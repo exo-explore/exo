@@ -1,11 +1,11 @@
 { inputs, ... }:
 {
   perSystem =
-    { config, self', pkgs, lib, system, ... }:
+    { self', pkgs, cudaPkgs, lib, ... }:
     let
       # Load workspace from uv.lock
       workspace = inputs.uv2nix.lib.workspace.loadWorkspace {
-        workspaceRoot = inputs.self;
+        workspaceRoot = ../.;
       };
 
       # Create overlay from workspace
@@ -35,16 +35,9 @@
 
       inherit (pkgs.stdenv.hostPlatform) isDarwin isLinux;
 
-      python = pkgs.python313;
-
       # Overlay to provide build systems and custom packages
-      buildSystemsOverlay = final: prev:
+      cudaOverlay = final: prev:
         let
-          addSetupTools = (old: {
-            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-              final.setuptools
-            ];
-          });
           torchLibs = [
             final.nvidia-cuda-runtime
             final.nvidia-cuda-nvrtc
@@ -147,7 +140,7 @@
             '';
           };
 
-          mergedCudaLibraries = with pkgs.cudaPackages_13; [
+          mergedCudaLibraries = with cudaPkgs.cudaPackages_13; [
             cuda_cudart # cuda_runtime.h, -lcudart
             cuda_cccl
             libcurand # curand_kernel.h
@@ -159,25 +152,16 @@
             libcublas
           ];
 
-	  cuda_cccl_compat = pkgs.runCommand "cuda-cccl-compat" {} ''
-	    mkdir -p $out/include
-	    ln -s ${pkgs.cudaPackages_13.cuda_cccl}/include $out/include/cccl
-	  '';
+          cuda_cccl_compat = pkgs.runCommand "cuda-cccl-compat" { } ''
+            mkdir -p $out/include
+            ln -s ${cudaPkgs.cudaPackages_13.cuda_cccl}/include $out/include/cccl
+          '';
           cudaToolkitRoot = pkgs.symlinkJoin {
-              name = "cuda-merged-exo";
-              paths = builtins.concatMap (p: [ (lib.getBin p) (lib.getLib p) (lib.getDev p) ]) (mergedCudaLibraries ++ [ pkgs.cudaPackages_13.cuda_nvcc  cuda_cccl_compat ]);
-            };
-
+            name = "cuda-merged-exo";
+            paths = builtins.concatMap (p: [ (lib.getBin p) (lib.getLib p) (lib.getDev p) ]) (mergedCudaLibraries ++ [ cudaPkgs.cudaPackages_13.cuda_nvcc cuda_cccl_compat ]);
+          };
         in
-
         {
-          # mlx-lm is a git dependency that needs setuptools
-          mlx-lm = prev.mlx-lm.overrideAttrs addSetupTools;
-          # rouge-score and sacrebleu don't declare setuptools as a build dependency
-          rouge-score = prev.rouge-score.overrideAttrs addSetupTools;
-          sacrebleu = prev.sacrebleu.overrideAttrs addSetupTools;
-          sqlitedict = prev.sqlitedict.overrideAttrs addSetupTools;
-          word2number = prev.word2number.overrideAttrs addSetupTools;
           fastsafetensors = prev.fastsafetensors.overrideAttrs (old: { nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ final.setuptools final.pybind11 ]; });
           torch = prev.torch.overrideAttrs (old: {
             propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ torchLibs ++ [ final.typing-extensions final.numpy ];
@@ -203,16 +187,17 @@
               '';
               autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "libcuda.so.1" ];
             });
-          xgrammar = prev.xgrammar.overrideAttrs (old: { nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ final.setuptools final.scikit-build-core final.packaging final.pathspec pkgs.cmake final.nanobind ]; 
+          xgrammar = prev.xgrammar.overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ final.setuptools final.scikit-build-core final.packaging final.pathspec pkgs.cmake final.nanobind ];
 
-  prePatch = ''
-cat cpp/nanobind/CMakeLists.txt
-'';
-  patches = (old.patches or [ ]) ++ [ ./nanobind_cmake.patch ];
-});
+            prePatch = ''
+              cat cpp/nanobind/CMakeLists.txt
+            '';
+            patches = (old.patches or [ ]) ++ [ ../nix/nanobind_cmake.patch ];
+          });
           vllm = prev.vllm.overrideAttrs (old: {
-            patches = (old.patches or [ ]) ++ [ ./vllm_uv2nix_cmake.patch ];
-            nativeBuildInputs = with pkgs.cudaPackages_13; (old.nativeBuildInputs or [ ]) ++ [
+            patches = (old.patches or [ ]) ++ [ ../nix/vllm_uv2nix_cmake.patch ];
+            nativeBuildInputs = with cudaPkgs.cudaPackages_13; (old.nativeBuildInputs or [ ]) ++ [
               final.setuptools
               final.setuptools-scm
               final.scikit-build-core
@@ -224,7 +209,7 @@ cat cpp/nanobind/CMakeLists.txt
               pkgs.ninja
               pkgs.autoAddDriverRunpath
             ];
-            buildInputs = with pkgs.cudaPackages_13; [
+            buildInputs = with cudaPkgs.cudaPackages_13; [
               libcufile
               cudnn
               nccl
@@ -250,7 +235,7 @@ cat cpp/nanobind/CMakeLists.txt
               "-DVLLM_FLASH_ATTN_SRC_DIR=${lib.getDev vllm-flash-attn}"
               "-DQUTLASS_SRC_DIR=${lib.getDev qutlass}"
               "-DTORCH_CUDA_ARCH_LIST=12.0;12.1"
-              "-DCUTLASS_NVCC_ARCHS_ENABLED=${pkgs.cudaPackages_13.flags.cmakeCudaArchitecturesString}"
+              "-DCUTLASS_NVCC_ARCHS_ENABLED=${cudaPkgs.cudaPackages_13.flags.cmakeCudaArchitecturesString}"
               "-DCUDA_HOME=${cudaToolkitRoot}"
               "-DCAFFE2_USE_CUDNN=ON"
               "-DCAFFE2_USE_CUFILE=ON"
@@ -258,6 +243,33 @@ cat cpp/nanobind/CMakeLists.txt
             ];
 
 
+          });
+        };
+
+      buildSystemsOverlay = final: prev:
+        let
+          addSetupTools = old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+              final.setuptools
+            ];
+          };
+
+        in
+        {
+          # mlx-lm is a git dependency that needs setuptools
+          mlx-lm = prev.mlx-lm.overrideAttrs addSetupTools;
+          # rouge-score and sacrebleu don't declare setuptools as a build dependency
+          rouge-score = prev.rouge-score.overrideAttrs addSetupTools;
+          sacrebleu = prev.sacrebleu.overrideAttrs addSetupTools;
+          sqlitedict = prev.sqlitedict.overrideAttrs addSetupTools;
+          word2number = prev.word2number.overrideAttrs addSetupTools;
+          vllm = prev.vllm.overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+              final.setuptools
+              final.setuptools-scm
+            ];
+            propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ [ final.torch ];
+            VLLM_TARGET_DEVICE = "empty";
           });
         } // lib.optionalAttrs isDarwin {
           # Use our pure Nix-built MLX with Metal support (macOS only)
@@ -295,6 +307,7 @@ cat cpp/nanobind/CMakeLists.txt
         );
 
 
+      python = pkgs.python313;
 
       pythonSet = (pkgs.callPackage inputs.pyproject-nix.build.packages {
         inherit python;
@@ -305,6 +318,31 @@ cat cpp/nanobind/CMakeLists.txt
           exoOverlay
           buildSystemsOverlay
           linuxOverlay
+        ]
+      );
+      editablePythonSet = pythonSet.overrideScope (
+        workspace.mkEditablePyprojectOverlay { root = "$REPO_ROOT"; members = [ "exo" "exo_core" "vllm_engine" "mlx_engine" "exo_bench" ]; }
+      );
+      evenv = editablePythonSet.mkVirtualEnv "exo-dev-env"
+        {
+          exo = lib.optionals isDarwin [ "mlx" ];
+          exo-pyo3-bindings = [ ];
+          exo-bench = [ ];
+          mlx-engine = [ ];
+          vllm-engine = [ ];
+
+        }
+      ;
+      cudaPythonSet = (cudaPkgs.callPackage inputs.pyproject-nix.build.packages {
+        python = cudaPkgs.python313;
+      }).overrideScope (
+        lib.composeManyExtensions [
+          inputs.pyproject-build-systems.overlays.default
+          overlay
+          exoOverlay
+          buildSystemsOverlay
+          linuxOverlay
+          cudaOverlay
         ]
       );
       # mlx-cpu and mlx-cuda-13 both ship mlx/ site-packages files; keep first.
@@ -320,8 +358,8 @@ cat cpp/nanobind/CMakeLists.txt
       }).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
       };
-      exoCudaVenv = (pythonSet.mkVirtualEnv "exo-env" {
-        exo = [ "cuda" ];
+      exoCudaVenv = (cudaPythonSet.mkVirtualEnv "exo-env" {
+        exo = lib.optionals cudaPkgs.config.cudaSupport [ "cuda" ];
         exo-pyo3-bindings = [ ];
       }).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
@@ -379,7 +417,7 @@ cat cpp/nanobind/CMakeLists.txt
             ${lib.optionalString isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
         '';
 
-      exoCudaPackage = pkgs.runCommand "exo"
+      exoCudaPackage = cudaPkgs.runCommand "exo"
         {
           nativeBuildInputs = [ pkgs.makeWrapper ];
         }
@@ -406,6 +444,8 @@ cat cpp/nanobind/CMakeLists.txt
         exo-eval = mkBenchScript "exo-eval" (inputs.self + /bench/exo_eval.py);
         exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);
         exo-get-all-models-on-cluster = mkSimplePythonScript "exo-get-all-models-on-cluster" (inputs.self + /tests/get_all_models_on_cluster.py);
+        editable-venv = evenv;
+        inherit python;
       };
 
       checks = {

@@ -9,15 +9,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiofiles
 import aiofiles.os as aios
 import pytest
-from exo.shared.types.common import ModelId
-from exo.shared.types.memory import Memory
-from pydantic import TypeAdapter
-
-from exo.download.download_utils import (
+from exo_core.types.common import ModelId
+from exo_core.types.downloads import FileListEntry, RepoFileDownloadProgress
+from exo_core.utils.downloads import (
     delete_model,
     fetch_file_list_with_cache,
 )
-from exo.shared.types.worker.downloads import FileListEntry, RepoFileDownloadProgress
+from exo_core.utils.memory import Memory
+from pydantic import TypeAdapter
 
 
 @pytest.fixture
@@ -30,7 +29,7 @@ async def temp_models_dir(tmp_path: Path) -> AsyncIterator[Path]:
     """Set up a temporary models directory for testing."""
     models_dir = tmp_path / "models"
     await aios.makedirs(models_dir, exist_ok=True)
-    with patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir):
+    with patch("exo_core.utils.downloads.EXO_MODELS_DIR", models_dir):
         yield models_dir
 
 
@@ -42,7 +41,7 @@ class TestFileVerification:
     ) -> None:
         """Test that files with mismatched sizes are re-downloaded."""
         # Import inside test to allow patching
-        from exo.download.download_utils import (
+        from exo_core.utils.downloads import (
             _download_file,  # pyright: ignore[reportPrivateUsage]
         )
 
@@ -59,12 +58,12 @@ class TestFileVerification:
 
         with (
             patch(
-                "exo.download.download_utils.file_meta",
+                "exo_core.utils.downloads.file_meta",
                 new_callable=AsyncMock,
                 return_value=(remote_size, remote_hash),
             ) as mock_file_meta,
             patch(
-                "exo.download.download_utils.create_http_session"
+                "exo_core.utils.downloads.create_http_session"
             ) as mock_session_factory,
         ):
             # Set up mock HTTP response for re-download
@@ -90,7 +89,7 @@ class TestFileVerification:
 
             # Mock calc_hash to return the expected hash
             with patch(
-                "exo.download.download_utils.calc_hash",
+                "exo_core.utils.downloads.calc_hash",
                 new_callable=AsyncMock,
                 return_value=remote_hash,
             ):
@@ -103,7 +102,7 @@ class TestFileVerification:
         self, model_id: ModelId, tmp_path: Path
     ) -> None:
         """Test that files with matching sizes are not re-downloaded."""
-        from exo.download.download_utils import (
+        from exo_core.utils.downloads import (
             _download_file,  # pyright: ignore[reportPrivateUsage]
         )
 
@@ -121,12 +120,12 @@ class TestFileVerification:
 
         with (
             patch(
-                "exo.download.download_utils.file_meta",
+                "exo_core.utils.downloads.file_meta",
                 new_callable=AsyncMock,
                 return_value=(remote_size, remote_hash),
             ) as mock_file_meta,
             patch(
-                "exo.download.download_utils.create_http_session"
+                "exo_core.utils.downloads.create_http_session"
             ) as mock_session_factory,
         ):
             result = await _download_file(
@@ -142,7 +141,7 @@ class TestFileVerification:
         self, model_id: ModelId, tmp_path: Path
     ) -> None:
         """Test that local files are used when network is unavailable."""
-        from exo.download.download_utils import (
+        from exo_core.utils.downloads import (
             _download_file,  # pyright: ignore[reportPrivateUsage]
         )
 
@@ -156,12 +155,12 @@ class TestFileVerification:
 
         with (
             patch(
-                "exo.download.download_utils.file_meta",
+                "exo_core.utils.downloads.file_meta",
                 new_callable=AsyncMock,
                 side_effect=Exception("Network error"),
             ),
             patch(
-                "exo.download.download_utils.create_http_session"
+                "exo_core.utils.downloads.create_http_session"
             ) as mock_session_factory,
         ):
             result = await _download_file(
@@ -188,9 +187,9 @@ class TestFileListCache:
         ]
 
         with (
-            patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir),
+            patch("exo_core.utils.downloads.EXO_MODELS_DIR", models_dir),
             patch(
-                "exo.download.download_utils.fetch_file_list_with_retry",
+                "exo_core.utils.downloads.fetch_file_list_with_retry",
                 new_callable=AsyncMock,
                 return_value=file_list,
             ) as mock_fetch,
@@ -234,9 +233,9 @@ class TestFileListCache:
             )
 
         with (
-            patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir),
+            patch("exo_core.utils.downloads.EXO_MODELS_DIR", models_dir),
             patch(
-                "exo.download.download_utils.fetch_file_list_with_retry",
+                "exo_core.utils.downloads.fetch_file_list_with_retry",
                 new_callable=AsyncMock,
                 side_effect=Exception("Network error"),
             ),
@@ -252,9 +251,9 @@ class TestFileListCache:
         models_dir = tmp_path / "models"
 
         with (
-            patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir),
+            patch("exo_core.utils.downloads.EXO_MODELS_DIR", models_dir),
             patch(
-                "exo.download.download_utils.fetch_file_list_with_retry",
+                "exo_core.utils.downloads.fetch_file_list_with_retry",
                 new_callable=AsyncMock,
                 side_effect=Exception("Network error"),
             ),
@@ -284,7 +283,7 @@ class TestModelDeletion:
         async with aiofiles.open(cache_dir / "file_list.json", "w") as f:
             await f.write("[]")
 
-        with patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir):
+        with patch("exo_core.utils.downloads.EXO_MODELS_DIR", models_dir):
             result = await delete_model(model_id)
 
             assert result is True
@@ -303,7 +302,7 @@ class TestModelDeletion:
         async with aiofiles.open(cache_dir / "file_list.json", "w") as f:
             await f.write("[]")
 
-        with patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir):
+        with patch("exo_core.utils.downloads.EXO_MODELS_DIR", models_dir):
             result = await delete_model(model_id)
 
             # Returns False because model dir didn't exist
@@ -318,7 +317,7 @@ class TestModelDeletion:
         models_dir = tmp_path / "models"
         await aios.makedirs(models_dir, exist_ok=True)
 
-        with patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir):
+        with patch("exo_core.utils.downloads.EXO_MODELS_DIR", models_dir):
             result = await delete_model(model_id)
 
             assert result is False

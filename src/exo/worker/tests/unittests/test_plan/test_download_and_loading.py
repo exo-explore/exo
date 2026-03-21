@@ -1,13 +1,14 @@
-import exo.worker.plan as plan_mod
-from exo.shared.types.common import NodeId
-from exo.shared.types.memory import Memory
-from exo.shared.types.tasks import LoadModel
-from exo.shared.types.worker.downloads import DownloadCompleted, DownloadProgress
-from exo.shared.types.worker.instances import BoundInstance
-from exo.shared.types.worker.runners import (
+from exo_core.types.common import NodeId
+from exo_core.types.downloads import DownloadCompleted, DownloadProgress
+from exo_core.types.instances import BoundInstance
+from exo_core.types.runners import (
     RunnerConnected,
     RunnerIdle,
 )
+from exo_core.types.tasks import LoadModel
+from exo_core.utils.memory import Memory
+
+import exo.worker.plan as plan_mod
 from exo.worker.tests.constants import (
     INSTANCE_1_ID,
     MODEL_A_ID,

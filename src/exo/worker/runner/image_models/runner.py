@@ -3,40 +3,16 @@ import time
 from typing import TYPE_CHECKING, Literal
 
 import mlx.core as mx
-
-from exo.api.types import ImageGenerationStats
-from exo.shared.constants import EXO_MAX_CHUNK_SIZE, EXO_TRACING_ENABLED
-from exo.shared.models.model_cards import ModelTask
-from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
-from exo.shared.types.chunks import ErrorChunk, ImageChunk
-from exo.shared.types.common import CommandId, ModelId
-from exo.shared.types.events import (
-    ChunkGenerated,
-    Event,
-    RunnerStatusUpdated,
-    TaskAcknowledged,
-    TaskStatusUpdated,
-    TraceEventData,
-    TracesCollected,
-)
-from exo.shared.types.tasks import (
-    CANCEL_ALL_TASKS,
-    ConnectToGroup,
-    ImageEdits,
-    ImageGeneration,
-    LoadModel,
-    Shutdown,
-    StartWarmup,
-    Task,
-    TaskId,
-    TaskStatus,
-)
-from exo.shared.types.worker.instances import BoundInstance
-from exo.shared.types.worker.runner_response import (
+from exo_core.constants import EXO_MAX_CHUNK_SIZE, EXO_TRACING_ENABLED
+from exo_core.model_cards import ModelTask
+from exo_core.types.chunks import ErrorChunk, ImageChunk
+from exo_core.types.common import CommandId, ModelId
+from exo_core.types.instances import BoundInstance
+from exo_core.types.runner_response import (
     ImageGenerationResponse,
     PartialImageResponse,
 )
-from exo.shared.types.worker.runners import (
+from exo_core.types.runners import (
     RunnerConnected,
     RunnerConnecting,
     RunnerFailed,
@@ -50,10 +26,34 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.shared.types.worker.shards import (
+from exo_core.types.shards import (
     CfgShardMetadata,
     PipelineShardMetadata,
     ShardMetadata,
+)
+from exo_core.types.tasks import (
+    CANCEL_ALL_TASKS,
+    ConnectToGroup,
+    ImageEdits,
+    ImageGeneration,
+    LoadModel,
+    Shutdown,
+    StartWarmup,
+    Task,
+    TaskId,
+    TaskStatus,
+)
+
+from exo.api.types import ImageGenerationStats
+from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
+from exo.shared.types.events import (
+    ChunkGenerated,
+    Event,
+    RunnerStatusUpdated,
+    TaskAcknowledged,
+    TaskStatusUpdated,
+    TraceEventData,
+    TracesCollected,
 )
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.image import (

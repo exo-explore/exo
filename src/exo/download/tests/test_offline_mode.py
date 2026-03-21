@@ -7,14 +7,13 @@ from unittest.mock import AsyncMock, patch
 import aiofiles
 import aiofiles.os as aios
 import pytest
-from exo.shared.types.common import ModelId
-
-from exo.download.download_utils import (
+from exo_core.types.common import ModelId
+from exo_core.types.downloads import FileListEntry
+from exo_core.utils.downloads import (
     _download_file,  # pyright: ignore[reportPrivateUsage]
     download_file_with_retry,
     fetch_file_list_with_cache,
 )
-from exo.shared.types.worker.downloads import FileListEntry
 
 
 @pytest.fixture
@@ -26,7 +25,7 @@ def model_id() -> ModelId:
 async def temp_models_dir(tmp_path: Path) -> AsyncIterator[Path]:
     models_dir = tmp_path / "models"
     await aios.makedirs(models_dir, exist_ok=True)
-    with patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir):
+    with patch("exo_core.utils.downloads.EXO_MODELS_DIR", models_dir):
         yield models_dir
 
 
@@ -46,7 +45,7 @@ class TestDownloadFileOffline:
             await f.write(b"model weights data")
 
         with patch(
-            "exo.download.download_utils.file_meta",
+            "exo_core.utils.downloads.file_meta",
             new_callable=AsyncMock,
         ) as mock_file_meta:
             result = await _download_file(
@@ -91,7 +90,7 @@ class TestDownloadFileOffline:
             await f.write(b"weights")
 
         with patch(
-            "exo.download.download_utils.file_meta",
+            "exo_core.utils.downloads.file_meta",
             new_callable=AsyncMock,
         ) as mock_file_meta:
             result = await _download_file(
@@ -121,7 +120,7 @@ class TestDownloadFileWithRetryOffline:
             await f.write(b'{"model_type": "qwen2"}')
 
         with patch(
-            "exo.download.download_utils.file_meta",
+            "exo_core.utils.downloads.file_meta",
             new_callable=AsyncMock,
         ) as mock_file_meta:
             result = await download_file_with_retry(
@@ -175,7 +174,7 @@ class TestFetchFileListOffline:
             )
 
         with patch(
-            "exo.download.download_utils.fetch_file_list_with_retry",
+            "exo_core.utils.downloads.fetch_file_list_with_retry",
             new_callable=AsyncMock,
         ) as mock_fetch:
             result = await fetch_file_list_with_cache(
@@ -209,7 +208,7 @@ class TestFetchFileListOffline:
             await f.write(b"x" * 500)
 
         with patch(
-            "exo.download.download_utils.fetch_file_list_with_retry",
+            "exo_core.utils.downloads.fetch_file_list_with_retry",
             new_callable=AsyncMock,
         ) as mock_fetch:
             result = await fetch_file_list_with_cache(

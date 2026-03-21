@@ -1,7 +1,6 @@
+from exo_core.models import CamelCaseModel
+from exo_core.types.common import NodeId
 from exo_pyo3_bindings import PyFromSwarm
-
-from exo.shared.types.common import NodeId
-from exo.utils.pydantic_ext import CamelCaseModel
 
 """Serialisable types for Connection Updates/Messages"""
 

@@ -2,8 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from typing import Self
 
-
-class TaskId(str): ...
+from exo_core.types.tasks import TaskId
 
 
 class Cancelled: ...

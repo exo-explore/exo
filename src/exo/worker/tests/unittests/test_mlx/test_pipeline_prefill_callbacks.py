@@ -14,12 +14,11 @@ import traceback
 from typing import Any, cast
 
 import pytest
-
-from exo.shared.constants import EXO_MODELS_DIR
-from exo.shared.models.model_cards import ModelCard, ModelTask
-from exo.shared.types.common import ModelId
-from exo.shared.types.memory import Memory
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo_core.constants import EXO_MODELS_DIR
+from exo_core.model_cards import ModelCard, ModelTask
+from exo_core.types.common import ModelId
+from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo_core.utils.memory import Memory
 
 MODEL_ID = "mlx-community/gpt-oss-20b-MXFP4-Q8"
 MODEL_PATH = EXO_MODELS_DIR / "mlx-community--gpt-oss-20b-MXFP4-Q8"
@@ -73,9 +72,9 @@ def _run_single_device(
     """Load full model without pipeline sharding, run mlx_generate, record callbacks."""
     try:
         import mlx.core as mx
+        from exo_core.types.shards import PipelineShardMetadata
         from mlx_lm.utils import load_model
 
-        from exo.shared.types.worker.shards import PipelineShardMetadata
         from exo.worker.engines.mlx.cache import encode_prompt
         from exo.worker.engines.mlx.generator.generate import mlx_generate
         from exo.worker.engines.mlx.utils_mlx import (
@@ -156,8 +155,8 @@ def _run_pipeline_device(
 
     try:
         import mlx.core as mx
+        from exo_core.types.shards import PipelineShardMetadata
 
-        from exo.shared.types.worker.shards import PipelineShardMetadata
         from exo.worker.engines.mlx.cache import encode_prompt
         from exo.worker.engines.mlx.generator.generate import mlx_generate
         from exo.worker.engines.mlx.utils_mlx import shard_and_load

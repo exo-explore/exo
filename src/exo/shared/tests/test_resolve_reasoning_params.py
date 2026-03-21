@@ -1,6 +1,5 @@
 import pytest
-
-from exo.shared.types.text_generation import resolve_reasoning_params
+from exo_core.types.text_generation import resolve_reasoning_params
 
 
 def test_both_none_returns_none_none() -> None:

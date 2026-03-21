@@ -30,6 +30,7 @@ dependencies = [
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
+  "exo_core",
 ]
 
 [project.scripts]
@@ -45,28 +46,30 @@ dev = [
   "pytest-env",
   "ruff>=0.11.13",
 ]
-build = [
-  "nanobind"
-]
+build = ["nanobind"]
 
 [project.optional-dependencies]
 mlx = ["mlx_engine"]
-cuda = [
-  "vllm_engine; sys_platform == 'linux' and platform_machine == 'aarch64'",
-]
+cuda = ["vllm_engine; sys_platform == 'linux'"]
 
 ###
 # workspace configuration
 ###
 
 [tool.uv.workspace]
-members = ["rust/exo_pyo3_bindings", "bench", "python/exo_core"]
+members = [
+  "rust/exo_pyo3_bindings",
+  "bench",
+  "python/exo_core",
+  "python/vllm_engine",
+  "python/mlx_engine",
+]
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
 exo_core = { workspace = true }
-mlx_engine = { path = "python/mlx_engine" }
-vllm_engine = { path = "python/vllm_engine" }
+mlx_engine = { workspace = true }
+vllm_engine = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/eval-left-padding-in-batched-rotation" }
 # Uncomment to use local mlx/mlx-lm development versions:
@@ -132,7 +135,7 @@ environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
 
 [tool.uv.extra-build-dependencies]
-xgrammar = [ "nanobind" ]
+xgrammar = ["nanobind"]
 
 
 ###

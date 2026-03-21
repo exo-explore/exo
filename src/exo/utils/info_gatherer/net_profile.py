@@ -4,10 +4,10 @@ from collections.abc import AsyncGenerator, Mapping
 import anyio
 import httpx
 from anyio import create_task_group
+from exo_core.types.common import NodeId
 from loguru import logger
 
 from exo.shared.topology import Topology
-from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import NodeNetworkInfo
 from exo.utils.channels import Sender, channel
 

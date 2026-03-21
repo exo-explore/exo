@@ -9,7 +9,7 @@ Model Cards require cleanup for family & quantization data
 import sys
 
 import anyio
-from exo.shared.models.model_cards import ModelCard, ModelId
+from exo_core.model_cards import ModelCard, ModelId
 
 
 async def main():

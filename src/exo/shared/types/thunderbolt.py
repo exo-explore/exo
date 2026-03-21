@@ -1,7 +1,6 @@
 import anyio
+from exo_core.models import CamelCaseModel
 from pydantic import BaseModel, Field
-
-from exo.utils.pydantic_ext import CamelCaseModel
 
 
 class ThunderboltConnection(CamelCaseModel):

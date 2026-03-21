@@ -4,14 +4,14 @@ from collections.abc import Awaitable
 from pathlib import Path
 from typing import AsyncIterator, Callable
 
-from exo.shared.models.model_cards import ModelCard, ModelId, get_model_cards
-from exo.shared.types.worker.shards import (
+from exo_core.model_cards import ModelCard, ModelId, get_model_cards
+from exo_core.types.shards import (
     PipelineShardMetadata,
     ShardMetadata,
 )
+from exo_core.utils.downloads import RepoDownloadProgress, download_shard
 from loguru import logger
 
-from exo.download.download_utils import RepoDownloadProgress, download_shard
 from exo.download.shard_downloader import ShardDownloader
 
 

@@ -4,10 +4,10 @@ from pathlib import Path
 from typing import Literal, Self
 
 import psutil
+from exo_core.models import CamelCaseModel
+from exo_core.utils.memory import Memory
 
-from exo.shared.types.memory import Memory
 from exo.shared.types.thunderbolt import ThunderboltIdentifier
-from exo.utils.pydantic_ext import CamelCaseModel
 
 
 class MemoryUsage(CamelCaseModel):

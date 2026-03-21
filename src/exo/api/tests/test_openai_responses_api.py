@@ -6,7 +6,7 @@ The responses adapter converts it to TextGenerationTaskParams for the pipeline.
 
 import pydantic
 import pytest
-from exo.shared.types.common import ModelId
+from exo_core.types.common import ModelId
 
 from exo.api.types.openai_responses import (
     ResponseInputMessage,

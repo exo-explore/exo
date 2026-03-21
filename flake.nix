@@ -72,18 +72,23 @@
       ];
 
       perSystem =
-        { config, self', inputs', pkgs, lib, system, ... }:
+        { config, self', pkgs, lib, system, ... }:
         let
           # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
           pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
         in
         {
+          _module.args.cudaPkgs = import inputs.nixpkgs
+            {
+              inherit system;
+              config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ "cuda-merged" "cuda_cuobjdump" "cuda_gdb" "cuda_nvcc" "cuda_nvdisasm" "cuda_nvprune" "cuda_cccl" "cuda_cudart" "cuda_cupti" "cuda_cuxxfilt" "cuda_nvml_dev" "cuda_nvrtc" "cuda_nvtx" "cuda_profiler_api" "cuda_sanitizer_api" "libcublas" "libcufft" "libcurand" "libcusolver" "libnvjitlink" "libcusparse" "libnpp" "cudnn" "libcusparse_lt" "libcufile" "libnvshmem" "libnvvm" "cuda_crt" ];
+              cudaSupport = true;
+              cudaCapabilities = [ "12.1" ];
+            };
           # Allow unfree for metal-toolchain (needed for Darwin Metal packages)
           _module.args.pkgs = import inputs.nixpkgs {
             inherit system;
-            config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ "metal-toolchain" "cuda-merged" "cuda_cuobjdump" "cuda_gdb" "cuda_nvcc" "cuda_nvdisasm" "cuda_nvprune" "cuda_cccl" "cuda_cudart" "cuda_cupti" "cuda_cuxxfilt" "cuda_nvml_dev" "cuda_nvrtc" "cuda_nvtx" "cuda_profiler_api" "cuda_sanitizer_api" "libcublas" "libcufft" "libcurand" "libcusolver" "libnvjitlink" "libcusparse" "libnpp" "cudnn" "libcusparse_lt" "libcufile" "libnvshmem" "libnvvm" "cuda_crt" ];
-            cudaSupport = true;
-            cudaCapabilities = [ "12.1" ];
+            config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ "metal-toolchain" ];
             overlays = lib.optionals (system == "aarch64-darwin") [
               (import ./nix/apple-sdk-overlay.nix)
             ];
@@ -133,7 +138,7 @@
             );
           devShells =
             {
-              default = with pkgs; pkgs.mkShell {
+              default = with pkgs; mkShell {
                 inputsFrom = [ self'.checks.cargo-build ];
 
                 packages =
@@ -142,7 +147,8 @@
                     config.treefmt.build.wrapper
 
                     # PYTHON
-                    python313
+                    self'.packages.editable-venv
+                    self'.packages.python
                     uv
                     ruff
                     basedpyright
@@ -168,10 +174,17 @@
                     macmon
                   ];
 
-                OPENSSL_NO_VENDOR = "1";
+                env = {
+                  UV_NO_SYNC = "1";
+                  UV_PYTHON = self'.packages.python.interpreter;
+                  UV_PYTHON_DOWNLOADS = "never";
+                  OPENSSL_NO_VENDOR = "1";
+                };
 
                 shellHook = ''
-                  export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${python313}/lib"
+                  unset PYTHONPATH
+                  export REPO_ROOT=$(git rev-parse --show-toplevel)
+                  export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${self'.packages.python}/lib"
                   ${lib.optionalString stdenv.isLinux ''
                     export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
                   ''}

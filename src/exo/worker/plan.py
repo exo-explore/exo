@@ -2,8 +2,28 @@
 
 from collections.abc import Mapping, Sequence
 
-from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.tasks import (
+from exo_core.types.common import CommandId, NodeId
+from exo_core.types.downloads import (
+    DownloadCompleted,
+    DownloadFailed,
+    DownloadOngoing,
+    DownloadProgress,
+)
+from exo_core.types.instances import BoundInstance, Instance, InstanceId
+from exo_core.types.runners import (
+    RunnerConnected,
+    RunnerConnecting,
+    RunnerFailed,
+    RunnerId,
+    RunnerIdle,
+    RunnerLoaded,
+    RunnerLoading,
+    RunnerReady,
+    RunnerRunning,
+    RunnerStatus,
+    RunnerWarmingUp,
+)
+from exo_core.types.tasks import (
     CancelTask,
     ConnectToGroup,
     CreateRunner,
@@ -18,26 +38,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
-from exo.shared.types.worker.downloads import (
-    DownloadCompleted,
-    DownloadFailed,
-    DownloadOngoing,
-    DownloadProgress,
-)
-from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
-from exo.shared.types.worker.runners import (
-    RunnerConnected,
-    RunnerConnecting,
-    RunnerFailed,
-    RunnerId,
-    RunnerIdle,
-    RunnerLoaded,
-    RunnerLoading,
-    RunnerReady,
-    RunnerRunning,
-    RunnerStatus,
-    RunnerWarmingUp,
-)
+
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
 

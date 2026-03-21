@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from typing import Self
 
 import anyio
+from exo_core.constants import EXO_LOG
+from exo_core.models import CamelCaseModel
+from exo_core.types.common import NodeId, SessionId
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -17,12 +20,9 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_id_keypair
-from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
-from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
-from exo.utils.pydantic_ext import CamelCaseModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
 

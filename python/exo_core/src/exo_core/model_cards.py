@@ -1,31 +1,23 @@
 from enum import Enum
-from typing import Annotated, Any
 
-import aiofiles
 import aiofiles.os as aios
 import tomlkit
 from anyio import Path, open_file
-from exo.shared.types.common import ModelId
-from exo.shared.types.memory import Memory
-from exo.utils.pydantic_ext import CamelCaseModel
-from huggingface_hub import model_info
-from loguru import logger
 from pydantic import (
-    AliasChoices,
-    BaseModel,
-    Field,
     PositiveInt,
     ValidationError,
     field_validator,
-    model_validator,
 )
 from tomlkit.exceptions import TOMLKitError
 
-from exo.shared.constants import (
+from exo_core.constants import (
     EXO_CUSTOM_MODEL_CARDS_DIR,
     EXO_ENABLE_IMAGE_MODELS,
     RESOURCES_DIR,
 )
+from exo_core.models import CamelCaseModel
+from exo_core.types.common import ModelId
+from exo_core.utils.memory import Memory
 
 # kinda ugly...
 # TODO: load search path from config.toml
@@ -127,6 +119,9 @@ class ModelCard(CamelCaseModel):
     @staticmethod
     async def fetch_from_hf(model_id: ModelId) -> "ModelCard":
         """Fetches storage size and number of layers for a Hugging Face model, returns Pydantic ModelMeta."""
+        # needed to prevent circular imports
+        from exo_core.utils.downloads import fetch_config_data, fetch_safetensors_size
+
         # TODO: failure if files do not exist
         config_data = await fetch_config_data(model_id)
         num_layers = config_data.layer_count
@@ -165,119 +160,3 @@ def is_custom_card(model_id: ModelId) -> bool:
         ModelId(model_id).normalize() + ".toml"
     )
     return os.path.isfile(str(card_path))
-
-
-class ConfigData(BaseModel):
-    model_config = {"extra": "ignore"}  # Allow unknown fields
-
-    architectures: list[str] | None = None
-    hidden_size: Annotated[int, Field(ge=0)] | None = None
-    num_key_value_heads: PositiveInt | None = None
-    layer_count: int = Field(
-        validation_alias=AliasChoices(
-            "num_hidden_layers",
-            "num_layers",
-            "n_layer",
-            "n_layers",
-            "num_decoder_layers",
-            "decoder_layers",
-        )
-    )
-
-    @property
-    def supports_tensor(self) -> bool:
-        return self.architectures in [
-            ["Glm4MoeLiteForCausalLM"],
-            ["GlmMoeDsaForCausalLM"],
-            ["DeepseekV32ForCausalLM"],
-            ["DeepseekV3ForCausalLM"],
-            ["Qwen3NextForCausalLM"],
-            ["Qwen3MoeForCausalLM"],
-            ["Qwen3_5MoeForConditionalGeneration"],
-            ["Qwen3_5ForConditionalGeneration"],
-            ["MiniMaxM2ForCausalLM"],
-            ["LlamaForCausalLM"],
-            ["GptOssForCausalLM"],
-            ["Step3p5ForCausalLM"],
-            ["NemotronHForCausalLM"],
-        ]
-
-    @model_validator(mode="before")
-    @classmethod
-    def defer_to_text_config(cls, data: dict[str, Any]):
-        text_config = data.get("text_config")
-        if text_config is None:
-            return data
-
-        for field in [
-            "architectures",
-            "hidden_size",
-            "num_key_value_heads",
-            "num_hidden_layers",
-            "num_layers",
-            "n_layer",
-            "n_layers",
-            "num_decoder_layers",
-            "decoder_layers",
-        ]:
-            if (val := text_config.get(field)) is not None:  # pyright: ignore[reportAny]
-                data[field] = val
-
-        return data
-
-
-async def fetch_config_data(model_id: ModelId) -> ConfigData:
-    """Downloads and parses config.json for a model."""
-    from exo.download.download_utils import (
-        download_file_with_retry,
-        ensure_models_dir,
-    )
-
-    target_dir = (await ensure_models_dir()) / model_id.normalize()
-    await aios.makedirs(target_dir, exist_ok=True)
-    config_path = await download_file_with_retry(
-        model_id,
-        "main",
-        "config.json",
-        target_dir,
-        lambda curr_bytes, total_bytes, is_renamed: logger.debug(
-            f"Downloading config.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
-        ),
-    )
-    async with aiofiles.open(config_path, "r") as f:
-        return ConfigData.model_validate_json(await f.read())
-
-
-async def fetch_safetensors_size(model_id: ModelId) -> Memory:
-    """Gets model size from safetensors index or falls back to HF API."""
-    from exo.download.download_utils import (
-        download_file_with_retry,
-        ensure_models_dir,
-    )
-    from exo.shared.types.worker.downloads import ModelSafetensorsIndex
-
-    target_dir = (await ensure_models_dir()) / model_id.normalize()
-    await aios.makedirs(target_dir, exist_ok=True)
-    try:
-        index_path = await download_file_with_retry(
-            model_id,
-            "main",
-            "model.safetensors.index.json",
-            target_dir,
-            lambda curr_bytes, total_bytes, is_renamed: logger.debug(
-                f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
-            ),
-        )
-        async with aiofiles.open(index_path, "r") as f:
-            index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
-
-        metadata = index_data.metadata
-        if metadata is not None:
-            return Memory.from_bytes(metadata.total_size)
-    except FileNotFoundError:
-        pass
-
-    info = model_info(model_id)
-    if info.safetensors is None:
-        raise ValueError(f"No safetensors info found for {model_id}")
-    return Memory.from_bytes(info.safetensors.total)

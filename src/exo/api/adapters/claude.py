@@ -5,6 +5,15 @@ import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from exo_core.types.chunks import (
+    ErrorChunk,
+    PrefillProgressChunk,
+    TokenChunk,
+    ToolCallChunk,
+)
+from exo_core.types.common import CommandId
+from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
+
 from exo.api.types import FinishReason, Usage
 from exo.api.types.claude_api import (
     ClaudeContentBlock,
@@ -29,14 +38,6 @@ from exo.api.types.claude_api import (
     ClaudeToolUseBlock,
     ClaudeUsage,
 )
-from exo.shared.types.chunks import (
-    ErrorChunk,
-    PrefillProgressChunk,
-    TokenChunk,
-    ToolCallChunk,
-)
-from exo.shared.types.common import CommandId
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 
 
 def finish_reason_to_claude_stop_reason(

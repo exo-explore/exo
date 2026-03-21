@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-from exo.utils.dashboard_path import find_dashboard, find_resources
+from exo_core.utils.paths import find_dashboard, find_resources
 
 _EXO_HOME_ENV = os.environ.get("EXO_HOME", None)
 

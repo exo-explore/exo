@@ -1,10 +1,11 @@
 from collections.abc import Generator
 
-from exo.api.types import FinishReason
-from exo.shared.types.worker.runner_response import (
+from exo_core.types.runner_response import (
     GenerationResponse,
     ToolCallResponse,
 )
+
+from exo.api.types import FinishReason
 from exo.worker.runner.llm_inference.model_output_parsers import parse_gpt_oss
 
 # Token IDs from mlx-community/gpt-oss-20b-MXFP4-Q8 tokenizer.

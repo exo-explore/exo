@@ -1,6 +1,7 @@
 # pyright: reportMissingImports=false
+from exo_core.models import TaggedModel
+
 from exo.shared.types.profiling import SystemPerformanceProfile
-from exo.utils.pydantic_ext import TaggedModel
 
 try:
     from pynvml import (

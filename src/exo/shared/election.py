@@ -6,13 +6,13 @@ from anyio import (
     Event,
     get_cancelled_exc_class,
 )
+from exo_core.models import CamelCaseModel
+from exo_core.types.common import NodeId, SessionId
 from loguru import logger
 
 from exo.routing.connection_message import ConnectionMessage
 from exo.shared.types.commands import ForwarderCommand
-from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, Sender
-from exo.utils.pydantic_ext import CamelCaseModel
 from exo.utils.task_group import TaskGroup
 
 DEFAULT_ELECTION_TIMEOUT = 3.0

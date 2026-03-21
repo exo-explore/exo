@@ -3,15 +3,14 @@ from typing import cast
 
 import anyio
 import pytest
+from exo_core.types.chunks import ErrorChunk
+from exo_core.types.common import CommandId, ModelId, NodeId
+from exo_core.types.instances import BoundInstance, InstanceId
+from exo_core.types.runners import RunnerFailed, RunnerId
+from exo_core.types.tasks import Task, TaskId, TextGeneration
+from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
 
-from exo.shared.models.model_cards import ModelId
-from exo.shared.types.chunks import ErrorChunk
-from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
-from exo.shared.types.tasks import Task, TaskId, TextGeneration
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
-from exo.shared.types.worker.instances import BoundInstance, InstanceId
-from exo.shared.types.worker.runners import RunnerFailed, RunnerId
 from exo.utils.channels import channel, mp_channel
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance

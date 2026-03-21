@@ -5,31 +5,9 @@ from typing import Callable
 
 import mlx.core as mx
 import pytest
-
-import exo.worker.runner.llm_inference.batch_generator as mlx_batch_generator
-import exo.worker.runner.llm_inference.model_output_parsers as mlx_model_output_parsers
-import exo.worker.runner.llm_inference.runner as mlx_runner
-from exo.shared.types.chunks import TokenChunk
-from exo.shared.types.events import (
-    ChunkGenerated,
-    Event,
-    RunnerStatusUpdated,
-    TaskAcknowledged,
-    TaskStatusUpdated,
-)
-from exo.shared.types.tasks import (
-    ConnectToGroup,
-    LoadModel,
-    Shutdown,
-    StartWarmup,
-    Task,
-    TaskId,
-    TaskStatus,
-    TextGeneration,
-)
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
-from exo.shared.types.worker.runner_response import GenerationResponse
-from exo.shared.types.worker.runners import (
+from exo_core.types.chunks import TokenChunk
+from exo_core.types.runner_response import GenerationResponse
+from exo_core.types.runners import (
     RunnerConnected,
     RunnerConnecting,
     RunnerIdle,
@@ -40,6 +18,28 @@ from exo.shared.types.worker.runners import (
     RunnerShutdown,
     RunnerShuttingDown,
     RunnerWarmingUp,
+)
+from exo_core.types.tasks import (
+    ConnectToGroup,
+    LoadModel,
+    Shutdown,
+    StartWarmup,
+    Task,
+    TaskId,
+    TaskStatus,
+    TextGeneration,
+)
+from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
+
+import exo.worker.runner.llm_inference.batch_generator as mlx_batch_generator
+import exo.worker.runner.llm_inference.model_output_parsers as mlx_model_output_parsers
+import exo.worker.runner.llm_inference.runner as mlx_runner
+from exo.shared.types.events import (
+    ChunkGenerated,
+    Event,
+    RunnerStatusUpdated,
+    TaskAcknowledged,
+    TaskStatusUpdated,
 )
 from exo.utils.channels import mp_channel
 
@@ -262,8 +262,8 @@ def _run(tasks: Iterable[Task], send_after_ready: list[Task] | None = None):
             "exo.worker.runner.llm_inference.runner.mx.distributed.all_gather",
             make_nothin(mx.array([1])),
         ):
-            builder = mlx_runner.MlxBuilder(
-                model_id=MODEL_A_ID,
+            builder = mlx_runner.MlxBuilder.create(
+                bound_instance,
                 event_sender=event_sender,  # pyright: ignore[reportArgumentType]
                 cancel_receiver=cancel_receiver,
             )

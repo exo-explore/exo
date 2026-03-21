@@ -2,9 +2,8 @@
 
 from typing import Any, Literal
 
+from exo_core.types.common import ModelId
 from pydantic import BaseModel, Field
-
-from exo.shared.types.common import ModelId
 
 # Tool definition types
 ClaudeToolInputSchema = dict[str, Any]

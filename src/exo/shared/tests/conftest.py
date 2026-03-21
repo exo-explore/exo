@@ -5,11 +5,10 @@ from typing import Generator
 
 import pytest
 from _pytest.logging import LogCaptureFixture
+from exo_core.model_cards import ModelCard, ModelId, ModelTask
+from exo_core.types.shards import PipelineShardMetadata, ShardMetadata
+from exo_core.utils.memory import Memory
 from loguru import logger
-
-from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
-from exo.shared.types.memory import Memory
-from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 
 
 @pytest.fixture(scope="session")

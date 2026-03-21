@@ -1,4 +1,5 @@
-from exo.shared.types.common import NodeId
+from exo_core.types.common import NodeId
+
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
 from exo.shared.types.topology import Connection, SocketConnection

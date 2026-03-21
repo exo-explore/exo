@@ -1,8 +1,6 @@
 from collections.abc import Generator
 from typing import Any, Literal
 
-from exo.utils.pydantic_ext import TaggedModel
-
 from exo.api.types import (
     FinishReason,
     GenerationStats,
@@ -11,6 +9,7 @@ from exo.api.types import (
     TopLogprobItem,
     Usage,
 )
+from exo_core.models import TaggedModel
 
 
 class BaseRunnerResponse(TaggedModel):

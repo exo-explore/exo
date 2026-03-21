@@ -2,7 +2,7 @@ from collections.abc import Mapping
 
 import anyio
 import pytest
-from exo.shared.types.common import NodeId
+from exo_core.types.common import NodeId
 
 from exo.api.types import PowerUsage
 from exo.shared.types.profiling import SystemPerformanceProfile

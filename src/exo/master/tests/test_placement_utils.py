@@ -1,12 +1,12 @@
 import pytest
-from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
-from exo.shared.types.common import NodeId
-from exo.shared.types.memory import Memory
-from exo.shared.types.worker.shards import (
+from exo_core.model_cards import ModelCard, ModelId, ModelTask
+from exo_core.types.common import NodeId
+from exo_core.types.shards import (
     CfgShardMetadata,
     PipelineShardMetadata,
     Sharding,
 )
+from exo_core.utils.memory import Memory
 
 from exo.master.placement_utils import (
     allocate_layers_proportionally,

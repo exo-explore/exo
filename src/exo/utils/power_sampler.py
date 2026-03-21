@@ -4,9 +4,9 @@ from collections.abc import Callable, Mapping
 from typing import final
 
 import anyio
+from exo_core.types.common import NodeId
 
 from exo.api.types import NodePowerStats, PowerUsage
-from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import SystemPerformanceProfile
 
 

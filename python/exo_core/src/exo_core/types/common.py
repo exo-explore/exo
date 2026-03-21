@@ -4,7 +4,7 @@ from uuid import uuid4
 from pydantic import GetCoreSchemaHandler, field_validator
 from pydantic_core import core_schema
 
-from exo_core.pydantic import CamelCaseModel
+from exo_core.models import CamelCaseModel
 
 
 class Id(str):

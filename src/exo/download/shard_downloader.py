@@ -5,14 +5,13 @@ from datetime import timedelta
 from pathlib import Path
 from typing import AsyncIterator, Callable
 
-from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
-from exo.shared.types.memory import Memory
-from exo.shared.types.worker.shards import (
+from exo_core.model_cards import ModelCard, ModelId, ModelTask
+from exo_core.types.shards import (
     PipelineShardMetadata,
     ShardMetadata,
 )
-
-from exo.download.download_utils import RepoDownloadProgress
+from exo_core.utils.downloads import RepoDownloadProgress
+from exo_core.utils.memory import Memory
 
 
 # TODO: the PipelineShardMetadata getting reinstantiated is a bit messy. Should this be a classmethod?

@@ -3,15 +3,14 @@ from collections.abc import Generator
 from typing import Annotated, Any, Literal, get_args
 from uuid import uuid4
 
+from exo_core.model_cards import ModelCard
+from exo_core.models import CamelCaseModel
+from exo_core.types.common import CommandId, ModelId, NodeId
+from exo_core.types.instances import Instance, InstanceId, InstanceMeta
+from exo_core.types.shards import Sharding, ShardMetadata
+from exo_core.types.text_generation import ReasoningEffort
+from exo_core.utils.memory import Memory
 from pydantic import BaseModel, Field, field_validator
-
-from exo.shared.models.model_cards import ModelCard, ModelId
-from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.memory import Memory
-from exo.shared.types.text_generation import ReasoningEffort
-from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding, ShardMetadata
-from exo.utils.pydantic_ext import CamelCaseModel
 
 FinishReason = Literal[
     "stop", "length", "tool_calls", "content_filter", "function_call", "error"

@@ -1,6 +1,6 @@
 import anyio
 import pytest
-from exo.utils.pydantic_ext import TaggedModel
+from exo_core.models import TaggedModel
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 

@@ -1,18 +1,18 @@
 import pytest
-from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
-from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.memory import Memory
-from exo.shared.types.tasks import TaskId, TaskStatus, TextGeneration
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
-from exo.shared.types.worker.instances import (
+from exo_core.model_cards import ModelCard, ModelId, ModelTask
+from exo_core.types.common import CommandId, NodeId
+from exo_core.types.instances import (
     Instance,
     InstanceId,
     InstanceMeta,
     MlxJacclInstance,
     MlxRingInstance,
 )
-from exo.shared.types.worker.runners import ShardAssignments
-from exo.shared.types.worker.shards import Sharding
+from exo_core.types.runners import ShardAssignments
+from exo_core.types.shards import Sharding
+from exo_core.types.tasks import TaskId, TaskStatus, TextGeneration
+from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo_core.utils.memory import Memory
 
 from exo.master.placement import (
     get_transition_events,

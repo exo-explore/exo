@@ -23,7 +23,7 @@ def test_xdg_paths_on_linux():
         # Re-import to pick up mocked values
         import importlib
 
-        import exo.shared.constants as constants
+        import exo_core.constants as constants
 
         importlib.reload(constants)
 
@@ -46,7 +46,7 @@ def test_xdg_default_paths_on_linux():
     ):
         import importlib
 
-        import exo.shared.constants as constants
+        import exo_core.constants as constants
 
         importlib.reload(constants)
 
@@ -68,7 +68,7 @@ def test_legacy_exo_home_takes_precedence():
     ):
         import importlib
 
-        import exo.shared.constants as constants
+        import exo_core.constants as constants
 
         importlib.reload(constants)
 
@@ -87,7 +87,7 @@ def test_macos_uses_traditional_paths():
     ):
         import importlib
 
-        import exo.shared.constants as constants
+        import exo_core.constants as constants
 
         importlib.reload(constants)
 
@@ -99,7 +99,7 @@ def test_macos_uses_traditional_paths():
 
 def test_node_id_in_config_dir():
     """Test that node ID keypair is in the config directory."""
-    import exo.shared.constants as constants
+    import exo_core.constants as constants
 
     assert constants.EXO_NODE_ID_KEYPAIR.parent == constants.EXO_CONFIG_HOME
 
@@ -111,7 +111,7 @@ def test_models_in_data_dir():
     with mock.patch.dict(os.environ, env, clear=True):
         import importlib
 
-        import exo.shared.constants as constants
+        import exo_core.constants as constants
 
         importlib.reload(constants)
 

@@ -5,8 +5,9 @@ from typing import Callable, Generator, Iterable
 
 import aiofiles
 import aiofiles.os as aios
-from exo.shared.types.worker.shards import ShardMetadata
 from loguru import logger
+
+from exo_core.types.shards import ShardMetadata
 
 
 def filter_repo_objects[T](

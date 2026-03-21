@@ -4,8 +4,8 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
-from exo.shared.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
-from exo.shared.types.common import CommandId, ModelId
+from exo_core.types.chunks import ErrorChunk, TokenChunk, ToolCallChunk
+from exo_core.types.common import CommandId, ModelId
 
 from exo.api.adapters.claude import (
     ClaudeMessagesResponse,

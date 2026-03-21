@@ -1,16 +1,16 @@
+from exo_core.model_cards import ModelCard
+from exo_core.models import CamelCaseModel, TaggedModel
+from exo_core.types.chunks import InputImageChunk
+from exo_core.types.common import CommandId, ModelId, NodeId, SystemId
+from exo_core.types.instances import Instance, InstanceId, InstanceMeta
+from exo_core.types.shards import Sharding, ShardMetadata
+from exo_core.types.text_generation import TextGenerationTaskParams
 from pydantic import Field
 
 from exo.api.types import (
     ImageEditsTaskParams,
     ImageGenerationTaskParams,
 )
-from exo.shared.models.model_cards import ModelCard, ModelId
-from exo.shared.types.chunks import InputImageChunk
-from exo.shared.types.common import CommandId, NodeId, SystemId
-from exo.shared.types.text_generation import TextGenerationTaskParams
-from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding, ShardMetadata
-from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
 class BaseCommand(TaggedModel):

@@ -2,11 +2,16 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, cast
 
+from exo_core.models import CamelCaseModel
+from exo_core.types.common import NodeId
+from exo_core.types.downloads import DownloadProgress
+from exo_core.types.instances import Instance, InstanceId
+from exo_core.types.runners import RunnerId, RunnerStatus
+from exo_core.types.tasks import Task, TaskId
 from pydantic import ConfigDict, Field, field_serializer, field_validator
 from pydantic.alias_generators import to_camel
 
 from exo.shared.topology import Topology, TopologySnapshot
-from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
@@ -17,11 +22,6 @@ from exo.shared.types.profiling import (
     SystemPerformanceProfile,
     ThunderboltBridgeStatus,
 )
-from exo.shared.types.tasks import Task, TaskId
-from exo.shared.types.worker.downloads import DownloadProgress
-from exo.shared.types.worker.instances import Instance, InstanceId
-from exo.shared.types.worker.runners import RunnerId, RunnerStatus
-from exo.utils.pydantic_ext import CamelCaseModel
 
 
 class State(CamelCaseModel):

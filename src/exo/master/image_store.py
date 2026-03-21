@@ -1,9 +1,8 @@
 import time
 from pathlib import Path
 
+from exo_core.types.common import Id
 from pydantic import BaseModel
-
-from exo.shared.types.common import Id
 
 
 class StoredImage(BaseModel, frozen=True):

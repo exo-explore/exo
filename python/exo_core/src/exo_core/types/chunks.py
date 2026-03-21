@@ -10,7 +10,7 @@ from exo.api.types import (
     Usage,
 )
 from exo_core.model_cards import ModelId
-from exo_core.pydantic import TaggedModel
+from exo_core.models import TaggedModel
 
 from .common import CommandId
 

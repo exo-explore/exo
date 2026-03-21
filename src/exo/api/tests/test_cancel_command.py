@@ -2,7 +2,7 @@
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from exo.shared.types.common import CommandId
+from exo_core.types.common import CommandId
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

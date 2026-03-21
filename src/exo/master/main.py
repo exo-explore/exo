@@ -1,6 +1,22 @@
 from datetime import datetime, timedelta, timezone
 
 import anyio
+from exo_core.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
+from exo_core.types.common import CommandId, NodeId, SessionId, SystemId
+from exo_core.types.instances import InstanceId
+from exo_core.types.tasks import (
+    ImageEdits as ImageEditsTask,
+)
+from exo_core.types.tasks import (
+    ImageGeneration as ImageGenerationTask,
+)
+from exo_core.types.tasks import (
+    TaskId,
+    TaskStatus,
+)
+from exo_core.types.tasks import (
+    TextGeneration as TextGenerationTask,
+)
 from loguru import logger
 
 from exo.master.placement import (
@@ -11,7 +27,6 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
@@ -27,7 +42,6 @@ from exo.shared.types.commands import (
     TestCommand,
     TextGeneration,
 )
-from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
@@ -45,20 +59,6 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.state import State
-from exo.shared.types.tasks import (
-    ImageEdits as ImageEditsTask,
-)
-from exo.shared.types.tasks import (
-    ImageGeneration as ImageGenerationTask,
-)
-from exo.shared.types.tasks import (
-    TaskId,
-    TaskStatus,
-)
-from exo.shared.types.tasks import (
-    TextGeneration as TextGenerationTask,
-)
-from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer

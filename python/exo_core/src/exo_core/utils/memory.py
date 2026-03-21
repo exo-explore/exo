@@ -1,7 +1,7 @@
 from math import ceil
 from typing import Self, overload
 
-from exo_core.pydantic import FrozenModel
+from exo_core.models import FrozenModel
 
 
 class Memory(FrozenModel):

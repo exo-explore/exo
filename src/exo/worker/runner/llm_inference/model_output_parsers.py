@@ -2,6 +2,8 @@ from collections.abc import Generator
 from functools import cache
 from typing import Any
 
+from exo_core.types.common import ModelId
+from exo_core.types.runner_response import GenerationResponse, ToolCallResponse
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (
     HarmonyEncodingName,
@@ -12,8 +14,6 @@ from openai_harmony import (
 )
 
 from exo.api.types import ToolCallItem
-from exo.shared.types.common import ModelId
-from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.engines.mlx.utils_mlx import (
     detect_thinking_prompt_suffix,
 )

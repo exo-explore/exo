@@ -6,7 +6,7 @@ from exo.api.types import (
     ImageEditsTaskParams,
     ImageGenerationTaskParams,
 )
-from exo_core.pydantic import TaggedModel
+from exo_core.models import TaggedModel
 from exo_core.types.common import CommandId, Id
 from exo_core.types.instances import BoundInstance, InstanceId
 from exo_core.types.runners import RunnerId

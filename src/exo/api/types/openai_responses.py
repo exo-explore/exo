@@ -3,16 +3,15 @@
 These types model the OpenAI Responses API request/response format.
 ResponsesRequest is the API-level wire type; for the canonical internal
 task params type used by the inference pipeline, see
-``exo.shared.types.text_generation.TextGenerationTaskParams``.
+``exo_core.types.text_generation.TextGenerationTaskParams``.
 """
 
 import time
 from typing import Any, Literal
 
+from exo_core.types.common import ModelId
+from exo_core.types.text_generation import ReasoningEffort
 from pydantic import BaseModel, Field
-
-from exo.shared.types.common import ModelId
-from exo.shared.types.text_generation import ReasoningEffort
 
 # Type aliases
 ResponseStatus = Literal["completed", "failed", "in_progress", "incomplete"]

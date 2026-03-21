@@ -5,11 +5,11 @@ import sys
 from pathlib import Path
 
 import loguru
+from exo_core.types.instances import BoundInstance, VllmInstance
+from exo_core.types.runners import RunnerFailed
+from exo_core.types.tasks import Task, TaskId
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
-from exo.shared.types.tasks import Task, TaskId
-from exo.shared.types.worker.instances import BoundInstance, VllmInstance
-from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
 logger: "loguru.Logger" = loguru.logger
@@ -72,7 +72,8 @@ def entrypoint(
             os.environ["VLLM_KV_CACHE_LAYOUT"] = "NHD"
             os.environ["VLLM_BATCH_INVARIANT"] = "1"
             _ensure_cuda_libs()
-            from exo.shared.constants import EXO_MODELS_DIR
+            from exo_core.constants import EXO_MODELS_DIR
+
             from exo.worker.runner.llm_inference.runner import Runner, VllmBuilder
 
             model_id = bound_instance.bound_shard.model_card.model_id

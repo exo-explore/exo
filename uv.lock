@@ -6,13 +6,24 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
     "sys_platform == 'darwin' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
     "sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "python_full_version >= '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "python_full_version < '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
+    "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
+    "python_full_version >= '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
+    "python_full_version < '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
+    "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
+    "python_full_version < '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
     "python_full_version < '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version >= '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version < '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version < '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version >= '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version < '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
 ]
 supported-markers = [
     "sys_platform == 'darwin'",
@@ -32,6 +43,8 @@ members = [
     "exo-bench",
     "exo-core",
     "exo-pyo3-bindings",
+    "mlx-engine",
+    "vllm-engine",
 ]
 
 [[package]]
@@ -173,14 +186,14 @@ name = "anthropic"
 version = "0.86.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "distro", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "docstring-parser", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "httpx", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "jiter", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "sniffio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "anyio", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "distro", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "docstring-parser", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "httpx", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "jiter", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "sniffio", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/37/7a/8b390dc47945d3169875d342847431e5f7d5fa716b2e37494d57cfc1db10/anthropic-0.86.0.tar.gz", hash = "sha256:60023a7e879aa4fbb1fed99d487fe407b2ebf6569603e5047cfe304cebdaa0e5", size = 583820, upload-time = "2026-03-18T18:43:08.017Z" }
 wheels = [
@@ -341,7 +354,7 @@ name = "cffi"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "pycparser", marker = "(implementation_name != 'PyPy' and sys_platform == 'linux') or (implementation_name == 'PyPy' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz", hash = "sha256:44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529", size = 523588, upload-time = "2025-09-08T23:24:04.541Z" }
 wheels = [
@@ -479,10 +492,12 @@ name = "compressed-tensors"
 version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "loguru", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "transformers", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "loguru", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "transformers", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/fc/65/88dd1c58fb9d0ded51b5c86471b937a1525f91fad2211a6f051dc1ea822d/compressed_tensors-0.13.0.tar.gz", hash = "sha256:23893824d3498ea3f1a829f14a8fa85f9a5e76a34c711a038b8d7c619ca9a67c", size = 200995, upload-time = "2025-12-16T16:03:55.397Z" }
 wheels = [
@@ -494,7 +509,7 @@ name = "contourpy"
 version = "1.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/58/01/1253e6698a07380cd31a736d248a3f2a50a7c88779a1813da27503cadc2a/contourpy-1.3.3.tar.gz", hash = "sha256:083e12155b210502d0bca491432bb04d56dc3432f95a979b429f2848c3dbe880", size = 13466174, upload-time = "2025-07-26T12:03:12.549Z" }
 wheels = [
@@ -549,7 +564,7 @@ name = "cryptography"
 version = "46.0.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "platform_machine == 'aarch64' and platform_python_implementation != 'PyPy' and sys_platform == 'linux'" },
+    { name = "cffi", marker = "(platform_python_implementation != 'PyPy' and sys_platform == 'linux') or (platform_python_implementation == 'PyPy' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/60/04/ee2a9e8542e4fa2773b81771ff8349ff19cdd56b7258a0cc442639052edb/cryptography-46.0.5.tar.gz", hash = "sha256:abace499247268e3757271b2f1e244b36b06f8515cf27c4d49468fc9eb16e93d", size = 750064, upload-time = "2026-02-10T19:18:38.255Z" }
 wheels = [
@@ -602,7 +617,7 @@ name = "cuda-bindings"
 version = "13.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "cuda-pathfinder", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2f/36/41ccc303eb6be8ae82c5edd2ccae938876e8a794660e8bb96a193174a978/cuda_bindings-13.0.3-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:fb16a7f769c9c67469add7a1d9f6c14dd44637f6921cb6b9eb82cb5015b35c3d", size = 11537064, upload-time = "2025-10-21T15:09:07.84Z" },
@@ -660,7 +675,7 @@ dependencies = [
     { name = "httpx", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "huggingface-hub", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "multiprocess", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "packaging", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pandas", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pyarrow", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -679,8 +694,8 @@ name = "depyf"
 version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "astor", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "dill", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "astor", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "dill", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/88/35/83fb0178212279aa0af031031905804c6de5618435d229f41ed21bb9ad2c/depyf-0.20.0.tar.gz", hash = "sha256:fb7683bd72c44f67b56029df2c47721e9a02ffa4d7b19095f1c54c4ebf797a98", size = 6168761, upload-time = "2025-10-13T12:33:38.589Z" }
 wheels = [
@@ -755,8 +770,8 @@ name = "email-validator"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "dnspython", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "idna", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "dnspython", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "idna", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f5/22/900cb125c76b7aaa450ce02fd727f452243f2e91a61af068b40adba60ea9/email_validator-2.3.0.tar.gz", hash = "sha256:9fc05c37f2f6cf439ff414f8fc46d917929974a82244c20eb10231ba60c54426", size = 51238, upload-time = "2025-08-26T13:09:06.831Z" }
 wheels = [
@@ -773,7 +788,7 @@ dependencies = [
     { name = "fsspec", extra = ["http"], marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "huggingface-hub", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "multiprocess", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "packaging", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pandas", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "requests", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -803,7 +818,7 @@ dependencies = [
     { name = "loguru", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "mflux", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "mlx", version = "0.30.6", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "mlx", version = "0.30.7.dev20260312+257d5692", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#257d5692fc7af6bba3b8afaeb63c549b7d1e43d5" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "mlx", version = "0.30.7.dev20260306+257d5692", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#257d5692fc7af6bba3b8afaeb63c549b7d1e43d5" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "msgspec", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "openai-harmony", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -819,7 +834,7 @@ dependencies = [
 
 [package.optional-dependencies]
 cuda = [
-    { name = "vllm-engine", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "vllm-engine", marker = "sys_platform == 'linux'" },
 ]
 mlx = [
     { name = "mlx-engine", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -854,7 +869,7 @@ requires-dist = [
     { name = "mflux", marker = "sys_platform == 'darwin'", specifier = "==0.16.9" },
     { name = "mlx", marker = "sys_platform == 'darwin'", git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks" },
     { name = "mlx", marker = "sys_platform == 'linux'", specifier = "==0.30.6" },
-    { name = "mlx-engine", marker = "extra == 'mlx'", directory = "python/mlx_engine" },
+    { name = "mlx-engine", marker = "extra == 'mlx'", editable = "python/mlx_engine" },
     { name = "mlx-lm", git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Feval-left-padding-in-batched-rotation" },
     { name = "msgspec", specifier = ">=0.19.0" },
     { name = "openai-harmony", specifier = ">=0.0.8" },
@@ -865,7 +880,7 @@ requires-dist = [
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "tomlkit", specifier = ">=0.14.0" },
     { name = "types-aiofiles", specifier = ">=24.1.0.20250708" },
-    { name = "vllm-engine", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'cuda'", directory = "python/vllm_engine" },
+    { name = "vllm-engine", marker = "sys_platform == 'linux' and extra == 'cuda'", editable = "python/vllm_engine" },
     { name = "zstandard", specifier = ">=0.23.0" },
 ]
 provides-extras = ["mlx", "cuda"]
@@ -894,8 +909,9 @@ dependencies = [
     { name = "lm-eval", extra = ["api", "math"], marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "loguru", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "math-verify", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "protobuf", version = "7.34.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "protobuf", version = "6.33.6", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "protobuf", version = "7.34.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "tiktoken", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "transformers", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
@@ -925,7 +941,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic" }]
+requires-dist = [{ name = "pydantic", specifier = ">=2.13.0b2" }]
 
 [[package]]
 name = "exo-pyo3-bindings"
@@ -955,8 +971,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-doc", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "starlette", version = "0.52.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "starlette", version = "1.0.0rc1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform == 'linux' and extra != 'extra-3-exo-cuda') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "starlette", version = "0.52.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "starlette", version = "1.0.0rc1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "typing-inspection", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
@@ -967,14 +983,14 @@ wheels = [
 
 [package.optional-dependencies]
 standard = [
-    { name = "email-validator", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "fastapi-cli", extra = ["standard"], marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "httpx", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "jinja2", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic-extra-types", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic-settings", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "python-multipart", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "uvicorn", extra = ["standard"], marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "email-validator", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "fastapi-cli", extra = ["standard"], marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "httpx", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "jinja2", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic-extra-types", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic-settings", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "python-multipart", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "uvicorn", extra = ["standard"], marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 
 [[package]]
@@ -982,9 +998,9 @@ name = "fastapi-cli"
 version = "0.0.24"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "rich-toolkit", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typer", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "uvicorn", extra = ["standard"], marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "rich-toolkit", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typer", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "uvicorn", extra = ["standard"], marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6e/58/74797ae9e4610cfa0c6b34c8309096d3b20bb29be3b8b5fbf1004d10fa5f/fastapi_cli-0.0.24.tar.gz", hash = "sha256:1afc9c9e21d7ebc8a3ca5e31790cd8d837742be7e4f8b9236e99cb3451f0de00", size = 19043, upload-time = "2026-02-24T10:45:10.476Z" }
 wheels = [
@@ -993,8 +1009,8 @@ wheels = [
 
 [package.optional-dependencies]
 standard = [
-    { name = "fastapi-cloud-cli", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "uvicorn", extra = ["standard"], marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "fastapi-cloud-cli", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "uvicorn", extra = ["standard"], marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 
 [[package]]
@@ -1002,14 +1018,14 @@ name = "fastapi-cloud-cli"
 version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastar", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "httpx", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic", extra = ["email"], marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "rich-toolkit", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "rignore", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "sentry-sdk", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typer", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "uvicorn", extra = ["standard"], marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "fastar", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "httpx", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic", extra = ["email"], marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "rich-toolkit", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "rignore", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "sentry-sdk", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typer", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "uvicorn", extra = ["standard"], marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/63/e1/05c44e7bbc619e980fab0236cff9f5f323ac1aaa79434b4906febf98b1d3/fastapi_cloud_cli-0.15.0.tar.gz", hash = "sha256:d02515231f3f505f7669c20920343934570a88a08af9f9a6463ca2807f27ffe5", size = 45309, upload-time = "2026-03-11T22:31:32.455Z" }
 wheels = [
@@ -1074,7 +1090,7 @@ name = "fastsafetensors"
 version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typer", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "typer", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f2/c2/1504b51a4ce61cd0f6b8c6a88c0dbed22df011a2aeb99ade35e528b0e091/fastsafetensors-0.2.2.tar.gz", hash = "sha256:67c06bdbb9855070ebb036e1ce7a61a71d2ce722bbd5457534af602dd4734249", size = 52029, upload-time = "2026-02-10T14:12:34.706Z" }
 wheels = [
@@ -1227,10 +1243,10 @@ name = "gguf"
 version = "0.18.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pyyaml", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "requests", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "tqdm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "numpy", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pyyaml", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "requests", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "tqdm", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3f/26/7622a41c39db9d7090225a4bf8368550e59694dcf7313b44f9a82b501209/gguf-0.18.0.tar.gz", hash = "sha256:b4659093d5d0dccdb5902a904d54b327f4052879fe5e90946ad5fce9f8018c2e", size = 107170, upload-time = "2026-02-27T15:05:39.254Z" }
 wheels = [
@@ -1242,7 +1258,7 @@ name = "googleapis-common-protos"
 version = "1.73.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "protobuf", version = "6.33.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "protobuf", version = "6.33.6", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/99/96/a0205167fa0154f4a542fd6925bdc63d039d88dab3588b875078107e6f06/googleapis_common_protos-1.73.0.tar.gz", hash = "sha256:778d07cd4fbeff84c6f7c72102f0daf98fa2bfd3fa8bea426edc545588da0b5a", size = 147323, upload-time = "2026-03-06T21:53:09.727Z" }
 wheels = [
@@ -1254,7 +1270,7 @@ name = "grpcio"
 version = "1.80.0rc1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/71/7b/f268818409a2b27fb02b6aa1984ebcc52b4e726e6897921da56f966c0be3/grpcio-1.80.0rc1.tar.gz", hash = "sha256:acf128375159a1ab6e715283aea6c9445a1be2cb20e007e5be3ef78ea24954b4", size = 13001149, upload-time = "2026-03-17T16:34:17.515Z" }
 wheels = [
@@ -1460,7 +1476,7 @@ version = "1.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fire", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "tqdm", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0a/4b/44832f60f8fb14257019084412229a2ed48e34acd0d9d3f8198196d02dd7/human-eval-1.0.3.tar.gz", hash = "sha256:03ee63d3fbbb6fecbc5dfae58381fc655004ad86caafeb141ca2169c63648766", size = 54651, upload-time = "2023-07-24T18:45:58.99Z" }
@@ -1570,7 +1586,7 @@ name = "importlib-metadata"
 version = "8.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "zipp", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f3/49/3b30cad09e7771a4982d9975a8cbf64f00d4a1ececb53297f1d9a7be1b10/importlib_metadata-8.7.1.tar.gz", hash = "sha256:49fef1ae6440c182052f407c8d34a68f72efc36db9ca90dc0113398f2fdde8bb", size = 57107, upload-time = "2025-12-21T10:00:19.278Z" }
 wheels = [
@@ -1726,10 +1742,10 @@ name = "jsonschema"
 version = "4.26.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "attrs", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "jsonschema-specifications", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "referencing", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "rpds-py", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "attrs", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "jsonschema-specifications", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "referencing", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "rpds-py", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b3/fc/e067678238fa451312d4c62bf6e6cf5ec56375422aee02f9cb5f909b3047/jsonschema-4.26.0.tar.gz", hash = "sha256:0c26707e2efad8aa1bfc5b7ce170f3fccc2e4918ff85989ba9ffa9facb2be326", size = 366583, upload-time = "2026-01-07T13:41:07.246Z" }
 wheels = [
@@ -1741,7 +1757,7 @@ name = "jsonschema-specifications"
 version = "2025.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "referencing", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "referencing", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d", size = 32855, upload-time = "2025-09-08T01:34:59.186Z" }
 wheels = [
@@ -1872,19 +1888,6 @@ wheels = [
 ]
 
 [[package]]
-name = "llvmlite"
-version = "0.44.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/89/6a/95a3d3610d5c75293d5dbbb2a76480d5d4eeba641557b69fe90af6c5b84e/llvmlite-0.44.0.tar.gz", hash = "sha256:07667d66a5d150abed9157ab6c0b9393c9356f229784a4385c02f99e94fc94d4", size = 171880, upload-time = "2025-01-20T11:14:41.342Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/89/24/4c0ca705a717514c2092b18476e7a12c74d34d875e05e4d742618ebbf449/llvmlite-0.44.0-cp313-cp313-macosx_10_14_x86_64.whl", hash = "sha256:319bddd44e5f71ae2689859b7203080716448a3cd1128fb144fe5c055219d516", size = 28132306, upload-time = "2025-01-20T11:14:09.035Z" },
-    { url = "https://files.pythonhosted.org/packages/01/cf/1dd5a60ba6aee7122ab9243fd614abcf22f36b0437cbbe1ccf1e3391461c/llvmlite-0.44.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:9c58867118bad04a0bb22a2e0068c693719658105e40009ffe95c7000fcde88e", size = 26201090, upload-time = "2025-01-20T11:14:15.401Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/1b/656f5a357de7135a3777bd735cc7c9b8f23b4d37465505bd0eaf4be9befe/llvmlite-0.44.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:46224058b13c96af1365290bdfebe9a6264ae62fb79b2b55693deed11657a8bf", size = 42361904, upload-time = "2025-01-20T11:14:22.949Z" },
-    { url = "https://files.pythonhosted.org/packages/d8/e1/12c5f20cb9168fb3464a34310411d5ad86e4163c8ff2d14a2b57e5cc6bac/llvmlite-0.44.0-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:aa0097052c32bf721a4efc03bd109d335dfa57d9bffb3d4c24cc680711b8b4fc", size = 41184245, upload-time = "2025-01-20T11:14:31.731Z" },
-    { url = "https://files.pythonhosted.org/packages/d0/81/e66fc86539293282fd9cb7c9417438e897f369e79ffb62e1ae5e5154d4dd/llvmlite-0.44.0-cp313-cp313-win_amd64.whl", hash = "sha256:2fb7c4f2fb86cbae6dca3db9ab203eeea0e22d73b99bc2341cdf9de93612e930", size = 30331193, upload-time = "2025-01-20T11:14:38.578Z" },
-]
-
-[[package]]
 name = "lm-eval"
 version = "0.4.11"
 source = { registry = "https://pypi.org/simple" }
@@ -1895,7 +1898,7 @@ dependencies = [
     { name = "jinja2", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "jsonlines", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "more-itertools", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pytablewriter", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "rouge-score", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "sacrebleu", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -1929,10 +1932,10 @@ name = "lm-format-enforcer"
 version = "0.11.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "interegular", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "packaging", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pyyaml", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "interegular", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "packaging", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pyyaml", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/84/d5/41cd417ba7dfdbbcfe46cebf81fb3dfd7c591b89897560ad05bb410a465d/lm_format_enforcer-0.11.3.tar.gz", hash = "sha256:e68081c108719cce284a9bcc889709b26ffb085a1945b5eba3a12cfa96d528da", size = 40258, upload-time = "2025-08-24T19:37:47.527Z" }
 wheels = [
@@ -2112,7 +2115,7 @@ dependencies = [
     { name = "cycler", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "fonttools", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "kiwisolver", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "packaging", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pillow", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pyparsing", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -2167,19 +2170,19 @@ name = "mcp"
 version = "1.26.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "httpx", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "httpx-sse", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "jsonschema", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic-settings", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pyjwt", extra = ["crypto"], marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "python-multipart", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "sse-starlette", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "starlette", version = "0.52.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-inspection", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "uvicorn", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "anyio", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "httpx", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "httpx-sse", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "jsonschema", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic-settings", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pyjwt", extra = ["crypto"], marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "python-multipart", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "sse-starlette", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "starlette", version = "0.52.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-inspection", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "uvicorn", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/fc/6d/62e76bbb8144d6ed86e202b5edd8a4cb631e7c8130f3f4893c3f90262b10/mcp-1.26.0.tar.gz", hash = "sha256:db6e2ef491eecc1a0d93711a76f28dec2e05999f93afd48795da1c1137142c66", size = 608005, upload-time = "2026-01-24T19:40:32.468Z" }
 wheels = [
@@ -2205,8 +2208,8 @@ dependencies = [
     { name = "hf-transfer", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "huggingface-hub", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "matplotlib", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "mlx", version = "0.30.7.dev20260312+257d5692", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#257d5692fc7af6bba3b8afaeb63c549b7d1e43d5" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "mlx", version = "0.30.7.dev20260306+257d5692", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#257d5692fc7af6bba3b8afaeb63c549b7d1e43d5" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "opencv-python", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "piexif", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pillow", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -2233,14 +2236,14 @@ name = "mistral-common"
 version = "1.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jsonschema", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pillow", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic-extra-types", extra = ["pycountry"], marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "requests", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "tiktoken", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "jsonschema", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pillow", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic-extra-types", extra = ["pycountry"], marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "requests", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "tiktoken", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a7/22/f798c1acc3f8cf32b6201b063d96867d79aa39d31dff12478739e1a78979/mistral_common-1.10.0.tar.gz", hash = "sha256:e456ff101edbdfc094039ec6c26f7d0f73356729798d628a6e6e96c3917147bc", size = 6351515, upload-time = "2026-03-13T10:13:46.683Z" }
 wheels = [
@@ -2249,7 +2252,7 @@ wheels = [
 
 [package.optional-dependencies]
 image = [
-    { name = "opencv-python-headless", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "opencv-python-headless", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 
 [[package]]
@@ -2257,13 +2260,12 @@ name = "mlx"
 version = "0.30.6"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "python_full_version < '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "python_full_version < '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version >= '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ae/5b/e460e144a34d5529e010056cccf50b538d56ed001473bc6b246018fd58cb/mlx-0.30.6-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:ed86f8bffc174c2f259ca589ea25464c96cf69d1bb457074a2bf2ef53737e54f", size = 573515, upload-time = "2026-02-06T03:45:23.405Z" },
@@ -2280,7 +2282,7 @@ wheels = [
 
 [[package]]
 name = "mlx"
-version = "0.30.7.dev20260312+257d5692"
+version = "0.30.7.dev20260306+257d5692"
 source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#257d5692fc7af6bba3b8afaeb63c549b7d1e43d5" }
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
@@ -2294,10 +2296,10 @@ name = "mlx-cuda-13"
 version = "0.30.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cuda-nvrtc", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cudnn-cu13", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-nccl-cu13", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-cublas", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cuda-nvrtc", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cudnn-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-nccl-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/08/6b/27cd4abed63ca9e4086536acde4486ea7a762dda5b36bb867ed954efe93a/mlx_cuda_13-0.30.6-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:1a5e58eaf4b1a4eb6cb0111ecb4099f6f1380403599f8992ec93dfbad8d9c6f1", size = 66904875, upload-time = "2026-02-06T02:49:19.183Z" },
@@ -2307,7 +2309,13 @@ wheels = [
 [[package]]
 name = "mlx-engine"
 version = "0.1.0"
-source = { directory = "python/mlx_engine" }
+source = { editable = "python/mlx_engine" }
+dependencies = [
+    { name = "exo-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "exo-core", editable = "python/exo_core" }]
 
 [[package]]
 name = "mlx-lm"
@@ -2315,11 +2323,10 @@ version = "0.31.0"
 source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Feval-left-padding-in-batched-rotation#1f17c5fecac52b82d1bd7e2735ed1d9eef83e28d" }
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "mlx", version = "0.30.7.dev20260312+257d5692", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#257d5692fc7af6bba3b8afaeb63c549b7d1e43d5" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform == 'linux' and extra != 'extra-3-exo-cuda') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "protobuf", version = "6.33.6", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "protobuf", version = "7.34.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform == 'linux' and extra != 'extra-3-exo-cuda') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "mlx", version = "0.30.7.dev20260306+257d5692", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#257d5692fc7af6bba3b8afaeb63c549b7d1e43d5" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "protobuf", version = "6.33.6", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "protobuf", version = "7.34.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "sentencepiece", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "transformers", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -2330,13 +2337,13 @@ name = "model-hosting-container-standards"
 version = "0.1.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastapi", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "httpx", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "jmespath", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "starlette", version = "0.52.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "supervisor", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "fastapi", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "httpx", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "jmespath", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "starlette", version = "0.52.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "supervisor", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c6/3d/cf5c6029648cb0a116f7b5c2f74aa155ab0c6dd723a1f204a6d7ff354526/model_hosting_container_standards-0.1.14.tar.gz", hash = "sha256:b6cf4c46d88ce6acd6e543a578bb88ffd55d1179a7c09c22e61ae1d8a567c564", size = 90386, upload-time = "2026-03-18T21:25:14.513Z" }
 wheels = [
@@ -2601,69 +2608,9 @@ wheels = [
 ]
 
 [[package]]
-name = "numba"
-version = "0.61.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "llvmlite", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/a0/e21f57604304aa03ebb8e098429222722ad99176a4f979d34af1d1ee80da/numba-0.61.2.tar.gz", hash = "sha256:8750ee147940a6637b80ecf7f95062185ad8726c8c28a2295b8ec1160a196f7d", size = 2820615, upload-time = "2025-04-09T02:58:07.659Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/f3/0fe4c1b1f2569e8a18ad90c159298d862f96c3964392a20d74fc628aee44/numba-0.61.2-cp313-cp313-macosx_10_14_x86_64.whl", hash = "sha256:3a10a8fc9afac40b1eac55717cece1b8b1ac0b946f5065c89e00bde646b5b154", size = 2771785, upload-time = "2025-04-09T02:57:59.96Z" },
-    { url = "https://files.pythonhosted.org/packages/e9/71/91b277d712e46bd5059f8a5866862ed1116091a7cb03bd2704ba8ebe015f/numba-0.61.2-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:7d3bcada3c9afba3bed413fba45845f2fb9cd0d2b27dd58a1be90257e293d140", size = 2773289, upload-time = "2025-04-09T02:58:01.435Z" },
-    { url = "https://files.pythonhosted.org/packages/0d/e0/5ea04e7ad2c39288c0f0f9e8d47638ad70f28e275d092733b5817cf243c9/numba-0.61.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:bdbca73ad81fa196bd53dc12e3aaf1564ae036e0c125f237c7644fe64a4928ab", size = 3893918, upload-time = "2025-04-09T02:58:02.933Z" },
-    { url = "https://files.pythonhosted.org/packages/17/58/064f4dcb7d7e9412f16ecf80ed753f92297e39f399c905389688cf950b81/numba-0.61.2-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:5f154aaea625fb32cfbe3b80c5456d514d416fcdf79733dd69c0df3a11348e9e", size = 3584056, upload-time = "2025-04-09T02:58:04.538Z" },
-    { url = "https://files.pythonhosted.org/packages/af/a4/6d3a0f2d3989e62a18749e1e9913d5fa4910bbb3e3311a035baea6caf26d/numba-0.61.2-cp313-cp313-win_amd64.whl", hash = "sha256:59321215e2e0ac5fa928a8020ab00b8e57cda8a97384963ac0dfa4d4e6aa54e7", size = 2831846, upload-time = "2025-04-09T02:58:06.125Z" },
-]
-
-[[package]]
-name = "numpy"
-version = "2.2.6"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "python_full_version < '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-]
-sdist = { url = "https://files.pythonhosted.org/packages/76/21/7d2a95e4bba9dc13d043ee156a356c0a8f0c6309dff6b21b4d71a073b8a8/numpy-2.2.6.tar.gz", hash = "sha256:e29554e2bef54a90aa5cc07da6ce955accb83f21ab5de01a62c8478897b264fd", size = 20276440, upload-time = "2025-05-17T22:38:04.611Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/5c/6657823f4f594f72b5471f1db1ab12e26e890bb2e41897522d134d2a3e81/numpy-2.2.6-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:0811bb762109d9708cca4d0b13c4f67146e3c3b7cf8d34018c722adb2d957c84", size = 20867828, upload-time = "2025-05-17T21:37:56.699Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/9e/14520dc3dadf3c803473bd07e9b2bd1b69bc583cb2497b47000fed2fa92f/numpy-2.2.6-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:287cc3162b6f01463ccd86be154f284d0893d2b3ed7292439ea97eafa8170e0b", size = 14143006, upload-time = "2025-05-17T21:38:18.291Z" },
-    { url = "https://files.pythonhosted.org/packages/4f/06/7e96c57d90bebdce9918412087fc22ca9851cceaf5567a45c1f404480e9e/numpy-2.2.6-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:f1372f041402e37e5e633e586f62aa53de2eac8d98cbfb822806ce4bbefcb74d", size = 5076765, upload-time = "2025-05-17T21:38:27.319Z" },
-    { url = "https://files.pythonhosted.org/packages/73/ed/63d920c23b4289fdac96ddbdd6132e9427790977d5457cd132f18e76eae0/numpy-2.2.6-cp313-cp313-macosx_14_0_x86_64.whl", hash = "sha256:55a4d33fa519660d69614a9fad433be87e5252f4b03850642f88993f7b2ca566", size = 6617736, upload-time = "2025-05-17T21:38:38.141Z" },
-    { url = "https://files.pythonhosted.org/packages/85/c5/e19c8f99d83fd377ec8c7e0cf627a8049746da54afc24ef0a0cb73d5dfb5/numpy-2.2.6-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f92729c95468a2f4f15e9bb94c432a9229d0d50de67304399627a943201baa2f", size = 14010719, upload-time = "2025-05-17T21:38:58.433Z" },
-    { url = "https://files.pythonhosted.org/packages/19/49/4df9123aafa7b539317bf6d342cb6d227e49f7a35b99c287a6109b13dd93/numpy-2.2.6-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1bc23a79bfabc5d056d106f9befb8d50c31ced2fbc70eedb8155aec74a45798f", size = 16526072, upload-time = "2025-05-17T21:39:22.638Z" },
-    { url = "https://files.pythonhosted.org/packages/b2/6c/04b5f47f4f32f7c2b0e7260442a8cbcf8168b0e1a41ff1495da42f42a14f/numpy-2.2.6-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:e3143e4451880bed956e706a3220b4e5cf6172ef05fcc397f6f36a550b1dd868", size = 15503213, upload-time = "2025-05-17T21:39:45.865Z" },
-    { url = "https://files.pythonhosted.org/packages/17/0a/5cd92e352c1307640d5b6fec1b2ffb06cd0dabe7d7b8227f97933d378422/numpy-2.2.6-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:b4f13750ce79751586ae2eb824ba7e1e8dba64784086c98cdbbcc6a42112ce0d", size = 18316632, upload-time = "2025-05-17T21:40:13.331Z" },
-    { url = "https://files.pythonhosted.org/packages/f0/3b/5cba2b1d88760ef86596ad0f3d484b1cbff7c115ae2429678465057c5155/numpy-2.2.6-cp313-cp313-win32.whl", hash = "sha256:5beb72339d9d4fa36522fc63802f469b13cdbe4fdab4a288f0c441b74272ebfd", size = 6244532, upload-time = "2025-05-17T21:43:46.099Z" },
-    { url = "https://files.pythonhosted.org/packages/cb/3b/d58c12eafcb298d4e6d0d40216866ab15f59e55d148a5658bb3132311fcf/numpy-2.2.6-cp313-cp313-win_amd64.whl", hash = "sha256:b0544343a702fa80c95ad5d3d608ea3599dd54d4632df855e4c8d24eb6ecfa1c", size = 12610885, upload-time = "2025-05-17T21:44:05.145Z" },
-    { url = "https://files.pythonhosted.org/packages/6b/9e/4bf918b818e516322db999ac25d00c75788ddfd2d2ade4fa66f1f38097e1/numpy-2.2.6-cp313-cp313t-macosx_10_13_x86_64.whl", hash = "sha256:0bca768cd85ae743b2affdc762d617eddf3bcf8724435498a1e80132d04879e6", size = 20963467, upload-time = "2025-05-17T21:40:44Z" },
-    { url = "https://files.pythonhosted.org/packages/61/66/d2de6b291507517ff2e438e13ff7b1e2cdbdb7cb40b3ed475377aece69f9/numpy-2.2.6-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:fc0c5673685c508a142ca65209b4e79ed6740a4ed6b2267dbba90f34b0b3cfda", size = 14225144, upload-time = "2025-05-17T21:41:05.695Z" },
-    { url = "https://files.pythonhosted.org/packages/e4/25/480387655407ead912e28ba3a820bc69af9adf13bcbe40b299d454ec011f/numpy-2.2.6-cp313-cp313t-macosx_14_0_arm64.whl", hash = "sha256:5bd4fc3ac8926b3819797a7c0e2631eb889b4118a9898c84f585a54d475b7e40", size = 5200217, upload-time = "2025-05-17T21:41:15.903Z" },
-    { url = "https://files.pythonhosted.org/packages/aa/4a/6e313b5108f53dcbf3aca0c0f3e9c92f4c10ce57a0a721851f9785872895/numpy-2.2.6-cp313-cp313t-macosx_14_0_x86_64.whl", hash = "sha256:fee4236c876c4e8369388054d02d0e9bb84821feb1a64dd59e137e6511a551f8", size = 6712014, upload-time = "2025-05-17T21:41:27.321Z" },
-    { url = "https://files.pythonhosted.org/packages/b7/30/172c2d5c4be71fdf476e9de553443cf8e25feddbe185e0bd88b096915bcc/numpy-2.2.6-cp313-cp313t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e1dda9c7e08dc141e0247a5b8f49cf05984955246a327d4c48bda16821947b2f", size = 14077935, upload-time = "2025-05-17T21:41:49.738Z" },
-    { url = "https://files.pythonhosted.org/packages/12/fb/9e743f8d4e4d3c710902cf87af3512082ae3d43b945d5d16563f26ec251d/numpy-2.2.6-cp313-cp313t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f447e6acb680fd307f40d3da4852208af94afdfab89cf850986c3ca00562f4fa", size = 16600122, upload-time = "2025-05-17T21:42:14.046Z" },
-    { url = "https://files.pythonhosted.org/packages/12/75/ee20da0e58d3a66f204f38916757e01e33a9737d0b22373b3eb5a27358f9/numpy-2.2.6-cp313-cp313t-musllinux_1_2_aarch64.whl", hash = "sha256:389d771b1623ec92636b0786bc4ae56abafad4a4c513d36a55dce14bd9ce8571", size = 15586143, upload-time = "2025-05-17T21:42:37.464Z" },
-    { url = "https://files.pythonhosted.org/packages/76/95/bef5b37f29fc5e739947e9ce5179ad402875633308504a52d188302319c8/numpy-2.2.6-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:8e9ace4a37db23421249ed236fdcdd457d671e25146786dfc96835cd951aa7c1", size = 18385260, upload-time = "2025-05-17T21:43:05.189Z" },
-    { url = "https://files.pythonhosted.org/packages/09/04/f2f83279d287407cf36a7a8053a5abe7be3622a4363337338f2585e4afda/numpy-2.2.6-cp313-cp313t-win32.whl", hash = "sha256:038613e9fb8c72b0a41f025a7e4c3f0b7a1b5d768ece4796b674c8f3fe13efff", size = 6377225, upload-time = "2025-05-17T21:43:16.254Z" },
-    { url = "https://files.pythonhosted.org/packages/67/0e/35082d13c09c02c011cf21570543d202ad929d961c02a147493cb0c2bdf5/numpy-2.2.6-cp313-cp313t-win_amd64.whl", hash = "sha256:6031dd6dfecc0cf9f668681a37648373bddd6421fff6c66ec1624eed0180ee06", size = 12771374, upload-time = "2025-05-17T21:43:35.479Z" },
-]
-
-[[package]]
 name = "numpy"
 version = "2.4.3"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14' and sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "python_full_version < '3.14' and sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "sys_platform == 'darwin' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "python_full_version >= '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "python_full_version < '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-]
 sdist = { url = "https://files.pythonhosted.org/packages/10/8b/c265f4823726ab832de836cdd184d0986dcf94480f81e8739692a7ac7af2/numpy-2.4.3.tar.gz", hash = "sha256:483a201202b73495f00dbc83796c6ae63137a9bdade074f7648b3e32613412dd", size = 20727743, upload-time = "2026-03-09T07:58:53.426Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b6/d0/1fe47a98ce0df229238b77611340aff92d52691bcbc10583303181abf7fc/numpy-2.4.3-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:b346845443716c8e542d54112966383b448f4a3ba5c66409771b8c0889485dd3", size = 16665297, upload-time = "2026-03-09T07:56:52.296Z" },
@@ -2755,7 +2702,7 @@ name = "nvidia-cudnn-cu13"
 version = "9.15.1.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-cublas", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ff/93/b3c9db2c35d6183361333d2dcfea50e094c012d012c8a4d7effbfb53ef62/nvidia_cudnn_cu13-9.15.1.9-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:44cd2ec83c3ef62a7357614bd02ce7f3dac35ffcbb04ad20999e730741f0ba17", size = 415636241, upload-time = "2025-11-12T20:22:26.582Z" },
@@ -2768,7 +2715,7 @@ name = "nvidia-cufft"
 version = "12.0.0.61"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8b/ae/f417a75c0259e85c1d2f83ca4e960289a5f814ed0cea74d18c353d3e989d/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:2708c852ef8cd89d1d2068bdbece0aa188813a0c934db3779b9b1faa8442e5f5", size = 214053554, upload-time = "2025-09-04T08:31:38.196Z" },
@@ -2800,9 +2747,9 @@ name = "nvidia-cusolver"
 version = "12.0.4.66"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cusparse", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-nvjitlink", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/c3/b30c9e935fc01e3da443ec0116ed1b2a009bb867f5324d3f2d7e533e776b/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:02c2457eaa9e39de20f880f4bd8820e6a1cfb9f9a34f820eb12a155aa5bc92d2", size = 223467760, upload-time = "2025-09-04T08:33:04.222Z" },
@@ -2815,7 +2762,7 @@ name = "nvidia-cusparse"
 version = "12.6.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/94/5c26f33738ae35276672f12615a64bd008ed5be6d1ebcb23579285d960a9/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:80bcc4662f23f1054ee334a15c72b8940402975e0eab63178fc7e670aa59472c", size = 162155568, upload-time = "2025-09-04T08:33:42.864Z" },
@@ -2876,14 +2823,14 @@ name = "openai"
 version = "2.24.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "distro", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "httpx", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "jiter", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "sniffio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "tqdm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "anyio", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "distro", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "httpx", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "jiter", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "sniffio", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "tqdm", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/55/13/17e87641b89b74552ed408a92b231283786523edddc95f3545809fab673c/openai-2.24.0.tar.gz", hash = "sha256:1e5769f540dbd01cb33bc4716a23e67b9d695161a734aff9c5f925e2bf99a673", size = 658717, upload-time = "2026-02-24T20:02:07.958Z" }
 wheels = [
@@ -2918,7 +2865,7 @@ name = "opencv-python"
 version = "4.13.0.92"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fc/6f/5a28fef4c4a382be06afe3938c64cc168223016fa520c5abaf37e8862aa5/opencv_python-4.13.0.92-cp37-abi3-macosx_13_0_arm64.whl", hash = "sha256:caf60c071ec391ba51ed00a4a920f996d0b64e3e46068aac1f646b5de0326a19", size = 46247052, upload-time = "2026-02-05T07:01:25.046Z" },
@@ -2936,7 +2883,7 @@ name = "opencv-python-headless"
 version = "4.13.0.92"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "numpy", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/42/2310883be3b8826ac58c3f2787b9358a2d46923d61f88fedf930bc59c60c/opencv_python_headless-4.13.0.92-cp37-abi3-macosx_13_0_arm64.whl", hash = "sha256:1a7d040ac656c11b8c38677cc8cccdc149f98535089dbe5b081e80a4e5903209", size = 46247192, upload-time = "2026-02-05T07:01:35.187Z" },
@@ -2954,8 +2901,8 @@ name = "opentelemetry-api"
 version = "1.40.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "importlib-metadata", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "importlib-metadata", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2c/1d/4049a9e8698361cc1a1aa03a6c59e4fa4c71e0c0f94a30f988a6876a2ae6/opentelemetry_api-1.40.0.tar.gz", hash = "sha256:159be641c0b04d11e9ecd576906462773eb97ae1b657730f0ecf64d32071569f", size = 70851, upload-time = "2026-03-04T14:17:21.555Z" }
 wheels = [
@@ -2967,8 +2914,8 @@ name = "opentelemetry-exporter-otlp"
 version = "1.40.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-exporter-otlp-proto-http", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d0/37/b6708e0eff5c5fb9aba2e0ea09f7f3bcbfd12a592d2a780241b5f6014df7/opentelemetry_exporter_otlp-1.40.0.tar.gz", hash = "sha256:7caa0870b95e2fcb59d64e16e2b639ecffb07771b6cd0000b5d12e5e4fef765a", size = 6152, upload-time = "2026-03-04T14:17:23.235Z" }
 wheels = [
@@ -2980,7 +2927,7 @@ name = "opentelemetry-exporter-otlp-proto-common"
 version = "1.40.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "opentelemetry-proto", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "opentelemetry-proto", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/51/bc/1559d46557fe6eca0b46c88d4c2676285f1f3be2e8d06bb5d15fbffc814a/opentelemetry_exporter_otlp_proto_common-1.40.0.tar.gz", hash = "sha256:1cbee86a4064790b362a86601ee7934f368b81cd4cc2f2e163902a6e7818a0fa", size = 20416, upload-time = "2026-03-04T14:17:23.801Z" }
 wheels = [
@@ -2992,13 +2939,13 @@ name = "opentelemetry-exporter-otlp-proto-grpc"
 version = "1.40.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "googleapis-common-protos", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "grpcio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-api", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-exporter-otlp-proto-common", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-proto", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-sdk", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "googleapis-common-protos", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "grpcio", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-api", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-exporter-otlp-proto-common", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-proto", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-sdk", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8f/7f/b9e60435cfcc7590fa87436edad6822240dddbc184643a2a005301cc31f4/opentelemetry_exporter_otlp_proto_grpc-1.40.0.tar.gz", hash = "sha256:bd4015183e40b635b3dab8da528b27161ba83bf4ef545776b196f0fb4ec47740", size = 25759, upload-time = "2026-03-04T14:17:24.4Z" }
 wheels = [
@@ -3010,13 +2957,13 @@ name = "opentelemetry-exporter-otlp-proto-http"
 version = "1.40.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "googleapis-common-protos", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-api", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-exporter-otlp-proto-common", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-proto", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-sdk", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "requests", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "googleapis-common-protos", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-api", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-exporter-otlp-proto-common", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-proto", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-sdk", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "requests", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2e/fa/73d50e2c15c56be4d000c98e24221d494674b0cc95524e2a8cb3856d95a4/opentelemetry_exporter_otlp_proto_http-1.40.0.tar.gz", hash = "sha256:db48f5e0f33217588bbc00274a31517ba830da576e59503507c839b38fa0869c", size = 17772, upload-time = "2026-03-04T14:17:25.324Z" }
 wheels = [
@@ -3028,7 +2975,7 @@ name = "opentelemetry-proto"
 version = "1.40.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "protobuf", version = "6.33.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "protobuf", version = "6.33.6", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4c/77/dd38991db037fdfce45849491cb61de5ab000f49824a00230afb112a4392/opentelemetry_proto-1.40.0.tar.gz", hash = "sha256:03f639ca129ba513f5819810f5b1f42bcb371391405d99c168fe6937c62febcd", size = 45667, upload-time = "2026-03-04T14:17:31.194Z" }
 wheels = [
@@ -3040,9 +2987,9 @@ name = "opentelemetry-sdk"
 version = "1.40.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "opentelemetry-api", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-semantic-conventions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "opentelemetry-api", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-semantic-conventions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/58/fd/3c3125b20ba18ce2155ba9ea74acb0ae5d25f8cd39cfd37455601b7955cc/opentelemetry_sdk-1.40.0.tar.gz", hash = "sha256:18e9f5ec20d859d268c7cb3c5198c8d105d073714db3de50b593b8c1345a48f2", size = 184252, upload-time = "2026-03-04T14:17:31.87Z" }
 wheels = [
@@ -3054,8 +3001,8 @@ name = "opentelemetry-semantic-conventions"
 version = "0.61b0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "opentelemetry-api", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "opentelemetry-api", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6d/c0/4ae7973f3c2cfd2b6e321f1675626f0dab0a97027cc7a297474c9c8f3d04/opentelemetry_semantic_conventions-0.61b0.tar.gz", hash = "sha256:072f65473c5d7c6dc0355b27d6c9d1a679d63b6d4b4b16a9773062cb7e31192a", size = 145755, upload-time = "2026-03-04T14:17:32.664Z" }
 wheels = [
@@ -3067,8 +3014,8 @@ name = "opentelemetry-semantic-conventions-ai"
 version = "0.4.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "opentelemetry-sdk", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-semantic-conventions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "opentelemetry-sdk", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-semantic-conventions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e9/75/455c15f8360b475dd31101a87eab316420388486f7941bf019cbf4e63d5b/opentelemetry_semantic_conventions_ai-0.4.15.tar.gz", hash = "sha256:12de172d1e11d21c6e82bbf578c7e8a713589a7fda76af9ed785632564a28b81", size = 18595, upload-time = "2026-03-02T15:36:50.254Z" }
 wheels = [
@@ -3105,7 +3052,7 @@ name = "pandas"
 version = "3.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "python-dateutil", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2e/0c/b28ed414f080ee0ad153f848586d61d1878f91689950f037f976ce15f6c8/pandas-3.0.1.tar.gz", hash = "sha256:4186a699674af418f655dbd420ed87f50d56b4cd6603784279d9eef6627823c8", size = 4641901, upload-time = "2026-02-17T22:20:16.434Z" }
@@ -3278,8 +3225,8 @@ name = "prometheus-fastapi-instrumentator"
 version = "7.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "prometheus-client", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "starlette", version = "0.52.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "prometheus-client", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "starlette", version = "0.52.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/69/6d/24d53033cf93826aa7857699a4450c1c67e5b9c710e925b1ed2b320c04df/prometheus_fastapi_instrumentator-7.1.0.tar.gz", hash = "sha256:be7cd61eeea4e5912aeccb4261c6631b3f227d8924542d79eaf5af3f439cbe5e", size = 20220, upload-time = "2025-03-19T19:35:05.351Z" }
 wheels = [
@@ -3361,7 +3308,11 @@ version = "6.33.6"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version >= '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
     "python_full_version < '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/66/70/e908e9c5e52ef7c3a6c7902c9dfbb34c7e29c25d2f81ade3856445fd5c94/protobuf-6.33.6.tar.gz", hash = "sha256:a6768d25248312c297558af96a9f9c929e8c4cee0659cb07e780731095f38135", size = 444531, upload-time = "2026-03-18T19:05:00.988Z" }
 wheels = [
@@ -3383,11 +3334,6 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
     "sys_platform == 'darwin' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
     "sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "python_full_version >= '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "python_full_version < '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f2/00/04a2ab36b70a52d0356852979e08b44edde0435f2115dc66e25f2100f3ab/protobuf-7.34.0.tar.gz", hash = "sha256:3871a3df67c710aaf7bb8d214cc997342e63ceebd940c8c7fc65c9b3d697591a", size = 454726, upload-time = "2026-02-27T00:30:25.421Z" }
 wheels = [
@@ -3602,7 +3548,7 @@ wheels = [
 
 [package.optional-dependencies]
 email = [
-    { name = "email-validator", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "email-validator", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 
 [[package]]
@@ -3663,8 +3609,8 @@ name = "pydantic-extra-types"
 version = "2.11.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pydantic", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "pydantic", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/66/71/dba38ee2651f84f7842206adbd2233d8bbdb59fb85e9fa14232486a8c471/pydantic_extra_types-2.11.1.tar.gz", hash = "sha256:46792d2307383859e923d8fcefa82108b1a141f8a9c0198982b3832ab5ef1049", size = 172002, upload-time = "2026-03-16T08:08:03.92Z" }
 wheels = [
@@ -3673,7 +3619,7 @@ wheels = [
 
 [package.optional-dependencies]
 pycountry = [
-    { name = "pycountry", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "pycountry", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 
 [[package]]
@@ -3681,9 +3627,9 @@ name = "pydantic-settings"
 version = "2.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pydantic", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "python-dotenv", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-inspection", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "pydantic", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "python-dotenv", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-inspection", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/52/6d/fffca34caecc4a3f97bda81b2098da5e8ab7efc9a66e819074a11955d87e/pydantic_settings-2.13.1.tar.gz", hash = "sha256:b4c11847b15237fb0171e1462bf540e294affb9b86db4d9aa5c01730bdbe4025", size = 223826, upload-time = "2026-02-19T13:45:08.055Z" }
 wheels = [
@@ -3708,8 +3654,8 @@ dependencies = [
     { name = "macholib", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "packaging", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pyinstaller-hooks-contrib", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "setuptools", version = "82.0.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform == 'linux' and extra != 'extra-3-exo-cuda') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "setuptools", version = "82.0.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c8/63/fd62472b6371d89dc138d40c36d87a50dc2de18a035803bbdc376b4ffac4/pyinstaller-6.19.0.tar.gz", hash = "sha256:ec73aeb8bd9b7f2f1240d328a4542e90b3c6e6fbc106014778431c616592a865", size = 4036072, upload-time = "2026-02-14T18:06:28.718Z" }
 wheels = [
@@ -3732,8 +3678,8 @@ version = "2026.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "packaging", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "setuptools", version = "82.0.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform == 'linux' and extra != 'extra-3-exo-cuda') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "setuptools", version = "82.0.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/80/17/716326f6ba18d0663f7995ae369c23e50efebc22fbb054e9710a45688f61/pyinstaller_hooks_contrib-2026.3.tar.gz", hash = "sha256:800d3a198a49a6cd0de2d7fb795005fdca7a0222ed9cb47c0691abd1c27b9310", size = 172323, upload-time = "2026-03-09T22:44:06.345Z" }
 wheels = [
@@ -3751,7 +3697,7 @@ wheels = [
 
 [package.optional-dependencies]
 crypto = [
-    { name = "cryptography", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "cryptography", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 
 [[package]]
@@ -3771,7 +3717,8 @@ dependencies = [
     { name = "dataproperty", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "mbstrdecoder", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pathvalidate", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "setuptools", version = "82.0.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "setuptools", version = "82.0.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "tabledata", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "tcolorpy", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "typepy", extra = ["datetime"], marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -3910,7 +3857,7 @@ name = "pyzmq"
 version = "27.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "implementation_name == 'pypy' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "cffi", marker = "(implementation_name == 'pypy' and sys_platform == 'linux') or (implementation_name != 'pypy' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/04/0b/3c9baedbdf613ecaa7aa07027780b8867f57b6293b6ee50de316c9f3222b/pyzmq-27.1.0.tar.gz", hash = "sha256:ac0765e3d44455adb6ddbf4417dcce460fc40a05978c08efdf2948072f6db540", size = 281750, upload-time = "2025-09-08T23:10:18.157Z" }
 wheels = [
@@ -3967,8 +3914,8 @@ name = "referencing"
 version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "attrs", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "rpds-py", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "attrs", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "rpds-py", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/22/f5/df4e9027acead3ecc63e50fe1e36aca1523e1719559c499951bb4b53188f/referencing-0.37.0.tar.gz", hash = "sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8", size = 78036, upload-time = "2025-10-13T15:30:48.871Z" }
 wheels = [
@@ -4101,9 +4048,9 @@ name = "rich-toolkit"
 version = "0.19.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "rich", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "click", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "rich", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/ba/dae9e3096651042754da419a4042bc1c75e07d615f9b15066d738838e4df/rich_toolkit-0.19.7.tar.gz", hash = "sha256:133c0915872da91d4c25d85342d5ec1dfacc69b63448af1a08a0d4b4f23ef46e", size = 195877, upload-time = "2026-02-24T16:06:20.555Z" }
 wheels = [
@@ -4170,7 +4117,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "absl-py", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "nltk", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "six", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e2/c5/9136736c37022a6ad27fea38f3111eb8f02fe75d067f9a985cc358653102/rouge_score-0.1.2.tar.gz", hash = "sha256:c7d4da2683e68c9abf0135ef915d63a46643666f848e558a1b9f7ead17ff0f04", size = 17400, upload-time = "2022-07-22T22:46:22.909Z" }
@@ -4271,8 +4218,7 @@ name = "rustworkx"
 version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform == 'linux' and extra != 'extra-3-exo-cuda') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e7/b0/66d96f02120f79eeed86b5c5be04029b6821155f31ed4907a4e9f1460671/rustworkx-0.17.1.tar.gz", hash = "sha256:59ea01b4e603daffa4e8827316c1641eef18ae9032f0b1b14aa0181687e3108e", size = 399407, upload-time = "2025-09-15T16:29:46.429Z" }
 wheels = [
@@ -4296,7 +4242,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "lxml", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "portalocker", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "regex", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "tabulate", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -4334,7 +4280,7 @@ version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "joblib", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "scipy", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "threadpoolctl", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
@@ -4371,7 +4317,7 @@ name = "scipy"
 version = "1.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7a/97/5a3609c4f8d58b039179648e62dd220f89864f56f7357f5d4f45c29eb2cc/scipy-1.17.1.tar.gz", hash = "sha256:95d8e012d8cb8816c226aef832200b1d45109ed4464303e997c5b13122b297c0", size = 30573822, upload-time = "2026-02-23T00:26:24.851Z" }
 wheels = [
@@ -4462,9 +4408,9 @@ name = "sentry-sdk"
 version = "3.0.0a7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-sdk", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "urllib3", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "certifi", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-sdk", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "urllib3", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/66/a5/747ab268f2cf3f4cb50af521e1a85a959411f74cf4a2ecf47782e1981cee/sentry_sdk-3.0.0a7.tar.gz", hash = "sha256:439a858d409b84407560df6b7ebb760acd9ad3d14e05cd919ae36b204e411cb2", size = 329999, upload-time = "2025-10-20T13:50:38.131Z" }
 wheels = [
@@ -4525,7 +4471,11 @@ version = "77.0.3"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version >= '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
     "python_full_version < '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/81/ed/7101d53811fd359333583330ff976e5177c5e871ca8b909d1d6c30553aa3/setuptools-77.0.3.tar.gz", hash = "sha256:583b361c8da8de57403743e756609670de6fb2345920e36dc5c2d914c319c945", size = 1367236, upload-time = "2025-03-20T14:38:08.777Z" }
 wheels = [
@@ -4541,11 +4491,6 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
     "sys_platform == 'darwin' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
     "sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "python_full_version >= '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "python_full_version < '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4f/db/cfac1baf10650ab4d1c111714410d2fbb77ac5a616db26775db562c8fab2/setuptools-82.0.1.tar.gz", hash = "sha256:7d872682c5d01cfde07da7bccc7b65469d3dca203318515ada1de5eda35efbf9", size = 1152316, upload-time = "2026-03-09T12:47:17.221Z" }
 wheels = [
@@ -4590,8 +4535,8 @@ name = "sse-starlette"
 version = "3.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "starlette", version = "0.52.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "anyio", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "starlette", version = "0.52.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/14/2f/9223c24f568bb7a0c03d751e609844dce0968f13b39a3f73fbb3a96cd27a/sse_starlette-3.3.3.tar.gz", hash = "sha256:72a95d7575fd5129bd0ae15275ac6432bb35ac542fdebb82889c24bb9f3f4049", size = 32420, upload-time = "2026-03-17T20:05:55.529Z" }
 wheels = [
@@ -4604,10 +4549,14 @@ version = "0.52.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version >= '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
     "python_full_version < '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux'",
 ]
 dependencies = [
-    { name = "anyio", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "anyio", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c4/68/79977123bb7be889ad680d79a40f339082c1978b5cfcf62c2d8d196873ac/starlette-0.52.1.tar.gz", hash = "sha256:834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933", size = 2653702, upload-time = "2026-01-18T13:34:11.062Z" }
 wheels = [
@@ -4623,14 +4572,9 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
     "sys_platform == 'darwin' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
     "sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "python_full_version >= '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "python_full_version < '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
 ]
 dependencies = [
-    { name = "anyio", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform == 'linux' and extra != 'extra-3-exo-cuda') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "anyio", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/06/47/11581c2f488a65ab8a32a1843e989203c7b359c39bd06d31ff8bc4ddc6f3/starlette-1.0.0rc1.tar.gz", hash = "sha256:c369b9ac3af2e64b3a5301d7059f4222cfa884ad5e91320336109789cfe0fe23", size = 2653401, upload-time = "2026-02-23T22:12:32.257Z" }
 wheels = [
@@ -4651,7 +4595,7 @@ name = "sympy"
 version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mpmath", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'project-9-exo-bench') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or sys_platform == 'darwin' or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "mpmath", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/83/d3/803453b36afefb7c2bb238361cd4ae6125a569b4db67cd9e79846ba2d68c/sympy-1.14.0.tar.gz", hash = "sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517", size = 7793921, upload-time = "2025-04-27T18:05:01.611Z" }
 wheels = [
@@ -4809,15 +4753,22 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
     "sys_platform == 'darwin' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
     "sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
+    "python_full_version < '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version < '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "python_full_version < '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
 ]
 dependencies = [
-    { name = "filelock", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "fsspec", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "jinja2", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "networkx", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "filelock", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "fsspec", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "jinja2", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "networkx", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "setuptools", version = "82.0.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "sympy", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "typing-extensions", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "sympy", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/23/2c9fe0c9c27f7f6cb865abcea8a4568f29f00acaeadfc6a37f6801f84cb4/torch-2.10.0-2-cp313-none-macosx_11_0_arm64.whl", hash = "sha256:e521c9f030a3774ed770a9c011751fb47c4d12029a3d6522116e48431f2ff89e", size = 79498254, upload-time = "2026-02-10T21:44:44.095Z" },
@@ -4845,6 +4796,47 @@ wheels = [
 
 [[package]]
 name = "torch"
+version = "2.10.0+cpu"
+source = { registry = "https://download.pytorch.org/whl/cpu" }
+resolution-markers = [
+    "python_full_version >= '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+]
+dependencies = [
+    { name = "filelock", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "fsspec", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "jinja2", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "networkx", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "sympy", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+]
+wheels = [
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp313-cp313-linux_aarch64.whl", hash = "sha256:fd215f3d0f681905c5b56b0630a3d666900a37fcc3ca5b937f95275c66f9fd9c" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp313-cp313-linux_s390x.whl", hash = "sha256:170a0623108055be5199370335cf9b41ba6875b3cb6f086db4aee583331a4899" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:e51994492cdb76edce29da88de3672a3022f9ef0ffd90345436948d4992be2c7" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:8d316e5bf121f1eab1147e49ad0511a9d92e4c45cc357d1ab0bee440da71a095" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp313-cp313-win_amd64.whl", hash = "sha256:b719da5af01b59126ac13eefd6ba3dd12d002dc0e8e79b8b365e55267a8189d3" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp313-cp313-win_arm64.whl", hash = "sha256:b67d91326e4ed9eccbd6b7d84ed7ffa43f93103aa3f0b24145f3001f3b11b714" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp313-cp313t-linux_aarch64.whl", hash = "sha256:5af75e5f49de21b0bdf7672bc27139bd285f9e8dbcabe2d617a2eb656514ac36" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp313-cp313t-linux_s390x.whl", hash = "sha256:ba51ef01a510baf8fff576174f702c47e1aa54389a9f1fba323bb1a5003ff0bf" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp313-cp313t-manylinux_2_28_aarch64.whl", hash = "sha256:0fedcb1a77e8f2aaf7bfd21591bf6d1e0b207473268c9be16b17cb7783253969" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:106dd1930cb30a4a337366ba3f9b25318ebf940f51fd46f789281dd9e736bdc4" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp313-cp313t-win_amd64.whl", hash = "sha256:eb1bde1ce198f05c8770017de27e001d404499cf552aaaa014569eff56ca25c0" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp314-cp314-linux_aarch64.whl", hash = "sha256:ea2bcc9d1fca66974a71d4bf9a502539283f35d61fcab5a799b4e120846f1e02" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp314-cp314-linux_s390x.whl", hash = "sha256:f8294fd2fc6dd8f4435a891a0122307a043b14b21f0dac1bca63c85bfb59e586" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp314-cp314-manylinux_2_28_aarch64.whl", hash = "sha256:a28fdbcfa2fbacffec81300f24dd1bed2b0ccfdbed107a823cff12bc1db070f6" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:aada8afc068add586464b2a55adb7cc9091eec55caf5320447204741cb6a0604" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp314-cp314-win_amd64.whl", hash = "sha256:2adc71fe471e98a608723bfc837f7e1929885ebb912c693597711e139c1cda41" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp314-cp314t-linux_aarch64.whl", hash = "sha256:9412bd37b70f5ebd1205242c4ba4cabae35a605947f2b30806d5c9b467936db9" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp314-cp314t-linux_s390x.whl", hash = "sha256:e71c476517c33e7db69825a9ff46c7f47a723ec4dac5b2481cff4246d1c632be" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:23882f8d882460aca809882fc42f5e343bf07585274f929ced00177d1be1eb67" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:4fcd8b4cc2ae20f2b7749fb275349c55432393868778c2d50a08e81d5ee5591e" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp314-cp314t-win_amd64.whl", hash = "sha256:ffc8da9a1341092d6a90cb5b1c1a33cd61abf0fb43f0cd88443c27fa372c26ae" },
+]
+
+[[package]]
+name = "torch"
 version = "2.10.0+cu130"
 source = { registry = "https://download.pytorch.org/whl/cu130" }
 resolution-markers = [
@@ -4852,30 +4844,30 @@ resolution-markers = [
     "python_full_version < '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux'",
 ]
 dependencies = [
-    { name = "cuda-bindings", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "filelock", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "fsspec", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "jinja2", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "networkx", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cublas", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cuda-cupti", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cuda-nvrtc", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cuda-runtime", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cudnn-cu13", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cufft", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cufile", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-curand", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cusolver", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cusparse", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cusparselt-cu13", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-nccl-cu13", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-nvjitlink", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-nvshmem-cu13", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-nvtx", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "sympy", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "triton", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "cuda-bindings", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "filelock", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "fsspec", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "jinja2", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "networkx", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cuda-cupti", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cuda-runtime", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cudnn-cu13", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cufft", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cufile", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-curand", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cusolver", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cusparselt-cu13", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-nccl-cu13", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-nvshmem-cu13", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-nvtx", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "sympy", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "triton", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 wheels = [
     { url = "https://download.pytorch.org/whl/cu130/torch-2.10.0%2Bcu130-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:75780283308df9fede371eeda01e9607c8862a1803a2f2f31a08a2c0deaed342" },
@@ -4893,60 +4885,6 @@ wheels = [
 ]
 
 [[package]]
-name = "torchaudio"
-version = "2.10.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b6/02/341e7bd588355f82c5180103cb2f8070a72ab1be920ab27553a1135d4aa6/torchaudio-2.10.0-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:8fd38d28ee150c584d3ee3b05f39e021f0ad8a8ec8fec1f26dfe150c9db9b2f5", size = 737164, upload-time = "2026-01-21T16:28:38.354Z" },
-    { url = "https://files.pythonhosted.org/packages/49/fd/831c2595c81b17141180ca11ab3c0836cc544ef13e15aa0e7b2cb619e582/torchaudio-2.10.0-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:5bc39ff3ea341097ce1ab023dd88c9dd8ca5f96ebf48821e7d23766137bb55d7", size = 392757, upload-time = "2026-01-21T16:28:33.631Z" },
-    { url = "https://files.pythonhosted.org/packages/8e/d8/405c80c57dc68ca5855bddfaae57c3d84ea7397bf1eb2aa5d59c9fa1d3a9/torchaudio-2.10.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:3057c4286db5673d266124a2a10ca54e19f516772e9057f44573a7da5b85e328", size = 1897099, upload-time = "2026-01-21T16:28:24.793Z" },
-    { url = "https://files.pythonhosted.org/packages/73/cf/0e48d67788c935e3b3d00e6f55a930a54a67f432e04c33ef80a38cb764fd/torchaudio-2.10.0-cp313-cp313-win_amd64.whl", hash = "sha256:99e74d1901742bc10961d807fe75c0dd9496f4a4a4ff4bb317c5de4a0b6f24e6", size = 475476, upload-time = "2026-01-21T16:28:28.249Z" },
-    { url = "https://files.pythonhosted.org/packages/48/29/30bcce0f17a8279b051b09250993691a828f89a03278306b23571c18df04/torchaudio-2.10.0-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:6cfe98ef0ea9bee6d6297493ce67ce0c54a38d80caf6535a3ae48900fd5f3769", size = 742449, upload-time = "2026-01-21T16:28:29.556Z" },
-    { url = "https://files.pythonhosted.org/packages/43/8c/653e7f67855424bf3b7cbb48335f8316f7fb02bb01a6cab38f6bf9555676/torchaudio-2.10.0-cp313-cp313t-manylinux_2_28_aarch64.whl", hash = "sha256:b41b254d958632dc00dc7768431cadda516c91641d798775cbb19bcd4f0d2be4", size = 393430, upload-time = "2026-01-21T16:28:34.855Z" },
-    { url = "https://files.pythonhosted.org/packages/8e/1f/f91fcb9dd47a19b720fb48042a2f6f023651948e73726e98fff60d5ed5c7/torchaudio-2.10.0-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:da1081d1018a1e95f5a13947402aeb037cf5ac8861219a6164df004898a96bb1", size = 1897271, upload-time = "2026-01-21T16:28:23.519Z" },
-    { url = "https://files.pythonhosted.org/packages/57/27/270c26890f43838e8faa5d3e52f079bd9d9d09f9a535a11cf6b94e20ed21/torchaudio-2.10.0-cp313-cp313t-win_amd64.whl", hash = "sha256:f1afa53146a5655258d3a86e689c6879dfe78581d9bee9ef611ace98722f86bb", size = 478966, upload-time = "2026-01-21T16:28:32.491Z" },
-    { url = "https://files.pythonhosted.org/packages/cc/5c/0e54b162bd0d1ec2f87b545553af839f906b940888d0122cdef04b965385/torchaudio-2.10.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:1f2897fbf776d55afcb5f6d9b7bdfaea850ca7a129c8f5e4b3a4b025c431130d", size = 739544, upload-time = "2026-01-21T16:28:26.947Z" },
-    { url = "https://files.pythonhosted.org/packages/57/a1/ef5571406858f4ea89c18d6ad844d21cb9858708149e6bbd9a789ee30ea5/torchaudio-2.10.0-cp314-cp314-manylinux_2_28_aarch64.whl", hash = "sha256:b2d5e11a2bec08f02a4f5fb7d1902ff82d48c533a27ceedc21e6ade650cf65b3", size = 393061, upload-time = "2026-01-21T16:28:25.802Z" },
-    { url = "https://files.pythonhosted.org/packages/9d/0f/a0cf0ebc6f71b1868ea056dd4cd4f1a2244b8da8bc38372a1adc984a7c1f/torchaudio-2.10.0-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:77f6cf11a3b61af1b0967cd642368ecd30a86d70f622b22410ae6cb42d980b72", size = 1897137, upload-time = "2026-01-21T16:28:15.366Z" },
-    { url = "https://files.pythonhosted.org/packages/7f/48/98e6710a4601e190bc923c3683629c29d41fb18a818a9328515541f023ed/torchaudio-2.10.0-cp314-cp314-win_amd64.whl", hash = "sha256:4711c2a86a005685ca3b5da135b2f370d81ac354e3dcb142ef45fe2c78b9c9c4", size = 475154, upload-time = "2026-01-21T16:28:22.438Z" },
-    { url = "https://files.pythonhosted.org/packages/c1/9b/cd02f8add38bd98761548b0821a5e54c564117a9bbeafaf95f665ab0fd72/torchaudio-2.10.0-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:13bdc1bde0c88e999699d1503304a56fc9dea6401b76bc08a5f268368129d46c", size = 742453, upload-time = "2026-01-21T16:28:20.989Z" },
-    { url = "https://files.pythonhosted.org/packages/53/8a/946aa07393845b918d318b5e34b3bd0359fd27fc9fac10a85fae2bb86382/torchaudio-2.10.0-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:ed912de8ec1b400e17a5172badcfcddc601a9cd4e02d200f3a9504fc8e54961c", size = 393434, upload-time = "2026-01-21T16:28:18.668Z" },
-    { url = "https://files.pythonhosted.org/packages/e1/68/e37e8fbbae986afa80f8851e08fc017eb8ae5f7b398ee28ed92303da163e/torchaudio-2.10.0-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:f7aa33a8198e87949896e16ea245ea731906445becdf10130e8823c68494a94a", size = 1897289, upload-time = "2026-01-21T16:28:17.059Z" },
-    { url = "https://files.pythonhosted.org/packages/5d/61/0e1f464463b85bc677036faffdfd23493aa17e8c3fc3a649abca8c019701/torchaudio-2.10.0-cp314-cp314t-win_amd64.whl", hash = "sha256:e49f6a18a8552620c4394f8529b7551eda9312d46dfdd3500bd2be459c86aea4", size = 478968, upload-time = "2026-01-21T16:28:19.542Z" },
-]
-
-[[package]]
-name = "torchvision"
-version = "0.25.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pillow", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f5/5b/1562a04a6a5a4cf8cf40016a0cdeda91ede75d6962cff7f809a85ae966a5/torchvision-0.25.0-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:24e11199e4d84ba9c5ee7825ebdf1cd37ce8deec225117f10243cae984ced3ec", size = 1874918, upload-time = "2026-01-21T16:27:39.02Z" },
-    { url = "https://files.pythonhosted.org/packages/36/b1/3d6c42f62c272ce34fcce609bb8939bdf873dab5f1b798fd4e880255f129/torchvision-0.25.0-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:5f271136d2d2c0b7a24c5671795c6e4fd8da4e0ea98aeb1041f62bc04c4370ef", size = 2309106, upload-time = "2026-01-21T16:27:30.624Z" },
-    { url = "https://files.pythonhosted.org/packages/c7/60/59bb9c8b67cce356daeed4cb96a717caa4f69c9822f72e223a0eae7a9bd9/torchvision-0.25.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:855c0dc6d37f462482da7531c6788518baedca1e0847f3df42a911713acdfe52", size = 8071522, upload-time = "2026-01-21T16:27:29.392Z" },
-    { url = "https://files.pythonhosted.org/packages/32/a5/9a9b1de0720f884ea50dbf9acb22cbe5312e51d7b8c4ac6ba9b51efd9bba/torchvision-0.25.0-cp313-cp313-win_amd64.whl", hash = "sha256:cef0196be31be421f6f462d1e9da1101be7332d91984caa6f8022e6c78a5877f", size = 4321911, upload-time = "2026-01-21T16:27:35.195Z" },
-    { url = "https://files.pythonhosted.org/packages/52/99/dca81ed21ebaeff2b67cc9f815a20fdaa418b69f5f9ea4c6ed71721470db/torchvision-0.25.0-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:a8f8061284395ce31bcd460f2169013382ccf411148ceb2ee38e718e9860f5a7", size = 1896209, upload-time = "2026-01-21T16:27:32.159Z" },
-    { url = "https://files.pythonhosted.org/packages/28/cc/2103149761fdb4eaed58a53e8437b2d716d48f05174fab1d9fcf1e2a2244/torchvision-0.25.0-cp313-cp313t-manylinux_2_28_aarch64.whl", hash = "sha256:146d02c9876858420adf41f3189fe90e3d6a409cbfa65454c09f25fb33bf7266", size = 2310735, upload-time = "2026-01-21T16:27:22.327Z" },
-    { url = "https://files.pythonhosted.org/packages/76/ad/f4c985ad52ddd3b22711c588501be1b330adaeaf6850317f66751711b78c/torchvision-0.25.0-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:c4d395cb2c4a2712f6eb93a34476cdf7aae74bb6ea2ea1917f858e96344b00aa", size = 8089557, upload-time = "2026-01-21T16:27:27.666Z" },
-    { url = "https://files.pythonhosted.org/packages/63/cc/0ea68b5802e5e3c31f44b307e74947bad5a38cc655231d845534ed50ddb8/torchvision-0.25.0-cp313-cp313t-win_amd64.whl", hash = "sha256:5e6b449e9fa7d642142c0e27c41e5a43b508d57ed8e79b7c0a0c28652da8678c", size = 4344260, upload-time = "2026-01-21T16:27:17.018Z" },
-    { url = "https://files.pythonhosted.org/packages/9e/1f/fa839532660e2602b7e704d65010787c5bb296258b44fa8b9c1cd6175e7d/torchvision-0.25.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:620a236288d594dcec7634c754484542dc0a5c1b0e0b83a34bda5e91e9b7c3a1", size = 1896193, upload-time = "2026-01-21T16:27:24.785Z" },
-    { url = "https://files.pythonhosted.org/packages/80/ed/d51889da7ceaf5ff7a0574fb28f9b6b223df19667265395891f81b364ab3/torchvision-0.25.0-cp314-cp314-manylinux_2_28_aarch64.whl", hash = "sha256:0b5e7f50002a8145a98c5694a018e738c50e2972608310c7e88e1bd4c058f6ce", size = 2309331, upload-time = "2026-01-21T16:27:19.97Z" },
-    { url = "https://files.pythonhosted.org/packages/90/a5/f93fcffaddd8f12f9e812256830ec9c9ca65abbf1bc369379f9c364d1ff4/torchvision-0.25.0-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:632db02300e83793812eee4f61ae6a2686dab10b4cfd628b620dc47747aa9d03", size = 8088713, upload-time = "2026-01-21T16:27:15.281Z" },
-    { url = "https://files.pythonhosted.org/packages/1f/eb/d0096eed5690d962853213f2ee00d91478dfcb586b62dbbb449fb8abc3a6/torchvision-0.25.0-cp314-cp314-win_amd64.whl", hash = "sha256:d1abd5ed030c708f5dbf4812ad5f6fbe9384b63c40d6bd79f8df41a4a759a917", size = 4325058, upload-time = "2026-01-21T16:27:26.165Z" },
-    { url = "https://files.pythonhosted.org/packages/97/36/96374a4c7ab50dea9787ce987815614ccfe988a42e10ac1a2e3e5b60319a/torchvision-0.25.0-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:ad9a8a5877782944d99186e4502a614770fe906626d76e9cd32446a0ac3075f2", size = 1896207, upload-time = "2026-01-21T16:27:23.383Z" },
-    { url = "https://files.pythonhosted.org/packages/b5/e2/7abb10a867db79b226b41da419b63b69c0bd5b82438c4a4ed50e084c552f/torchvision-0.25.0-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:40a122c3cf4d14b651f095e0f672b688dde78632783fc5cd3d4d5e4f6a828563", size = 2310741, upload-time = "2026-01-21T16:27:18.712Z" },
-    { url = "https://files.pythonhosted.org/packages/08/e6/0927784e6ffc340b6676befde1c60260bd51641c9c574b9298d791a9cda4/torchvision-0.25.0-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:846890161b825b38aa85fc37fb3ba5eea74e7091ff28bab378287111483b6443", size = 8089772, upload-time = "2026-01-21T16:27:14.048Z" },
-    { url = "https://files.pythonhosted.org/packages/b6/37/e7ca4ec820d434c0f23f824eb29f0676a0c3e7a118f1514f5b949c3356da/torchvision-0.25.0-cp314-cp314t-win_amd64.whl", hash = "sha256:f07f01d27375ad89d72aa2b3f2180f07da95dd9d2e4c758e015c0acb2da72977", size = 4425879, upload-time = "2026-01-21T16:27:12.579Z" },
-]
-
-[[package]]
 name = "tqdm"
 version = "4.67.3"
 source = { registry = "https://pypi.org/simple" }
@@ -4961,8 +4899,7 @@ version = "5.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or sys_platform == 'darwin' or (sys_platform == 'linux' and extra != 'extra-3-exo-cuda') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "packaging", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "regex", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -5089,8 +5026,8 @@ name = "uvicorn"
 version = "0.42.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "h11", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "click", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "h11", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e3/ad/4a96c425be6fb67e0621e62d86c402b4a17ab2be7f7c055d9bd2f638b9e2/uvicorn-0.42.0.tar.gz", hash = "sha256:9b1f190ce15a2dd22e7758651d9b6d12df09a13d51ba5bf4fc33c383a48e1775", size = 85393, upload-time = "2026-03-16T06:19:50.077Z" }
 wheels = [
@@ -5099,12 +5036,12 @@ wheels = [
 
 [package.optional-dependencies]
 standard = [
-    { name = "httptools", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "python-dotenv", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pyyaml", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "uvloop", marker = "platform_machine == 'aarch64' and platform_python_implementation != 'PyPy' and sys_platform == 'linux'" },
-    { name = "watchfiles", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "websockets", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "httptools", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "python-dotenv", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pyyaml", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "uvloop", marker = "(platform_python_implementation != 'PyPy' and sys_platform == 'linux') or (platform_python_implementation == 'PyPy' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "watchfiles", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "websockets", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 
 [[package]]
@@ -5135,90 +5072,90 @@ wheels = [
 
 [[package]]
 name = "vllm"
-version = "0.1.dev14936+gb99bedc73"
+version = "0.1.dev14936+gb99bedc73.empty"
 source = { git = "https://github.com/hmellor/vllm.git?rev=b99bedc737166ae5ca98cb9e3534b96e0c8c69aa#b99bedc737166ae5ca98cb9e3534b96e0c8c69aa" }
 dependencies = [
-    { name = "aiohttp", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "anthropic", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "blake3", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "cachetools", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "cbor2", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "cloudpickle", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "compressed-tensors", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "depyf", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "diskcache", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "einops", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "fastapi", extra = ["standard"], marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "filelock", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "gguf", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "ijson", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "lark", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "llguidance", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "lm-format-enforcer", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "mcp", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "mistral-common", extra = ["image"], marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "model-hosting-container-standards", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "msgspec", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "ninja", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "numba", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "openai", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "openai-harmony", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opencv-python-headless", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-api", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-exporter-otlp", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-sdk", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "opentelemetry-semantic-conventions-ai", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "outlines-core", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "partial-json-parser", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pillow", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "prometheus-client", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "prometheus-fastapi-instrumentator", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "protobuf", version = "6.33.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "psutil", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "py-cpuinfo", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pybase64", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "python-json-logger", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pyyaml", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pyzmq", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "regex", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "requests", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "sentencepiece", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "setproctitle", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "six", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "tiktoken", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "tokenizers", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "torchaudio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "torchvision", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "tqdm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "transformers", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "watchfiles", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "xgrammar", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "aiohttp", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "anthropic", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "blake3", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "cachetools", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "cbor2", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "cloudpickle", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "compressed-tensors", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "depyf", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "diskcache", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "einops", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "fastapi", extra = ["standard"], marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "filelock", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "gguf", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "ijson", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "lark", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "llguidance", marker = "(platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'ppc64le' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'ppc64le' and sys_platform == 'linux') or (platform_machine == 's390x' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "lm-format-enforcer", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "mcp", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "mistral-common", extra = ["image"], marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "model-hosting-container-standards", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "msgspec", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "ninja", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "numpy", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "openai", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "openai-harmony", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opencv-python-headless", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-api", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-exporter-otlp", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-sdk", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "opentelemetry-semantic-conventions-ai", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "outlines-core", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "partial-json-parser", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pillow", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "prometheus-client", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "prometheus-fastapi-instrumentator", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "protobuf", version = "6.33.6", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "psutil", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "py-cpuinfo", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pybase64", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "python-json-logger", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pyyaml", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pyzmq", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "regex", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "requests", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "sentencepiece", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "setproctitle", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "setuptools", version = "77.0.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "six", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "tiktoken", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "tokenizers", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "tqdm", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "transformers", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "watchfiles", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "xgrammar", marker = "(platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'ppc64le' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'ppc64le' and sys_platform == 'linux') or (platform_machine == 's390x' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 
 [[package]]
 name = "vllm-engine"
 version = "0.1.0"
-source = { directory = "python/vllm_engine" }
+source = { editable = "python/vllm_engine" }
 dependencies = [
-    { name = "fastsafetensors", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "mlx-cuda-13", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "vllm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "exo-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "fastsafetensors", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "mlx-cuda-13", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "vllm", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "exo-core", editable = "python/exo_core" },
     { name = "fastsafetensors", marker = "sys_platform == 'linux'", specifier = ">=0.1.10" },
     { name = "mlx-cuda-13", marker = "sys_platform == 'linux'", specifier = "==0.30.6" },
     { name = "torch", marker = "platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux'", specifier = ">=2.10.0" },
     { name = "torch", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "vllm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", git = "https://github.com/hmellor/vllm.git?rev=b99bedc737166ae5ca98cb9e3534b96e0c8c69aa" },
+    { name = "vllm", marker = "sys_platform == 'linux'", git = "https://github.com/hmellor/vllm.git?rev=b99bedc737166ae5ca98cb9e3534b96e0c8c69aa" },
 ]
 
 [[package]]
@@ -5226,7 +5163,7 @@ name = "watchfiles"
 version = "1.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "anyio", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c2/c9/8869df9b2a2d6c59d79220a4db37679e74f807c559ffe5265e08b227a210/watchfiles-1.1.1.tar.gz", hash = "sha256:a173cb5c16c4f40ab19cecf48a534c409f7ea983ab8fed0741304a1c0a31b3f2", size = 94440, upload-time = "2025-10-14T15:06:21.08Z" }
 wheels = [
@@ -5337,11 +5274,14 @@ name = "xgrammar"
 version = "0.1.29"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "pydantic", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "transformers", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "numpy", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "pydantic", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "transformers", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "triton", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/02/a3/70dbe3ffd331a1e7e1ad5a95690a4086e6c7cdb8089f5c7eda712219ccec/xgrammar-0.1.29.tar.gz", hash = "sha256:cf195afa81b489eebf35d4c6f37f27136d05420739ab4a6f7f065c938d7e4baa", size = 2321317, upload-time = "2025-12-19T08:23:54.53Z" }
 wheels = [

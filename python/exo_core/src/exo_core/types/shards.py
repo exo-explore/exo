@@ -4,7 +4,7 @@ from typing import TypeAlias, final
 from pydantic import Field
 
 from exo_core.model_cards import ModelCard
-from exo_core.pydantic import TaggedModel
+from exo_core.models import TaggedModel
 
 
 class Sharding(str, Enum):

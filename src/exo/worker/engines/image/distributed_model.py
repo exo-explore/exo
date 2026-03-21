@@ -3,13 +3,13 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 import mlx.core as mx
+from exo_core.types.instances import BoundInstance
+from exo_core.types.shards import CfgShardMetadata, PipelineShardMetadata
+from exo_core.utils.downloads import build_model_path
 from mflux.models.common.config.config import Config
 from PIL import Image
 
 from exo.api.types import AdvancedImageParams
-from exo.download.download_utils import build_model_path
-from exo.shared.types.worker.instances import BoundInstance
-from exo.shared.types.worker.shards import CfgShardMetadata, PipelineShardMetadata
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models import (
     create_adapter_for_model,

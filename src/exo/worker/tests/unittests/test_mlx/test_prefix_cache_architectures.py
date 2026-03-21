@@ -11,12 +11,12 @@ from typing import Any, cast
 import mlx.core as mx
 import mlx.nn as nn
 import pytest
+from exo_core.types.common import ModelId
+from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
 from mlx.utils import tree_flatten, tree_unflatten
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.types.common import ModelId
 from exo.shared.types.mlx import Model
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import mlx_generate
 from exo.worker.engines.mlx.utils_mlx import (

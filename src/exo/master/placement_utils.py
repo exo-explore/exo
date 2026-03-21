@@ -1,21 +1,21 @@
 from collections.abc import Generator, Mapping
 
-from loguru import logger
-
-from exo.shared.models.model_cards import ModelCard
-from exo.shared.topology import Topology
-from exo.shared.types.common import Host, NodeId
-from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
-from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
-from exo.shared.types.worker.runners import RunnerId, ShardAssignments
-from exo.shared.types.worker.shards import (
+from exo_core.model_cards import ModelCard
+from exo_core.types.common import Host, NodeId
+from exo_core.types.runners import RunnerId, ShardAssignments
+from exo_core.types.shards import (
     CfgShardMetadata,
     PipelineShardMetadata,
     Sharding,
     ShardMetadata,
     TensorShardMetadata,
 )
+from exo_core.utils.memory import Memory
+from loguru import logger
+
+from exo.shared.topology import Topology
+from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
 
 
 def filter_cycles_by_memory(

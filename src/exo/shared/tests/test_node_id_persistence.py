@@ -7,11 +7,11 @@ from multiprocessing.queues import Queue as QueueT
 from multiprocessing.synchronize import Event as EventT
 from multiprocessing.synchronize import Semaphore as SemaphoreT
 
+from exo_core.constants import EXO_NODE_ID_KEYPAIR
 from loguru import logger
 from pytest import LogCaptureFixture, mark
 
 from exo.routing.router import get_node_id_keypair
-from exo.shared.constants import EXO_NODE_ID_KEYPAIR
 
 NUM_CONCURRENT_PROCS = 10
 

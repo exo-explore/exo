@@ -7,15 +7,15 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import mlx.core as mx
+from exo_core.constants import EXO_MAX_CONCURRENT_REQUESTS
+from exo_core.types.chunks import ErrorChunk, PrefillProgressChunk
+from exo_core.types.common import ModelId
+from exo_core.types.runner_response import GenerationResponse, ToolCallResponse
+from exo_core.types.tasks import CANCEL_ALL_TASKS, TaskId, TextGeneration
+from exo_core.types.text_generation import TextGenerationTaskParams
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
-from exo.shared.types.chunks import ErrorChunk, PrefillProgressChunk
-from exo.shared.types.common import ModelId
 from exo.shared.types.events import ChunkGenerated, Event
-from exo.shared.types.tasks import CANCEL_ALL_TASKS, TaskId, TextGeneration
-from exo.shared.types.text_generation import TextGenerationTaskParams
-from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator

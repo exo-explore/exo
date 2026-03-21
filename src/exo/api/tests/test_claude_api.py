@@ -2,7 +2,7 @@
 
 import pydantic
 import pytest
-from exo.shared.types.common import ModelId
+from exo_core.types.common import ModelId
 
 from exo.api.adapters.claude import (
     claude_request_to_text_generation,

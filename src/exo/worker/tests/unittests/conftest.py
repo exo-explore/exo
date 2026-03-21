@@ -1,17 +1,17 @@
 from dataclasses import dataclass, field
 
-from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
-from exo.shared.types.common import NodeId
-from exo.shared.types.memory import Memory
-from exo.shared.types.tasks import BaseTask, TaskId
-from exo.shared.types.worker.instances import (
+from exo_core.model_cards import ModelCard, ModelTask
+from exo_core.types.common import ModelId, NodeId
+from exo_core.types.instances import (
     BoundInstance,
     Instance,
     InstanceId,
     MlxRingInstance,
 )
-from exo.shared.types.worker.runners import RunnerId, RunnerStatus, ShardAssignments
-from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
+from exo_core.types.runners import RunnerId, RunnerStatus, ShardAssignments
+from exo_core.types.shards import PipelineShardMetadata, ShardMetadata
+from exo_core.types.tasks import BaseTask, TaskId
+from exo_core.utils.memory import Memory
 
 
 # Runner supervisor without multiprocessing logic.

@@ -11,11 +11,12 @@ import anyio
 from anyio import fail_after, open_process, to_thread
 from anyio.streams.buffered import BufferedByteReceiveStream
 from anyio.streams.text import TextReceiveStream
+from exo_core.constants import EXO_CONFIG_FILE, EXO_MODELS_DIR
+from exo_core.models import TaggedModel
+from exo_core.utils.memory import Memory
 from loguru import logger
 from pydantic import ValidationError
 
-from exo.shared.constants import EXO_CONFIG_FILE, EXO_MODELS_DIR
-from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
@@ -28,7 +29,6 @@ from exo.shared.types.thunderbolt import (
     ThunderboltIdentifier,
 )
 from exo.utils.channels import Sender
-from exo.utils.pydantic_ext import TaggedModel
 from exo.utils.task_group import TaskGroup
 
 from .macmon import MacmonMetrics

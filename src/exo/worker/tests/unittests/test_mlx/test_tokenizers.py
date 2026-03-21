@@ -10,13 +10,14 @@ import contextlib
 from pathlib import Path
 
 import pytest
-
-from exo.download.download_utils import (
+from exo_core.model_cards import ModelCard, get_model_cards
+from exo_core.types.common import ModelId
+from exo_core.utils.downloads import (
     download_file_with_retry,
     ensure_models_dir,
     fetch_file_list_with_cache,
 )
-from exo.shared.models.model_cards import ModelCard, ModelId, get_model_cards
+
 from exo.worker.engines.mlx.utils_mlx import (
     get_eos_token_ids_for_model,
     load_tokenizer_for_model_id,

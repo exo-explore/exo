@@ -2,9 +2,13 @@ import copy
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 
+from exo_core.types.common import NodeId
+from exo_core.types.downloads import DownloadProgress
+from exo_core.types.instances import Instance, InstanceId
+from exo_core.types.runners import RunnerId, RunnerShutdown, RunnerStatus
+from exo_core.types.tasks import Task, TaskId, TaskStatus
 from loguru import logger
 
-from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -35,11 +39,7 @@ from exo.shared.types.profiling import (
     ThunderboltBridgeStatus,
 )
 from exo.shared.types.state import State
-from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
-from exo.shared.types.worker.downloads import DownloadProgress
-from exo.shared.types.worker.instances import Instance, InstanceId
-from exo.shared.types.worker.runners import RunnerId, RunnerShutdown, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import (
     MacmonMetrics,
     MacThunderboltConnections,

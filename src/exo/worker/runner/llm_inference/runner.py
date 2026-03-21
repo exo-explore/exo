@@ -9,38 +9,19 @@ from enum import Enum
 from typing import TYPE_CHECKING, Self
 
 from anyio import WouldBlock
-
-from exo.shared.models.model_cards import ModelTask
-from exo.shared.types.chunks import (
+from exo_core.model_cards import ModelTask
+from exo_core.types.chunks import (
     ErrorChunk,
     TokenChunk,
     ToolCallChunk,
 )
-from exo.shared.types.common import CommandId, ModelId
-from exo.shared.types.events import (
-    ChunkGenerated,
-    Event,
-    RunnerStatusUpdated,
-    TaskAcknowledged,
-    TaskStatusUpdated,
-)
-from exo.shared.types.mlx import Model
-from exo.shared.types.tasks import (
-    ConnectToGroup,
-    LoadModel,
-    Shutdown,
-    StartWarmup,
-    Task,
-    TaskId,
-    TaskStatus,
-    TextGeneration,
-)
-from exo.shared.types.worker.instances import BoundInstance
-from exo.shared.types.worker.runner_response import (
+from exo_core.types.common import CommandId, ModelId
+from exo_core.types.instances import BoundInstance
+from exo_core.types.runner_response import (
     GenerationResponse,
     ToolCallResponse,
 )
-from exo.shared.types.worker.runners import (
+from exo_core.types.runners import (
     RunnerConnected,
     RunnerConnecting,
     RunnerFailed,
@@ -54,6 +35,25 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
+from exo_core.types.tasks import (
+    ConnectToGroup,
+    LoadModel,
+    Shutdown,
+    StartWarmup,
+    Task,
+    TaskId,
+    TaskStatus,
+    TextGeneration,
+)
+
+from exo.shared.types.events import (
+    ChunkGenerated,
+    Event,
+    RunnerStatusUpdated,
+    TaskAcknowledged,
+    TaskStatusUpdated,
+)
+from exo.shared.types.mlx import Model
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.utils_mlx import (
@@ -544,7 +544,7 @@ class VllmBuilder(Builder):
         event_sender: MpSender[Event],
         cancel_receiver: MpReceiver[TaskId],
     ) -> Self:
-        from exo.shared.constants import EXO_MODELS_DIR
+        from exo_core.constants import EXO_MODELS_DIR
 
         mid = bound_instance.instance.shard_assignments.model_id
         return cls(
@@ -566,7 +566,7 @@ class VllmBuilder(Builder):
         on_timeout: Callable[[], None],
         on_layer_loaded: Callable[[int, int], None],
     ) -> None:
-        from exo.worker.engines.vllm.vllm_generator import load_vllm_engine
+        from vllm_engine.vllm_generator import load_vllm_engine
 
         self._engine, self._tool_parser, self._prefix_cache = load_vllm_engine(
             model_path=self.model_path,

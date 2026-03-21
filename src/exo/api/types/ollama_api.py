@@ -1,9 +1,8 @@
 import time
 from typing import Any, Literal
 
+from exo_core.model_cards import ModelId
 from pydantic import BaseModel, Field
-
-from exo.shared.models.model_cards import ModelId
 
 # https://github.com/ollama/ollama/blob/main/docs/api.md
 

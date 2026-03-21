@@ -1,9 +1,9 @@
 from typing import Self
 
+from exo_core.models import TaggedModel
 from pydantic import BaseModel
 
 from exo.shared.types.profiling import MemoryUsage, SystemPerformanceProfile
-from exo.utils.pydantic_ext import TaggedModel
 
 
 class _TempMetrics(BaseModel, extra="ignore"):

@@ -4,9 +4,9 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 import rustworkx as rx
+from exo_core.types.common import NodeId
 from pydantic import BaseModel, ConfigDict
 
-from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import (
     InterfaceType,
     NodeNetworkInfo,

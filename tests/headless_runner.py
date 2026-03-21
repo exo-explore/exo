@@ -2,10 +2,25 @@ import socket
 from typing import Literal
 
 import anyio
-from exo.shared.models.model_cards import ModelCard, ModelId
-from exo.shared.types.chunks import TokenChunk
-from exo.shared.types.common import Host, NodeId
-from exo.shared.types.tasks import (
+from exo_core.constants import EXO_MODELS_DIR
+from exo_core.model_cards import ModelCard, ModelId
+from exo_core.types.chunks import TokenChunk
+from exo_core.types.common import Host, NodeId
+from exo_core.types.instances import (
+    BoundInstance,
+    Instance,
+    InstanceId,
+    MlxJacclInstance,
+    MlxRingInstance,
+)
+from exo_core.types.runners import (
+    RunnerFailed,
+    RunnerId,
+    RunnerShutdown,
+    ShardAssignments,
+)
+from exo_core.types.shards import PipelineShardMetadata, TensorShardMetadata
+from exo_core.types.tasks import (
     ConnectToGroup,
     LoadModel,
     Shutdown,
@@ -13,21 +28,7 @@ from exo.shared.types.tasks import (
     Task,
     TextGeneration,
 )
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
-from exo.shared.types.worker.instances import (
-    BoundInstance,
-    Instance,
-    InstanceId,
-    MlxJacclInstance,
-    MlxRingInstance,
-)
-from exo.shared.types.worker.runners import (
-    RunnerFailed,
-    RunnerId,
-    RunnerShutdown,
-    ShardAssignments,
-)
-from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata
+from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
 from fastapi import FastAPI
 from fastapi.responses import Response, StreamingResponse
 from hypercorn import Config
@@ -35,7 +36,6 @@ from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType
 from loguru import logger
 from pydantic import BaseModel
 
-from exo.shared.constants import EXO_MODELS_DIR
 from exo.shared.types.commands import CommandId
 from exo.shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
 from exo.utils.channels import channel, mp_channel

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import mlx.core as mx
 import mlx.nn as nn
+from exo_core.types.shards import PipelineShardMetadata
 from mlx.nn.layers.distributed import (
     shard_inplace,
     shard_linear,
@@ -58,7 +59,6 @@ from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
 
 from exo.shared.logging import logger
-from exo.shared.types.worker.shards import PipelineShardMetadata
 
 if TYPE_CHECKING:
     from mlx_lm.models.cache import Cache

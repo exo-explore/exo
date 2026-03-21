@@ -4,16 +4,16 @@ from math import ceil
 from typing import Any, Optional, final
 
 import mlx.core as mx
+from exo_core.constants import EXO_TRACING_ENABLED
+from exo_core.types.shards import CfgShardMetadata, PipelineShardMetadata
 from mflux.models.common.config.config import Config
 from mflux.utils.exceptions import StopImageGenerationException
 from tqdm import tqdm
 
-from exo.shared.constants import EXO_TRACING_ENABLED
 from exo.shared.tracing import (
     clear_trace_buffer,
     trace,
 )
-from exo.shared.types.worker.shards import CfgShardMetadata, PipelineShardMetadata
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models.base import (
     ModelAdapter,

@@ -10,27 +10,9 @@ from anyio import (
     ClosedResourceError,
     to_thread,
 )
-from loguru import logger
-
-from exo.shared.types.chunks import ErrorChunk
-from exo.shared.types.events import (
-    ChunkGenerated,
-    Event,
-    RunnerStatusUpdated,
-    TaskAcknowledged,
-    TaskStatusUpdated,
-)
-from exo.shared.types.tasks import (
-    CANCEL_ALL_TASKS,
-    ImageEdits,
-    ImageGeneration,
-    Task,
-    TaskId,
-    TaskStatus,
-    TextGeneration,
-)
-from exo.shared.types.worker.instances import BoundInstance
-from exo.shared.types.worker.runners import (
+from exo_core.types.chunks import ErrorChunk
+from exo_core.types.instances import BoundInstance
+from exo_core.types.runners import (
     RunnerConnecting,
     RunnerFailed,
     RunnerIdle,
@@ -40,7 +22,25 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.shared.types.worker.shards import ShardMetadata
+from exo_core.types.shards import ShardMetadata
+from exo_core.types.tasks import (
+    CANCEL_ALL_TASKS,
+    ImageEdits,
+    ImageGeneration,
+    Task,
+    TaskId,
+    TaskStatus,
+    TextGeneration,
+)
+from loguru import logger
+
+from exo.shared.types.events import (
+    ChunkGenerated,
+    Event,
+    RunnerStatusUpdated,
+    TaskAcknowledged,
+    TaskStatusUpdated,
+)
 from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
 from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint

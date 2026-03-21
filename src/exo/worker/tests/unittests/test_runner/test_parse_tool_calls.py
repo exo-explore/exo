@@ -4,7 +4,8 @@ import json
 from collections.abc import Generator
 from typing import Any
 
-from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
+from exo_core.types.runner_response import GenerationResponse, ToolCallResponse
+
 from exo.worker.runner.llm_inference.model_output_parsers import parse_tool_calls
 from exo.worker.runner.llm_inference.tool_parsers import make_mlx_parser
 

@@ -1,4 +1,4 @@
-# pyright: reportAny=false, reportUnknownArgumentType=false, reportUnknownVariableType=false
+# pyright: reportAny=false
 
 from typing import Any, Self
 
@@ -42,7 +42,7 @@ class TaggedModel(CamelCaseModel):
     @model_validator(mode="wrap")
     @classmethod
     def _validate(cls, v: Any, handler: ValidatorFunctionWrapHandler) -> Self:
-        if isinstance(v, dict) and len(v) == 1 and cls.__name__ in v:
+        if isinstance(v, dict) and len(v) == 1 and cls.__name__ in v:  # pyright: ignore[reportUnknownArgumentType]
             return handler(v[cls.__name__])
 
         return handler(v)

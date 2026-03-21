@@ -1,17 +1,17 @@
 from datetime import datetime
 from typing import final
 
+from exo_core.models import CamelCaseModel, FrozenModel, TaggedModel
+from exo_core.types.chunks import GenerationChunk, InputImageChunk
+from exo_core.types.common import CommandId, Id, NodeId, SessionId, SystemId
+from exo_core.types.downloads import DownloadProgress
+from exo_core.types.instances import Instance, InstanceId
+from exo_core.types.runners import RunnerId, RunnerStatus
+from exo_core.types.tasks import Task, TaskId, TaskStatus
 from pydantic import Field
 
 from exo.shared.topology import Connection
-from exo.shared.types.chunks import GenerationChunk, InputImageChunk
-from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
-from exo.shared.types.tasks import Task, TaskId, TaskStatus
-from exo.shared.types.worker.downloads import DownloadProgress
-from exo.shared.types.worker.instances import Instance, InstanceId
-from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo
-from exo.utils.pydantic_ext import CamelCaseModel, FrozenModel, TaggedModel
 
 
 class EventId(Id):

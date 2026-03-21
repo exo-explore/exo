@@ -3,6 +3,24 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Sequence
 
+from exo_core.model_cards import ModelId
+from exo_core.types.common import NodeId
+from exo_core.types.downloads import (
+    DownloadOngoing,
+    DownloadProgress,
+)
+from exo_core.types.instances import (
+    Instance,
+    InstanceId,
+    InstanceMeta,
+    MlxJacclInstance,
+    MlxRingInstance,
+    VllmInstance,
+)
+from exo_core.types.shards import Sharding
+from exo_core.types.tasks import Task, TaskId, TaskStatus
+from exo_core.utils.memory import Memory
+
 from exo.master.placement_utils import (
     Cycle,
     filter_cycles_by_memory,
@@ -12,7 +30,6 @@ from exo.master.placement_utils import (
     get_shard_assignments,
     get_smallest_cycles,
 )
-from exo.shared.models.model_cards import ModelId
 from exo.shared.topology import Topology
 from exo.shared.types.commands import (
     CancelDownload,
@@ -21,29 +38,13 @@ from exo.shared.types.commands import (
     DownloadCommand,
     PlaceInstance,
 )
-from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     Event,
     InstanceCreated,
     InstanceDeleted,
     TaskStatusUpdated,
 )
-from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
-from exo.shared.types.tasks import Task, TaskId, TaskStatus
-from exo.shared.types.worker.downloads import (
-    DownloadOngoing,
-    DownloadProgress,
-)
-from exo.shared.types.worker.instances import (
-    Instance,
-    InstanceId,
-    InstanceMeta,
-    MlxJacclInstance,
-    MlxRingInstance,
-    VllmInstance,
-)
-from exo.shared.types.worker.shards import Sharding
 
 
 def random_ephemeral_port() -> int:

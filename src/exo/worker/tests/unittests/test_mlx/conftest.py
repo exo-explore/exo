@@ -9,14 +9,14 @@ from typing import Any, cast
 
 import mlx.core as mx
 import mlx.nn as nn
+from exo_core.constants import EXO_MODELS_DIR
+from exo_core.model_cards import ModelCard, ModelTask
+from exo_core.types.common import ModelId
+from exo_core.types.shards import PipelineShardMetadata, TensorShardMetadata
+from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo_core.utils.memory import Memory
 
-from exo.shared.constants import EXO_MODELS_DIR
-from exo.shared.models.model_cards import ModelCard, ModelTask
-from exo.shared.types.common import ModelId
-from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import Model
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
-from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata
 from exo.worker.engines.mlx.generator.generate import mlx_generate
 from exo.worker.engines.mlx.utils_mlx import apply_chat_template, shard_and_load
 

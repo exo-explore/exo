@@ -11,6 +11,8 @@ from anyio import (
     move_on_after,
     sleep_forever,
 )
+from exo_core.constants import EXO_NODE_ID_KEYPAIR
+from exo_core.models import CamelCaseModel
 from exo_pyo3_bindings import (
     AllQueuesFullError,
     Keypair,
@@ -22,9 +24,7 @@ from exo_pyo3_bindings import (
 from filelock import FileLock
 from loguru import logger
 
-from exo.shared.constants import EXO_NODE_ID_KEYPAIR
 from exo.utils.channels import Receiver, Sender, channel
-from exo.utils.pydantic_ext import CamelCaseModel
 from exo.utils.task_group import TaskGroup
 
 from .connection_message import ConnectionMessage

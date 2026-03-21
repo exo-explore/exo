@@ -8,36 +8,36 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 
 import torch
-from exo.shared.types.api import (
-    CompletionTokensDetails,
-    GenerationStats,
-    PromptTokensDetails,
-    Usage,
-)
-from exo.shared.types.common import ModelId
-from exo.shared.types.memory import Memory
-from exo.shared.types.tasks import TaskId
-from exo.shared.types.text_generation import TextGenerationTaskParams
-from exo.shared.types.worker.runner_response import GenerationResponse
-from exo.worker.engines.vllm.growable_cache import (
-    get_model_runner,
-    patch_vllm,
-    set_prefix_cache,
-)
-from exo.worker.engines.vllm.kv_cache import TorchKVCache
-from exo.worker.engines.vllm.prompt_format import (
-    format_vllm_prompt,
-    make_vllm_sampling_params,
-)
+from exo_core.types.common import ModelId
+from exo_core.types.runner_response import GenerationResponse
+from exo_core.types.tasks import TaskId
+from exo_core.types.text_generation import TextGenerationTaskParams
+from exo_core.utils.memory import Memory
 from vllm.engine.arg_utils import EngineArgs
 from vllm.sampling_params import SamplingParams
 from vllm.v1.engine.llm_engine import LLMEngine
 from vllm.v1.kv_cache_interface import KVCacheConfig
 
+from exo.api.types import (
+    CompletionTokensDetails,
+    GenerationStats,
+    PromptTokensDetails,
+    Usage,
+)
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.utils_mlx import get_eos_token_ids_for_model
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.tool_parsers import ToolParser, infer_tool_parser
+from vllm_engine.growable_cache import (
+    get_model_runner,
+    patch_vllm,
+    set_prefix_cache,
+)
+from vllm_engine.kv_cache import TorchKVCache
+from vllm_engine.prompt_format import (
+    format_vllm_prompt,
+    make_vllm_sampling_params,
+)
 
 
 def _build_layer_groups(kv_cache_config: KVCacheConfig) -> list[int]:

@@ -19,11 +19,11 @@ try:
 except ImportError:
     pass  # transformers < 5.0 or bytes_to_unicode not available
 
+from exo_core.model_cards import ModelId
 from mlx_lm.models.cache import KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 
 try:
@@ -34,26 +34,26 @@ import contextlib
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.utils import load_model
-from pydantic import RootModel
-
-from exo.download.download_utils import build_model_path
-from exo.shared.types.common import Host
-from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import Model
-from exo.shared.types.tasks import TaskId, TextGeneration
-from exo.shared.types.text_generation import TextGenerationTaskParams
-from exo.shared.types.worker.instances import (
+from exo_core.types.common import Host
+from exo_core.types.instances import (
     BoundInstance,
     MlxJacclInstance,
     MlxRingInstance,
 )
-from exo.shared.types.worker.shards import (
+from exo_core.types.shards import (
     CfgShardMetadata,
     PipelineShardMetadata,
     ShardMetadata,
     TensorShardMetadata,
 )
+from exo_core.types.tasks import TaskId, TextGeneration
+from exo_core.types.text_generation import TextGenerationTaskParams
+from exo_core.utils.downloads import build_model_path
+from exo_core.utils.memory import Memory
+from mlx_lm.utils import load_model
+from pydantic import RootModel
+
+from exo.shared.types.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import (
     LayerLoadedCallback,
     TimeoutCallback,

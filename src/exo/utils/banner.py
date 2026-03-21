@@ -3,7 +3,7 @@ import os
 import sys
 import webbrowser
 
-from exo.shared.constants import EXO_CONFIG_HOME
+from exo_core.constants import EXO_CONFIG_HOME
 
 logger = logging.getLogger(__name__)
 

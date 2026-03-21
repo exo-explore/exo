@@ -2,10 +2,11 @@ import json
 from collections.abc import Generator
 from typing import Any
 
-from exo.shared.types.worker.runner_response import (
+from exo_core.types.runner_response import (
     GenerationResponse,
     ToolCallResponse,
 )
+
 from exo.worker.engines.mlx.dsml_encoding import (
     ASSISTANT_TOKEN,
     BOS_TOKEN,

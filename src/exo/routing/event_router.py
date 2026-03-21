@@ -4,10 +4,10 @@ from random import random
 import anyio
 from anyio import BrokenResourceError, ClosedResourceError
 from anyio.abc import CancelScope
+from exo_core.types.common import SessionId, SystemId
 from loguru import logger
 
 from exo.shared.types.commands import ForwarderCommand, RequestEventLog
-from exo.shared.types.common import SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     EventId,

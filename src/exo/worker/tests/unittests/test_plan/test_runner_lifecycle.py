@@ -1,14 +1,15 @@
 from typing import Any
 
-import exo.worker.plan as plan_mod
-from exo.shared.types.tasks import Shutdown
-from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
-from exo.shared.types.worker.runners import (
+from exo_core.types.instances import BoundInstance, Instance, InstanceId
+from exo_core.types.runners import (
     RunnerFailed,
     RunnerId,
     RunnerReady,
     RunnerStatus,
 )
+from exo_core.types.tasks import Shutdown
+
+import exo.worker.plan as plan_mod
 from exo.worker.tests.constants import (
     INSTANCE_1_ID,
     MODEL_A_ID,

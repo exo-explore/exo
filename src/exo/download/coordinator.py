@@ -2,19 +2,26 @@ from dataclasses import dataclass, field
 
 import anyio
 from anyio import current_time
-from exo.shared.models.model_cards import ModelId, get_model_cards
-from exo.shared.types.common import NodeId
-from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
-from loguru import logger
-
-from exo.download.download_utils import (
+from exo_core.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
+from exo_core.model_cards import ModelId, get_model_cards
+from exo_core.types.common import NodeId
+from exo_core.types.downloads import (
+    DownloadCompleted,
+    DownloadFailed,
+    DownloadOngoing,
+    DownloadPending,
+    DownloadProgress,
+)
+from exo_core.types.shards import PipelineShardMetadata, ShardMetadata
+from exo_core.utils.downloads import (
     RepoDownloadProgress,
     delete_model,
     map_repo_download_progress_to_download_progress_data,
     resolve_model_in_path,
 )
+from loguru import logger
+
 from exo.download.shard_downloader import ShardDownloader
-from exo.shared.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
 from exo.shared.types.commands import (
     CancelDownload,
     DeleteDownload,
@@ -24,13 +31,6 @@ from exo.shared.types.commands import (
 from exo.shared.types.events import (
     Event,
     NodeDownloadProgress,
-)
-from exo.shared.types.worker.downloads import (
-    DownloadCompleted,
-    DownloadFailed,
-    DownloadOngoing,
-    DownloadPending,
-    DownloadProgress,
 )
 from exo.utils.channels import Receiver, Sender
 from exo.utils.task_group import TaskGroup

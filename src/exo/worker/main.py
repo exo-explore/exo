@@ -3,18 +3,29 @@ from datetime import datetime, timezone
 
 import anyio
 from anyio import fail_after
+from exo_core.model_cards import ModelId
+from exo_core.types.common import CommandId, NodeId, SystemId
+from exo_core.types.downloads import DownloadCompleted
+from exo_core.types.runners import RunnerId
+from exo_core.types.tasks import (
+    CancelTask,
+    CreateRunner,
+    DownloadModel,
+    ImageEdits,
+    Shutdown,
+    Task,
+    TaskStatus,
+)
+from exo_core.utils.downloads import resolve_model_in_path
 from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
-from exo.download.download_utils import resolve_model_in_path
 from exo.shared.apply import apply
-from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
     ForwarderCommand,
     ForwarderDownloadCommand,
     StartDownload,
 )
-from exo.shared.types.common import CommandId, NodeId, SystemId
 from exo.shared.types.events import (
     Event,
     IndexedEvent,
@@ -28,18 +39,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
-from exo.shared.types.tasks import (
-    CancelTask,
-    CreateRunner,
-    DownloadModel,
-    ImageEdits,
-    Shutdown,
-    Task,
-    TaskStatus,
-)
 from exo.shared.types.topology import Connection, SocketConnection
-from exo.shared.types.worker.downloads import DownloadCompleted
-from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable

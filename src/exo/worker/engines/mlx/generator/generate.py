@@ -5,6 +5,12 @@ from copy import deepcopy
 from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
+from exo_core.types.common import ModelId
+from exo_core.types.runner_response import (
+    GenerationResponse,
+)
+from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo_core.utils.memory import Memory
 from mlx_lm.generate import (
     maybe_quantize_kv_cache,
     stream_generate,
@@ -21,13 +27,7 @@ from exo.api.types import (
     TopLogprobItem,
     Usage,
 )
-from exo.shared.types.common import ModelId
-from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import MLXCacheType, Model
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
-from exo.shared.types.worker.runner_response import (
-    GenerationResponse,
-)
 from exo.worker.engines.mlx.auto_parallel import (
     PipelineFirstLayer,
     PipelineLastLayer,

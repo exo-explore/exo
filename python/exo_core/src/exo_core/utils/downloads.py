@@ -15,11 +15,8 @@ import aiofiles
 import aiofiles.os as aios
 import aiohttp
 import certifi
-from exo.shared.models.model_cards import ModelTask
-from exo.shared.types.common import ModelId
-from exo.shared.types.memory import Memory
-from exo.shared.types.worker.shards import ShardMetadata
 from huggingface_hub import (
+    model_info,
     snapshot_download,  # pyright: ignore[reportUnknownVariableType]
 )
 from loguru import logger
@@ -27,21 +24,25 @@ from pydantic import (
     TypeAdapter,
 )
 
-from exo.download.huggingface_utils import (
-    filter_repo_objects,
-    get_allow_patterns,
-    get_auth_headers,
-    get_hf_endpoint,
-    get_hf_token,
-)
-from exo.shared.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
-from exo.shared.types.worker.downloads import (
+from exo_core.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
+from exo_core.types.common import ModelId
+from exo_core.types.downloads import (
+    ConfigData,
     DownloadProgressData,
     FileListEntry,
     ModelSafetensorsIndex,
     RepoDownloadProgress,
     RepoFileDownloadProgress,
 )
+from exo_core.types.shards import ShardMetadata
+from exo_core.utils.huggingface import (
+    filter_repo_objects,
+    get_allow_patterns,
+    get_auth_headers,
+    get_hf_endpoint,
+    get_hf_token,
+)
+from exo_core.utils.memory import Memory
 
 
 class HuggingFaceAuthenticationError(Exception):
@@ -704,7 +705,9 @@ async def resolve_allow_patterns(shard: ShardMetadata) -> list[str]:
         return ["*"]
 
 
-def is_image_model(shard: ShardMetadata) -> bool:
+def _is_image_model(shard: ShardMetadata) -> bool:
+    from exo_core.model_cards import ModelTask
+
     tasks = shard.model_card.tasks
     return ModelTask.TextToImage in tasks or ModelTask.ImageToImage in tasks
 
@@ -762,7 +765,7 @@ async def download_shard(
 
     # For image models, skip root-level safetensors files since weights
     # are stored in component subdirectories (e.g., transformer/, vae/)
-    if is_image_model(shard):
+    if _is_image_model(shard):
         filtered_file_list = [
             f
             for f in filtered_file_list
@@ -881,3 +884,50 @@ async def download_shard(
         return target_dir / gguf.path, final_repo_progress
     else:
         return target_dir, final_repo_progress
+
+
+async def fetch_config_data(model_id: ModelId) -> ConfigData:
+    """Downloads and parses config.json for a model."""
+
+    target_dir = (await ensure_models_dir()) / model_id.normalize()
+    await aios.makedirs(target_dir, exist_ok=True)
+    config_path = await download_file_with_retry(
+        model_id,
+        "main",
+        "config.json",
+        target_dir,
+        lambda curr_bytes, total_bytes, is_renamed: logger.debug(
+            f"Downloading config.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
+        ),
+    )
+    async with aiofiles.open(config_path, "r") as f:
+        return ConfigData.model_validate_json(await f.read())
+
+
+async def fetch_safetensors_size(model_id: ModelId) -> Memory:
+    """Gets model size from safetensors index or falls back to HF API."""
+    target_dir = (await ensure_models_dir()) / model_id.normalize()
+    await aios.makedirs(target_dir, exist_ok=True)
+    try:
+        index_path = await download_file_with_retry(
+            model_id,
+            "main",
+            "model.safetensors.index.json",
+            target_dir,
+            lambda curr_bytes, total_bytes, is_renamed: logger.debug(
+                f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
+            ),
+        )
+        async with aiofiles.open(index_path, "r") as f:
+            index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
+
+        metadata = index_data.metadata
+        if metadata is not None:
+            return Memory.from_bytes(metadata.total_size)
+    except FileNotFoundError:
+        pass
+
+    info = model_info(model_id)
+    if info.safetensors is None:
+        raise ValueError(f"No safetensors info found for {model_id}")
+    return Memory.from_bytes(info.safetensors.total)

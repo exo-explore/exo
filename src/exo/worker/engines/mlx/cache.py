@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
 import psutil
+from exo_core.utils.memory import Memory
 from mlx_lm.models.cache import (
     ArraysCache,
     CacheList,
@@ -13,7 +14,6 @@ from mlx_lm.models.cache import (
 )
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType, MLXCacheType, Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
