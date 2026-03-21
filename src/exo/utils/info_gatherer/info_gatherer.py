@@ -567,5 +567,6 @@ class InfoGatherer:
                     f"MacMon failed with return code {e.returncode}: {stderr_msg}"
                 )
             except Exception as e:
-                logger.warning(f"Error in macmon monitor: {e}")
+                # Use repr(e) so empty-message exceptions (ClosedResourceError, etc.) still log their type
+                logger.warning(f"Error in macmon monitor: {type(e).__name__}: {e!r}")
             await anyio.sleep(self.macmon_interval)

@@ -42,6 +42,7 @@ from exo.worker.engines.mlx.cache import (
     encode_prompt,
     has_non_kv_caches,
     make_kv_cache,
+    snapkv_maybe_compress,
     snapshot_ssm_states,
 )
 from exo.worker.engines.mlx.constants import (
@@ -530,6 +531,11 @@ def mlx_generate(
         distributed_prompt_progress_callback,
     )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
+
+    # SnapKV: optionally compress the cache after prefill.
+    # Enabled when EXO_SNAPKV=1 and the prompt exceeds the configured threshold.
+    # Only plain KVCache layers are compressed; SSM/RotatingKVCache are untouched.
+    snapkv_maybe_compress(caches)
 
     # stream_generate starts from the last token
     last_token = prompt_tokens[-2:]

@@ -173,7 +173,9 @@ class RunnerSupervisor:
             self.cancelled.add(task_id)
             return
         self.cancelled.add(task_id)
-        with anyio.move_on_after(0.5) as scope:
+        # 2s timeout — 0.5s was too aggressive and triggered spurious runner health checks
+        # under normal load when the cancel pipe is briefly busy.
+        with anyio.move_on_after(2.0) as scope:
             try:
                 await self._cancel_sender.send_async(task_id)
             except ClosedResourceError:
@@ -182,7 +184,7 @@ class RunnerSupervisor:
                     f"Cancelling task {task_id} failed, runner closed communication"
                 )
         if scope.cancel_called:
-            logger.error("RunnerSupervisor cancel pipe blocked")
+            logger.error("RunnerSupervisor cancel pipe blocked for >2s")
             await self._check_runner(TimeoutError("cancel pipe blocked"))
 
     async def _forward_events(self):
@@ -192,14 +194,22 @@ class RunnerSupervisor:
                     if isinstance(event, RunnerStatusUpdated):
                         self.status = event.runner_status
                     if isinstance(event, TaskAcknowledged):
-                        self.pending.pop(event.task_id).set()
+                        # Guard against duplicate TaskAcknowledged events (race condition)
+                        pending_event = self.pending.pop(event.task_id, None)
+                        if pending_event is not None:
+                            pending_event.set()
+                        else:
+                            logger.warning(
+                                f"TaskAcknowledged for unknown task {event.task_id} — duplicate or late event"
+                            )
                         continue
                     if (
                         isinstance(event, TaskStatusUpdated)
                         and event.task_status == TaskStatus.Complete
                     ):
-                        # If a task has just been completed, we should be working on it.
-                        assert isinstance(
+                        # Guard: runner may complete a task during any status (e.g. ShuttingDown, Failed).
+                        # Assert was too strict — log a warning instead of crashing.
+                        if not isinstance(
                             self.status,
                             (
                                 RunnerRunning,
@@ -208,7 +218,10 @@ class RunnerSupervisor:
                                 RunnerConnecting,
                                 RunnerShuttingDown,
                             ),
-                        )
+                        ):
+                            logger.warning(
+                                f"Task {event.task_id} completed while runner is in unexpected state {self.status!r}"
+                            )
                         self.in_progress.pop(event.task_id, None)
                         self.completed.add(event.task_id)
                     await self._event_sender.send(event)

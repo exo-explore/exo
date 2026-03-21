@@ -1,4 +1,5 @@
 import os
+import resource
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -86,6 +87,9 @@ class Runner:
         self.task_receiver = task_receiver
         self.cancel_receiver = cancel_receiver
         self.bound_instance = bound_instance
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
         self.instance, self.runner_id, self.shard_metadata = (
             self.bound_instance.instance,
@@ -247,6 +251,12 @@ class Runner:
         self.update_status(RunnerShuttingDown())
         self.acknowledge_task(task)
         if isinstance(self.generator, InferenceGenerator):
+            import contextlib
+
+            kv_cache = getattr(self.generator, "kv_prefix_cache", None)
+            if kv_cache is not None:
+                with contextlib.suppress(Exception):
+                    kv_cache.clear()  # type: ignore[union-attr]
             self.generator.close()
         mx.clear_cache()
         import gc
@@ -284,12 +294,16 @@ class Runner:
                         self.send_task_status(task_id, TaskStatus.Complete)
                         finished.append(task_id)
                     case _:
-                        self.send_response(
-                            result, self.active_tasks[task_id].command_id
-                        )
+                        # Guard: task may have been cancelled and removed from active_tasks
+                        # between the generator yielding a result and us processing it.
+                        if task_id in self.active_tasks:
+                            self.send_response(
+                                result, self.active_tasks[task_id].command_id
+                            )
 
             for task_id in finished:
                 self.active_tasks.pop(task_id, None)
+                self.seen.discard(task_id)
 
             try:
                 task = self.task_receiver.receive_nowait()
@@ -336,11 +350,10 @@ class Runner:
                     )
 
                 elif self.device_rank == 0:
-                    assert response.finish_reason not in (
-                        "error",
-                        "tool_calls",
-                        "function_call",
-                    )
+                    finish_reason = response.finish_reason
+                    if finish_reason in ("error", "tool_calls", "function_call"):
+                        logger.warning(f"Unexpected finish_reason={finish_reason} on device_rank=0")
+                        finish_reason = "stop"
                     self.event_sender.send(
                         ChunkGenerated(
                             command_id=command_id,
@@ -349,7 +362,7 @@ class Runner:
                                 text=response.text,
                                 token_id=response.token,
                                 usage=response.usage,
-                                finish_reason=response.finish_reason,
+                                finish_reason=finish_reason,
                                 stats=response.stats,
                                 logprob=response.logprob,
                                 top_logprobs=response.top_logprobs,

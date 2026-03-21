@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+import time
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
+import numpy as np
 import psutil
 from mlx_lm.models.cache import (
     ArraysCache,
@@ -24,6 +27,54 @@ if TYPE_CHECKING:
     from exo.worker.engines.mlx.remote_cache_tier import RemoteCacheTierProtocol
 
 
+# ---------------------------------------------------------------------------
+# SnapKV constants
+# ---------------------------------------------------------------------------
+
+# Minimum prompt length (tokens) before SnapKV compression is attempted.
+SNAPKV_THRESHOLD: int = int(os.environ.get("EXO_SNAPKV_THRESHOLD", "2048"))
+
+# Tokens kept at the start of the prompt (system prompt anchor).
+SNAPKV_ANCHOR_TOKENS: int = int(os.environ.get("EXO_SNAPKV_ANCHOR", "64"))
+
+# Tokens always kept at the end (most-recent context window).
+SNAPKV_LOCAL_WINDOW: int = int(os.environ.get("EXO_SNAPKV_LOCAL_WINDOW", "256"))
+
+# Maximum number of "important" tokens from the middle band to retain.
+SNAPKV_MAX_CAPACITY_PROMPT: int = int(os.environ.get("EXO_SNAPKV_MAX_CAPACITY", "2048"))
+
+# Kernel size for average-pooling key scores before top-k selection.
+SNAPKV_POOLING_KERNEL_SIZE: int = int(os.environ.get("EXO_SNAPKV_KERNEL", "5"))
+
+# Master on/off switch — must set EXO_SNAPKV=1 to enable.
+_SNAPKV_ENABLED: bool = os.environ.get("EXO_SNAPKV", "0").strip() == "1"
+
+
+# ---------------------------------------------------------------------------
+# SnapKV runtime statistics accumulator
+# ---------------------------------------------------------------------------
+
+# Bytes per float32 element (keys and values both stored as float32).
+_BYTES_PER_ELEMENT: int = 4
+
+
+@dataclass
+class _SnapKVStats:
+    """Mutable accumulator for SnapKV compression statistics."""
+
+    tokens_before: int = field(default=0)
+    tokens_after: int = field(default=0)
+    compression_calls: int = field(default=0)
+    # Tracks *approximate* memory saved: tokens_removed * heads * head_dim * 2 (K+V) * bytes_per_elem.
+    # We use a simple heuristic here (layer count unknown at accumulation time)
+    # so memory_saved_bytes is computed from the token delta only.
+    memory_saved_bytes: int = field(default=0)
+
+
+_SNAPKV_STATS: _SnapKVStats = _SnapKVStats()
+
+
+# ---------------------------------------------------------------------------
 # Fraction of device memory above which LRU eviction kicks in.
 # Smaller machines need more aggressive eviction.
 def _default_memory_threshold() -> float:
@@ -273,6 +324,395 @@ class KVPrefixCache:
         # .item() evals.
         max_pressure = float(mx.max(all_pressure).item())
         return max_pressure
+
+
+def compress_kv_cache(
+    cache: KVCacheType,
+    threshold: int = 2048,
+    anchor_tokens: int = 64,
+    recent_tokens: int = 512,
+    important_tokens: int = 512,
+) -> int:
+    """SnapKV-style KV cache compression.
+
+    When the cache exceeds *threshold* tokens, it is compressed to at most
+    ``anchor_tokens + recent_tokens + important_tokens`` tokens by:
+
+    1. Keeping the first ``anchor_tokens`` positions (prompt anchor).
+    2. Keeping the last ``recent_tokens`` positions (recent context).
+    3. Scoring each remaining position by the L2-norm of its key vectors
+       (averaged across heads and batch), then keeping the top
+       ``important_tokens`` scoring positions.
+
+    Only plain :class:`KVCache` layers are compressed; ``QuantizedKVCache``,
+    ``RotatingKVCache``, and ``ArraysCache`` layers are left untouched because
+    their internal invariants differ.  The function is a no-op when the cache
+    length is at or below *threshold*.
+
+    Returns the new cache length after compression (or the original length if
+    compression was skipped).
+    """
+    current_length = cache_length(cache)
+    if current_length <= threshold:
+        return current_length
+
+    budget = anchor_tokens + recent_tokens + important_tokens
+    if current_length <= budget:
+        return current_length
+
+    # Middle band start: everything after the anchor is a candidate.
+    middle_start = anchor_tokens
+
+    for layer_cache in cache:
+        if not isinstance(layer_cache, KVCache):
+            # Skip non-plain caches — their invariants differ.
+            continue
+        # KVCache.keys starts as None at runtime despite the stub type being mx.array.
+        # getattr with sentinel is the only way to check without a type-ignore.
+        layer_keys = getattr(layer_cache, "keys", None)
+        layer_values = getattr(layer_cache, "values", None)
+        if not isinstance(layer_keys, mx.array) or not isinstance(
+            layer_values, mx.array
+        ):
+            continue
+
+        effective_length = layer_cache.offset
+        if effective_length <= threshold:
+            continue
+
+        keys = layer_keys[..., :effective_length, :]  # (B, H, T, D)
+        values = layer_values[..., :effective_length, :]
+
+        # --- Build the index set of tokens to keep ---
+        anchor_idx = mx.arange(anchor_tokens)
+        recent_start = effective_length - recent_tokens
+        recent_idx = mx.arange(recent_start, effective_length)
+
+        mid_end = effective_length - recent_tokens
+        mid_len = mid_end - middle_start
+
+        if mid_len > 0 and important_tokens > 0:
+            mid_keys = keys[..., middle_start:mid_end, :]  # (B, H, mid_len, D)
+            # Score = mean L2-norm across batch and heads → shape (mid_len,)
+            scores = mx.mean(
+                mx.sqrt(mx.sum(mid_keys * mid_keys, axis=-1)),
+                axis=(0, 1),
+            )  # (mid_len,)
+            mx.eval(scores)
+            scores_list = cast(list[float], scores.tolist())
+            # Top-k indices within the middle band
+            k = min(important_tokens, mid_len)
+            top_local = sorted(range(mid_len), key=lambda i: scores_list[i], reverse=True)[:k]
+            top_local_sorted = sorted(top_local)
+            important_idx = mx.array([middle_start + i for i in top_local_sorted])
+        else:
+            important_idx = mx.array([], dtype=mx.int32)
+
+        # Concatenate all kept indices (already sorted: anchor < important < recent)
+        if len(important_idx) > 0:
+            keep_idx = mx.concatenate([anchor_idx, important_idx, recent_idx])
+        else:
+            keep_idx = mx.concatenate([anchor_idx, recent_idx])
+
+        mx.eval(keep_idx)
+        new_len = int(keep_idx.shape[0])
+
+        # Gather selected keys and values along the sequence axis.
+        new_keys = keys[..., keep_idx, :]  # (B, H, new_len, D)
+        new_values = values[..., keep_idx, :]
+        mx.eval(new_keys, new_values)
+
+        layer_cache.keys = new_keys
+        layer_cache.values = new_values
+        layer_cache.offset = new_len
+
+    new_length = cache_length(cache)
+    logger.info(
+        f"KV cache compressed: {current_length} → {new_length} tokens "
+        f"(anchor={anchor_tokens}, important={important_tokens}, recent={recent_tokens})"
+    )
+    return new_length
+
+
+def snapkv_compress(
+    cache: KVCacheType,
+    *,
+    threshold: int = SNAPKV_THRESHOLD,
+    anchor_tokens: int = SNAPKV_ANCHOR_TOKENS,
+    local_window: int = SNAPKV_LOCAL_WINDOW,
+    max_capacity_prompt: int = SNAPKV_MAX_CAPACITY_PROMPT,
+    pooling_kernel_size: int = SNAPKV_POOLING_KERNEL_SIZE,
+) -> int:
+    """SnapKV-style KV cache compression with average-pooling score smoothing.
+
+    Identical to :func:`compress_kv_cache` but applies a sliding-window
+    average-pool over neighbouring positions (kernel size = *pooling_kernel_size*)
+    before the top-k selection step.  This matches the smoothing strategy in the
+    original SnapKV paper and avoids keeping isolated high-norm "spike" positions
+    that carry little semantic weight.
+
+    Parameters
+    ----------
+    cache:
+        The KV cache to compress in-place.
+    threshold:
+        Minimum cache length before compression is attempted.
+    anchor_tokens:
+        Number of leading tokens always kept (system prompt anchor).
+    local_window:
+        Number of trailing tokens always kept (recency window).
+    max_capacity_prompt:
+        Maximum number of "important" middle-band tokens to keep.
+    pooling_kernel_size:
+        Width of the average-pooling kernel applied to per-position L2-norm
+        scores before top-k selection.  Must be >= 1.  When 1 this function
+        is equivalent to :func:`compress_kv_cache`.
+
+    Returns
+    -------
+    int
+        New cache length (unchanged if compression was skipped).
+    """
+    current_length = cache_length(cache)
+    if current_length <= threshold:
+        return current_length
+
+    budget = anchor_tokens + local_window + max_capacity_prompt
+    if current_length <= budget:
+        return current_length
+
+    kernel = max(1, pooling_kernel_size)
+    middle_start = anchor_tokens
+
+    for layer_cache in cache:
+        if not isinstance(layer_cache, KVCache):
+            # Skip QuantizedKVCache, RotatingKVCache, ArraysCache — their
+            # internal invariants differ from plain KVCache.
+            continue
+
+        layer_keys = getattr(layer_cache, "keys", None)
+        layer_values = getattr(layer_cache, "values", None)
+        if not isinstance(layer_keys, mx.array) or not isinstance(layer_values, mx.array):
+            continue
+
+        effective_length = layer_cache.offset
+        if effective_length <= threshold:
+            continue
+
+        keys = layer_keys[..., :effective_length, :]  # (B, H, T, D)
+        values = layer_values[..., :effective_length, :]
+
+        mid_end = effective_length - local_window
+        mid_len = mid_end - middle_start
+
+        # Work in numpy for scoring and gathering to avoid Metal fancy-index
+        # kernel compilation issues on some macOS versions.
+        keys_np: np.ndarray[tuple[int, ...], np.dtype[np.float32]] = np.array(
+            keys, dtype=np.float32
+        )  # (B, H, T, D)
+        values_np: np.ndarray[tuple[int, ...], np.dtype[np.float32]] = np.array(
+            values, dtype=np.float32
+        )
+
+        anchor_keys_np: np.ndarray[tuple[int, ...], np.dtype[np.float32]] = (
+            keys_np[..., :anchor_tokens, :]
+        )
+        anchor_values_np: np.ndarray[tuple[int, ...], np.dtype[np.float32]] = (
+            values_np[..., :anchor_tokens, :]
+        )
+        recent_keys_np: np.ndarray[tuple[int, ...], np.dtype[np.float32]] = (
+            keys_np[..., (effective_length - local_window):, :]
+        )
+        recent_values_np: np.ndarray[tuple[int, ...], np.dtype[np.float32]] = (
+            values_np[..., (effective_length - local_window):, :]
+        )
+
+        if mid_len > 0 and max_capacity_prompt > 0:
+            mid_keys_np: np.ndarray[tuple[int, ...], np.dtype[np.float32]] = (
+                keys_np[..., middle_start:mid_end, :]  # (B, H, mid_len, D)
+            )
+            # L2-norm per position, averaged across batch and heads → (mid_len,)
+            # cast() is needed because numpy ufunc stubs return Any.
+            squared_sum = cast(
+                np.ndarray[tuple[int, ...], np.dtype[np.float32]],
+                np.sum(mid_keys_np * mid_keys_np, axis=-1),
+            )
+            norms = cast(
+                np.ndarray[tuple[int, ...], np.dtype[np.float32]],
+                np.sqrt(squared_sum),
+            )
+            raw_scores_np = cast(
+                np.ndarray[tuple[int, ...], np.dtype[np.float32]],
+                np.mean(norms, axis=(0, 1)),
+            )
+            scores_list: list[float] = [float(v) for v in raw_scores_np.ravel()]
+
+            # Average-pool with a sliding window to smooth isolated spikes.
+            if kernel > 1 and mid_len >= kernel:
+                half = kernel // 2
+                smoothed: list[float] = []
+                for position in range(mid_len):
+                    lo = max(0, position - half)
+                    hi = min(mid_len, position + half + 1)
+                    window_scores = scores_list[lo:hi]
+                    smoothed.append(sum(window_scores) / len(window_scores))
+            else:
+                smoothed = scores_list
+
+            k = min(max_capacity_prompt, mid_len)
+            top_local = sorted(range(mid_len), key=lambda i: smoothed[i], reverse=True)[:k]
+            top_local_sorted = sorted(top_local)
+
+            mid_keys_selected: np.ndarray[tuple[int, ...], np.dtype[np.float32]] = (
+                mid_keys_np[..., top_local_sorted, :]
+            )
+            mid_vals_band: np.ndarray[tuple[int, ...], np.dtype[np.float32]] = (
+                values_np[..., middle_start:mid_end, :]
+            )
+            mid_values_np: np.ndarray[tuple[int, ...], np.dtype[np.float32]] = (
+                mid_vals_band[..., top_local_sorted, :]
+            )
+            new_keys_np: np.ndarray[tuple[int, ...], np.dtype[np.float32]] = np.concatenate(
+                [anchor_keys_np, mid_keys_selected, recent_keys_np], axis=-2
+            )
+            new_values_np: np.ndarray[tuple[int, ...], np.dtype[np.float32]] = np.concatenate(
+                [anchor_values_np, mid_values_np, recent_values_np], axis=-2
+            )
+        else:
+            new_keys_np = np.concatenate([anchor_keys_np, recent_keys_np], axis=-2)
+            new_values_np = np.concatenate([anchor_values_np, recent_values_np], axis=-2)
+
+        new_len = int(new_keys_np.shape[-2])
+        layer_cache.keys = mx.array(new_keys_np)
+        layer_cache.values = mx.array(new_values_np)
+        layer_cache.offset = new_len
+
+    new_length = cache_length(cache)
+    logger.info(
+        f"SnapKV compressed: {current_length} → {new_length} tokens "
+        f"(anchor={anchor_tokens}, important={max_capacity_prompt}, "
+        f"local_window={local_window}, kernel={kernel})"
+    )
+    return new_length
+
+
+def snapkv_maybe_compress(cache: KVCacheType) -> int:
+    """Apply SnapKV compression when EXO_SNAPKV=1 and the cache is long enough.
+
+    This is the single call-site integration point: call it immediately after
+    prefill completes.  Returns the new cache length (unchanged if disabled or
+    below the threshold).
+
+    Side-effect: updates the module-level :data:`_SNAPKV_STATS` accumulator.
+    """
+    if not _SNAPKV_ENABLED:
+        return cache_length(cache)
+
+    length_before = cache_length(cache)
+    length_after = snapkv_compress(cache)
+
+    if length_before > length_after:
+        tokens_removed = length_before - length_after
+        # Heuristic memory estimate: 2 (K+V) × float32 bytes × removed tokens.
+        # Head count and head-dim are not available here without the model, so
+        # we conservatively use 1 as a multiplier (callers may scale separately).
+        _SNAPKV_STATS.tokens_before += length_before
+        _SNAPKV_STATS.tokens_after += length_after
+        _SNAPKV_STATS.compression_calls += 1
+        _SNAPKV_STATS.memory_saved_bytes += tokens_removed * 2 * _BYTES_PER_ELEMENT
+
+    return length_after
+
+
+def snapkv_stats() -> dict[str, float | int]:
+    """Return a snapshot of SnapKV compression statistics since process start.
+
+    Returns a plain dict with the following keys:
+
+    * ``compression_ratio`` – ratio of tokens retained to tokens originally
+      seen (lower is better compression).  ``1.0`` if no compression has
+      occurred yet.
+    * ``tokens_processed`` – total number of input tokens seen across all
+      compression calls.
+    * ``tokens_retained`` – total output tokens after compression.
+    * ``compression_calls`` – number of times compression was triggered.
+    * ``memory_saved_mb`` – approximate device-memory saved in MiB based on
+      a heuristic of 2 × float32 bytes per removed token position.  This is a
+      *lower bound*; actual savings scale with number of layers, heads, and
+      head dimension.
+    """
+    s = _SNAPKV_STATS
+    ratio = (s.tokens_after / s.tokens_before) if s.tokens_before > 0 else 1.0
+    memory_saved_mb = s.memory_saved_bytes / (1024 * 1024)
+    return {
+        "compression_ratio": ratio,
+        "tokens_processed": s.tokens_before,
+        "tokens_retained": s.tokens_after,
+        "compression_calls": s.compression_calls,
+        "memory_saved_mb": memory_saved_mb,
+    }
+
+
+def snapkv_benchmark(seq_len: int = 16384) -> dict[str, float]:
+    """Measure SnapKV compression time and approximate memory delta.
+
+    Constructs a synthetic single-layer KV cache of *seq_len* tokens (float32,
+    1 batch, 32 heads, 128 head-dim), runs :func:`snapkv_compress` once, and
+    reports wall-clock time and the memory-usage delta measured via
+    ``psutil``.
+
+    Parameters
+    ----------
+    seq_len:
+        Number of tokens in the synthetic cache.  Default 16 384.
+
+    Returns
+    -------
+    dict with keys:
+        * ``seq_len`` – the requested sequence length.
+        * ``new_len`` – compressed length in tokens.
+        * ``compression_ratio`` – ``new_len / seq_len``.
+        * ``elapsed_seconds`` – wall-clock time for the compress call.
+        * ``rss_before_mb`` – RSS before compression (MiB).
+        * ``rss_after_mb`` – RSS after compression (MiB).
+        * ``rss_delta_mb`` – RSS change (positive = memory freed).
+    """
+    batch_size = 1
+    num_heads = 32
+    head_dim = 128
+    shape = (batch_size, num_heads, seq_len, head_dim)
+
+    # Build a synthetic single-layer cache.
+    synthetic_cache: KVCache = KVCache()
+    synthetic_cache.keys = mx.random.normal(shape).astype(mx.float32)
+    synthetic_cache.values = mx.random.normal(shape).astype(mx.float32)
+    synthetic_cache.offset = seq_len
+    mx.eval(synthetic_cache.keys, synthetic_cache.values)
+
+    cache: KVCacheType = [synthetic_cache]
+
+    process = psutil.Process()
+    rss_before = process.memory_info().rss
+
+    start = time.perf_counter()
+    new_len = snapkv_compress(cache, threshold=0)  # threshold=0 forces compression
+    elapsed = time.perf_counter() - start
+
+    rss_after = process.memory_info().rss
+
+    rss_before_mb = rss_before / (1024 * 1024)
+    rss_after_mb = rss_after / (1024 * 1024)
+    rss_delta_mb = (rss_before - rss_after) / (1024 * 1024)
+
+    return {
+        "seq_len": float(seq_len),
+        "new_len": float(new_len),
+        "compression_ratio": new_len / seq_len if seq_len > 0 else 1.0,
+        "elapsed_seconds": elapsed,
+        "rss_before_mb": rss_before_mb,
+        "rss_after_mb": rss_after_mb,
+        "rss_delta_mb": rss_delta_mb,
+    }
 
 
 def trim_cache(
