@@ -384,9 +384,9 @@ class Args(CamelCaseModel):
         parser.add_argument(
             "--libp2p-port",
             type=int,
-            default=None,
+            default=0,
             dest="libp2p_port",
-            help="Fixed TCP port for libp2p to listen on. If not set, the OS assigns a random port.",
+            help="Fixed TCP port for libp2p to listen on (0 = OS-assigned).",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
         fast_synch_group.add_argument(

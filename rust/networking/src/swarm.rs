@@ -144,13 +144,13 @@ fn filter_swarm_event(event: SwarmEvent<BehaviourEvent>) -> Option<FromSwarm> {
 
 /// Create and configure a swarm.
 ///
-/// - `listen_port`: TCP port to listen on. `None` lets the OS assign one (tcp/0).
+/// - `listen_port`: TCP port to listen on. `0` lets the OS assign one.
 /// - `bootstrap_peers`: multiaddrs to dial for environments without mDNS.
 pub fn create_swarm(
     keypair: identity::Keypair,
     from_client: mpsc::Receiver<ToSwarm>,
     bootstrap_peers: Vec<String>,
-    listen_port: Option<u16>,
+    listen_port: u16,
 ) -> alias::AnyResult<Swarm> {
     let parsed_bootstrap_peers: Vec<libp2p::Multiaddr> = bootstrap_peers
         .iter()
@@ -164,8 +164,7 @@ pub fn create_swarm(
         .with_behaviour(|keypair| Behaviour::new(keypair, parsed_bootstrap_peers))?
         .build();
 
-    let port = listen_port.unwrap_or(0);
-    swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{port}").parse()?)?;
+    swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{listen_port}").parse()?)?;
     Ok(Swarm { swarm, from_client })
 }
 

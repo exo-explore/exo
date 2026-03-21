@@ -180,11 +180,11 @@ impl PyNetworkingHandle {
     // ---- Lifecycle management methods ----
 
     #[new]
-    #[pyo3(signature = (identity, bootstrap_peers=vec![], listen_port=None))]
+    #[pyo3(signature = (identity, bootstrap_peers, listen_port))]
     fn py_new(
         identity: Bound<'_, PyKeypair>,
         bootstrap_peers: Vec<String>,
-        listen_port: Option<u16>,
+        listen_port: u16,
     ) -> PyResult<Self> {
         // create communication channels
         let (to_swarm, from_client) = mpsc::channel(MPSC_CHANNEL_SIZE);
