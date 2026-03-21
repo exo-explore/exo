@@ -9,7 +9,7 @@ from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType
 from loguru import logger
 from pydantic import BaseModel
 
-from exo.shared.constants import EXO_MODELS_DIR
+from exo.shared.constants import EXO_DEFAULT_MODELS_DIR
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.commands import CommandId
@@ -90,7 +90,7 @@ async def tb_detection():
 
 def list_models():
     sent = set[str]()
-    for path in EXO_MODELS_DIR.rglob("model-*.safetensors"):
+    for path in EXO_DEFAULT_MODELS_DIR.rglob("model-*.safetensors"):
         if "--" not in path.parent.name:
             continue
         name = path.parent.name.replace("--", "/")

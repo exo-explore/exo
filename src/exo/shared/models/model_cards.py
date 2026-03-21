@@ -230,11 +230,10 @@ async def fetch_config_data(model_id: ModelId) -> ConfigData:
     """Downloads and parses config.json for a model."""
     from exo.download.download_utils import (
         download_file_with_retry,
-        ensure_models_dir,
+        resolve_model_dir,
     )
 
-    target_dir = (await ensure_models_dir()) / model_id.normalize()
-    await aios.makedirs(target_dir, exist_ok=True)
+    target_dir = await resolve_model_dir(model_id)
     config_path = await download_file_with_retry(
         model_id,
         "main",
@@ -252,12 +251,11 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
     """Gets model size from safetensors index or falls back to HF API."""
     from exo.download.download_utils import (
         download_file_with_retry,
-        ensure_models_dir,
+        resolve_model_dir,
     )
     from exo.shared.types.worker.downloads import ModelSafetensorsIndex
 
-    target_dir = (await ensure_models_dir()) / model_id.normalize()
-    await aios.makedirs(target_dir, exist_ok=True)
+    target_dir = await resolve_model_dir(model_id)
     index_path = await download_file_with_retry(
         model_id,
         "main",

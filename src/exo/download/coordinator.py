@@ -1,17 +1,21 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import anyio
-from anyio import current_time
+from anyio import current_time, to_thread
 from loguru import logger
 
 from exo.download.download_utils import (
     RepoDownloadProgress,
     delete_model,
+    is_read_only_model_dir,
     map_repo_download_progress_to_download_progress_data,
-    resolve_model_in_path,
+    resolve_existing_model,
 )
 from exo.download.shard_downloader import ShardDownloader
-from exo.shared.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
+from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_MODELS_READ_ONLY_DIRS
 from exo.shared.models.model_cards import ModelId, get_model_cards
 from exo.shared.types.commands import (
     CancelDownload,
@@ -24,6 +28,7 @@ from exo.shared.types.events import (
     Event,
     NodeDownloadProgress,
 )
+from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadFailed,
@@ -56,8 +61,23 @@ class DownloadCoordinator:
     def __post_init__(self) -> None:
         self.shard_downloader.on_progress(self._download_progress_callback)
 
-    def _model_dir(self, model_id: ModelId) -> str:
-        return str(EXO_MODELS_DIR / model_id.normalize())
+    @staticmethod
+    def _default_model_dir(model_id: ModelId) -> str:
+        return str(EXO_DEFAULT_MODELS_DIR / model_id.normalize())
+
+    def _completed_from_path(
+        self,
+        shard: ShardMetadata,
+        found: Path,
+        total: Memory,
+    ) -> DownloadCompleted:
+        return DownloadCompleted(
+            shard_metadata=shard,
+            node_id=self.node_id,
+            total=total,
+            model_directory=str(found),
+            read_only=is_read_only_model_dir(found),
+        )
 
     async def _download_progress_callback(
         self, callback_shard: ShardMetadata, progress: RepoDownloadProgress
@@ -66,12 +86,18 @@ class DownloadCoordinator:
         throttle_interval_secs = 1.0
 
         if progress.status == "complete":
-            completed = DownloadCompleted(
-                shard_metadata=callback_shard,
-                node_id=self.node_id,
-                total=progress.total,
-                model_directory=self._model_dir(model_id),
-            )
+            found = await to_thread.run_sync(lambda: resolve_existing_model(model_id))
+            if found is not None:
+                completed = self._completed_from_path(
+                    callback_shard, found, progress.total
+                )
+            else:
+                completed = DownloadCompleted(
+                    shard_metadata=callback_shard,
+                    node_id=self.node_id,
+                    total=progress.total,
+                    model_directory=self._default_model_dir(model_id),
+                )
             self.download_status[model_id] = completed
             await self.event_sender.send(
                 NodeDownloadProgress(download_progress=completed)
@@ -88,7 +114,7 @@ class DownloadCoordinator:
                 download_progress=map_repo_download_progress_to_download_progress_data(
                     progress
                 ),
-                model_directory=self._model_dir(model_id),
+                model_directory=self._default_model_dir(model_id),
             )
             self.download_status[model_id] = ongoing
             await self.event_sender.send(
@@ -130,7 +156,7 @@ class DownloadCoordinator:
             pending = DownloadPending(
                 shard_metadata=current_status.shard_metadata,
                 node_id=self.node_id,
-                model_directory=self._model_dir(model_id),
+                model_directory=self._default_model_dir(model_id),
             )
             self.download_status[model_id] = pending
             await self.event_sender.send(
@@ -149,18 +175,12 @@ class DownloadCoordinator:
                 )
                 return
 
-        # Check EXO_MODELS_PATH for pre-downloaded models
-        found_path = resolve_model_in_path(model_id)
+        # Check all model directories for pre-existing complete models
+        found_path = await to_thread.run_sync(lambda: resolve_existing_model(model_id))
         if found_path is not None:
-            logger.info(
-                f"DownloadCoordinator: Model {model_id} found in EXO_MODELS_PATH at {found_path}"
-            )
-            completed = DownloadCompleted(
-                shard_metadata=shard,
-                node_id=self.node_id,
-                total=shard.model_card.storage_size,
-                model_directory=str(found_path),
-                read_only=True,
+            logger.info(f"DownloadCoordinator: Model {model_id} found at {found_path}")
+            completed = self._completed_from_path(
+                shard, found_path, shard.model_card.storage_size
             )
             self.download_status[model_id] = completed
             await self.event_sender.send(
@@ -172,7 +192,7 @@ class DownloadCoordinator:
         progress = DownloadPending(
             shard_metadata=shard,
             node_id=self.node_id,
-            model_directory=self._model_dir(model_id),
+            model_directory=self._default_model_dir(model_id),
         )
         self.download_status[model_id] = progress
         await self.event_sender.send(NodeDownloadProgress(download_progress=progress))
@@ -183,12 +203,18 @@ class DownloadCoordinator:
         )
 
         if initial_progress.status == "complete":
-            completed = DownloadCompleted(
-                shard_metadata=shard,
-                node_id=self.node_id,
-                total=initial_progress.total,
-                model_directory=self._model_dir(model_id),
-            )
+            found = await to_thread.run_sync(lambda: resolve_existing_model(model_id))
+            if found is not None:
+                completed = self._completed_from_path(
+                    shard, found, initial_progress.total
+                )
+            else:
+                completed = DownloadCompleted(
+                    shard_metadata=shard,
+                    node_id=self.node_id,
+                    total=initial_progress.total,
+                    model_directory=self._default_model_dir(model_id),
+                )
             self.download_status[model_id] = completed
             await self.event_sender.send(
                 NodeDownloadProgress(download_progress=completed)
@@ -203,7 +229,7 @@ class DownloadCoordinator:
                 shard_metadata=shard,
                 node_id=self.node_id,
                 error_message=f"Model files not found locally in offline mode: {model_id}",
-                model_directory=self._model_dir(model_id),
+                model_directory=self._default_model_dir(model_id),
             )
             self.download_status[model_id] = failed
             await self.event_sender.send(NodeDownloadProgress(download_progress=failed))
@@ -224,7 +250,7 @@ class DownloadCoordinator:
             download_progress=map_repo_download_progress_to_download_progress_data(
                 initial_progress
             ),
-            model_directory=self._model_dir(model_id),
+            model_directory=self._default_model_dir(model_id),
         )
         self.download_status[model_id] = status
         self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
@@ -239,7 +265,7 @@ class DownloadCoordinator:
                     shard_metadata=shard,
                     node_id=self.node_id,
                     error_message=str(e),
-                    model_directory=self._model_dir(model_id),
+                    model_directory=self._default_model_dir(model_id),
                 )
                 self.download_status[model_id] = failed
                 await self.event_sender.send(
@@ -256,13 +282,11 @@ class DownloadCoordinator:
         self.active_downloads[model_id] = scope
 
     async def _delete_download(self, model_id: ModelId) -> None:
-        # Protect read-only models (from EXO_MODELS_PATH) from deletion
+        # Protect read-only models from deletion
         if model_id in self.download_status:
             current = self.download_status[model_id]
             if isinstance(current, DownloadCompleted) and current.read_only:
-                logger.warning(
-                    f"Refusing to delete read-only model {model_id} (from EXO_MODELS_PATH)"
-                )
+                logger.warning(f"Refusing to delete read-only model {model_id}")
                 return
 
         # Cancel if active
@@ -285,7 +309,7 @@ class DownloadCoordinator:
             pending = DownloadPending(
                 shard_metadata=current_status.shard_metadata,
                 node_id=self.node_id,
-                model_directory=self._model_dir(model_id),
+                model_directory=self._default_model_dir(model_id),
             )
             await self.event_sender.send(
                 NodeDownloadProgress(download_progress=pending)
@@ -309,22 +333,26 @@ class DownloadCoordinator:
                         continue
 
                     if progress.status == "complete":
-                        status: DownloadProgress = DownloadCompleted(
-                            node_id=self.node_id,
-                            shard_metadata=progress.shard,
-                            total=progress.total,
-                            model_directory=self._model_dir(
-                                progress.shard.model_card.model_id
-                            ),
+                        found = await to_thread.run_sync(
+                            lambda mid=model_id: resolve_existing_model(mid)
                         )
+                        if found is not None:
+                            status: DownloadProgress = self._completed_from_path(
+                                progress.shard, found, progress.total
+                            )
+                        else:
+                            status = DownloadCompleted(
+                                node_id=self.node_id,
+                                shard_metadata=progress.shard,
+                                total=progress.total,
+                                model_directory=self._default_model_dir(model_id),
+                            )
                     elif progress.status in ["in_progress", "not_started"]:
                         if progress.downloaded_this_session.in_bytes == 0:
                             status = DownloadPending(
                                 node_id=self.node_id,
                                 shard_metadata=progress.shard,
-                                model_directory=self._model_dir(
-                                    progress.shard.model_card.model_id
-                                ),
+                                model_directory=self._default_model_dir(model_id),
                                 downloaded=progress.downloaded,
                                 total=progress.total,
                             )
@@ -335,9 +363,7 @@ class DownloadCoordinator:
                                 download_progress=map_repo_download_progress_to_download_progress_data(
                                     progress
                                 ),
-                                model_directory=self._model_dir(
-                                    progress.shard.model_card.model_id
-                                ),
+                                model_directory=self._default_model_dir(model_id),
                             )
                     else:
                         continue
@@ -346,8 +372,8 @@ class DownloadCoordinator:
                     await self.event_sender.send(
                         NodeDownloadProgress(download_progress=status)
                     )
-                # Scan EXO_MODELS_PATH for pre-downloaded models
-                if EXO_MODELS_PATH is not None:
+                # Scan read-only directories for pre-downloaded models
+                if EXO_MODELS_READ_ONLY_DIRS:
                     for card in await get_model_cards():
                         mid = card.model_id
                         if mid in self.active_downloads:
@@ -357,8 +383,10 @@ class DownloadCoordinator:
                             (DownloadCompleted, DownloadOngoing, DownloadFailed),
                         ):
                             continue
-                        found = resolve_model_in_path(mid)
-                        if found is not None:
+                        found = await to_thread.run_sync(
+                            lambda mid=mid: resolve_existing_model(mid)
+                        )
+                        if found is not None and is_read_only_model_dir(found):
                             path_shard = PipelineShardMetadata(
                                 model_card=card,
                                 device_rank=0,
@@ -367,12 +395,10 @@ class DownloadCoordinator:
                                 end_layer=card.n_layers,
                                 n_layers=card.n_layers,
                             )
-                            path_completed: DownloadProgress = DownloadCompleted(
-                                node_id=self.node_id,
-                                shard_metadata=path_shard,
-                                total=card.storage_size,
-                                model_directory=str(found),
-                                read_only=True,
+                            path_completed: DownloadProgress = (
+                                self._completed_from_path(
+                                    path_shard, found, card.storage_size
+                                )
                             )
                             self.download_status[mid] = path_completed
                             await self.event_sender.send(

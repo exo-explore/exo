@@ -1,7 +1,6 @@
 """Tests for download verification and cache behavior."""
 
 import time
-from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -23,15 +22,6 @@ from exo.shared.types.worker.downloads import FileListEntry, RepoFileDownloadPro
 @pytest.fixture
 def model_id() -> ModelId:
     return ModelId("test-org/test-model")
-
-
-@pytest.fixture
-async def temp_models_dir(tmp_path: Path) -> AsyncIterator[Path]:
-    """Set up a temporary models directory for testing."""
-    models_dir = tmp_path / "models"
-    await aios.makedirs(models_dir, exist_ok=True)
-    with patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir):
-        yield models_dir
 
 
 class TestFileVerification:
@@ -188,7 +178,8 @@ class TestFileListCache:
         ]
 
         with (
-            patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir),
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
+            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
             patch(
                 "exo.download.download_utils.fetch_file_list_with_retry",
                 new_callable=AsyncMock,
@@ -234,7 +225,8 @@ class TestFileListCache:
             )
 
         with (
-            patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir),
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
+            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
             patch(
                 "exo.download.download_utils.fetch_file_list_with_retry",
                 new_callable=AsyncMock,
@@ -252,7 +244,8 @@ class TestFileListCache:
         models_dir = tmp_path / "models"
 
         with (
-            patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir),
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
+            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
             patch(
                 "exo.download.download_utils.fetch_file_list_with_retry",
                 new_callable=AsyncMock,
@@ -284,7 +277,10 @@ class TestModelDeletion:
         async with aiofiles.open(cache_dir / "file_list.json", "w") as f:
             await f.write("[]")
 
-        with patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir):
+        with (
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
+            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+        ):
             result = await delete_model(model_id)
 
             assert result is True
@@ -303,7 +299,10 @@ class TestModelDeletion:
         async with aiofiles.open(cache_dir / "file_list.json", "w") as f:
             await f.write("[]")
 
-        with patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir):
+        with (
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
+            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+        ):
             result = await delete_model(model_id)
 
             # Returns False because model dir didn't exist
@@ -318,7 +317,10 @@ class TestModelDeletion:
         models_dir = tmp_path / "models"
         await aios.makedirs(models_dir, exist_ok=True)
 
-        with patch("exo.download.download_utils.EXO_MODELS_DIR", models_dir):
+        with (
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
+            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+        ):
             result = await delete_model(model_id)
 
             assert result is False
