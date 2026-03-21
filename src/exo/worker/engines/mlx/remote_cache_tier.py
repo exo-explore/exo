@@ -189,9 +189,20 @@ class LiveTieredRemoteCache:
 
     @classmethod
     def from_env(cls) -> "LiveTieredRemoteCache":
-        """Build from EXO_REMOTE_CACHE_URLS / EXO_IPAD_CACHE_URL env vars."""
+        """Build from EXO_REMOTE_CACHE_URLS / EXO_IPAD_CACHE_URL env vars,
+        falling back to ~/.exo/remote_cache_urls (written by cache_discovery_daemon.sh).
+        This prevents the 30-second blind spot on startup.
+        """
         raw = os.environ.get("EXO_REMOTE_CACHE_URLS") or os.environ.get("EXO_IPAD_CACHE_URL") or ""
         urls = [u.strip() for u in raw.split(",") if u.strip()]
+        if not urls and _CACHE_URLS_FILE.exists():
+            try:
+                file_urls = [u.strip() for u in _CACHE_URLS_FILE.read_text().split(",") if u.strip()]
+                if file_urls:
+                    logger.info("Remote cache: loaded %d tier(s) from %s", len(file_urls), _CACHE_URLS_FILE)
+                    urls = file_urls
+            except Exception as exc:
+                logger.debug("Remote cache URL file read failed: %s", exc)
         return cls(urls)
 
     def _poll_loop(self) -> None:

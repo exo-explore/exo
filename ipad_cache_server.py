@@ -31,9 +31,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
 import time
 from collections import OrderedDict, deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from threading import Lock, Semaphore
 from typing import Any
 
@@ -94,6 +96,8 @@ _PORTAL_HTML_TEMPLATE = """\
 
       <a href="/blobs" target="_blank" class="open-btn">Cached Entries (JSON) ↗</a>
       <a href="/stats" target="_blank" class="open-btn">Cache Stats (JSON) ↗</a>
+      <a href="/download" class="open-btn" style="background:#1a7f37;">⬇ Download server script (for other iOS devices)</a>
+      <a href="/iphone-setup" class="open-btn" style="background:#4a1d96;color:#e9d5ff;font-weight:bold;">📱 iPhone SE Setup Page</a>
     </div>
   </div>
 </div>
@@ -289,10 +293,22 @@ def _make_handler(
     device_name: str = "ipad",
 ) -> type[BaseHTTPRequestHandler]:
     class _Handler(BaseHTTPRequestHandler):
+        # Per-connection timeout: prevents hung WiFi connections blocking the server thread.
+        # If MacBook drops WiFi for <30s (iOS power management), connection recovers cleanly.
+        timeout = 30
+
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             # Suppress default access log spam; print errors only
             if args and str(args[1]).startswith(("4", "5")):
                 print(f"[{time.strftime('%H:%M:%S')}] {self.address_string()} {format % args}")
+
+        def handle_error(self, request: Any, client_address: Any) -> None:  # type: ignore[override]
+            """Swallow WiFi-drop errors silently; log anything unexpected."""
+            import traceback
+            exc = traceback.format_exc()
+            if any(t in exc for t in ("BrokenPipeError", "ConnectionReset", "ConnectionAborted", "TimeoutError")):
+                return  # WiFi blip — client disconnected mid-request, not a bug
+            print(f"[{time.strftime('%H:%M:%S')}] handler error from {client_address}:\n{exc}")
 
         def _send_json(self, code: int, obj: Any) -> None:
             body = json.dumps(obj).encode()
@@ -321,8 +337,60 @@ def _make_handler(
             if path == "/":
                 body = portal_html.encode()
                 self._send_bytes(200, body, "text/html; charset=utf-8")
-            elif path == "/health":
-                self._send_json(200, {"ok": True, "ts": time.time()})
+            elif path in ("/health", "/ping"):
+                # /ping: lightweight keepalive for MacBook-side reconnect polling
+                self._send_json(200, {"ok": True, "ts": time.time(), "device": device_name})
+            elif path == "/iphone-setup":
+                # /iphone-setup — HTML page with one-tap a-Shell launch button.
+                # Open this URL on the iPhone in Safari to start the cache server
+                # without typing anything.
+                import urllib.parse as _up
+                _cmd = (
+                    "curl -s http://<MASTER_IP>:9877/download -o ~/ipad_cache_server.py"
+                    " && grep -qF 'ipad_cache_server' ~/.profile 2>/dev/null"
+                    " || echo 'python3 ~/ipad_cache_server.py --max-mb 1500 --device iphone-se &'"
+                    " >> ~/.profile"
+                    " && python3 ~/ipad_cache_server.py --max-mb 1500 --device iphone-se"
+                )
+                _ashell_url = "ashell://run?cmd=" + _up.quote(_cmd)
+                _setup_html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iPhone SE exo Setup</title>
+<style>
+* {{box-sizing:border-box;margin:0;padding:0}}
+body {{background:#0d1117;color:#e6edf3;font-family:-apple-system,sans-serif;
+       min-height:100vh;display:flex;flex-direction:column;align-items:center;
+       justify-content:center;padding:24px;text-align:center}}
+h1 {{color:#4ade80;font-size:26px;margin-bottom:12px}}
+p {{color:#8b949e;margin-bottom:24px;line-height:1.5}}
+a.btn {{display:block;background:#4ade80;color:#000;font-size:22px;
+        font-weight:bold;padding:22px 40px;border-radius:14px;
+        text-decoration:none;margin:12px 0;min-width:280px}}
+.note {{font-size:12px;color:#444;margin-top:20px}}
+</style></head>
+<body>
+<h1>exo Cache Server</h1>
+<p>Tap the button below.<br>It opens a-Shell and starts the cache server.</p>
+<a class="btn" href="{_ashell_url}">▶ Start Cache Server</a>
+<p class="note">Downloads server script, sets up auto-start in ~/.profile,<br>then starts listening on port 9876.</p>
+</body></html>"""
+                body = _setup_html.encode()
+                self._send_bytes(200, body, "text/html; charset=utf-8")
+            elif path == "/download":
+                # /download — serve this script file so iOS devices can pull it via Safari.
+                # On iPad/iPhone: open Safari → http://<macbook-ip>:9877/download
+                # → tap Share → Save to Files → open a-Shell → python3 ipad_cache_server.py
+                try:
+                    script = Path(__file__).read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Disposition", 'attachment; filename="ipad_cache_server.py"')
+                    self.send_header("Content-Length", str(len(script)))
+                    self.end_headers()
+                    self.wfile.write(script)
+                except Exception as exc:
+                    self._send_json(500, {"error": str(exc)})
             elif path == "/stats":
                 self._send_json(200, store.stats(device=device_name, throttle=throttle))
             elif path == "/blobs":
@@ -368,8 +436,14 @@ def _make_handler(
             put_start = time.monotonic()
             try:
                 body = self.rfile.read(length)
+                if len(body) < length:
+                    # WiFi drop mid-upload — partial read, discard
+                    self._send_json(400, {"error": "incomplete upload", "got": len(body), "expected": length})
+                    return
                 store.put(bid, body)
                 self._send_json(200, {"ok": True, "size": len(body)})
+            except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                pass  # client dropped WiFi mid-upload — server stays alive
             finally:
                 throttle.release_put(duration_s=time.monotonic() - put_start)
 
@@ -417,6 +491,17 @@ def main() -> None:
     handler_cls = _make_handler(store, html, throttle=throttle, device_name=args.device)
     server = HTTPServer(("0.0.0.0", args.port), handler_cls)
 
+    # TCP keepalive: detect and recover from WiFi drops without being plugged in.
+    # iOS WiFi power management can pause the connection for up to ~20s — keepalive
+    # probes detect this and allow graceful reconnect on the MacBook side.
+    server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    if hasattr(socket, "TCP_KEEPIDLE"):
+        server.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 20)
+    if hasattr(socket, "TCP_KEEPINTVL"):
+        server.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+    if hasattr(socket, "TCP_KEEPCNT"):
+        server.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+
     print(f"exo cache server — {profile['description']}")
     print(f"  Device:    {args.device}")
     print(f"  Max cache: {args.max_mb} MB")
@@ -428,6 +513,12 @@ def main() -> None:
     print()
     print(f"Open Safari → http://<this-device-ip>:{args.port} for the cluster portal.")
     print(f"Set EXO_IPAD_CACHE_URL=http://<this-device-ip>:{args.port} on MacBook.")
+    print()
+    print("⚠️  WIRELESS (no charger) — required one-time iOS setup:")
+    print("   Settings → Display & Brightness → Auto-Lock → Never")
+    print("   Settings → Accessibility → Display & Text Size → Reduce White Point → ON (75%)")
+    print("   Keep a-Shell in FOREGROUND (don't switch apps — iOS suspends background Python)")
+    print("   Server survives WiFi blips up to ~20s via TCP keepalive.")
 
     try:
         server.serve_forever()

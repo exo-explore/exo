@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import os
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 import mlx.core as mx
 import psutil
@@ -16,6 +19,9 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType, Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
+
+if TYPE_CHECKING:
+    from exo.worker.engines.mlx.remote_cache_tier import RemoteCacheTierProtocol
 
 
 # Fraction of device memory above which LRU eviction kicks in.
@@ -76,16 +82,27 @@ def has_non_kv_caches(cache: KVCacheType) -> bool:
 
 
 class KVPrefixCache:
-    def __init__(self, group: mx.distributed.Group | None):
+    def __init__(
+        self,
+        group: mx.distributed.Group | None,
+        remote_tier: RemoteCacheTierProtocol | None = None,
+    ):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[KVCacheType] = []
         self._snapshots: list[list[CacheSnapshot] | None] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._access_counter: int = 0
         self._group = group
+        self._entry_ids: list[str] = []
+        self._entry_counter: int = 0
+        self._remote_tier = remote_tier
 
     def clear(self):
         """Clear all cached prompts and caches."""
+        if self._remote_tier is not None:
+            for eid in self._entry_ids:
+                self._remote_tier.remove(eid)
+        self._entry_ids.clear()
         self.prompts.clear()
         self.caches.clear()
         self._snapshots.clear()
@@ -99,11 +116,16 @@ class KVPrefixCache:
     ):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         self._evict_if_needed()
+        entry_id = f"kvc-{id(self)}-{self._entry_counter}"
+        self._entry_counter += 1
+        self._entry_ids.append(entry_id)
         self.prompts.append(prompt_tokens)
         self.caches.append(deepcopy(cache))
         self._snapshots.append(ssm_snapshots)
         self._access_counter += 1
         self._last_used.append(self._access_counter)
+        if self._remote_tier is not None:
+            self._remote_tier.store_async(entry_id, prompt_tokens, cache)
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
 
     def update_kv_cache(
@@ -127,6 +149,8 @@ class KVPrefixCache:
         self._snapshots[index] = merged or None
         self._access_counter += 1
         self._last_used[index] = self._access_counter
+        if self._remote_tier is not None:
+            self._remote_tier.store_async(self._entry_ids[index], prompt_tokens, cache)
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
 
     def _get_snapshot(
@@ -179,6 +203,11 @@ class KVPrefixCache:
                 best_index, best_length = i, length
 
         if best_index is None:
+            if self._remote_tier is not None:
+                remote_result = self._remote_tier.fetch(prompt_tokens, model)
+                if remote_result is not None:
+                    remote_cache, matched_tokens = remote_result
+                    return remote_cache, prompt_tokens[matched_tokens:], None
             return make_kv_cache(model), prompt_tokens, None
 
         # For exact match: trim to max_length-1 so remaining has the last token
@@ -220,6 +249,9 @@ class KVPrefixCache:
         ):
             lru_index = self._last_used.index(min(self._last_used))
             evicted_tokens = len(self.prompts[lru_index])
+            if self._remote_tier is not None:
+                self._remote_tier.remove(self._entry_ids[lru_index])
+            self._entry_ids.pop(lru_index)
             self.prompts.pop(lru_index)
             self.caches.pop(lru_index)
             self._snapshots.pop(lru_index)

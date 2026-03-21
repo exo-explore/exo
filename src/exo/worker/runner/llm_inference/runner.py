@@ -53,6 +53,7 @@ from exo.shared.types.worker.runners import (
 )
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.cache import KVPrefixCache
+from exo.worker.engines.mlx.remote_cache_tier import LiveTieredRemoteCache
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
@@ -402,7 +403,8 @@ class Builder:
                 self.tokenizer.tool_parser,  # type: ignore
             )
 
-        kv_prefix_cache = KVPrefixCache(self.group)
+        live_remote_cache = LiveTieredRemoteCache.from_env()
+        kv_prefix_cache = KVPrefixCache(self.group, remote_tier=live_remote_cache)
 
         device_rank = 0 if self.group is None else self.group.rank()
         if os.environ.get("EXO_NO_BATCH"):
