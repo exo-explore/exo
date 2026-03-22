@@ -1,9 +1,10 @@
 import time
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, final
 
 K = TypeVar("K")
 
 
+@final
 class KeyedBackoff(Generic[K]):
     """Tracks exponential backoff state per key."""
 
@@ -25,6 +26,10 @@ class KeyedBackoff(Generic[K]):
         """Record that an attempt was made for this key."""
         self._last_time[key] = time.monotonic()
         self._attempts[key] = self._attempts.get(key, 0) + 1
+
+    def attempts(self, key: K) -> int:
+        """Return the number of recorded attempts for a key."""
+        return self._attempts.get(key, 0)
 
     def reset(self, key: K) -> None:
         """Reset backoff state for a key (e.g., on success)."""
