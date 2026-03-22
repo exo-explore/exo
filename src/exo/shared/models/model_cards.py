@@ -122,17 +122,24 @@ class ModelCard(CamelCaseModel):
         if (mc := _card_cache.get(model_id)) is not None:
             return mc
 
-        return await ModelCard.fetch_from_hf(model_id)
+        mc = await ModelCard.fetch_from_hf(model_id)
+        await mc.save_to_custom_dir()
+        _card_cache[model_id] = mc
+        return mc
 
     @staticmethod
     async def fetch_from_hf(model_id: ModelId) -> "ModelCard":
-        """Fetches storage size and number of layers for a Hugging Face model, returns Pydantic ModelMeta."""
+        """Fetches storage size and number of layers for a Hugging Face model, returns Pydantic ModelMeta.
+
+        This is a pure fetch — it does NOT save to disk or update the cache.
+        Persistence is handled by the event-sourcing layer (worker event handler).
+        """
         # TODO: failure if files do not exist
         config_data = await fetch_config_data(model_id)
         num_layers = config_data.layer_count
         mem_size_bytes = await fetch_safetensors_size(model_id)
 
-        mc = ModelCard(
+        return ModelCard(
             model_id=ModelId(model_id),
             storage_size=mem_size_bytes,
             n_layers=num_layers,
@@ -142,9 +149,11 @@ class ModelCard(CamelCaseModel):
             tasks=[ModelTask.TextGeneration],
             trust_remote_code=False,
         )
-        await mc.save_to_custom_dir()
-        _card_cache[model_id] = mc
-        return mc
+
+
+def add_to_card_cache(card: "ModelCard") -> None:
+    """Add or update a model card in the in-memory cache."""
+    _card_cache[card.model_id] = card
 
 
 async def delete_custom_card(model_id: ModelId) -> bool:

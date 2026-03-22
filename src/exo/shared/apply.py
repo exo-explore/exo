@@ -4,9 +4,12 @@ from datetime import datetime
 
 from loguru import logger
 
-from exo.shared.types.common import NodeId
+from exo.shared.models.model_cards import ModelCard
+from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
+    CustomModelCardAdded,
+    CustomModelCardDeleted,
     Event,
     IndexedEvent,
     InputChunkReceived,
@@ -91,6 +94,10 @@ def event_apply(event: Event, state: State) -> State:
             return apply_topology_edge_created(event, state)
         case TopologyEdgeDeleted():
             return apply_topology_edge_deleted(event, state)
+        case CustomModelCardAdded():
+            return apply_custom_model_card_added(event, state)
+        case CustomModelCardDeleted():
+            return apply_custom_model_card_deleted(event, state)
 
 
 def apply(state: State, event: IndexedEvent) -> State:
@@ -384,3 +391,22 @@ def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> Sta
     topology.remove_connection(event.conn)
     # TODO: Clean up removing the reverse connection
     return state.model_copy(update={"topology": topology})
+
+
+def apply_custom_model_card_added(event: CustomModelCardAdded, state: State) -> State:
+    new_cards: Mapping[ModelId, ModelCard] = {
+        **state.custom_model_cards,
+        event.model_card.model_id: event.model_card,
+    }
+    return state.model_copy(update={"custom_model_cards": new_cards})
+
+
+def apply_custom_model_card_deleted(
+    event: CustomModelCardDeleted, state: State
+) -> State:
+    new_cards: Mapping[ModelId, ModelCard] = {
+        mid: card
+        for mid, card in state.custom_model_cards.items()
+        if mid != event.model_id
+    }
+    return state.model_copy(update={"custom_model_cards": new_cards})

@@ -5,8 +5,9 @@ from typing import Any, cast
 from pydantic import ConfigDict, Field, field_serializer, field_validator
 from pydantic.alias_generators import to_camel
 
+from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology, TopologySnapshot
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
@@ -60,6 +61,9 @@ class State(CamelCaseModel):
 
     # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
     thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []
+
+    # Custom model cards synced across the cluster
+    custom_model_cards: Mapping[ModelId, ModelCard] = {}
 
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:
