@@ -95,17 +95,27 @@ Then restart the Nix daemon: `sudo launchctl kickstart -k system/org.nixos.nix-d
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   ```
 - [uv](https://github.com/astral-sh/uv) (for Python dependency management)
-- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
 - [node](https://github.com/nodejs/node) (for building the dashboard)
 
   ```bash
-  brew install uv macmon node
+  brew install uv node
   ```
 - [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
 
   ```bash
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   rustup toolchain install nightly
+  ```
+- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
+
+  Install the pinned fork revision used by this repo instead of Homebrew `macmon`.
+  Homebrew `macmon 0.6.1` still crashes on Apple M5.
+
+  ```bash
+  cargo install --git https://github.com/swiftraccoon/macmon \
+    --rev 9154d234f763fbeffdcb4135d0bbbaf80609699b \
+    macmon \
+    --force
   ```
 
 Clone the repo, build the dashboard, and run exo:

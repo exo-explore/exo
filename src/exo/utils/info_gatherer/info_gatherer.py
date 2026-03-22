@@ -287,8 +287,8 @@ class ThunderboltBridgeInfo(TaggedModel):
                     service_name=tb_service_name,
                 )
             )
-        except Exception as e:
-            logger.warning(f"Failed to gather Thunderbolt Bridge info: {e}")
+        except Exception:
+            logger.opt(exception=True).warning("Failed to gather Thunderbolt Bridge info")
             return None
 
 
@@ -382,18 +382,69 @@ class InfoGatherer:
     rdma_ctl_poll_interval: float | None = 10 if IS_DARWIN else None
     disk_poll_interval: float | None = 30
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
+    _psutil_memory_fallback_enabled: bool = field(init=False, default=False)
+
+    def _enable_psutil_memory_fallback(self, reason: str) -> None:
+        if not self._psutil_memory_fallback_enabled:
+            logger.warning(reason)
+            self._psutil_memory_fallback_enabled = True
+        self.memory_poll_rate = 1
+
+    def _get_macmon_path(self) -> str | None:
+        return os.getenv("EXO_MACMON_PATH") or shutil.which("macmon")
+
+    async def _can_read_macmon_metrics(self, macmon_path: str) -> bool:
+        try:
+            with fail_after(5):
+                proc = await anyio.run_process(
+                    [macmon_path, "pipe", "--samples", "1", "--interval", "100"],
+                    check=False,
+                )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to validate macmon at {macmon_path}"
+            )
+            return False
+
+        if proc.returncode != 0:
+            stderr = proc.stderr.decode("utf-8", errors="replace").strip()
+            logger.warning(
+                f"macmon preflight failed with return code {proc.returncode}: "
+                f"{stderr or 'no stderr'}"
+            )
+            return False
+
+        stdout = proc.stdout.decode("utf-8", errors="replace").strip()
+        if not stdout:
+            logger.warning("macmon preflight returned no metrics")
+            return False
+
+        try:
+            MacmonMetrics.from_raw_json(stdout.splitlines()[0])
+        except ValidationError:
+            logger.opt(exception=True).warning(
+                "macmon preflight returned unexpected metrics JSON"
+            )
+            return False
+
+        return True
 
     async def run(self):
         async with self._tg as tg:
             if IS_DARWIN:
-                if (macmon_path := shutil.which("macmon")) is not None:
-                    tg.start_soon(self._monitor_macmon, macmon_path)
+                if (macmon_path := self._get_macmon_path()) is not None:
+                    if await self._can_read_macmon_metrics(macmon_path):
+                        tg.start_soon(self._monitor_macmon, macmon_path)
+                    else:
+                        self._enable_psutil_memory_fallback(
+                            f"macmon at {macmon_path} is unusable, falling back "
+                            f"to psutil memory monitoring"
+                        )
                 else:
-                    # macmon not installed — fall back to psutil for memory
-                    logger.warning(
-                        "macmon not found, falling back to psutil for memory monitoring"
+                    self._enable_psutil_memory_fallback(
+                        "macmon not found, falling back to psutil for memory "
+                        "monitoring"
                     )
-                    self.memory_poll_rate = 1
                 tg.start_soon(self._monitor_system_profiler_thunderbolt_data)
                 tg.start_soon(self._monitor_thunderbolt_bridge_status)
                 tg.start_soon(self._monitor_rdma_ctl_status)
@@ -417,8 +468,8 @@ class InfoGatherer:
             try:
                 with fail_after(30):
                     await self.info_sender.send(await StaticNodeInformation.gather())
-            except Exception as e:
-                logger.warning(f"Error gathering static node info: {e}")
+            except Exception:
+                logger.opt(exception=True).warning("Error gathering static node info")
             await anyio.sleep(self.static_info_poll_interval)
 
     async def _monitor_misc(self):
@@ -428,8 +479,8 @@ class InfoGatherer:
             try:
                 with fail_after(10):
                     await self.info_sender.send(await MiscData.gather())
-            except Exception as e:
-                logger.warning(f"Error gathering misc data: {e}")
+            except Exception:
+                logger.opt(exception=True).warning("Error gathering misc data")
             await anyio.sleep(self.misc_poll_interval)
 
     async def _monitor_system_profiler_thunderbolt_data(self):
@@ -455,8 +506,8 @@ class InfoGatherer:
 
                     conns = [it for i in data if (it := i.conn()) is not None]
                     await self.info_sender.send(MacThunderboltConnections(conns=conns))
-            except Exception as e:
-                logger.warning(f"Error gathering Thunderbolt data: {e}")
+            except Exception:
+                logger.opt(exception=True).warning("Error gathering Thunderbolt data")
             await anyio.sleep(self.system_profiler_interval)
 
     async def _monitor_memory_usage(self):
@@ -466,16 +517,18 @@ class InfoGatherer:
             if override_memory_env
             else None
         )
-        if self.memory_poll_rate is None:
-            return
         while True:
+            poll_rate = self.memory_poll_rate
+            if poll_rate is None:
+                await anyio.sleep(1)
+                continue
             try:
                 await self.info_sender.send(
                     MemoryUsage.from_psutil(override_memory=override_memory)
                 )
-            except Exception as e:
-                logger.warning(f"Error gathering memory usage: {e}")
-            await anyio.sleep(self.memory_poll_rate)
+            except Exception:
+                logger.opt(exception=True).warning("Error gathering memory usage")
+            await anyio.sleep(poll_rate)
 
     async def _watch_system_info(self):
         if self.interface_watcher_interval is None:
@@ -485,8 +538,8 @@ class InfoGatherer:
                 with fail_after(10):
                     nics = await get_network_interfaces()
                     await self.info_sender.send(NodeNetworkInterfaces(ifaces=nics))
-            except Exception as e:
-                logger.warning(f"Error gathering network interfaces: {e}")
+            except Exception:
+                logger.opt(exception=True).warning("Error gathering network interfaces")
             await anyio.sleep(self.interface_watcher_interval)
 
     async def _monitor_thunderbolt_bridge_status(self):
@@ -498,8 +551,8 @@ class InfoGatherer:
                     curr = await ThunderboltBridgeInfo.gather()
                     if curr is not None:
                         await self.info_sender.send(curr)
-            except Exception as e:
-                logger.warning(f"Error gathering Thunderbolt Bridge status: {e}")
+            except Exception:
+                logger.opt(exception=True).warning("Error gathering Thunderbolt Bridge status")
             await anyio.sleep(self.thunderbolt_bridge_poll_interval)
 
     async def _monitor_rdma_ctl_status(self):
@@ -510,8 +563,8 @@ class InfoGatherer:
                 curr = await RdmaCtlStatus.gather()
                 if curr is not None:
                     await self.info_sender.send(curr)
-            except Exception as e:
-                logger.warning(f"Error gathering RDMA ctl status: {e}")
+            except Exception:
+                logger.opt(exception=True).warning("Error gathering RDMA ctl status")
             await anyio.sleep(self.rdma_ctl_poll_interval)
 
     async def _monitor_disk_usage(self):
@@ -521,8 +574,8 @@ class InfoGatherer:
             try:
                 with fail_after(5):
                     await self.info_sender.send(await NodeDiskUsage.gather())
-            except Exception as e:
-                logger.warning(f"Error gathering disk usage: {e}")
+            except Exception:
+                logger.opt(exception=True).warning("Error gathering disk usage")
             await anyio.sleep(self.disk_poll_interval)
 
     async def _monitor_macmon(self, macmon_path: str):
@@ -554,6 +607,10 @@ class InfoGatherer:
                 logger.warning(
                     f"MacMon produced no output for {read_timeout}s, restarting"
                 )
+                self._enable_psutil_memory_fallback(
+                    "MacMon produced no output, falling back to psutil memory "
+                    "monitoring"
+                )
             except CalledProcessError as e:
                 stderr_msg = "no stderr"
                 stderr_output = cast(bytes | str | None, e.stderr)
@@ -566,6 +623,12 @@ class InfoGatherer:
                 logger.warning(
                     f"MacMon failed with return code {e.returncode}: {stderr_msg}"
                 )
-            except Exception as e:
-                logger.warning(f"Error in macmon monitor: {e}")
+                self._enable_psutil_memory_fallback(
+                    "MacMon failed, falling back to psutil memory monitoring"
+                )
+            except Exception:
+                logger.opt(exception=True).warning("Error in macmon monitor")
+                self._enable_psutil_memory_fallback(
+                    "MacMon crashed, falling back to psutil memory monitoring"
+                )
             await anyio.sleep(self.macmon_interval)
