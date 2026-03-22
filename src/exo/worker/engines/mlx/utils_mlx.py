@@ -486,16 +486,7 @@ def _patch_lossy_chat_template(template: str) -> str | None:
 
 
 def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
-    if "deepseek-v3.2" not in task_params.model.lower():
-        return False
-    # Use DSML encoding when tools are provided or tool results are in the conversation
-    if task_params.tools:
-        return True
-    if task_params.chat_template_messages:
-        return any(
-            msg.get("role") == "tool" for msg in task_params.chat_template_messages
-        )
-    return False
+    return "deepseek-v3.2" in task_params.model.lower()
 
 
 def apply_chat_template(
