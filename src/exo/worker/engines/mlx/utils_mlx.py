@@ -371,7 +371,7 @@ def load_tokenizer_for_model_id(
             tok_module = types.ModuleType("tokenization_kimi")
             tok_module.__file__ = str(tok_path)
             sys.modules["tokenization_kimi"] = tok_module
-            exec(compile(source, tok_path, "exec"), tok_module.__dict__)  # noqa: S102
+            exec(compile(source, tok_path, "exec"), tok_module.__dict__)  # noqa: S102  # nosec:DANGEROUS_CALL — local file only, not network data
             TikTokenTokenizer = tok_module.TikTokenTokenizer  # type: ignore[attr-defined]  # noqa: N806
         else:
             from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001

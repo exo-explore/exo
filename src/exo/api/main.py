@@ -1,6 +1,7 @@
 import base64
 import contextlib
 import json
+import os
 import random
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
@@ -229,6 +230,13 @@ class API:
         ) -> StreamingResponse:
             logger.debug(f"API request: {request.method} {request.url.path}")
             return await call_next(request)
+
+        # Metered billing: authenticate + quota-check external inference requests.
+        # Localhost / internal traffic is always allowed without a key.
+        if os.environ.get("EXO_BILLING", "0") == "1":
+            from exo.api.billing import billing_middleware
+
+            self.app.middleware("http")(billing_middleware)
 
         self._setup_exception_handlers()
         self._setup_cors()

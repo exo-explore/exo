@@ -28,7 +28,7 @@ def _maybe_run_inline_code(argv: Sequence[str]) -> bool:
     inline_code = argv[code_index]
     sys.argv = ["-c", *argv[code_index + 1 :]]
     namespace: dict[str, object] = {"__name__": "__main__"}
-    exec(inline_code, namespace, namespace)
+    exec(inline_code, namespace, namespace)  # nosec:DANGEROUS_CALL — intentional python -c equivalent
     return True
 
 

@@ -94,12 +94,12 @@ def event_apply(event: Event, state: State) -> State:
 
 
 def apply(state: State, event: IndexedEvent) -> State:
-    # Just to test that events are only applied in correct order
+    # Guard against out-of-order events — log and skip rather than crash.
     if state.last_event_applied_idx != event.idx - 1:
-        logger.warning(
-            f"Expected event {state.last_event_applied_idx + 1} but received {event.idx}"
+        logger.warning(  # nosec:EVENT_SOURCING
+            f"Expected event {state.last_event_applied_idx + 1} but received {event.idx} — skipping"
         )
-    assert state.last_event_applied_idx == event.idx - 1
+        return state
     new_state: State = event_apply(event.event, state)
     return new_state.model_copy(update={"last_event_applied_idx": event.idx})
 

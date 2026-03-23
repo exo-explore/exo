@@ -2,6 +2,14 @@
 
 This file provides guidance to AI coding agents when working with code in this repository.
 
+## Context files (read on session start)
+
+Additional context lives in `.context/`:
+- `.context/SOUL.md` — behavioral principles and identity
+- `.context/IDENTITY.md` — current role, stack, cluster state
+- `.context/AGENTS.md` — operational rules, never-touch list, pre-commit gate
+- `REVIEW.md` — code review checklist (severity labels, skip list)
+
 ## Project Overview
 
 exo is a distributed AI inference system that connects multiple devices into a cluster. It enables running large language models across multiple machines using MLX as the inference backend and libp2p for peer-to-peer networking.
