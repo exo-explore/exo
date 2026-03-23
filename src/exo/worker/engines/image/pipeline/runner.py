@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from math import ceil
 from typing import Any, Optional, final
@@ -100,6 +100,8 @@ class DiffusionRunner:
         self.total_layers = config.total_blocks
 
         self._guidance_override: float | None = None
+        self._cancel_checker: Callable[[], bool] | None = None
+        self._cancelling: bool = False
 
         self._compute_assigned_blocks()
 
@@ -240,6 +242,43 @@ class DiffusionRunner:
     def is_distributed(self) -> bool:
         return self.group is not None
 
+    def _is_sentinel(self, tensor: mx.array) -> bool:
+        return bool(mx.all(mx.isnan(tensor)).item())
+
+    def _check_cancellation(self) -> None:
+        if self._cancelling:
+            return
+        if (
+            self.is_first_stage
+            and self._cancel_checker is not None
+            and self._cancel_checker()
+        ):
+            self._cancelling = True
+
+    def _send(self, data: mx.array, dst: int) -> mx.array:
+        assert self.group is not None
+        if self._cancelling:
+            data = mx.full(data.shape, float("nan"), dtype=data.dtype)
+        return mx.distributed.send(data, dst, group=self.group)
+
+    def _recv_and_check(self, result: mx.array) -> mx.array:
+        mx.eval(result)
+        if self._is_sentinel(result):
+            self._cancelling = True
+        return result
+
+    def _recv(self, shape: tuple[int, ...], dtype: mx.Dtype, src: int) -> mx.array:
+        assert self.group is not None
+        return self._recv_and_check(
+            mx.distributed.recv(shape, dtype, src, group=self.group)
+        )
+
+    def _recv_like(self, template: mx.array, src: int) -> mx.array:
+        assert self.group is not None
+        return self._recv_and_check(
+            mx.distributed.recv_like(template, src, group=self.group)
+        )
+
     def _get_effective_guidance_scale(self) -> float | None:
         if self._guidance_override is not None:
             return self._guidance_override
@@ -313,19 +352,13 @@ class DiffusionRunner:
         assert self.cfg_peer_rank is not None
 
         if is_positive:
-            noise = mx.distributed.send(noise, self.cfg_peer_rank, group=self.group)
+            noise = self._send(noise, self.cfg_peer_rank)
             mx.async_eval(noise)
-            noise_neg = mx.distributed.recv_like(
-                noise, self.cfg_peer_rank, group=self.group
-            )
-            mx.eval(noise_neg)
+            noise_neg = self._recv_like(noise, src=self.cfg_peer_rank)
             noise_pos = noise
         else:
-            noise_pos = mx.distributed.recv_like(
-                noise, self.cfg_peer_rank, group=self.group
-            )
-            mx.eval(noise_pos)
-            noise = mx.distributed.send(noise, self.cfg_peer_rank, group=self.group)
+            noise_pos = self._recv_like(noise, src=self.cfg_peer_rank)
+            noise = self._send(noise, self.cfg_peer_rank)
             mx.async_eval(noise)
             noise_neg = noise
 
@@ -432,6 +465,7 @@ class DiffusionRunner:
         guidance_override: float | None = None,
         negative_prompt: str | None = None,
         num_sync_steps: int = 1,
+        cancel_checker: Callable[[], bool] | None = None,
     ):
         """Primary entry point for image generation.
 
@@ -454,6 +488,8 @@ class DiffusionRunner:
             Final GeneratedImage
         """
         self._guidance_override = guidance_override
+        self._cancel_checker = cancel_checker
+        self._cancelling = False
         latents = self.adapter.create_latents(seed, runtime_config)
         prompt_data = self.adapter.encode_prompt(prompt, negative_prompt)
 
@@ -495,7 +531,7 @@ class DiffusionRunner:
             except StopIteration as e:
                 latents = e.value  # pyright: ignore[reportAny]
 
-        if self.is_last_stage:
+        if self.is_last_stage and not self._cancelling:
             yield self.adapter.decode_latents(latents, runtime_config, seed, prompt)  # pyright: ignore[reportAny]
 
     def _run_diffusion_loop(
@@ -524,7 +560,12 @@ class DiffusionRunner:
             latents=latents,
         )
 
+        t = -1  # default if time_steps is empty; drain condition uses t
         for t in time_steps:
+            self._check_cancellation()
+            if self._cancelling and self.group is None:
+                break
+
             try:
                 latents = self._diffusion_step(
                     t=t,
@@ -542,7 +583,7 @@ class DiffusionRunner:
 
                 mx.eval(latents)
 
-                if t in capture_steps and self.is_last_stage:
+                if t in capture_steps and self.is_last_stage and not self._cancelling:
                     yield (latents, t)
 
             except KeyboardInterrupt:  # noqa: PERF203
@@ -550,6 +591,24 @@ class DiffusionRunner:
                 raise StopImageGenerationException(
                     f"Stopping image generation at step {t + 1}/{len(time_steps)}"
                 ) from None
+
+            if self._cancelling:
+                break
+
+        # Drain pending ring recvs after cancellation during async steps.
+        # The last stage sent patches during the final completed step, but
+        # the first stage will never enter the next step to recv them.
+        if (
+            self._cancelling
+            and self.is_first_stage
+            and not self.is_last_stage
+            and self.group is not None
+            and t >= runtime_config.init_time_step + num_sync_steps
+            and t != runtime_config.num_inference_steps - 1
+        ):
+            patch_latents_drain, _ = self._create_patches(latents, runtime_config)
+            for patch in patch_latents_drain:
+                self._recv_like(patch, src=self.last_pipeline_rank)
 
         ctx.after_loop(latents=latents)  # pyright: ignore[reportAny]
 
@@ -777,19 +836,16 @@ class DiffusionRunner:
                     rank=self.rank,
                     category="comms",
                 ):
-                    hidden_states = mx.distributed.recv(
+                    hidden_states = self._recv(
                         (batch_size, num_img_tokens, hidden_dim),
                         dtype,
                         self.prev_pipeline_rank,
-                        group=self.group,
                     )
-                    encoder_hidden_states = mx.distributed.recv(
+                    encoder_hidden_states = self._recv(
                         (batch_size, text_seq_len, hidden_dim),
                         dtype,
                         self.prev_pipeline_rank,
-                        group=self.group,
                     )
-                    mx.eval(hidden_states, encoder_hidden_states)
 
             assert self.joint_block_wrappers is not None
             assert encoder_hidden_states is not None
@@ -825,9 +881,7 @@ class DiffusionRunner:
                     rank=self.rank,
                     category="comms",
                 ):
-                    concatenated = mx.distributed.send(
-                        concatenated, self.next_pipeline_rank, group=self.group
-                    )
+                    concatenated = self._send(concatenated, self.next_pipeline_rank)
                     mx.async_eval(concatenated)
 
         elif self.has_joint_blocks and not self.is_last_stage:
@@ -838,11 +892,9 @@ class DiffusionRunner:
                 rank=self.rank,
                 category="comms",
             ):
-                hidden_states = mx.distributed.send(
-                    hidden_states, self.next_pipeline_rank, group=self.group
-                )
-                encoder_hidden_states = mx.distributed.send(
-                    encoder_hidden_states, self.next_pipeline_rank, group=self.group
+                hidden_states = self._send(hidden_states, self.next_pipeline_rank)
+                encoder_hidden_states = self._send(
+                    encoder_hidden_states, self.next_pipeline_rank
                 )
                 mx.async_eval(hidden_states, encoder_hidden_states)
 
@@ -854,13 +906,11 @@ class DiffusionRunner:
                     rank=self.rank,
                     category="comms",
                 ):
-                    hidden_states = mx.distributed.recv(
+                    hidden_states = self._recv(
                         (batch_size, text_seq_len + num_img_tokens, hidden_dim),
                         dtype,
                         self.prev_pipeline_rank,
-                        group=self.group,
                     )
-                    mx.eval(hidden_states)
 
             assert self.single_block_wrappers is not None
             with trace(
@@ -886,9 +936,7 @@ class DiffusionRunner:
                     rank=self.rank,
                     category="comms",
                 ):
-                    hidden_states = mx.distributed.send(
-                        hidden_states, self.next_pipeline_rank, group=self.group
-                    )
+                    hidden_states = self._send(hidden_states, self.next_pipeline_rank)
                     mx.async_eval(hidden_states)
 
         hidden_states = hidden_states[:, text_seq_len:, ...]
@@ -961,16 +1009,11 @@ class DiffusionRunner:
             )
 
             if not self.is_first_stage:
-                hidden_states = mx.distributed.send(
-                    hidden_states, self.first_pipeline_rank, group=self.group
-                )
+                hidden_states = self._send(hidden_states, self.first_pipeline_rank)
                 mx.async_eval(hidden_states)
 
         elif self.is_first_stage:
-            hidden_states = mx.distributed.recv_like(
-                prev_latents, src=self.last_pipeline_rank, group=self.group
-            )
-            mx.eval(hidden_states)
+            hidden_states = self._recv_like(prev_latents, src=self.last_pipeline_rank)
 
         else:
             hidden_states = prev_latents
@@ -1006,10 +1049,7 @@ class DiffusionRunner:
                     rank=self.rank,
                     category="comms",
                 ):
-                    patch = mx.distributed.recv_like(
-                        patch, src=self.last_pipeline_rank, group=self.group
-                    )
-                    mx.eval(patch)
+                    patch = self._recv_like(patch, src=self.last_pipeline_rank)
 
             results: list[tuple[bool, mx.array]] = []
 
@@ -1066,10 +1106,9 @@ class DiffusionRunner:
                         rank=self.rank,
                         category="comms",
                     ):
-                        patch_latents[patch_idx] = mx.distributed.send(
+                        patch_latents[patch_idx] = self._send(
                             patch_latents[patch_idx],
                             self.first_pipeline_rank,
-                            group=self.group,
                         )
                         mx.async_eval(patch_latents[patch_idx])
 
@@ -1116,13 +1155,11 @@ class DiffusionRunner:
                     rank=self.rank,
                     category="comms",
                 ):
-                    patch = mx.distributed.recv(
+                    patch = self._recv(
                         (batch_size, patch_len, hidden_dim),
                         patch.dtype,
                         self.prev_pipeline_rank,
-                        group=self.group,
                     )
-                    mx.eval(patch)
 
                 if patch_idx == 0:
                     with trace(
@@ -1130,13 +1167,11 @@ class DiffusionRunner:
                         rank=self.rank,
                         category="comms",
                     ):
-                        encoder_hidden_states = mx.distributed.recv(
+                        encoder_hidden_states = self._recv(
                             (batch_size, text_seq_len, hidden_dim),
                             patch.dtype,
                             self.prev_pipeline_rank,
-                            group=self.group,
                         )
-                        mx.eval(encoder_hidden_states)
 
             if self.is_first_stage:
                 patch, encoder_hidden_states = self.adapter.compute_embeddings(
@@ -1175,9 +1210,7 @@ class DiffusionRunner:
                     rank=self.rank,
                     category="comms",
                 ):
-                    patch_concat = mx.distributed.send(
-                        patch_concat, self.next_pipeline_rank, group=self.group
-                    )
+                    patch_concat = self._send(patch_concat, self.next_pipeline_rank)
                     mx.async_eval(patch_concat)
 
         elif self.has_joint_blocks and not self.is_last_stage:
@@ -1187,9 +1220,7 @@ class DiffusionRunner:
                 rank=self.rank,
                 category="comms",
             ):
-                patch = mx.distributed.send(
-                    patch, self.next_pipeline_rank, group=self.group
-                )
+                patch = self._send(patch, self.next_pipeline_rank)
                 mx.async_eval(patch)
 
             if patch_idx == 0:
@@ -1199,8 +1230,8 @@ class DiffusionRunner:
                     rank=self.rank,
                     category="comms",
                 ):
-                    encoder_hidden_states = mx.distributed.send(
-                        encoder_hidden_states, self.next_pipeline_rank, group=self.group
+                    encoder_hidden_states = self._send(
+                        encoder_hidden_states, self.next_pipeline_rank
                     )
                     mx.async_eval(encoder_hidden_states)
 
@@ -1213,13 +1244,11 @@ class DiffusionRunner:
                     rank=self.rank,
                     category="comms",
                 ):
-                    patch = mx.distributed.recv(
+                    patch = self._recv(
                         (batch_size, text_seq_len + patch_len, hidden_dim),
                         patch.dtype,
                         self.prev_pipeline_rank,
-                        group=self.group,
                     )
-                    mx.eval(patch)
 
             assert self.single_block_wrappers is not None
             with trace(
@@ -1245,9 +1274,7 @@ class DiffusionRunner:
                     rank=self.rank,
                     category="comms",
                 ):
-                    patch = mx.distributed.send(
-                        patch, self.next_pipeline_rank, group=self.group
-                    )
+                    patch = self._send(patch, self.next_pipeline_rank)
                     mx.async_eval(patch)
 
         noise: mx.array | None = None
