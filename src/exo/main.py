@@ -377,7 +377,9 @@ class Args(CamelCaseModel):
         parser.add_argument(
             "--bootstrap-peers",
             type=lambda s: [p for p in s.split(",") if p],
-            default=os.getenv("EXO_BOOTSTRAP_PEERS", "").split(",") if os.getenv("EXO_BOOTSTRAP_PEERS") else [],
+            default=os.getenv("EXO_BOOTSTRAP_PEERS", "").split(",")
+            if os.getenv("EXO_BOOTSTRAP_PEERS")
+            else [],
             dest="bootstrap_peers",
             help="Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)",
         )
