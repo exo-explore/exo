@@ -218,6 +218,18 @@ def parse_deepseek_v32(
             continue
 
         # ── Detect start of tool call block ──
+
+        # Always yield tokens with finish_reason to avoid hanging the chunk stream.
+        # The DSML prefix detection below may buffer tokens, and a buffered final
+        # token would never be flushed (no subsequent token to trigger the flush).
+        if response.finish_reason is not None:
+            for buf_resp in pending_buffer:
+                yield buf_resp
+            pending_buffer = []
+            accumulated = ""
+            yield response
+            continue
+
         accumulated += response.text
 
         if TOOL_CALLS_START in accumulated:

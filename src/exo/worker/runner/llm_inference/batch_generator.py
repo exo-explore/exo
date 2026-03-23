@@ -196,11 +196,14 @@ class SequentialGenerator(InferenceGenerator):
 
         task, mlx_gen, queue, output_generator = self._active
         response = None
+        drained: list[tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]] = []
         try:
             queue.push(next(mlx_gen))
             response = next(output_generator)
         except (StopIteration, PrefillCancelled):
-            response = Finished()
+            while (extra := next(output_generator)) is not None:
+                drained.append((task.task_id, extra))
+            drained.append((task.task_id, Finished()))
             self._active = None
             if self._queue:
                 self._start_next()
@@ -210,6 +213,7 @@ class SequentialGenerator(InferenceGenerator):
             raise
         return itertools.chain(
             [] if response is None else [(task.task_id, response)],
+            drained,
             map(lambda task: (task, Cancelled()), self._cancelled_tasks),
         )
 
@@ -433,6 +437,8 @@ class BatchGenerator(InferenceGenerator):
                 output.append((task.task_id, parsed))
 
             if response.finish_reason is not None:
+                while (extra := next(output_generator)) is not None:
+                    output.append((task.task_id, extra))
                 output.append((task.task_id, Finished()))
                 del self._active_tasks[uid]
 
