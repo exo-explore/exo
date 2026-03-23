@@ -151,10 +151,10 @@ def select_download_dir(required_bytes: int) -> Path:
     Raises ``InsufficientDiskSpaceError`` if none have enough space.
     """
     for candidate_dir in EXO_MODELS_DIRS:
+        if not candidate_dir.exists():
+            continue
         try:
-            usage = shutil.disk_usage(
-                candidate_dir if candidate_dir.exists() else candidate_dir.parent
-            )
+            usage = shutil.disk_usage(candidate_dir)
             if usage.free >= required_bytes:
                 return candidate_dir
         except OSError:

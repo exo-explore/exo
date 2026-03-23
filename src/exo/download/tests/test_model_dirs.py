@@ -196,11 +196,13 @@ class TestSelectDownloadDir:
         ):
             select_download_dir(1024)
 
-    def test_checks_parent_when_dir_does_not_exist(self, tmp_path: Path) -> None:
+    def test_skips_nonexistent_dir(self, tmp_path: Path) -> None:
         nonexistent = tmp_path / "does-not-exist"
-        # tmp_path exists, nonexistent doesn't — should check parent
-        with patch("exo.download.download_utils.EXO_MODELS_DIRS", (nonexistent,)):
-            assert select_download_dir(1) == nonexistent
+        with (
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (nonexistent,)),
+            pytest.raises(InsufficientDiskSpaceError),
+        ):
+            select_download_dir(1)
 
     def test_skips_dir_raising_oserror(self, tmp_path: Path) -> None:
         dir1 = tmp_path / "unmounted"
