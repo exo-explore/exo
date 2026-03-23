@@ -264,7 +264,9 @@ def main():
     mp.set_start_method("spawn", force=True)
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
-    logger.info("Starting EXO")
+    logger.info(f"{'=' * 40}")
+    logger.info(f"Starting EXO | pid={os.getpid()}")
+    logger.info(f"{'=' * 40}")
     logger.info(f"EXO_LIBP2P_NAMESPACE: {os.getenv('EXO_LIBP2P_NAMESPACE')}")
 
     if args.offline:
