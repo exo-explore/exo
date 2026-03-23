@@ -202,6 +202,8 @@ async def generate_chat_stream(
                     usage=last_usage,
                 )
                 yield f"data: {tool_response.model_dump_json()}\n\n"
+                if chunk.stats is not None:
+                    yield f": generation_stats {chunk.stats.model_dump_json()}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
@@ -216,6 +218,8 @@ async def generate_chat_stream(
                 yield f"data: {chunk_response.model_dump_json()}\n\n"
 
                 if chunk.finish_reason is not None:
+                    if chunk.stats is not None:
+                        yield f": generation_stats {chunk.stats.model_dump_json()}\n\n"
                     yield "data: [DONE]\n\n"
 
 

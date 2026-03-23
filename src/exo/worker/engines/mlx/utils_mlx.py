@@ -638,6 +638,7 @@ class NullKVCache(KVCache):
     @property
     def state(self) -> tuple[mx.array, mx.array]:
         # matches what mx.save_safetensors / mx.eval expect
+        assert self.keys is not None and self.values is not None
         return self.keys, self.values
 
     @state.setter

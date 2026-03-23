@@ -1793,6 +1793,14 @@ class AppStore {
             this.persistConversation(targetConversationId);
           }
         },
+        {
+          generation_stats: (data) => {
+            const stats = data as { generation_tps: number };
+            if (stats.generation_tps > 0) {
+              this.tps = stats.generation_tps;
+            }
+          },
+        },
       );
 
       // Final update
@@ -1989,6 +1997,14 @@ class AppStore {
             this.syncActiveMessagesIfNeeded(targetConversationId);
             this.persistConversation(targetConversationId);
           }
+        },
+        {
+          generation_stats: (data) => {
+            const stats = data as { generation_tps: number };
+            if (stats.generation_tps > 0) {
+              this.tps = stats.generation_tps;
+            }
+          },
         },
       );
 
@@ -2397,7 +2413,7 @@ class AppStore {
 
       let streamedContent = "";
       let streamedThinking = "";
-
+      let serverTpsReceived = false;
       interface ChatCompletionChunk {
         choices?: Array<{
           delta?: { content?: string; reasoning_content?: string };
@@ -2462,7 +2478,6 @@ class AppStore {
             tokenCount += 1;
             this.totalTokens = tokenCount;
 
-            // Update real-time TPS during streaming
             if (firstTokenTime !== null && tokenCount > 1) {
               const elapsed = performance.now() - firstTokenTime;
               this.tps = (tokenCount / elapsed) * 1000;
@@ -2513,16 +2528,24 @@ class AppStore {
               startedAt: this.prefillProgress?.startedAt ?? performance.now(),
             };
           },
+          generation_stats: (data) => {
+            const stats = data as { generation_tps: number };
+
+            if (stats.generation_tps > 0) {
+              this.tps = stats.generation_tps;
+              serverTpsReceived = true;
+            }
+          },
         },
       );
 
       // Clear prefill progress after stream ends
       this.prefillProgress = null;
 
-      // Calculate final TPS
-      if (firstTokenTime !== null && tokenCount > 1) {
+      // Use server-side TPS if available, otherwise fall back to client-side
+      if (!serverTpsReceived && firstTokenTime !== null && tokenCount > 1) {
         const totalGenerationTime = performance.now() - firstTokenTime;
-        this.tps = (tokenCount / totalGenerationTime) * 1000; // tokens per second
+        this.tps = (tokenCount / totalGenerationTime) * 1000;
       }
 
       // Final cleanup of the message (if conversation still exists)

@@ -88,8 +88,8 @@ def create_attention_mask(
 ) -> array | Literal["causal"] | None: ...
 
 class _BaseCache(Cache):
-    keys: mx.array
-    values: mx.array
+    keys: mx.array | None
+    values: mx.array | None
     offset: int
     @property
     def state(self) -> tuple[mx.array | None, mx.array | None]: ...
@@ -268,29 +268,14 @@ class CacheList(_BaseCache):
         """
 
 class BatchKVCache(_BaseCache):
-    step = ...
-    def __init__(self, left_padding: List[int]) -> None:
-        """
-        The BatchKV cache expects inputs to be left-padded.
-
-        E.g. the following prompts:
-
-            [1, 3, 5]
-            [7]
-            [2, 6, 8, 9]
-
-        Should be padded like so:
-
-            [0, 1, 3, 5]
-            [0, 0, 0, 7]
-            [2, 6, 8, 9]
-
-        And ``left_padding`` specifies the amount of padding for each.
-        In this case, ``left_padding = [1, 3, 0]``.
-        """
-
-    def update_and_fetch(self, keys, values):  # -> tuple[array | Any, array | Any]:
-        ...
+    step: int
+    keys: array | None
+    values: array | None
+    offset: array
+    left_padding: array
+    _idx: int
+    def __init__(self, left_padding: List[int]) -> None: ...
+    def update_and_fetch(self, keys: array, values: array) -> tuple[array, array]: ...
     @property
     def state(
         self,
@@ -316,12 +301,23 @@ class BatchKVCache(_BaseCache):
         """
 
 class BatchRotatingKVCache(_BaseCache):
-    step = ...
-    def __init__(self, max_size, left_padding: List[int]) -> None: ...
-    def update_and_fetch(
-        self, keys, values
-    ):  # -> tuple[array | Any, array | Any] | tuple[array | Any, array | Any | None]:
-        ...
+    step: int
+    keys: array | None
+    values: array | None
+    offset: array
+    left_padding: array
+    max_size: int
+    _idx: int
+    _offset: int
+    rotated: bool
+    _lengths: array | None
+    _lp_debt: int
+    _offset_debt: int
+    def __init__(self, max_size: int, left_padding: List[int]) -> None: ...
+    def _trim(self, trim_size: int, v: array, append: array | None = ...) -> array: ...
+    def _update_in_place(self, keys: array, values: array) -> tuple[array, array]: ...
+    def _update_concat(self, keys: array, values: array) -> tuple[array, array]: ...
+    def update_and_fetch(self, keys: array, values: array) -> tuple[array, array]: ...
     @property
     def state(
         self,

@@ -5,6 +5,7 @@ from typing import Callable, cast
 import mlx.core as mx
 from mlx_lm.generate import (
     BatchGenerator as MlxBatchGenerator,
+    generation_stream,
 )
 from mlx_lm.models.cache import RotatingKVCache
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
@@ -63,6 +64,7 @@ class _EngineTask:
     potential_stop_sequence_text: str = ""
     completion_tokens: int = 0
     generation_start_time: float = 0.0
+    generation_time_at_start: float = 0.0
     in_thinking: bool = False
     reasoning_tokens: int = 0
     prefill_tps: float = 0.0
@@ -211,6 +213,7 @@ class ExoBatchGenerator:
             on_generation_token=on_generation_token,
             generation_start_time=time.perf_counter(),
             prefill_tps=_prefill_tps,
+            generation_time_at_start=self._exo_gen._stats.generation_time,
         )
 
         return uid
@@ -277,28 +280,26 @@ class ExoBatchGenerator:
             logprob: float | None = None
             top_logprobs: list[TopLogprobItem] | None = None
             if task_params.logprobs:
-                logprob, top_logprobs = extract_top_logprobs(
-                    logprobs=response.logprobs,
-                    tokenizer=self.tokenizer,
-                    top_logprobs=task_params.top_logprobs or DEFAULT_TOP_LOGPROBS,
-                    selected_token=response.token,
-                )
+                with mx.stream(generation_stream):
+                    logprob, top_logprobs = extract_top_logprobs(
+                        logprobs=response.logprobs,
+                        tokenizer=self.tokenizer,
+                        top_logprobs=task_params.top_logprobs or DEFAULT_TOP_LOGPROBS,
+                        selected_token=response.token,
+                    )
 
             stats: GenerationStats | None = None
             usage: Usage | None = None
             if is_done:
-                try:
-                    mlx_stats = self._exo_gen.stats()
-                    generation_tps = mlx_stats.generation_tps
-                except ZeroDivisionError:
-                    generation_elapsed = (
-                        time.perf_counter() - state.generation_start_time
-                    )
-                    generation_tps = (
-                        state.completion_tokens / generation_elapsed
-                        if generation_elapsed > 0
-                        else 0.0
-                    )
+                gen_time_delta = (
+                    self._exo_gen._stats.generation_time
+                    - state.generation_time_at_start
+                )
+                generation_tps = (
+                    state.completion_tokens / gen_time_delta
+                    if gen_time_delta > 0
+                    else 0.0
+                )
 
                 stats = GenerationStats(
                     prompt_tps=state.prefill_tps,

@@ -8,6 +8,7 @@ from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.worker.engines.mlx.patches import apply_mlx_patches
 
 logger: "loguru.Logger" = loguru.logger
 
@@ -44,6 +45,8 @@ def entrypoint(
             runner.main()
         else:
             from exo.worker.runner.llm_inference.runner import Runner
+
+            apply_mlx_patches()
 
             runner = Runner(
                 bound_instance, event_sender, task_receiver, cancel_receiver

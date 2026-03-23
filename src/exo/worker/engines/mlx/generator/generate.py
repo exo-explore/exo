@@ -179,7 +179,8 @@ def pipeline_parallel_prefill(
         flush_prefill_sends()
 
     assert _prompt_cache is not None
-    mx.eval([c.state for c in _prompt_cache])  # type: ignore
+    with mx.stream(generation_stream):
+        mx.eval([c.state for c in _prompt_cache])  # type: ignore
 
     # Final callback matching generate_step
     prompt_progress_callback(total, total)
@@ -624,12 +625,13 @@ def mlx_generate(
         logprob: float | None = None
         top_logprobs: list[TopLogprobItem] | None = None
         if task.logprobs:
-            logprob, top_logprobs = extract_top_logprobs(
-                logprobs=out.logprobs,
-                tokenizer=tokenizer,
-                top_logprobs=task.top_logprobs or DEFAULT_TOP_LOGPROBS,
-                selected_token=out.token,
-            )
+            with mx.stream(generation_stream):
+                logprob, top_logprobs = extract_top_logprobs(
+                    logprobs=out.logprobs,
+                    tokenizer=tokenizer,
+                    top_logprobs=task.top_logprobs or DEFAULT_TOP_LOGPROBS,
+                    selected_token=out.token,
+                )
 
         if is_done:
             # Log generation stats

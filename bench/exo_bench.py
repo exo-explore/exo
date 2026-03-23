@@ -501,23 +501,21 @@ def main() -> int:
                                     for x, _ in batch_results
                                     if x["stats"]["generation_tps"] > 0
                                 ]
-                                agg_gen_tps = (
+                                per_req_tps = (
                                     mean(valid_gen_tps) if valid_gen_tps else 0.0
                                 )
-                                gen_tps = agg_gen_tps / concurrency
+                                agg_gen_tps = per_req_tps * concurrency
                                 logger.info(
                                     f"[concurrent {concurrency}x]  "
                                     f"agg_gen_tps={agg_gen_tps:.2f}  "
-                                    f"gen_tps={gen_tps:.2f}  "
+                                    f"per_req_tps={per_req_tps:.2f}  "
                                     f"errors={batch_errors}"
                                 )
 
                     if runs:
                         prompt_tps = mean(x["stats"]["prompt_tps"] for x in runs)
-                        gen_tps = mean(
-                            x["stats"]["generation_tps"] / x["concurrency"]
-                            for x in runs
-                        )
+                        per_req_tps = mean(x["stats"]["generation_tps"] for x in runs)
+                        gen_tps = per_req_tps * concurrency
                         ptok = mean(x["stats"]["prompt_tokens"] for x in runs)
                         gtok = mean(x["stats"]["generation_tokens"] for x in runs)
                         peak = mean(

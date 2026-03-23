@@ -427,7 +427,7 @@ class BatchGenerator(InferenceGenerator):
 
             task, queue, output_generator = self._active_tasks[uid]
             queue.push(response)
-            parsed = next(output_generator)
+            parsed = next(output_generator, None)
 
             if parsed is not None:
                 output.append((task.task_id, parsed))
