@@ -137,6 +137,31 @@ def test_default_dir_always_prepended_to_models_dirs():
         assert Path("/tmp/custom-models") in constants.EXO_MODELS_DIRS
 
 
+def test_default_models_dir_override():
+    """Test that EXO_DEFAULT_MODELS_DIR can be overridden via env var."""
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k
+        not in (
+            "EXO_MODELS_DIRS",
+            "EXO_MODELS_READ_ONLY_DIRS",
+            "EXO_HOME",
+            "EXO_DEFAULT_MODELS_DIR",
+        )
+    }
+    env["EXO_DEFAULT_MODELS_DIR"] = "/Volumes/FastSSD/exo-models"
+    with mock.patch.dict(os.environ, env, clear=True):
+        import importlib
+
+        import exo.shared.constants as constants
+
+        importlib.reload(constants)
+
+        assert Path("/Volumes/FastSSD/exo-models") == constants.EXO_DEFAULT_MODELS_DIR
+        assert constants.EXO_MODELS_DIRS[0] == constants.EXO_DEFAULT_MODELS_DIR
+
+
 def test_default_dir_only_entry_when_env_unset():
     """Test that EXO_MODELS_DIRS contains only the default when env var is not set."""
     env = {

@@ -295,7 +295,8 @@ exo supports several environment variables for configuration:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `EXO_MODELS_DIRS` | Colon-separated writable directories for model downloads. Checked in order; first with enough free space is used. The default directory is always appended. | `~/.local/share/exo/models` (Linux) or `~/.exo/models` (macOS) |
+| `EXO_DEFAULT_MODELS_DIR` | Default directory for model downloads and caches. Always first in the writable dirs list. | `~/.local/share/exo/models` (Linux) or `~/.exo/models` (macOS) |
+| `EXO_MODELS_DIRS` | Colon-separated additional writable directories for model downloads. Checked in order after the default; first with enough free space is used. | None |
 | `EXO_MODELS_READ_ONLY_DIRS` | Colon-separated read-only directories to search for pre-downloaded models (e.g., NFS mounts, shared storage). Models here cannot be deleted. | None |
 | `EXO_OFFLINE` | Run without internet connection (uses only local models) | `false` |
 | `EXO_ENABLE_IMAGE_MODELS` | Enable image model support | `false` |

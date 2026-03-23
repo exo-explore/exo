@@ -27,7 +27,12 @@ EXO_DATA_HOME = _get_xdg_dir("XDG_DATA_HOME", ".local/share")
 EXO_CACHE_HOME = _get_xdg_dir("XDG_CACHE_HOME", ".cache")
 
 # Default models directory (always included as first entry in writable dirs)
-EXO_DEFAULT_MODELS_DIR = EXO_DATA_HOME / "models"
+_EXO_DEFAULT_MODELS_DIR_ENV = os.environ.get("EXO_DEFAULT_MODELS_DIR", None)
+EXO_DEFAULT_MODELS_DIR = (
+    Path(_EXO_DEFAULT_MODELS_DIR_ENV).expanduser()
+    if _EXO_DEFAULT_MODELS_DIR_ENV is not None
+    else EXO_DATA_HOME / "models"
+)
 
 
 def _parse_colon_dirs(env_var: str) -> tuple[Path, ...]:
