@@ -328,12 +328,14 @@ class Worker:
             await runner.start_task(task)
 
     def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
-        """Creates and stores a new AssignedRunner with initial downloading status."""
+        runner_id = task.bound_instance.bound_runner_id
+        if existing := self.runners.pop(runner_id, None):
+            existing.shutdown()
         runner = RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
         )
-        self.runners[task.bound_instance.bound_runner_id] = runner
+        self.runners[runner_id] = runner
         self._tg.start_soon(runner.run)
         return runner
 

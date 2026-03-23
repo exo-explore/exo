@@ -364,7 +364,6 @@ def _find_connection_ip(
     node_j: NodeId,
     cycle_digraph: Topology,
 ) -> Generator[str, None, None]:
-    """Find all IP addresses that connect node i to node j."""
     for connection in cycle_digraph.get_all_connections_between(node_i, node_j):
         if isinstance(connection, SocketConnection):
             yield connection.sink_multiaddr.ip_address
@@ -377,40 +376,30 @@ def _find_ip_prioritised(
     node_network: Mapping[NodeId, NodeNetworkInfo],
     ring: bool,
 ) -> str | None:
-    """Find an IP address between nodes with prioritization.
-
-    Priority: ethernet > wifi > unknown > thunderbolt
-    """
     ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
-    if not ips:
-        return None
     other_network = node_network.get(other_node_id, NodeNetworkInfo())
     ip_to_type = {
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
 
-    # Ring should prioritise fastest connection. As a best-effort, we prioritise TB.
-    # TODO: Profile and get actual connection speeds.
-    if ring:
-        priority = {
-            "thunderbolt": 0,
-            "maybe_ethernet": 1,
-            "ethernet": 2,
-            "wifi": 3,
-            "unknown": 4,
-        }
+    priority = {
+        "thunderbolt": 0,
+        "ethernet": 1 if not ring else 2,
+        "maybe_ethernet": 1 if ring else 2,
+        "wifi": 3,
+        "unknown": 4,
+    }
 
-    # JACCL coordinator: prefer thunderbolt (40Gbps direct, lowest latency).
-    # Original code preferred ethernet — caused RDMA "not connected" on TB4 clusters.
-    # MISSED_THINGS.md noted TB5 instability but TB4 (M1 Max / M4) is stable.
-    else:
-        priority = {
-            "thunderbolt": 0,
-            "ethernet": 1,
-            "maybe_ethernet": 2,
-            "wifi": 3,
-            "unknown": 4,
-        }
+    if not ips:
+        # Topology edges are populated by a 10s poll; fall back to node_network
+        # so placement succeeds on the first attempt after a peer reconnects.
+        if not other_network.interfaces:
+            return None
+        return min(
+            (iface.ip_address for iface in other_network.interfaces),
+            key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 4),
+        )
+
     return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
 
 
@@ -420,13 +409,6 @@ def get_mlx_ring_hosts_by_node(
     ephemeral_port: int,
     node_network: Mapping[NodeId, NodeNetworkInfo],
 ) -> dict[NodeId, list[Host]]:
-    """Generate per-node host lists for MLX ring backend.
-
-    Each node gets a list where:
-    - Self position: Host(ip="0.0.0.0", port=ephemeral_port)
-    - Left/right neighbors: actual connection IPs
-    - Non-neighbors: Host(ip="198.51.100.1", port=0) placeholder (RFC 5737 TEST-NET-2)
-    """
     world_size = len(selected_cycle)
     if world_size == 0:
         return {}
@@ -470,11 +452,6 @@ def get_mlx_jaccl_coordinators(
     cycle_digraph: Topology,
     node_network: Mapping[NodeId, NodeNetworkInfo],
 ) -> dict[NodeId, str]:
-    """Get the coordinator addresses for MLX JACCL (rank 0 device).
-
-    Select an IP address that each node can reach for the rank 0 node. Returns
-    address in format "X.X.X.X:PORT" per node.
-    """
     logger.debug(f"Selecting coordinator: {coordinator}")
 
     def get_ip_for_node(n: NodeId) -> str:
