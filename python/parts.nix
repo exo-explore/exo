@@ -247,27 +247,8 @@
         };
 
       buildSystemsOverlay = final: prev:
-        let
-          addSetupTools = old: {
-            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-              final.setuptools
-            ];
-          };
-
-        in
         {
-          # mlx-lm is a git dependency that needs setuptools
-          mlx-lm = prev.mlx-lm.overrideAttrs addSetupTools;
-          # rouge-score and sacrebleu don't declare setuptools as a build dependency
-          rouge-score = prev.rouge-score.overrideAttrs addSetupTools;
-          sacrebleu = prev.sacrebleu.overrideAttrs addSetupTools;
-          sqlitedict = prev.sqlitedict.overrideAttrs addSetupTools;
-          word2number = prev.word2number.overrideAttrs addSetupTools;
           vllm = prev.vllm.overrideAttrs (old: {
-            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-              final.setuptools
-              final.setuptools-scm
-            ];
             propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ [ final.torch ];
             VLLM_TARGET_DEVICE = "empty";
           });
@@ -320,19 +301,6 @@
           linuxOverlay
         ]
       );
-      editablePythonSet = pythonSet.overrideScope (
-        workspace.mkEditablePyprojectOverlay { root = "$REPO_ROOT"; members = [ "exo" "exo_core" "vllm_engine" "mlx_engine" "exo_bench" ]; }
-      );
-      evenv = editablePythonSet.mkVirtualEnv "exo-dev-env"
-        {
-          exo = lib.optionals isDarwin [ "mlx" ];
-          exo-pyo3-bindings = [ ];
-          exo-bench = [ ];
-          mlx-engine = [ ];
-          vllm-engine = [ ];
-
-        }
-      ;
       cudaPythonSet = (cudaPkgs.callPackage inputs.pyproject-nix.build.packages {
         python = cudaPkgs.python313;
       }).overrideScope (
@@ -348,12 +316,27 @@
       # mlx-cpu and mlx-cuda-13 both ship mlx/ site-packages files; keep first.
       # mlx-cpu/mlx-cuda-13 and nvidia-cudnn-cu12/cu13 ship overlapping files.
       venvCollisionPaths = lib.optionals isLinux [
+        "lib/python3.13/site-packages/cv2*"
         "lib/python3.13/site-packages/mlx*"
         "lib/python3.13/site-packages/nvidia*"
       ];
 
+      editablePythonSet = pythonSet.overrideScope (
+        workspace.mkEditablePyprojectOverlay { root = "$REPO_ROOT"; members = [ "exo" "python/*" "bench" ]; }
+      );
+      evenv = (editablePythonSet.mkVirtualEnv "exo-dev-env"
+        {
+          exo = [ "mlx" "dev" ];
+          exo-pyo3-bindings = [ ];
+          exo-bench = [ ];
+          mlx-engine = [ ];
+          vllm-engine = [ ];
+        }).overrideAttrs {
+        venvIgnoreCollisions = venvCollisionPaths;
+      };
       exoVenv = (pythonSet.mkVirtualEnv "exo-env" {
-        exo = lib.optionals isDarwin [ "mlx" ];
+        exo = [ "mlx" ];
+        mlx-engine = [ ];
         exo-pyo3-bindings = [ ];
       }).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
@@ -361,6 +344,7 @@
       exoCudaVenv = (cudaPythonSet.mkVirtualEnv "exo-env" {
         exo = lib.optionals cudaPkgs.config.cudaSupport [ "cuda" ];
         exo-pyo3-bindings = [ ];
+        vllm-engine = [ ];
       }).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
       };

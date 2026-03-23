@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 import anyio
 from anyio import current_time
 from exo_core.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
-from exo_core.model_cards import ModelId, get_model_cards
-from exo_core.types.common import NodeId
+from exo_core.model_cards import get_model_cards
+from exo_core.types.common import NodeId, ModelId
 from exo_core.types.downloads import (
     DownloadCompleted,
     DownloadFailed,
@@ -13,8 +13,10 @@ from exo_core.types.downloads import (
     DownloadProgress,
 )
 from exo_core.types.shards import PipelineShardMetadata, ShardMetadata
-from exo_core.utils.downloads import (
+from exo_core.types.downloads import (
     RepoDownloadProgress,
+)
+from exo_core.utils.downloads import (
     delete_model,
     map_repo_download_progress_to_download_progress_data,
     resolve_model_in_path,

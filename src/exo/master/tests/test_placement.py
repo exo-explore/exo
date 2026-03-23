@@ -1,6 +1,6 @@
 import pytest
-from exo_core.model_cards import ModelCard, ModelId, ModelTask
-from exo_core.types.common import CommandId, NodeId
+from exo_core.model_cards import ModelCard, ModelTask
+from exo_core.types.common import CommandId, NodeId, ModelId
 from exo_core.types.instances import (
     Instance,
     InstanceId,

@@ -33,8 +33,8 @@ class MemoryUsage(CamelCaseModel):
         sm = psutil.swap_memory()
 
         return cls.from_bytes(
-            ram_total=vm.total,
-            ram_available=vm.available if override_memory is None else override_memory,
+            ram_total=vm.total,  # pyright: ignore[reportAny]
+            ram_available=vm.available if override_memory is None else override_memory,  # pyright: ignore[reportAny]
             swap_total=sm.total,
             swap_available=sm.free,
         )

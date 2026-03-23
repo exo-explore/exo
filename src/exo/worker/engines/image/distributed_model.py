@@ -9,7 +9,7 @@ from exo_core.utils.downloads import build_model_path
 from mflux.models.common.config.config import Config
 from PIL import Image
 
-from exo.api.types import AdvancedImageParams
+from exo_core.types.image_generation import AdvancedImageParams
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models import (
     create_adapter_for_model,
@@ -17,8 +17,8 @@ from exo.worker.engines.image.models import (
 )
 from exo.worker.engines.image.models.base import ModelAdapter
 from exo.worker.engines.image.pipeline import DiffusionRunner
-from exo.worker.engines.mlx.utils_mlx import mlx_distributed_init, mx_barrier
-from exo.worker.runner.bootstrap import logger
+from mlx_engine.utils_mlx import mlx_distributed_init, mx_barrier
+from loguru import logger
 
 
 class DistributedImageModel:

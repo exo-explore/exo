@@ -22,7 +22,6 @@ from exo_core.constants import (
 )
 from exo_core.model_cards import (
     ModelCard,
-    ModelId,
     delete_custom_card,
     get_model_cards,
     is_custom_card,
@@ -35,7 +34,7 @@ from exo_core.types.chunks import (
     TokenChunk,
     ToolCallChunk,
 )
-from exo_core.types.common import CommandId, Id, NodeId, SystemId
+from exo_core.types.common import CommandId, Id, ModelId, NodeId, SystemId
 from exo_core.types.downloads import DownloadCompleted
 from exo_core.types.instances import Instance, InstanceId, InstanceMeta
 from exo_core.types.shards import Sharding
@@ -72,13 +71,19 @@ from exo.api.adapters.responses import (
     generate_responses_stream,
     responses_request_to_text_generation,
 )
+from exo_core.types.image_generation import (
+    normalize_image_size,
+    AdvancedImageParams,
+    BenchImageGenerationTaskParams,
+    ImageEditsTaskParams,
+    ImageGenerationTaskParams,
+    ImageSize,
+)
 from exo.api.types import (
     AddCustomModelParams,
-    AdvancedImageParams,
     BenchChatCompletionRequest,
     BenchChatCompletionResponse,
     BenchImageGenerationResponse,
-    BenchImageGenerationTaskParams,
     CancelCommandResponse,
     ChatCompletionChoice,
     ChatCompletionMessage,
@@ -96,13 +101,10 @@ from exo.api.types import (
     GenerationStats,
     HuggingFaceSearchResult,
     ImageData,
-    ImageEditsTaskParams,
     ImageGenerationResponse,
     ImageGenerationStats,
-    ImageGenerationTaskParams,
     ImageListItem,
     ImageListResponse,
-    ImageSize,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -118,7 +120,6 @@ from exo.api.types import (
     TraceRankStats,
     TraceResponse,
     TraceStatsResponse,
-    normalize_image_size,
 )
 from exo.api.types.claude_api import (
     ClaudeMessagesRequest,

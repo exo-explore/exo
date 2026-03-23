@@ -133,9 +133,10 @@
                   inherit (self'.packages) metal-toolchain;
                   inherit uvLockMlxVersion uvLockMlxRev;
                 };
-                default = self'.packages.exo;
               }
-            );
+            ) // {
+            default = self'.packages.exo;
+          };
           devShells =
             {
               default = with pkgs; mkShell {
@@ -148,10 +149,7 @@
 
                     # PYTHON
                     self'.packages.editable-venv
-                    self'.packages.python
                     uv
-                    ruff
-                    basedpyright
 
                     # RUST
                     config.rust.toolchain
@@ -176,8 +174,10 @@
 
                 env = {
                   UV_NO_SYNC = "1";
-                  UV_PYTHON = self'.packages.python.interpreter;
+                  UV_PYTHON = "${self'.packages.editable-venv}/bin/python";
                   UV_PYTHON_DOWNLOADS = "never";
+                  UV_PROJECT_ENVIRONMENT = self'.packages.editable-venv;
+                  VIRTUAL_ENV = self'.packages.editable-venv;
                   OPENSSL_NO_VENDOR = "1";
                 };
 

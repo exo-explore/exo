@@ -1,6 +1,5 @@
 import itertools
 import time
-from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass, field
@@ -17,31 +16,24 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.events import ChunkGenerated, Event
 from exo.utils.channels import MpReceiver, MpSender
-from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
+from mlx_engine.cache import KVPrefixCache
+from mlx_engine.generator.batch_generate import ExoBatchGenerator
 
 if TYPE_CHECKING:
-    from exo.worker.engines.vllm.vllm_generator import VllmBatchEngine
-from exo.worker.engines.mlx.generator.generate import (
+    from vllm_engine.vllm_generator import VllmBatchEngine
+from mlx_engine.generator.generate import (
     PrefillCancelled,
 )
-from exo.worker.engines.mlx.utils_mlx import (
+from mlx_engine.utils_mlx import (
     apply_chat_template,
     mx_all_gather_tasks,
     mx_any,
 )
-from exo.worker.runner.bootstrap import logger
+from loguru import logger
+from exo_core.engine import Engine, Cancelled, Finished
 
 from .model_output_parsers import apply_all_parsers
-from .tool_parsers import ToolParser
-
-
-class Cancelled:
-    pass
-
-
-class Finished:
-    pass
+from exo_core.utils.tool_parsers import ToolParser
 
 
 class GeneratorQueue[T]:
@@ -59,35 +51,6 @@ class GeneratorQueue[T]:
                 yield self._q.popleft()
 
 
-class InferenceGenerator(ABC):
-    _cancelled_tasks: set[TaskId]
-
-    def should_cancel(self, task_id: TaskId) -> bool:
-        return (
-            task_id in self._cancelled_tasks
-            or CANCEL_ALL_TASKS in self._cancelled_tasks
-        )
-
-    @abstractmethod
-    def warmup(self) -> None: ...
-
-    @abstractmethod
-    def submit(
-        self,
-        task: TextGeneration,
-    ) -> None: ...
-
-    @abstractmethod
-    def step(
-        self,
-    ) -> Iterable[
-        tuple[TaskId, ToolCallResponse | GenerationResponse | Cancelled | Finished]
-    ]: ...
-
-    @abstractmethod
-    def close(self) -> None: ...
-
-
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"
 EXO_RUNNER_MUST_OOM = "EXO RUNNER MUST OOM"
 EXO_RUNNER_MUST_TIMEOUT = "EXO RUNNER MUST TIMEOUT"
@@ -95,7 +58,7 @@ EXO_RUNNER_MUST_TIMEOUT = "EXO RUNNER MUST TIMEOUT"
 
 def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
     """Check for debug prompt triggers in the input."""
-    from exo.worker.engines.mlx.utils_mlx import mlx_force_oom
+    from mlx_engine.utils_mlx import mlx_force_oom
 
     if len(task_params.input) == 0:
         return
@@ -111,7 +74,7 @@ def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
 
 
 @dataclass(eq=False)
-class SequentialGenerator(InferenceGenerator):
+class SequentialGenerator(Engine[TextGeneration, GenerationResponse | ToolCallResponse]):
     tokenizer: TokenizerWrapper
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
@@ -297,7 +260,7 @@ class SequentialGenerator(InferenceGenerator):
 
 
 @dataclass(eq=False)
-class BatchGenerator(InferenceGenerator):
+class BatchGenerator(Engine[TextGeneration, GenerationResponse | ToolCallResponse]):
     tokenizer: TokenizerWrapper
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None

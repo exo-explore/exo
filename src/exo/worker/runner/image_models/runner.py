@@ -44,7 +44,7 @@ from exo_core.types.tasks import (
     TaskStatus,
 )
 
-from exo.api.types import ImageGenerationStats
+from exo_core.types.runner_response import ImageGenerationStats
 from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -62,10 +62,10 @@ from exo.worker.engines.image import (
     initialize_image_model,
     warmup_image_generator,
 )
-from exo.worker.engines.mlx.utils_mlx import (
+from mlx_engine.utils_mlx import (
     initialize_mlx,
 )
-from exo.worker.runner.bootstrap import logger
+from loguru import logger
 
 
 def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:

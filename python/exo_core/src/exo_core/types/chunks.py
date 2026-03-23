@@ -1,7 +1,9 @@
 from collections.abc import Generator
 from typing import Any, Literal
 
-from exo.api.types import (
+from exo_core.model_cards import ModelId
+from exo_core.models import TaggedModel
+from exo_core.types.runner_response import (
     FinishReason,
     GenerationStats,
     ImageGenerationStats,
@@ -9,8 +11,6 @@ from exo.api.types import (
     TopLogprobItem,
     Usage,
 )
-from exo_core.model_cards import ModelId
-from exo_core.models import TaggedModel
 
 from .common import CommandId
 

@@ -15,18 +15,19 @@ dependencies = [
   "huggingface-hub>=0.33.4",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
-  "exo_pyo3_bindings",                       # rust bindings
+  "exo_pyo3_bindings",                 # rust bindings
   "exo_core",
   "anyio==4.11.0",
   "mlx; sys_platform == 'darwin'",
-  "mlx==0.30.6; sys_platform == 'linux'",
+  "mlx[cpu]; sys_platform == 'linux'",
+  "mflux==0.16.9",
+  "pillow>=12.1.1",
   "mlx-lm",
-  "tiktoken>=0.12.0",                        # required for kimi k2 tokenizer
+  "tiktoken>=0.12.0",                  # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",
   "tomlkit>=0.14.0",
-  "mflux==0.16.9; sys_platform == 'darwin'",
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
@@ -45,6 +46,8 @@ dev = [
   "pytest-asyncio>=1.0.0",
   "pytest-env",
   "ruff>=0.11.13",
+  "mlx_engine",
+  "vllm_engine; sys_platform == 'linux'",
 ]
 build = ["nanobind"]
 
@@ -67,9 +70,9 @@ members = [
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
-exo_core = { workspace = true }
-mlx_engine = { workspace = true }
-vllm_engine = { workspace = true }
+exo_core = { workspace = true, editable = true }
+mlx_engine = { workspace = true, editable = true }
+vllm_engine = { workspace = true, editable = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/eval-left-padding-in-batched-rotation" }
 # Uncomment to use local mlx/mlx-lm development versions:
@@ -85,7 +88,13 @@ build-backend = "uv_build"
 ###
 
 [tool.basedpyright]
-include = [".venv/lib/mlx", ".venv/lib/mlx_lm", "src", "bench"]
+include = [
+  "src",
+  "bench",
+  "python/vllm_engine/src",
+  "python/mlx_engine/src",
+  "python/exo_core/src",
+]
 typeCheckingMode = "strict"
 failOnWarnings = true
 
@@ -99,29 +108,21 @@ reportUnnecessaryCast = "error"
 reportUnnecessaryTypeIgnoreComment = "error"
 
 pythonVersion = "3.13"
-pythonPlatform = "Darwin"
+pythonPlatform = "All"
 
-exclude = [
-  "**/.venv",
-  "**/venv",
-  "**/__pycache__",
-  "**/exo_scripts",
-  "**/.direnv",
-  "**/rust",
-  "**/.github",
-  "**/vllm_patches",
-  "**/engines/vllm",
+exclude = ["**/__pycache__"]
+stubPath = ".typings"
+extraPaths = [
+  ".cuda_typings",
+  "python/exo_core/src",
+  "python/vllm_engine/src",
+  "python/mlx_engine/src",
 ]
-stubPath = ".mlx_typings"
-extraPaths = [".cuda_typings"]
-
-[[tool.basedpyright.executionEnvironments]]
-root = "src/exo/worker/runner/vllm_inference"
-extraPaths = ["src", ".cuda_typings"]
-reportMissingModuleSource = false
-
-[[tool.basedpyright.executionEnvironments]]
-root = "src"
+executionEnvironments = [
+  { root = "src" },
+  { root = "python" },
+  { root = "bench" },
+]
 
 ###
 # uv configuration
@@ -134,8 +135,15 @@ prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
 
+
 [tool.uv.extra-build-dependencies]
+mlx-lm = ["setuptools"]
 xgrammar = ["nanobind"]
+rouge-score = ["setuptools"]
+sacrebleu = ["setuptools"]
+sqlitedict = ["setuptools"]
+word2number = ["setuptools"]
+vllm = ["setuptools", "setuptools-scm"]
 
 
 ###
@@ -144,7 +152,7 @@ xgrammar = ["nanobind"]
 
 [tool.ruff]
 extend-exclude = [
-  "*mlx_typings/**",
+  ".typings/**",
   "*cuda_typings/**",
   "rust/exo_pyo3_bindings/**",
   "bench/vendor/**",

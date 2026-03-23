@@ -8,8 +8,8 @@ from exo_core.types.common import ModelId, NodeId, SessionId, SystemId
 from exo_core.types.instances import (
     InstanceMeta,
     MlxRingInstance,
-    ShardAssignments,
 )
+from exo_core.types.runners import ShardAssignments
 from exo_core.types.shards import PipelineShardMetadata, Sharding
 from exo_core.types.tasks import TaskStatus
 from exo_core.types.tasks import TextGeneration as TextGenerationTask

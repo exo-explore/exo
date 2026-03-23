@@ -5,10 +5,10 @@ from typing import Self
 from exo_core.types.tasks import TaskId
 
 
-class Cancelled: ...
+class Cancelled: pass
 
 
-class Finished: ...
+class Finished: pass
 
 
 CANCEL_ALL_TASKS = TaskId("CANCEL_TALL_TASKS")

@@ -1,13 +1,12 @@
+from exo.worker.engines.mlx.utils_mlx import (
+    apply_chat_template,
+    get_eos_token_ids_for_model,
+)
 from exo_core.types.common import ModelId
 from exo_core.types.text_generation import TextGenerationTaskParams
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from vllm.sampling_params import SamplingParams
 from vllm.v1.engine.llm_engine import LLMEngine
-
-from exo.worker.engines.mlx.utils_mlx import (
-    apply_chat_template,
-    get_eos_token_ids_for_model,
-)
 
 
 def format_vllm_prompt(

@@ -3,8 +3,7 @@ from datetime import datetime, timezone
 
 import anyio
 from anyio import fail_after
-from exo_core.model_cards import ModelId
-from exo_core.types.common import CommandId, NodeId, SystemId
+from exo_core.types.common import CommandId, NodeId, SystemId, ModelId
 from exo_core.types.downloads import DownloadCompleted
 from exo_core.types.runners import RunnerId
 from exo_core.types.tasks import (
@@ -19,7 +18,7 @@ from exo_core.types.tasks import (
 from exo_core.utils.downloads import resolve_model_in_path
 from loguru import logger
 
-from exo.api.types import ImageEditsTaskParams
+from exo_core.types.image_generation import ImageEditsTaskParams
 from exo.shared.apply import apply
 from exo.shared.types.commands import (
     ForwarderCommand,

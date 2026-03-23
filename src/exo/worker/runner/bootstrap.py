@@ -5,14 +5,13 @@ import sys
 from pathlib import Path
 
 import loguru
+from exo_core.constants import EXO_MODELS_DIR
 from exo_core.types.instances import BoundInstance, VllmInstance
 from exo_core.types.runners import RunnerFailed
 from exo_core.types.tasks import Task, TaskId
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
-
-logger: "loguru.Logger" = loguru.logger
 
 _CUDA_HOST_LIBS = ["libcuda.so.1", "libnvidia-ml.so.1", "libnvidia-ptxjitcompiler.so.1"]
 _CUDA_HOST_SEARCH_DIRS = [
@@ -37,9 +36,9 @@ def _ensure_cuda_libs() -> None:
             if lib_path.exists():
                 try:
                     ctypes.CDLL(str(lib_path), mode=ctypes.RTLD_GLOBAL)
-                    logger.info(f"Loaded CUDA host lib: {lib_path}")
+                    loguru.logger.info(f"Loaded CUDA host lib: {lib_path}")
                 except OSError:
-                    logger.warning(f"Failed to load {lib_path}")
+                    loguru.logger.warning(f"Failed to load {lib_path}")
                     raise
         return
 
@@ -51,8 +50,8 @@ def entrypoint(
     cancel_receiver: MpReceiver[TaskId],
     _logger: "loguru.Logger",
 ) -> None:
-    global logger
-    logger = _logger
+    loguru.logger = _logger
+    logger = loguru.logger
 
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
@@ -72,15 +71,12 @@ def entrypoint(
             os.environ["VLLM_KV_CACHE_LAYOUT"] = "NHD"
             os.environ["VLLM_BATCH_INVARIANT"] = "1"
             _ensure_cuda_libs()
-            from exo_core.constants import EXO_MODELS_DIR
 
-            from exo.worker.runner.llm_inference.runner import Runner, VllmBuilder
+            from vllm_engine.builder import VllmBuilder
+            from .llm_inference.runner import Runner
 
-            model_id = bound_instance.bound_shard.model_card.model_id
-            builder = VllmBuilder(
-                model_id=model_id,
-                model_path=str(EXO_MODELS_DIR / model_id.normalize()),
-                trust_remote_code=bound_instance.bound_shard.model_card.trust_remote_code,
+            builder = VllmBuilder.create(
+                bound_instance=bound_instance,
                 cancel_receiver=cancel_receiver,
                 event_sender=event_sender,
             )
@@ -89,14 +85,15 @@ def entrypoint(
             )
             runner.main()
         elif bound_instance.is_image_model:
-            from exo.worker.runner.image_models.runner import Runner as ImageRunner
+            from .image_models.runner import Runner
 
-            runner = ImageRunner(
+            runner = Runner(
                 bound_instance, event_sender, task_receiver, cancel_receiver
             )
             runner.main()
         else:
-            from exo.worker.runner.llm_inference.runner import MlxBuilder, Runner
+            from .llm_inference.runner import Runner
+            from mlx_engine.builder import MlxBuilder
 
             builder = MlxBuilder.create(
                 bound_instance,

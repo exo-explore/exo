@@ -14,13 +14,13 @@ from exo_core.types.runner_response import (
 from exo_core.utils.memory import Memory
 from PIL import Image
 
-from exo.api.types import (
+from exo_core.types.image_generation import (
     AdvancedImageParams,
     ImageEditsTaskParams,
-    ImageGenerationStats,
     ImageGenerationTaskParams,
     ImageSize,
 )
+from exo_core.types.runner_response import ImageGenerationStats
 from exo.worker.engines.image.distributed_model import DistributedImageModel
 
 

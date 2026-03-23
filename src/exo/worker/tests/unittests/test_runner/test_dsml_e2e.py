@@ -7,7 +7,7 @@ from exo_core.types.runner_response import (
     ToolCallResponse,
 )
 
-from exo.worker.engines.mlx.dsml_encoding import (
+from mlx_engine.dsml_encoding import (
     ASSISTANT_TOKEN,
     BOS_TOKEN,
     DSML_TOKEN,

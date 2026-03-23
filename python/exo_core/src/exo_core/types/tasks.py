@@ -2,16 +2,17 @@ from enum import Enum
 
 from pydantic import Field
 
-from exo.api.types import (
+from exo_core.models import TaggedModel
+
+from .common import CommandId, Id
+from .image_generation import (
     ImageEditsTaskParams,
     ImageGenerationTaskParams,
 )
-from exo_core.models import TaggedModel
-from exo_core.types.common import CommandId, Id
-from exo_core.types.instances import BoundInstance, InstanceId
-from exo_core.types.runners import RunnerId
-from exo_core.types.shards import ShardMetadata
-from exo_core.types.text_generation import TextGenerationTaskParams
+from .instances import BoundInstance, InstanceId
+from .runners import RunnerId
+from .shards import ShardMetadata
+from .text_generation import TextGenerationTaskParams
 
 
 class TaskId(Id):

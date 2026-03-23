@@ -14,11 +14,11 @@ from openai_harmony import (
 )
 
 from exo.api.types import ToolCallItem
-from exo.worker.engines.mlx.utils_mlx import (
+from mlx_engine.utils_mlx import (
     detect_thinking_prompt_suffix,
 )
-from exo.worker.runner.bootstrap import logger
-from exo.worker.runner.llm_inference.tool_parsers import ToolParser
+from loguru import logger
+from exo_core.utils.tool_parsers import ToolParser
 
 
 @cache
@@ -143,7 +143,7 @@ def parse_deepseek_v32(
     DSML markers like <｜DSML｜function_calls> may span multiple tokens.
     Also handles <think>...</think> blocks for thinking mode.
     """
-    from exo.worker.engines.mlx.dsml_encoding import (
+    from mlx_engine.dsml_encoding import (
         THINKING_END,
         THINKING_START,
         TOOL_CALLS_END,
@@ -284,7 +284,7 @@ def _could_be_dsml_prefix(text: str) -> bool:
     We look for suffixes of text that are prefixes of the TOOL_CALLS_START pattern.
     This allows us to buffer tokens until we can determine if a tool call is starting.
     """
-    from exo.worker.engines.mlx.dsml_encoding import TOOL_CALLS_START
+    from mlx_engine.dsml_encoding import TOOL_CALLS_START
 
     # Only check the last portion of text that could overlap with the marker
     max_check = len(TOOL_CALLS_START)

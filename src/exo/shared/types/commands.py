@@ -7,7 +7,7 @@ from exo_core.types.shards import Sharding, ShardMetadata
 from exo_core.types.text_generation import TextGenerationTaskParams
 from pydantic import Field
 
-from exo.api.types import (
+from exo_core.types.image_generation import (
     ImageEditsTaskParams,
     ImageGenerationTaskParams,
 )

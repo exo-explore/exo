@@ -4,11 +4,27 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = ["exo_core"]
+dependencies = ["exo_core", "psutil >= 7.0.0", "loguru >= 0.7.3"]
 
 [build-system]
 requires = ["uv_build>=0.8.9,<0.9.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
-exo_core = { workspace = true }
+exo_core = { workspace = true, editable = true }
+
+[tool.basedpyright]
+typeCheckingMode = "strict"
+failOnWarnings = true
+
+reportAny = "error"
+reportUnknownVariableType = "error"
+reportUnknownParameterType = "error"
+reportMissingParameterType = "error"
+reportMissingTypeStubs = "error"
+reportInvalidCast = "error"
+reportUnnecessaryCast = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
+
+pythonVersion = "3.13"
+stubPath = "../../.typings"

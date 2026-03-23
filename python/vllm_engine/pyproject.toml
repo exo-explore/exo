@@ -10,6 +10,8 @@ dependencies = [
   "mlx-cuda-13==0.30.6; sys_platform == 'linux'",
   "fastsafetensors>=0.1.10; sys_platform == 'linux'",
   "exo_core",
+  "mlx_engine",                                       # TODO(evan): remove this dependency!
+  "loguru>=0.7.3",
 ]
 
 [tool.uv]
@@ -17,7 +19,8 @@ environments = ["sys_platform == 'linux'"]
 
 
 [tool.uv.sources]
-exo_core = { workspace = true }
+exo_core = { workspace = true, editable = true }
+mlx_engine = { workspace = true, editable = true }
 vllm = { git = "https://github.com/hmellor/vllm.git", rev = "b99bedc737166ae5ca98cb9e3534b96e0c8c69aa" }
 torch = [
   { index = "pytorch-cu130", marker = "platform_machine == 'aarch64'" },

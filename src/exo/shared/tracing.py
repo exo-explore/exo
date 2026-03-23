@@ -10,7 +10,7 @@ from typing import cast, final
 
 from exo_core.constants import EXO_TRACING_ENABLED
 
-from exo.worker.runner.bootstrap import logger
+from loguru import logger
 
 # Context variable to track the current trace category for hierarchical nesting
 _current_category: ContextVar[str | None] = ContextVar("current_category", default=None)
