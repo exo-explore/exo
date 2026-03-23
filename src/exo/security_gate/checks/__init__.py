@@ -9,6 +9,7 @@ from .dict_mutation import check_dict_mutation
 from .event_sourcing import check_event_sourcing
 from .network_exposure import check_network_exposure
 from .pydantic_mutation import check_pydantic_mutation
+from .replay_dedup import check_replay_dedup
 from .secrets import check_secrets
 
 __all__ = ["Issue", "ALL_CHECKS"]
@@ -21,4 +22,5 @@ ALL_CHECKS: list[Callable[[str, str, ast.Module], list[Issue]]] = [
     check_event_sourcing,
     check_network_exposure,
     check_dict_mutation,
+    check_replay_dedup,
 ]

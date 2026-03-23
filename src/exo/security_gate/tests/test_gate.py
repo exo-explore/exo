@@ -13,6 +13,7 @@ from exo.security_gate.checks.dict_mutation import check_dict_mutation
 from exo.security_gate.checks.event_sourcing import check_event_sourcing
 from exo.security_gate.checks.network_exposure import check_network_exposure
 from exo.security_gate.checks.pydantic_mutation import check_pydantic_mutation
+from exo.security_gate.checks.replay_dedup import check_replay_dedup
 from exo.security_gate.checks.secrets import check_secrets
 from exo.security_gate.suppressions import filter_issues
 
@@ -470,3 +471,63 @@ class TestDictMutation:
         issues = _run_check(check_dict_mutation, source)
         blocking = [i for i in issues if i.check_id == "DICT_MUTATION"]
         assert blocking, f"Expected DICT_MUTATION for counts[k] += 1, got: {issues}"
+
+
+# ---------------------------------------------------------------------------
+# REPLAY_DEDUP
+# ---------------------------------------------------------------------------
+
+
+class TestReplayDedup:
+    def test_apply_without_dedup_flagged(self) -> None:
+        source = """
+        def apply(state, event):
+            return state.add(event)
+        """
+        issues = _run_check(check_replay_dedup, source)
+        assert any(i.check_id == "REPLAY_DEDUP" for i in issues), f"Expected REPLAY_DEDUP, got: {issues}"
+
+    def test_apply_with_idx_guard_not_flagged(self) -> None:
+        source = """
+        def apply(state, event):
+            if state.last_event_applied_idx >= event.idx:
+                return state
+            return state.add(event)
+        """
+        issues = _run_check(check_replay_dedup, source)
+        assert not any(i.check_id == "REPLAY_DEDUP" for i in issues), f"Expected no REPLAY_DEDUP, got: {issues}"
+
+    def test_apply_with_seen_set_not_flagged(self) -> None:
+        source = """
+        def apply(state, event):
+            if event.id in state.seen_event_ids:
+                return state
+            return state.add(event)
+        """
+        issues = _run_check(check_replay_dedup, source)
+        assert not any(i.check_id == "REPLAY_DEDUP" for i in issues), f"Expected no REPLAY_DEDUP, got: {issues}"
+
+    def test_handle_event_without_dedup_flagged(self) -> None:
+        source = """
+        def handle_event(self, event):
+            self.state = self.state + event
+        """
+        issues = _run_check(check_replay_dedup, source)
+        assert any(i.check_id == "REPLAY_DEDUP" for i in issues), f"Expected REPLAY_DEDUP, got: {issues}"
+
+    def test_single_arg_apply_not_flagged(self) -> None:
+        # apply(x) with 1 arg is not an event handler
+        source = """
+        def apply(x):
+            return x * 2
+        """
+        issues = _run_check(check_replay_dedup, source)
+        assert not any(i.check_id == "REPLAY_DEDUP" for i in issues), f"Should not flag 1-arg apply, got: {issues}"
+
+    def test_unrelated_function_not_flagged(self) -> None:
+        source = """
+        def process_batch(items, config):
+            return [item for item in items]
+        """
+        issues = _run_check(check_replay_dedup, source)
+        assert not any(i.check_id == "REPLAY_DEDUP" for i in issues), f"Should not flag unrelated fn, got: {issues}"
