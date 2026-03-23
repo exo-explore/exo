@@ -10,6 +10,7 @@ from exo_core.types.common import CommandId, ModelId
 from exo_core.types.instances import BoundInstance
 from exo_core.types.runner_response import (
     ImageGenerationResponse,
+    ImageGenerationStats,
     PartialImageResponse,
 )
 from exo_core.types.runners import (
@@ -43,8 +44,12 @@ from exo_core.types.tasks import (
     TaskId,
     TaskStatus,
 )
+from exo_core.utils.channels import MpReceiver, MpSender
+from loguru import logger
+from mlx_engine.utils_mlx import (
+    initialize_mlx,
+)
 
-from exo_core.types.runner_response import ImageGenerationStats
 from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -55,17 +60,12 @@ from exo.shared.types.events import (
     TraceEventData,
     TracesCollected,
 )
-from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.image import (
     DistributedImageModel,
     generate_image,
     initialize_image_model,
     warmup_image_generator,
 )
-from mlx_engine.utils_mlx import (
-    initialize_mlx,
-)
-from loguru import logger
 
 
 def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:

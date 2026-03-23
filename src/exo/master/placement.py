@@ -3,7 +3,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Sequence
 
-from exo_core.types.common import NodeId, ModelId
+from exo_core.types.common import ModelId, NodeId
 from exo_core.types.downloads import (
     DownloadOngoing,
     DownloadProgress,

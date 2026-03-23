@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any
 
 import mlx.core as mx
-from base import Module
+from .base import Module
 
 @partial(mx.compile, shapeless=True)
 def sigmoid(x: mx.array) -> mx.array:

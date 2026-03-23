@@ -2,9 +2,8 @@ import json
 import re
 from typing import Any
 
-from mlx_lm.chat_templates import deepseek_v32
-
 from exo_core.types.runner_response import ToolCallItem
+from mlx_lm.chat_templates import deepseek_v32
 
 BOS_TOKEN: str = deepseek_v32.bos_token
 EOS_TOKEN: str = deepseek_v32.eos_token

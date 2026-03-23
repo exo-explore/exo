@@ -6,7 +6,7 @@ from functools import lru_cache
 from typing import Callable, Optional, Union
 
 import mlx.core as mx
-from base import Module
+from .base import Module
 from mlx.nn.layers.linear import Linear
 
 @lru_cache

@@ -5,7 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 authors = [{ name = "Evan", email = "evanev7@gmail.com" }]
 requires-python = ">=3.13"
-dependencies = ["pydantic>=2.13.0b2"]
+dependencies = [
+  "mlx-lm",         # TODO: depend on transformers or other
+  "openai-harmony", # inherit from workspace
+  "pydantic",       # inherit from workspace
+]
 
 [build-system]
 requires = ["uv_build>=0.9.24,<0.10.0"]

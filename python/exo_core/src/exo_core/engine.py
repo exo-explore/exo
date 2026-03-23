@@ -1,14 +1,15 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
-from typing import Self
 
 from exo_core.types.tasks import TaskId
 
 
-class Cancelled: pass
+class Cancelled:
+    pass
 
 
-class Finished: pass
+class Finished:
+    pass
 
 
 CANCEL_ALL_TASKS = TaskId("CANCEL_TALL_TASKS")
@@ -45,12 +46,12 @@ class Engine[TaskType, ResponseType](ABC):
 
 
 class EngineBuilder[SetupType, TaskType, ResponseType](ABC):
-    @classmethod
-    @abstractmethod
-    def create(
-        cls,
-        bound_instance: SetupType,
-    ) -> Self: ...
+    # @classmethod
+    # @abstractmethod
+    # def create(
+    #    cls,
+    #    bound_instance: SetupType,
+    # ) -> Self: ...
 
     @abstractmethod
     def connect(self) -> None: ...

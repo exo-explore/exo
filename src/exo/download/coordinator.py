@@ -4,18 +4,17 @@ import anyio
 from anyio import current_time
 from exo_core.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
 from exo_core.model_cards import get_model_cards
-from exo_core.types.common import NodeId, ModelId
+from exo_core.types.common import ModelId, NodeId
 from exo_core.types.downloads import (
     DownloadCompleted,
     DownloadFailed,
     DownloadOngoing,
     DownloadPending,
     DownloadProgress,
-)
-from exo_core.types.shards import PipelineShardMetadata, ShardMetadata
-from exo_core.types.downloads import (
     RepoDownloadProgress,
 )
+from exo_core.types.shards import PipelineShardMetadata, ShardMetadata
+from exo_core.utils.channels import Receiver, Sender
 from exo_core.utils.downloads import (
     delete_model,
     map_repo_download_progress_to_download_progress_data,
@@ -34,7 +33,6 @@ from exo.shared.types.events import (
     Event,
     NodeDownloadProgress,
 )
-from exo.utils.channels import Receiver, Sender
 from exo.utils.task_group import TaskGroup
 
 

@@ -29,6 +29,7 @@ from exo_core.types.tasks import (
     TextGeneration,
 )
 from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo_core.utils.channels import channel, mp_channel
 from fastapi import FastAPI
 from fastapi.responses import Response, StreamingResponse
 from hypercorn import Config
@@ -38,7 +39,6 @@ from pydantic import BaseModel
 
 from exo.shared.types.commands import CommandId
 from exo.shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
-from exo.utils.channels import channel, mp_channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.worker.runner.bootstrap import entrypoint
 

@@ -188,12 +188,8 @@
               autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "libcuda.so.1" ];
             });
           xgrammar = prev.xgrammar.overrideAttrs (old: {
-            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ final.setuptools final.scikit-build-core final.packaging final.pathspec pkgs.cmake final.nanobind ];
-
-            prePatch = ''
-              cat cpp/nanobind/CMakeLists.txt
-            '';
-            patches = (old.patches or [ ]) ++ [ ../nix/nanobind_cmake.patch ];
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.cmake ];
+            patches = (old.patches or [ ]) ++ [ ../nix/xgrammar_cmake.patch ];
           });
           vllm = prev.vllm.overrideAttrs (old: {
             patches = (old.patches or [ ]) ++ [ ../nix/vllm_uv2nix_cmake.patch ];

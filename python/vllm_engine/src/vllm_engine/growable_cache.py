@@ -1,8 +1,7 @@
 import torch
+from loguru import logger
 from mlx_engine.cache import KVPrefixCache
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
-
-from loguru import logger
 
 INITIAL_FRACTION = 0.05
 GROWTH_HEADROOM_BYTES = 512 * 1024 * 1024

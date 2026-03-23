@@ -14,15 +14,14 @@ import pytest
 from exo_core.types.common import ModelId
 from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
 from mlx.utils import tree_flatten, tree_unflatten
-from mlx_lm.tokenizer_utils import TokenizerWrapper
-
-from exo.shared.types.mlx import Model
-from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.generator.generate import mlx_generate
-from exo.worker.engines.mlx.utils_mlx import (
+from mlx_engine.cache import KVPrefixCache
+from mlx_engine.generator.generate import mlx_generate
+from mlx_engine.types import Model
+from mlx_engine.utils_mlx import (
     apply_chat_template,
     load_tokenizer_for_model_id,
 )
+from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 HF_CACHE = Path.home() / ".cache" / "huggingface" / "hub"
 

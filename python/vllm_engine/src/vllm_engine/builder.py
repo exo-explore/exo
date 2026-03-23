@@ -1,30 +1,37 @@
+import contextlib
+import os
 from dataclasses import dataclass
-from typing import Self, Callable
+from typing import Callable, Self
+
 from exo_core.constants import EXO_MODELS_DIR
-from exo_core.engine import EngineBuilder, Engine
-from exo_core.types.common import ModelId
+from exo_core.engine import Engine, EngineBuilder
+from exo_core.types.chunks import ErrorChunk, PrefillProgressChunk
+from exo_core.types.common import CommandId, ModelId
 from exo_core.types.instances import BoundInstance
-from exo_core.types.tasks import TextGeneration
-from exo_core.types.runner_response import GenerationResponse
-from vllm_engine.vllm_generator import VllmBatchEngine
-from vllm_engine.vllm_generator import load_vllm_engine
+from exo_core.types.runner_response import GenerationResponse, ToolCallResponse
+from exo_core.types.tasks import TaskId, TextGeneration
+from exo_core.utils.channels import MpReceiver, MpSender
+from loguru import logger
+from mlx_engine.batch_generator import BatchGenerator
+
+from vllm_engine.vllm_generator import VllmBatchEngine, load_vllm_engine
 
 
 @dataclass
-class VllmBuilder(EngineBuilder[BoundInstance, TextGeneration, GenerationResponse]):
+class VllmBuilder(EngineBuilder[BoundInstance, TextGeneration, GenerationResponse | ToolCallResponse]):
     model_id: ModelId
     model_path: str
     trust_remote_code: bool
     cancel_receiver: MpReceiver[TaskId]
-    event_sender: MpSender[Event]
+    event_sender: MpSender[tuple[CommandId, ErrorChunk | PrefillProgressChunk]]
     bound_instance: BoundInstance
 
     @classmethod
     def create(
         cls,
         bound_instance: BoundInstance,
-        event_sender: MpSender[Event],
-        cancel_receiver: MpReceiver[TaskId],
+    cancel_receiver: MpReceiver[TaskId],
+    event_sender: MpSender[tuple[CommandId, ErrorChunk | PrefillProgressChunk]],
     ) -> Self:
         mid = bound_instance.instance.shard_assignments.model_id
         return cls(

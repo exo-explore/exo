@@ -3,9 +3,8 @@ import time
 
 import pytest
 from anyio import fail_after
+from exo_core.utils.channels import MpReceiver, MpSender, mp_channel
 from loguru import logger
-
-from exo.utils.channels import MpReceiver, MpSender, mp_channel
 
 
 def foo(recv: MpReceiver[str]):

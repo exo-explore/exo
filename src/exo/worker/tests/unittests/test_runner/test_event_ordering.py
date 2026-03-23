@@ -30,6 +30,7 @@ from exo_core.types.tasks import (
     TextGeneration,
 )
 from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo_core.utils.channels import mp_channel
 
 import exo.worker.runner.llm_inference.batch_generator as mlx_batch_generator
 import exo.worker.runner.llm_inference.model_output_parsers as mlx_model_output_parsers
@@ -41,7 +42,6 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.utils.channels import mp_channel
 
 from ...constants import (
     CHAT_COMPLETION_TASK_ID,

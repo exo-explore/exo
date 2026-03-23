@@ -13,6 +13,7 @@ from anyio.streams.buffered import BufferedByteReceiveStream
 from anyio.streams.text import TextReceiveStream
 from exo_core.constants import EXO_CONFIG_FILE, EXO_MODELS_DIR
 from exo_core.models import TaggedModel
+from exo_core.utils.channels import Sender
 from exo_core.utils.memory import Memory
 from loguru import logger
 from pydantic import ValidationError
@@ -28,7 +29,6 @@ from exo.shared.types.thunderbolt import (
     ThunderboltConnectivity,
     ThunderboltIdentifier,
 )
-from exo.utils.channels import Sender
 from exo.utils.task_group import TaskGroup
 
 from .macmon import MacmonMetrics

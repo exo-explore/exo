@@ -4,6 +4,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from anyio import WouldBlock
+from exo_core.engine import Cancelled, Engine, EngineBuilder, Finished
 from exo_core.model_cards import ModelTask
 from exo_core.types.chunks import (
     ErrorChunk,
@@ -40,6 +41,8 @@ from exo_core.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
+from exo_core.utils.channels import MpReceiver, MpSender
+from loguru import logger
 
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -48,12 +51,6 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.utils.channels import MpReceiver, MpSender
-from loguru import logger
-
-from .batch_generator import Cancelled, Finished
-
-from exo_core.engine import EngineBuilder, Engine
 
 try:
     from vllm_engine.builder import VllmBuilder
@@ -74,7 +71,9 @@ class ExitCode(str, Enum):
     Shutdown = "Shutdown"
 
 
-BuilderType = EngineBuilder[BoundInstance, TextGeneration, GenerationResponse | ToolCallResponse]
+BuilderType = EngineBuilder[
+    BoundInstance, TextGeneration, GenerationResponse | ToolCallResponse
+]
 EngineType = Engine[TextGeneration, GenerationResponse | ToolCallResponse]
 
 
@@ -220,8 +219,9 @@ class Runner:
                 self.update_status(RunnerLoaded())
                 logger.info("runner loaded")
 
-            case StartWarmup() if isinstance(self.current_status, RunnerLoaded) and isinstance(self.generator, Engine):
-                assert isinstance(self.generator, InferenceGenerator)
+            case StartWarmup() if isinstance(
+                self.current_status, RunnerLoaded
+            ) and isinstance(self.generator, Engine):
                 logger.info("runner warming up")
 
                 self.update_status(RunnerWarmingUp())

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import cast, final
 
 from exo_core.constants import EXO_TRACING_ENABLED
-
 from loguru import logger
 
 # Context variable to track the current trace category for hierarchical nesting

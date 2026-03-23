@@ -3,8 +3,9 @@ from datetime import datetime, timezone
 
 import anyio
 from anyio import fail_after
-from exo_core.types.common import CommandId, NodeId, SystemId, ModelId
+from exo_core.types.common import CommandId, ModelId, NodeId, SystemId
 from exo_core.types.downloads import DownloadCompleted
+from exo_core.types.image_generation import ImageEditsTaskParams
 from exo_core.types.runners import RunnerId
 from exo_core.types.tasks import (
     CancelTask,
@@ -15,10 +16,10 @@ from exo_core.types.tasks import (
     Task,
     TaskStatus,
 )
+from exo_core.utils.channels import Receiver, Sender, channel
 from exo_core.utils.downloads import resolve_model_in_path
 from loguru import logger
 
-from exo_core.types.image_generation import ImageEditsTaskParams
 from exo.shared.apply import apply
 from exo.shared.types.commands import (
     ForwarderCommand,
@@ -39,7 +40,6 @@ from exo.shared.types.events import (
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
 from exo.shared.types.topology import Connection, SocketConnection
-from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff

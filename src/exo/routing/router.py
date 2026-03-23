@@ -13,6 +13,7 @@ from anyio import (
 )
 from exo_core.constants import EXO_NODE_ID_KEYPAIR
 from exo_core.models import CamelCaseModel
+from exo_core.utils.channels import Receiver, Sender, channel
 from exo_pyo3_bindings import (
     AllQueuesFullError,
     Keypair,
@@ -24,7 +25,6 @@ from exo_pyo3_bindings import (
 from filelock import FileLock
 from loguru import logger
 
-from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.task_group import TaskGroup
 
 from .connection_message import ConnectionMessage

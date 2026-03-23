@@ -9,9 +9,9 @@ from exo_core.types.instances import BoundInstance, InstanceId
 from exo_core.types.runners import RunnerFailed, RunnerId
 from exo_core.types.tasks import Task, TaskId, TextGeneration
 from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo_core.utils.channels import channel, mp_channel
 
 from exo.shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
-from exo.utils.channels import channel, mp_channel
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance
 

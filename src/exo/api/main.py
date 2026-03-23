@@ -36,8 +36,17 @@ from exo_core.types.chunks import (
 )
 from exo_core.types.common import CommandId, Id, ModelId, NodeId, SystemId
 from exo_core.types.downloads import DownloadCompleted
+from exo_core.types.image_generation import (
+    AdvancedImageParams,
+    BenchImageGenerationTaskParams,
+    ImageEditsTaskParams,
+    ImageGenerationTaskParams,
+    ImageSize,
+    normalize_image_size,
+)
 from exo_core.types.instances import Instance, InstanceId, InstanceMeta
 from exo_core.types.shards import Sharding
+from exo_core.utils.channels import Receiver, Sender, channel
 from exo_core.utils.memory import Memory
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -70,14 +79,6 @@ from exo.api.adapters.responses import (
     collect_responses_response,
     generate_responses_stream,
     responses_request_to_text_generation,
-)
-from exo_core.types.image_generation import (
-    normalize_image_size,
-    AdvancedImageParams,
-    BenchImageGenerationTaskParams,
-    ImageEditsTaskParams,
-    ImageGenerationTaskParams,
-    ImageSize,
 )
 from exo.api.types import (
     AddCustomModelParams,
@@ -173,7 +174,6 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.state import State
 from exo.utils.banner import print_startup_banner
-from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup

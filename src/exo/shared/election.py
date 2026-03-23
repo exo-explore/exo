@@ -8,11 +8,11 @@ from anyio import (
 )
 from exo_core.models import CamelCaseModel
 from exo_core.types.common import NodeId, SessionId
+from exo_core.utils.channels import Receiver, Sender
 from loguru import logger
 
 from exo.routing.connection_message import ConnectionMessage
 from exo.shared.types.commands import ForwarderCommand
-from exo.utils.channels import Receiver, Sender
 from exo.utils.task_group import TaskGroup
 
 DEFAULT_ELECTION_TIMEOUT = 3.0

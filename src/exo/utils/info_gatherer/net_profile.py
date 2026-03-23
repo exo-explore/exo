@@ -5,11 +5,11 @@ import anyio
 import httpx
 from anyio import create_task_group
 from exo_core.types.common import NodeId
+from exo_core.utils.channels import Sender, channel
 from loguru import logger
 
 from exo.shared.topology import Topology
 from exo.shared.types.profiling import NodeNetworkInfo
-from exo.utils.channels import Sender, channel
 
 REACHABILITY_ATTEMPTS = 3
 

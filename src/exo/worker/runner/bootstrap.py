@@ -5,13 +5,12 @@ import sys
 from pathlib import Path
 
 import loguru
-from exo_core.constants import EXO_MODELS_DIR
 from exo_core.types.instances import BoundInstance, VllmInstance
 from exo_core.types.runners import RunnerFailed
 from exo_core.types.tasks import Task, TaskId
+from exo_core.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
-from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
 _CUDA_HOST_LIBS = ["libcuda.so.1", "libnvidia-ml.so.1", "libnvidia-ptxjitcompiler.so.1"]
 _CUDA_HOST_SEARCH_DIRS = [
@@ -73,6 +72,7 @@ def entrypoint(
             _ensure_cuda_libs()
 
             from vllm_engine.builder import VllmBuilder
+
             from .llm_inference.runner import Runner
 
             builder = VllmBuilder.create(
@@ -92,8 +92,9 @@ def entrypoint(
             )
             runner.main()
         else:
-            from .llm_inference.runner import Runner
             from mlx_engine.builder import MlxBuilder
+
+            from .llm_inference.runner import Runner
 
             builder = MlxBuilder.create(
                 bound_instance,

@@ -9,10 +9,10 @@ from typing import Callable
 from unittest.mock import AsyncMock, patch
 
 from exo_core.model_cards import ModelCard, ModelTask
-from exo_core.types.common import NodeId, SystemId, ModelId
-from exo_core.types.downloads import DownloadCompleted
+from exo_core.types.common import ModelId, NodeId, SystemId
+from exo_core.types.downloads import DownloadCompleted, RepoDownloadProgress
 from exo_core.types.shards import PipelineShardMetadata, ShardMetadata
-from exo_core.types.downloads import RepoDownloadProgress
+from exo_core.utils.channels import Receiver, Sender, channel
 from exo_core.utils.memory import Memory
 
 from exo.download.coordinator import DownloadCoordinator
@@ -24,7 +24,6 @@ from exo.shared.types.commands import (
     StartDownload,
 )
 from exo.shared.types.events import Event, NodeDownloadProgress
-from exo.utils.channels import Receiver, Sender, channel
 
 NODE_ID = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 MODEL_ID = ModelId("test-org/test-model")

@@ -5,6 +5,7 @@ import anyio
 from anyio import BrokenResourceError, ClosedResourceError
 from anyio.abc import CancelScope
 from exo_core.types.common import SessionId, SystemId
+from exo_core.utils.channels import Receiver, Sender, channel
 from loguru import logger
 
 from exo.shared.types.commands import ForwarderCommand, RequestEventLog
@@ -15,7 +16,6 @@ from exo.shared.types.events import (
     IndexedEvent,
     LocalForwarderEvent,
 )
-from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
 from exo.utils.task_group import TaskGroup
 

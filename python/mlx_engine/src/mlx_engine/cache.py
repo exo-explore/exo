@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 # Fraction of device memory above which LRU eviction kicks in.
 # Smaller machines need more aggressive eviction.
 def _default_memory_threshold() -> float:
-    total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb
+    total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb # pyright: ignore[reportAny]
     if total_gb >= 128:
         return 0.85
     if total_gb >= 64:
@@ -220,7 +220,6 @@ class KVPrefixCache:
     def lookup(
         self, prompt_token_ids: list[int]
     ) -> tuple["TorchKVCache | None", int, int | None]:
-        from exo.worker.engines.vllm.kv_cache import TorchKVCache
 
         prompt_mx = mx.array(prompt_token_ids)
         max_length = len(prompt_token_ids)
@@ -352,14 +351,14 @@ def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
 
 
 def get_available_memory() -> Memory:
-    mem: int = psutil.virtual_memory().available
+    mem: int = psutil.virtual_memory().available # pyright: ignore[reportAny]
     return Memory.from_bytes(mem)
 
 
 def get_memory_used_percentage() -> float:
     mem = psutil.virtual_memory()
     # percent is 0-100
-    return float(mem.percent / 100)
+    return float(mem.percent / 100) # pyright: ignore[reportAny]
 
 
 def make_kv_cache(

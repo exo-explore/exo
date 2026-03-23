@@ -1,8 +1,8 @@
 from collections.abc import Generator
 from typing import Any, Literal
 
-from exo_core.model_cards import ModelId
 from exo_core.models import TaggedModel
+from exo_core.types.common import ModelId
 from exo_core.types.runner_response import (
     FinishReason,
     GenerationStats,

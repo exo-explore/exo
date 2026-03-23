@@ -7,11 +7,11 @@ from typing import AsyncIterator, Callable
 
 from exo_core.model_cards import ModelCard, ModelTask
 from exo_core.types.common import ModelId
+from exo_core.types.downloads import RepoDownloadProgress
 from exo_core.types.shards import (
     PipelineShardMetadata,
     ShardMetadata,
 )
-from exo_core.types.downloads import RepoDownloadProgress
 from exo_core.utils.memory import Memory
 
 

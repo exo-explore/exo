@@ -2,8 +2,10 @@ from collections.abc import Generator
 from functools import cache
 from typing import Any
 
-from exo_core.types.common import ModelId
-from exo_core.types.runner_response import GenerationResponse, ToolCallResponse
+from loguru import logger
+from mlx_engine.utils_mlx import (
+    detect_thinking_prompt_suffix,
+)
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (
     HarmonyEncodingName,
@@ -13,12 +15,13 @@ from openai_harmony import (
     load_harmony_encoding,
 )
 
-from exo.api.types import ToolCallItem
-from mlx_engine.utils_mlx import (
-    detect_thinking_prompt_suffix,
+from exo_core.tokenizers.tool_parsers import ToolParser
+from exo_core.types.common import ModelId
+from exo_core.types.runner_response import (
+    GenerationResponse,
+    ToolCallItem,
+    ToolCallResponse,
 )
-from loguru import logger
-from exo_core.utils.tool_parsers import ToolParser
 
 
 @cache

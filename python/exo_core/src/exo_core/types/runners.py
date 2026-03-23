@@ -2,9 +2,8 @@ from collections.abc import Mapping
 
 from pydantic import model_validator
 
-from exo_core.model_cards import ModelId
 from exo_core.models import CamelCaseModel, TaggedModel
-from exo_core.types.common import Id, NodeId
+from exo_core.types.common import Id, ModelId, NodeId
 from exo_core.types.shards import ShardMetadata
 
 

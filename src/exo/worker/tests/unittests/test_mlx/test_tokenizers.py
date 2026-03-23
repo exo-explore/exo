@@ -17,8 +17,7 @@ from exo_core.utils.downloads import (
     ensure_models_dir,
     fetch_file_list_with_cache,
 )
-
-from exo.worker.engines.mlx.utils_mlx import (
+from mlx_engine.utils_mlx import (
     get_eos_token_ids_for_model,
     load_tokenizer_for_model_id,
 )

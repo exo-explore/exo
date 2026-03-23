@@ -7,13 +7,13 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as mlx_nn
 import pytest
-
-from exo.worker.engines.mlx.auto_parallel import (
+from mlx_engine.auto_parallel import (
     CustomMlxLayer,
     PipelineFirstLayer,
     PipelineLastLayer,
     patch_pipeline_model,
 )
+
 from exo.worker.tests.unittests.test_mlx.conftest import MockLayer
 
 

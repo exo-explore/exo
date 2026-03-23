@@ -8,19 +8,23 @@ from typing import TYPE_CHECKING
 import mlx.core as mx
 from exo_core.constants import EXO_MAX_CONCURRENT_REQUESTS
 from exo_core.types.chunks import ErrorChunk, PrefillProgressChunk
-from exo_core.types.common import ModelId
+from exo_core.types.common import CommandId, ModelId
 from exo_core.types.runner_response import GenerationResponse, ToolCallResponse
 from exo_core.types.tasks import CANCEL_ALL_TASKS, TaskId, TextGeneration
 from exo_core.types.text_generation import TextGenerationTaskParams
+from exo_core.utils.channels import MpReceiver, MpSender
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.types.events import ChunkGenerated, Event
-from exo.utils.channels import MpReceiver, MpSender
 from mlx_engine.cache import KVPrefixCache
 from mlx_engine.generator.batch_generate import ExoBatchGenerator
 
 if TYPE_CHECKING:
     from vllm_engine.vllm_generator import VllmBatchEngine
+from exo_core.engine import Cancelled, Engine, Finished
+from exo_core.tokenizers.model_output_parsers import apply_all_parsers
+from exo_core.tokenizers.tool_parsers import ToolParser
+from loguru import logger
+
 from mlx_engine.generator.generate import (
     PrefillCancelled,
 )
@@ -29,11 +33,6 @@ from mlx_engine.utils_mlx import (
     mx_all_gather_tasks,
     mx_any,
 )
-from loguru import logger
-from exo_core.engine import Engine, Cancelled, Finished
-
-from .model_output_parsers import apply_all_parsers
-from exo_core.utils.tool_parsers import ToolParser
 
 
 class GeneratorQueue[T]:
@@ -74,7 +73,9 @@ def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
 
 
 @dataclass(eq=False)
-class SequentialGenerator(Engine[TextGeneration, GenerationResponse | ToolCallResponse]):
+class SequentialGenerator(
+    Engine[TextGeneration, GenerationResponse | ToolCallResponse]
+):
     tokenizer: TokenizerWrapper
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
@@ -82,7 +83,7 @@ class SequentialGenerator(Engine[TextGeneration, GenerationResponse | ToolCallRe
     model_id: ModelId
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
-    event_sender: MpSender[Event]
+    event_sender: MpSender[tuple[CommandId, ErrorChunk | PrefillProgressChunk]]
     _generate_fn: Callable[..., Generator[GenerationResponse]]
     _warmup_fn: Callable[[], int]
     check_for_cancel_every: int = 50
@@ -197,10 +198,11 @@ class SequentialGenerator(Engine[TextGeneration, GenerationResponse | ToolCallRe
 
     def _send_error(self, task: TextGeneration, e: Exception) -> None:
         if self.device_rank == 0:
+            # TODO: sync channels?
             self.event_sender.send(
-                ChunkGenerated(
-                    command_id=task.command_id,
-                    chunk=ErrorChunk(
+                (
+                    task.command_id,
+                    ErrorChunk(
                         model=self.model_id,
                         finish_reason="error",
                         error_message=str(e),
@@ -215,9 +217,9 @@ class SequentialGenerator(Engine[TextGeneration, GenerationResponse | ToolCallRe
         def on_prefill_progress(processed: int, total: int) -> None:
             if self.device_rank == 0:
                 self.event_sender.send(
-                    ChunkGenerated(
-                        command_id=task.command_id,
-                        chunk=PrefillProgressChunk(
+                    (
+                        task.command_id,
+                        PrefillProgressChunk(
                             model=self.model_id,
                             processed_tokens=processed,
                             total_tokens=total,
@@ -268,7 +270,7 @@ class BatchGenerator(Engine[TextGeneration, GenerationResponse | ToolCallRespons
     model_id: ModelId
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
-    event_sender: MpSender[Event]
+    event_sender: MpSender[tuple[CommandId, ErrorChunk | PrefillProgressChunk]]
     _gen: "ExoBatchGenerator | VllmBatchEngine"
     max_concurrent_requests: int = EXO_MAX_CONCURRENT_REQUESTS
     check_for_cancel_every: int = 50
@@ -412,9 +414,9 @@ class BatchGenerator(Engine[TextGeneration, GenerationResponse | ToolCallRespons
     def _send_error(self, task: TextGeneration, e: Exception) -> None:
         if self.device_rank == 0:
             self.event_sender.send(
-                ChunkGenerated(
-                    command_id=task.command_id,
-                    chunk=ErrorChunk(
+                (
+                    task.command_id,
+                    ErrorChunk(
                         model=self.model_id,
                         finish_reason="error",
                         error_message=str(e),
@@ -429,9 +431,9 @@ class BatchGenerator(Engine[TextGeneration, GenerationResponse | ToolCallRespons
         def on_prefill_progress(processed: int, total: int) -> None:
             if self.device_rank == 0:
                 self.event_sender.send(
-                    ChunkGenerated(
-                        command_id=task.command_id,
-                        chunk=PrefillProgressChunk(
+                    (
+                        task.command_id,
+                        PrefillProgressChunk(
                             model=self.model_id,
                             processed_tokens=processed,
                             total_tokens=total,

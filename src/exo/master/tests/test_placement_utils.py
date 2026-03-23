@@ -1,6 +1,6 @@
 import pytest
 from exo_core.model_cards import ModelCard, ModelTask
-from exo_core.types.common import NodeId, ModelId
+from exo_core.types.common import ModelId, NodeId
 from exo_core.types.shards import (
     CfgShardMetadata,
     PipelineShardMetadata,

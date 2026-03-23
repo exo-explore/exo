@@ -32,6 +32,7 @@ from exo_core.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
+from exo_core.utils.channels import MpReceiver, MpSender, Sender, mp_channel
 from loguru import logger
 
 from exo.shared.types.events import (
@@ -41,7 +42,6 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
 from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint
 

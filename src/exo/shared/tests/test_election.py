@@ -1,11 +1,11 @@
 import pytest
 from anyio import create_task_group, fail_after, move_on_after
 from exo_core.types.common import NodeId, SessionId, SystemId
+from exo_core.utils.channels import channel
 
 from exo.routing.connection_message import ConnectionMessage
 from exo.shared.election import Election, ElectionMessage, ElectionResult
 from exo.shared.types.commands import ForwarderCommand, TestCommand
-from exo.utils.channels import channel
 
 # ======= #
 # Helpers #

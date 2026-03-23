@@ -5,7 +5,8 @@ from pydantic import model_validator
 from exo_core.model_cards import ModelTask
 from exo_core.models import CamelCaseModel, TaggedModel
 from exo_core.types.common import Host, Id, NodeId
-from exo_core.types.runners import RunnerId, ShardAssignments, ShardMetadata
+from exo_core.types.runners import RunnerId, ShardAssignments
+from exo_core.types.shards import ShardMetadata
 
 
 class InstanceId(Id):

@@ -1,27 +1,36 @@
+import contextlib
+import os
 from dataclasses import dataclass
-from typing import Self, Callable
-from exo_core.engine import EngineBuilder, Engine
-from exo_core.types.common import ModelId
+from typing import Callable, Self
+
+import mlx.core as mx
+from exo_core.engine import EngineBuilder
+from exo_core.tokenizers.tool_parsers import make_mlx_parser
+from exo_core.types.chunks import ErrorChunk, PrefillProgressChunk
+from exo_core.types.common import CommandId, ModelId
 from exo_core.types.instances import BoundInstance
-from exo_core.types.tasks import TextGeneration
-from exo_core.types.runner_response import GenerationResponse
-from mlx_engine.utils_mlx import initialize_mlx, load_mlx_items
-from mlx_engine.types import Model
+from exo_core.types.runner_response import GenerationResponse, ToolCallResponse
+from exo_core.types.tasks import TaskId, TextGeneration
+from exo_core.utils.channels import MpReceiver, MpSender
+from loguru import logger
+from mlx_lm.tokenizer_utils import TokenizerWrapper
+
+from mlx_engine.batch_generator import BatchGenerator, SequentialGenerator
+from mlx_engine.cache import KVPrefixCache
+from mlx_engine.generator.batch_generate import ExoBatchGenerator
 from mlx_engine.generator.generate import (
     mlx_generate,
     warmup_inference,
 )
-from exo_core.utils.tool_parsers import make_mlx_parser
+from mlx_engine.types import Model
+from mlx_engine.utils_mlx import initialize_mlx, load_mlx_items
 
 
 @dataclass
-class MlxBuilder(EngineBuilder[BoundInstance, TextGeneration, GenerationResponse]):
-    import mlx.core as mx
-    from mlx_lm.tokenizer_utils import TokenizerWrapper
-
+class MlxBuilder(EngineBuilder[BoundInstance, TextGeneration, GenerationResponse | ToolCallResponse]):
     model_id: ModelId
     bound_instance: BoundInstance
-    event_sender: MpSender[Event]
+    event_sender: MpSender[tuple[CommandId, ErrorChunk | PrefillProgressChunk]]
     cancel_receiver: MpReceiver[TaskId]
     inference_model: Model | None = None
     tokenizer: TokenizerWrapper | None = None
@@ -31,7 +40,7 @@ class MlxBuilder(EngineBuilder[BoundInstance, TextGeneration, GenerationResponse
     def create(
         cls,
         bound_instance: BoundInstance,
-        event_sender: MpSender[Event],
+        event_sender: MpSender[tuple[CommandId, ErrorChunk | PrefillProgressChunk]],
         cancel_receiver: MpReceiver[TaskId],
     ) -> Self:
         return cls(
@@ -105,7 +114,6 @@ class MlxBuilder(EngineBuilder[BoundInstance, TextGeneration, GenerationResponse
                 _generate_fn=generate_fn,
                 _warmup_fn=warmup_fn,
             )
-        from exo.worker.runner.llm_inference.batch_generator import ExoBatchGenerator
 
         logger.info("using BatchGenerator")
         gen = ExoBatchGenerator(

@@ -7,20 +7,20 @@ from pathlib import Path
 from typing import Generator, Literal
 
 import mlx.core as mx
-from exo_core.types.runner_response import (
-    ImageGenerationResponse,
-    PartialImageResponse,
-)
-from exo_core.utils.memory import Memory
-from PIL import Image
-
 from exo_core.types.image_generation import (
     AdvancedImageParams,
     ImageEditsTaskParams,
     ImageGenerationTaskParams,
     ImageSize,
 )
-from exo_core.types.runner_response import ImageGenerationStats
+from exo_core.types.runner_response import (
+    ImageGenerationResponse,
+    ImageGenerationStats,
+    PartialImageResponse,
+)
+from exo_core.utils.memory import Memory
+from PIL import Image
+
 from exo.worker.engines.image.distributed_model import DistributedImageModel
 
 

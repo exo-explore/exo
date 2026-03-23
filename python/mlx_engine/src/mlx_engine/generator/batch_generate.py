@@ -4,7 +4,15 @@ from typing import Callable, cast
 
 import mlx.core as mx
 from exo_core.types.common import ModelId
-from exo_core.types.runner_response import GenerationResponse
+from exo_core.types.runner_response import (
+    CompletionTokensDetails,
+    FinishReason,
+    GenerationResponse,
+    GenerationStats,
+    PromptTokensDetails,
+    TopLogprobItem,
+    Usage,
+)
 from exo_core.types.tasks import TaskId
 from exo_core.types.text_generation import TextGenerationTaskParams
 from exo_core.utils.memory import Memory
@@ -16,14 +24,6 @@ from mlx_lm.models.cache import RotatingKVCache
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import StreamingDetokenizer, TokenizerWrapper
 
-from exo.api.types import (
-    CompletionTokensDetails,
-    FinishReason,
-    GenerationStats,
-    PromptTokensDetails,
-    TopLogprobItem,
-    Usage,
-)
 from mlx_engine.cache import (
     CacheSnapshot,
     KVPrefixCache,

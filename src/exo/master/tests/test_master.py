@@ -14,6 +14,7 @@ from exo_core.types.shards import PipelineShardMetadata, Sharding
 from exo_core.types.tasks import TaskStatus
 from exo_core.types.tasks import TextGeneration as TextGenerationTask
 from exo_core.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo_core.utils.channels import channel
 from exo_core.utils.memory import Memory
 from loguru import logger
 
@@ -38,7 +39,6 @@ from exo.shared.types.events import (
 from exo.shared.types.profiling import (
     MemoryUsage,
 )
-from exo.utils.channels import channel
 
 
 @pytest.mark.asyncio

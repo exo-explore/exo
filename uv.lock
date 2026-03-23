@@ -943,11 +943,17 @@ name = "exo-core"
 version = "0.1.0"
 source = { editable = "python/exo_core" }
 dependencies = [
+    { name = "mlx-lm", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "openai-harmony", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.13.0b2" }]
+requires-dist = [
+    { name = "mlx-lm", git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Feval-left-padding-in-batched-rotation" },
+    { name = "openai-harmony", specifier = ">=0.0.8" },
+    { name = "pydantic", specifier = ">=2.13.0b2" },
+]
 
 [[package]]
 name = "exo-pyo3-bindings"

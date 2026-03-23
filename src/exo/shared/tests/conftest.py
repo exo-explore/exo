@@ -6,8 +6,8 @@ from typing import Generator
 import pytest
 from _pytest.logging import LogCaptureFixture
 from exo_core.model_cards import ModelCard, ModelTask
-from exo_core.types.shards import PipelineShardMetadata, ShardMetadata
 from exo_core.types.common import ModelId
+from exo_core.types.shards import PipelineShardMetadata, ShardMetadata
 from exo_core.utils.memory import Memory
 from loguru import logger
 

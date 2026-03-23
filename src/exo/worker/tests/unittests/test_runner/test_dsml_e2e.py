@@ -6,7 +6,6 @@ from exo_core.types.runner_response import (
     GenerationResponse,
     ToolCallResponse,
 )
-
 from mlx_engine.dsml_encoding import (
     ASSISTANT_TOKEN,
     BOS_TOKEN,
@@ -20,6 +19,7 @@ from mlx_engine.dsml_encoding import (
     encode_messages,
     parse_dsml_output,
 )
+
 from exo.worker.runner.llm_inference.model_output_parsers import parse_deepseek_v32
 
 # ── Shared fixtures ──────────────────────────────────────────────

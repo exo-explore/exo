@@ -17,6 +17,7 @@ from exo_core.types.tasks import (
 from exo_core.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
+from exo_core.utils.channels import Receiver, Sender
 from loguru import logger
 
 from exo.master.placement import (
@@ -59,7 +60,6 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.state import State
-from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
