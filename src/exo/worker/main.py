@@ -282,11 +282,19 @@ class Worker:
 
     def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""
+        runner_id = task.bound_instance.bound_runner_id
+        existing = self.runners.pop(runner_id, None)
+        if existing is not None:
+            logger.warning(
+                f"CreateRunner for {runner_id} while a runner already exists — "
+                "shutting down old runner to free port before starting new one"
+            )
+            existing.shutdown()
         runner = RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
         )
-        self.runners[task.bound_instance.bound_runner_id] = runner
+        self.runners[runner_id] = runner
         self._tg.start_soon(runner.run)
         return runner
 

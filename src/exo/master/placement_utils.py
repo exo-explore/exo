@@ -346,10 +346,39 @@ def _find_ip_prioritised(
     """Find an IP address between nodes with prioritization.
 
     Priority: ethernet > wifi > unknown > thunderbolt
+    Falls back to node_network interfaces when topology graph has no edges yet
+    (e.g. before the reachability poll has completed after a peer reconnect).
     """
     ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
     if not ips:
-        return None
+        # Topology graph hasn't recorded a SocketConnection edge yet — fall back
+        # to the known network interfaces for the other node so placement can
+        # proceed rather than raising ValueError.
+        other_network = node_network.get(other_node_id, NodeNetworkInfo())
+        if not other_network.interfaces:
+            return None
+        fallback_priority = {
+            "thunderbolt": 0,
+            "maybe_ethernet": 1,
+            "ethernet": 2,
+            "wifi": 3,
+            "unknown": 4,
+        } if ring else {
+            "ethernet": 0,
+            "wifi": 1,
+            "unknown": 2,
+            "maybe_ethernet": 3,
+            "thunderbolt": 4,
+        }
+        best = min(
+            other_network.interfaces,
+            key=lambda iface: fallback_priority.get(iface.interface_type, 4),
+        )
+        logger.warning(
+            f"No topology edge found from {node_id} to {other_node_id}; "
+            f"falling back to node_network interface {best.ip_address} ({best.interface_type})"
+        )
+        return best.ip_address
     other_network = node_network.get(other_node_id, NodeNetworkInfo())
     ip_to_type = {
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
