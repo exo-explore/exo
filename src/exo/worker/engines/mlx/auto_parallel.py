@@ -510,7 +510,7 @@ def pipeline_auto_parallel(
                 has_linear=has_mamba,
             )
 
-    if isinstance(inner_model_instance, Llama4InnerModel):
+    if isinstance(inner_model_instance, Llama4InnerModel) and world_size > 1:
         _patch_llama4_pipeline(model, inner_model_instance, start_layer, len(layers))
 
     _set_layers(model, layers)
