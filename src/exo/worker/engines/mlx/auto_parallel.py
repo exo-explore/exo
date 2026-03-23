@@ -14,9 +14,10 @@ from mlx.nn.layers.distributed import (
     sum_gradients,
 )
 from mlx_lm.models.base import (
+    create_attention_mask,  # pyright: ignore[reportUnknownVariableType]
     scaled_dot_product_attention,  # pyright: ignore[reportUnknownVariableType]
 )
-from mlx_lm.models.cache import ArraysCache, KVCache
+from mlx_lm.models.cache import ArraysCache, ChunkedKVCache, KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
@@ -29,6 +30,10 @@ from mlx_lm.models.gpt_oss import GptOssMoeModel
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.models.kimi_k25 import Model as KimiK25Model
 from mlx_lm.models.llama import Model as LlamaModel
+from mlx_lm.models.llama4 import LlamaModel as Llama4InnerModel
+from mlx_lm.models.llama4 import Model as Llama4Model
+from mlx_lm.models.llama4 import MoE as Llama4MoE
+from mlx_lm.models.llama4_text import Model as Llama4TextModel
 from mlx_lm.models.minimax import MiniMaxAttention
 from mlx_lm.models.minimax import Model as MiniMaxModel
 from mlx_lm.models.ministral3 import Model as Ministral3Model
@@ -303,6 +308,90 @@ def _patch_hybrid_cache(
     model.make_cache = patched
 
 
+def _patch_llama4_pipeline(
+    model: nn.Module,
+    inner_model: nn.Module,
+    start_layer: int,
+    num_layers: int,
+) -> None:
+    """Patch llama4 make_cache and LlamaModel.__call__ for pipeline parallel.
+
+    Llama 4 uses ``(global_layer_idx + 1) % 4`` to choose between
+    ChunkedKVCache / KVCache and chunked / global attention masks.
+    After pipeline slicing local indices no longer equal global ones,
+    so both ``make_cache`` and the inner model's forward pass must be
+    adjusted to use the global offset.
+    """
+    outer = cast(Llama4Model, model)
+    inner = cast(Llama4InnerModel, inner_model)
+
+    chunk_size: int = inner.attention_chunk_size
+
+    uses_chunked = [(start_layer + i + 1) % 4 != 0 for i in range(num_layers)]
+    first_chunked_local = next((i for i, uc in enumerate(uses_chunked) if uc), None)
+    first_global_local = next((i for i, uc in enumerate(uses_chunked) if not uc), None)
+
+    def patched_make_cache() -> list[ChunkedKVCache | KVCache]:
+        caches: list[ChunkedKVCache | KVCache] = []
+        for local_idx in range(num_layers):
+            if uses_chunked[local_idx]:
+                caches.append(ChunkedKVCache(chunk_size))
+            else:
+                caches.append(KVCache())
+        return caches
+
+    outer.make_cache = patched_make_cache
+
+    def _patched_call(
+        self: Llama4InnerModel,
+        inputs: mx.array,
+        cache: list[Any] | None = None,
+    ) -> mx.array:
+        h = self.embed_tokens(inputs)
+
+        start: int = 0
+        offset: int = 0
+        if cache is not None:
+            for local_idx, c in enumerate(cache):  # pyright: ignore[reportAny]
+                if uses_chunked[local_idx]:
+                    c.maybe_trim_front()  # pyright: ignore[reportAny]
+
+            if first_chunked_local is not None:
+                start = cache[first_chunked_local].start_position  # pyright: ignore[reportAny]
+                offset = cache[first_chunked_local].offset  # pyright: ignore[reportAny]
+            else:
+                offset = cache[0].offset  # pyright: ignore[reportAny]
+                start = offset
+
+        end: int = offset + h.shape[1]
+        linds = mx.arange(start, end)
+        rinds = mx.arange(offset, end)[:, None]
+        block_pos = mx.abs((linds // chunk_size) - (rinds // chunk_size))
+        token_pos: mx.array = linds <= rinds
+        chunk_mask: mx.array = (block_pos == 0) & token_pos  # pyright: ignore[reportOperatorIssue, reportUnknownVariableType]
+
+        if cache is None:
+            cache = [None] * len(self.layers)
+
+        cache_for_global = (  # pyright: ignore[reportAny]
+            cache[first_global_local] if first_global_local is not None else cache[0]
+        )
+        global_mask: mx.array = create_attention_mask(h, cache_for_global)  # pyright: ignore[reportUnknownVariableType]
+
+        for local_idx, (layer, c) in enumerate(zip(self.layers, cache, strict=True)):  # pyright: ignore[reportAny]
+            mask: mx.array = chunk_mask if uses_chunked[local_idx] else global_mask  # pyright: ignore[reportUnknownVariableType]
+            h = layer(h, mask, cache=c)  # pyright: ignore[reportUnknownArgumentType, reportAny]
+
+        return self.norm(h)
+
+    patched_class = type(
+        f"Pipeline{Llama4InnerModel.__name__}",
+        (Llama4InnerModel,),
+        {"__call__": _patched_call},
+    )
+    inner.__class__ = patched_class
+
+
 def pipeline_auto_parallel(
     model: nn.Module,
     group: mx.distributed.Group,
@@ -420,6 +509,9 @@ def pipeline_auto_parallel(
                 ssm_idx=inner_model_instance.ssm_idx,
                 has_linear=has_mamba,
             )
+
+    if isinstance(inner_model_instance, Llama4InnerModel):
+        _patch_llama4_pipeline(model, inner_model_instance, start_layer, len(layers))
 
     _set_layers(model, layers)
 
@@ -609,6 +701,22 @@ def tensor_auto_parallel(
             all_to_sharded_linear_in_place,
             sharded_to_all_linear_in_place,
         )
+    elif isinstance(model, Llama4TextModel):
+        tensor_parallel_sharding_strategy = Llama4TextShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
+    elif isinstance(model, Llama4Model):
+        tensor_parallel_sharding_strategy = Llama4ShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
     else:
         raise ValueError(f"Unsupported model type: {type(model)}")
 
@@ -668,6 +776,96 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
             layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
             layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
             layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
+            mx.eval(layer)
+            if on_layer_loaded is not None:
+                on_layer_loaded(i, total)
+        return model
+
+
+class Llama4TextShardingStrategy(TensorParallelShardingStrategy):
+    def shard_model(
+        self,
+        model: nn.Module,
+        timeout_seconds: float,
+        on_timeout: TimeoutCallback | None,
+        on_layer_loaded: LayerLoadedCallback | None,
+    ) -> nn.Module:
+        model = cast(Llama4TextModel, model)
+        total = len(model.layers)
+        for i, layer in enumerate(model.layers):
+            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+            layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
+            layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
+            layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
+            layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            layer.self_attn.n_heads //= self.N
+            layer.self_attn.n_kv_heads //= self.N
+
+            layer.feed_forward.gate_proj = self.all_to_sharded_linear(
+                layer.feed_forward.gate_proj
+            )
+            layer.feed_forward.down_proj = self.sharded_to_all_linear(
+                layer.feed_forward.down_proj
+            )
+            layer.feed_forward.up_proj = self.all_to_sharded_linear(
+                layer.feed_forward.up_proj
+            )
+            mx.eval(layer)
+            if on_layer_loaded is not None:
+                on_layer_loaded(i, total)
+        return model
+
+
+class Llama4ShardingStrategy(TensorParallelShardingStrategy):
+    def shard_model(
+        self,
+        model: nn.Module,
+        timeout_seconds: float,
+        on_timeout: TimeoutCallback | None,
+        on_layer_loaded: LayerLoadedCallback | None,
+    ) -> nn.Module:
+        model = cast(Llama4Model, model)
+        total = len(model.layers)
+        for i, layer in enumerate(model.layers):
+            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+
+            layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
+            layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
+            layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
+            layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            layer.self_attn.n_heads //= self.N
+            layer.self_attn.n_kv_heads //= self.N
+
+            if isinstance(layer.feed_forward, Llama4MoE):
+                self.all_to_sharded_linear_in_place(
+                    layer.feed_forward.experts.gate_proj
+                )
+                self.sharded_to_all_linear_in_place(
+                    layer.feed_forward.experts.down_proj
+                )
+                self.all_to_sharded_linear_in_place(layer.feed_forward.experts.up_proj)
+                self.all_to_sharded_linear_in_place(
+                    layer.feed_forward.shared_expert.gate_proj
+                )
+                self.sharded_to_all_linear_in_place(
+                    layer.feed_forward.shared_expert.down_proj
+                )
+                self.all_to_sharded_linear_in_place(
+                    layer.feed_forward.shared_expert.up_proj
+                )
+                layer.feed_forward = ShardedMoE(layer.feed_forward)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
+                layer.feed_forward.sharding_group = self.group
+            else:
+                layer.feed_forward.gate_proj = self.all_to_sharded_linear(
+                    layer.feed_forward.gate_proj
+                )
+                layer.feed_forward.down_proj = self.sharded_to_all_linear(
+                    layer.feed_forward.down_proj
+                )
+                layer.feed_forward.up_proj = self.all_to_sharded_linear(
+                    layer.feed_forward.up_proj
+                )
+
             mx.eval(layer)
             if on_layer_loaded is not None:
                 on_layer_loaded(i, total)

@@ -1,0 +1,13 @@
+model_id = "mlx-community/Llama-4-Scout-17B-16E-Instruct-6bit"
+n_layers = 48
+hidden_size = 5120
+num_key_value_heads = 8
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "llama"
+quantization = "6bit"
+base_model = "Llama 4 Scout"
+capabilities = ["text"]
+
+[storage_size]
+in_bytes = 88275096777

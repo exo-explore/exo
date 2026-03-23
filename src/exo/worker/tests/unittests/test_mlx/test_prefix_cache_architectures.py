@@ -185,6 +185,7 @@ ARCHITECTURES: list[ArchSpec] = [
     ArchSpec("kimi_k25", "Kimi-K2.5", "kimi_k25"),
     ArchSpec("qwen3_5", "Qwen3.5-2B-MLX-8bit", "qwen3_5"),
     ArchSpec("qwen3_5_moe", "Qwen3.5-35B-A3B-4bit", "qwen3_5_moe"),
+    ArchSpec("llama4", "Llama-4-Scout-17B-16E-Instruct-4bit", "llama4"),
 ]
 
 
