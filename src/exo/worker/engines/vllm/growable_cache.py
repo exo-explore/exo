@@ -56,17 +56,25 @@ def _patch_determine_available_memory() -> None:
 
     @torch.inference_mode()
     def patched(self: "Worker") -> int:
+        import pathlib
+        import shutil
+
+        compile_cache = pathlib.Path.home() / ".cache" / "vllm" / "torch_compile_cache"
+        if compile_cache.exists():
+            shutil.rmtree(compile_cache, ignore_errors=True)
+
+        real_empty_cache = torch.cuda.empty_cache
+        torch.cuda.empty_cache = lambda: None  # type: ignore
         try:
             original(self)
-        except AssertionError:
-            logger.warning(
-                "vLLM memory profiling assertion failed (free memory changed during init, "
-                "likely another process released GPU memory). Continuing with growable cache."
-            )
-        torch.cuda.empty_cache()
+        except (AssertionError, Exception):
+            pass
+        finally:
+            torch.cuda.empty_cache = real_empty_cache  # type: ignore
         free_bytes, _ = torch.cuda.mem_get_info()
         initial = max(int(free_bytes * INITIAL_FRACTION), 1)
         self._growable_max_kv_bytes = free_bytes
+        self.available_kv_cache_memory_bytes = initial
         logger.info(
             f"Growable KV cache: initial {initial / (1024**3):.2f} GiB "
             f"(max {free_bytes / (1024**3):.2f} GiB)"
@@ -164,12 +172,10 @@ def _try_grow_cache(kv_cache_manager: "object") -> bool:
     model_runner = kv_cache_manager._growable_model_runner  # type: ignore
 
     if model_runner is None:
-        logger.debug("No model_runner reference — cannot grow cache")
         return False
 
     free_bytes, _ = torch.cuda.mem_get_info()
     if free_bytes < GROWTH_HEADROOM_BYTES:
-        logger.debug(f"Only {free_bytes / (1024**3):.2f} GiB free — not enough to grow")
         return False
 
     kv_cache_config = model_runner._growable_kv_cache_config  # type: ignore
@@ -182,7 +188,6 @@ def _try_grow_cache(kv_cache_manager: "object") -> bool:
     growth_blocks = min(usable_bytes // per_block_bytes, old_num_blocks)
 
     if growth_blocks < MIN_GROWTH_BLOCKS:
-        logger.debug(f"Growth too small ({growth_blocks} blocks)")
         return False
 
     new_num_blocks = old_num_blocks + growth_blocks
@@ -193,16 +198,18 @@ def _try_grow_cache(kv_cache_manager: "object") -> bool:
     )
 
     try:
-        _grow_tensors(model_runner, kv_cache_config, old_num_blocks, new_num_blocks)
-        _grow_block_pool(block_pool, old_num_blocks, new_num_blocks)
         kv_cache_config.num_blocks = new_num_blocks
         for tensor_spec in kv_cache_config.kv_cache_tensors:
             tensor_spec.size = int(tensor_spec.size * new_num_blocks / old_num_blocks)
+        _grow_tensors(model_runner, kv_cache_config, old_num_blocks, new_num_blocks)
+        _grow_block_pool(block_pool, old_num_blocks, new_num_blocks)
         logger.info(f"KV cache grown successfully to {new_num_blocks} blocks")
         return True
     except Exception:
         logger.opt(exception=True).error("Failed to grow KV cache")
         return False
+
+
 
 
 def _grow_tensors(
@@ -243,7 +250,6 @@ def _grow_tensors(
         model_runner.compilation_config.static_forward_context
     )  # type: ignore
     runner_kv_caches: list[torch.Tensor] = model_runner.kv_caches  # type: ignore
-    runner_kv_caches.clear()
 
     from collections import defaultdict
 
@@ -258,12 +264,37 @@ def _grow_tensors(
     for ln in new_kv_caches:
         index2name[extract_layer_index(ln, num_attn_module)].append(ln)
 
+    new_ordered: list[torch.Tensor | list[torch.Tensor]] = []
     for layer_index in sorted(index2name.keys()):
         for ln in index2name[layer_index]:
-            runner_kv_caches.append(new_kv_caches[ln])
+            new_ordered.append(new_kv_caches[ln])
 
-    for layer_name, kv_cache in new_kv_caches.items():
-        forward_context[layer_name].kv_cache = [kv_cache]  # type: ignore
+    for i, new_kv in enumerate(new_ordered):
+        if i < len(runner_kv_caches):
+            old_kv = runner_kv_caches[i]
+            if isinstance(old_kv, list) and isinstance(new_kv, list):
+                for j, (old_t, new_t) in enumerate(zip(old_kv, new_kv)):
+                    old_t.set_(new_t.storage(), new_t.storage_offset(), new_t.shape, new_t.stride())  # type: ignore
+            elif isinstance(old_kv, torch.Tensor) and isinstance(new_kv, torch.Tensor):
+                old_kv.set_(new_kv.storage(), new_kv.storage_offset(), new_kv.shape, new_kv.stride())  # type: ignore
+            else:
+                runner_kv_caches[i] = new_kv
+        else:
+            runner_kv_caches.append(new_kv)
+
+    for layer_name, new_kv in new_kv_caches.items():
+        old_kv_list = forward_context[layer_name].kv_cache  # type: ignore
+        if old_kv_list and len(old_kv_list) > 0:
+            old_entry = old_kv_list[0]
+            if isinstance(old_entry, list) and isinstance(new_kv, list):
+                for j, (old_t, new_t) in enumerate(zip(old_entry, new_kv)):
+                    old_t.set_(new_t.storage(), new_t.storage_offset(), new_t.shape, new_t.stride())  # type: ignore
+            elif isinstance(old_entry, torch.Tensor) and isinstance(new_kv, torch.Tensor):
+                old_entry.set_(new_kv.storage(), new_kv.storage_offset(), new_kv.shape, new_kv.stride())  # type: ignore
+            else:
+                forward_context[layer_name].kv_cache = [new_kv]  # type: ignore
+        else:
+            forward_context[layer_name].kv_cache = [new_kv]  # type: ignore
 
 
 def _grow_block_pool(

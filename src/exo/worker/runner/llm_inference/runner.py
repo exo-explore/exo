@@ -137,6 +137,7 @@ class Runner:
             TaskId,
             TextGeneration,
         ] = {}
+        self.prefill_server_port: int | None = None
 
         logger.info("runner created")
         self.update_status(RunnerIdle())
@@ -237,7 +238,9 @@ class Runner:
                     on_timeout=on_model_load_timeout,
                     on_layer_loaded=on_layer_loaded,
                 )
+                builder_ref = self.generator
                 self.generator = self.generator.build()
+                self.prefill_server_port = getattr(builder_ref, "_prefill_server_port", None)
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerLoaded())
@@ -257,7 +260,7 @@ class Runner:
                 )
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
-                self.update_status(RunnerReady())
+                self.update_status(RunnerReady(prefill_server_port=self.prefill_server_port))
                 logger.info("runner ready")
 
             case TextGeneration() if isinstance(self.current_status, RunnerReady):
@@ -342,7 +345,7 @@ class Runner:
             except WouldBlock:
                 pass
 
-        self.update_status(RunnerReady())
+        self.update_status(RunnerReady(prefill_server_port=self.prefill_server_port))
         logger.info("runner ready")
 
         return ExitCode.AllTasksComplete
@@ -529,12 +532,23 @@ class VllmBuilder(Builder):
     ) -> None:
         from exo.worker.engines.vllm.vllm_generator import load_vllm_engine
 
+        kv_connector_cls: type[object] | None = None
+        overlapping = not os.environ.get("EXO_NO_OVERLAPPING_PREFILL_SENDS")
+        if overlapping:
+            from exo.disaggregated.streaming_connector import StreamingConnector
+            kv_connector_cls = StreamingConnector
+        else:
+            from exo.disaggregated.batch_connector import BatchConnector
+            kv_connector_cls = BatchConnector
+
+        self._bound_runner_id = bound_instance.bound_runner_id
         self._engine, self._tool_parser, self._prefix_cache = load_vllm_engine(
             model_path=self.model_path,
             model_id=self.model_id,
             trust_remote_code=self.trust_remote_code,
             n_layers=bound_instance.bound_shard.model_card.n_layers,
             on_layer_loaded=on_layer_loaded,
+            kv_connector_cls=kv_connector_cls,
         )
 
     def build(self) -> InferenceGenerator:
@@ -547,6 +561,39 @@ class VllmBuilder(Builder):
         )
         tokenizer = TokenizerWrapper(self._engine.get_tokenizer())
         max_concurrent = 1 if os.environ.get("EXO_NO_BATCH") else 8
+
+        from exo.master.placement import random_ephemeral_port
+
+        prefill_port = random_ephemeral_port()
+        overlapping = not os.environ.get("EXO_NO_OVERLAPPING_PREFILL_SENDS")
+        try:
+            from exo.disaggregated.prefill_server import start_prefill_server
+
+            from exo.shared.types.events import RunnerStatusUpdated
+            from exo.shared.types.worker.runners import RunnerReady, RunnerRunning
+
+            runner_id = self._bound_runner_id
+
+            def _on_prefill_status(running: bool) -> None:
+                port = prefill_port
+                if running:
+                    self.event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerRunning(prefill_server_port=port)))
+                else:
+                    self.event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerReady(prefill_server_port=port)))
+
+            self._prefill_server = start_prefill_server(
+                engine=self._engine,
+                bind_address="0.0.0.0",
+                port=prefill_port,
+                overlapping=overlapping,
+                prefix_cache=self._prefix_cache,
+                on_status_change=_on_prefill_status,
+            )
+            self._prefill_server_port = prefill_port
+        except Exception:
+            logger.opt(exception=True).warning("Failed to start prefill server")
+            self._prefill_server = None
+            self._prefill_server_port = None
 
         logger.info(f"using BatchGenerator (vLLM, max_concurrent={max_concurrent})")
         return BatchGenerator(
@@ -564,4 +611,6 @@ class VllmBuilder(Builder):
 
     def close(self) -> None:
         with contextlib.suppress(NameError, AttributeError):
+            if hasattr(self, "_prefill_server") and self._prefill_server is not None:
+                self._prefill_server.shutdown()
             del self._engine, self._prefix_cache, self._tool_parser

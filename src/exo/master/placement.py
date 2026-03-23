@@ -67,10 +67,43 @@ def place_instance(
     current_instances: Mapping[InstanceId, Instance],
     node_memory: Mapping[NodeId, MemoryUsage],
     node_network: Mapping[NodeId, NodeNetworkInfo],
+    node_vllm: Mapping[NodeId, bool],
     required_nodes: set[NodeId] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
+
+    # vLLM instances can only be placed on nodes that have vLLM available.
+    # vLLM does not support quantized mlx-community models (only bf16 or unquantized).
+    if command.instance_meta == InstanceMeta.Vllm:
+        is_mlx_community = str(command.model_card.model_id).startswith("mlx-community/")
+        if is_mlx_community and command.model_card.quantization not in ("", "bf16"):
+            raise ValueError("vLLM does not support quantized mlx-community models")
+        candidate_cycles = [
+            cycle
+            for cycle in candidate_cycles
+            if all(node_vllm.get(nid, False) for nid in cycle.node_ids)
+        ]
+
+    # QMM/quantized ops are not available on MLX CUDA — exclude CUDA nodes for quantized MLX models.
+    if command.instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
+        if command.model_card.quantization not in ("", "bf16"):
+            candidate_cycles = [
+                cycle
+                for cycle in candidate_cycles
+                if not any(node_vllm.get(nid, False) for nid in cycle.node_ids)
+            ]
+
+    # mlx-community models should prefer Apple Silicon nodes over CUDA nodes.
+    if command.instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
+        if str(command.model_card.model_id).startswith("mlx-community/"):
+            apple_silicon_cycles = [
+                cycle
+                for cycle in candidate_cycles
+                if not any(node_vllm.get(nid, False) for nid in cycle.node_ids)
+            ]
+            if apple_silicon_cycles:
+                candidate_cycles = apple_silicon_cycles
 
     # Filter to cycles containing all required nodes (subset matching)
     if required_nodes:

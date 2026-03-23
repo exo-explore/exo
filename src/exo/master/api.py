@@ -414,6 +414,7 @@ class API:
                 node_network=self.state.node_network,
                 topology=self.state.topology,
                 current_instances=self.state.instances,
+                node_vllm=self.state.node_vllm,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -451,26 +452,12 @@ class API:
         instance_combinations: list[tuple[Sharding, InstanceMeta, int]] = []
         node_count = len(list(self.state.topology.list_nodes()))
 
-        # QMM is not available on MLX CUDA. Also, VLLM does not support MLX community models
-        is_mlx_community = str(model_card.model_id).startswith("mlx-community/")
-        is_quantized_mlx = is_mlx_community and model_card.quantization in (
-            "4bit",
-            "8bit",
-        )
-        skip_mlx = any(self.state.node_vllm.values()) and is_quantized_mlx
-        is_vllm_compatible_mlx = is_mlx_community and model_card.quantization in (
-            "",
-            "bf16",
-            "fp16",
-        )
-        skip_vllm = is_mlx_community and not is_vllm_compatible_mlx
-        if not skip_mlx:
-            for sharding in (Sharding.Pipeline, Sharding.Tensor):
-                for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
-                    instance_combinations.extend(
-                        [(sharding, instance_meta, i) for i in range(1, node_count + 1)]
-                    )
-        if any(self.state.node_vllm.values()) and not skip_vllm:
+        for sharding in (Sharding.Pipeline, Sharding.Tensor):
+            for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
+                instance_combinations.extend(
+                    [(sharding, instance_meta, i) for i in range(1, node_count + 1)]
+                )
+        if any(self.state.node_vllm.values()):
             instance_combinations.append((Sharding.Pipeline, InstanceMeta.Vllm, 1))
 
         for sharding, instance_meta, min_nodes in instance_combinations:
@@ -484,6 +471,7 @@ class API:
                     ),
                     node_memory=self.state.node_memory,
                     node_network=self.state.node_network,
+                    node_vllm=self.state.node_vllm,
                     topology=self.state.topology,
                     current_instances=self.state.instances,
                     required_nodes=required_nodes,
@@ -761,20 +749,25 @@ class API:
         return await self._collect_text_generation_with_stats(command.command_id)
 
     async def _resolve_and_validate_text_model(self, model_id: ModelId) -> ModelId:
-        """Validate a text model exists and return the resolved model ID.
+        from exo.shared.models.model_cards import derive_base_model
 
-        Raises HTTPException 404 if no instance is found for the model.
-        """
-        if not any(
+        if any(
             instance.shard_assignments.model_id == model_id
             for instance in self.state.instances.values()
         ):
-            await self._trigger_notify_user_to_download_model(model_id)
-            raise HTTPException(
-                status_code=404,
-                detail=f"No instance found for model {model_id}",
-            )
-        return model_id
+            return model_id
+
+        request_base = derive_base_model(str(model_id))
+        for instance in self.state.instances.values():
+            first_shard = next(iter(instance.shard_assignments.runner_to_shard.values()), None)
+            if first_shard is not None and first_shard.model_card.base_model.lower() == request_base.lower():
+                return instance.shard_assignments.model_id
+
+        await self._trigger_notify_user_to_download_model(model_id)
+        raise HTTPException(
+            status_code=404,
+            detail=f"No instance found for model {model_id}",
+        )
 
     async def _validate_image_model(self, model: ModelId) -> ModelId:
         """Validate model exists and return resolved model ID.

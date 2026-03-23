@@ -91,31 +91,82 @@ async def _get_interface_types_from_networksetup() -> dict[str, InterfaceType]:
     return types
 
 
+def _classify_unknown_darwin_interface(name: str) -> InterfaceType:
+    if name.lower().startswith("anpi"):
+        return "thunderbolt"
+    return "unknown"
+
+
+async def _get_linux_network_interfaces() -> list[NetworkInterfaceInfo]:
+    import json as _json
+
+    try:
+        result = await run_process(["ip", "-j", "addr", "show"])
+    except (CalledProcessError, FileNotFoundError):
+        return []
+
+    data: list[dict[str, object]] = _json.loads(result.stdout)  # pyright: ignore[reportAny]
+    interfaces: list[NetworkInterfaceInfo] = []
+    for iface in data:
+        name: str = iface.get("ifname", "")  # pyright: ignore[reportAssignmentType, reportAny]
+        link_type: str = iface.get("link_type", "")  # pyright: ignore[reportAssignmentType, reportAny]
+
+        iface_type: InterfaceType
+        if link_type == "loopback":
+            continue
+        elif link_type == "ether":
+            if name.startswith(("wl", "wlan")):
+                iface_type = "wifi"
+            elif name.startswith(("docker", "br-", "veth")):
+                iface_type = "unknown"
+            elif name.startswith(("thunderbolt", "tb", "enx")):
+                iface_type = "thunderbolt"
+            else:
+                iface_type = "ethernet"
+        elif link_type in ("none", "tun"):
+            iface_type = "unknown"
+        else:
+            iface_type = "unknown"
+
+        for addr_info in iface.get("addr_info", []):  # pyright: ignore[reportAny]
+            family: str = addr_info.get("family", "")  # pyright: ignore[reportAny]
+            ip: str = addr_info.get("local", "")  # pyright: ignore[reportAny]
+            if family in ("inet", "inet6") and ip:
+                interfaces.append(NetworkInterfaceInfo(name=name, ip_address=ip, interface_type=iface_type))
+
+    return interfaces
+
+
 async def get_network_interfaces() -> list[NetworkInterfaceInfo]:
     """
-    Retrieves detailed network interface information on macOS.
-    Parses output from 'networksetup -listallhardwareports' and 'ifconfig'
+    Retrieves detailed network interface information on macOS or Linux.
+    On MacOS: parses output from 'networksetup -listallhardwareports' and 'ifconfig'
     to determine interface names, IP addresses, and types (ethernet, wifi, vpn, other).
+    Falls back to using ip -j addr show on other platforms.
     Returns a list of NetworkInterfaceInfo objects.
     """
-    interfaces_info: list[NetworkInterfaceInfo] = []
-    interface_types = await _get_interface_types_from_networksetup()
-
-    for iface, services in psutil.net_if_addrs().items():
-        for service in services:
-            match service.family:
-                case socket.AF_INET | socket.AF_INET6:
-                    interfaces_info.append(
-                        NetworkInterfaceInfo(
-                            name=iface,
-                            ip_address=service.address,
-                            interface_type=interface_types.get(iface, "unknown"),
+    if sys.platform == "darwin":
+        interfaces_info: list[NetworkInterfaceInfo] = []
+        interface_types = await _get_interface_types_from_networksetup()
+        for iface, services in psutil.net_if_addrs().items():
+            for service in services:
+                match service.family:
+                    case socket.AF_INET | socket.AF_INET6:
+                        iface_type = interface_types.get(iface, "unknown")
+                        if iface_type == "unknown":
+                            iface_type = _classify_unknown_darwin_interface(iface)
+                        interfaces_info.append(
+                            NetworkInterfaceInfo(
+                                name=iface,
+                                ip_address=service.address,
+                                interface_type=iface_type,
+                            )
                         )
-                    )
-                case _:
-                    pass
+                    case _:
+                        pass
+        return interfaces_info
 
-    return interfaces_info
+    return await _get_linux_network_interfaces()
 
 
 def _read_dmi_field(name: str) -> str | None:

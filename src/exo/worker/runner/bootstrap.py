@@ -2,6 +2,7 @@ import ctypes
 import os
 import resource
 import sys
+import urllib.request
 from pathlib import Path
 
 import loguru
@@ -14,6 +15,9 @@ from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
 logger: "loguru.Logger" = loguru.logger
 
+_TIKTOKEN_BASE_URL = "https://openaipublic.blob.core.windows.net/encodings"
+_TIKTOKEN_FILES = ["o200k_base.tiktoken", "cl100k_base.tiktoken"]
+
 _CUDA_HOST_LIBS = ["libcuda.so.1", "libnvidia-ml.so.1", "libnvidia-ptxjitcompiler.so.1"]
 _CUDA_HOST_SEARCH_DIRS = [
     Path("/usr/lib/aarch64-linux-gnu"),
@@ -23,6 +27,28 @@ _CUDA_HOST_SEARCH_DIRS = [
     Path("/usr/local/cuda/lib64"),
     Path("/usr/local/cuda/compat"),
 ]
+
+
+def _ensure_tiktoken_encodings() -> None:
+    if os.environ.get("TIKTOKEN_ENCODINGS_BASE"):
+        return
+    from exo.shared.constants import EXO_CACHE_HOME
+
+    enc_dir = EXO_CACHE_HOME / "encodings"
+    enc_dir.mkdir(parents=True, exist_ok=True)
+    for fname in _TIKTOKEN_FILES:
+        dest = enc_dir / fname
+        if dest.exists():
+            continue
+        url = f"{_TIKTOKEN_BASE_URL}/{fname}"
+        logger.info(f"Downloading {url} -> {dest}")
+        try:
+            urllib.request.urlretrieve(url, dest)
+        except Exception:
+            logger.warning(f"Failed to download {fname}, harmony encoding may fail")
+            return
+    os.environ["TIKTOKEN_ENCODINGS_BASE"] = str(enc_dir)
+    logger.info(f"Set TIKTOKEN_ENCODINGS_BASE={enc_dir}")
 
 
 def _ensure_cuda_libs() -> None:
@@ -65,13 +91,22 @@ def entrypoint(
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 
+    from exo.worker.engines.mlx.yarn_rope_patch import patch_yarn_rope
+
+    patch_yarn_rope()
+
+    from exo.worker.engines.mlx.gdn_softplus_patch import patch_gdn_softplus
+
+    patch_gdn_softplus()
+
     # Import main after setting global logger - this lets us just import logger from this module
     try:
         if isinstance(bound_instance.instance, VllmInstance):
             os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
             os.environ["VLLM_KV_CACHE_LAYOUT"] = "NHD"
-            os.environ["VLLM_BATCH_INVARIANT"] = "1"
+            # os.environ["VLLM_BATCH_INVARIANT"] = "1"
             _ensure_cuda_libs()
+            _ensure_tiktoken_encodings()
             from exo.shared.constants import EXO_MODELS_DIR
             from exo.worker.runner.llm_inference.runner import Runner, VllmBuilder
 

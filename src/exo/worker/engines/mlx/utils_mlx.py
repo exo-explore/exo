@@ -551,7 +551,7 @@ def apply_chat_template(
         )
         if partial_assistant_content:
             prompt += partial_assistant_content
-        logger.info(prompt)
+        logger.debug(prompt)
         return prompt
 
     extra_kwargs: dict[str, Any] = {}
@@ -588,7 +588,7 @@ def apply_chat_template(
     if partial_assistant_content:
         prompt += partial_assistant_content
 
-    logger.info(prompt)
+    logger.debug(prompt)
 
     return prompt
 
