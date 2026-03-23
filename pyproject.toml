@@ -33,6 +33,7 @@ dependencies = [
 
 [project.scripts]
 exo = "exo.main:main"
+exo-billing = "exo.api.billing_cli:main"
 
 # dependencies only required for development
 [dependency-groups]
