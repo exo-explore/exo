@@ -8,7 +8,6 @@ from typing import (
     Mapping,
     Sequence,
     TypeAlias,
-    TypeVar,
     overload,
 )
 
@@ -2397,9 +2396,7 @@ def degrees(a: array, /, *, stream: Stream | Device | None = ...) -> array:
         array: The angles in degrees.
     """
 
-_DependsT = TypeVar("_DependsT", array, Sequence[array])
-
-def depends(inputs: _DependsT, dependencies: array | Sequence[array]) -> _DependsT:
+def depends[T](inputs: T, dependencies: array | Sequence[array]) -> T:
     """
     Insert dependencies between arrays in the graph. The outputs are
     identical to ``inputs`` but with dependencies on ``dependencies``.

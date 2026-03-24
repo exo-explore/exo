@@ -1,12 +1,9 @@
-import os
 import time
 from typing import Any, cast
 
 import mlx.core as mx
 from mlx_lm.generate import BatchGenerator, generation_stream
-from mlx_lm.models.cache import BatchRotatingKVCache
 
-EXO_NO_BATCH_OPT = os.environ.get("EXO_NO_BATCH_OPT", "0") == "1"
 _PRECOMPUTE_TOP_K = 20
 
 _original_public_next = BatchGenerator.next
@@ -14,59 +11,6 @@ _original_public_next = BatchGenerator.next
 _pending_topk_idx: mx.array | None = None
 _pending_topk_val: mx.array | None = None
 _pending_selected_lps: mx.array | None = None
-
-
-def _fast_brc_update_in_place(
-    self: BatchRotatingKVCache, keys: mx.array, values: mx.array
-) -> tuple[mx.array, mx.array]:
-    if self._lengths is not None:
-        raise RuntimeError(
-            "finalize() should be called before decoding with BatchRotatingKVCache"
-        )
-
-    batch_size, n_kv_heads, seq_len, k_head_dim = keys.shape
-    prev = self._offset
-    if self.keys is None or (
-        prev >= self.keys.shape[2] and self.keys.shape[2] < self.max_size
-    ):
-        v_head_dim = values.shape[3]
-        new_size = min(self.step, self.max_size - prev)
-        k_shape = (batch_size, n_kv_heads, new_size, k_head_dim)
-        v_shape = (batch_size, n_kv_heads, new_size, v_head_dim)
-        new_k = mx.zeros(k_shape, keys.dtype)
-        new_v = mx.zeros(v_shape, values.dtype)
-        if self.keys is not None and self.values is not None:
-            self.keys = mx.concatenate([self.keys, new_k], axis=2)
-            self.values = mx.concatenate([self.values, new_v], axis=2)
-        else:
-            self.keys, self.values = new_k, new_v
-        self._idx = prev
-
-    assert self.keys is not None and self.values is not None
-    trim_size = self.keys.shape[2] - self.max_size
-    if trim_size > 0:
-        self.keys = self._trim(trim_size, self.keys)
-        self.values = self._trim(trim_size, self.values)
-        self._idx = self.max_size
-        self.left_padding -= trim_size
-
-    if self._idx == self.max_size:
-        self.rotated = True
-        self._idx = 0
-    if self.rotated:
-        self.left_padding -= seq_len
-
-    self.keys[..., self._idx : self._idx + seq_len, :] = keys
-    self.values[..., self._idx : self._idx + seq_len, :] = values
-    self._offset += seq_len
-    self.offset += seq_len
-    self._idx += seq_len
-
-    self.keys = mx.depends(self.keys, (self.left_padding, self.offset))
-
-    if self._offset < self.max_size:
-        return self.keys[..., : self._offset, :], self.values[..., : self._offset, :]
-    return self.keys, self.values
 
 
 def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
@@ -185,7 +129,7 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
         if finish_reason is not None:
             cache = batch.extract_cache(e)
         response = self.Response(uid, t, prev_logprobs[e], finish_reason, cache)
-        if emit_topk_indices:
+        if emit_topk_indices and e < len(emit_topk_indices):
             response._topk_indices = emit_topk_indices[e]  # pyright: ignore[reportAttributeAccessIssue]
             response._topk_values = emit_topk_values[e]  # pyright: ignore[reportAttributeAccessIssue]
             response._selected_logprob = emit_selected_lps[e]  # pyright: ignore[reportAttributeAccessIssue]
@@ -226,7 +170,4 @@ def _patched_public_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
 
 
 def apply_batch_gen_patch() -> None:
-    if EXO_NO_BATCH_OPT:
-        return
     BatchGenerator.next = _patched_public_next
-    BatchRotatingKVCache._update_in_place = _fast_brc_update_in_place
