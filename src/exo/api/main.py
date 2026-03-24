@@ -613,13 +613,15 @@ class API:
                         break
 
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
-                )
             raise
         finally:
+            cancel_command = TaskCancelled(cancelled_command_id=command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(
+                        origin=self._system_id, command=cancel_command
+                    )
+                )
             await self._send(TaskFinished(finished_command_id=command_id))
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
