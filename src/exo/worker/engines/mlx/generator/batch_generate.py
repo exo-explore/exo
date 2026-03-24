@@ -83,19 +83,19 @@ class ExoBatchGenerator:
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
-        self._exo_gen = MlxBatchGenerator(
+        self._mlx_gen = MlxBatchGenerator(
             model=self.model,
             stop_tokens=set(eos_ids_from_tokenizer(self.tokenizer)),
             prefill_step_size=4096,
         )
-        self._exo_gen._needs_topk = False  # pyright: ignore[reportAttributeAccessIssue]
+        self._mlx_gen._needs_topk = False  # pyright: ignore[reportAttributeAccessIssue]
 
     @property
     def has_work(self) -> bool:
         return (
             bool(self._active_tasks)
-            or bool(self._exo_gen.unprocessed_prompts)
-            or self._exo_gen.active_batch is not None
+            or bool(self._mlx_gen.unprocessed_prompts)
+            or self._mlx_gen.active_batch is not None
         )
 
     def submit(
@@ -193,7 +193,7 @@ class ExoBatchGenerator:
 
         max_tokens = task_params.max_output_tokens or MAX_TOKENS
 
-        uids = self._exo_gen.insert(
+        uids = self._mlx_gen.insert(
             prompts=[last_tokens.tolist()],
             max_tokens=[max_tokens],
             caches=[list(cache)],
@@ -216,7 +216,7 @@ class ExoBatchGenerator:
             on_generation_token=on_generation_token,
             generation_start_time=time.perf_counter(),
             prefill_tps=_prefill_tps,
-            generation_time_at_start=self._exo_gen._stats.generation_time,
+            generation_time_at_start=self._mlx_gen._stats.generation_time,
         )
 
         return uid
@@ -225,11 +225,11 @@ class ExoBatchGenerator:
         if not self.has_work:
             return []
 
-        self._exo_gen._needs_topk = any(  # pyright: ignore[reportAttributeAccessIssue]
+        self._mlx_gen._needs_topk = any(  # pyright: ignore[reportAttributeAccessIssue]
             t.task_params.logprobs for t in self._active_tasks.values()
         )
         _step_tic = time.perf_counter()
-        responses = self._exo_gen.next()
+        responses = self._mlx_gen.next()
         _next_elapsed = time.perf_counter() - _step_tic
 
         results: list[tuple[int, GenerationResponse]] = []
@@ -305,7 +305,7 @@ class ExoBatchGenerator:
             usage: Usage | None = None
             if is_done:
                 gen_time_delta = (
-                    self._exo_gen._stats.generation_time
+                    self._mlx_gen._stats.generation_time
                     - state.generation_time_at_start
                 )
                 generation_tps = (
@@ -361,7 +361,7 @@ class ExoBatchGenerator:
 
         _step_elapsed = time.perf_counter() - _step_tic
         _overhead = _step_elapsed - _next_elapsed
-        if self._exo_gen._next_count % 64 == 0 and responses:
+        if self._mlx_gen._next_count % 64 == 0 and responses:
             logger.debug(
                 f"step overhead: {_overhead * 1000:.2f}ms (next={_next_elapsed * 1000:.2f}ms total={_step_elapsed * 1000:.2f}ms)"
             )
@@ -369,12 +369,12 @@ class ExoBatchGenerator:
         return results
 
     def cancel(self, uids: list[int]) -> None:
-        self._exo_gen.remove(uids)
+        self._mlx_gen.remove(uids)
         for uid in uids:
             self._active_tasks.pop(uid, None)
 
     def close(self) -> None:
-        self._exo_gen.close()
+        self._mlx_gen.close()
 
     def _save_prefix_cache(
         self,
