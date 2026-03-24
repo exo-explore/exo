@@ -1599,9 +1599,7 @@ class API:
 
     async def delete_custom_model(self, model_id: ModelId) -> JSONResponse:
         """Delete a user-added custom model card and sync deletion across the cluster."""
-        if model_id not in self.state.custom_model_cards and not is_custom_card(
-            model_id
-        ):
+        if not is_custom_card(model_id):
             raise HTTPException(status_code=404, detail="Custom model card not found")
 
         await self.command_sender.send(
