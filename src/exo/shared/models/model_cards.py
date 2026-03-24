@@ -30,28 +30,40 @@ from exo.utils.pydantic_ext import CamelCaseModel
 # kinda ugly...
 # TODO: load search path from config.toml
 _custom_cards_dir = Path(str(EXO_CUSTOM_MODEL_CARDS_DIR))
-CARD_SEARCH_PATH = [
+_BUILTIN_CARD_DIRS = [
     Path(RESOURCES_DIR) / "inference_model_cards",
     Path(RESOURCES_DIR) / "image_model_cards",
-    _custom_cards_dir,
 ]
 
 _card_cache: dict[ModelId, "ModelCard"] = {}
 
 
-async def _refresh_card_cache():
-    for path in CARD_SEARCH_PATH:
-        async for toml_file in path.rglob("*.toml"):
-            try:
-                card = await ModelCard.load_from_path(toml_file)
-                if card.model_id not in _card_cache:
-                    _card_cache[card.model_id] = card
-            except (ValidationError, TOMLKitError):
-                pass
+async def _load_cards_from_dir(directory: Path, *, is_custom: bool) -> None:
+    """Load all TOML model cards from a directory into the cache."""
+    async for toml_file in directory.rglob("*.toml"):
+        try:
+            card = await ModelCard.load_from_path(toml_file)
+            if is_custom:
+                card = card.model_copy(update={"is_custom": True})
+            if card.model_id not in _card_cache:
+                _card_cache[card.model_id] = card
+        except (ValidationError, TOMLKitError):
+            pass
+
+
+async def _refresh_card_cache() -> None:
+    for path in _BUILTIN_CARD_DIRS:
+        await _load_cards_from_dir(path, is_custom=False)
+    await _load_cards_from_dir(_custom_cards_dir, is_custom=True)
 
 
 def _is_image_card(card: "ModelCard") -> bool:
     return any(t in (ModelTask.TextToImage, ModelTask.ImageToImage) for t in card.tasks)
+
+
+def get_card(model_id: ModelId) -> "ModelCard | None":
+    """Look up a single model card from the cache by ID."""
+    return _card_cache.get(model_id)
 
 
 async def get_model_cards() -> list["ModelCard"]:
@@ -92,6 +104,7 @@ class ModelCard(CamelCaseModel):
     capabilities: list[str] = []
     uses_cfg: bool = False
     trust_remote_code: bool = True
+    is_custom: bool = False
 
     @field_validator("tasks", mode="before")
     @classmethod
@@ -100,7 +113,7 @@ class ModelCard(CamelCaseModel):
 
     async def save(self, path: Path) -> None:
         async with await open_file(path, "w") as f:
-            py = self.model_dump(exclude_none=True)
+            py = self.model_dump(exclude_none=True, exclude={"is_custom"})
             data = tomlkit.dumps(py)  # pyright: ignore[reportUnknownMemberType]
             await f.write(data)
 
@@ -148,6 +161,7 @@ class ModelCard(CamelCaseModel):
             num_key_value_heads=config_data.num_key_value_heads,
             tasks=[ModelTask.TextGeneration],
             trust_remote_code=False,
+            is_custom=True,
         )
 
 
@@ -164,16 +178,6 @@ async def delete_custom_card(model_id: ModelId) -> bool:
         _card_cache.pop(model_id, None)
         return True
     return False
-
-
-def is_custom_card(model_id: ModelId) -> bool:
-    """Check if a model card exists in the custom cards directory."""
-    import os
-
-    card_path = Path(str(EXO_CUSTOM_MODEL_CARDS_DIR)) / (
-        ModelId(model_id).normalize() + ".toml"
-    )
-    return os.path.isfile(str(card_path))
 
 
 class ConfigData(BaseModel):

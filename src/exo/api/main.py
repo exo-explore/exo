@@ -129,8 +129,8 @@ from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
+    get_card,
     get_model_cards,
-    is_custom_card,
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
@@ -1559,7 +1559,7 @@ class API:
                     storage_size_megabytes=card.storage_size.in_mb,
                     supports_tensor=card.supports_tensor,
                     tasks=[task.value for task in card.tasks],
-                    is_custom=is_custom_card(card.model_id),
+                    is_custom=card.is_custom,
                     family=card.family,
                     quantization=card.quantization,
                     base_model=card.base_model,
@@ -1599,7 +1599,8 @@ class API:
 
     async def delete_custom_model(self, model_id: ModelId) -> JSONResponse:
         """Delete a user-added custom model card and sync deletion across the cluster."""
-        if not is_custom_card(model_id):
+        card = get_card(model_id)
+        if card is None or not card.is_custom:
             raise HTTPException(status_code=404, detail="Custom model card not found")
 
         await self.command_sender.send(
