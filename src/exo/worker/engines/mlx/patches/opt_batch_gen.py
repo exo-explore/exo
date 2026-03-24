@@ -62,6 +62,8 @@ def _fast_brc_update_in_place(
     self.offset += seq_len
     self._idx += seq_len
 
+    self.keys = mx.depends(self.keys, (self.left_padding, self.offset))
+
     if self._offset < self.max_size:
         return self.keys[..., : self._offset, :], self.values[..., : self._offset, :]
     return self.keys, self.values
@@ -206,8 +208,16 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
     if end_idx:
         if keep_idx:
             batch.filter(keep_idx)
+            if _pending_topk_idx is not None:
+                ki = mx.array(keep_idx)
+                _pending_topk_idx = _pending_topk_idx[ki]
+                _pending_topk_val = _pending_topk_val[ki]  # pyright: ignore[reportOptionalSubscript]
+                _pending_selected_lps = _pending_selected_lps[ki]  # pyright: ignore[reportOptionalSubscript]
         else:
             self.active_batch = None
+            _pending_topk_idx = None
+            _pending_topk_val = None
+            _pending_selected_lps = None
 
     self._next_count += 1
     if self._next_count % 512 == 0:
@@ -218,6 +228,7 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
 
 def _patched_public_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
     batch = self.active_batch
+    # Only do decode with fast_next
     if batch is not None and not self.unprocessed_prompts:
         with mx.stream(generation_stream):
             return _fast_next(self)

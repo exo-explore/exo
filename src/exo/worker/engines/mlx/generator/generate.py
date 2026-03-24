@@ -413,7 +413,7 @@ def extract_top_logprobs(
         selected_logprob = precomputed_selected
     else:
         selected_logprob_arr = logprobs[selected_token]
-        top_logprobs = min(top_logprobs, logprobs.shape[0])
+        top_logprobs = min(top_logprobs, logprobs.shape[0] - 1)
         top_indices = mx.argpartition(-logprobs, top_logprobs)[:top_logprobs]
         top_values = logprobs[top_indices]
         sort_order = mx.argsort(-top_values)
