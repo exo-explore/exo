@@ -39,6 +39,7 @@ from exo.shared.types.tasks import (
     Shutdown,
     Task,
     TaskStatus,
+    TextGeneration,
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
@@ -118,10 +119,10 @@ class Worker:
     async def _event_applier(self):
         with self.event_receiver as events:
             async for event in events:
-                # Cancel runners for tasks being deleted while still in progress
+                # Cancel runners for text generation tasks being deleted while still in progress
                 if isinstance(event.event, TaskDeleted):
                     task = self.state.tasks.get(event.event.task_id)
-                    if task is not None:
+                    if task is not None and isinstance(task, TextGeneration):
                         for runner in self.runners.values():
                             if task.instance_id == runner.bound_instance.instance.instance_id:
                                 await runner.cancel_task(task.task_id)
