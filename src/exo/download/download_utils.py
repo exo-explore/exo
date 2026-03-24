@@ -744,13 +744,30 @@ async def download_shard(
         logger.debug(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
 
     all_start_time = time.time()
-    file_list = await fetch_file_list_with_cache(
-        shard.model_card.model_id,
-        revision,
-        recursive=True,
-        skip_internet=skip_internet,
-        on_connection_lost=on_connection_lost,
-    )
+    try:
+        file_list = await fetch_file_list_with_cache(
+            shard.model_card.model_id,
+            revision,
+            recursive=True,
+            skip_internet=skip_internet,
+            on_connection_lost=on_connection_lost,
+        )
+    except FileNotFoundError:
+        not_started_progress = RepoDownloadProgress(
+            repo_id=str(shard.model_card.model_id),
+            repo_revision=revision,
+            shard=shard,
+            completed_files=0,
+            total_files=0,
+            downloaded=Memory.from_bytes(0),
+            downloaded_this_session=Memory.from_bytes(0),
+            total=Memory.from_bytes(0),
+            overall_speed=0.0,
+            overall_eta=timedelta(0),
+            status="not_started",
+            file_progress={},
+        )
+        return target_dir, not_started_progress
     filtered_file_list = list(
         filter_repo_objects(
             file_list, allow_patterns=allow_patterns, key=lambda x: x.path
