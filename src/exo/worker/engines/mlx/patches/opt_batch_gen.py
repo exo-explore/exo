@@ -1,15 +1,19 @@
 import os
 import time
-from typing import Any
+from typing import Any, cast
 
 import mlx.core as mx
 from mlx_lm.generate import BatchGenerator, generation_stream
 from mlx_lm.models.cache import ArraysCache, BatchKVCache, BatchRotatingKVCache, KVCache
 
 EXO_NO_BATCH_OPT = os.environ.get("EXO_NO_BATCH_OPT", "0") == "1"
+_PRECOMPUTE_TOP_K = 20
 
 _original_public_next = BatchGenerator.next
-_orig_brc_update_in_place = BatchRotatingKVCache._update_in_place
+
+_pending_topk_idx: mx.array | None = None
+_pending_topk_val: mx.array | None = None
+_pending_selected_lps: mx.array | None = None
 
 
 def _convert_cache(
@@ -20,7 +24,7 @@ def _convert_cache(
         c.keys = batch_cache.keys
         c.values = batch_cache.values
         c.offset = batch_cache._idx
-        c.make_mask = batch_cache.make_mask  # pyright: ignore[reportAttributeAccessIssue]
+        c.make_mask = cast(Any, batch_cache.make_mask)
         return c
     return batch_cache
 
@@ -90,18 +94,18 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
     assert batch is not None
     batch_size = len(batch)
 
-    y = batch.y
+    prev_tokens = batch.y
     prev_logprobs = batch.logprobs
 
     has_processors = any(p for ps in batch.logits_processors for p in ps)
     if has_processors:
         for i, toks in enumerate(batch.tokens):
-            batch.tokens[i] = mx.concatenate([toks, y[i : i + 1]])
+            batch.tokens[i] = mx.concatenate([toks, prev_tokens[i : i + 1]])
 
     batch_cache: list[BatchKVCache | BatchRotatingKVCache | ArraysCache] = batch.cache
     fast_cache = [_convert_cache(c) for c in batch_cache]
 
-    logits = self.model(y[:, None], cache=fast_cache)
+    logits = self.model(prev_tokens[:, None], cache=fast_cache)
     logits = logits[:, -1, :]
 
     if has_processors:
@@ -136,12 +140,62 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
         if fast_c is not orig_c:
             _sync_back(fast_c, orig_c)  # pyright: ignore[reportArgumentType]
 
-    if has_processors:
-        mx.async_eval(batch.y, *batch.logprobs, *batch.tokens)
-    else:
-        mx.async_eval(batch.y, *batch.logprobs)
+    global _pending_topk_idx, _pending_topk_val, _pending_selected_lps
 
-    y_list: list[int] = [int(y.item())] if batch_size == 1 else [int(v) for v in y]
+    emit_topk_indices: list[list[int]] = (
+        cast(list[list[int]], _pending_topk_idx.tolist())
+        if _pending_topk_idx is not None
+        else []
+    )
+    emit_topk_values: list[list[float]] = (
+        cast(list[list[float]], _pending_topk_val.tolist())
+        if _pending_topk_val is not None
+        else []
+    )
+    emit_selected_lps: list[float] = (
+        cast(list[float], _pending_selected_lps.tolist())
+        if _pending_selected_lps is not None
+        else []
+    )
+
+    needs_topk: bool = getattr(self, "_needs_topk", False)
+    if needs_topk:
+        k = min(_PRECOMPUTE_TOP_K, logprobs.shape[1])
+        _pending_topk_idx = mx.argpartition(-logprobs, k, axis=1)[:, :k]
+        _pending_topk_val = mx.take_along_axis(logprobs, _pending_topk_idx, axis=1)
+        sort_order = mx.argsort(-_pending_topk_val, axis=1)
+        _pending_topk_idx = mx.take_along_axis(_pending_topk_idx, sort_order, axis=1)
+        _pending_topk_val = mx.take_along_axis(_pending_topk_val, sort_order, axis=1)
+        _pending_selected_lps = logprobs[mx.arange(batch_size), batch.y]
+        if has_processors:
+            mx.async_eval(
+                batch.y,
+                *batch.logprobs,
+                *batch.tokens,
+                _pending_topk_idx,
+                _pending_topk_val,
+                _pending_selected_lps,
+            )
+        else:
+            mx.async_eval(
+                batch.y,
+                *batch.logprobs,
+                _pending_topk_idx,
+                _pending_topk_val,
+                _pending_selected_lps,
+            )
+    else:
+        _pending_topk_idx = None
+        _pending_topk_val = None
+        _pending_selected_lps = None
+        if has_processors:
+            mx.async_eval(batch.y, *batch.logprobs, *batch.tokens)
+        else:
+            mx.async_eval(batch.y, *batch.logprobs)
+
+    prev_token_list: list[int] = (
+        [int(prev_tokens.item())] if batch_size == 1 else [int(v) for v in prev_tokens]
+    )
 
     toc = time.perf_counter()
     self._stats.generation_time += toc - tic
@@ -152,7 +206,7 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
     stop_tokens = self.stop_tokens
 
     for e in range(batch_size):
-        t = y_list[e]
+        t = prev_token_list[e]
         uid = batch.uids[e]
         num_tok = batch.num_tokens[e] + 1
         batch.num_tokens[e] = num_tok
@@ -170,7 +224,12 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
         cache = None
         if finish_reason is not None:
             cache = batch.extract_cache(e)
-        responses.append(self.Response(uid, t, prev_logprobs[e], finish_reason, cache))
+        response = self.Response(uid, t, prev_logprobs[e], finish_reason, cache)
+        if emit_topk_indices:
+            response._topk_indices = emit_topk_indices[e]  # pyright: ignore[reportAttributeAccessIssue]
+            response._topk_values = emit_topk_values[e]  # pyright: ignore[reportAttributeAccessIssue]
+            response._selected_logprob = emit_selected_lps[e]  # pyright: ignore[reportAttributeAccessIssue]
+        responses.append(response)
 
     if end_idx:
         if keep_idx:
@@ -183,10 +242,6 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
         mx.clear_cache()
     self._stats.generation_tokens += len(responses)
     return responses
-
-
-def _has_arrays_cache(batch: Any) -> bool:
-    return any(isinstance(c, ArraysCache) for c in batch.cache)
 
 
 def _patched_public_next(self: BatchGenerator) -> list[BatchGenerator.Response]:

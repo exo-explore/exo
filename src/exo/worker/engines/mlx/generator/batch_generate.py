@@ -5,6 +5,8 @@ from typing import Callable, cast
 import mlx.core as mx
 from mlx_lm.generate import (
     BatchGenerator as MlxBatchGenerator,
+)
+from mlx_lm.generate import (
     generation_stream,
 )
 from mlx_lm.models.cache import RotatingKVCache
@@ -292,9 +294,11 @@ class ExoBatchGenerator:
                         tokenizer=self.tokenizer,
                         top_logprobs=task_params.top_logprobs or DEFAULT_TOP_LOGPROBS,
                         selected_token=response.token,
-                        precomputed_indices=getattr(response, '_topk_indices', None),
-                        precomputed_values=getattr(response, '_topk_values', None),
-                        precomputed_selected=getattr(response, '_selected_logprob', None),
+                        precomputed_indices=getattr(response, "_topk_indices", None),
+                        precomputed_values=getattr(response, "_topk_values", None),
+                        precomputed_selected=getattr(
+                            response, "_selected_logprob", None
+                        ),
                     )
 
             stats: GenerationStats | None = None
@@ -358,7 +362,9 @@ class ExoBatchGenerator:
         _step_elapsed = time.perf_counter() - _step_tic
         _overhead = _step_elapsed - _next_elapsed
         if self._exo_gen._next_count % 64 == 0 and responses:
-            logger.debug(f"step overhead: {_overhead*1000:.2f}ms (next={_next_elapsed*1000:.2f}ms total={_step_elapsed*1000:.2f}ms)")
+            logger.debug(
+                f"step overhead: {_overhead * 1000:.2f}ms (next={_next_elapsed * 1000:.2f}ms total={_step_elapsed * 1000:.2f}ms)"
+            )
 
         return results
 
