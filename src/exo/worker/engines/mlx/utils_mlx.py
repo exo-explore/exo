@@ -740,12 +740,9 @@ def _parse_kimi_tool_calls(text: str):
         if func_args_match is None:
             raise ValueError("No tool call arguments found.")
         func_args = func_args_match.group(1)
-        try:
-            arg_dct = json.loads(func_args)  # pyright: ignore[reportAny]
-        except Exception:
-            arg_dct = None
+        arg_dct = json.loads(func_args)  # pyright: ignore[reportAny]
 
-        return dict(id=tool_call_id, name=func_name, arguments=arg_dct)
+        return dict(id=tool_call_id, name=func_name, arguments=arg_dct)  # pyright: ignore[reportAny]
 
     tool_matches = _tool_call_split_regex.findall(text)
     if tool_matches:
