@@ -138,7 +138,13 @@ conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
 
 [tool.uv.extra-build-dependencies]
 mlx-lm = ["setuptools"]
-xgrammar = ["nanobind"]
+xgrammar = [
+  "nanobind",
+  "setuptools",
+  "scikit-build-core",
+  "packaging",
+  "pathspec",
+]
 rouge-score = ["setuptools"]
 sacrebleu = ["setuptools"]
 sqlitedict = ["setuptools"]
