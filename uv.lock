@@ -524,7 +524,7 @@ requires-dist = [
     { name = "mflux", specifier = "==0.16.9" },
     { name = "mlx", marker = "sys_platform == 'darwin'", git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks" },
     { name = "mlx", extras = ["cpu"], marker = "sys_platform == 'linux'", specifier = "==0.30.6" },
-    { name = "mlx-lm", git = "https://github.com/ml-explore/mlx-lm?branch=main" },
+    { name = "mlx-lm", git = "https://github.com/rltakashige/mlx-lm?branch=fix%2Ffloat32-logprobs" },
     { name = "msgspec", specifier = ">=0.19.0" },
     { name = "openai-harmony", specifier = ">=0.0.8" },
     { name = "psutil", specifier = ">=7.0.0" },
@@ -1445,7 +1445,7 @@ wheels = [
 [[package]]
 name = "mlx-lm"
 version = "0.31.2"
-source = { git = "https://github.com/ml-explore/mlx-lm?branch=main#ed7884cb80968e0e77fce6cde5d1597952bbd524" }
+source = { git = "https://github.com/rltakashige/mlx-lm?branch=fix%2Ffloat32-logprobs#8e94256220f954949133e036980951681e353945" }
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.30.7.dev20260225+257d5692", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#257d5692fc7af6bba3b8afaeb63c549b7d1e43d5" }, marker = "sys_platform == 'darwin'" },
