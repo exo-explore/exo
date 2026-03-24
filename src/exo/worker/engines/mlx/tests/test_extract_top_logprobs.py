@@ -23,31 +23,41 @@ def _make_logprobs(values: list[float]) -> mx.array:
 class TestExtractTopLogprobsFallback:
     def test_returns_correct_selected_logprob(self) -> None:
         lp = _make_logprobs([-1.0, -2.0, -0.5, -3.0, -4.0])
-        selected, _ = extract_top_logprobs(lp, _mock_tokenizer(), top_logprobs=3, selected_token=2)
+        selected, _ = extract_top_logprobs(
+            lp, _mock_tokenizer(), top_logprobs=3, selected_token=2
+        )
         assert selected == pytest.approx(-0.5)
 
     def test_returns_top_k_sorted_descending(self) -> None:
         lp = _make_logprobs([-1.0, -2.0, -0.5, -3.0, -4.0])
-        _, items = extract_top_logprobs(lp, _mock_tokenizer(), top_logprobs=3, selected_token=0)
+        _, items = extract_top_logprobs(
+            lp, _mock_tokenizer(), top_logprobs=3, selected_token=0
+        )
         logprob_values = [item.logprob for item in items]
         assert logprob_values == sorted(logprob_values, reverse=True)
         assert len(items) == 3
 
     def test_top_tokens_are_most_probable(self) -> None:
         lp = _make_logprobs([-5.0, -1.0, -3.0, -0.1, -2.0])
-        _, items = extract_top_logprobs(lp, _mock_tokenizer(), top_logprobs=2, selected_token=0)
+        _, items = extract_top_logprobs(
+            lp, _mock_tokenizer(), top_logprobs=2, selected_token=0
+        )
         token_ids = [int(item.token.split("_")[1]) for item in items]
         assert 3 in token_ids
         assert 1 in token_ids
 
     def test_top_logprobs_clamped_to_vocab_size(self) -> None:
         lp = _make_logprobs([-1.0, -2.0, -3.0, -4.0, -5.0])
-        _, items = extract_top_logprobs(lp, _mock_tokenizer(), top_logprobs=10, selected_token=0)
+        _, items = extract_top_logprobs(
+            lp, _mock_tokenizer(), top_logprobs=10, selected_token=0
+        )
         assert len(items) == 4
 
     def test_nan_logprobs_filtered(self) -> None:
         lp = _make_logprobs([-1.0, float("nan"), -0.5])
-        _, items = extract_top_logprobs(lp, _mock_tokenizer(), top_logprobs=3, selected_token=0)
+        _, items = extract_top_logprobs(
+            lp, _mock_tokenizer(), top_logprobs=3, selected_token=0
+        )
         for item in items:
             assert not math.isnan(item.logprob)
 
@@ -110,7 +120,9 @@ class TestExtractTopLogprobsPrecomputed:
         lp = _make_logprobs([-1.0, -0.3, -2.5, -0.1, -4.0, -0.8, -3.0, -1.5])
         tok = _mock_tokenizer()
 
-        selected_fb, items_fb = extract_top_logprobs(lp, tok, top_logprobs=5, selected_token=1)
+        selected_fb, items_fb = extract_top_logprobs(
+            lp, tok, top_logprobs=5, selected_token=1
+        )
 
         pre_indices = [item.token.split("_")[1] for item in items_fb]
         pre_indices_int = [int(x) for x in pre_indices]
@@ -128,6 +140,6 @@ class TestExtractTopLogprobsPrecomputed:
 
         assert selected_pc == pytest.approx(selected_fb)
         assert len(items_pc) == len(items_fb)
-        for a, b in zip(items_pc, items_fb):
+        for a, b in zip(items_pc, items_fb, strict=True):
             assert a.token == b.token
             assert a.logprob == pytest.approx(b.logprob)

@@ -141,35 +141,21 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
         _pending_topk_idx = mx.take_along_axis(_pending_topk_idx, sort_order, axis=1)
         _pending_topk_val = mx.take_along_axis(_pending_topk_val, sort_order, axis=1)
         _pending_selected_lps = logprobs[mx.arange(batch_size), batch.y]
-        if has_processors:
-            mx.async_eval(
-                batch.y,
-                *batch.logprobs,
-                *batch.tokens,
-                _pending_topk_idx,
-                _pending_topk_val,
-                _pending_selected_lps,
-            )
-        else:
-            mx.async_eval(
-                batch.y,
-                *batch.logprobs,
-                _pending_topk_idx,
-                _pending_topk_val,
-                _pending_selected_lps,
-            )
+        mx.async_eval(
+            batch.y,
+            *batch.logprobs,
+            *batch.tokens,
+            _pending_topk_idx,
+            _pending_topk_val,
+            _pending_selected_lps,
+        )
     else:
         _pending_topk_idx = None
         _pending_topk_val = None
         _pending_selected_lps = None
-        if has_processors:
-            mx.async_eval(batch.y, *batch.logprobs, *batch.tokens)
-        else:
-            mx.async_eval(batch.y, *batch.logprobs)
+        mx.async_eval(batch.y, *batch.logprobs, *batch.tokens)
 
-    prev_token_list: list[int] = (
-        [int(prev_tokens.item())] if batch_size == 1 else [int(v) for v in prev_tokens]
-    )
+    prev_token_list: list[int] = cast(list[int], prev_tokens.tolist())
 
     toc = time.perf_counter()
     self._stats.generation_time += toc - tic
@@ -208,11 +194,15 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
     if end_idx:
         if keep_idx:
             batch.filter(keep_idx)
-            if _pending_topk_idx is not None:
+            if (
+                _pending_topk_idx is not None
+                and _pending_topk_val is not None
+                and _pending_selected_lps is not None
+            ):
                 ki = mx.array(keep_idx)
                 _pending_topk_idx = _pending_topk_idx[ki]
-                _pending_topk_val = _pending_topk_val[ki]  # pyright: ignore[reportOptionalSubscript]
-                _pending_selected_lps = _pending_selected_lps[ki]  # pyright: ignore[reportOptionalSubscript]
+                _pending_topk_val = _pending_topk_val[ki]
+                _pending_selected_lps = _pending_selected_lps[ki]
         else:
             self.active_batch = None
             _pending_topk_idx = None
