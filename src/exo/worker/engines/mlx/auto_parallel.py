@@ -480,7 +480,7 @@ def patch_tensor_model[T](model: T) -> T:
             last = cache[-1]  # pyright: ignore[reportAny]
             dep_cache = last[0] if hasattr(last, "caches") else last  # pyright: ignore[reportAny]
             if hasattr(dep_cache, "keys"):  # type: ignore
-                dep_cache.keys = mx.depends(dep_cache.keys, logits)  # pyright: ignore[reportAny,reportUnknownMemberType]
+                dep_cache.keys = mx.depends(dep_cache.keys, logits)  # pyright: ignore[reportAny]
 
         return logits
 

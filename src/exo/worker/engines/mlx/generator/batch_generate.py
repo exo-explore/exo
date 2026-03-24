@@ -6,6 +6,9 @@ import mlx.core as mx
 from mlx_lm.generate import (
     BatchGenerator as MlxBatchGenerator,
 )
+from mlx_lm.generate import (
+    generation_stream,
+)
 from mlx_lm.models.cache import RotatingKVCache
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import StreamingDetokenizer, TokenizerWrapper
@@ -63,6 +66,7 @@ class _EngineTask:
     potential_stop_sequence_text: str = ""
     completion_tokens: int = 0
     generation_start_time: float = 0.0
+    generation_time_at_start: float = 0.0
     in_thinking: bool = False
     reasoning_tokens: int = 0
     prefill_tps: float = 0.0
@@ -75,22 +79,23 @@ class ExoBatchGenerator:
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
 
-    _exo_gen: MlxBatchGenerator = field(init=False)
+    _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
-        self._exo_gen = MlxBatchGenerator(
+        self._mlx_gen = MlxBatchGenerator(
             model=self.model,
             stop_tokens=set(eos_ids_from_tokenizer(self.tokenizer)),
             prefill_step_size=4096,
         )
+        self._mlx_gen._needs_topk = False  # pyright: ignore[reportAttributeAccessIssue]
 
     @property
     def has_work(self) -> bool:
         return (
             bool(self._active_tasks)
-            or bool(self._exo_gen.unprocessed_prompts)
-            or self._exo_gen.active_batch is not None
+            or bool(self._mlx_gen.unprocessed_prompts)
+            or self._mlx_gen.active_batch is not None
         )
 
     def submit(
@@ -188,7 +193,7 @@ class ExoBatchGenerator:
 
         max_tokens = task_params.max_output_tokens or MAX_TOKENS
 
-        uids = self._exo_gen.insert(
+        uids = self._mlx_gen.insert(
             prompts=[last_tokens.tolist()],
             max_tokens=[max_tokens],
             caches=[list(cache)],
@@ -211,6 +216,7 @@ class ExoBatchGenerator:
             on_generation_token=on_generation_token,
             generation_start_time=time.perf_counter(),
             prefill_tps=_prefill_tps,
+            generation_time_at_start=self._mlx_gen._stats.generation_time,
         )
 
         return uid
@@ -219,7 +225,12 @@ class ExoBatchGenerator:
         if not self.has_work:
             return []
 
-        responses = self._exo_gen.next()
+        self._mlx_gen._needs_topk = any(  # pyright: ignore[reportAttributeAccessIssue]
+            t.task_params.logprobs for t in self._active_tasks.values()
+        )
+        _step_tic = time.perf_counter()
+        responses = self._mlx_gen.next()
+        _next_elapsed = time.perf_counter() - _step_tic
 
         results: list[tuple[int, GenerationResponse]] = []
 
@@ -277,28 +288,31 @@ class ExoBatchGenerator:
             logprob: float | None = None
             top_logprobs: list[TopLogprobItem] | None = None
             if task_params.logprobs:
-                logprob, top_logprobs = extract_top_logprobs(
-                    logprobs=response.logprobs,
-                    tokenizer=self.tokenizer,
-                    top_logprobs=task_params.top_logprobs or DEFAULT_TOP_LOGPROBS,
-                    selected_token=response.token,
-                )
+                with mx.stream(generation_stream):
+                    logprob, top_logprobs = extract_top_logprobs(
+                        logprobs=response.logprobs,
+                        tokenizer=self.tokenizer,
+                        top_logprobs=task_params.top_logprobs or DEFAULT_TOP_LOGPROBS,
+                        selected_token=response.token,
+                        precomputed_indices=getattr(response, "_topk_indices", None),
+                        precomputed_values=getattr(response, "_topk_values", None),
+                        precomputed_selected=getattr(
+                            response, "_selected_logprob", None
+                        ),
+                    )
 
             stats: GenerationStats | None = None
             usage: Usage | None = None
             if is_done:
-                try:
-                    mlx_stats = self._exo_gen.stats()
-                    generation_tps = mlx_stats.generation_tps
-                except ZeroDivisionError:
-                    generation_elapsed = (
-                        time.perf_counter() - state.generation_start_time
-                    )
-                    generation_tps = (
-                        state.completion_tokens / generation_elapsed
-                        if generation_elapsed > 0
-                        else 0.0
-                    )
+                gen_time_delta = (
+                    self._mlx_gen._stats.generation_time
+                    - state.generation_time_at_start
+                )
+                generation_tps = (
+                    state.completion_tokens / gen_time_delta
+                    if gen_time_delta > 0
+                    else 0.0
+                )
 
                 stats = GenerationStats(
                     prompt_tps=state.prefill_tps,
@@ -345,15 +359,22 @@ class ExoBatchGenerator:
                     -max_stop_len:
                 ]
 
+        _step_elapsed = time.perf_counter() - _step_tic
+        _overhead = _step_elapsed - _next_elapsed
+        if self._mlx_gen._next_count % 64 == 0 and responses:
+            logger.debug(
+                f"step overhead: {_overhead * 1000:.2f}ms (next={_next_elapsed * 1000:.2f}ms total={_step_elapsed * 1000:.2f}ms)"
+            )
+
         return results
 
     def cancel(self, uids: list[int]) -> None:
-        self._exo_gen.remove(uids)
+        self._mlx_gen.remove(uids)
         for uid in uids:
             self._active_tasks.pop(uid, None)
 
     def close(self) -> None:
-        self._exo_gen.close()
+        self._mlx_gen.close()
 
     def _save_prefix_cache(
         self,

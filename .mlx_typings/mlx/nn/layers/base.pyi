@@ -53,7 +53,7 @@ class Module(dict):
         mx.eval(model.parameters())
     """
 
-    __call__: Callable
+    def __call__(self, *args: Any, **kwargs: Any) -> mx.array: ...
     def __init__(self) -> None:
         """Should be called by the subclasses of ``Module``."""
 

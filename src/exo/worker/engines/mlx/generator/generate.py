@@ -179,7 +179,8 @@ def pipeline_parallel_prefill(
         flush_prefill_sends()
 
     assert _prompt_cache is not None
-    mx.eval([c.state for c in _prompt_cache])  # type: ignore
+    with mx.stream(generation_stream):
+        mx.eval([c.state for c in _prompt_cache])  # type: ignore
 
     # Final callback matching generate_step
     prompt_progress_callback(total, total)
@@ -398,52 +399,44 @@ def extract_top_logprobs(
     tokenizer: TokenizerWrapper,
     top_logprobs: int,
     selected_token: int,
+    precomputed_indices: list[int] | None = None,
+    precomputed_values: list[float] | None = None,
+    precomputed_selected: float | None = None,
 ) -> tuple[float, list[TopLogprobItem]]:
-    """Extract the selected token's logprob and top alternative tokens.
-
-    Args:
-        logprobs: Full vocabulary logprobs array from MLX
-        tokenizer: Tokenizer for decoding token IDs to strings
-        top_logprobs: Number of top alternatives to return
-        selected_token: The token ID that was actually sampled
-
-    Returns:
-        Tuple of (selected_token_logprob, list of TopLogprobItem for top alternatives)
-    """
-    # Get the logprob of the selected token
-    selected_logprob = float(logprobs[selected_token].item())
-
-    # Get top indices (most probable tokens)
-    # mx.argpartition gives indices that would partition the array
-    # We negate logprobs since argpartition finds smallest, and we want largest
-    top_logprobs = min(top_logprobs, logprobs.shape[0])  # Don't exceed vocab size
-    top_indices = mx.argpartition(-logprobs, top_logprobs)[:top_logprobs]
-
-    # Get the actual logprob values for these indices
-    top_values = logprobs[top_indices]
-
-    # Sort by logprob (descending) for consistent ordering
-    sort_order = mx.argsort(-top_values)
-    top_indices = top_indices[sort_order]
-    top_values = top_values[sort_order]
+    if (
+        precomputed_indices is not None
+        and precomputed_values is not None
+        and precomputed_selected is not None
+    ):
+        top_indices_list: list[int] = precomputed_indices[:top_logprobs]
+        top_values_list: list[float] = precomputed_values[:top_logprobs]
+        selected_logprob = precomputed_selected
+    else:
+        selected_logprob_arr = logprobs[selected_token]
+        top_logprobs = min(top_logprobs, logprobs.shape[0] - 1)
+        top_indices = mx.argpartition(-logprobs, top_logprobs)[:top_logprobs]
+        top_values = logprobs[top_indices]
+        sort_order = mx.argsort(-top_values)
+        top_indices = top_indices[sort_order]
+        top_values = top_values[sort_order]
+        mx.eval(selected_logprob_arr, top_indices, top_values)
+        selected_logprob = float(selected_logprob_arr.item())
+        top_indices_list = top_indices.tolist()  # type: ignore
+        top_values_list = top_values.tolist()  # type: ignore
 
     # Convert to list of TopLogprobItem
     top_logprob_items: list[TopLogprobItem] = []
-    for i in range(top_logprobs):
-        token_id = int(top_indices[i].item())
-        token_logprob = float(top_values[i].item())
+    for token_id, token_logprob in zip(top_indices_list, top_values_list, strict=True):
         if math.isnan(token_logprob):
             continue
 
         # Decode token ID to string
         token_str = tokenizer.decode([token_id])
-        # Get byte representation
-        token_bytes = list(token_str.encode("utf-8"))
         top_logprob_items.append(
             TopLogprobItem(
                 token=token_str,
                 logprob=token_logprob,
-                bytes=token_bytes,
+                bytes=list(token_str.encode("utf-8")),
             )
         )
 
@@ -624,12 +617,13 @@ def mlx_generate(
         logprob: float | None = None
         top_logprobs: list[TopLogprobItem] | None = None
         if task.logprobs:
-            logprob, top_logprobs = extract_top_logprobs(
-                logprobs=out.logprobs,
-                tokenizer=tokenizer,
-                top_logprobs=task.top_logprobs or DEFAULT_TOP_LOGPROBS,
-                selected_token=out.token,
-            )
+            with mx.stream(generation_stream):
+                logprob, top_logprobs = extract_top_logprobs(
+                    logprobs=out.logprobs,
+                    tokenizer=tokenizer,
+                    top_logprobs=task.top_logprobs or DEFAULT_TOP_LOGPROBS,
+                    selected_token=out.token,
+                )
 
         if is_done:
             # Log generation stats

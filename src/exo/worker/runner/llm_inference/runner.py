@@ -319,7 +319,9 @@ class Runner:
         return ExitCode.AllTasksComplete
 
     def send_response(
-        self, response: GenerationResponse | ToolCallResponse, command_id: CommandId
+        self,
+        response: GenerationResponse | ToolCallResponse,
+        command_id: CommandId,
     ):
         match response:
             case GenerationResponse():
