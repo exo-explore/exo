@@ -25,7 +25,7 @@ dependencies = [
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",
   "tomlkit>=0.14.0",
-  "mflux==0.16.9",
+  "mflux==0.17.2",
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
