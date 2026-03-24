@@ -337,21 +337,24 @@ def warmup_inference(
     mx_barrier(group)
 
     logger.info("Generating warmup tokens")
-    for _r in stream_generate(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=warmup_prompt,
-        max_tokens=50,
-        sampler=sampler,
-        prompt_cache=cache,
-        prefill_step_size=2048,
-        kv_group_size=KV_GROUP_SIZE,
-        kv_bits=KV_BITS,
-    ):
-        logger.info("Generated warmup token: " + str(_r.text))
-        tokens_generated += 1
-
-    logger.info("Generated ALL warmup tokens")
+    try:
+        # for slow warmups, pipeline prefill=True tends to be more likely to succeed within the 5s gpu timeout window
+        # as we don't block on the last all gather.
+        set_pipeline_prefill(model, is_prefill=True)
+        for _r in stream_generate(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=warmup_prompt,
+            max_tokens=50,
+            sampler=sampler,
+            prompt_cache=cache,
+            prefill_step_size=2048,
+            kv_group_size=KV_GROUP_SIZE,
+            kv_bits=KV_BITS,
+        ):
+            tokens_generated += 1
+    finally:
+        set_pipeline_prefill(model, is_prefill=False)
 
     mx_barrier(group)
 
