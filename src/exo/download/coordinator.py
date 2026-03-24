@@ -7,6 +7,7 @@ from loguru import logger
 from exo.download.download_utils import (
     RepoDownloadProgress,
     delete_model,
+    is_model_directory_complete,
     map_repo_download_progress_to_download_progress_data,
     resolve_model_in_path,
 )
@@ -161,6 +162,23 @@ class DownloadCoordinator:
                 total=shard.model_card.storage_size,
                 model_directory=str(found_path),
                 read_only=True,
+            )
+            self.download_status[model_id] = completed
+            await self.event_sender.send(
+                NodeDownloadProgress(download_progress=completed)
+            )
+            return
+
+        local_model_dir = EXO_MODELS_DIR / model_id.normalize()
+        if local_model_dir.is_dir() and is_model_directory_complete(local_model_dir):
+            logger.info(
+                f"DownloadCoordinator: Model {model_id} already complete at {local_model_dir}"
+            )
+            completed = DownloadCompleted(
+                shard_metadata=shard,
+                node_id=self.node_id,
+                total=shard.model_card.storage_size,
+                model_directory=str(local_model_dir),
             )
             self.download_status[model_id] = completed
             await self.event_sender.send(

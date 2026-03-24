@@ -2,11 +2,15 @@
 
 import asyncio
 import contextlib
+import json
 from collections.abc import AsyncIterator, Awaitable
 from datetime import timedelta
 from pathlib import Path
 from typing import Callable
 from unittest.mock import AsyncMock, patch
+
+import aiofiles
+import aiofiles.os as aios
 
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.download_utils import RepoDownloadProgress
@@ -190,6 +194,53 @@ async def test_re_download_after_delete_completes() -> None:
             coordinator_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await coordinator_task
+
+
+async def test_start_download_uses_complete_local_model_without_status_probe(
+    tmp_path: Path,
+) -> None:
+    _, cmd_recv = channel[ForwarderDownloadCommand]()
+    event_send, event_recv = channel[Event]()
+
+    fake_downloader = FakeShardDownloader()
+    fake_downloader.get_shard_download_status_for_shard = AsyncMock(
+        side_effect=AssertionError("status probe should be skipped for complete models")
+    )
+
+    coordinator = DownloadCoordinator(
+        node_id=NODE_ID,
+        shard_downloader=SingletonShardDownloader(fake_downloader),
+        download_command_receiver=cmd_recv,
+        event_sender=event_send,
+    )
+    shard = _make_shard()
+
+    models_dir = tmp_path / "models"
+    model_dir = models_dir / MODEL_ID.normalize()
+    await aios.makedirs(model_dir, exist_ok=True)
+
+    async with aiofiles.open(model_dir / "config.json", "w") as f:
+        await f.write('{"model_type":"qwen2"}')
+    async with aiofiles.open(model_dir / "model.safetensors.index.json", "w") as f:
+        await f.write(
+                json.dumps(
+                    {
+                        "metadata": {"total_size": 128},
+                        "weight_map": {"model.layers.0.weight": "model.safetensors"},
+                    }
+                )
+            )
+    async with aiofiles.open(model_dir / "model.safetensors", "wb") as f:
+        await f.write(b"x" * 128)
+
+    with patch("exo.download.coordinator.EXO_MODELS_DIR", models_dir):
+        await coordinator._start_download(shard)  # pyright: ignore[reportPrivateUsage]
+
+    event = await event_recv.receive()
+    assert isinstance(event, NodeDownloadProgress)
+    assert isinstance(event.download_progress, DownloadCompleted)
+    assert event.download_progress.model_directory == str(model_dir)
+    assert event.download_progress.total == shard.model_card.storage_size
 
 
 async def _wait_for_download_completed(

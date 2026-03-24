@@ -239,6 +239,17 @@ def _scan_model_directory(
 
 def is_model_directory_complete(model_dir: Path) -> bool:
     """Check if a model directory contains all required weight files."""
+    index_files = list(model_dir.glob("**/*.safetensors.index.json"))
+    if not index_files:
+        return False
+
+    for index_file in index_files:
+        try:
+            ModelSafetensorsIndex.model_validate_json(index_file.read_text())
+        except Exception:
+            logger.warning(f"Failed to parse model index {index_file}")
+            return False
+
     file_list = _scan_model_directory(model_dir, recursive=True)
     return file_list is not None and all(f.size is not None for f in file_list)
 

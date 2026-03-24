@@ -14,6 +14,7 @@ from pydantic import TypeAdapter
 from exo.download.download_utils import (
     delete_model,
     fetch_file_list_with_cache,
+    is_model_directory_complete,
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -322,6 +323,69 @@ class TestModelDeletion:
             result = await delete_model(model_id)
 
             assert result is False
+
+
+class TestModelDirectoryComplete:
+    """Tests for local completeness checks used to skip download probing."""
+
+    async def test_returns_false_when_only_partial_weight_exists(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        import json
+
+        model_dir = tmp_path / model_id.normalize()
+        await aios.makedirs(model_dir, exist_ok=True)
+
+        async with aiofiles.open(model_dir / "model.safetensors.index.json", "w") as f:
+            await f.write(
+                json.dumps(
+                    {
+                        "metadata": {"total_size": 256},
+                        "weight_map": {"model.layers.0.weight": "model.safetensors"},
+                    }
+                )
+            )
+        async with aiofiles.open(model_dir / "model.safetensors.partial", "wb") as f:
+            await f.write(b"x" * 128)
+
+        assert is_model_directory_complete(model_dir) is False
+
+    async def test_returns_true_when_final_weight_exists_even_with_stale_partial(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        import json
+
+        model_dir = tmp_path / model_id.normalize()
+        await aios.makedirs(model_dir, exist_ok=True)
+
+        async with aiofiles.open(model_dir / "model.safetensors.index.json", "w") as f:
+            await f.write(
+                json.dumps(
+                    {
+                        "metadata": {"total_size": 256},
+                        "weight_map": {"model.layers.0.weight": "model.safetensors"},
+                    }
+                )
+            )
+        async with aiofiles.open(model_dir / "model.safetensors", "wb") as f:
+            await f.write(b"x" * 256)
+        async with aiofiles.open(model_dir / "model.safetensors.partial", "wb") as f:
+            await f.write(b"x" * 128)
+
+        assert is_model_directory_complete(model_dir) is True
+
+    async def test_returns_false_when_index_is_invalid(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        model_dir = tmp_path / model_id.normalize()
+        await aios.makedirs(model_dir, exist_ok=True)
+
+        async with aiofiles.open(model_dir / "model.safetensors.index.json", "w") as f:
+            await f.write("{not valid json")
+        async with aiofiles.open(model_dir / "model.safetensors", "wb") as f:
+            await f.write(b"x" * 256)
+
+        assert is_model_directory_complete(model_dir) is False
 
 
 class TestProgressResetOnRedownload:
