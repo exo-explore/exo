@@ -31,6 +31,10 @@ build-dashboard:
 package:
     uv run pyinstaller packaging/pyinstaller/exo.spec
 
+build-app: package
+    xcodebuild build -project app/EXO/EXO.xcodeproj -scheme EXO -configuration Debug -derivedDataPath app/EXO/build
+    @echo "\nBuild complete. Run with:\n  open {{justfile_directory()}}/app/EXO/build/Build/Products/Debug/EXO.app"
+
 clean:
     rm -rf **/__pycache__
     rm -rf target/
