@@ -27,7 +27,9 @@ from mlx_engine.utils_mlx import initialize_mlx, load_mlx_items
 
 
 @dataclass
-class MlxBuilder(EngineBuilder[BoundInstance, TextGeneration, GenerationResponse | ToolCallResponse]):
+class MlxBuilder(
+    EngineBuilder[BoundInstance, TextGeneration, GenerationResponse | ToolCallResponse]
+):
     model_id: ModelId
     bound_instance: BoundInstance
     event_sender: MpSender[tuple[CommandId, ErrorChunk | PrefillProgressChunk]]

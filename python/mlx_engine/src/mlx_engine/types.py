@@ -11,13 +11,13 @@ from mlx_lm.models.cache import (
     QuantizedKVCache,
     RotatingKVCache,
 )
-from vllm_engine.kv_cache import TorchKVCache
+# from vllm_engine.kv_cache import TorchKVCache
 
 MLXCacheType = Sequence[
     KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList
 ]
 
-KVCacheType = MLXCacheType | TorchKVCache
+KVCacheType = MLXCacheType  # | TorchKVCache
 
 
 # Model is a wrapper function to fix the fact that mlx is not strongly typed in the same way that EXO is.

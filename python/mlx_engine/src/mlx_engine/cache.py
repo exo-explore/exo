@@ -1,6 +1,6 @@
 import os
 from copy import deepcopy
-from typing import TYPE_CHECKING, cast
+from typing import cast  # , TYPE_CHECKING
 
 import mlx.core as mx
 import psutil
@@ -18,14 +18,14 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from mlx_engine.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from mlx_engine.types import KVCacheType, MLXCacheType, Model
 
-if TYPE_CHECKING:
-    from vllm_engine.kv_cache import TorchKVCache
+# if TYPE_CHECKING:
+# from vllm_engine.kv_cache import TorchKVCache
 
 
 # Fraction of device memory above which LRU eviction kicks in.
 # Smaller machines need more aggressive eviction.
 def _default_memory_threshold() -> float:
-    total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb # pyright: ignore[reportAny]
+    total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb  # pyright: ignore[reportAny]
     if total_gb >= 128:
         return 0.85
     if total_gb >= 64:
@@ -217,9 +217,10 @@ class KVPrefixCache:
 
         return prompt_cache, remaining, best_index
 
-    def lookup(
+    def lookup(  # type: ignore
         self, prompt_token_ids: list[int]
-    ) -> tuple["TorchKVCache | None", int, int | None]:
+    ) -> tuple["TorchKVCache | None", int, int | None]:  # type: ignore
+        from vllm_engine.kv_cache import TorchKVCache
 
         prompt_mx = mx.array(prompt_token_ids)
         max_length = len(prompt_token_ids)
@@ -250,11 +251,13 @@ class KVPrefixCache:
         return torch_cache.trim_to(best_length), best_length, best_index
 
     def add_from_torch(
-        self, prompt_token_ids: list[int], cache: "TorchKVCache"
+        self,
+        prompt_token_ids: list[int],
+        cache: "TorchKVCache",  # type: ignore
     ) -> None:
         self._evict_if_needed()
         self.prompts.append(mx.array(prompt_token_ids))
-        self.caches.append(cache.detach_cpu())
+        self.caches.append(cache.detach_cpu())  # type: ignore
         self._snapshots.append(None)
         self._access_counter += 1
         self._last_used.append(self._access_counter)
@@ -351,14 +354,14 @@ def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
 
 
 def get_available_memory() -> Memory:
-    mem: int = psutil.virtual_memory().available # pyright: ignore[reportAny]
+    mem: int = psutil.virtual_memory().available  # pyright: ignore[reportAny]
     return Memory.from_bytes(mem)
 
 
 def get_memory_used_percentage() -> float:
     mem = psutil.virtual_memory()
     # percent is 0-100
-    return float(mem.percent / 100) # pyright: ignore[reportAny]
+    return float(mem.percent / 100)  # pyright: ignore[reportAny]
 
 
 def make_kv_cache(

@@ -18,7 +18,9 @@ from vllm_engine.vllm_generator import VllmBatchEngine, load_vllm_engine
 
 
 @dataclass
-class VllmBuilder(EngineBuilder[BoundInstance, TextGeneration, GenerationResponse | ToolCallResponse]):
+class VllmBuilder(
+    EngineBuilder[BoundInstance, TextGeneration, GenerationResponse | ToolCallResponse]
+):
     model_id: ModelId
     model_path: str
     trust_remote_code: bool
@@ -30,8 +32,8 @@ class VllmBuilder(EngineBuilder[BoundInstance, TextGeneration, GenerationRespons
     def create(
         cls,
         bound_instance: BoundInstance,
-    cancel_receiver: MpReceiver[TaskId],
-    event_sender: MpSender[tuple[CommandId, ErrorChunk | PrefillProgressChunk]],
+        cancel_receiver: MpReceiver[TaskId],
+        event_sender: MpSender[tuple[CommandId, ErrorChunk | PrefillProgressChunk]],
     ) -> Self:
         mid = bound_instance.instance.shard_assignments.model_id
         return cls(
