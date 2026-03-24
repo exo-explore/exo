@@ -86,6 +86,7 @@ class ExoBatchGenerator:
             stop_tokens=set(eos_ids_from_tokenizer(self.tokenizer)),
             prefill_step_size=4096,
         )
+        self._exo_gen._needs_topk = False  # pyright: ignore[reportAttributeAccessIssue]
 
     @property
     def has_work(self) -> bool:
@@ -222,7 +223,12 @@ class ExoBatchGenerator:
         if not self.has_work:
             return []
 
+        self._exo_gen._needs_topk = any(  # pyright: ignore[reportAttributeAccessIssue]
+            t.task_params.logprobs for t in self._active_tasks.values()
+        )
+        _step_tic = time.perf_counter()
         responses = self._exo_gen.next()
+        _next_elapsed = time.perf_counter() - _step_tic
 
         results: list[tuple[int, GenerationResponse]] = []
 
@@ -286,6 +292,9 @@ class ExoBatchGenerator:
                         tokenizer=self.tokenizer,
                         top_logprobs=task_params.top_logprobs or DEFAULT_TOP_LOGPROBS,
                         selected_token=response.token,
+                        precomputed_indices=getattr(response, '_topk_indices', None),
+                        precomputed_values=getattr(response, '_topk_values', None),
+                        precomputed_selected=getattr(response, '_selected_logprob', None),
                     )
 
             stats: GenerationStats | None = None
@@ -345,6 +354,11 @@ class ExoBatchGenerator:
                 state.potential_stop_sequence_text = state.potential_stop_sequence_text[
                     -max_stop_len:
                 ]
+
+        _step_elapsed = time.perf_counter() - _step_tic
+        _overhead = _step_elapsed - _next_elapsed
+        if self._exo_gen._next_count % 64 == 0 and responses:
+            logger.debug(f"step overhead: {_overhead*1000:.2f}ms (next={_next_elapsed*1000:.2f}ms total={_step_elapsed*1000:.2f}ms)")
 
         return results
 
