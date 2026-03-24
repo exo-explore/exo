@@ -427,6 +427,7 @@ class BatchGenerator(InferenceGenerator):
 
             task, queue, output_generator = self._active_tasks[uid]
             queue.push(response)
+            # If a generator fails to parse for some reason and returns early, we should not crash
             parsed = next(output_generator, None)
 
             if parsed is not None:

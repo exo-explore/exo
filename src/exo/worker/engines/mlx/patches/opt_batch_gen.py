@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import mlx.core as mx
 from mlx_lm.generate import BatchGenerator, generation_stream
-from mlx_lm.models.cache import ArraysCache, BatchKVCache, BatchRotatingKVCache, KVCache
+from mlx_lm.models.cache import BatchRotatingKVCache
 
 EXO_NO_BATCH_OPT = os.environ.get("EXO_NO_BATCH_OPT", "0") == "1"
 _PRECOMPUTE_TOP_K = 20
@@ -14,27 +14,6 @@ _original_public_next = BatchGenerator.next
 _pending_topk_idx: mx.array | None = None
 _pending_topk_val: mx.array | None = None
 _pending_selected_lps: mx.array | None = None
-
-
-def _convert_cache(
-    batch_cache: BatchKVCache | BatchRotatingKVCache | ArraysCache,
-) -> KVCache | BatchRotatingKVCache | ArraysCache:
-    if isinstance(batch_cache, BatchKVCache):
-        c = KVCache()
-        c.keys = batch_cache.keys
-        c.values = batch_cache.values
-        c.offset = batch_cache._idx
-        c.make_mask = cast(Any, batch_cache.make_mask)
-        return c
-    return batch_cache
-
-
-def _sync_back(fast_cache: KVCache, batch_cache: BatchKVCache) -> None:
-    batch_cache.keys = fast_cache.keys
-    batch_cache.values = fast_cache.values
-    n_new = fast_cache.offset - batch_cache._idx
-    batch_cache._idx = fast_cache.offset
-    batch_cache.offset += n_new
 
 
 def _fast_brc_update_in_place(
@@ -102,10 +81,7 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
         for i, toks in enumerate(batch.tokens):
             batch.tokens[i] = mx.concatenate([toks, prev_tokens[i : i + 1]])
 
-    batch_cache: list[BatchKVCache | BatchRotatingKVCache | ArraysCache] = batch.cache
-    fast_cache = [_convert_cache(c) for c in batch_cache]
-
-    logits = self.model(prev_tokens[:, None], cache=fast_cache)
+    logits = self.model(prev_tokens[:, None], cache=batch.cache)
     logits = logits[:, -1, :]
 
     if has_processors:
@@ -135,10 +111,6 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
     else:
         batch.y = self.sampler(logprobs)
     batch.logprobs = list(logprobs)
-
-    for fast_c, orig_c in zip(fast_cache, batch_cache, strict=True):
-        if fast_c is not orig_c:
-            _sync_back(fast_c, orig_c)  # pyright: ignore[reportArgumentType]
 
     global _pending_topk_idx, _pending_topk_val, _pending_selected_lps
 
