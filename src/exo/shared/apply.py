@@ -7,6 +7,8 @@ from loguru import logger
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
+    CustomModelCardAdded,
+    CustomModelCardDeleted,
     Event,
     IndexedEvent,
     InputChunkReceived,
@@ -65,6 +67,8 @@ def event_apply(event: Event, state: State) -> State:
             | InputChunkReceived()
             | TracesCollected()
             | TracesMerged()
+            | CustomModelCardAdded()
+            | CustomModelCardDeleted()
         ):  # Pass-through events that don't modify state
             return state
         case InstanceCreated():

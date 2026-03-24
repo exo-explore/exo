@@ -129,9 +129,8 @@ from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
-    delete_custom_card,
+    get_card,
     get_model_cards,
-    is_custom_card,
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
@@ -143,8 +142,10 @@ from exo.shared.types.chunks import (
     ToolCallChunk,
 )
 from exo.shared.types.commands import (
+    AddCustomModelCard,
     Command,
     CreateInstance,
+    DeleteCustomModelCard,
     DeleteDownload,
     DeleteInstance,
     DownloadCommand,
@@ -1558,7 +1559,7 @@ class API:
                     storage_size_megabytes=card.storage_size.in_mb,
                     supports_tensor=card.supports_tensor,
                     tasks=[task.value for task in card.tasks],
-                    is_custom=is_custom_card(card.model_id),
+                    is_custom=card.is_custom,
                     family=card.family,
                     quantization=card.quantization,
                     base_model=card.base_model,
@@ -1569,13 +1570,20 @@ class API:
         )
 
     async def add_custom_model(self, payload: AddCustomModelParams) -> ModelListModel:
-        """Fetch a model from HuggingFace and save as a custom model card."""
+        """Fetch a model from HuggingFace and save as a custom model card, then sync across the cluster."""
         try:
             card = await ModelCard.fetch_from_hf(payload.model_id)
         except Exception as exc:
             raise HTTPException(
                 status_code=400, detail=f"Failed to fetch model: {exc}"
             ) from exc
+
+        await self.command_sender.send(
+            ForwarderCommand(
+                origin=self._system_id,
+                command=AddCustomModelCard(model_card=card),
+            )
+        )
 
         return ModelListModel(
             id=card.model_id,
@@ -1590,10 +1598,18 @@ class API:
         )
 
     async def delete_custom_model(self, model_id: ModelId) -> JSONResponse:
-        """Delete a user-added custom model card."""
-        deleted = await delete_custom_card(model_id)
-        if not deleted:
+        """Delete a user-added custom model card and sync deletion across the cluster."""
+        card = get_card(model_id)
+        if card is None or not card.is_custom:
             raise HTTPException(status_code=404, detail="Custom model card not found")
+
+        await self.command_sender.send(
+            ForwarderCommand(
+                origin=self._system_id,
+                command=DeleteCustomModelCard(model_id=model_id),
+            )
+        )
+
         return JSONResponse(
             {"message": "Model card deleted", "model_id": str(model_id)}
         )

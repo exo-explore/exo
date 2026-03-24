@@ -81,6 +81,14 @@ class CancelDownload(BaseCommand):
     model_id: ModelId
 
 
+class AddCustomModelCard(BaseCommand):
+    model_card: ModelCard
+
+
+class DeleteCustomModelCard(BaseCommand):
+    model_id: ModelId
+
+
 DownloadCommand = StartDownload | DeleteDownload | CancelDownload
 
 
@@ -96,6 +104,8 @@ Command = (
     | TaskCancelled
     | TaskFinished
     | SendInputChunk
+    | AddCustomModelCard
+    | DeleteCustomModelCard
 )
 
 
