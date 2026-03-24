@@ -61,7 +61,7 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
-mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", branch = "main" }
+mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "fix/float32-logprobs" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
 # mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
