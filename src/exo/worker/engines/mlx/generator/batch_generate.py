@@ -393,9 +393,8 @@ class ExoBatchGenerator:
                 if len(all_prompt_tokens) > 0
                 else 0.0
             )
-            if (
-                matched_index is not None
-                and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
+            if matched_index is not None and (
+                prefix_hit_length > 1000 or hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
             ):
                 self.kv_prefix_cache.update_kv_cache(
                     matched_index,
