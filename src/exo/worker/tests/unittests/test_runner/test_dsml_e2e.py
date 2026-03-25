@@ -967,6 +967,22 @@ class TestE2EFullRoundTrip:
         assert "12°C" in final_text
 
 
+class TestMultiTurnThinkingPrompt:
+
+    def test_no_orphan_think_end_in_multiturn(self):
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": "Hi!"},
+            {"role": "assistant", "content": "Hello! How can I help you today?"},
+            {"role": "user", "content": "Tell me about Paris."},
+        ]
+        prompt = encode_messages(messages, thinking_mode="thinking")
+        assistant_token = "<\uff5cAssistant\uff5c>"
+        parts = prompt.split(assistant_token)
+        for part in parts[1:]:
+            if part.startswith(THINKING_END):
+                assert False, f"Orphan </think> without <think> after <Assistant>: ...{assistant_token}{part[:50]}"
+
+
 class TestApplyChatTemplateWithToolCalls:
 
     def test_dsml_encoding_with_tool_calls_in_history(self):
