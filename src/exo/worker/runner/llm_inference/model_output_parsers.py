@@ -184,7 +184,11 @@ def parse_deepseek_v32(
             pending_buffer.clear()
             if in_tool_call:
                 tool_call_text += response.text
-                yield _try_parse_tool_call(tool_call_text, response) if TOOL_CALLS_END in tool_call_text else response.model_copy(update={"text": tool_call_text})
+                yield (
+                    _try_parse_tool_call(tool_call_text, response)
+                    if TOOL_CALLS_END in tool_call_text
+                    else response.model_copy(update={"text": tool_call_text})
+                )
             elif TOOL_CALLS_START in response.text and TOOL_CALLS_END in response.text:
                 dsml_start = response.text.index(TOOL_CALLS_START)
                 before = response.text[:dsml_start]

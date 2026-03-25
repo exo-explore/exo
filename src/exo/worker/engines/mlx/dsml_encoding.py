@@ -25,7 +25,7 @@ def encode_messages(
     context: list[dict[str, Any]] | None = None,
     drop_thinking: bool = True,
     add_default_bos_token: bool = True,
-    tools: Any = None,
+    tools: Any = None,  # pyright: ignore[reportAny]
 ) -> str:
     prompt: str = deepseek_v32.encode_messages(
         messages,
@@ -36,6 +36,7 @@ def encode_messages(
         tools=tools,
     )
     return prompt.replace(_ORPHAN_THINK_END, _FIXED_THINK_BLOCK)
+
 
 _INVOKE_PATTERN = re.compile(
     rf"<{re.escape(DSML_TOKEN)}invoke\s+name=\"([^\"]+)\">"

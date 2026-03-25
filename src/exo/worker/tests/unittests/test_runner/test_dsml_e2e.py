@@ -2,6 +2,7 @@ import json
 from collections.abc import Generator
 from typing import Any
 
+from exo.shared.types.common import ModelId
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ToolCallResponse,
@@ -968,7 +969,6 @@ class TestE2EFullRoundTrip:
 
 
 class TestMultiTurnThinkingPrompt:
-
     def test_no_orphan_think_end_in_multiturn(self):
         messages: list[dict[str, Any]] = [
             {"role": "user", "content": "Hi!"},
@@ -979,15 +979,18 @@ class TestMultiTurnThinkingPrompt:
         assistant_token = "<\uff5cAssistant\uff5c>"
         parts = prompt.split(assistant_token)
         for part in parts[1:]:
-            if part.startswith(THINKING_END):
-                assert False, f"Orphan </think> without <think> after <Assistant>: ...{assistant_token}{part[:50]}"
+            assert not part.startswith(THINKING_END), (
+                f"Orphan </think> without <think> after <Assistant>: ...{assistant_token}{part[:50]}"
+            )
 
 
 class TestApplyChatTemplateWithToolCalls:
-
     def test_dsml_encoding_with_tool_calls_in_history(self):
+        from exo.shared.types.text_generation import (
+            InputMessage,
+            TextGenerationTaskParams,
+        )
         from exo.worker.engines.mlx.utils_mlx import apply_chat_template
-        from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 
         chat_template_messages: list[dict[str, Any]] = [
             {"role": "system", "content": "You are a helpful assistant."},
@@ -1011,13 +1014,14 @@ class TestApplyChatTemplateWithToolCalls:
         ]
 
         from unittest.mock import MagicMock
+
         tokenizer = MagicMock()
         tokenizer.has_thinking = True
         tokenizer.think_start = "<think>"
         tokenizer.think_end = "</think>"
 
         params = TextGenerationTaskParams(
-            model="mlx-community/DeepSeek-V3.2-8bit",
+            model=ModelId("mlx-community/DeepSeek-V3.2-8bit"),
             input=[InputMessage(role="user", content="Thanks!")],
             instructions="You are a helpful assistant.",
             enable_thinking=True,

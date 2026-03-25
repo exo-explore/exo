@@ -1,7 +1,11 @@
 from collections.abc import Generator
 from typing import Any
 
-from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
+from exo.shared.types.worker.runner_response import (
+    FinishReason,
+    GenerationResponse,
+    ToolCallResponse,
+)
 from exo.worker.engines.mlx.dsml_encoding import (
     DSML_TOKEN,
     THINKING_END,
@@ -17,11 +21,17 @@ from exo.worker.runner.llm_inference.model_output_parsers import (
 from exo.worker.runner.llm_inference.tool_parsers import make_mlx_parser
 
 
-def _make_response(text: str, token: int, finish_reason: str | None = None) -> GenerationResponse:
-    return GenerationResponse(text=text, token=token, finish_reason=finish_reason, usage=None)
+def _make_response(
+    text: str, token: int, finish_reason: FinishReason | None = None
+) -> GenerationResponse:
+    return GenerationResponse(
+        text=text, token=token, finish_reason=finish_reason, usage=None
+    )
 
 
-def _queue_source(tokens: list[GenerationResponse]) -> Generator[GenerationResponse | None]:
+def _queue_source(
+    tokens: list[GenerationResponse],
+) -> Generator[GenerationResponse | None]:
     for token in tokens:
         yield token
         yield None
@@ -53,7 +63,7 @@ def _got_finish(results: list[GenerationResponse | ToolCallResponse]) -> bool:
     for r in results:
         if isinstance(r, ToolCallResponse):
             return True
-        if isinstance(r, GenerationResponse) and r.finish_reason is not None:
+        if r.finish_reason is not None:
             return True
     return False
 
@@ -62,7 +72,6 @@ def _got_finish(results: list[GenerationResponse | ToolCallResponse]) -> bool:
 
 
 class TestDeepSeekV32FinishReason:
-
     def test_finish_reason_with_buffered_dsml_prefix(self):
         tokens = [
             _make_response("Hello! The answer is x", 0),
@@ -71,7 +80,9 @@ class TestDeepSeekV32FinishReason:
         ]
         results = _step_until_finish(parse_deepseek_v32(_queue_source(tokens)))
         assert _got_finish(results)
-        full_text = "".join(r.text for r in results if isinstance(r, GenerationResponse))
+        full_text = "".join(
+            r.text for r in results if isinstance(r, GenerationResponse)
+        )
         assert "Hello" in full_text
         assert "<" in full_text
 
@@ -80,7 +91,10 @@ class TestDeepSeekV32FinishReason:
             _make_response(TOOL_CALLS_START, 0),
             _make_response("\n", 1),
             _make_response(f'<{DSML_TOKEN}invoke name="get_weather">\n', 2),
-            _make_response(f'<{DSML_TOKEN}parameter name="city" string="true">Tokyo</{DSML_TOKEN}parameter>\n', 3),
+            _make_response(
+                f'<{DSML_TOKEN}parameter name="city" string="true">Tokyo</{DSML_TOKEN}parameter>\n',
+                3,
+            ),
             _make_response(f"</{DSML_TOKEN}invoke>\n", 4),
             _make_response(TOOL_CALLS_END, 5, finish_reason="stop"),
         ]
@@ -93,7 +107,9 @@ class TestDeepSeekV32FinishReason:
         tokens = [
             _make_response(TOOL_CALLS_START, 0),
             _make_response("\n", 1),
-            _make_response(f'<{DSML_TOKEN}invoke name="get_weather">\n', 2, finish_reason="stop"),
+            _make_response(
+                f'<{DSML_TOKEN}invoke name="get_weather">\n', 2, finish_reason="stop"
+            ),
         ]
         results = _step_until_finish(parse_deepseek_v32(_queue_source(tokens)))
         assert _got_finish(results)
@@ -130,7 +146,10 @@ class TestDeepSeekV32FinishReason:
             _make_response(TOOL_CALLS_START, 4),
             _make_response("\n", 5),
             _make_response(f'<{DSML_TOKEN}invoke name="get_weather">\n', 6),
-            _make_response(f'<{DSML_TOKEN}parameter name="city" string="true">NYC</{DSML_TOKEN}parameter>\n', 7),
+            _make_response(
+                f'<{DSML_TOKEN}parameter name="city" string="true">NYC</{DSML_TOKEN}parameter>\n',
+                7,
+            ),
             _make_response(f"</{DSML_TOKEN}invoke>\n", 8),
             _make_response(TOOL_CALLS_END, 9, finish_reason="stop"),
         ]
@@ -147,7 +166,9 @@ class TestDeepSeekV32FinishReason:
         ]
         results = _step_until_finish(parse_deepseek_v32(_queue_source(tokens)))
         assert _got_finish(results)
-        full_text = "".join(r.text for r in results if isinstance(r, GenerationResponse))
+        full_text = "".join(
+            r.text for r in results if isinstance(r, GenerationResponse)
+        )
         assert full_text == "Hello world!"
 
     def test_finish_reason_multiple_buffered_prefix_tokens(self):
@@ -166,21 +187,26 @@ class TestDeepSeekV32FinishReason:
 
 
 class TestThinkingModelsFinishReason:
-
     def test_finish_reason_during_thinking(self):
         tokens = [
             _make_response("<think>", 0),
             _make_response("reasoning here", 1),
             _make_response("more reasoning", 2, finish_reason="stop"),
         ]
-        results = _step_until_finish(parse_thinking_models(
-            _queue_source(tokens),
-            think_start="<think>",
-            think_end="</think>",
-            starts_in_thinking=False,
-        ))
+        results = _step_until_finish(
+            parse_thinking_models(
+                _queue_source(tokens),
+                think_start="<think>",
+                think_end="</think>",
+                starts_in_thinking=False,
+            )
+        )
         assert _got_finish(results)
-        last_gen = [r for r in results if isinstance(r, GenerationResponse) and r.finish_reason is not None]
+        last_gen = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse) and r.finish_reason is not None
+        ]
         assert len(last_gen) == 1
         assert last_gen[0].is_thinking is False
 
@@ -191,12 +217,14 @@ class TestThinkingModelsFinishReason:
             _make_response("</think>", 2),
             _make_response("The answer is 42.", 3, finish_reason="stop"),
         ]
-        results = _step_until_finish(parse_thinking_models(
-            _queue_source(tokens),
-            think_start="<think>",
-            think_end="</think>",
-            starts_in_thinking=False,
-        ))
+        results = _step_until_finish(
+            parse_thinking_models(
+                _queue_source(tokens),
+                think_start="<think>",
+                think_end="</think>",
+                starts_in_thinking=False,
+            )
+        )
         assert _got_finish(results)
 
     def test_finish_reason_starts_in_thinking(self):
@@ -205,12 +233,14 @@ class TestThinkingModelsFinishReason:
             _make_response("</think>", 1),
             _make_response("done", 2, finish_reason="stop"),
         ]
-        results = _step_until_finish(parse_thinking_models(
-            _queue_source(tokens),
-            think_start="<think>",
-            think_end="</think>",
-            starts_in_thinking=True,
-        ))
+        results = _step_until_finish(
+            parse_thinking_models(
+                _queue_source(tokens),
+                think_start="<think>",
+                think_end="</think>",
+                starts_in_thinking=True,
+            )
+        )
         assert _got_finish(results)
 
 
@@ -225,7 +255,6 @@ _dummy_parser = make_mlx_parser("<tool_call>", "</tool_call>", _dummy_parser_fn)
 
 
 class TestGenericToolCallsFinishReason:
-
     def test_finish_reason_after_complete_tool_call(self):
         tokens = [
             _make_response("<tool_call>", 0),
@@ -233,11 +262,13 @@ class TestGenericToolCallsFinishReason:
             _make_response("</tool_call>", 2),
             _make_response("extra text", 3, finish_reason="stop"),
         ]
-        results = _step_until_finish(parse_tool_calls(
-            _queue_source(tokens),
-            _dummy_parser,
-            tools=None,
-        ))
+        results = _step_until_finish(
+            parse_tool_calls(
+                _queue_source(tokens),
+                _dummy_parser,
+                tools=None,
+            )
+        )
         tool_results = [r for r in results if isinstance(r, ToolCallResponse)]
         assert len(tool_results) == 1
 
@@ -246,11 +277,13 @@ class TestGenericToolCallsFinishReason:
             _make_response("<tool_call>", 0),
             _make_response("partial content", 1, finish_reason="stop"),
         ]
-        results = _step_until_finish(parse_tool_calls(
-            _queue_source(tokens),
-            _dummy_parser,
-            tools=None,
-        ))
+        results = _step_until_finish(
+            parse_tool_calls(
+                _queue_source(tokens),
+                _dummy_parser,
+                tools=None,
+            )
+        )
         assert _got_finish(results)
 
     def test_finish_reason_no_tool_calls(self):
@@ -260,11 +293,13 @@ class TestGenericToolCallsFinishReason:
             _make_response(" normal", 2),
             _make_response(" response.", 3, finish_reason="stop"),
         ]
-        results = _step_until_finish(parse_tool_calls(
-            _queue_source(tokens),
-            _dummy_parser,
-            tools=None,
-        ))
+        results = _step_until_finish(
+            parse_tool_calls(
+                _queue_source(tokens),
+                _dummy_parser,
+                tools=None,
+            )
+        )
         assert _got_finish(results)
 
 
@@ -272,7 +307,6 @@ class TestGenericToolCallsFinishReason:
 
 
 class TestBatchGeneratorSingleNext:
-
     def test_finish_reason_with_buffered_tokens_drain_loop(self):
         from exo.worker.runner.llm_inference.batch_generator import GeneratorQueue
 
@@ -293,4 +327,6 @@ class TestBatchGeneratorSingleNext:
             if token.finish_reason is not None:
                 break
 
-        assert _got_finish(collected), f"No finish_reason in collected: {[(type(r).__name__, getattr(r, 'finish_reason', None) if isinstance(r, GenerationResponse) else 'tool') for r in collected]}"
+        assert _got_finish(collected), (
+            f"No finish_reason in collected: {[(type(r).__name__, getattr(r, 'finish_reason', None) if isinstance(r, GenerationResponse) else 'tool') for r in collected]}"
+        )
