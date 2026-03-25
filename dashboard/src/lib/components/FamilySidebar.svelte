@@ -31,6 +31,7 @@
     kimi: "Kimi",
     flux: "FLUX",
     "qwen-image": "Qwen Img",
+    nemotron: "NVIDIA",
   };
 
   function getFamilyName(family: string): string {
