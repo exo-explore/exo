@@ -159,10 +159,6 @@ def parse_deepseek_v32(
     # Text accumulated during a tool call block
     tool_call_text = ""
 
-    def _flush_pending() -> Generator[GenerationResponse, None, None]:
-        for buf_resp in pending_buffer:
-            yield buf_resp
-
     def _try_parse_tool_call(
         text: str, response: GenerationResponse
     ) -> ToolCallResponse | GenerationResponse:
@@ -180,7 +176,7 @@ def parse_deepseek_v32(
             continue
 
         if response.finish_reason is not None:
-            yield from _flush_pending()
+            yield from pending_buffer
             pending_buffer.clear()
             if in_tool_call:
                 tool_call_text += response.text
@@ -270,13 +266,13 @@ def parse_deepseek_v32(
             continue
 
         # No partial match — flush all pending tokens and the current one
-        yield from _flush_pending()
-        pending_buffer = []
+        yield from pending_buffer
+        pending_buffer.clear()
         accumulated = ""
         yield response
 
     # Flush any remaining pending buffer at generator end
-    yield from _flush_pending()
+    yield from pending_buffer
 
 
 def _could_be_dsml_prefix(text: str) -> bool:
