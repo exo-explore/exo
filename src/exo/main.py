@@ -316,7 +316,7 @@ class Args(CamelCaseModel):
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
     bootstrap_peers: list[str] = []
-    libp2p_port: int | None = None
+    libp2p_port: int
 
     @classmethod
     def parse(cls) -> Self:
