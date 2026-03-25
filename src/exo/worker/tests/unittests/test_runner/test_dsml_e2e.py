@@ -2,6 +2,7 @@ import json
 from collections.abc import Generator
 from typing import Any
 
+from exo.shared.types.common import ModelId
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ToolCallResponse,
@@ -965,3 +966,70 @@ class TestE2EFullRoundTrip:
         assert "sunny" in final_text.lower()
         assert "5°C" in final_text
         assert "12°C" in final_text
+
+
+class TestMultiTurnThinkingPrompt:
+    def test_no_orphan_think_end_in_multiturn(self):
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": "Hi!"},
+            {"role": "assistant", "content": "Hello! How can I help you today?"},
+            {"role": "user", "content": "Tell me about Paris."},
+        ]
+        prompt = encode_messages(messages, thinking_mode="thinking")
+        assistant_token = "<\uff5cAssistant\uff5c>"
+        parts = prompt.split(assistant_token)
+        for part in parts[1:]:
+            assert not part.startswith(THINKING_END), (
+                f"Orphan </think> without <think> after <Assistant>: ...{assistant_token}{part[:50]}"
+            )
+
+
+class TestApplyChatTemplateWithToolCalls:
+    def test_dsml_encoding_with_tool_calls_in_history(self):
+        from exo.shared.types.text_generation import (
+            InputMessage,
+            TextGenerationTaskParams,
+        )
+        from exo.worker.engines.mlx.utils_mlx import apply_chat_template
+
+        chat_template_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "What's the weather?"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"city": "Tokyo"}',
+                        },
+                    }
+                ],
+            },
+            {"role": "tool", "content": "Sunny, 25°C"},
+            {"role": "user", "content": "Thanks!"},
+        ]
+
+        from unittest.mock import MagicMock
+
+        tokenizer = MagicMock()
+        tokenizer.has_thinking = True
+        tokenizer.think_start = "<think>"
+        tokenizer.think_end = "</think>"
+
+        params = TextGenerationTaskParams(
+            model=ModelId("mlx-community/DeepSeek-V3.2-8bit"),
+            input=[InputMessage(role="user", content="Thanks!")],
+            instructions="You are a helpful assistant.",
+            enable_thinking=True,
+            chat_template_messages=chat_template_messages,
+            tools=_WEATHER_TOOLS,
+        )
+
+        prompt = apply_chat_template(tokenizer, params)
+        assert "get_weather" in prompt
+        assert "Tokyo" in prompt
+        assert "Sunny" in prompt

@@ -195,21 +195,29 @@ class SequentialGenerator(InferenceGenerator):
         assert self._active is not None
 
         task, mlx_gen, queue, output_generator = self._active
-        response = None
+        output: list[
+            tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
+        ] = []
         try:
-            queue.push(next(mlx_gen))
-            response = next(output_generator)
+            response = next(mlx_gen)
+            queue.push(response)
+            # drain potentially many responses every time
+            while (parsed := next(output_generator, None)) is not None:
+                output.append((task.task_id, parsed))
+
         except (StopIteration, PrefillCancelled):
-            response = Finished()
+            output.append((task.task_id, Finished()))
             self._active = None
             if self._queue:
                 self._start_next()
+
         except Exception as e:
             self._send_error(task, e)
             self._active = None
             raise
+
         return itertools.chain(
-            [] if response is None else [(task.task_id, response)],
+            output,
             map(lambda task: (task, Cancelled()), self._cancelled_tasks),
         )
 
@@ -428,11 +436,10 @@ class BatchGenerator(InferenceGenerator):
             task, queue, output_generator = self._active_tasks[uid]
             queue.push(response)
             # If a generator fails to parse for some reason and returns early, we should not crash
-            parsed = next(output_generator, None)
-
-            if parsed is not None:
+            while (parsed := next(output_generator, None)) is not None:
                 output.append((task.task_id, parsed))
 
+            # check if original response was terminal and append a Finished()
             if response.finish_reason is not None:
                 output.append((task.task_id, Finished()))
                 del self._active_tasks[uid]

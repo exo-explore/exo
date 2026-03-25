@@ -221,6 +221,7 @@ async def generate_chat_stream(
                     if chunk.stats is not None:
                         yield f": generation_stats {chunk.stats.model_dump_json()}\n\n"
                     yield "data: [DONE]\n\n"
+                    return
 
 
 async def collect_chat_response(

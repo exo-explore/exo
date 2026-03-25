@@ -190,7 +190,7 @@ ARCHITECTURES: list[ArchSpec] = [
 
 def _arch_available(spec: ArchSpec) -> bool:
     snap = _find_snapshot(spec.hub_name)
-    if snap is None:
+    if snap is None or not (snap / "config.json").exists():
         return False
     if spec.tokenizer_hub is not None:
         return _find_snapshot(spec.tokenizer_hub) is not None

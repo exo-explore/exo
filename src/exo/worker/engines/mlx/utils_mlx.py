@@ -486,16 +486,7 @@ def _patch_lossy_chat_template(template: str) -> str | None:
 
 
 def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
-    if "deepseek-v3.2" not in task_params.model.lower():
-        return False
-    # Use DSML encoding when tools are provided or tool results are in the conversation
-    if task_params.tools:
-        return True
-    if task_params.chat_template_messages:
-        return any(
-            msg.get("role") == "tool" for msg in task_params.chat_template_messages
-        )
-    return False
+    return "deepseek-v3.2" in task_params.model.lower()
 
 
 def apply_chat_template(
@@ -514,8 +505,6 @@ def apply_chat_template(
     if task_params.chat_template_messages is not None:
         # Use pre-formatted messages that preserve tool_calls, thinking, etc.
         formatted_messages = list(task_params.chat_template_messages)
-        for msg in formatted_messages:
-            _normalize_tool_calls(msg)
     else:
         # Add system message (instructions) if present
         if task_params.instructions:
@@ -541,13 +530,19 @@ def apply_chat_template(
 
         prompt = encode_messages(
             messages=formatted_messages,
-            thinking_mode="thinking" if task_params.enable_thinking else "chat",
+            # Only use chat mode if enable thinking is explicitly Fakse.
+            thinking_mode="chat"
+            if task_params.enable_thinking is False
+            else "thinking",
             tools=task_params.tools,
         )
         if partial_assistant_content:
             prompt += partial_assistant_content
         logger.info(prompt)
         return prompt
+
+    for msg in formatted_messages:
+        _normalize_tool_calls(msg)
 
     extra_kwargs: dict[str, Any] = {}
     if task_params.enable_thinking is not None:

@@ -10,7 +10,6 @@ from typing import Self, cast
 import anyio
 from anyio import fail_after, open_process, to_thread
 from anyio.streams.buffered import BufferedByteReceiveStream
-from anyio.streams.text import TextReceiveStream
 from loguru import logger
 from pydantic import ValidationError
 
@@ -590,11 +589,15 @@ class InfoGatherer:
                     if not p.stdout:
                         logger.critical("MacMon closed stdout")
                         return
-                    stream = TextReceiveStream(BufferedByteReceiveStream(p.stdout))
+                    stream = BufferedByteReceiveStream(p.stdout)
                     while True:
                         with fail_after(read_timeout):
-                            text = await stream.receive()
-                        await self.info_sender.send(MacmonMetrics.from_raw_json(text))
+                            data = await stream.receive_until(
+                                delimiter=b"\n", max_bytes=8 * 1024
+                            )
+                            text = data.decode("utf-8", errors="replace").strip()
+                            metrics = MacmonMetrics.from_raw_json(text)
+                        await self.info_sender.send(metrics)
             except TimeoutError:
                 logger.warning(
                     f"MacMon produced no output for {read_timeout}s, restarting"

@@ -159,10 +159,41 @@ def parse_deepseek_v32(
     # Text accumulated during a tool call block
     tool_call_text = ""
 
+    def _try_parse_tool_call(
+        text: str, response: GenerationResponse
+    ) -> ToolCallResponse | GenerationResponse:
+        parsed = parse_dsml_output(text)
+        if parsed is not None:
+            return ToolCallResponse(
+                tool_calls=parsed, usage=response.usage, stats=response.stats
+            )
+        logger.warning(f"DSML tool call parsing failed for: {text}")
+        return response.model_copy(update={"text": text})
+
     for response in responses:
         if response is None:
             yield None
             continue
+
+        if response.finish_reason is not None:
+            yield from pending_buffer
+            pending_buffer.clear()
+            if in_tool_call:
+                tool_call_text += response.text
+                yield (
+                    _try_parse_tool_call(tool_call_text, response)
+                    if TOOL_CALLS_END in tool_call_text
+                    else response.model_copy(update={"text": tool_call_text})
+                )
+            elif TOOL_CALLS_START in response.text and TOOL_CALLS_END in response.text:
+                dsml_start = response.text.index(TOOL_CALLS_START)
+                before = response.text[:dsml_start]
+                if before:
+                    yield response.model_copy(update={"text": before})
+                yield _try_parse_tool_call(response.text[dsml_start:], response)
+            else:
+                yield response
+            break
 
         # ── Handle thinking tags ──
         if not thinking and THINKING_START in response.text:
@@ -191,28 +222,7 @@ def parse_deepseek_v32(
         if in_tool_call:
             tool_call_text += response.text
             if TOOL_CALLS_END in tool_call_text:
-                # Parse the accumulated DSML block
-                parsed = parse_dsml_output(tool_call_text)
-                if parsed is not None:
-                    logger.info(f"parsed DSML tool calls: {parsed}")
-                    yield ToolCallResponse(
-                        tool_calls=parsed,
-                        usage=response.usage,
-                        stats=response.stats,
-                    )
-                else:
-                    logger.warning(
-                        f"DSML tool call parsing failed for: {tool_call_text}"
-                    )
-                    yield response.model_copy(update={"text": tool_call_text})
-                in_tool_call = False
-                tool_call_text = ""
-                continue
-
-            # EOS reached before end marker — yield buffered text as-is
-            if response.finish_reason is not None:
-                logger.info("DSML tool call parsing interrupted by EOS")
-                yield response.model_copy(update={"text": tool_call_text})
+                yield _try_parse_tool_call(tool_call_text, response)
                 in_tool_call = False
                 tool_call_text = ""
             continue
@@ -228,33 +238,22 @@ def parse_deepseek_v32(
             if pre_text:
                 # Flush pending buffer tokens that contributed text before the marker
                 for buf_resp in pending_buffer:
-                    if pre_text:
-                        chunk = buf_resp.text
-                        if len(chunk) <= len(pre_text):
-                            yield buf_resp
-                            pre_text = pre_text[len(chunk) :]
-                        else:
-                            yield buf_resp.model_copy(update={"text": pre_text})
-                            pre_text = ""
+                    if not pre_text:
+                        break
+                    chunk = buf_resp.text
+                    if len(chunk) <= len(pre_text):
+                        yield buf_resp
+                        pre_text = pre_text[len(chunk) :]
+                    else:
+                        yield buf_resp.model_copy(update={"text": pre_text})
+                        pre_text = ""
             pending_buffer = []
             tool_call_text = accumulated[start_idx:]
             accumulated = ""
 
             # Check if the end marker is already present (entire tool call in one token)
             if TOOL_CALLS_END in tool_call_text:
-                parsed = parse_dsml_output(tool_call_text)
-                if parsed is not None:
-                    logger.info(f"parsed DSML tool calls: {parsed}")
-                    yield ToolCallResponse(
-                        tool_calls=parsed,
-                        usage=response.usage,
-                        stats=response.stats,
-                    )
-                else:
-                    logger.warning(
-                        f"DSML tool call parsing failed for: {tool_call_text}"
-                    )
-                    yield response.model_copy(update={"text": tool_call_text})
+                yield _try_parse_tool_call(tool_call_text, response)
                 tool_call_text = ""
             else:
                 in_tool_call = True
@@ -267,15 +266,13 @@ def parse_deepseek_v32(
             continue
 
         # No partial match — flush all pending tokens and the current one
-        for buf_resp in pending_buffer:
-            yield buf_resp
-        pending_buffer = []
+        yield from pending_buffer
+        pending_buffer.clear()
         accumulated = ""
         yield response
 
     # Flush any remaining pending buffer at generator end
-    for buf_resp in pending_buffer:
-        yield buf_resp
+    yield from pending_buffer
 
 
 def _could_be_dsml_prefix(text: str) -> bool:

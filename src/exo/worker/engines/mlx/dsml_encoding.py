@@ -15,7 +15,28 @@ USER_TOKEN = "<\uff5cUser\uff5c>"
 ASSISTANT_TOKEN = "<\uff5cAssistant\uff5c>"
 TOOL_CALLS_START = f"<{DSML_TOKEN}function_calls>"
 TOOL_CALLS_END = f"</{DSML_TOKEN}function_calls>"
-encode_messages = deepseek_v32.encode_messages
+_ORPHAN_THINK_END = ASSISTANT_TOKEN + THINKING_END
+_FIXED_THINK_BLOCK = ASSISTANT_TOKEN + THINKING_START + "\n" + THINKING_END
+
+
+def encode_messages(
+    messages: list[dict[str, Any]],
+    thinking_mode: str = "thinking",
+    context: list[dict[str, Any]] | None = None,
+    drop_thinking: bool = True,
+    add_default_bos_token: bool = True,
+    tools: Any = None,  # pyright: ignore[reportAny]
+) -> str:
+    prompt: str = deepseek_v32.encode_messages(
+        messages,
+        thinking_mode=thinking_mode,
+        context=context,
+        drop_thinking=drop_thinking,
+        add_default_bos_token=add_default_bos_token,
+        tools=tools,
+    )
+    return prompt.replace(_ORPHAN_THINK_END, _FIXED_THINK_BLOCK)
+
 
 _INVOKE_PATTERN = re.compile(
     rf"<{re.escape(DSML_TOKEN)}invoke\s+name=\"([^\"]+)\">"

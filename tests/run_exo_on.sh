@@ -11,10 +11,17 @@ set -euo pipefail
   exit 1
 }
 
+upstream=$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null) || {
+  echo "No upstream"
+  exit 1
+}
 commit=$(git rev-parse HEAD)
-git fetch -q origin
-git branch -r --contains "$commit" | grep -qE '^\s*origin/' || {
-  echo "Not pushed to origin"
+remote=${upstream%%/*}
+remote_installable=$(git remote get-url "$remote" | sed -E "s#^(git@github.com:|https://github\.com/)([^/]+)/([^/]+)(\.git)?\$#github:\2/\3/$commit#")
+
+git fetch -q "$remote"
+git branch -r --contains "$commit" | grep -qE "^[[:space:]]*$remote/" || {
+  echo "Not pushed to $remote"
   exit 1
 }
 
@@ -35,7 +42,7 @@ i=0
 for host; do
   colour=${colours[i++ % 4]}
   ssh -T -o BatchMode=yes -o ServerAliveInterval=30 "$host@$host" \
-    "EXO_LIBP2P_NAMESPACE=$commit /nix/var/nix/profiles/default/bin/nix run github:exo-explore/exo/$commit" |&
+    "EXO_LIBP2P_NAMESPACE=$commit /nix/var/nix/profiles/default/bin/nix run $remote_installable" 2>&1 |
     awk -v p="${colour}[${host}]${reset}" '{ print p $0; fflush() }' &
 done
 
