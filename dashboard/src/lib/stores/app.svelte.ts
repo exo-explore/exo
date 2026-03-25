@@ -2650,6 +2650,9 @@ class AppStore {
     this.syncActiveMessagesIfNeeded(targetConversationId);
     this.saveConversationsToStorage();
 
+    const abortController = new AbortController();
+    this.currentAbortController = abortController;
+
     try {
       // Determine the model to use
       const model = this.getModelForRequest(modelId);
@@ -2704,6 +2707,7 @@ class AppStore {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(requestBody),
+        signal: abortController.signal,
       });
 
       if (!response.ok) {
@@ -2843,14 +2847,27 @@ class AppStore {
         );
       }
     } catch (error) {
-      console.error("Error generating image:", error);
-      this.handleStreamingError(
-        error,
-        targetConversationId,
-        assistantMessage.id,
-        "Failed to generate image",
-      );
+      if (abortController.signal.aborted) {
+        this.updateConversationMessage(
+          targetConversationId,
+          assistantMessage.id,
+          (msg) => {
+            msg.content = "Cancelled";
+            msg.attachments = [];
+          },
+        );
+        this.syncActiveMessagesIfNeeded(targetConversationId);
+      } else {
+        console.error("Error generating image:", error);
+        this.handleStreamingError(
+          error,
+          targetConversationId,
+          assistantMessage.id,
+          "Failed to generate image",
+        );
+      }
     } finally {
+      this.currentAbortController = null;
       this.isLoading = false;
       this.saveConversationsToStorage();
     }
@@ -2914,6 +2931,9 @@ class AppStore {
     // Clear editing state
     this.editingImage = null;
 
+    const abortController = new AbortController();
+    this.currentAbortController = abortController;
+
     try {
       // Determine the model to use
       const model = this.getModelForRequest(modelId);
@@ -2975,6 +2995,7 @@ class AppStore {
       const apiResponse = await fetch("/v1/images/edits", {
         method: "POST",
         body: formData,
+        signal: abortController.signal,
       });
 
       if (!apiResponse.ok) {
@@ -3075,14 +3096,27 @@ class AppStore {
         );
       }
     } catch (error) {
-      console.error("Error editing image:", error);
-      this.handleStreamingError(
-        error,
-        targetConversationId,
-        assistantMessage.id,
-        "Failed to edit image",
-      );
+      if (abortController.signal.aborted) {
+        this.updateConversationMessage(
+          targetConversationId,
+          assistantMessage.id,
+          (msg) => {
+            msg.content = "Cancelled";
+            msg.attachments = [];
+          },
+        );
+        this.syncActiveMessagesIfNeeded(targetConversationId);
+      } else {
+        console.error("Error editing image:", error);
+        this.handleStreamingError(
+          error,
+          targetConversationId,
+          assistantMessage.id,
+          "Failed to edit image",
+        );
+      }
     } finally {
+      this.currentAbortController = null;
       this.isLoading = false;
       this.saveConversationsToStorage();
     }

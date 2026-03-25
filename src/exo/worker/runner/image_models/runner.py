@@ -4,7 +4,11 @@ from typing import TYPE_CHECKING, Literal
 
 import mlx.core as mx
 
-from exo.api.types import ImageGenerationStats
+from exo.api.types import (
+    ImageEditsTaskParams,
+    ImageGenerationStats,
+    ImageGenerationTaskParams,
+)
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE, EXO_TRACING_ENABLED
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
@@ -235,6 +239,77 @@ class Runner:
     def acknowledge_task(self, task: Task):
         self.event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
+    def _check_cancelled(self, task_id: TaskId) -> bool:
+        for cancel_id in self.cancel_receiver.collect():
+            self.cancelled_tasks.add(cancel_id)
+        return (
+            task_id in self.cancelled_tasks or CANCEL_ALL_TASKS in self.cancelled_tasks
+        )
+
+    def _run_image_task(
+        self,
+        task: Task,
+        task_params: ImageGenerationTaskParams | ImageEditsTaskParams,
+        command_id: CommandId,
+    ) -> None:
+        assert self.image_model
+        logger.info(f"received image task: {str(task)[:500]}")
+        logger.info("runner running")
+        self.update_status(RunnerRunning())
+        self.acknowledge_task(task)
+
+        def cancel_checker() -> bool:
+            return self._check_cancelled(task.task_id)
+
+        try:
+            image_index = 0
+            for response in generate_image(
+                model=self.image_model,
+                task=task_params,
+                cancel_checker=cancel_checker,
+            ):
+                if _is_primary_output_node(self.shard_metadata):
+                    match response:
+                        case PartialImageResponse():
+                            logger.info(
+                                f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
+                            )
+                            _process_image_response(
+                                response,
+                                command_id,
+                                self.shard_metadata,
+                                self.event_sender,
+                                image_index,
+                            )
+                        case ImageGenerationResponse():
+                            logger.info("sending final ImageChunk")
+                            _process_image_response(
+                                response,
+                                command_id,
+                                self.shard_metadata,
+                                self.event_sender,
+                                image_index,
+                            )
+                            image_index += 1
+        except Exception as e:
+            if _is_primary_output_node(self.shard_metadata):
+                self.event_sender.send(
+                    ChunkGenerated(
+                        command_id=command_id,
+                        chunk=ErrorChunk(
+                            model=self.shard_metadata.model_card.model_id,
+                            finish_reason="error",
+                            error_message=str(e),
+                        ),
+                    )
+                )
+            raise
+        finally:
+            _send_traces_if_enabled(self.event_sender, task.task_id, self.device_rank)
+
+        self.current_status = RunnerReady()
+        logger.info("runner ready")
+
     def main(self):
         with self.task_receiver as tasks:
             for task in tasks:
@@ -306,124 +381,11 @@ class Runner:
                 self.current_status = RunnerReady()
                 logger.info("runner ready")
 
-            case ImageGeneration(task_params=task_params, command_id=command_id) if (
-                isinstance(self.current_status, RunnerReady)
-            ):
-                assert self.image_model
-                logger.info(f"received image generation request: {str(task)[:500]}")
-                logger.info("runner running")
-                self.update_status(RunnerRunning())
-                self.acknowledge_task(task)
-
-                try:
-                    image_index = 0
-                    for response in generate_image(
-                        model=self.image_model, task=task_params
-                    ):
-                        is_primary_output = _is_primary_output_node(self.shard_metadata)
-
-                        if is_primary_output:
-                            match response:
-                                case PartialImageResponse():
-                                    logger.info(
-                                        f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
-                                    )
-                                    _process_image_response(
-                                        response,
-                                        command_id,
-                                        self.shard_metadata,
-                                        self.event_sender,
-                                        image_index,
-                                    )
-                                case ImageGenerationResponse():
-                                    logger.info("sending final ImageChunk")
-                                    _process_image_response(
-                                        response,
-                                        command_id,
-                                        self.shard_metadata,
-                                        self.event_sender,
-                                        image_index,
-                                    )
-                                    image_index += 1
-                # can we make this more explicit?
-                except Exception as e:
-                    if _is_primary_output_node(self.shard_metadata):
-                        self.event_sender.send(
-                            ChunkGenerated(
-                                command_id=command_id,
-                                chunk=ErrorChunk(
-                                    model=self.shard_metadata.model_card.model_id,
-                                    finish_reason="error",
-                                    error_message=str(e),
-                                ),
-                            )
-                        )
-                    raise
-                finally:
-                    _send_traces_if_enabled(
-                        self.event_sender, task.task_id, self.device_rank
-                    )
-
-                self.current_status = RunnerReady()
-                logger.info("runner ready")
-
-            case ImageEdits(task_params=task_params, command_id=command_id) if (
-                isinstance(self.current_status, RunnerReady)
-            ):
-                assert self.image_model
-                logger.info(f"received image edits request: {str(task)[:500]}")
-                logger.info("runner running")
-                self.update_status(RunnerRunning())
-                self.acknowledge_task(task)
-
-                try:
-                    image_index = 0
-                    for response in generate_image(
-                        model=self.image_model, task=task_params
-                    ):
-                        if _is_primary_output_node(self.shard_metadata):
-                            match response:
-                                case PartialImageResponse():
-                                    logger.info(
-                                        f"sending partial ImageChunk {response.partial_index}/{response.total_partials}"
-                                    )
-                                    _process_image_response(
-                                        response,
-                                        command_id,
-                                        self.shard_metadata,
-                                        self.event_sender,
-                                        image_index,
-                                    )
-                                case ImageGenerationResponse():
-                                    logger.info("sending final ImageChunk")
-                                    _process_image_response(
-                                        response,
-                                        command_id,
-                                        self.shard_metadata,
-                                        self.event_sender,
-                                        image_index,
-                                    )
-                                    image_index += 1
-                except Exception as e:
-                    if _is_primary_output_node(self.shard_metadata):
-                        self.event_sender.send(
-                            ChunkGenerated(
-                                command_id=command_id,
-                                chunk=ErrorChunk(
-                                    model=self.shard_metadata.model_card.model_id,
-                                    finish_reason="error",
-                                    error_message=str(e),
-                                ),
-                            )
-                        )
-                    raise
-                finally:
-                    _send_traces_if_enabled(
-                        self.event_sender, task.task_id, self.device_rank
-                    )
-
-                self.current_status = RunnerReady()
-                logger.info("runner ready")
+            case (
+                ImageGeneration(task_params=task_params, command_id=command_id)
+                | ImageEdits(task_params=task_params, command_id=command_id)
+            ) if isinstance(self.current_status, RunnerReady):
+                self._run_image_task(task, task_params, command_id)
 
             case Shutdown():
                 logger.info("runner shutting down")
