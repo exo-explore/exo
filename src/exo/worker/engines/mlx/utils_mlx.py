@@ -505,8 +505,6 @@ def apply_chat_template(
     if task_params.chat_template_messages is not None:
         # Use pre-formatted messages that preserve tool_calls, thinking, etc.
         formatted_messages = list(task_params.chat_template_messages)
-        for msg in formatted_messages:
-            _normalize_tool_calls(msg)
     else:
         # Add system message (instructions) if present
         if task_params.instructions:
@@ -539,6 +537,9 @@ def apply_chat_template(
             prompt += partial_assistant_content
         logger.info(prompt)
         return prompt
+
+    for msg in formatted_messages:
+        _normalize_tool_calls(msg)
 
     extra_kwargs: dict[str, Any] = {}
     if task_params.enable_thinking is not None:

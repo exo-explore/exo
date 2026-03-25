@@ -965,3 +965,51 @@ class TestE2EFullRoundTrip:
         assert "sunny" in final_text.lower()
         assert "5°C" in final_text
         assert "12°C" in final_text
+
+
+class TestApplyChatTemplateWithToolCalls:
+
+    def test_dsml_encoding_with_tool_calls_in_history(self):
+        from exo.worker.engines.mlx.utils_mlx import apply_chat_template
+        from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+
+        chat_template_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "What's the weather?"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"city": "Tokyo"}',
+                        },
+                    }
+                ],
+            },
+            {"role": "tool", "content": "Sunny, 25°C"},
+            {"role": "user", "content": "Thanks!"},
+        ]
+
+        from unittest.mock import MagicMock
+        tokenizer = MagicMock()
+        tokenizer.has_thinking = True
+        tokenizer.think_start = "<think>"
+        tokenizer.think_end = "</think>"
+
+        params = TextGenerationTaskParams(
+            model="mlx-community/DeepSeek-V3.2-8bit",
+            input=[InputMessage(role="user", content="Thanks!")],
+            instructions="You are a helpful assistant.",
+            enable_thinking=True,
+            chat_template_messages=chat_template_messages,
+            tools=_WEATHER_TOOLS,
+        )
+
+        prompt = apply_chat_template(tokenizer, params)
+        assert "get_weather" in prompt
+        assert "Tokyo" in prompt
+        assert "Sunny" in prompt
