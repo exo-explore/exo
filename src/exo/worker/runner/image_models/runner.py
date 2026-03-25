@@ -39,7 +39,6 @@ from exo.shared.types.worker.runner_response import (
 from exo.shared.types.worker.runners import (
     RunnerConnected,
     RunnerConnecting,
-    RunnerFailed,
     RunnerIdle,
     RunnerLoaded,
     RunnerLoading,
@@ -256,9 +255,7 @@ class Runner:
 
     def handle_task(self, task: Task):
         match task:
-            case ConnectToGroup() if isinstance(
-                self.current_status, (RunnerIdle, RunnerFailed)
-            ):
+            case ConnectToGroup() if isinstance(self.current_status, RunnerIdle):
                 logger.info("runner connecting")
                 self.update_status(RunnerConnecting())
                 self.acknowledge_task(task)

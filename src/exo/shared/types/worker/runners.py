@@ -63,7 +63,7 @@ class RunnerShutdown(BaseRunnerStatus):
 
 
 class RunnerFailed(BaseRunnerStatus):
-    error_message: str | None = None
+    error_message: str
 
 
 RunnerStatus = (

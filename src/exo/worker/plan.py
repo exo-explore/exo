@@ -55,7 +55,7 @@ def plan(
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
         _cancel_tasks(runners, tasks)
-        or _kill_runner(runners, all_runners, instances)
+        or _kill_runner(runners, instances)
         or _create_runner(node_id, runners, instances)
         or _model_needs_download(node_id, runners, global_download_status)
         or _init_distributed_backend(runners, all_runners)
@@ -67,25 +67,14 @@ def plan(
 
 def _kill_runner(
     runners: Mapping[RunnerId, RunnerSupervisor],
-    all_runners: Mapping[RunnerId, RunnerStatus],
     instances: Mapping[InstanceId, Instance],
 ) -> Shutdown | None:
     for runner in runners.values():
         runner_id = runner.bound_instance.bound_runner_id
         if (instance_id := runner.bound_instance.instance.instance_id) not in instances:
             return Shutdown(instance_id=instance_id, runner_id=runner_id)
-
-        for (
-            global_runner_id
-        ) in runner.bound_instance.instance.shard_assignments.node_to_runner.values():
-            if runner_id == global_runner_id:
-                continue
-
-            if isinstance(all_runners.get(global_runner_id, None), RunnerFailed):
-                return Shutdown(
-                    instance_id=instance_id,
-                    runner_id=runner_id,
-                )
+        if isinstance(runner.status, RunnerFailed):
+            return Shutdown(instance_id=instance_id, runner_id=runner_id)
 
 
 def _create_runner(

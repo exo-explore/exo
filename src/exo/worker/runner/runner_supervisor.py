@@ -24,6 +24,7 @@ from exo.shared.types.tasks import (
     CANCEL_ALL_TASKS,
     ImageEdits,
     ImageGeneration,
+    Shutdown,
     Task,
     TaskId,
     TaskStatus,
@@ -169,7 +170,8 @@ class RunnerSupervisor:
             await self._task_sender.send_async(task)
         except ClosedResourceError:
             self.in_progress.pop(task.task_id, None)
-            logger.warning(f"Task {task} dropped, runner closed communication.")
+            if not isinstance(task, Shutdown):
+                logger.warning(f"Task {task} dropped, runner closed communication.")
             return
         await event.wait()
 
