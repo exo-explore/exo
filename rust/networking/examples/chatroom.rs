@@ -16,9 +16,14 @@ async fn main() {
     let (to_swarm, from_client) = mpsc::channel(20);
 
     // Configure swarm
-    let mut swarm = swarm::create_swarm(identity::Keypair::generate_ed25519(), from_client)
-        .expect("Swarm creation failed")
-        .into_stream();
+    let mut swarm = swarm::create_swarm(
+        identity::Keypair::generate_ed25519(),
+        from_client,
+        vec![],
+        0,
+    )
+    .expect("Swarm creation failed")
+    .into_stream();
 
     // Create a Gossipsub topic & subscribe
     let (tx, rx) = oneshot::channel();
