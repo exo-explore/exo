@@ -594,6 +594,7 @@ class InfoGatherer:
                     while True:
                         with fail_after(read_timeout):
                             text = await stream.receive()
+                            logger.warning(f"mac! mon! {text}")
                         await self.info_sender.send(MacmonMetrics.from_raw_json(text))
             except TimeoutError:
                 logger.warning(
@@ -619,4 +620,6 @@ class InfoGatherer:
                 logger.opt(exception=e).warning("Error in macmon monitor")
                 self.memory_poll_rate = 1
                 self._tg.start_soon(self._monitor_memory_usage)
+            finally:
+                logger.warning("macmon terminal path")
             await anyio.sleep(self.macmon_interval)

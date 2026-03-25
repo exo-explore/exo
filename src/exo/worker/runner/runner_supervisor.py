@@ -128,7 +128,7 @@ class RunnerSupervisor:
                 self._cancel_sender.send(CANCEL_ALL_TASKS)
             with contextlib.suppress(ClosedResourceError):
                 self._cancel_sender.close()
-            self.runner_process.join(5)
+            await to_thread.run_sync(self.runner_process.join, 5)
             if not self.runner_process.is_alive():
                 logger.info("Runner process succesfully terminated")
                 self.runner_process.close()
