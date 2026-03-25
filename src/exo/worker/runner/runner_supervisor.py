@@ -132,17 +132,21 @@ class RunnerSupervisor:
         self.runner_process.join(5)
         if not self.runner_process.is_alive():
             logger.info("Runner process succesfully terminated")
+            self.runner_process.close()
             return
 
         # This is overkill but it's not technically bad, just unnecessary.
         logger.warning("Runner process didn't shutdown succesfully, terminating")
         self.runner_process.terminate()
-        self.runner_process.join(1)
+        self.runner_process.join(5)
         if not self.runner_process.is_alive():
+            self.runner_process.close()
             return
 
         logger.critical("Runner process didn't respond to SIGTERM, killing")
         self.runner_process.kill()
+        self.runner_process.join(timeout=5)
+        self.runner_process.close()
 
     async def start_task(self, task: Task):
         if task.task_id in self.pending:
