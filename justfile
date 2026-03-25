@@ -1,5 +1,8 @@
 export NIX_CONFIG := "extra-experimental-features = nix-command flakes"
 
+default: lint fmt
+all: lint fmt check
+
 fmt:
     treefmt || nix fmt
 
