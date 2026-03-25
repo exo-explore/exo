@@ -313,55 +313,46 @@ def warmup_inference(
     model_id: ModelId,
 ) -> int:
     logger.info(f"warming up inference for instance: {model_id}")
-    t = time.monotonic()
 
     content = "Prompt to warm up the inference engine. Repeat this."
 
+    warmup_task_params = TextGenerationTaskParams(
+        model=model_id,
+        input=[InputMessage(role="user", content=content)],
+        max_output_tokens=50,
+        temperature=0.0,
+    )
+
     warmup_prompt = apply_chat_template(
         tokenizer=tokenizer,
-        task_params=TextGenerationTaskParams(
-            model=ModelId(""),
-            input=[InputMessage(role="user", content=content)],
-        ),
+        task_params=warmup_task_params,
     )
 
     tokens_generated = 0
 
-    cache = make_kv_cache(
-        model=model,
-    )
-
-    # Use a default sampler for warmup
-    sampler = make_sampler(temp=0.0)
-
     mx_barrier(group)
 
     logger.info("Generating warmup tokens")
-    try:
-        # for slow warmups, pipeline prefill=True tends to be more likely to succeed within the 5s gpu timeout window
-        # as we don't block on the last all gather.
-        set_pipeline_prefill(model, is_prefill=True)
-        for _r in stream_generate(
-            model=model,
-            tokenizer=tokenizer,
-            prompt=warmup_prompt,
-            max_tokens=50,
-            sampler=sampler,
-            prompt_cache=cache,
-            prefill_step_size=2048,
-            kv_group_size=KV_GROUP_SIZE,
-            kv_bits=KV_BITS,
-        ):
-            tokens_generated += 1
-    finally:
-        set_pipeline_prefill(model, is_prefill=False)
+
+    t = time.monotonic()
+
+    for _r in mlx_generate(
+        model=model,
+        tokenizer=tokenizer,
+        task=warmup_task_params,
+        prompt=warmup_prompt,
+        kv_prefix_cache=None,
+        group=group,
+    ):
+        tokens_generated += 1
+
+    check_for_cancel_every = min(
+        math.ceil(tokens_generated / min(time.monotonic() - t, 0.001)), 100
+    )
 
     mx_barrier(group)
 
     logger.info(f"warmed up by generating {tokens_generated} tokens")
-    check_for_cancel_every = min(
-        math.ceil(tokens_generated / min(time.monotonic() - t, 0.001)), 100
-    )
     if group is not None:
         check_for_cancel_every = int(
             mx.max(
@@ -654,9 +645,9 @@ def mlx_generate(
                     if len(all_prompt_tokens) > 0
                     else 0.0
                 )
-                if (
-                    matched_index is not None
-                    and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
+                if matched_index is not None and (
+                    prefix_hit_length > 1000
+                    or hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
                 ):
                     kv_prefix_cache.update_kv_cache(
                         matched_index,
