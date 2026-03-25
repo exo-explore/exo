@@ -47,13 +47,14 @@ dev = [
   "pytest-env",
   "ruff>=0.11.13",
   "mlx_engine",
-  "vllm_engine; sys_platform == 'linux'",
 ]
 build = ["nanobind"]
 
 [project.optional-dependencies]
 mlx = ["mlx_engine"]
-cuda = ["vllm_engine; sys_platform == 'linux'"]
+cuda = [
+  "vllm_engine; sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
 
 ###
 # workspace configuration
@@ -73,7 +74,7 @@ exo_pyo3_bindings = { workspace = true }
 exo_core = { workspace = true, editable = true }
 mlx_engine = { workspace = true, editable = true }
 vllm_engine = { workspace = true, editable = true }
-mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
+mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/eval-left-padding-in-batched-rotation" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
@@ -134,9 +135,19 @@ required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
+override-dependencies = ["compressed-tensors==0.13.0"]
 
 
 [tool.uv.extra-build-dependencies]
+mlx = [
+  "setuptools",
+  "typing-extensions",
+  "nanobind",
+  "pybind11",
+  "wheel",
+  "cmake",
+  "ninja",
+]
 mlx-lm = ["setuptools"]
 xgrammar = [
   "nanobind",
@@ -149,7 +160,15 @@ rouge-score = ["setuptools"]
 sacrebleu = ["setuptools"]
 sqlitedict = ["setuptools"]
 word2number = ["setuptools"]
-vllm = ["setuptools", "setuptools-scm"]
+vllm = [
+  "setuptools",
+  "setuptools-scm",
+  "scikit-build-core",
+  "jinja2",
+  "wheel",
+  "markupsafe",
+]
+fastsafetensors = ["setuptools", "pybind11"]
 
 
 ###

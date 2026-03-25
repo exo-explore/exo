@@ -1,4 +1,4 @@
-from exo.worker.engines.mlx.utils_mlx import (
+from mlx_engine.utils_mlx import (
     apply_chat_template,
     get_eos_token_ids_for_model,
 )

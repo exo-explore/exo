@@ -156,10 +156,6 @@
             mkdir -p $out/include
             ln -s ${cudaPkgs.cudaPackages_13.cuda_cccl}/include $out/include/cccl
           '';
-          cudaToolkitRoot = pkgs.symlinkJoin {
-            name = "cuda-merged-exo";
-            paths = builtins.concatMap (p: [ (lib.getBin p) (lib.getLib p) (lib.getDev p) ]) (mergedCudaLibraries ++ [ cudaPkgs.cudaPackages_13.cuda_nvcc cuda_cccl_compat ]);
-          };
         in
         {
           fastsafetensors = prev.fastsafetensors.overrideAttrs (old: { nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ final.setuptools final.pybind11 ]; });
@@ -171,6 +167,7 @@
             {
               buildInputs = (old.buildInputs or [ ]) ++ [
                 final.torch
+                cudaPkgs.cudaPackages_13.cuda_cudart
               ];
               preFixup = (old.preFixup or "") + ''
                 addAutoPatchelfSearchPath "${final.torch}"
@@ -189,30 +186,27 @@
             });
           xgrammar = prev.xgrammar.overrideAttrs (old: {
             nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.cmake ];
-            patches = (old.patches or [ ]) ++ [ ../nix/xgrammar_cmake.patch ];
+            #patches = (old.patches or [ ]) ++ [ ../nix/xgrammar_cmake.patch ];
           });
           vllm = prev.vllm.overrideAttrs (old: {
             patches = (old.patches or [ ]) ++ [ ../nix/vllm_uv2nix_cmake.patch ];
             nativeBuildInputs = with cudaPkgs.cudaPackages_13; (old.nativeBuildInputs or [ ]) ++ [
-              final.setuptools
-              final.setuptools-scm
-              final.scikit-build-core
               pkgs.cmake
-              cuda_nvcc
-              final.jinja2
-              final.wheel
-              final.markupsafe
               pkgs.ninja
               pkgs.autoAddDriverRunpath
+              cuda_nvcc
             ];
-            buildInputs = with cudaPkgs.cudaPackages_13; [
+            buildInputs = (old.nativeBuildInputs or [ ]) ++ (with cudaPkgs.cudaPackages_13; [
               libcufile
               cudnn
               nccl
-            ] ++ mergedCudaLibraries;
+            ]) ++ mergedCudaLibraries;
             propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ torchLibs ++ [ final.torch ];
 
-            CUDA_HOME = "${cudaToolkitRoot}";
+            CUDA_HOME = "${pkgs.symlinkJoin {
+              name = "cuda-merged-exo";
+              paths = builtins.concatMap (p: [ (lib.getBin p) (lib.getLib p) (lib.getDev p) ]) (mergedCudaLibraries ++ [ cudaPkgs.cudaPackages_13.cuda_nvcc cuda_cccl_compat ]);
+            }}";
             VLLM_CUTLASS_SRC_DIR = "${lib.getDev cutlass}";
             VLLM_TARGET_DEVICE = "cuda";
             TORCH_CUDA_ARCH_LIST = "12.0;12.1";
@@ -223,7 +217,7 @@
             CAFFE2_USE_CUDNN = "ON";
             CAFFE2_USE_CUFILE = "ON";
             CUTLASS_ENABLE_CUBLAS = "ON";
-            CUTLASS_NVCC_ARCHS_ENABLED = "12.1;12.1";
+            CUTLASS_NVCC_ARCHS_ENABLED = "12.0;12.1";
 
             UV2NIX_CMAKE_FLAGS_JSON = builtins.toJSON [
               "-DFETCHCONTENT_SOURCE_DIR_CUTLASS=${lib.getDev cutlass}"
@@ -232,13 +226,10 @@
               "-DQUTLASS_SRC_DIR=${lib.getDev qutlass}"
               "-DTORCH_CUDA_ARCH_LIST=12.0;12.1"
               "-DCUTLASS_NVCC_ARCHS_ENABLED=${cudaPkgs.cudaPackages_13.flags.cmakeCudaArchitecturesString}"
-              "-DCUDA_HOME=${cudaToolkitRoot}"
               "-DCAFFE2_USE_CUDNN=ON"
               "-DCAFFE2_USE_CUFILE=ON"
               "-DCUTLASS_ENABLE_CUBLAS=ON"
             ];
-
-
           });
         };
 
@@ -259,10 +250,57 @@
         let
           ignoreMissing = drv: drv.overrideAttrs { autoPatchelfIgnoreMissingDeps = [ "*" ]; };
           nvidiaPackages = lib.filterAttrs (name: _: lib.hasPrefix "nvidia-" name) prev;
+
+          # Static dependencies included directly during compilation
+          gguf-tools = pkgs.fetchFromGitHub {
+            owner = "antirez";
+            repo = "gguf-tools";
+            rev = "8fa6eb65236618e28fd7710a0fba565f7faa1848";
+            hash = "sha256-15FvyPOFqTOr5vdWQoPnZz+mYH919++EtghjozDlnSA=";
+          };
+
+          metal_cpp = pkgs.fetchzip {
+            url = "https://developer.apple.com/metal/cpp/files/metal-cpp_26.zip";
+            hash = "sha256-7n2eI2lw/S+Us6l7YPAATKwcIbRRpaQ8VmES7S8ZjY8=";
+          };
+
+          nanobind = pkgs.fetchFromGitHub {
+            owner = "wjakob";
+            repo = "nanobind";
+            rev = "v2.10.2";
+            hash = "sha256-io44YhN+VpfHFWyvvLWSanRgbzA0whK8WlDNRi3hahU=";
+            fetchSubmodules = true;
+          };
+
         in
         lib.optionalAttrs isLinux (
           (lib.mapAttrs (_: ignoreMissing) nvidiaPackages) // {
-            mlx = ignoreMissing prev.mlx;
+            mlx = prev.mlx.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [ gguf-tools pkgs.openblas pkgs.fmt ];
+              postPatch = ''
+                substituteInPlace mlx/backend/cpu/jit_compiler.cpp \
+                  --replace-fail "g++" "$CXX"
+              '';
+
+              env = {
+                DEV_RELEASE = 1;
+                CMAKE_ARGS = toString ([
+                  (lib.cmakeBool "USE_SYSTEM_FMT" true)
+                  (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_GGUFLIB" "${gguf-tools}")
+                  (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_JSON" "${pkgs.nlohmann_json.src}")
+                  (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_NANOBIND" "${nanobind}")
+                  (lib.cmakeBool "FETCHCONTENT_FULLY_DISCONNECTED" true)
+                  (lib.cmakeBool "MLX_BUILD_CPU" true)
+                  (lib.cmakeOptionType "string" "CMAKE_INSTALL_LIBDIR" "lib")
+                ] ++ lib.optionals isDarwin [
+                  (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_METAL_CPP" "${metal_cpp}")
+                  (lib.cmakeBool "MLX_BUILD_METAL" true)
+                ] ++ lib.optionals pkgs.config.cudaSupport [
+                  (lib.cmakeBool "MLX_BUILD_CUDA" true)
+                ]);
+
+              };
+            });
             mlx-cuda-13 = prev.mlx-cuda-13.overrideAttrs (old: {
               buildInputs = (old.buildInputs or [ ]) ++ [
                 final.nvidia-cublas
@@ -279,6 +317,8 @@
               autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
             });
             torch = ignoreMissing prev.torch;
+            torchaudio = ignoreMissing prev.torchaudio;
+            torchvision = ignoreMissing prev.torchvision;
             triton = ignoreMissing prev.triton;
           }
         );
@@ -326,7 +366,6 @@
           exo-pyo3-bindings = [ ];
           exo-bench = [ ];
           mlx-engine = [ ];
-          vllm-engine = [ ];
         }).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
       };
