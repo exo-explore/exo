@@ -459,6 +459,7 @@
       "llama",
       "flux",
       "qwen-image",
+      "nemotron",
     ];
     return Array.from(families).sort((a, b) => {
       const aIdx = familyOrder.indexOf(a);
