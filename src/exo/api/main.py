@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import hashlib
 import json
 import random
 import time
@@ -703,6 +704,8 @@ class API:
             "TODO: we should send a notification to the user to download the model"
         )
 
+    _sent_image_hashes: set[str] = set()
+
     async def _send_text_generation_with_images(
         self, task_params: TextGenerationTaskParams
     ) -> TextGeneration:
@@ -711,6 +714,20 @@ class API:
             command = TextGeneration(task_params=task_params)
             await self._send(command)
             return command
+
+        hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
+        all_cached = all(h in self._sent_image_hashes for h in hashes)
+
+        if all_cached:
+            task_params = task_params.model_copy(
+                update={"images": [], "image_hashes": hashes}
+            )
+            command = TextGeneration(task_params=task_params)
+            await self._send(command)
+            return command
+
+        for h in hashes:
+            self._sent_image_hashes.add(h)
 
         all_chunks: list[tuple[int, str]] = []
         for img_idx, img_data in enumerate(images):

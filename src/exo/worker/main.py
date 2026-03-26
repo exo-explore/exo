@@ -1,3 +1,4 @@
+import hashlib
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -80,6 +81,7 @@ class Worker:
         # Buffer for input image chunks (for image editing)
         self.input_chunk_buffer: dict[CommandId, dict[int, InputImageChunk]] = {}
         self.input_chunk_counts: dict[CommandId, int] = {}
+        self.image_cache: dict[str, str] = {}
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
         self._stopped: anyio.Event = anyio.Event()
@@ -282,6 +284,26 @@ class Worker:
                         del self.input_chunk_counts[cmd_id]
                     await self._start_runner_task(modified_task)
 
+                case TextGeneration() if task.task_params.image_hashes:
+                    cached_images = [
+                        self.image_cache[h]
+                        for h in task.task_params.image_hashes
+                        if h in self.image_cache
+                    ]
+                    if len(cached_images) == len(task.task_params.image_hashes):
+                        modified_task = TextGeneration(
+                            task_id=task.task_id,
+                            command_id=task.command_id,
+                            instance_id=task.instance_id,
+                            task_status=task.task_status,
+                            task_params=task.task_params.model_copy(
+                                update={"images": cached_images}
+                            ),
+                        )
+                        await self._start_runner_task(modified_task)
+                    else:
+                        logger.warning("Image cache miss for hashes, dropping task")
+
                 case TextGeneration() if task.task_params.total_input_chunks > 0:
                     cmd_id = task.command_id
                     chunk_buffer = self.input_chunk_buffer.get(cmd_id, {})
@@ -296,6 +318,10 @@ class Worker:
                             per_image[img_idx], key=lambda c: c.chunk_index
                         )
                         assembled_images.append("".join(c.data for c in sorted_chunks))
+                    for img in assembled_images:
+                        self.image_cache[
+                            hashlib.sha256(img.encode("ascii")).hexdigest()
+                        ] = img
                     logger.info(
                         f"Assembled {len(assembled_images)} VLM image(s) from "
                         f"{len(chunk_buffer)} chunks"
