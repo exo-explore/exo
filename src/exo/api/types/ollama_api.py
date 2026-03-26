@@ -65,6 +65,7 @@ class OllamaGenerateRequest(BaseModel, frozen=True):
     keep_alive: str | int | None = None
     think: bool | None = None
     raw: bool = False
+    images: list[str] | None = None
 
 
 class OllamaGenerateResponse(BaseModel, frozen=True, strict=True):

@@ -78,14 +78,18 @@ def _get_usage(
 def ollama_request_to_text_generation(
     request: OllamaChatRequest,
 ) -> TextGenerationTaskParams:
-    """Convert Ollama chat request to exo's internal text generation format."""
     instructions: str | None = None
     input_messages: list[InputMessage] = []
     chat_template_messages: list[dict[str, Any]] = []
+    images: list[str] = []
     tool_message_index = 0
 
     for msg in request.messages:
         content = msg.content or ""
+        has_images = False
+        if msg.images:
+            images.extend(msg.images)
+            has_images = True
 
         if msg.role == "system":
             if instructions is None:
@@ -100,6 +104,16 @@ def ollama_request_to_text_generation(
         ):
             input_messages.append(InputMessage(role=msg.role, content=content))
 
+        if has_images:
+            multimodal: list[dict[str, Any]] = [
+                {"type": "image"} for _ in (msg.images or [])
+            ]
+            if content:
+                multimodal.append({"type": "text", "text": content})
+            chat_template_messages.append({"role": msg.role, "content": multimodal})
+            if msg.role in ("user", "assistant"):
+                input_messages.append(InputMessage(role=msg.role, content=content))
+            continue
         dumped: dict[str, Any] = {"role": msg.role, "content": content}
         if msg.thinking is not None:
             dumped["thinking"] = msg.thinking
@@ -152,6 +166,7 @@ def ollama_request_to_text_generation(
         chat_template_messages=chat_template_messages
         if chat_template_messages
         else None,
+        images=images,
     )
 
 
@@ -309,11 +324,18 @@ async def collect_ollama_chat_response(
 def ollama_generate_request_to_text_generation(
     request: OllamaGenerateRequest,
 ) -> TextGenerationTaskParams:
-    """Convert Ollama generate request to exo's internal text generation format."""
     chat_template_messages: list[dict[str, Any]] = []
+    images: list[str] = []
     if request.system:
         chat_template_messages.append({"role": "system", "content": request.system})
-    chat_template_messages.append({"role": "user", "content": request.prompt})
+    if request.images:
+        images.extend(request.images)
+        multimodal: list[dict[str, Any]] = [{"type": "image"} for _ in request.images]
+        if request.prompt:
+            multimodal.append({"type": "text", "text": request.prompt})
+        chat_template_messages.append({"role": "user", "content": multimodal})
+    else:
+        chat_template_messages.append({"role": "user", "content": request.prompt})
 
     options = request.options
     return TextGenerationTaskParams(
@@ -331,6 +353,7 @@ def ollama_generate_request_to_text_generation(
         chat_template_messages=chat_template_messages
         if chat_template_messages
         else None,
+        images=images,
     )
 
 
