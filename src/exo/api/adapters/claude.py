@@ -62,7 +62,9 @@ def _extract_tool_result_text(block: ClaudeToolResultBlock) -> str:
         return ""
     if isinstance(block.content, str):
         return block.content
-    return "".join(sub_block.text for sub_block in block.content)
+    return "".join(
+        sub.text for sub in block.content if isinstance(sub, ClaudeTextBlock)
+    )
 
 
 # Matches "x-anthropic-billing-header: ...;" (with optional trailing newline)
@@ -138,6 +140,15 @@ def claude_request_to_text_generation(
                 )
             else:
                 tool_results.append(block)
+                if isinstance(block.content, list):
+                    for sub in block.content:
+                        if isinstance(sub, ClaudeImageBlock):
+                            if sub.source.type == "base64" and sub.source.data:
+                                images.append(sub.source.data)
+                                has_images = True
+                            elif sub.source.type == "url" and sub.source.url:
+                                images.append(sub.source.url)
+                                has_images = True
 
         content = "".join(text_parts)
         reasoning_content = "".join(thinking_parts) if thinking_parts else None

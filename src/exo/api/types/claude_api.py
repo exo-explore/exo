@@ -69,7 +69,7 @@ class ClaudeToolResultBlock(BaseModel, frozen=True):
 
     type: Literal["tool_result"] = "tool_result"
     tool_use_id: str
-    content: str | list[ClaudeTextBlock] | None = None
+    content: str | list[ClaudeTextBlock | ClaudeImageBlock] | None = None
     is_error: bool | None = None
     cache_control: dict[str, str] | None = None
 
