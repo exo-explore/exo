@@ -144,6 +144,7 @@ class ModelCard(CamelCaseModel):
     quantization: str = ""
     base_model: str = ""
     capabilities: list[str] = []
+    context_length: int = 0
     uses_cfg: bool = False
     trust_remote_code: bool = True
     is_custom: bool = False
@@ -217,6 +218,7 @@ class ModelCard(CamelCaseModel):
             hidden_size=config_data.hidden_size or 0,
             supports_tensor=config_data.supports_tensor,
             num_key_value_heads=config_data.num_key_value_heads,
+            context_length=config_data.max_position_embeddings,
             tasks=[ModelTask.TextGeneration],
             trust_remote_code=False,
             is_custom=True,
@@ -255,6 +257,7 @@ class ConfigData(BaseModel):
             "decoder_layers",
         )
     )
+    max_position_embeddings: int = 0
     vision_config: dict[str, Any] | None = None
     image_token_id: int | None = None
     model_type: str | None = None
@@ -288,6 +291,7 @@ class ConfigData(BaseModel):
             "architectures",
             "hidden_size",
             "num_key_value_heads",
+            "max_position_embeddings",
             "num_hidden_layers",
             "num_layers",
             "n_layer",
