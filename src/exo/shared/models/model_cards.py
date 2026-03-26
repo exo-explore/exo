@@ -21,6 +21,8 @@ from tomlkit.exceptions import TOMLKitError
 from exo.shared.constants import (
     EXO_CUSTOM_MODEL_CARDS_DIR,
     EXO_ENABLE_IMAGE_MODELS,
+    EXO_MODELS_DIR,
+    EXO_MODELS_PATH,
     RESOURCES_DIR,
 )
 from exo.shared.types.common import ModelId
@@ -38,6 +40,34 @@ _BUILTIN_CARD_DIRS = [
 _card_cache: dict[ModelId, "ModelCard"] = {}
 
 
+def _detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
+    import json
+    import pathlib
+
+    normalized = model_id.normalize()
+    candidates = [pathlib.Path(str(EXO_MODELS_DIR)) / normalized]
+    if EXO_MODELS_PATH:
+        candidates = [p / normalized for p in EXO_MODELS_PATH] + candidates
+    for model_dir in candidates:
+        config_path = model_dir / "config.json"
+        if not config_path.exists():
+            continue
+        try:
+            with open(config_path) as f:
+                config: dict[str, Any] = json.load(f)  # type: ignore
+        except Exception:
+            continue
+        vision_cfg: dict[str, Any] | None = config.get("vision_config")
+        image_token_id: int | None = config.get("image_token_id")
+        if vision_cfg is None or image_token_id is None:
+            return None
+        return VisionCardConfig(
+            image_token_id=image_token_id,
+            model_type=str(vision_cfg.get("model_type", config.get("model_type", ""))),  # type: ignore
+        )
+    return None
+
+
 async def _load_cards_from_dir(directory: Path, *, is_custom: bool) -> None:
     """Load all TOML model cards from a directory into the cache."""
     async for toml_file in directory.rglob("*.toml"):
@@ -45,6 +75,10 @@ async def _load_cards_from_dir(directory: Path, *, is_custom: bool) -> None:
             card = await ModelCard.load_from_path(toml_file)
             if is_custom:
                 card = card.model_copy(update={"is_custom": True})
+            if card.vision is None:
+                vision = _detect_vision_from_config(card.model_id)
+                if vision is not None:
+                    card = card.model_copy(update={"vision": vision})
             if card.model_id not in _card_cache:
                 _card_cache[card.model_id] = card
         except (ValidationError, TOMLKitError):
@@ -89,6 +123,14 @@ class ComponentInfo(CamelCaseModel):
     safetensors_index_filename: str | None = None
 
 
+class VisionCardConfig(CamelCaseModel):
+    image_token_id: int
+    model_type: str
+    weights_repo: str | None = None
+    image_token: str | None = None
+    processor_repo: str | None = None
+
+
 class ModelCard(CamelCaseModel):
     model_id: ModelId
     storage_size: Memory
@@ -105,6 +147,7 @@ class ModelCard(CamelCaseModel):
     uses_cfg: bool = False
     trust_remote_code: bool = True
     is_custom: bool = False
+    vision: VisionCardConfig | None = None
 
     @field_validator("tasks", mode="before")
     @classmethod
@@ -152,6 +195,21 @@ class ModelCard(CamelCaseModel):
         num_layers = config_data.layer_count
         mem_size_bytes = await fetch_safetensors_size(model_id)
 
+        vision: VisionCardConfig | None = None
+        if (
+            config_data.vision_config is not None
+            and config_data.image_token_id is not None
+        ):
+            vision_model_type = str(
+                config_data.vision_config.get(  # type: ignore
+                    "model_type", config_data.model_type or ""
+                )
+            )
+            vision = VisionCardConfig(
+                image_token_id=config_data.image_token_id,
+                model_type=vision_model_type,
+            )
+
         return ModelCard(
             model_id=ModelId(model_id),
             storage_size=mem_size_bytes,
@@ -162,6 +220,7 @@ class ModelCard(CamelCaseModel):
             tasks=[ModelTask.TextGeneration],
             trust_remote_code=False,
             is_custom=True,
+            vision=vision,
         )
 
 
@@ -196,6 +255,9 @@ class ConfigData(BaseModel):
             "decoder_layers",
         )
     )
+    vision_config: dict[str, Any] | None = None
+    image_token_id: int | None = None
+    model_type: str | None = None
 
     @property
     def supports_tensor(self) -> bool:

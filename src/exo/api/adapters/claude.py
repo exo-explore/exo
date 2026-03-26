@@ -11,6 +11,7 @@ from exo.api.types.claude_api import (
     ClaudeContentBlockDeltaEvent,
     ClaudeContentBlockStartEvent,
     ClaudeContentBlockStopEvent,
+    ClaudeImageBlock,
     ClaudeInputJsonDelta,
     ClaudeMessageDelta,
     ClaudeMessageDeltaEvent,
@@ -86,6 +87,7 @@ def claude_request_to_text_generation(
     # Handle system message
     instructions: str | None = None
     chat_template_messages: list[dict[str, Any]] = []
+    images: list[str] = []
 
     if request.system:
         if isinstance(request.system, str):
@@ -109,10 +111,18 @@ def claude_request_to_text_generation(
         thinking_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         tool_results: list[ClaudeToolResultBlock] = []
+        has_images = False
 
         for block in msg.content:
             if isinstance(block, ClaudeTextBlock):
                 text_parts.append(block.text)
+            elif isinstance(block, ClaudeImageBlock):
+                if block.source.type == "base64" and block.source.data:
+                    images.append(block.source.data)
+                    has_images = True
+                elif block.source.type == "url" and block.source.url:
+                    images.append(block.source.url)
+                    has_images = True
             elif isinstance(block, ClaudeThinkingBlock):
                 thinking_parts.append(block.thinking)
             elif isinstance(block, ClaudeToolUseBlock):
@@ -126,7 +136,7 @@ def claude_request_to_text_generation(
                         },
                     }
                 )
-            elif isinstance(block, ClaudeToolResultBlock):
+            else:
                 tool_results.append(block)
 
         content = "".join(text_parts)
@@ -155,6 +165,17 @@ def claude_request_to_text_generation(
                         "content": _extract_tool_result_text(tr),
                     }
                 )
+        elif has_images:
+            multimodal_content: list[dict[str, Any]] = []
+            for block in msg.content:
+                if isinstance(block, ClaudeTextBlock):
+                    multimodal_content.append({"type": "text", "text": block.text})
+                elif isinstance(block, ClaudeImageBlock):
+                    multimodal_content.append({"type": "image"})
+            chat_msg = {"role": msg.role, "content": multimodal_content}
+            if reasoning_content:
+                chat_msg["reasoning_content"] = reasoning_content
+            chat_template_messages.append(chat_msg)
         else:
             chat_msg = {"role": msg.role, "content": content}
             if reasoning_content:
@@ -197,6 +218,7 @@ def claude_request_to_text_generation(
         chat_template_messages=chat_template_messages
         if chat_template_messages
         else None,
+        images=images,
     )
 
 

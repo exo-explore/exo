@@ -7,7 +7,7 @@ import mlx.core as mx
 from anyio import WouldBlock
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.models.model_cards import ModelTask
+from exo.shared.models.model_cards import ModelTask, VisionCardConfig
 from exo.shared.types.chunks import (
     ErrorChunk,
     TokenChunk,
@@ -103,7 +103,10 @@ class Runner:
         self.setup_start_time = time.time()
 
         self.generator: Builder | InferenceGenerator = Builder(
-            self.model_id, self.event_sender, self.cancel_receiver
+            self.model_id,
+            self.event_sender,
+            self.cancel_receiver,
+            vision_config=self.shard_metadata.model_card.vision,
         )
 
         self.seen: set[TaskId] = set()
@@ -378,6 +381,7 @@ class Builder:
     model_id: ModelId
     event_sender: MpSender[Event]
     cancel_receiver: MpReceiver[TaskId]
+    vision_config: VisionCardConfig | None = None
     inference_model: Model | None = None
     tokenizer: TokenizerWrapper | None = None
     group: mx.distributed.Group | None = None
@@ -419,6 +423,7 @@ class Builder:
                 device_rank=device_rank,
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
+                vision_config=self.vision_config,
             )
         logger.info("using BatchGenerator")
         return BatchGenerator(
@@ -431,4 +436,5 @@ class Builder:
             device_rank=device_rank,
             cancel_receiver=self.cancel_receiver,
             event_sender=self.event_sender,
+            vision_config=self.vision_config,
         )

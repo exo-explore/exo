@@ -9,6 +9,7 @@ import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
+from exo.shared.models.model_cards import VisionCardConfig
 from exo.shared.types.chunks import ErrorChunk, PrefillProgressChunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import ChunkGenerated, Event
@@ -120,6 +121,7 @@ class SequentialGenerator(InferenceGenerator):
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
+    vision_config: VisionCardConfig | None = None
     check_for_cancel_every: int = 50
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
@@ -304,6 +306,7 @@ class SequentialGenerator(InferenceGenerator):
             distributed_prompt_progress_callback=distributed_prompt_progress_callback,
             on_generation_token=on_generation_token,
             group=self.group,
+            vision_config=self.vision_config,
         )
 
     def close(self) -> None:
@@ -322,6 +325,7 @@ class BatchGenerator(InferenceGenerator):
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
     check_for_cancel_every: int = 50
+    vision_config: VisionCardConfig | None = None
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -344,6 +348,7 @@ class BatchGenerator(InferenceGenerator):
             tokenizer=self.tokenizer,
             group=self.group,
             kv_prefix_cache=self.kv_prefix_cache,
+            vision_config=self.vision_config,
         )
 
     def warmup(self):
