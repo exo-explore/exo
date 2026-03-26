@@ -159,7 +159,7 @@ jobs:
           fi
 
       - name: Install Homebrew packages
-        run: brew install just awscli macmon
+        run: brew install just awscli
 
       - name: Install UV
         uses: astral-sh/setup-uv@v6
@@ -242,6 +242,14 @@ jobs:
       # ============================================================
       # Build the bundle
       # ============================================================
+
+      - name: Add pinned macmon to PATH
+        run: |
+          MACMON_DIR=$(nix develop --command sh -c 'dirname $(which macmon)')
+          echo "Using macmon from: $MACMON_DIR"
+          echo "$MACMON_DIR" >> $GITHUB_PATH
+          # Remove any Homebrew macmon so PyInstaller can't accidentally pick it up
+          brew uninstall macmon 2>/dev/null || true
 
       - name: Build PyInstaller bundle
         run: uv run pyinstaller packaging/pyinstaller/exo.spec
