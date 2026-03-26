@@ -84,7 +84,7 @@ class ToolCall(BaseModel):
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]
     content: (
-        str | ChatCompletionMessageText | list[ChatCompletionContentPart] | None
+        str | ChatCompletionContentPart | list[ChatCompletionContentPart] | None
     ) = None
     reasoning_content: str | None = None
     name: str | None = None

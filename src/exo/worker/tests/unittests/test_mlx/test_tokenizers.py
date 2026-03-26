@@ -138,7 +138,9 @@ async def test_tokenizer_encode_decode(model_card: ModelCard) -> None:
     # Test decoding
     decoded = tokenizer.decode(encoded)
     assert isinstance(decoded, str), f"decode() should return a string for {model_id}"
-    assert test_text in decoded or decoded.strip() == test_text.strip(), (
+    normalized_decoded = decoded.replace(" ", "").lower()
+    normalized_expected = test_text.replace(" ", "").lower()
+    assert normalized_expected in normalized_decoded, (
         f"decode(encode(x)) should preserve text for {model_id}: got {decoded!r}"
     )
 

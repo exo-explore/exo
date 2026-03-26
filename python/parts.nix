@@ -64,6 +64,13 @@
             final.setuptools
           ];
         });
+        miniaudio = prev.miniaudio.overrideAttrs (old: {
+          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+            final.setuptools
+            final.cffi
+            final.pycparser
+          ];
+        });
       } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
         # Use our pure Nix-built MLX with Metal support (macOS only)
         mlx = self'.packages.mlx;
