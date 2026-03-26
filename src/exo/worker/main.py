@@ -80,6 +80,7 @@ class Worker:
         self.input_chunk_counts: dict[CommandId, int] = {}
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
+        self._stopped: anyio.Event = anyio.Event()
 
     async def run(self):
         logger.info("Starting Worker")
@@ -102,6 +103,7 @@ class Worker:
             self.download_command_sender.close()
             for runner in self.runners.values():
                 runner.shutdown()
+            self._stopped.set()
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -280,8 +282,9 @@ class Worker:
                 case task:
                     await self._start_runner_task(task)
 
-    def shutdown(self):
+    async def shutdown(self):
         self._tg.cancel_tasks()
+        await self._stopped.wait()
 
     async def _start_runner_task(self, task: Task):
         if (instance := self.state.instances.get(task.instance_id)) is not None:

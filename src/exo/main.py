@@ -228,7 +228,7 @@ class Node:
                     )
                 if result.is_new_master:
                     if self.download_coordinator:
-                        self.download_coordinator.shutdown()
+                        await self.download_coordinator.shutdown()
                         self.download_coordinator = DownloadCoordinator(
                             self.node_id,
                             exo_shard_downloader(offline=self.offline),
@@ -240,7 +240,7 @@ class Node:
                         )
                         self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
-                        self.worker.shutdown()
+                        await self.worker.shutdown()
                         # TODO: add profiling etc to resource monitor
                         self.worker = Worker(
                             self.node_id,
