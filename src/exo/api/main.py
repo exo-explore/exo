@@ -1424,12 +1424,11 @@ class API:
         self, payload: ResponsesRequest
     ) -> ResponsesResponse | StreamingResponse:
         """OpenAI Responses API."""
-        task_params = responses_request_to_text_generation(payload)
+        task_params = await responses_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(task_params.model)
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
@@ -1472,8 +1471,7 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
@@ -1509,8 +1507,7 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
