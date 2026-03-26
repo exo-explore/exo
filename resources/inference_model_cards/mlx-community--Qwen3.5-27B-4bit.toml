@@ -9,5 +9,7 @@ quantization = "4bit"
 base_model = "Qwen3.5 27B"
 capabilities = ["text", "thinking"]
 
+context_length = 262144
+
 [storage_size]
 in_bytes = 16054266848

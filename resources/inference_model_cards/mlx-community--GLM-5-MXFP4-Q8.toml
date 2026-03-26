@@ -9,5 +9,7 @@ quantization = "MXFP4-Q8"
 base_model = "GLM-5"
 capabilities = ["text", "thinking"]
 
+context_length = 202752
+
 [storage_size]
 in_bytes = 405478939008
