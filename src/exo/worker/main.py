@@ -282,11 +282,8 @@ class Worker:
                 case task:
                     await self._start_runner_task(task)
 
-    def shutdown(self):
+    async def shutdown(self):
         self._tg.cancel_tasks()
-
-    async def wait_stopped(self) -> None:
-        """Block until run() has fully completed, including runner process cleanup."""
         await self._stopped.wait()
 
     async def _start_runner_task(self, task: Task):

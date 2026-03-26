@@ -108,11 +108,8 @@ class DownloadCoordinator:
         finally:
             self._stopped.set()
 
-    def shutdown(self) -> None:
+    async def shutdown(self) -> None:
         self._tg.cancel_tasks()
-
-    async def wait_stopped(self) -> None:
-        """Block until run() has fully completed."""
         await self._stopped.wait()
 
     async def _command_processor(self) -> None:
