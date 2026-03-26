@@ -105,9 +105,9 @@ def test_node_id_in_config_dir():
 
 
 def test_models_in_data_dir():
-    """Test that models directory is in the data directory."""
-    # Clear EXO_MODELS_DIR to test default behavior
-    env = {k: v for k, v in os.environ.items() if k != "EXO_MODELS_DIR"}
+    """Test that default models directory is in the data directory."""
+    # Clear EXO_MODELS_DIRS to test default behavior
+    env = {k: v for k, v in os.environ.items() if k != "EXO_MODELS_DIRS"}
     with mock.patch.dict(os.environ, env, clear=True):
         import importlib
 
@@ -115,4 +115,106 @@ def test_models_in_data_dir():
 
         importlib.reload(constants)
 
-        assert constants.EXO_MODELS_DIR.parent == constants.EXO_DATA_HOME
+        assert constants.EXO_DEFAULT_MODELS_DIR.parent == constants.EXO_DATA_HOME
+
+
+def test_default_dir_always_prepended_to_models_dirs():
+    """Test that the default models dir is always the first entry in EXO_MODELS_DIRS."""
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("EXO_MODELS_DIRS", "EXO_MODELS_READ_ONLY_DIRS", "EXO_HOME")
+    }
+    env["EXO_MODELS_DIRS"] = "/tmp/custom-models"
+    with mock.patch.dict(os.environ, env, clear=True):
+        import importlib
+
+        import exo.shared.constants as constants
+
+        importlib.reload(constants)
+
+        assert constants.EXO_MODELS_DIRS[0] == constants.EXO_DEFAULT_MODELS_DIR
+        assert Path("/tmp/custom-models") in constants.EXO_MODELS_DIRS
+
+
+def test_default_models_dir_override():
+    """Test that EXO_DEFAULT_MODELS_DIR can be overridden via env var."""
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k
+        not in (
+            "EXO_MODELS_DIRS",
+            "EXO_MODELS_READ_ONLY_DIRS",
+            "EXO_HOME",
+            "EXO_DEFAULT_MODELS_DIR",
+        )
+    }
+    env["EXO_DEFAULT_MODELS_DIR"] = "/Volumes/FastSSD/exo-models"
+    with mock.patch.dict(os.environ, env, clear=True):
+        import importlib
+
+        import exo.shared.constants as constants
+
+        importlib.reload(constants)
+
+        assert Path("/Volumes/FastSSD/exo-models") == constants.EXO_DEFAULT_MODELS_DIR
+        assert constants.EXO_MODELS_DIRS[0] == constants.EXO_DEFAULT_MODELS_DIR
+
+
+def test_default_dir_only_entry_when_env_unset():
+    """Test that EXO_MODELS_DIRS contains only the default when env var is not set."""
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("EXO_MODELS_DIRS", "EXO_MODELS_READ_ONLY_DIRS", "EXO_HOME")
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        import importlib
+
+        import exo.shared.constants as constants
+
+        importlib.reload(constants)
+
+        assert constants.EXO_MODELS_DIRS == (constants.EXO_DEFAULT_MODELS_DIR,)
+
+
+def test_overlap_between_dirs_and_read_only_dirs():
+    """Test that a directory in both lists is excluded from writable dirs."""
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("EXO_MODELS_DIRS", "EXO_MODELS_READ_ONLY_DIRS", "EXO_HOME")
+    }
+    env["EXO_MODELS_DIRS"] = "/tmp/shared:/tmp/writable-only"
+    env["EXO_MODELS_READ_ONLY_DIRS"] = "/tmp/shared:/tmp/ro-only"
+    with mock.patch.dict(os.environ, env, clear=True):
+        import importlib
+
+        import exo.shared.constants as constants
+
+        importlib.reload(constants)
+
+        # /tmp/shared should be excluded from writable dirs
+        assert Path("/tmp/shared") not in constants.EXO_MODELS_DIRS
+        assert Path("/tmp/writable-only") in constants.EXO_MODELS_DIRS
+        # /tmp/shared should still be in read-only dirs
+        assert Path("/tmp/shared") in constants.EXO_MODELS_READ_ONLY_DIRS
+        assert Path("/tmp/ro-only") in constants.EXO_MODELS_READ_ONLY_DIRS
+
+
+def test_empty_read_only_dirs_when_unset():
+    """Test that EXO_MODELS_READ_ONLY_DIRS is empty when env var is not set."""
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("EXO_MODELS_DIRS", "EXO_MODELS_READ_ONLY_DIRS", "EXO_HOME")
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        import importlib
+
+        import exo.shared.constants as constants
+
+        importlib.reload(constants)
+
+        assert constants.EXO_MODELS_READ_ONLY_DIRS == ()

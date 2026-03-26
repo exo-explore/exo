@@ -2,11 +2,11 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 import anyio
-from anyio import fail_after
+from anyio import fail_after, to_thread
 from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
-from exo.download.download_utils import resolve_model_in_path
+from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
 from exo.shared.types.commands import (
@@ -181,11 +181,11 @@ class Worker:
                     model_id = shard.model_card.model_id
                     self._download_backoff.record_attempt(model_id)
 
-                    found_path = resolve_model_in_path(model_id)
+                    found_path = await to_thread.run_sync(
+                        resolve_existing_model, model_id
+                    )
                     if found_path is not None:
-                        logger.info(
-                            f"Model {model_id} found in EXO_MODELS_PATH at {found_path}"
-                        )
+                        logger.info(f"Model {model_id} found at {found_path}")
                         await self.event_sender.send(
                             NodeDownloadProgress(
                                 download_progress=DownloadCompleted(
@@ -193,7 +193,7 @@ class Worker:
                                     shard_metadata=shard,
                                     model_directory=str(found_path),
                                     total=shard.model_card.storage_size,
-                                    read_only=True,
+                                    read_only=is_read_only_model_dir(found_path),
                                 )
                             )
                         )

@@ -13,8 +13,8 @@ import pytest
 
 from exo.download.download_utils import (
     download_file_with_retry,
-    ensure_models_dir,
     fetch_file_list_with_cache,
+    resolve_model_dir,
 )
 from exo.shared.models.model_cards import ModelCard, ModelId, get_model_cards
 from exo.worker.engines.mlx.utils_mlx import (
@@ -53,8 +53,7 @@ def is_tokenizer_file(filename: str) -> bool:
 
 async def download_tokenizer_files(model_id: ModelId) -> Path:
     """Download only the tokenizer-related files for a model."""
-    target_dir = await ensure_models_dir() / model_id.normalize()
-    target_dir.mkdir(parents=True, exist_ok=True)
+    target_dir = await resolve_model_dir(model_id)
 
     file_list = await fetch_file_list_with_cache(model_id, "main", recursive=True)
 
