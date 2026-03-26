@@ -124,14 +124,19 @@ class ExoBatchGenerator:
         media_regions: list[MediaRegion] = []
 
         if self.vision_config is not None:
-            vision = prepare_vision(
-                images=task_params.images,
-                chat_template_messages=task_params.chat_template_messages,
-                vision_config=self.vision_config,
-                tokenizer=self.tokenizer,
-                model=self.model,
-                model_id=task_params.model,
-            )
+            try:
+                vision = prepare_vision(
+                    images=task_params.images,
+                    chat_template_messages=task_params.chat_template_messages,
+                    vision_config=self.vision_config,
+                    tokenizer=self.tokenizer,
+                    model=self.model,
+                    model_id=task_params.model,
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Vision processing failed, falling back to text-only"
+                )
 
         if vision is not None:
             all_prompt_tokens = vision.prompt_tokens

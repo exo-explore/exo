@@ -499,14 +499,20 @@ def mlx_generate(
     all_prompt_tokens = encode_prompt(tokenizer, prompt)
     all_prompt_tokens = fix_unmatched_think_end_tokens(all_prompt_tokens, tokenizer)
 
-    vision: VisionResult | None = prepare_vision(
-        images=task.images,
-        chat_template_messages=task.chat_template_messages,
-        vision_config=vision_config,
-        tokenizer=tokenizer,
-        model=model,
-        model_id=task.model,
-    )
+    vision: VisionResult | None = None
+    try:
+        vision = prepare_vision(
+            images=task.images,
+            chat_template_messages=task.chat_template_messages,
+            vision_config=vision_config,
+            tokenizer=tokenizer,
+            model=model,
+            model_id=task.model,
+        )
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Vision processing failed, falling back to text-only"
+        )
     if vision is not None:
         all_prompt_tokens = vision.prompt_tokens
     media_regions: list[MediaRegion] = vision.media_regions if vision else []
