@@ -328,7 +328,7 @@ class NodeDiskUsage(TaggedModel):
     async def gather(cls) -> Self:
         return cls(
             disk_usage=await to_thread.run_sync(
-                lambda: DiskUsage.from_path(EXO_DEFAULT_MODELS_DIR)
+                DiskUsage.from_path, EXO_DEFAULT_MODELS_DIR
             )
         )
 

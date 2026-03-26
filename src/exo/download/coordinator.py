@@ -87,7 +87,7 @@ class DownloadCoordinator:
         throttle_interval_secs = 1.0
 
         if progress.status == "complete":
-            found = await to_thread.run_sync(lambda: resolve_existing_model(model_id))
+            found = await to_thread.run_sync(resolve_existing_model, model_id)
             if found is not None:
                 completed = self._completed_from_path(
                     callback_shard, found, progress.total
@@ -181,7 +181,7 @@ class DownloadCoordinator:
                 return
 
         # Check all model directories for pre-existing complete models
-        found_path = await to_thread.run_sync(lambda: resolve_existing_model(model_id))
+        found_path = await to_thread.run_sync(resolve_existing_model, model_id)
         if found_path is not None:
             logger.info(f"DownloadCoordinator: Model {model_id} found at {found_path}")
             completed = self._completed_from_path(
@@ -208,7 +208,7 @@ class DownloadCoordinator:
         )
 
         if initial_progress.status == "complete":
-            found = await to_thread.run_sync(lambda: resolve_existing_model(model_id))
+            found = await to_thread.run_sync(resolve_existing_model, model_id)
             if found is not None:
                 completed = self._completed_from_path(
                     shard, found, initial_progress.total
@@ -339,7 +339,7 @@ class DownloadCoordinator:
 
                     if progress.status == "complete":
                         found = await to_thread.run_sync(
-                            lambda mid=model_id: resolve_existing_model(mid)
+                            resolve_existing_model, model_id
                         )
                         if found is not None:
                             status: DownloadProgress = self._completed_from_path(
@@ -388,9 +388,7 @@ class DownloadCoordinator:
                             (DownloadCompleted, DownloadOngoing, DownloadFailed),
                         ):
                             continue
-                        found = await to_thread.run_sync(
-                            lambda mid=mid: resolve_existing_model(mid)
-                        )
+                        found = await to_thread.run_sync(resolve_existing_model, mid)
                         if found is not None and is_read_only_model_dir(found):
                             path_shard = PipelineShardMetadata(
                                 model_card=card,
