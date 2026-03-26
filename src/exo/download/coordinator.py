@@ -49,6 +49,7 @@ class DownloadCoordinator:
     active_downloads: dict[ModelId, anyio.CancelScope] = field(default_factory=dict)
 
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
+    _stopped: anyio.Event = field(init=False, default_factory=anyio.Event)
 
     # Per-model throttle for download progress events
     _last_progress_time: dict[ModelId, float] = field(default_factory=dict)
@@ -100,12 +101,19 @@ class DownloadCoordinator:
         logger.info(
             f"Starting DownloadCoordinator{' (offline mode)' if self.offline else ''}"
         )
-        async with self._tg as tg:
-            tg.start_soon(self._command_processor)
-            tg.start_soon(self._emit_existing_download_progress)
+        try:
+            async with self._tg as tg:
+                tg.start_soon(self._command_processor)
+                tg.start_soon(self._emit_existing_download_progress)
+        finally:
+            self._stopped.set()
 
     def shutdown(self) -> None:
         self._tg.cancel_tasks()
+
+    async def wait_stopped(self) -> None:
+        """Block until run() has fully completed."""
+        await self._stopped.wait()
 
     async def _command_processor(self) -> None:
         with self.download_command_receiver as commands:
