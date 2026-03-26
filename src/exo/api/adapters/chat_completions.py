@@ -37,7 +37,7 @@ from exo.shared.types.text_generation import (
 )
 
 
-def _extract_base64_from_data_url(data_url: str) -> str:
+def extract_base64_from_data_url(data_url: str) -> str:
     match = re.match(r"data:[^;]+;base64,(.+)", data_url)
     if match:
         return match.group(1)
@@ -79,7 +79,7 @@ async def chat_request_to_text_generation(
                 if url.startswith(("http://", "https://")):
                     images.append(await fetch_image_url(url))
                 else:
-                    images.append(_extract_base64_from_data_url(url))
+                    images.append(extract_base64_from_data_url(url))
                 has_images = True
             content = ""
         else:
@@ -93,7 +93,7 @@ async def chat_request_to_text_generation(
                         if url.startswith(("http://", "https://")):
                             images.append(await fetch_image_url(url))
                         else:
-                            images.append(_extract_base64_from_data_url(url))
+                            images.append(extract_base64_from_data_url(url))
                         has_images = True
             content = "\n".join(text_parts)
 
