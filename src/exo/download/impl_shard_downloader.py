@@ -8,12 +8,16 @@ from loguru import logger
 
 from exo.download.download_utils import (
     RepoDownloadProgress,
-    are_repo_files_downloaded,
-    download_repo_files,
     download_shard,
 )
 from exo.download.shard_downloader import ShardDownloader
-from exo.shared.models.model_cards import ModelCard, ModelId, get_model_cards
+from exo.shared.models.model_cards import (
+    ModelCard,
+    ModelId,
+    ModelTask,
+    get_model_cards,
+)
+from exo.shared.types.memory import Memory
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
@@ -108,24 +112,6 @@ class ResumableShardDownloader(ShardDownloader):
     ) -> None:
         self.on_progress_callbacks.append(callback)
 
-    async def _check_vision_status(
-        self,
-        shard: ShardMetadata,
-        progress: RepoDownloadProgress,
-    ) -> RepoDownloadProgress:
-        """Downgrade 'complete' to 'in_progress' if vision weights are missing."""
-        if progress.status != "complete" or not shard.model_card.vision:
-            return progress
-        vision_ok = await are_repo_files_downloaded(
-            ModelId(shard.model_card.vision.weights_repo),
-            allow_patterns=["*.safetensors", "config.json"],
-            skip_internet=not self.internet_connection,
-            on_connection_lost=lambda: self.set_internet_connection(False),
-        )
-        if not vision_ok:
-            return progress.model_copy(update={"status": "in_progress"})
-        return progress
-
     async def ensure_shard(
         self, shard: ShardMetadata, config_only: bool = False
     ) -> Path:
@@ -139,14 +125,35 @@ class ResumableShardDownloader(ShardDownloader):
             skip_internet=self.offline,
         )
 
-        # Download vision weights from separate repo if model supports vision
-        if not config_only and shard.model_card.vision:
-            await download_repo_files(
-                ModelId(shard.model_card.vision.weights_repo),
-                allow_patterns=["*.safetensors", "config.json"],
+        if (
+            not config_only
+            and not self.offline
+            and shard.model_card.vision
+            and shard.model_card.vision.weights_repo
+        ):
+            vision_repo = shard.model_card.vision.weights_repo
+            vision_card = ModelCard(
+                model_id=ModelId(vision_repo),
+                storage_size=Memory.from_bytes(0),
+                n_layers=1,
+                hidden_size=1,
+                supports_tensor=False,
+                tasks=[ModelTask.TextGeneration],
+            )
+            vision_shard = PipelineShardMetadata(
+                model_card=vision_card,
+                device_rank=0,
+                world_size=1,
+                start_layer=0,
+                end_layer=1,
+                n_layers=1,
+            )
+            await download_shard(
+                vision_shard,
+                self.on_progress_wrapper,
                 max_parallel_downloads=self.max_parallel_downloads,
-                skip_internet=not self.internet_connection,
-                on_connection_lost=lambda: self.set_internet_connection(False),
+                allow_patterns=["*.safetensors", "config.json"],
+                skip_internet=self.offline,
             )
 
         return target_dir
@@ -159,14 +166,12 @@ class ResumableShardDownloader(ShardDownloader):
         ) -> tuple[Path, RepoDownloadProgress]:
             """Helper coroutine that builds the shard for a model and gets its download status."""
             shard = await build_full_shard(model_id)
-            path, progress = await download_shard(
+            return await download_shard(
                 shard,
                 self.on_progress_wrapper,
                 skip_download=True,
                 skip_internet=self.offline,
             )
-            progress = await self._check_vision_status(shard, progress)
-            return path, progress
 
         semaphore = asyncio.Semaphore(self.max_parallel_downloads)
 
@@ -196,4 +201,4 @@ class ResumableShardDownloader(ShardDownloader):
             skip_download=True,
             skip_internet=self.offline,
         )
-        return await self._check_vision_status(shard, progress)
+        return progress

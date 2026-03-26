@@ -9,6 +9,7 @@ from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
+from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     ForwarderCommand,
     ForwarderDownloadCommand,
@@ -38,6 +39,7 @@ from exo.shared.types.tasks import (
     Shutdown,
     Task,
     TaskStatus,
+    TextGeneration,
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
@@ -76,7 +78,7 @@ class Worker:
         self._system_id = SystemId()
 
         # Buffer for input image chunks (for image editing)
-        self.input_chunk_buffer: dict[CommandId, dict[int, str]] = {}
+        self.input_chunk_buffer: dict[CommandId, dict[int, InputImageChunk]] = {}
         self.input_chunk_counts: dict[CommandId, int] = {}
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
@@ -131,7 +133,7 @@ class Worker:
                         self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
 
                     self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
-                        event.chunk.data
+                        event.chunk
                     )
 
                 if isinstance(event, CustomModelCardAdded):
@@ -245,7 +247,7 @@ class Worker:
                     # Assemble image from chunks and inject into task
                     cmd_id = task.command_id
                     chunks = self.input_chunk_buffer.get(cmd_id, {})
-                    assembled = "".join(chunks[i] for i in range(len(chunks)))
+                    assembled = "".join(chunks[i].data for i in range(len(chunks)))
                     logger.info(
                         f"Assembled input image from {len(chunks)} chunks, "
                         f"total size: {len(assembled)} bytes"
@@ -274,6 +276,41 @@ class Worker:
                         ),
                     )
                     # Cleanup buffers
+                    if cmd_id in self.input_chunk_buffer:
+                        del self.input_chunk_buffer[cmd_id]
+                    if cmd_id in self.input_chunk_counts:
+                        del self.input_chunk_counts[cmd_id]
+                    await self._start_runner_task(modified_task)
+
+                case TextGeneration() if task.task_params.total_input_chunks > 0:
+                    cmd_id = task.command_id
+                    chunk_buffer = self.input_chunk_buffer.get(cmd_id, {})
+                    per_image: defaultdict[int, list[InputImageChunk]] = defaultdict(
+                        list
+                    )
+                    for chunk in chunk_buffer.values():
+                        per_image[chunk.image_index].append(chunk)
+                    assembled_images: list[str] = []
+                    for img_idx in range(task.task_params.image_count):
+                        sorted_chunks = sorted(
+                            per_image[img_idx], key=lambda c: c.chunk_index
+                        )
+                        assembled_images.append("".join(c.data for c in sorted_chunks))
+                    logger.info(
+                        f"Assembled {len(assembled_images)} VLM image(s) from "
+                        f"{len(chunk_buffer)} chunks"
+                    )
+                    modified_task = TextGeneration(
+                        task_id=task.task_id,
+                        command_id=task.command_id,
+                        instance_id=task.instance_id,
+                        task_status=task.task_status,
+                        task_params=task.task_params.model_copy(
+                            update={
+                                "images": assembled_images,
+                            }
+                        ),
+                    )
                     if cmd_id in self.input_chunk_buffer:
                         del self.input_chunk_buffer[cmd_id]
                     if cmd_id in self.input_chunk_counts:
