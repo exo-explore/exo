@@ -71,5 +71,6 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     repetition_penalty: float | None = None
     repetition_context_size: int | None = None
     images: list[str] = Field(default_factory=list)
+    image_hashes: list[str] = Field(default_factory=list)
     total_input_chunks: int = 0
     image_count: int = 0
