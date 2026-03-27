@@ -508,6 +508,7 @@ def mlx_generate(
             tokenizer=tokenizer,
             model=model,
             model_id=task.model,
+            task_params=task,
         )
     except Exception:
         logger.opt(exception=True).warning(
