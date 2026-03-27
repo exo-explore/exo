@@ -67,9 +67,6 @@ mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/fix-deep
 # mlx = { path = "/Users/Shared/mlx", editable=true }
 # mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
 
-[tool.uv.extra-build-dependencies]
-"miniaudio" = ["setuptools"]
-
 [build-system]
 requires = ["uv_build>=0.8.9,<0.9.0"]
 build-backend = "uv_build"
@@ -118,6 +115,7 @@ root = "src"
 required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
+extra-build-dependencies = { "miniaudio" = ["setuptools", "cffi", "pycparser"] }
 
 ###
 # ruff configuration
