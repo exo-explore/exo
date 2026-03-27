@@ -84,6 +84,7 @@
   });
 
   let codexModel = $state("");
+  let codexMcpPath = $state("/Users/username");
   let openClawModel = $state("");
   let openClawToolsProfile = $state("coding");
   $effect(() => {
@@ -174,6 +175,10 @@
       `name = "exo"`,
       `base_url = "${apiUrl}/v1"`,
       `env_key = "EXO_API_KEY"`,
+      ``,
+      `[mcp_servers.filesystem]`,
+      `command = "npx"`,
+      `args = ["-y", "@modelcontextprotocol/server-filesystem", "${codexMcpPath}"]`,
     ].join("\n"),
   );
 
@@ -385,19 +390,32 @@
           config={openCodeConfig}
         />
       {:else if activeTab === "Codex"}
-        {#if runningModels.length > 1}
-          <div class="text-xs">
+        <div class="flex gap-3 text-xs">
+          {#if runningModels.length > 1}
+            <div>
+              <span
+                class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1"
+                >Model</span
+              >
+              <select bind:value={codexModel} class={selectClass}>
+                {#each runningModels as model}
+                  <option value={model}>{model.split("/").pop()}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
+          <div class="flex-1">
             <span
               class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1"
-              >Model</span
+              >MCP Filesystem Path</span
             >
-            <select bind:value={codexModel} class={selectClass}>
-              {#each runningModels as model}
-                <option value={model}>{model.split("/").pop()}</option>
-              {/each}
-            </select>
+            <input
+              type="text"
+              bind:value={codexMcpPath}
+              class="w-full bg-black/30 border border-exo-light-gray/20 rounded px-2 py-1.5 text-white font-mono text-xs focus:border-exo-yellow/50 focus:outline-none"
+            />
           </div>
-        {/if}
+        </div>
         <IntegrationCard
           title="Config File"
           subtitle="~/.codex/config.toml"
