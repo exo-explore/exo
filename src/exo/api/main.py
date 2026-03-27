@@ -735,29 +735,35 @@ class API:
             return command
 
         hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
-        all_cached = all(h in self._sent_image_hashes for h in hashes)
 
-        if all_cached:
+        cached_hashes: dict[int, str] = {}
+        new_images: list[tuple[int, str]] = []
+        for idx, (img, h) in enumerate(zip(images, hashes, strict=True)):
+            if h in self._sent_image_hashes:
+                cached_hashes[idx] = h
+            else:
+                self._sent_image_hashes.add(h)
+                new_images.append((idx, img))
+
+        if not new_images:
             task_params = task_params.model_copy(
-                update={"images": [], "image_hashes": hashes}
+                update={"images": [], "image_hashes": cached_hashes}
             )
             command = TextGeneration(task_params=task_params)
             await self._send(command)
             return command
 
-        for h in hashes:
-            self._sent_image_hashes.add(h)
-
         all_chunks: list[tuple[int, str]] = []
-        for img_idx, img_data in enumerate(images):
+        for img_idx, img_data in new_images:
             for i in range(0, len(img_data), EXO_MAX_CHUNK_SIZE):
                 all_chunks.append((img_idx, img_data[i : i + EXO_MAX_CHUNK_SIZE]))
 
         task_params = task_params.model_copy(
             update={
                 "images": [],
+                "image_hashes": cached_hashes,
                 "total_input_chunks": len(all_chunks),
-                "image_count": len(images),
+                "image_count": len(new_images),
             }
         )
         command = TextGeneration(task_params=task_params)

@@ -155,7 +155,6 @@ class Worker:
                 self.state.instances,
                 self.state.runners,
                 self.state.tasks,
-                self.input_chunk_buffer,
                 self.input_chunk_counts,
             )
             if task is None:
@@ -284,58 +283,45 @@ class Worker:
                         del self.input_chunk_counts[cmd_id]
                     await self._start_runner_task(modified_task)
 
-                case TextGeneration() if task.task_params.image_hashes:
-                    cached_images = [
-                        self.image_cache[h]
-                        for h in task.task_params.image_hashes
-                        if h in self.image_cache
-                    ]
-                    if len(cached_images) == len(task.task_params.image_hashes):
-                        modified_task = TextGeneration(
-                            task_id=task.task_id,
-                            command_id=task.command_id,
-                            instance_id=task.instance_id,
-                            task_status=task.task_status,
-                            task_params=task.task_params.model_copy(
-                                update={"images": cached_images}
-                            ),
-                        )
-                        await self._start_runner_task(modified_task)
-                    else:
-                        logger.warning("Image cache miss for hashes, dropping task")
-
-                case TextGeneration() if task.task_params.total_input_chunks > 0:
+                case TextGeneration() if (
+                    task.task_params.image_hashes
+                    or task.task_params.total_input_chunks > 0
+                ):
                     cmd_id = task.command_id
-                    chunk_buffer = self.input_chunk_buffer.get(cmd_id, {})
-                    per_image: defaultdict[int, list[InputImageChunk]] = defaultdict(
-                        list
-                    )
-                    for chunk in chunk_buffer.values():
-                        per_image[chunk.image_index].append(chunk)
-                    assembled_images: list[str] = []
-                    for img_idx in range(task.task_params.image_count):
-                        sorted_chunks = sorted(
-                            per_image[img_idx], key=lambda c: c.chunk_index
+                    by_index: dict[int, str] = {}
+
+                    for idx, h in task.task_params.image_hashes.items():
+                        assert h in self.image_cache
+                        by_index[idx] = self.image_cache[h]
+
+                    if task.task_params.total_input_chunks > 0:
+                        chunk_buffer = self.input_chunk_buffer.get(cmd_id, {})
+                        per_image: defaultdict[int, list[InputImageChunk]] = (
+                            defaultdict(list)
                         )
-                        assembled_images.append("".join(c.data for c in sorted_chunks))
-                    for img in assembled_images:
-                        self.image_cache[
-                            hashlib.sha256(img.encode("ascii")).hexdigest()
-                        ] = img
-                    logger.info(
-                        f"Assembled {len(assembled_images)} VLM image(s) from "
-                        f"{len(chunk_buffer)} chunks"
-                    )
-                    modified_task = TextGeneration(
-                        task_id=task.task_id,
-                        command_id=task.command_id,
-                        instance_id=task.instance_id,
-                        task_status=task.task_status,
-                        task_params=task.task_params.model_copy(
-                            update={
-                                "images": assembled_images,
-                            }
-                        ),
+                        for chunk in chunk_buffer.values():
+                            per_image[chunk.image_index].append(chunk)
+                        for img_idx in sorted(per_image):
+                            sorted_chunks = sorted(
+                                per_image[img_idx], key=lambda c: c.chunk_index
+                            )
+                            img = "".join(c.data for c in sorted_chunks)
+                            self.image_cache[
+                                hashlib.sha256(img.encode("ascii")).hexdigest()
+                            ] = img
+                            by_index[img_idx] = img
+                        logger.info(
+                            f"Assembled {len(per_image)} VLM image(s) "
+                            f"from {len(chunk_buffer)} chunks"
+                        )
+
+                    resolved_images = [by_index[i] for i in sorted(by_index)]
+                    modified_task = task.model_copy(
+                        update={
+                            "task_params": task.task_params.model_copy(
+                                update={"images": resolved_images}
+                            )
+                        }
                     )
                     if cmd_id in self.input_chunk_buffer:
                         del self.input_chunk_buffer[cmd_id]

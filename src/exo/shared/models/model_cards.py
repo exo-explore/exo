@@ -54,17 +54,10 @@ def _detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
             continue
         try:
             with open(config_path) as f:
-                config: dict[str, Any] = json.load(f)  # type: ignore
+                raw = json.load(f)  # type: ignore
+            return ConfigData.model_validate(raw).vision
         except Exception:
             continue
-        vision_cfg: dict[str, Any] | None = config.get("vision_config")
-        image_token_id: int | None = config.get("image_token_id")
-        if vision_cfg is None or image_token_id is None:
-            return None
-        return VisionCardConfig(
-            image_token_id=image_token_id,
-            model_type=str(vision_cfg.get("model_type", config.get("model_type", ""))),  # type: ignore
-        )
     return None
 
 
@@ -195,21 +188,6 @@ class ModelCard(CamelCaseModel):
         num_layers = config_data.layer_count
         mem_size_bytes = await fetch_safetensors_size(model_id)
 
-        vision: VisionCardConfig | None = None
-        if (
-            config_data.vision_config is not None
-            and config_data.image_token_id is not None
-        ):
-            vision_model_type = str(
-                config_data.vision_config.get(  # type: ignore
-                    "model_type", config_data.model_type or ""
-                )
-            )
-            vision = VisionCardConfig(
-                image_token_id=config_data.image_token_id,
-                model_type=vision_model_type,
-            )
-
         return ModelCard(
             model_id=ModelId(model_id),
             storage_size=mem_size_bytes,
@@ -220,7 +198,7 @@ class ModelCard(CamelCaseModel):
             tasks=[ModelTask.TextGeneration],
             trust_remote_code=False,
             is_custom=True,
-            vision=vision,
+            vision=config_data.vision,
         )
 
 
@@ -255,9 +233,7 @@ class ConfigData(BaseModel):
             "decoder_layers",
         )
     )
-    vision_config: dict[str, Any] | None = None
-    image_token_id: int | None = None
-    model_type: str | None = None
+    vision: VisionCardConfig | None = None
 
     @property
     def supports_tensor(self) -> bool:
@@ -281,22 +257,31 @@ class ConfigData(BaseModel):
     @classmethod
     def defer_to_text_config(cls, data: dict[str, Any]):
         text_config = data.get("text_config")
-        if text_config is None:
-            return data
+        if text_config is not None:
+            for field in [
+                "architectures",
+                "hidden_size",
+                "num_key_value_heads",
+                "num_hidden_layers",
+                "num_layers",
+                "n_layer",
+                "n_layers",
+                "num_decoder_layers",
+                "decoder_layers",
+            ]:
+                if (val := text_config.get(field)) is not None:  # pyright: ignore[reportAny]
+                    data[field] = val
 
-        for field in [
-            "architectures",
-            "hidden_size",
-            "num_key_value_heads",
-            "num_hidden_layers",
-            "num_layers",
-            "n_layer",
-            "n_layers",
-            "num_decoder_layers",
-            "decoder_layers",
-        ]:
-            if (val := text_config.get(field)) is not None:  # pyright: ignore[reportAny]
-                data[field] = val
+        vision_config = data.get("vision_config")
+        image_token_id = data.get("image_token_id")
+        if vision_config is not None and image_token_id is not None:
+            model_type = str(
+                vision_config.get("model_type", data.get("model_type", ""))  # pyright: ignore[reportAny]
+            )
+            data["vision"] = VisionCardConfig(
+                image_token_id=int(image_token_id),  # pyright: ignore[reportAny]
+                model_type=model_type,
+            )
 
         return data
 

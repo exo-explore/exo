@@ -49,7 +49,6 @@ def plan(
     instances: Mapping[InstanceId, Instance],
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
     tasks: Mapping[TaskId, Task],
-    input_chunk_buffer: Mapping[CommandId, Mapping[int, object]] | None = None,
     input_chunk_counts: Mapping[CommandId, int] | None = None,
 ) -> Task | None:
     # Python short circuiting OR logic should evaluate these sequentially.
@@ -61,7 +60,7 @@ def plan(
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
-        or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer or {})
+        or _pending_tasks(runners, tasks, all_runners, input_chunk_counts or {})
     )
 
 
@@ -272,7 +271,7 @@ def _pending_tasks(
     runners: Mapping[RunnerId, RunnerSupervisor],
     tasks: Mapping[TaskId, Task],
     all_runners: Mapping[RunnerId, RunnerStatus],
-    input_chunk_buffer: Mapping[CommandId, Mapping[int, object]],
+    input_chunk_counts: Mapping[CommandId, int],
 ) -> Task | None:
     for task in tasks.values():
         # for now, just forward chat completions
@@ -288,7 +287,7 @@ def _pending_tasks(
             expected_image_chunks = task.task_params.total_input_chunks
         if expected_image_chunks > 0:
             cmd_id = task.command_id
-            received = len(input_chunk_buffer.get(cmd_id, {}))
+            received = input_chunk_counts.get(cmd_id, 0)
             if received < expected_image_chunks:
                 continue  # Wait for all chunks to arrive
 
