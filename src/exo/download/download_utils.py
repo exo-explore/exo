@@ -858,30 +858,41 @@ async def download_shard(
     if card.gguf_repo_id is not None and card.gguf_filename is not None:
         from exo.utils.backend import detect_backend
         if detect_backend() not in ("mlx_metal", "mlx_cuda"):
-            if shard.device_rank != 0:
-                # Rank 1+ nodes don't need the GGUF file — they run RPC servers only.
-                # Return a synthetic "complete" progress without downloading anything.
-                target_dir = EXO_DEFAULT_MODELS_DIR / str(card.gguf_repo_id).replace("/", "--")
-                target_dir.mkdir(parents=True, exist_ok=True)
-                dummy = RepoDownloadProgress(
+            target_dir = EXO_DEFAULT_MODELS_DIR / str(card.gguf_repo_id).replace("/", "--")
+            target_dir.mkdir(parents=True, exist_ok=True)
+            gguf_path = target_dir / card.gguf_filename
+
+            def _make_gguf_progress(downloaded: int, total: int, status: str) -> RepoDownloadProgress:
+                size = Memory.from_bytes(total)
+                return RepoDownloadProgress(
                     repo_id=str(card.gguf_repo_id),
                     repo_revision="main",
                     shard=shard,
-                    completed_files=1,
+                    completed_files=1 if status == "complete" else 0,
                     total_files=1,
-                    downloaded=card.storage_size,
-                    downloaded_this_session=card.storage_size,
-                    total=card.storage_size,
+                    downloaded=Memory.from_bytes(downloaded),
+                    downloaded_this_session=Memory.from_bytes(downloaded),
+                    total=size,
                     overall_speed=0.0,
                     overall_eta=timedelta(seconds=0),
-                    status="complete",
+                    status=status,
                     file_progress={},
                 )
+
+            # Status-check calls (skip_download=True) and rank-1 RPC nodes:
+            # just report whether the file exists locally, never download.
+            if skip_download or shard.device_rank != 0:
+                if gguf_path.exists():
+                    prog = _make_gguf_progress(gguf_path.stat().st_size, gguf_path.stat().st_size, "complete")
+                else:
+                    total = card.storage_size.in_bytes
+                    prog = _make_gguf_progress(0, total, "in_progress" if not skip_download else "pending")
                 try:
-                    await on_progress(shard, dummy)
+                    await on_progress(shard, prog)
                 except Exception:
-                    pass  # stream may not be ready yet; master will proceed regardless
-                return target_dir, dummy
+                    pass
+                return target_dir, prog
+
             return await _download_gguf_shard(shard, on_progress, skip_internet=skip_internet)
 
     if not skip_download:
