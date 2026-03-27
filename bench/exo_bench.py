@@ -494,7 +494,7 @@ def main() -> int:
                                     except Exception as e:
                                         logger.error(f"Concurrent request failed: {e}")
                                         batch_errors += 1
-                            batch_wall_s = time.perf_counter() - batch_t0
+                            batch_wall_s = max(x["elapsed_s"] for x, _ in batch_results) if batch_results else time.perf_counter() - batch_t0
 
                             for idx, (row, actual_pp_tokens) in enumerate(
                                 batch_results
@@ -523,28 +523,25 @@ def main() -> int:
                                 all_rows.append(row)
 
                             if batch_results:
-                                total_gen_tokens = sum(
-                                    x["stats"]["generation_tokens"]
-                                    for x, _ in batch_results
-                                )
-                                wall_agg_tps = total_gen_tokens / batch_wall_s if batch_wall_s > 0 else 0.0
-                                server_per_req_tps = mean(
+                                valid_gen_tps = [
                                     x["stats"]["generation_tps"]
                                     for x, _ in batch_results
                                     if x["stats"]["generation_tps"] > 0
-                                )
-                                server_agg_tps = server_per_req_tps * concurrency
+                                ]
+                                per_req_tps = max(valid_gen_tps) if valid_gen_tps else 0.0
+                                agg_gen_tps = per_req_tps * concurrency
                                 logger.info(
                                     f"[concurrent {concurrency}x]  "
-                                    f"wall_agg_tps={wall_agg_tps:.2f}  "
-                                    f"server_agg_tps={server_agg_tps:.2f}  "
+                                    f"agg_gen_tps={agg_gen_tps:.2f}  "
+                                    f"per_req_tps={per_req_tps:.2f}  "
                                     f"wall_s={batch_wall_s:.2f}  "
                                     f"errors={batch_errors}"
                                 )
 
                     if runs:
                         prompt_tps = mean(x["stats"]["prompt_tps"] for x in runs)
-                        per_req_tps = mean(x["stats"]["generation_tps"] for x in runs)
+                        valid_gen = [x["stats"]["generation_tps"] for x in runs if x["stats"]["generation_tps"] > 0]
+                        per_req_tps = max(valid_gen) if valid_gen else 0.0
                         gen_tps = per_req_tps * concurrency
                         ptok = mean(x["stats"]["prompt_tokens"] for x in runs)
                         gtok = mean(x["stats"]["generation_tokens"] for x in runs)
