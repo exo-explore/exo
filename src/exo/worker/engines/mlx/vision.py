@@ -134,11 +134,7 @@ class VisionEncoder:
     def __init__(self, config: VisionCardConfig, model_id: ModelId):
         self._config = config
         self._main_model_path = build_model_path(model_id)
-        self._model_path = (
-            build_model_path(ModelId(config.weights_repo))
-            if config.weights_repo
-            else self._main_model_path
-        )
+        self._model_path = build_model_path(ModelId(config.weights_repo))
         self._vision_tower: nn.Module | None = None
         self._projector: nn.Module | None = None
         self._processor: BaseImageProcessor | None = None
@@ -466,7 +462,7 @@ def _find_media_regions(
     return regions
 
 
-class VisionPipeline:
+class VisionProcessor:
     """
     Pipeline for vision models:
     1. Encode images into features (or grab from cache)
@@ -476,7 +472,7 @@ class VisionPipeline:
     """
 
     def __init__(self, config: VisionCardConfig, model_id: ModelId):
-        self._config = config
+        self.vision_config = config
         self._encoder = VisionEncoder(config, model_id)
         self._feature_cache: dict[str, tuple[mx.array, list[int]]] = {}
         self._feature_cache_max = 32
@@ -512,12 +508,12 @@ class VisionPipeline:
             f"({image_features.shape[0]} tokens, per-image: {n_tokens_per_image})"
         )
 
-        image_token = self._config.image_token
+        image_token = self.vision_config.image_token
         if image_token is None:
-            image_token = tokenizer.decode([self._config.image_token_id])
+            image_token = tokenizer.decode([self.vision_config.image_token_id])
 
         formatted_messages = _format_vlm_messages(
-            chat_template_messages, self._config.model_type
+            chat_template_messages, self.vision_config.model_type
         )
 
         prompt = build_vision_prompt(
@@ -534,7 +530,7 @@ class VisionPipeline:
         prompt_tokens: mx.array = encode_prompt(tokenizer, prompt)
         prompt_tokens = fix_unmatched_think_end_tokens(prompt_tokens, tokenizer)
         n_image_tokens = int(
-            mx.sum(mx.equal(prompt_tokens, self._config.image_token_id)).item()
+            mx.sum(mx.equal(prompt_tokens, self.vision_config.image_token_id)).item()
         )
         logger.info(
             f"Encoded prompt: {len(prompt_tokens)} tokens, {n_image_tokens} image pad tokens"
@@ -544,14 +540,14 @@ class VisionPipeline:
             model,
             prompt_tokens,
             image_features,
-            self._config.image_token_id,
+            self.vision_config.image_token_id,
         )
         mx.eval(embeddings)
 
         media_regions = _find_media_regions(
             prompt_tokens,
             images,
-            self._config.image_token_id,
+            self.vision_config.image_token_id,
         )
 
         return VisionResult(
@@ -562,25 +558,14 @@ class VisionPipeline:
         )
 
 
-_vision_pipeline: VisionPipeline | None = None
-_vision_pipeline_model_type: str | None = None
-
-
 def prepare_vision(
     images: list[str] | None,
     chat_template_messages: list[dict[str, Any]] | None,
-    vision_config: VisionCardConfig | None,
+    vision_processor: VisionProcessor,
     tokenizer: TokenizerWrapper,
     model: Model,
-    model_id: ModelId,
 ) -> VisionResult | None:
     if not images:
-        return None
-
-    if vision_config is None:
-        logger.warning(
-            "Images sent to a model without vision support — ignoring images"
-        )
         return None
     if chat_template_messages is None:
         logger.warning(
@@ -588,16 +573,7 @@ def prepare_vision(
         )
         return None
 
-    global _vision_pipeline, _vision_pipeline_model_type
-    # Only create the vision pipeline once.
-    if (
-        _vision_pipeline is None
-        or _vision_pipeline_model_type != vision_config.model_type
-    ):
-        _vision_pipeline = VisionPipeline(vision_config, model_id)
-        _vision_pipeline_model_type = vision_config.model_type
-
-    return _vision_pipeline.process(
+    return vision_processor.process(
         images=images,
         chat_template_messages=chat_template_messages,
         tokenizer=tokenizer,
