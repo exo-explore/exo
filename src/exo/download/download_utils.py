@@ -852,11 +852,33 @@ async def download_shard(
     allow_patterns: list[str] | None = None,
     on_connection_lost: Callable[[], None] = lambda: None,
 ) -> tuple[Path, RepoDownloadProgress]:
-    # For non-MLX backends, download the GGUF file instead of MLX safetensors
+    # For non-MLX backends, download the GGUF file instead of MLX safetensors.
+    # Only rank 0 needs the model file; rank 1+ nodes run RPC servers and don't load it.
     card = shard.model_card
     if card.gguf_repo_id is not None and card.gguf_filename is not None:
         from exo.utils.backend import detect_backend
         if detect_backend() not in ("mlx_metal", "mlx_cuda"):
+            if shard.device_rank != 0:
+                # Rank 1+ nodes don't need the GGUF file — report instant completion
+                target_dir = EXO_DEFAULT_MODELS_DIR / str(card.gguf_repo_id).replace("/", "--")
+                target_dir.mkdir(parents=True, exist_ok=True)
+                size = card.storage_size.in_bytes
+                dummy = RepoDownloadProgress(
+                    repo_id=str(card.gguf_repo_id),
+                    repo_revision="main",
+                    shard=shard,
+                    completed_files=1,
+                    total_files=1,
+                    downloaded=card.storage_size,
+                    downloaded_this_session=card.storage_size,
+                    total=card.storage_size,
+                    overall_speed=0.0,
+                    overall_eta=timedelta(seconds=0),
+                    status="complete",
+                    file_progress={},
+                )
+                await on_progress(shard, dummy)
+                return target_dir, dummy
             return await _download_gguf_shard(shard, on_progress, skip_internet=skip_internet)
 
     if not skip_download:
