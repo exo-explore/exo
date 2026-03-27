@@ -1,6 +1,6 @@
 [project]
 name = "exo"
-version = "0.3.68"
+version = "0.3.69"
 description = "Exo"
 readme = "README.md"
 requires-python = ">=3.13"
