@@ -22,7 +22,6 @@ from exo.api.types import (
     TopLogprobItem,
     Usage,
 )
-from exo.shared.models.model_cards import VisionCardConfig
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType, Model
@@ -59,6 +58,7 @@ from exo.worker.engines.mlx.utils_mlx import (
 )
 from exo.worker.engines.mlx.vision import (
     MediaRegion,
+    VisionProcessor,
     VisionResult,
     get_inner_model,
     prepare_vision,
@@ -70,9 +70,10 @@ generation_stream = mx.new_stream(mx.default_device())
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 
 
+@contextlib.contextmanager
 def patch_embed_tokens(
     model: Model, embeddings: mx.array, start_offset: int = 0, token_count: int = 0
-) -> Callable[[], None]:
+) -> Generator[None]:
     inner = get_inner_model(model)  # type: ignore
     original_embed = inner.embed_tokens  # type: ignore
     end_offset = start_offset + token_count
@@ -95,11 +96,10 @@ def patch_embed_tokens(
                 setattr(_inject, attr, getattr(original_embed, attr))  # type: ignore
 
     inner.embed_tokens = _inject
-
-    def _cleanup() -> None:
+    try:
+        yield
+    finally:
         inner.embed_tokens = original_embed
-
-    return _cleanup
 
 
 class PrefillCancelled(BaseException):
@@ -487,7 +487,7 @@ def mlx_generate(
     on_prefill_progress: Callable[[int, int], None] | None = None,
     distributed_prompt_progress_callback: Callable[[], None] | None = None,
     on_generation_token: Callable[[], None] | None = None,
-    vision_config: VisionCardConfig | None = None,
+    vision_processor: VisionProcessor | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -500,19 +500,19 @@ def mlx_generate(
     all_prompt_tokens = fix_unmatched_think_end_tokens(all_prompt_tokens, tokenizer)
 
     vision: VisionResult | None = None
-    try:
-        vision = prepare_vision(
-            images=task.images,
-            chat_template_messages=task.chat_template_messages,
-            vision_config=vision_config,
-            tokenizer=tokenizer,
-            model=model,
-            model_id=task.model,
-        )
-    except Exception:
-        logger.opt(exception=True).warning(
-            "Vision processing failed, falling back to text-only"
-        )
+    if vision_processor is not None:
+        try:
+            vision = prepare_vision(
+                images=task.images,
+                chat_template_messages=task.chat_template_messages,
+                vision_processor=vision_processor,
+                tokenizer=tokenizer,
+                model=model,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Vision processing failed, falling back to text-only"
+            )
     if vision is not None:
         all_prompt_tokens = vision.prompt_tokens
     media_regions: list[MediaRegion] = vision.media_regions if vision else []
@@ -564,14 +564,14 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
-    # Prefill cache — for vision, monkey-patch embed_tokens to inject pre-computed embeddings
-    vision_cleanup: Callable[[], None] | None = None
-    if vision is not None:
-        vision_cleanup = patch_embed_tokens(
+    maybe_vision_ctx = (
+        patch_embed_tokens(
             model, vision.embeddings, prefix_hit_length, len(prompt_tokens) - 1
         )
-
-    try:
+        if vision is not None
+        else contextlib.nullcontext()
+    )
+    with maybe_vision_ctx:
         prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
             model,
             tokenizer,
@@ -582,9 +582,6 @@ def mlx_generate(
             on_prefill_progress,
             distributed_prompt_progress_callback,
         )
-    finally:
-        if vision_cleanup is not None:
-            vision_cleanup()
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
     # stream_generate starts from the last token

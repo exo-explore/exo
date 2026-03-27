@@ -129,7 +129,7 @@ class ResumableShardDownloader(ShardDownloader):
             not config_only
             and not self.offline
             and shard.model_card.vision
-            and shard.model_card.vision.weights_repo
+            and shard.model_card.vision.weights_repo != str(shard.model_card.model_id)
         ):
             vision_repo = shard.model_card.vision.weights_repo
             vision_card = ModelCard(

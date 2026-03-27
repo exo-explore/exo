@@ -1,3 +1,4 @@
+import contextlib
 import time
 from dataclasses import dataclass, field
 from typing import Callable, cast
@@ -21,7 +22,6 @@ from exo.api.types import (
     TopLogprobItem,
     Usage,
 )
-from exo.shared.models.model_cards import VisionCardConfig
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType, Model
 from exo.shared.types.text_generation import TextGenerationTaskParams
@@ -43,6 +43,7 @@ from exo.worker.engines.mlx.generator.generate import (
 from exo.worker.engines.mlx.utils_mlx import fix_unmatched_think_end_tokens
 from exo.worker.engines.mlx.vision import (
     MediaRegion,
+    VisionProcessor,
     VisionResult,
     prepare_vision,
 )
@@ -86,7 +87,7 @@ class ExoBatchGenerator:
     tokenizer: TokenizerWrapper
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
-    vision_config: VisionCardConfig | None = None
+    vision_processor: VisionProcessor | None = None
 
     _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
@@ -123,15 +124,14 @@ class ExoBatchGenerator:
         vision: VisionResult | None = None
         media_regions: list[MediaRegion] = []
 
-        if self.vision_config is not None:
+        if self.vision_processor is not None:
             try:
                 vision = prepare_vision(
                     images=task_params.images,
                     chat_template_messages=task_params.chat_template_messages,
-                    vision_config=self.vision_config,
+                    vision_processor=self.vision_processor,
                     tokenizer=self.tokenizer,
                     model=self.model,
-                    model_id=task_params.model,
                 )
             except Exception:
                 logger.opt(exception=True).warning(
@@ -176,13 +176,14 @@ class ExoBatchGenerator:
             top_k=task_params.top_k if task_params.top_k is not None else 0,
         )
 
-        vision_cleanup: Callable[[], None] | None = None
-        if vision is not None:
-            vision_cleanup = patch_embed_tokens(
+        vision_ctx = (
+            patch_embed_tokens(
                 self.model, vision.embeddings, prefix_hit_length, len(prompt_tokens) - 1
             )
-
-        try:
+            if vision is not None
+            else contextlib.nullcontext()
+        )
+        with vision_ctx:
             _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
                 self.model,
                 self.tokenizer,
@@ -193,9 +194,6 @@ class ExoBatchGenerator:
                 on_prefill_progress,
                 distributed_prompt_progress_callback,
             )
-        finally:
-            if vision_cleanup is not None:
-                vision_cleanup()
 
         # We need to clamp rotating kv caches to max size so that mlx lm's _merge_caches behaves
         for c in cache:
