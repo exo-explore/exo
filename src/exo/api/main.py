@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import anyio
@@ -342,7 +342,8 @@ class API:
         self.app.get("/ollama/api/ps")(self.ollama_ps)
         self.app.get("/ollama/api/version")(self.ollama_version)
 
-        self.app.get("/state")(lambda: self.state)
+        self.app.get("/state")(self.get_state)
+        self.app.get("/state/{path:path}")(self.get_state)
         self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
@@ -353,6 +354,24 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
+
+    def get_state(self, path: str = ""):
+        if path == "":
+            return self.state
+        try:
+            x = self.state.model_dump(by_alias=True)
+            for attr in path.split("/"):
+                if attr != "":
+                    if isinstance(x, dict):
+                        x = x[attr]  # pyright: ignore[reportUnknownVariableType]
+                    elif isinstance(x, list):
+                        x = x[int(attr)]  # pyright: ignore[reportUnknownVariableType]
+            return cast(Any, x)  # pyright: ignore[reportAny]
+        except Exception as e:
+            raise HTTPException(
+                status_code=404,
+                detail=f"unable to find path '{path.replace('/', '.')}' in state json",
+            ) from e
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
