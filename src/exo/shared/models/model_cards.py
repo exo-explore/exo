@@ -22,8 +22,7 @@ from tomlkit.exceptions import TOMLKitError
 from exo.shared.constants import (
     EXO_CUSTOM_MODEL_CARDS_DIR,
     EXO_ENABLE_IMAGE_MODELS,
-    EXO_MODELS_DIR,
-    EXO_MODELS_PATH,
+    EXO_MODELS_DIRS,
     RESOURCES_DIR,
 )
 from exo.shared.types.common import ModelId
@@ -43,13 +42,9 @@ _card_cache: dict[ModelId, "ModelCard"] = {}
 
 def _detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
     import json
-    import pathlib
 
     normalized = model_id.normalize()
-    candidates = [pathlib.Path(str(EXO_MODELS_DIR)) / normalized]
-    if EXO_MODELS_PATH:
-        candidates = [p / normalized for p in EXO_MODELS_PATH] + candidates
-    for model_dir in candidates:
+    for model_dir in [d / normalized for d in EXO_MODELS_DIRS]:
         config_path = model_dir / "config.json"
         if not config_path.exists():
             continue
