@@ -12,6 +12,8 @@ from exo.master.placement import (
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
+from exo.shared.models.model_cards import ModelId
+from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.commands import (
     AddCustomModelCard,
     CreateInstance,
@@ -31,6 +33,7 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
+    ChunkGenerated,
     CustomModelCardAdded,
     CustomModelCardDeleted,
     Event,
@@ -63,6 +66,7 @@ from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
@@ -133,6 +137,15 @@ class Master:
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                 ):
+                                    # Skip instances where any runner has failed —
+                                    # the worker won't dispatch tasks to them anyway
+                                    # (plan._kill_runner short-circuits), so routing
+                                    # here just causes the API to hang.
+                                    if any(
+                                        isinstance(self.state.runners.get(rid), RunnerFailed)
+                                        for rid in instance.shard_assignments.node_to_runner.values()
+                                    ):
+                                        continue
                                     task_count = sum(
                                         1
                                         for task in self.state.tasks.values()
@@ -370,6 +383,18 @@ class Master:
                         await self.event_sender.send(event)
                 except ValueError as e:
                     logger.opt(exception=e).warning("Error in command processor")
+                    # For text generation commands, send an error chunk so the API
+                    # doesn't hang waiting for chunks that will never arrive.
+                    if isinstance(command, TextGeneration):
+                        await self.event_sender.send(
+                            ChunkGenerated(
+                                command_id=command.command_id,
+                                chunk=ErrorChunk(
+                                    model=ModelId(command.task_params.model),
+                                    error_message=str(e),
+                                ),
+                            )
+                        )
 
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
@@ -383,6 +408,17 @@ class Master:
                             InstanceDeleted(instance_id=instance_id)
                         )
                         break
+                else:
+                    # Also clean up instances where any runner has failed.
+                    # After a crash the node stays connected (EXO process alive)
+                    # but the runners are dead — without this, the instance
+                    # persists as a zombie that can never serve requests.
+                    for rid in instance.shard_assignments.node_to_runner.values():
+                        if isinstance(self.state.runners.get(rid), RunnerFailed):
+                            await self.event_sender.send(
+                                InstanceDeleted(instance_id=instance_id)
+                            )
+                            break
 
             # time out dead nodes
             for node_id, time in self.state.last_seen.items():
