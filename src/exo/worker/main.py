@@ -139,6 +139,24 @@ class Worker:
                 if isinstance(event, CustomModelCardDeleted):
                     await delete_custom_card(event.model_id)
 
+    def _find_peer_with_model(self, model_id) -> str | None:
+        """Find a peer node that has already completed downloading this model."""
+        for node_id, downloads in self.state.downloads.items():
+            if node_id == self.node_id:
+                continue
+            for mid, status in downloads.items():
+                if mid == model_id and isinstance(status, DownloadCompleted):
+                    # Find a reachable IP for this peer from topology
+                    for conn in self.state.topology.out_edges(self.node_id):
+                        if conn.sink == node_id and isinstance(conn.edge, SocketConnection):
+                            ip = conn.edge.sink_multiaddr.ip_address
+                            port = conn.edge.sink_multiaddr.port
+                            logger.info(
+                                f"P2P: found peer {node_id[:20]}... at {ip}:{port} with model {model_id}"
+                            )
+                            return f"http://{ip}:{port}"
+        return None
+
     async def plan_step(self):
         while True:
             await anyio.sleep(0.1)
@@ -202,12 +220,14 @@ class Worker:
                             )
                         )
                     else:
+                        peer_base_url = self._find_peer_with_model(shard.model_card.model_id)
                         await self.download_command_sender.send(
                             ForwarderDownloadCommand(
                                 origin=self._system_id,
                                 command=StartDownload(
                                     target_node_id=self.node_id,
                                     shard_metadata=shard,
+                                    peer_base_url=peer_base_url,
                                 ),
                             )
                         )

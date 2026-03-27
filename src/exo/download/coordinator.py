@@ -115,8 +115,8 @@ class DownloadCoordinator:
                     continue
 
                 match cmd.command:
-                    case StartDownload(shard_metadata=shard):
-                        await self._start_download(shard)
+                    case StartDownload(shard_metadata=shard, peer_base_url=peer_base_url):
+                        await self._start_download(shard, peer_base_url=peer_base_url)
                     case DeleteDownload(model_id=model_id):
                         await self._delete_download(model_id)
                     case CancelDownload(model_id=model_id):
@@ -137,7 +137,7 @@ class DownloadCoordinator:
                 NodeDownloadProgress(download_progress=pending)
             )
 
-    async def _start_download(self, shard: ShardMetadata) -> None:
+    async def _start_download(self, shard: ShardMetadata, peer_base_url: str | None = None) -> None:
         model_id = shard.model_card.model_id
 
         # Check if already downloading, complete, or recently failed
@@ -210,10 +210,10 @@ class DownloadCoordinator:
             return
 
         # Start actual download
-        self._start_download_task(shard, initial_progress)
+        self._start_download_task(shard, initial_progress, peer_base_url=peer_base_url)
 
     def _start_download_task(
-        self, shard: ShardMetadata, initial_progress: RepoDownloadProgress
+        self, shard: ShardMetadata, initial_progress: RepoDownloadProgress, peer_base_url: str | None = None
     ) -> None:
         model_id = shard.model_card.model_id
 
@@ -232,7 +232,7 @@ class DownloadCoordinator:
         async def download_wrapper(cancel_scope: anyio.CancelScope) -> None:
             try:
                 with cancel_scope:
-                    await self.shard_downloader.ensure_shard(shard)
+                    await self.shard_downloader.ensure_shard(shard, peer_base_url=peer_base_url)
             except Exception as e:
                 logger.error(f"Download failed for {model_id}: {e}")
                 failed = DownloadFailed(

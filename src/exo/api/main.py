@@ -1,3 +1,4 @@
+import os
 import base64
 import contextlib
 import json
@@ -352,6 +353,10 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
+
+        # P2P model distribution endpoints
+        self.app.get("/p2p/models/{model_id:path}/files")(self.list_model_files)
+        self.app.get("/p2p/models/{model_id:path}/{file_path:path}")(self.serve_model_file)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -1655,6 +1660,50 @@ class API:
                 limit=limit,
             )
         )
+
+    async def list_model_files(self, model_id: str) -> JSONResponse:
+        """List available files for a model (P2P endpoint)."""
+        normalized = model_id.replace("/", "--")
+        from exo.shared.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
+
+        # Search in EXO_MODELS_DIR first, then EXO_MODELS_PATH
+        search_dirs: list[Path] = [EXO_MODELS_DIR / normalized]
+        if EXO_MODELS_PATH is not None:
+            search_dirs.extend(p / normalized for p in EXO_MODELS_PATH)
+
+        for model_dir in search_dirs:
+            if model_dir.is_dir():
+                files: list[str] = []
+                for dirpath, _, filenames in os.walk(model_dir):
+                    for fname in filenames:
+                        if fname.endswith(".partial"):
+                            continue
+                        full = Path(dirpath) / fname
+                        rel = str(full.relative_to(model_dir))
+                        files.append(rel)
+                return JSONResponse({"model_id": model_id, "files": sorted(files)})
+
+        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
+
+    async def serve_model_file(self, model_id: str, file_path: str) -> FileResponse:
+        """Serve a model file to a peer node (P2P endpoint)."""
+        # Path traversal protection
+        if ".." in file_path:
+            raise HTTPException(status_code=400, detail="Invalid file path")
+
+        normalized = model_id.replace("/", "--")
+        from exo.shared.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
+
+        search_dirs: list[Path] = [EXO_MODELS_DIR / normalized]
+        if EXO_MODELS_PATH is not None:
+            search_dirs.extend(p / normalized for p in EXO_MODELS_PATH)
+
+        for model_dir in search_dirs:
+            candidate = model_dir / file_path
+            if candidate.is_file():
+                return FileResponse(str(candidate))
+
+        raise HTTPException(status_code=404, detail=f"File not found: {model_id}/{file_path}")
 
     async def run(self):
         shutdown_ev = anyio.Event()

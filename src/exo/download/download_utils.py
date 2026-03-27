@@ -486,7 +486,16 @@ async def download_file_with_retry(
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
     on_connection_lost: Callable[[], None] = lambda: None,
     skip_internet: bool = False,
+    peer_base_url: str | None = None,
 ) -> Path:
+    # Try P2P download first if a peer has the model
+    if peer_base_url:
+        success = await _download_file_from_peer(
+            peer_base_url, model_id, path, target_dir, on_progress
+        )
+        if success:
+            return target_dir / path
+
     n_attempts = 3
     for attempt in range(n_attempts):
         try:
@@ -718,6 +727,70 @@ async def get_downloaded_size(path: Path) -> int:
     return 0
 
 
+async def _download_file_from_peer(
+    peer_base_url: str,
+    model_id: ModelId,
+    file_path: str,
+    target_dir: Path,
+    on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
+) -> bool:
+    """Download a single file from a peer node. Returns True on success."""
+    normalized = str(model_id).replace("/", "--")
+    url = f"{peer_base_url}/p2p/models/{normalized}/{file_path}"
+    local_path = target_dir / file_path
+    partial_path = target_dir / f"{file_path}.partial"
+
+    # If file already exists, skip
+    if await aios.path.exists(local_path):
+        return True
+
+    await aios.makedirs(local_path.parent, exist_ok=True)
+
+    # Support resume via Range header
+    existing_size = 0
+    if await aios.path.exists(partial_path):
+        existing_size = (await aios.stat(partial_path)).st_size
+
+    headers: dict[str, str] = {}
+    if existing_size > 0:
+        headers["Range"] = f"bytes={existing_size}-"
+
+    try:
+        async with (
+            aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=3600, connect=10, sock_read=60)
+            ) as session,
+            session.get(url, headers=headers) as resp,
+        ):
+            if resp.status == 404:
+                logger.debug(f"P2P: peer does not have {file_path}")
+                return False
+            if resp.status not in (200, 206):
+                logger.warning(f"P2P: unexpected status {resp.status} for {file_path}")
+                return False
+
+            total_size = existing_size + (resp.content_length or 0)
+            n_read = existing_size
+
+            async with aiofiles.open(
+                partial_path, "ab" if existing_size > 0 else "wb"
+            ) as f:
+                while chunk := await resp.content.read(8 * 1024 * 1024):
+                    n_read += await f.write(chunk)
+                    if total_size > 0:
+                        on_progress(n_read, total_size, False)
+
+        # Rename partial to final
+        await aios.rename(partial_path, local_path)
+        if total_size > 0:
+            on_progress(total_size, total_size, True)
+        logger.info(f"P2P: successfully downloaded {file_path} from peer")
+        return True
+    except Exception as e:
+        logger.warning(f"P2P download failed for {file_path}: {e}")
+        return False
+
+
 async def download_shard(
     shard: ShardMetadata,
     on_progress: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
@@ -726,6 +799,7 @@ async def download_shard(
     skip_internet: bool = False,
     allow_patterns: list[str] | None = None,
     on_connection_lost: Callable[[], None] = lambda: None,
+    peer_base_url: str | None = None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
         logger.debug(f"Downloading {shard.model_card.model_id=}")
@@ -881,6 +955,7 @@ async def download_shard(
                 ),
                 on_connection_lost=on_connection_lost,
                 skip_internet=skip_internet,
+                peer_base_url=peer_base_url,
             )
 
     if not skip_download:
