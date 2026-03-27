@@ -48,25 +48,14 @@
   <button
     type="button"
     onclick={() => onSelect(null)}
-    class="group flex flex-col items-center justify-center p-2 sm:p-2 rounded transition-all duration-200 cursor-pointer min-h-[44px] sm:min-h-0 {selectedFamily ===
+    class="group flex items-center justify-center px-3 py-2.5 rounded transition-all duration-200 cursor-pointer min-h-[44px] sm:min-h-0 {selectedFamily ===
     null
       ? 'bg-exo-yellow/20 border-l-2 border-exo-yellow'
       : 'hover:bg-white/5 border-l-2 border-transparent'}"
     title="All models"
   >
-    <svg
-      class="w-6 h-6 {selectedFamily === null
-        ? 'text-exo-yellow'
-        : 'text-white/50 group-hover:text-white/70'}"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-    >
-      <path
-        d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z"
-      />
-    </svg>
     <span
-      class="text-[11px] font-mono mt-0.5 {selectedFamily === null
+      class="text-[12px] font-mono font-medium {selectedFamily === null
         ? 'text-exo-yellow'
         : 'text-white/40 group-hover:text-white/60'}">All</span
     >
