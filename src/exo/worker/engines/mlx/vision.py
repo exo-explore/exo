@@ -38,7 +38,7 @@ _video_processor_patched = False
 
 def _patch_video_processor() -> None:
     """Patch so we don't crash horribly when torch vision isn't installed"""
-    # TODO: Consider whether we want torch vision.
+    # TODO: Update if we add torch vision.
     global _video_processor_patched
     if _video_processor_patched:
         return
