@@ -17,8 +17,7 @@ dependencies = [
   "loguru>=0.7.3",
   "exo_pyo3_bindings",                       # rust bindings
   "anyio==4.11.0",
-  "mlx; sys_platform == 'darwin'",
-  "mlx==0.30.6; sys_platform == 'linux'",
+  "mlx",
   "mlx-lm",
   "tiktoken>=0.12.0",                        # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
@@ -46,10 +45,10 @@ dev = [
 ]
 
 [project.optional-dependencies]
+build = ["nanobind"]
 cuda = [
   "torch>=2.10.0; sys_platform == 'linux'",
   "vllm>=0.13.0; sys_platform == 'linux'",
-  "mlx-cuda-13==0.30.6; sys_platform == 'linux'",
   "fastsafetensors>=0.1.10; sys_platform == 'linux'",
 ]
 
@@ -62,13 +61,10 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
-mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
+mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/eval-left-padding-in-batched-rotation" }
 torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
 vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
-# Uncomment to use local mlx/mlx-lm development versions:
-# mlx = { path = "/Users/Shared/mlx", editable=true }
-# mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
@@ -130,22 +126,43 @@ root = "src"
 [tool.uv]
 required-version = ">=0.8.6"
 prerelease = "allow"
-environments = [
-  "sys_platform == 'darwin'",
-  "sys_platform == 'linux' and platform_machine == 'aarch64'",
-]
-no-binary-package = ["vllm"]
-no-build-isolation-package = ["vllm"]
-extra-build-dependencies = { vllm = [
-  "cmake>=3.26.1",
-  "ninja",
-  "packaging>=24.2",
-  "setuptools>=77.0.3,<81.0.0",
-  "setuptools-scm>=8.0",
-  "wheel",
-  "jinja2",
-] }
+environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
+override-dependencies = ["compressed-tensors==0.13.0", "torch==2.10.0"]
+
+[tool.uv.extra-build-dependencies]
+mlx = [
+  "setuptools",
+  "typing-extensions",
+  "nanobind",
+  "pybind11",
+  "wheel",
+  "cmake",
+  "ninja",
+]
+mlx-lm = ["setuptools"]
+xgrammar = [
+  "nanobind",
+  "setuptools",
+  "scikit-build-core",
+  "packaging",
+  "pathspec",
+]
+rouge-score = ["setuptools"]
+sacrebleu = ["setuptools"]
+sqlitedict = ["setuptools"]
+word2number = ["setuptools"]
+vllm = [
+  "setuptools",
+  "setuptools-scm",
+  "scikit-build-core",
+  "jinja2",
+  "wheel",
+  "markupsafe",
+  "typing-extensions",
+]
+fastsafetensors = ["setuptools", "pybind11"]
+torch = ["typing-extensions"]
 
 ###
 # ruff configuration
@@ -153,7 +170,6 @@ conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
 
 [tool.ruff]
 extend-exclude = [
-  "shared/protobufs/**",
   "*mlx_typings/**",
   "*cuda_typings/**",
   "rust/exo_pyo3_bindings/**",
