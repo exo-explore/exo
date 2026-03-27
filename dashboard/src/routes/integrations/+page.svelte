@@ -6,7 +6,7 @@
   import { instances, refreshState } from "$lib/stores/app.svelte";
   import { onMount } from "svelte";
 
-  const apiUrl = browser ? window.location.origin : "http://localhost:52415";
+  const apiUrl = browser ? window.location.origin.replace("localhost", "127.0.0.1") : "http://127.0.0.1:52415";
 
   const instancesData = $derived(instances());
 
@@ -86,7 +86,6 @@
   let codexModel = $state("");
   let codexMcpPath = $state("/Users/username");
   let openClawModel = $state("");
-  let openClawToolsProfile = $state("coding");
   $effect(() => {
     const def = modelsBySize.length > 0 ? modelsBySize[0] : "your-model-id";
     codexModel = def;
@@ -185,13 +184,30 @@
   const openClawConfig = $derived(
     JSON.stringify(
       {
-        model: openClawModel,
-        modelProvider: {
-          name: "exo",
-          baseURL: `${apiUrl}/v1`,
-          apiKey: "x",
+        gateway: { mode: "local" },
+        models: {
+          providers: {
+            exo: {
+              baseUrl: `${apiUrl}/v1`,
+              apiKey: "x",
+              api: "openai-completions",
+              models: [
+                {
+                  id: openClawModel,
+                  name: "exo local",
+                  input: (modelCapabilities[openClawModel] || []).includes("vision")
+                    ? ["text", "image"]
+                    : ["text"],
+                },
+              ],
+            },
+          },
         },
-        toolsProfile: openClawToolsProfile,
+        agents: {
+          defaults: {
+            model: `exo/${openClawModel}`,
+          },
+        },
       },
       null,
       2,
@@ -202,24 +218,53 @@
     `OLLAMA_HOST=${apiUrl}/ollama ollama run ${modelsBySize.length > 0 ? modelsBySize[0] : "your-model-id"}`,
   );
 
-  const n8nConfig = $derived.by(() => {
-    const steps = [
-      "1. In n8n, go to Credentials → New Credential → OpenAI API",
+  const openWebUiCommand = $derived(
+    [
+      `docker run -d -p 3000:8080 \\`,
+      `  -e OLLAMA_BASE_URL=${apiUrl.replace("localhost", "host.docker.internal")}/ollama \\`,
+      `  -v open-webui:/app/backend/data \\`,
+      `  --name open-webui \\`,
+      `  ghcr.io/open-webui/open-webui:main`,
+    ].join("\n"),
+  );
+
+  const n8nDockerCommand = $derived(
+    [
+      `docker run -d -p 5678:5678 \\`,
+      `  -v n8n_data:/home/node/.n8n \\`,
+      `  --name n8n \\`,
+      `  docker.n8n.io/n8nio/n8n`,
+    ].join("\n"),
+  );
+
+  const n8nCredentialSteps = $derived(
+    [
+      `1. Go to Credentials → Add Credential → search "OpenAI API"`,
       `2. Set API Key to: x`,
-      `3. Set Base URL to: ${apiUrl}/v1`,
-      "4. Save the credential",
-      `5. In your AI Agent or LLM Chain node, use the OpenAI Chat Model sub-node`,
-      `6. Enter model name: ${modelsBySize.length > 0 ? modelsBySize[0] : "your-model-id"}`,
-    ];
-    return steps.join("\n");
-  });
+      `3. Set Base URL to: ${apiUrl.replace("127.0.0.1", "host.docker.internal").replace("localhost", "host.docker.internal")}/v1`,
+      `4. Save the credential`,
+    ].join("\n"),
+  );
+
+  const n8nWorkflowSteps = $derived(
+    [
+      `1. Create a new workflow → "Start from Scratch"`,
+      `2. Add an "AI Agent" or "Basic LLM Chain" node`,
+      `3. Inside it, add an "OpenAI Chat Model" sub-node`,
+      `4. Select the OpenAI credential you just created`,
+      `5. Set Model to "From list" and pick your model (e.g. ${modelsBySize.length > 0 ? modelsBySize[0] : "your-model-id"})`,
+      `6. Optionally toggle "Use Responses API", add Built-in Tools, or click "Add Option" for sampling settings`,
+      `7. Connect a "Chat Trigger" node for interactive chat`,
+      `8. On the Chat Trigger, enable "Allow File Uploads" for vision`,
+    ].join("\n"),
+  );
 
   const tabs = [
     "Claude Code",
     "OpenCode",
     "Codex",
     "OpenClaw",
-    "Ollama",
+    "Open WebUI",
     "n8n",
   ] as const;
   type Tab = (typeof tabs)[number];
@@ -430,52 +475,77 @@
           language="bash"
         />
       {:else if activeTab === "OpenClaw"}
-        <div class="flex gap-3 text-xs">
-          {#if runningModels.length > 1}
-            <div>
-              <span
-                class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1"
-                >Model</span
-              >
-              <select bind:value={openClawModel} class={selectClass}>
-                {#each runningModels as model}
-                  <option value={model}>{model.split("/").pop()}</option>
-                {/each}
-              </select>
-            </div>
-          {/if}
-          <div>
-            <span
-              class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1"
-              >Tools Profile</span
-            >
-            <select bind:value={openClawToolsProfile} class={selectClass}>
-              {#each ["minimal", "coding", "messaging", "full"] as profile}
-                <option value={profile}>{profile}</option>
+        {#if runningModels.length > 1}
+          <div class="text-xs">
+            <span class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1">Model</span>
+            <select bind:value={openClawModel} class={selectClass}>
+              {#each runningModels as model}
+                <option value={model}>{model.split("/").pop()}</option>
               {/each}
             </select>
           </div>
-        </div>
+        {/if}
         <IntegrationCard
           title="Config File"
           subtitle="~/.openclaw/openclaw.json"
-          description="Add this to your OpenClaw config."
+          description="Add this to your OpenClaw config. If you haven't installed OpenClaw yet, run: npm install -g openclaw@latest"
           config={openClawConfig}
         />
-      {:else if activeTab === "Ollama"}
         <IntegrationCard
-          title="Shell Command"
+          title="Setup Commands"
           subtitle="Run in terminal"
-          description="Set OLLAMA_HOST to point the Ollama CLI at your exo cluster."
+          description="After saving the config, run these commands to fix metadata and start the gateway."
+          config={`openclaw doctor --fix${(modelCapabilities[openClawModel] || []).includes("vision") ? `\nopenclaw models set-image exo/${openClawModel}` : ""}\nopenclaw gateway &\nopenclaw dashboard`}
+          language="bash"
+        />
+      {:else if activeTab === "Open WebUI"}
+        <IntegrationCard
+          title="1. Start Open WebUI"
+          subtitle="Run in terminal"
+          description="Run this to start Open WebUI."
+          config={openWebUiCommand}
+          language="bash"
+        />
+        <IntegrationCard
+          title="2. Open & Select Model"
+          subtitle="http://localhost:3000"
+          description={`Open http://localhost:3000 in your browser. Select the running model from the dropdown at the top: ${runningModels.length > 0 ? runningModels.join(", ") : "no models running"}`}
+          config={"open http://localhost:3000"}
+          language="bash"
+        />
+        <IntegrationCard
+          title="Ollama CLI"
+          subtitle="Run in terminal"
+          description="Or use the Ollama CLI directly."
           config={ollamaCommand}
           language="bash"
         />
       {:else if activeTab === "n8n"}
         <IntegrationCard
-          title="Credential Setup"
-          subtitle="n8n UI"
-          description="Configure an OpenAI credential in n8n to use your exo cluster."
-          config={n8nConfig}
+          title="1. Start n8n"
+          subtitle="Run in terminal"
+          description="Start n8n with Docker. If you already have n8n running, skip this step."
+          config={n8nDockerCommand}
+          language="bash"
+        />
+        <IntegrationCard
+          title="2. Open n8n"
+          subtitle="http://localhost:5678"
+          description="Open n8n in your browser. If this is your first time, complete the setup and select 'Start from Scratch' when prompted."
+          config={"open http://localhost:5678"}
+          language="bash"
+        />
+        <IntegrationCard
+          title="3. Add OpenAI Credential"
+          subtitle="n8n UI → Credentials"
+          description="Create an OpenAI credential pointing at your exo cluster."
+          config={n8nCredentialSteps}
+        />
+        <IntegrationCard
+          title="4. Build a Workflow"
+          subtitle="n8n UI → Workflows"
+          description="Create a workflow that uses your exo-powered model."
+          config={n8nWorkflowSteps}
         />
       {/if}
     </div>
