@@ -46,6 +46,7 @@ from exo.api.adapters.responses import (
     generate_responses_stream,
     responses_request_to_text_generation,
 )
+from exo.api.keepalive import with_sse_keepalive
 from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
@@ -779,9 +780,11 @@ class API:
 
         if payload.stream:
             return StreamingResponse(
-                generate_chat_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                with_sse_keepalive(
+                    generate_chat_stream(
+                        command.command_id,
+                        self._token_chunk_stream(command.command_id),
+                    ),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1384,10 +1387,12 @@ class API:
 
         if payload.stream:
             return StreamingResponse(
-                generate_claude_stream(
-                    command.command_id,
-                    payload.model,
-                    self._token_chunk_stream(command.command_id),
+                with_sse_keepalive(
+                    generate_claude_stream(
+                        command.command_id,
+                        payload.model,
+                        self._token_chunk_stream(command.command_id),
+                    ),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1418,10 +1423,12 @@ class API:
 
         if payload.stream:
             return StreamingResponse(
-                generate_responses_stream(
-                    command.command_id,
-                    payload.model,
-                    self._token_chunk_stream(command.command_id),
+                with_sse_keepalive(
+                    generate_responses_stream(
+                        command.command_id,
+                        payload.model,
+                        self._token_chunk_stream(command.command_id),
+                    ),
                 ),
                 media_type="text/event-stream",
                 headers={
