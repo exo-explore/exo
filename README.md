@@ -287,6 +287,8 @@ After that, RDMA will be enabled in macOS and exo will take care of the rest.
 4. If running from source, please use the script found at `tmp/set_rdma_network_config.sh`, which will disable Thunderbolt Bridge and set dhcp on each RDMA port.
 5. RDMA ports may be unable to discover each other on different versions of MacOS. Please ensure that OS versions match exactly (even beta version numbers) on all devices.
 
+If you are intentionally running a bridge-based two-node setup with fixed `bridge0` addresses, do not use `tmp/set_rdma_network_config.sh`. Use the bridge-preserving ops scripts documented in `docs/thunderbolt-bridge-ops.md` instead.
+
 ---
 
 ## Environment Variables

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.exo.thunderbolt-watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd "$HOME/exo" &amp;&amp; EXO_WATCHDOG_RESTART_PEER=1 ./scripts/exo-thunderbolt-watchdog</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/io.exo.thunderbolt-watchdog.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/io.exo.thunderbolt-watchdog.err.log</string>
+</dict>
+</plist>

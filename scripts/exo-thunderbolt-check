@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/exo_thunderbolt_common.sh
+source "$SCRIPT_DIR/exo_thunderbolt_common.sh"
+
+need_cmd curl
+need_cmd ifconfig
+need_cmd jq
+need_cmd lsof
+need_cmd route
+need_cmd scselect
+
+require_cluster=0
+quiet=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --require-cluster)
+      require_cluster=1
+      ;;
+    --quiet)
+      quiet=1
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+  shift
+done
+
+status=0
+
+report() {
+  if [[ "$quiet" -eq 0 ]]; then
+    echo "$1"
+  fi
+}
+
+location="$(get_current_location || true)"
+if [[ "$location" == "$EXO_EXPECTED_LOCATION" ]]; then
+  report "location: ok ($location)"
+else
+  report "location: bad (${location:-unknown}, expected $EXO_EXPECTED_LOCATION)"
+  status=1
+fi
+
+if bridge_exists; then
+  report "bridge: ok ($EXO_BRIDGE_DEVICE exists)"
+else
+  report "bridge: bad ($EXO_BRIDGE_DEVICE missing)"
+  status=1
+fi
+
+ip="$(bridge_ip || true)"
+if [[ "$ip" == "$EXO_LOCAL_BRIDGE_IP" ]]; then
+  report "bridge_ip: ok ($ip)"
+else
+  report "bridge_ip: bad (${ip:-none}, expected $EXO_LOCAL_BRIDGE_IP)"
+  status=1
+fi
+
+members="$(bridge_members | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
+report "bridge_members: ${members:-none}"
+
+route_iface="$(route_interface_to_peer || true)"
+if [[ "$route_iface" == "$EXO_BRIDGE_DEVICE" ]]; then
+  report "peer_route: ok ($EXO_PEER_BRIDGE_IP via $route_iface)"
+else
+  report "peer_route: bad ($EXO_PEER_BRIDGE_IP via ${route_iface:-unknown})"
+  status=1
+fi
+
+pid="$(current_exo_pid || true)"
+if [[ -n "$pid" ]]; then
+  report "exo_pid: ok ($pid)"
+else
+  report "exo_pid: bad (no listener on :$EXO_API_PORT)"
+  status=1
+fi
+
+if curl -fsS "http://localhost:${EXO_API_PORT}/node_id" >/dev/null 2>&1; then
+  report "api: ok"
+else
+  report "api: bad"
+  status=1
+fi
+
+if curl -fsS "http://localhost:${EXO_API_PORT}/state" >/dev/null 2>&1; then
+  tb_exists="$(local_state | jq -r '.nodeThunderboltBridge | to_entries[0].value.exists // false')"
+  tb_enabled="$(local_state | jq -r '.nodeThunderboltBridge | to_entries[0].value.enabled // false')"
+  report "thunderbolt_bridge_state: exists=$tb_exists enabled=$tb_enabled"
+  if [[ "$tb_exists" != "true" || "$tb_enabled" != "true" ]]; then
+    status=1
+  fi
+  if [[ "$require_cluster" -eq 1 ]]; then
+    node_count="$(topology_node_count)"
+    report "topology_nodes: $node_count"
+    if [[ "$node_count" -lt 2 ]]; then
+      status=1
+    fi
+  fi
+fi
+
+exit "$status"
