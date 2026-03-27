@@ -132,6 +132,8 @@ class ExoBatchGenerator:
                     vision_processor=self.vision_processor,
                     tokenizer=self.tokenizer,
                     model=self.model,
+                    model_id=task_params.model,
+                    task_params=task_params,
                 )
             except Exception:
                 logger.opt(exception=True).warning(

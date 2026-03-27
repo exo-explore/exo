@@ -508,6 +508,8 @@ def mlx_generate(
                 vision_processor=vision_processor,
                 tokenizer=tokenizer,
                 model=model,
+                model_id=task.model,
+                task_params=task,
             )
         except Exception:
             logger.opt(exception=True).warning(
