@@ -57,11 +57,19 @@ class EventRouter:
     async def _simple_retry(self):
         while True:
             await anyio.sleep(1 + random())
+            now = anyio.current_time()
+            stale: list[EventId] = []
             # list here is a shallow clone for shared mutation
             for e_id, (time, event) in list(self.out_for_delivery.items()):
-                if anyio.current_time() > time + 5:
-                    self.out_for_delivery[e_id] = (anyio.current_time(), event)
+                if now > time + 60:
+                    # Drop events older than 60 s to prevent unbounded growth
+                    # under prolonged network partition.
+                    stale.append(e_id)
+                elif now > time + 5:
+                    self.out_for_delivery[e_id] = (now, event)
                     await self.external_outbound.send(event)
+            for e_id in stale:
+                self.out_for_delivery.pop(e_id, None)
 
     def sender(self) -> Sender[Event]:
         send, recv = channel[Event]()
