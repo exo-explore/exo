@@ -859,10 +859,10 @@ async def download_shard(
         from exo.utils.backend import detect_backend
         if detect_backend() not in ("mlx_metal", "mlx_cuda"):
             if shard.device_rank != 0:
-                # Rank 1+ nodes don't need the GGUF file — report instant completion
+                # Rank 1+ nodes don't need the GGUF file — they run RPC servers only.
+                # Return a synthetic "complete" progress without downloading anything.
                 target_dir = EXO_DEFAULT_MODELS_DIR / str(card.gguf_repo_id).replace("/", "--")
                 target_dir.mkdir(parents=True, exist_ok=True)
-                size = card.storage_size.in_bytes
                 dummy = RepoDownloadProgress(
                     repo_id=str(card.gguf_repo_id),
                     repo_revision="main",
@@ -877,7 +877,10 @@ async def download_shard(
                     status="complete",
                     file_progress={},
                 )
-                await on_progress(shard, dummy)
+                try:
+                    await on_progress(shard, dummy)
+                except Exception:
+                    pass  # stream may not be ready yet; master will proceed regardless
                 return target_dir, dummy
             return await _download_gguf_shard(shard, on_progress, skip_internet=skip_internet)
 
