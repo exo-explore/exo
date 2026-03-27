@@ -13,6 +13,7 @@ from pydantic import (
     Field,
     PositiveInt,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -55,7 +56,9 @@ def _detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
         try:
             with open(config_path) as f:
                 raw = json.load(f)  # type: ignore
-            return ConfigData.model_validate(raw).vision
+            return ConfigData.model_validate(
+                raw, context={"model_id": str(model_id)}
+            ).vision
         except Exception:
             continue
     return None
@@ -119,7 +122,7 @@ class ComponentInfo(CamelCaseModel):
 class VisionCardConfig(CamelCaseModel):
     image_token_id: int
     model_type: str
-    weights_repo: str | None = None
+    weights_repo: str = ""
     image_token: str | None = None
     processor_repo: str | None = None
 
@@ -141,6 +144,16 @@ class ModelCard(CamelCaseModel):
     trust_remote_code: bool = True
     is_custom: bool = False
     vision: VisionCardConfig | None = None
+
+    @model_validator(mode="after")
+    def _fill_vision_weights_repo(self) -> "ModelCard":
+        if self.vision is not None and not self.vision.weights_repo:
+            object.__setattr__(
+                self,
+                "vision",
+                self.vision.model_copy(update={"weights_repo": str(self.model_id)}),
+            )
+        return self
 
     @field_validator("tasks", mode="before")
     @classmethod
@@ -255,7 +268,7 @@ class ConfigData(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def defer_to_text_config(cls, data: dict[str, Any]):
+    def defer_to_text_config(cls, data: dict[str, Any], info: ValidationInfo):
         text_config = data.get("text_config")
         if text_config is not None:
             for field in [
@@ -278,9 +291,12 @@ class ConfigData(BaseModel):
             model_type = str(
                 vision_config.get("model_type", data.get("model_type", ""))  # pyright: ignore[reportAny]
             )
+            assert info.context is not None
+
             data["vision"] = VisionCardConfig(
                 image_token_id=int(image_token_id),  # pyright: ignore[reportAny]
                 model_type=model_type,
+                weights_repo=info.context["model_id"],  # type: ignore
             )
 
         return data
@@ -304,7 +320,9 @@ async def fetch_config_data(model_id: ModelId) -> ConfigData:
         ),
     )
     async with aiofiles.open(config_path, "r") as f:
-        return ConfigData.model_validate_json(await f.read())
+        return ConfigData.model_validate_json(
+            await f.read(), context={"model_id": str(model_id)}
+        )
 
 
 async def fetch_safetensors_size(model_id: ModelId) -> Memory:

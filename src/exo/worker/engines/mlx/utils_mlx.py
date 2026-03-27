@@ -63,6 +63,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.vision import VisionProcessor
 from exo.worker.runner.bootstrap import logger
 
 Group = mx.distributed.Group
@@ -168,7 +169,7 @@ def load_mlx_items(
     group: Group | None,
     on_timeout: TimeoutCallback | None,
     on_layer_loaded: LayerLoadedCallback | None,
-) -> tuple[Model, TokenizerWrapper]:
+) -> tuple[Model, TokenizerWrapper, VisionProcessor | None]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
@@ -210,7 +211,15 @@ def load_mlx_items(
 
     mx.clear_cache()
 
-    return cast(Model, model), tokenizer
+    vision_config = bound_instance.bound_shard.model_card.vision
+
+    vision_processor = (
+        VisionProcessor(vision_config, bound_instance.bound_shard.model_card.model_id)
+        if vision_config is not None
+        else None
+    )
+
+    return cast(Model, model), tokenizer, vision_processor
 
 
 def shard_and_load(
