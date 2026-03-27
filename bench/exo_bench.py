@@ -453,17 +453,24 @@ def main() -> int:
                                 "max_tokens": tg,
                             }
                             barrier = threading.Barrier(concurrency)
+                            batch_start = threading.Event()
+                            batch_t0: float = 0.0
                             batch_results: list[tuple[dict[str, Any], int]] = []
                             batch_errors = 0
 
                             def _run_concurrent(
                                 idx: int,
                             ) -> tuple[dict[str, Any], int]:
+                                nonlocal batch_t0
                                 c = ExoClient(
                                     args.host, args.port, timeout_s=args.timeout
                                 )
-                                barrier.wait()
-                                t0 = time.perf_counter()
+                                if barrier.wait() == 0:
+                                    batch_t0 = time.perf_counter()
+                                    batch_start.set()
+                                else:
+                                    batch_start.wait()
+                                t0 = batch_t0
                                 out = c.post_bench_chat_completions(pre_built_payload)
                                 elapsed = time.perf_counter() - t0
                                 stats = out.get("generation_stats")
@@ -487,6 +494,7 @@ def main() -> int:
                                     except Exception as e:
                                         logger.error(f"Concurrent request failed: {e}")
                                         batch_errors += 1
+                            batch_wall_s = time.perf_counter() - batch_t0
 
                             for idx, (row, actual_pp_tokens) in enumerate(
                                 batch_results
@@ -515,19 +523,22 @@ def main() -> int:
                                 all_rows.append(row)
 
                             if batch_results:
-                                valid_gen_tps = [
+                                total_gen_tokens = sum(
+                                    x["stats"]["generation_tokens"]
+                                    for x, _ in batch_results
+                                )
+                                wall_agg_tps = total_gen_tokens / batch_wall_s if batch_wall_s > 0 else 0.0
+                                server_per_req_tps = mean(
                                     x["stats"]["generation_tps"]
                                     for x, _ in batch_results
                                     if x["stats"]["generation_tps"] > 0
-                                ]
-                                per_req_tps = (
-                                    mean(valid_gen_tps) if valid_gen_tps else 0.0
                                 )
-                                agg_gen_tps = per_req_tps * concurrency
+                                server_agg_tps = server_per_req_tps * concurrency
                                 logger.info(
                                     f"[concurrent {concurrency}x]  "
-                                    f"agg_gen_tps={agg_gen_tps:.2f}  "
-                                    f"per_req_tps={per_req_tps:.2f}  "
+                                    f"wall_agg_tps={wall_agg_tps:.2f}  "
+                                    f"server_agg_tps={server_agg_tps:.2f}  "
+                                    f"wall_s={batch_wall_s:.2f}  "
                                     f"errors={batch_errors}"
                                 )
 
