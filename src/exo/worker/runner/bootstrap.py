@@ -5,8 +5,9 @@ import loguru
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId
-from exo.shared.types.worker.instances import BoundInstance
+from exo.shared.types.worker.instances import BoundInstance, LlamaCppRpcInstance
 from exo.shared.types.worker.runners import RunnerFailed
+from exo.utils.backend import detect_backend
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.engines.mlx.patches import apply_mlx_patches
 
@@ -26,13 +27,19 @@ def entrypoint(
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
-    fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
-    if fast_synch_override != "off":
-        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
-    else:
-        os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+    backend = detect_backend()
+    use_llamacpp = isinstance(bound_instance.instance, LlamaCppRpcInstance)
 
-    logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
+    if not use_llamacpp:
+        # Only set MLX Metal flags when we're actually going to use MLX
+        fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
+        if fast_synch_override != "off":
+            os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+        else:
+            os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+        logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
+
+    logger.info(f"Detected backend: {backend}, using llama-cpp: {use_llamacpp}")
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
@@ -40,6 +47,13 @@ def entrypoint(
             from exo.worker.runner.image_models.runner import Runner as ImageRunner
 
             runner = ImageRunner(
+                bound_instance, event_sender, task_receiver, cancel_receiver
+            )
+            runner.main()
+        elif use_llamacpp:
+            from exo.worker.runner.llm_inference.runner_llamacpp import LlamaCppRunner
+
+            runner = LlamaCppRunner(
                 bound_instance, event_sender, task_receiver, cancel_receiver
             )
             runner.main()

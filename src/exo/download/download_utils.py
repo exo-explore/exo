@@ -760,6 +760,89 @@ async def get_downloaded_size(path: Path) -> int:
     return 0
 
 
+async def _download_gguf_shard(
+    shard: ShardMetadata,
+    on_progress: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
+    skip_internet: bool = False,
+) -> tuple[Path, RepoDownloadProgress]:
+    """Download a single GGUF file for non-MLX backends (ROCm, Vulkan, CPU)."""
+    card = shard.model_card
+    assert card.gguf_repo_id is not None
+    assert card.gguf_filename is not None
+
+    gguf_repo_id = ModelId(str(card.gguf_repo_id))
+    dir_name = str(card.gguf_repo_id).replace("/", "--")
+    target_dir = EXO_DEFAULT_MODELS_DIR / dir_name
+    target_dir.mkdir(parents=True, exist_ok=True)
+    revision = "main"
+    start_time = time.time()
+
+    downloaded_ref: list[int] = [0]
+    total_ref: list[int] = [0]
+    last_report_time: list[float] = [0.0]
+
+    def _make_progress(curr: int, total: int, status: str) -> RepoDownloadProgress:
+        elapsed = time.time() - start_time
+        speed = curr / elapsed if elapsed > 0 else 0.0
+        remaining_sec = (total - curr) / speed if speed > 0 and total > curr else 0.0
+        file_prog = RepoFileDownloadProgress(
+            repo_id=str(gguf_repo_id),
+            repo_revision=revision,
+            file_path=card.gguf_filename,
+            downloaded=Memory.from_bytes(curr),
+            downloaded_this_session=Memory.from_bytes(curr),
+            total=Memory.from_bytes(total),
+            speed=speed,
+            eta=timedelta(seconds=remaining_sec),
+            status=status,
+            start_time=start_time,
+        )
+        return RepoDownloadProgress(
+            repo_id=str(gguf_repo_id),
+            repo_revision=revision,
+            shard=shard,
+            completed_files=1 if status == "complete" else 0,
+            total_files=1,
+            downloaded=Memory.from_bytes(curr),
+            downloaded_this_session=Memory.from_bytes(curr),
+            total=Memory.from_bytes(total),
+            overall_speed=speed,
+            overall_eta=timedelta(seconds=remaining_sec),
+            status=status,
+            file_progress={card.gguf_filename: file_prog},
+        )
+
+    def on_chunk(curr: int, total: int, done: bool) -> None:
+        downloaded_ref[0] = curr
+        total_ref[0] = total
+        now = time.time()
+        if done or now - last_report_time[0] >= 1.0:
+            last_report_time[0] = now
+            status = "complete" if done else "in_progress"
+            prog = _make_progress(curr, total, status)
+            loop = asyncio.get_event_loop()
+            loop.call_soon_threadsafe(
+                lambda p=prog: asyncio.ensure_future(on_progress(shard, p))
+            )
+
+    await on_progress(shard, _make_progress(0, card.storage_size.in_bytes, "in_progress"))
+
+    await download_file_with_retry(
+        gguf_repo_id,
+        revision,
+        card.gguf_filename,
+        target_dir,
+        on_progress=on_chunk,
+        skip_internet=skip_internet,
+    )
+
+    final_size = (await aios.stat(target_dir / card.gguf_filename)).st_size
+    final_progress = _make_progress(final_size, final_size, "complete")
+    await on_progress(shard, final_progress)
+    logger.info(f"GGUF download complete: {target_dir / card.gguf_filename}")
+    return target_dir, final_progress
+
+
 async def download_shard(
     shard: ShardMetadata,
     on_progress: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
@@ -769,6 +852,13 @@ async def download_shard(
     allow_patterns: list[str] | None = None,
     on_connection_lost: Callable[[], None] = lambda: None,
 ) -> tuple[Path, RepoDownloadProgress]:
+    # For non-MLX backends, download the GGUF file instead of MLX safetensors
+    card = shard.model_card
+    if card.gguf_repo_id is not None and card.gguf_filename is not None:
+        from exo.utils.backend import detect_backend
+        if detect_backend() not in ("mlx_metal", "mlx_cuda"):
+            return await _download_gguf_shard(shard, on_progress, skip_internet=skip_internet)
+
     if not skip_download:
         logger.debug(f"Downloading {shard.model_card.model_id=}")
 

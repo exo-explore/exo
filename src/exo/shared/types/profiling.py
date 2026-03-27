@@ -83,6 +83,7 @@ class NodeIdentity(CamelCaseModel):
     friendly_name: str = "Unknown"
     os_version: str = "Unknown"
     os_build_version: str = "Unknown"
+    backend: str = "cpu"
 
 
 class NodeNetworkInfo(CamelCaseModel):

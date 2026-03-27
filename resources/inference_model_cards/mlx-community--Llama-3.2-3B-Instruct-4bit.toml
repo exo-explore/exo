@@ -8,6 +8,8 @@ family = "llama"
 quantization = "4bit"
 base_model = "Llama 3.2 3B"
 capabilities = ["text"]
+gguf_repo_id = "bartowski/Llama-3.2-3B-Instruct-GGUF"
+gguf_filename = "Llama-3.2-3B-Instruct-Q4_K_M.gguf"
 
 [storage_size]
 in_bytes = 1863319552

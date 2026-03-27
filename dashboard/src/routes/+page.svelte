@@ -701,7 +701,7 @@
       ? Object.keys(topologyData()!.nodes).length
       : 1;
     const sharding = nodeCount <= 1 ? "Pipeline" : selectedSharding;
-    const instanceType = nodeCount <= 1 ? "MlxRing" : selectedInstanceType;
+    const instanceType = nodeCount <= 1 ? selectedInstanceType : selectedInstanceType;
     try {
       const placementResponse = await fetch(
         `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${sharding}&instance_meta=${instanceType}&min_nodes=1`,
@@ -885,7 +885,7 @@
   }
 
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
-  type InstanceMeta = "MlxRing" | "MlxJaccl";
+  type InstanceMeta = "MlxRing" | "MlxJaccl" | "LlamaCppRpc";
 
   // Launch defaults persistence
   const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults-v2";
@@ -931,7 +931,11 @@
     // Apply sharding and instance type unconditionally
     selectedSharding = defaults.sharding;
     selectedInstanceType =
-      defaults.instanceType === "MlxRing" ? "MlxRing" : "MlxJaccl";
+      defaults.instanceType === "MlxJaccl"
+        ? "MlxJaccl"
+        : defaults.instanceType === "LlamaCppRpc"
+          ? "LlamaCppRpc"
+          : "MlxRing";
 
     // Apply minNodes if valid (between 1 and maxNodes)
     if (
@@ -1145,9 +1149,9 @@
   }
 
   const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
-    selectedInstanceType === "MlxRing"
-      ? runtime === "MlxRing"
-      : runtime === "MlxJaccl";
+    selectedInstanceType === "MlxJaccl"
+      ? runtime === "MlxJaccl"
+      : runtime === "MlxRing" || runtime === "LlamaCppRpc";
 
   // Helper to check if a model can be launched (has valid placement with >= minNodes)
   function canModelFit(modelId: string): boolean {
@@ -2688,19 +2692,23 @@
         .sort((a, b) => getPreviewNodeCount(b) - getPreviewNodeCount(a));
       if (jacclTensor.length > 0) return jacclTensor[0];
 
-      // Multi-node without RDMA: fall back to single-node Pipeline/Ring
+      // Multi-node without RDMA: fall back to single-node Pipeline/Ring or LlamaCppRpc
       const singlePipeline = valid.filter(
         (p) =>
-          p.instance_meta === "MlxRing" &&
+          (p.instance_meta === "MlxRing" || p.instance_meta === "LlamaCppRpc") &&
           p.sharding === "Pipeline" &&
           getPreviewNodeCount(p) === 1,
       );
       if (singlePipeline.length > 0) return singlePipeline[0];
     }
 
-    // Single node (or final fallback): Pipeline/Ring with fewest nodes
+    // Single node (or final fallback): Pipeline/Ring or LlamaCppRpc with fewest nodes
     const ringPipeline = valid
-      .filter((p) => p.instance_meta === "MlxRing" && p.sharding === "Pipeline")
+      .filter(
+        (p) =>
+          (p.instance_meta === "MlxRing" || p.instance_meta === "LlamaCppRpc") &&
+          p.sharding === "Pipeline",
+      )
       .sort((a, b) => getPreviewNodeCount(a) - getPreviewNodeCount(b));
     if (ringPipeline.length > 0) return ringPipeline[0];
 

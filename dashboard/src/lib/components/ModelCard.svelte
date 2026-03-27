@@ -23,7 +23,7 @@
     } | null;
     nodes?: Record<string, NodeInfo>;
     sharding?: "Pipeline" | "Tensor";
-    runtime?: "MlxRing" | "MlxJaccl";
+    runtime?: "MlxRing" | "MlxJaccl" | "LlamaCppRpc";
     onLaunch?: () => void;
     tags?: string[];
     apiPreview?: PlacementPreview | null;
@@ -576,13 +576,17 @@
         class="px-1.5 py-0.5 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 text-exo-light-gray border border-exo-medium-gray/40"
         title={runtime === "MlxRing"
           ? "Ring: standard networking. Works over any connection (Wi-Fi, Ethernet, Thunderbolt)."
-          : "RDMA: direct memory access over Thunderbolt. Significantly faster for multi-device inference."}
+          : runtime === "MlxJaccl"
+            ? "RDMA: direct memory access over Thunderbolt. Significantly faster for multi-device inference."
+            : "llama.cpp RPC: distributed inference over TCP/IP using llama.cpp's RPC protocol."}
       >
         {runtime === "MlxRing"
           ? "MLX Ring"
           : runtime === "MlxJaccl"
             ? "MLX RDMA"
-            : runtime}
+            : runtime === "LlamaCppRpc"
+              ? "llama.cpp RPC"
+              : runtime}
       </span>
     </div>
 

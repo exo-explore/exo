@@ -105,6 +105,9 @@ class ModelCard(CamelCaseModel):
     uses_cfg: bool = False
     trust_remote_code: bool = True
     is_custom: bool = False
+    # GGUF variant for llama-cpp-python backends (ROCm / Vulkan / CPU on Linux)
+    gguf_repo_id: ModelId | None = None
+    gguf_filename: str | None = None
 
     @field_validator("tasks", mode="before")
     @classmethod

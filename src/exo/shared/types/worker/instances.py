@@ -15,6 +15,7 @@ class InstanceId(Id):
 class InstanceMeta(str, Enum):
     MlxRing = "MlxRing"
     MlxJaccl = "MlxJaccl"
+    LlamaCppRpc = "LlamaCppRpc"
 
 
 class BaseInstance(TaggedModel):
@@ -35,8 +36,27 @@ class MlxJacclInstance(BaseInstance):
     jaccl_coordinators: dict[NodeId, str]
 
 
+class LlamaCppRpcInstance(BaseInstance):
+    """Instance backed by llama-cpp-python with optional RPC distribution.
+
+    For a single-node setup, ``rpc_addresses`` is empty and the full model
+    runs locally on rank 0.
+
+    For a two-node setup:
+    - Rank 1 spawns a ``llama-rpc-server`` on ``rpc_port``.
+    - Rank 0 connects to each rank-1 host via ``rpc_addresses`` and splits
+      GPU layers according to ``n_gpu_layers_per_runner``.
+    """
+
+    rpc_port: int
+    # NodeId → "host:port" for each non-rank-0 node (empty for single-node)
+    rpc_addresses: dict[NodeId, str]
+    # RunnerId → number of GPU layers that runner should hold
+    n_gpu_layers_per_runner: dict[RunnerId, int]
+
+
 # TODO: Single node instance
-Instance = MlxRingInstance | MlxJacclInstance
+Instance = MlxRingInstance | MlxJacclInstance | LlamaCppRpcInstance
 
 
 class BoundInstance(CamelCaseModel):

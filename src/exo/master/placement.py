@@ -42,9 +42,11 @@ from exo.shared.types.worker.instances import (
     Instance,
     InstanceId,
     InstanceMeta,
+    LlamaCppRpcInstance,
     MlxJacclInstance,
     MlxRingInstance,
 )
+from exo.shared.types.worker.runners import RunnerId
 from exo.shared.types.worker.shards import Sharding
 
 
@@ -192,7 +194,8 @@ def place_instance(
     )
 
     # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
-    if len(selected_cycle) == 1:
+    # LlamaCppRpc works fine single-node so leave it alone
+    if len(selected_cycle) == 1 and command.instance_meta != InstanceMeta.LlamaCppRpc:
         command.instance_meta = InstanceMeta.MlxRing
         command.sharding = Sharding.Pipeline
 
@@ -251,6 +254,35 @@ def place_instance(
                 shard_assignments=shard_assignments,
                 hosts_by_node=hosts_by_node,
                 ephemeral_port=ephemeral_port,
+            )
+
+        case InstanceMeta.LlamaCppRpc:
+            rpc_port = random_ephemeral_port()
+            # Build rpc_addresses: every non-rank-0 node gets an entry
+            rpc_addresses: dict[NodeId, str] = {}
+            for node_id in selected_cycle.node_ids:
+                runner_id = shard_assignments.node_to_runner[node_id]
+                shard_md = shard_assignments.runner_to_shard[runner_id]
+                if shard_md.device_rank != 0:
+                    # Pick the first reachable IP for this node
+                    ifaces = node_network.get(node_id)
+                    host_ip = "127.0.0.1"
+                    if ifaces and ifaces.interfaces:
+                        host_ip = ifaces.interfaces[0].ip_address
+                    rpc_addresses[node_id] = f"{host_ip}:{rpc_port}"
+
+            # Equal layer split across all runners
+            n_runners = len(shard_assignments.runner_to_shard)
+            n_gpu_layers_per_runner: dict[RunnerId, int] = {}
+            for runner_id, shard_md in shard_assignments.runner_to_shard.items():
+                n_gpu_layers_per_runner[runner_id] = shard_md.n_layers // n_runners
+
+            target_instances[instance_id] = LlamaCppRpcInstance(
+                instance_id=instance_id,
+                shard_assignments=shard_assignments,
+                rpc_port=rpc_port,
+                rpc_addresses=rpc_addresses,
+                n_gpu_layers_per_runner=n_gpu_layers_per_runner,
             )
 
     return target_instances

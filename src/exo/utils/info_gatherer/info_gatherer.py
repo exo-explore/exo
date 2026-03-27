@@ -185,15 +185,19 @@ class StaticNodeInformation(TaggedModel):
     chip: str
     os_version: str
     os_build_version: str
+    backend: str = "cpu"
 
     @classmethod
     async def gather(cls) -> Self:
+        from exo.utils.backend import detect_backend
+
         model, chip = await get_model_and_chip()
         return cls(
             model=model,
             chip=chip,
             os_version=get_os_version(),
             os_build_version=await get_os_build_version(),
+            backend=detect_backend(),
         )
 
 

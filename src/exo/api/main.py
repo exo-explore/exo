@@ -451,16 +451,28 @@ class API:
                 status_code=400, detail=f"Failed to load model card: {exc}"
             ) from exc
         instance_combinations: list[tuple[Sharding, InstanceMeta, int]] = []
-        for sharding in (Sharding.Pipeline, Sharding.Tensor):
-            for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
-                instance_combinations.extend(
-                    [
-                        (sharding, instance_meta, i)
-                        for i in range(
-                            1, len(list(self.state.topology.list_nodes())) + 1
-                        )
-                    ]
-                )
+        node_count = len(list(self.state.topology.list_nodes()))
+        node_backends = {
+            identity.backend
+            for identity in self.state.node_identities.values()
+        }
+        all_llamacpp = node_backends <= {"rocm", "vulkan", "cpu"} and not (
+            node_backends & {"mlx_metal", "mlx_cuda"}
+        )
+        if all_llamacpp and model_card.gguf_filename is not None:
+            instance_combinations.extend(
+                (Sharding.Pipeline, InstanceMeta.LlamaCppRpc, i)
+                for i in range(1, node_count + 1)
+            )
+        else:
+            for sharding in (Sharding.Pipeline, Sharding.Tensor):
+                for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
+                    instance_combinations.extend(
+                        [
+                            (sharding, instance_meta, i)
+                            for i in range(1, node_count + 1)
+                        ]
+                    )
         # TODO: PDD
         # instance_combinations.append((Sharding.PrefillDecodeDisaggregation, InstanceMeta.MlxRing, 1))
 
