@@ -8,5 +8,7 @@ quantization = "6bit"
 base_model = "NVIDIA Nemotron-3-Nano-30B-A3B"
 capabilities = ["text"]
 
+context_length = 262144
+
 [storage_size]
 in_bytes = 25667611392

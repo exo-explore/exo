@@ -1634,6 +1634,7 @@ class API:
                     quantization=card.quantization,
                     base_model=card.base_model,
                     capabilities=card.capabilities,
+                    context_length=card.context_length,
                 )
                 for card in cards
             ]

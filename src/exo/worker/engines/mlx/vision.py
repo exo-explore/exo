@@ -23,8 +23,12 @@ from exo.download.download_utils import build_model_path
 from exo.shared.models.model_cards import VisionCardConfig
 from exo.shared.types.common import ModelId
 from exo.shared.types.mlx import Model
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.worker.engines.mlx.cache import encode_prompt
-from exo.worker.engines.mlx.utils_mlx import fix_unmatched_think_end_tokens
+from exo.worker.engines.mlx.utils_mlx import (
+    fix_unmatched_think_end_tokens,
+    render_chat_template,
+)
 from exo.worker.runner.bootstrap import logger
 
 
@@ -84,15 +88,9 @@ def build_vision_prompt(
     chat_template_messages: list[dict[str, Any]],
     n_tokens_per_image: list[int],
     image_token: str,
+    task_params: TextGenerationTaskParams,
 ) -> str:
-    logger.info(
-        f"Vision prompt messages: {[{k: (v[:50] if isinstance(v, str) else v) for k, v in m.items()} for m in chat_template_messages]}"  # type: ignore
-    )
-    prompt: str = tokenizer.apply_chat_template(
-        chat_template_messages,
-        tokenize=False,
-        add_generation_prompt=True,
-    )
+    prompt = render_chat_template(tokenizer, chat_template_messages, task_params)
 
     image_idx = 0
     result: list[str] = []
@@ -494,6 +492,7 @@ class VisionPipeline:
         chat_template_messages: list[dict[str, Any]],
         tokenizer: TokenizerWrapper,
         model: Model,
+        task_params: TextGenerationTaskParams,
     ) -> VisionResult:
         logger.info(f"Vision pipeline: {len(images)} image(s)")
 
@@ -525,6 +524,7 @@ class VisionPipeline:
             formatted_messages,
             n_tokens_per_image,
             image_token,
+            task_params,
         )
 
         logger.info(
@@ -573,6 +573,7 @@ def prepare_vision(
     tokenizer: TokenizerWrapper,
     model: Model,
     model_id: ModelId,
+    task_params: TextGenerationTaskParams,
 ) -> VisionResult | None:
     if not images:
         return None
@@ -602,4 +603,5 @@ def prepare_vision(
         chat_template_messages=chat_template_messages,
         tokenizer=tokenizer,
         model=model,
+        task_params=task_params,
     )

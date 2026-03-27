@@ -9,5 +9,7 @@ quantization = "bf16"
 base_model = "Qwen3 Coder Next"
 capabilities = ["text", "code"]
 
+context_length = 262144
+
 [storage_size]
 in_bytes = 157548627945

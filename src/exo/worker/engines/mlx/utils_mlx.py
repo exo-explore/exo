@@ -489,11 +489,39 @@ def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
     return "deepseek-v3.2" in task_params.model.lower()
 
 
-def apply_chat_template(
+def consolidate_system_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    System messages almost exclusively must go at the start of a message
+    and there must only be a single one.
+
+    Also, Codex sends "developer" messages which are just system prompts.
+    """
+    system_parts: list[str] = []
+    non_system: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.get("role") in ("system", "developer"):
+            content = cast(str, msg.get("content", ""))
+            if content:
+                system_parts.append(content)
+        else:
+            non_system.append(msg)
+    formatted_messages = non_system
+    if system_parts:
+        formatted_messages.insert(
+            0, {"role": "system", "content": "\n".join(system_parts)}
+        )
+    return formatted_messages
+
+
+def render_chat_template(
     tokenizer: TokenizerWrapper,
+    messages: list[dict[str, Any]],
     task_params: TextGenerationTaskParams,
 ) -> str:
-    """Convert TextGenerationTaskParams to a chat template prompt.
+    """
+    Convert TextGenerationTaskParams to a chat template prompt.
 
     Converts the internal format (input + instructions) to a messages list
     that can be processed by the tokenizer's chat template.
@@ -501,23 +529,7 @@ def apply_chat_template(
     When chat_template_messages is available (from Chat Completions API),
     uses those directly to preserve tool_calls, thinking, and other fields.
     """
-    formatted_messages: list[dict[str, Any]] = []
-    if task_params.chat_template_messages is not None:
-        # Use pre-formatted messages that preserve tool_calls, thinking, etc.
-        formatted_messages = list(task_params.chat_template_messages)
-    else:
-        # Add system message (instructions) if present
-        if task_params.instructions:
-            formatted_messages.append(
-                {"role": "system", "content": task_params.instructions}
-            )
-
-        # Convert input to messages
-        for msg in task_params.input:
-            if not msg.content:
-                logger.warning("Received message with empty content, skipping")
-                continue
-            formatted_messages.append({"role": msg.role, "content": msg.content})
+    formatted_messages = consolidate_system_messages(messages)
 
     # For assistant prefilling, append content after templating to avoid a closing turn token.
     partial_assistant_content: str | None = None
@@ -578,6 +590,30 @@ def apply_chat_template(
     if partial_assistant_content:
         prompt += partial_assistant_content
 
+    return prompt
+
+
+def apply_chat_template(
+    tokenizer: TokenizerWrapper,
+    task_params: TextGenerationTaskParams,
+) -> str:
+    messages: list[dict[str, Any]] = []
+    if task_params.chat_template_messages is not None:
+        # Use pre-formatted messages that preserve tool_calls, thinking, etc.
+        messages = list(task_params.chat_template_messages)
+    else:
+        # Add system message (instructions) if present
+        if task_params.instructions:
+            messages.append({"role": "system", "content": task_params.instructions})
+
+        # Convert input to messages
+        for msg in task_params.input:
+            if not msg.content:
+                logger.warning("Received message with empty content, skipping")
+                continue
+            messages.append({"role": msg.role, "content": msg.content})
+
+    prompt = render_chat_template(tokenizer, messages, task_params)
     logger.info(prompt)
 
     return prompt

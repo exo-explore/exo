@@ -9,5 +9,7 @@ quantization = "MXFP4-Q8"
 base_model = "GPT-OSS 120B"
 capabilities = ["text", "thinking"]
 
+context_length = 131072
+
 [storage_size]
 in_bytes = 70652212224

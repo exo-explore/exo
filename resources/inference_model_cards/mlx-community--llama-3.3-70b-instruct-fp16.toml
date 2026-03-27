@@ -9,5 +9,7 @@ quantization = "fp16"
 base_model = "Llama 3.3 70B"
 capabilities = ["text"]
 
+context_length = 131072
+
 [storage_size]
 in_bytes = 144383672320
