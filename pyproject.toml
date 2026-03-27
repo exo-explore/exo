@@ -167,8 +167,12 @@ vllm = [
   "jinja2",
   "wheel",
   "markupsafe",
+  "typing-extensions",
 ]
 fastsafetensors = ["setuptools", "pybind11"]
+torch = [
+  "typing-extensions",
+]
 
 
 ###

@@ -7,8 +7,8 @@ requires-python = ">=3.13"
 dependencies = [
   "torch>=2.10.0; sys_platform == 'linux'",
   "vllm>=0.13.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
-  "mlx-cuda-13==0.30.6; sys_platform == 'linux'",
   "fastsafetensors>=0.1.10; sys_platform == 'linux'",
+  "mlx[cuda13]",
   "exo_core",
   "mlx_engine",                                                              # TODO(evan): remove this dependency!
   "loguru>=0.7.3",

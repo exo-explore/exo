@@ -54,32 +54,32 @@
             final.nvidia-curand
             final.nvidia-cusolver
           ];
-          cutlass = pkgs.fetchFromGitHub {
+          cutlass = cudaPkgs.fetchFromGitHub {
             name = "cutlass-source";
             owner = "NVIDIA";
             repo = "cutlass";
             tag = "v4.2.1";
             hash = "sha256-iP560D5Vwuj6wX1otJhwbvqe/X4mYVeKTpK533Wr5gY=";
           };
-          triton-kernels = pkgs.fetchFromGitHub {
+          triton-kernels = cudaPkgs.fetchFromGitHub {
             owner = "triton-lang";
             repo = "triton";
-            tag = "v3.5.0";
-            hash = "sha256-F6T0n37Lbs+B7UHNYzoIQHjNNv3TcMtoXjNrT8ZUlxY=";
+            tag = "v3.6.0";
+            hash = "sha256-JFSpQn+WsNnh7CAPlcpOcUp0nyKXNbJEANdXqmkt4Tc=";
           };
 
-          cutlass-flashmla = pkgs.fetchFromGitHub {
+          cutlass-flashmla = cudaPkgs.fetchFromGitHub {
             owner = "NVIDIA";
             repo = "cutlass";
             rev = "147f5673d0c1c3dcf66f78d677fd647e4a020219";
             hash = "sha256-dHQto08IwTDOIuFUp9jwm1MWkFi8v2YJ/UESrLuG71g=";
           };
 
-          flashmla = pkgs.stdenv.mkDerivation {
+          flashmla = cudaPkgs.stdenv.mkDerivation {
             pname = "flashmla";
             version = "1.0.0";
 
-            src = pkgs.fetchFromGitHub {
+            src = cudaPkgs.fetchFromGitHub {
               name = "FlashMLA-source";
               owner = "vllm-project";
               repo = "FlashMLA";
@@ -98,18 +98,18 @@
               cp -rva . $out
             '';
           };
-          qutlass = pkgs.fetchFromGitHub {
+          qutlass = cudaPkgs.fetchFromGitHub {
             name = "qutlass-source";
             owner = "IST-DASLab";
             repo = "qutlass";
             rev = "830d2c4537c7396e14a02a46fbddd18b5d107c65";
             hash = "sha256-aG4qd0vlwP+8gudfvHwhtXCFmBOJKQQTvcwahpEqC84=";
           };
-          vllm-flash-attn = pkgs.stdenv.mkDerivation {
+          vllm-flash-attn = cudaPkgs.stdenv.mkDerivation {
             pname = "vllm-flash-attn";
             version = "2.7.2.post1";
 
-            src = pkgs.fetchFromGitHub {
+            src = cudaPkgs.fetchFromGitHub {
               name = "flash-attention-source";
               owner = "vllm-project";
               repo = "flash-attention";
@@ -118,11 +118,11 @@
             };
 
             patches = [
-              (pkgs.fetchpatch {
+              (cudaPkgs.fetchpatch {
                 url = "https://github.com/Dao-AILab/flash-attention/commit/dad67c88d4b6122c69d0bed1cebded0cded71cea.patch";
                 hash = "sha256-JSgXWItOp5KRpFbTQj/cZk+Tqez+4mEz5kmH5EUeQN4=";
               })
-              (pkgs.fetchpatch {
+              (cudaPkgs.fetchpatch {
                 url = "https://github.com/Dao-AILab/flash-attention/commit/e26dd28e487117ee3e6bc4908682f41f31e6f83a.patch";
                 hash = "sha256-NkCEowXSi+tiWu74Qt+VPKKavx0H9JeteovSJKToK9A=";
               })
@@ -140,27 +140,52 @@
             '';
           };
 
-          mergedCudaLibraries = with cudaPkgs.cudaPackages_13; [
-            cuda_cudart # cuda_runtime.h, -lcudart
+          cudaLibs = with cudaPkgs.cudaPackages_13; [
+            cuda_cudart
             cuda_cccl
-            libcurand # curand_kernel.h
-            libcusparse # cusparse.h
-            libcusolver # cusolverDn.h
-            cuda_nvtx
+            cuda_cupti
             cuda_nvrtc
-            # cusparselt # cusparseLt.h
+            cuda_nvtx
+            cudnn
+            libcufile
             libcublas
+            libcublas
+            libcufft
+            libcurand
+            libcusolver
+            libcusparse
+            libcusparse_lt
+            libcufile
+            libnvjitlink
+            libnvshmem
+            nccl
           ];
 
-          cuda_cccl_compat = pkgs.runCommand "cuda-cccl-compat" { } ''
+          cuda_cccl_compat = cudaPkgs.runCommand "cuda-cccl-compat" { } ''
             mkdir -p $out/include
             ln -s ${cudaPkgs.cudaPackages_13.cuda_cccl}/include $out/include/cccl
           '';
         in
         {
-          fastsafetensors = prev.fastsafetensors.overrideAttrs (old: { nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ final.setuptools final.pybind11 ]; });
+	  nvidia-cufile = prev.nvidia-cufile.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ [ 
+                cudaPkgs.rdma-core
+                cudaPkgs.autoAddDriverRunpath
+            ];
+            propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ [ cudaPkgs.util-linux ];
+	  });
+          nvidia-cusolver = prev.nvidia-cusolver.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ (with cudaPkgs.cudaPackages_13; [ libnvjitlink libcublas libcusparse cudaPkgs.autoAddDriverRunpath]);
+	  });
+          nvidia-cusparse = prev.nvidia-cusparse.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ [ cudaPkgs.cudaPackages_13.libnvjitlink cudaPkgs.autoAddDriverRunpath];
+          });
+          nvidia-nvshmem-cu13 = prev.nvidia-nvshmem-cu13.overrideAttrs (old: {
+	    buildInputs = (old.buildInputs or [ ]) ++ [ cudaPkgs.rdma-core cudaPkgs.pmix cudaPkgs.libfabric cudaPkgs.ucx cudaPkgs.openmpi cudaPkgs.autoAddDriverRunpath];
+	  });
+ 
           torch = prev.torch.overrideAttrs (old: {
-            propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ torchLibs ++ [ final.typing-extensions final.numpy ];
+            buildInputs = (old.buildInputs or [ ]) ++ cudaLibs ++ [ cudaPkgs.autoAddDriverRunpath ];
             autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "libcuda.so.1" ];
           });
           torchaudio = prev.torchaudio.overrideAttrs (old:
@@ -168,6 +193,7 @@
               buildInputs = (old.buildInputs or [ ]) ++ [
                 final.torch
                 cudaPkgs.cudaPackages_13.cuda_cudart
+                cudaPkgs.autoAddDriverRunpath
               ];
               preFixup = (old.preFixup or "") + ''
                 addAutoPatchelfSearchPath "${final.torch}"
@@ -178,6 +204,7 @@
             {
               buildInputs = (old.buildInputs or [ ]) ++ [
                 final.torch
+                cudaPkgs.autoAddDriverRunpath
               ];
               preFixup = (old.preFixup or "") + ''
                 addAutoPatchelfSearchPath "${final.torch}"
@@ -185,27 +212,23 @@
               autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "libcuda.so.1" ];
             });
           xgrammar = prev.xgrammar.overrideAttrs (old: {
-            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.cmake ];
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ cudaPkgs.cmake ];
             #patches = (old.patches or [ ]) ++ [ ../nix/xgrammar_cmake.patch ];
           });
           vllm = prev.vllm.overrideAttrs (old: {
             patches = (old.patches or [ ]) ++ [ ../nix/vllm_uv2nix_cmake.patch ];
-            nativeBuildInputs = with cudaPkgs.cudaPackages_13; (old.nativeBuildInputs or [ ]) ++ [
-              pkgs.cmake
-              pkgs.ninja
-              pkgs.autoAddDriverRunpath
-              cuda_nvcc
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+              cudaPkgs.cmake
+              cudaPkgs.ninja
+              cudaPkgs.autoAddDriverRunpath
+              cudaPkgs.cudaPackages_13.cuda_nvcc
             ];
-            buildInputs = (old.nativeBuildInputs or [ ]) ++ (with cudaPkgs.cudaPackages_13; [
-              libcufile
-              cudnn
-              nccl
-            ]) ++ mergedCudaLibraries;
+            buildInputs = (old.buildInputs or [ ]) ++ cudaLibs;
             propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ torchLibs ++ [ final.torch ];
 
-            CUDA_HOME = "${pkgs.symlinkJoin {
+            CUDA_HOME = "${cudaPkgs.symlinkJoin {
               name = "cuda-merged-exo";
-              paths = builtins.concatMap (p: [ (lib.getBin p) (lib.getLib p) (lib.getDev p) ]) (mergedCudaLibraries ++ [ cudaPkgs.cudaPackages_13.cuda_nvcc cuda_cccl_compat ]);
+              paths = builtins.concatMap (p: [ (lib.getBin p) (lib.getLib p) (lib.getDev p) ]) (cudaLibs ++ [ cudaPkgs.cudaPackages_13.cuda_nvcc cuda_cccl_compat ]);
             }}";
             VLLM_CUTLASS_SRC_DIR = "${lib.getDev cutlass}";
             VLLM_TARGET_DEVICE = "cuda";
@@ -273,8 +296,7 @@
           };
 
         in
-        lib.optionalAttrs isLinux (
-          (lib.mapAttrs (_: ignoreMissing) nvidiaPackages) // {
+          {
             mlx = prev.mlx.overrideAttrs (old: {
               buildInputs = (old.buildInputs or [ ]) ++ [ gguf-tools pkgs.openblas pkgs.fmt ];
               postPatch = ''
@@ -301,27 +323,7 @@
 
               };
             });
-            mlx-cuda-13 = prev.mlx-cuda-13.overrideAttrs (old: {
-              buildInputs = (old.buildInputs or [ ]) ++ [
-                final.nvidia-cublas
-                final.nvidia-cuda-nvrtc
-                final.nvidia-cudnn-cu13
-                final.nvidia-nccl-cu13
-              ];
-              preFixup = ''
-                addAutoPatchelfSearchPath ${final.nvidia-cublas}
-                addAutoPatchelfSearchPath ${final.nvidia-cuda-nvrtc}
-                addAutoPatchelfSearchPath ${final.nvidia-cudnn-cu13}
-                addAutoPatchelfSearchPath ${final.nvidia-nccl-cu13}
-              '';
-              autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
-            });
-            torch = ignoreMissing prev.torch;
-            torchaudio = ignoreMissing prev.torchaudio;
-            torchvision = ignoreMissing prev.torchvision;
-            triton = ignoreMissing prev.triton;
-          }
-        );
+          };
 
 
       python = pkgs.python313;
@@ -357,15 +359,15 @@
         "lib/python3.13/site-packages/nvidia*"
       ];
 
-      editablePythonSet = pythonSet.overrideScope (
+      editablePythonSet = cudaPythonSet.overrideScope (
         workspace.mkEditablePyprojectOverlay { root = "$REPO_ROOT"; members = [ "exo" "python/*" "bench" ]; }
       );
       evenv = (editablePythonSet.mkVirtualEnv "exo-dev-env"
         {
-          exo = [ "mlx" "dev" ];
+          exo = [ "mlx" "dev" "cuda" ];
           exo-pyo3-bindings = [ ];
           exo-bench = [ ];
-          mlx-engine = [ ];
+        vllm-engine = [ ];
         }).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
       };

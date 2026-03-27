@@ -320,7 +320,7 @@ def _patch_get_computed_blocks() -> None:
         if prefix_cache is None or request.prompt_token_ids is None:
             return original(self, request)
 
-        from exo.worker.engines.vllm.kv_cache import (
+        from vllm_engine.kv_cache import (
             TorchKVCache as _TorchKVCache,  # noqa: F811
         )
 
@@ -338,7 +338,7 @@ def _patch_get_computed_blocks() -> None:
         ):
             return original(self, request)
 
-        from exo.worker.engines.vllm.vllm_generator import _build_layer_groups
+        from vllm_engine.vllm_generator import _build_layer_groups
         from vllm.utils.math_utils import cdiv  # type: ignore[reportMissingImports]
 
         num_groups = len(self.kv_cache_config.kv_cache_groups)

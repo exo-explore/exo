@@ -186,7 +186,7 @@
                   export REPO_ROOT=$(git rev-parse --show-toplevel)
                   export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${self'.packages.python}/lib"
                   ${lib.optionalString stdenv.isLinux ''
-                    export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
+                    export LD_LIBRARY_PATH="${openssl.out}/lib:${lib.getLib pkgs.util-linux}/lib:${lib.getLib pkgs.systemd}/lib:${lib.getLib pkgs.numactl}/lib:$LD_LIBRARY_PATH"
                   ''}
                 '';
               };

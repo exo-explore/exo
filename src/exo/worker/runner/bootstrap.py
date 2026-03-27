@@ -50,7 +50,7 @@ def entrypoint(
     _logger: "loguru.Logger",
 ) -> None:
     loguru.logger = _logger
-    logger = loguru.logger
+    logger = _logger
 
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
@@ -107,9 +107,9 @@ def entrypoint(
             runner.main()
 
     except ClosedResourceError:
-        logger.warning("Runner communication closed unexpectedly")
+        loguru.logger.warning("Runner communication closed unexpectedly")
     except Exception as e:
-        logger.opt(exception=e).warning(
+        loguru.logger.opt(exception=e).warning(
             f"Runner {bound_instance.bound_runner_id} crashed with critical exception {e}"
         )
         event_sender.send(
@@ -125,4 +125,4 @@ def entrypoint(
         finally:
             event_sender.join()
             task_receiver.join()
-            logger.info("bye from the runner")
+            loguru.logger.info("bye from the runner")

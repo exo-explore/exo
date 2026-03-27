@@ -2307,21 +2307,6 @@ version = "0.30.7.dev20260312+257d5692"
 source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#257d5692fc7af6bba3b8afaeb63c549b7d1e43d5" }
 
 [[package]]
-name = "mlx-cuda-13"
-version = "0.30.6"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "nvidia-cublas", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "nvidia-cuda-nvrtc", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "nvidia-cudnn-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "nvidia-nccl-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/08/6b/27cd4abed63ca9e4086536acde4486ea7a762dda5b36bb867ed954efe93a/mlx_cuda_13-0.30.6-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:1a5e58eaf4b1a4eb6cb0111ecb4099f6f1380403599f8992ec93dfbad8d9c6f1", size = 66904875, upload-time = "2026-02-06T02:49:19.183Z" },
-    { url = "https://files.pythonhosted.org/packages/b1/ae/8864834f1c4637bd2f5da7fd8a6d2fb554a0bad16fbe53bb5ecdfcf1611f/mlx_cuda_13-0.30.6-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:35792e799bbf1498f3e0792c5c34c64bd13075de6d34d88e223de4b1000bab82", size = 69745930, upload-time = "2026-02-06T02:49:22.844Z" },
-]
-
-[[package]]
 name = "mlx-engine"
 version = "0.1.0"
 source = { editable = "python/mlx_engine" }
@@ -2791,7 +2776,7 @@ name = "nvidia-cudnn-cu13"
 version = "9.15.1.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ff/93/b3c9db2c35d6183361333d2dcfea50e094c012d012c8a4d7effbfb53ef62/nvidia_cudnn_cu13-9.15.1.9-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:44cd2ec83c3ef62a7357614bd02ce7f3dac35ffcbb04ad20999e730741f0ba17", size = 415636241, upload-time = "2025-11-12T20:22:26.582Z" },
@@ -5361,7 +5346,6 @@ dependencies = [
     { name = "exo-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "fastsafetensors", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "loguru", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "mlx-cuda-13", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "mlx-engine", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (platform_machine == 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -5374,7 +5358,6 @@ requires-dist = [
     { name = "exo-core", editable = "python/exo_core" },
     { name = "fastsafetensors", marker = "sys_platform == 'linux'", specifier = ">=0.1.10" },
     { name = "loguru", specifier = ">=0.7.3" },
-    { name = "mlx-cuda-13", marker = "sys_platform == 'linux'", specifier = "==0.30.6" },
     { name = "mlx-engine", editable = "python/mlx_engine" },
     { name = "torch", marker = "platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux'", specifier = ">=2.10.0" },
     { name = "torch", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130" },
