@@ -1,5 +1,6 @@
 """OpenAI Responses API adapter for converting requests/responses."""
 
+import json
 from collections.abc import AsyncGenerator
 from itertools import count
 from typing import Any
@@ -10,7 +11,22 @@ from exo.api.adapters.chat_completions import (
 )
 from exo.api.types import Usage
 from exo.api.types.openai_responses import (
+    ApplyPatchCallInputItem,
+    ApplyPatchCallOutputInputItem,
+    CodeInterpreterCallInputItem,
+    CompactionInputItem,
+    ComputerCallInputItem,
+    ComputerCallOutputInputItem,
+    CustomToolCallInputItem,
+    CustomToolCallOutputInputItem,
+    FileSearchCallInputItem,
     FunctionCallInputItem,
+    FunctionCallOutputInputItem,
+    ImageGenerationCallInputItem,
+    LocalShellCallInputItem,
+    LocalShellCallOutputInputItem,
+    McpCallInputItem,
+    ReasoningInputItem,
     ResponseCompletedEvent,
     ResponseContentPart,
     ResponseContentPartAddedEvent,
@@ -39,6 +55,11 @@ from exo.api.types.openai_responses import (
     ResponseTextDeltaEvent,
     ResponseTextDoneEvent,
     ResponseUsage,
+    ShellCallInputItem,
+    ShellCallOutputInputItem,
+    ToolSearchCallInputItem,
+    ToolSearchOutputInputItem,
+    WebSearchCallInputItem,
 )
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -120,7 +141,9 @@ async def responses_request_to_text_generation(
                     chat_template_messages.append(
                         {"role": item.role, "content": content}
                     )
-            elif isinstance(item, FunctionCallInputItem):
+            elif isinstance(
+                item, FunctionCallInputItem | McpCallInputItem | CustomToolCallInputItem
+            ):
                 chat_template_messages.append(
                     {
                         "role": "assistant",
@@ -137,14 +160,121 @@ async def responses_request_to_text_generation(
                         ],
                     }
                 )
-            else:
+            elif isinstance(
+                item,
+                LocalShellCallInputItem | ShellCallInputItem | ComputerCallInputItem,
+            ):
+                chat_template_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": item.call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": item.type,
+                                    "arguments": json.dumps(item.action),
+                                },
+                            }
+                        ],
+                    }
+                )
+            elif isinstance(item, ApplyPatchCallInputItem):
+                chat_template_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": item.call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": "apply_patch",
+                                    "arguments": json.dumps({"patch": item.patch}),
+                                },
+                            }
+                        ],
+                    }
+                )
+            elif isinstance(
+                item,
+                WebSearchCallInputItem
+                | FileSearchCallInputItem
+                | CodeInterpreterCallInputItem
+                | ImageGenerationCallInputItem
+                | ToolSearchCallInputItem,
+            ):
+                args: dict[str, Any] = {}
+                if isinstance(item, WebSearchCallInputItem):
+                    args = {"query": item.query}
+                elif isinstance(item, FileSearchCallInputItem):
+                    args = {"queries": item.queries}
+                elif isinstance(item, CodeInterpreterCallInputItem):
+                    args = {"code": item.code}
+                elif isinstance(item, ImageGenerationCallInputItem):
+                    args = {"prompt": item.prompt}
+                else:
+                    args = {"query": item.query}
+                chat_template_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": item.call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": item.type,
+                                    "arguments": json.dumps(args),
+                                },
+                            }
+                        ],
+                    }
+                )
+            elif isinstance(
+                item,
+                FunctionCallOutputInputItem
+                | LocalShellCallOutputInputItem
+                | ShellCallOutputInputItem
+                | ApplyPatchCallOutputInputItem
+                | ComputerCallOutputInputItem
+                | CustomToolCallOutputInputItem
+                | ToolSearchOutputInputItem,
+            ):
+                output = (
+                    item.output
+                    if isinstance(item.output, str)
+                    else json.dumps(item.output)
+                )
                 chat_template_messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": item.call_id,
-                        "content": item.output,
+                        "content": output,
                     }
                 )
+            elif isinstance(item, ReasoningInputItem):
+                reasoning_text = ""
+                if item.content:
+                    reasoning_text = "".join(
+                        entry.get("text", "") for entry in item.content
+                    )
+                elif item.summary:
+                    reasoning_text = "".join(
+                        entry.get("text", "") for entry in item.summary
+                    )
+                if reasoning_text:
+                    chat_template_messages.append(
+                        {"role": "assistant", "content": reasoning_text}
+                    )
+            elif isinstance(item, CompactionInputItem):
+                if item.summary:
+                    chat_template_messages.append(
+                        {"role": "system", "content": item.summary}
+                    )
+            else:
+                continue
 
         input_value = (
             input_messages
