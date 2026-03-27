@@ -33,6 +33,7 @@ dependencies = [
 
 [project.scripts]
 exo = "exo.main:main"
+exo-cli = "exo.cli.main:main"
 
 # dependencies only required for development
 [dependency-groups]
