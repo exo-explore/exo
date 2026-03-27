@@ -159,7 +159,7 @@ class VisionEncoder:
             results.append(importlib.import_module(name))
         return results[0] if len(results) == 1 else tuple(results)
 
-    def _ensure_loaded(self) -> None:
+    def ensure_loaded(self) -> None:
         if self._loaded:
             return
         self._load_weights()
@@ -322,7 +322,7 @@ class VisionEncoder:
         logger.info(f"Vision encoder loaded: {n_vision / 1e6:.1f}M params")
 
     def encode_images(self, images: list[str]) -> tuple[mx.array, list[int]]:
-        self._ensure_loaded()
+        self.ensure_loaded()
         assert self._vision_tower is not None
         assert self._processor is not None
 
@@ -476,6 +476,9 @@ class VisionProcessor:
         self._encoder = VisionEncoder(config, model_id)
         self._feature_cache: dict[str, tuple[mx.array, list[int]]] = {}
         self._feature_cache_max = 32
+
+    def load(self) -> None:
+        self._encoder.ensure_loaded()
 
     def _image_cache_key(self, images: list[str]) -> str:
         h = hashlib.sha256()
