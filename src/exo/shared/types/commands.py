@@ -69,6 +69,7 @@ class RequestEventLog(BaseCommand):
 class StartDownload(BaseCommand):
     target_node_id: NodeId
     shard_metadata: ShardMetadata
+    peer_base_url: str | None = None
 
 
 class DeleteDownload(BaseCommand):
