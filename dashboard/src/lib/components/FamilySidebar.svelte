@@ -42,7 +42,7 @@
 </script>
 
 <div
-  class="flex flex-col gap-1 py-2 px-1 border-r border-exo-yellow/10 bg-exo-medium-gray/30 min-w-[72px] sm:min-w-[64px] overflow-y-auto scrollbar-hide"
+  class="flex flex-col gap-1 py-2 px-1 border-r border-exo-yellow/10 bg-exo-medium-gray/30 min-w-[80px] sm:min-w-[72px] overflow-y-auto scrollbar-hide"
 >
   <!-- All models (no filter) -->
   <button
@@ -55,7 +55,7 @@
     title="All models"
   >
     <svg
-      class="w-5 h-5 {selectedFamily === null
+      class="w-6 h-6 {selectedFamily === null
         ? 'text-exo-yellow'
         : 'text-white/50 group-hover:text-white/70'}"
       viewBox="0 0 24 24"
@@ -66,7 +66,7 @@
       />
     </svg>
     <span
-      class="text-[9px] font-mono mt-0.5 {selectedFamily === null
+      class="text-[11px] font-mono mt-0.5 {selectedFamily === null
         ? 'text-exo-yellow'
         : 'text-white/40 group-hover:text-white/60'}">All</span
     >
@@ -90,7 +90,7 @@
           : "text-white/50 group-hover:text-amber-400/70"}
       />
       <span
-        class="text-[9px] font-mono mt-0.5 {selectedFamily === 'favorites'
+        class="text-[11px] font-mono mt-0.5 {selectedFamily === 'favorites'
           ? 'text-amber-400'
           : 'text-white/40 group-hover:text-white/60'}">Faves</span
       >
@@ -115,7 +115,7 @@
           : "text-white/50 group-hover:text-white/70"}
       />
       <span
-        class="text-[9px] font-mono mt-0.5 {selectedFamily === 'recents'
+        class="text-[11px] font-mono mt-0.5 {selectedFamily === 'recents'
           ? 'text-exo-yellow'
           : 'text-white/40 group-hover:text-white/60'}">Recent</span
       >
@@ -139,7 +139,7 @@
         : "text-white/50 group-hover:text-orange-400/70"}
     />
     <span
-      class="text-[9px] font-mono mt-0.5 {selectedFamily === 'huggingface'
+      class="text-[11px] font-mono mt-0.5 {selectedFamily === 'huggingface'
         ? 'text-orange-400'
         : 'text-white/40 group-hover:text-white/60'}">Hub</span
     >
@@ -165,7 +165,7 @@
           : "text-white/50 group-hover:text-white/70"}
       />
       <span
-        class="text-[9px] font-mono mt-0.5 truncate max-w-full {selectedFamily ===
+        class="text-[11px] font-mono mt-0.5 truncate max-w-full {selectedFamily ===
         family
           ? 'text-exo-yellow'
           : 'text-white/40 group-hover:text-white/60'}"
