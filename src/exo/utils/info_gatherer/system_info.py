@@ -132,7 +132,11 @@ async def _get_linux_network_interfaces() -> list[NetworkInterfaceInfo]:
             family: str = addr_info.get("family", "")  # pyright: ignore[reportAny]
             ip: str = addr_info.get("local", "")  # pyright: ignore[reportAny]
             if family in ("inet", "inet6") and ip:
-                interfaces.append(NetworkInterfaceInfo(name=name, ip_address=ip, interface_type=iface_type))
+                interfaces.append(
+                    NetworkInterfaceInfo(
+                        name=name, ip_address=ip, interface_type=iface_type
+                    )
+                )
 
     return interfaces
 

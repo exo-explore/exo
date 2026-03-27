@@ -65,7 +65,8 @@
         const variants = modelList
           .filter(
             (m) =>
-              normalizeBaseModel(m.base_model) === normalizeBaseModel(baseModel) &&
+              normalizeBaseModel(m.base_model) ===
+                normalizeBaseModel(baseModel) &&
               (m.storage_size_megabytes || 0) / 1024 <= memoryGB &&
               (m.storage_size_megabytes || 0) > 0,
           )
@@ -167,7 +168,11 @@
   /** For a given base_model name, find the biggest quant variant that fits in memory. */
   function pickBestVariant(baseModel: string): ChatModelInfo | null {
     const variants = models
-      .filter((m) => normalizeBaseModel(m.base_model) === normalizeBaseModel(baseModel) && fitsInMemory(m))
+      .filter(
+        (m) =>
+          normalizeBaseModel(m.base_model) === normalizeBaseModel(baseModel) &&
+          fitsInMemory(m),
+      )
       .sort((a, b) => getModelSizeGB(b) - getModelSizeGB(a));
     return variants[0] ?? null;
   }

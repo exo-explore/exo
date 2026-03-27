@@ -276,7 +276,9 @@ def main():
 
     if args.no_overlapping_prefill_sends:
         os.environ["EXO_NO_OVERLAPPING_PREFILL_SENDS"] = "1"
-        logger.info("Overlapping prefill sends disabled (--no-overlapping-prefill-sends)")
+        logger.info(
+            "Overlapping prefill sends disabled (--no-overlapping-prefill-sends)"
+        )
 
     # Set FAST_SYNCH override env var for runner subprocesses
     if args.fast_synch is True:
