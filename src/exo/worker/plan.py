@@ -151,15 +151,18 @@ def _init_distributed_backend(
             continue
 
         runner_is_idle = isinstance(runner.status, RunnerIdle)
-        all_runners_connecting = all(
+        # Allow RunnerConnected in addition to RunnerConnecting/RunnerIdle so that
+        # fast backends (e.g. llama-cpp rank 0 whose ConnectToGroup is a no-op) don't
+        # race past RunnerConnecting before the last-rank node's plan loop fires.
+        all_runners_pre_load = all(
             isinstance(
                 all_runners.get(global_runner_id),
-                (RunnerConnecting, RunnerIdle),
+                (RunnerConnecting, RunnerIdle, RunnerConnected),
             )
             for global_runner_id in shard_assignments.runner_to_shard
         )
 
-        if not (runner_is_idle and all_runners_connecting):
+        if not (runner_is_idle and all_runners_pre_load):
             continue
 
         runner_id = runner.bound_instance.bound_runner_id
@@ -173,9 +176,9 @@ def _init_distributed_backend(
 
         accepting_ranks = device_rank < world_size - 1
 
-        # Rank = n-1
+        # Rank = n-1: send ConnectToGroup once all lower ranks have started connecting
         connecting_rank_ready = device_rank == world_size - 1 and all(
-            isinstance(all_runners.get(global_runner_id, None), RunnerConnecting)
+            isinstance(all_runners.get(global_runner_id, None), (RunnerConnecting, RunnerConnected))
             for global_runner_id in shard_assignments.runner_to_shard
             if global_runner_id != runner_id
         )
