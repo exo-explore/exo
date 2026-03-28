@@ -48,10 +48,13 @@ def find_rpc_server_binary() -> str | None:
        (populated when building llama-cpp-python from source with
        ``LLAMA_BUILD_SERVER=on``)
     """
+    binary_names = ["llama-rpc-server", "rpc-server"]
+
     # 1. System PATH
-    found = shutil.which("llama-rpc-server")
-    if found is not None:
-        return found
+    for name in binary_names:
+        found = shutil.which(name)
+        if found is not None:
+            return found
 
     # 2. Alongside the llama_cpp package
     try:
@@ -59,9 +62,14 @@ def find_rpc_server_binary() -> str | None:
 
         pkg_dir = Path(llama_cpp.__file__).parent
         candidates = [
-            pkg_dir / "llama-rpc-server",
-            pkg_dir / "bin" / "llama-rpc-server",
-            pkg_dir.parent / "bin" / "llama-rpc-server",
+            pkg_dir / name
+            for name in binary_names
+        ] + [
+            pkg_dir / "bin" / name
+            for name in binary_names
+        ] + [
+            pkg_dir.parent / "bin" / name
+            for name in binary_names
         ]
         for c in candidates:
             if c.exists():
