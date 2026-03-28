@@ -258,9 +258,10 @@ def _ready_to_warmup(
             for global_runner_id in shard_assignments.runner_to_shard
         )
 
-        # Rank = 0
+        # Rank = 0: also accept RunnerReady in case rank 1+ completed warmup
+        # before this plan loop fired (warmup is instant for RPC workers).
         connecting_rank_ready = device_rank == 0 and all(
-            isinstance(all_runners.get(global_runner_id, None), RunnerWarmingUp)
+            isinstance(all_runners.get(global_runner_id, None), (RunnerWarmingUp, RunnerReady))
             for global_runner_id in shard_assignments.runner_to_shard
             if global_runner_id != runner_id
         )
