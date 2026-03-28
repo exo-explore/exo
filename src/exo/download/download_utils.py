@@ -879,14 +879,24 @@ async def download_shard(
                     file_progress={},
                 )
 
-            # Status-check calls (skip_download=True) and rank-1 RPC nodes:
-            # just report whether the file exists locally, never download.
-            if skip_download or shard.device_rank != 0:
+            # Rank 1+ nodes run RPC servers only — they never need the model file.
+            # Always report complete so the master doesn't wait for a download.
+            if shard.device_rank != 0:
+                total = card.storage_size.in_bytes
+                prog = _make_gguf_progress(total, total, "complete")
+                try:
+                    await on_progress(shard, prog)
+                except Exception:
+                    pass
+                return target_dir, prog
+
+            # Status-check calls: report actual file state without downloading.
+            if skip_download:
                 if gguf_path.exists():
-                    prog = _make_gguf_progress(gguf_path.stat().st_size, gguf_path.stat().st_size, "complete")
+                    size = gguf_path.stat().st_size
+                    prog = _make_gguf_progress(size, size, "complete")
                 else:
-                    total = card.storage_size.in_bytes
-                    prog = _make_gguf_progress(0, total, "not_started")
+                    prog = _make_gguf_progress(0, card.storage_size.in_bytes, "not_started")
                 try:
                     await on_progress(shard, prog)
                 except Exception:
