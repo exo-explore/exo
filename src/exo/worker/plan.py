@@ -304,6 +304,13 @@ def _pending_tasks(
             if task.task_id in runner.completed or task.task_id in runner.in_progress:
                 continue
 
+            # For LlamaCppRpc instances only rank 0 drives generation;
+            # rank 1+ are passive RPC workers and must not consume the task.
+            from exo.shared.types.worker.instances import LlamaCppRpcInstance
+            if isinstance(runner.bound_instance.instance, LlamaCppRpcInstance):
+                if runner.bound_instance.bound_shard.device_rank != 0:
+                    continue
+
             if isinstance(runner.status, (RunnerReady, RunnerRunning)) and all(
                 isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))
                 for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
