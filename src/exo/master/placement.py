@@ -5,6 +5,7 @@ from typing import Sequence
 
 from exo.master.placement_utils import (
     Cycle,
+    _find_connection_ip,
     filter_cycles_by_memory,
     get_mlx_jaccl_coordinators,
     get_mlx_jaccl_devices_matrix,
@@ -260,15 +261,29 @@ def place_instance(
             rpc_port = random_ephemeral_port()
             # Build rpc_addresses: every non-rank-0 node gets an entry
             rpc_addresses: dict[NodeId, str] = {}
+            # Find rank-0 node to use as the "viewer" for topology connections
+            rank0_node_id: NodeId | None = None
+            for node_id in selected_cycle.node_ids:
+                runner_id = shard_assignments.node_to_runner[node_id]
+                if shard_assignments.runner_to_shard[runner_id].device_rank == 0:
+                    rank0_node_id = node_id
+                    break
+
             for node_id in selected_cycle.node_ids:
                 runner_id = shard_assignments.node_to_runner[node_id]
                 shard_md = shard_assignments.runner_to_shard[runner_id]
                 if shard_md.device_rank != 0:
-                    # Pick the first reachable IP for this node
-                    ifaces = node_network.get(node_id)
+                    # Use the IP address that rank-0 uses to reach this node via the topology,
+                    # falling back to node_network interfaces, then 127.0.0.1.
                     host_ip = "127.0.0.1"
-                    if ifaces and ifaces.interfaces:
-                        host_ip = ifaces.interfaces[0].ip_address
+                    if rank0_node_id is not None:
+                        topo_ips = list(_find_connection_ip(rank0_node_id, node_id, cycle_digraph))
+                        if topo_ips:
+                            host_ip = topo_ips[0]
+                    if host_ip == "127.0.0.1":
+                        ifaces = node_network.get(node_id)
+                        if ifaces and ifaces.interfaces:
+                            host_ip = ifaces.interfaces[0].ip_address
                     rpc_addresses[node_id] = f"{host_ip}:{rpc_port}"
 
             # Equal layer split across all runners
