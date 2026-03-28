@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import hashlib
 import json
 import random
 import time
@@ -24,6 +25,7 @@ from loguru import logger
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
+    fetch_image_url,
     generate_chat_stream,
 )
 from exo.api.adapters.claude import (
@@ -170,6 +172,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
@@ -701,18 +704,79 @@ class API:
             "TODO: we should send a notification to the user to download the model"
         )
 
+    _sent_image_hashes: set[str] = set()
+
+    async def _send_text_generation_with_images(
+        self, task_params: TextGenerationTaskParams
+    ) -> TextGeneration:
+        images = task_params.images
+        if not images:
+            command = TextGeneration(task_params=task_params)
+            await self._send(command)
+            return command
+
+        hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
+
+        cached_hashes: dict[int, str] = {}
+        new_images: list[tuple[int, str]] = []
+        for idx, (img, h) in enumerate(zip(images, hashes, strict=True)):
+            if h in self._sent_image_hashes:
+                cached_hashes[idx] = h
+            else:
+                self._sent_image_hashes.add(h)
+                new_images.append((idx, img))
+
+        if not new_images:
+            task_params = task_params.model_copy(
+                update={"images": [], "image_hashes": cached_hashes}
+            )
+            command = TextGeneration(task_params=task_params)
+            await self._send(command)
+            return command
+
+        all_chunks: list[tuple[int, str]] = []
+        for img_idx, img_data in new_images:
+            for i in range(0, len(img_data), EXO_MAX_CHUNK_SIZE):
+                all_chunks.append((img_idx, img_data[i : i + EXO_MAX_CHUNK_SIZE]))
+
+        task_params = task_params.model_copy(
+            update={
+                "images": [],
+                "image_hashes": cached_hashes,
+                "total_input_chunks": len(all_chunks),
+                "image_count": len(new_images),
+            }
+        )
+        command = TextGeneration(task_params=task_params)
+
+        for global_idx, (img_idx, chunk_data) in enumerate(all_chunks):
+            await self._send(
+                SendInputChunk(
+                    chunk=InputImageChunk(
+                        model=task_params.model,
+                        command_id=command.command_id,
+                        data=chunk_data,
+                        chunk_index=global_idx,
+                        total_chunks=len(all_chunks),
+                        image_index=img_idx,
+                    )
+                )
+            )
+
+        await self._send(command)
+        return command
+
     async def chat_completions(
         self, payload: ChatCompletionRequest
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
-        task_params = chat_request_to_text_generation(payload)
+        task_params = await chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
@@ -739,7 +803,7 @@ class API:
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
     ) -> BenchChatCompletionResponse:
-        task_params = chat_request_to_text_generation(payload)
+        task_params = await chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )
@@ -747,8 +811,7 @@ class API:
 
         task_params = task_params.model_copy(update={"stream": False, "bench": True})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         return await self._collect_text_generation_with_stats(command.command_id)
 
@@ -1305,13 +1368,20 @@ class API:
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
         task_params = claude_request_to_text_generation(payload)
+        if task_params.images:
+            resolved_images: list[str] = []
+            for img in task_params.images:
+                if img.startswith(("http://", "https://")):
+                    resolved_images.append(await fetch_image_url(img))
+                else:
+                    resolved_images.append(img)
+            task_params = task_params.model_copy(update={"images": resolved_images})
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
@@ -1341,12 +1411,11 @@ class API:
         self, payload: ResponsesRequest
     ) -> ResponsesResponse | StreamingResponse:
         """OpenAI Responses API."""
-        task_params = responses_request_to_text_generation(payload)
+        task_params = await responses_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(task_params.model)
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
@@ -1389,8 +1458,7 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
@@ -1426,8 +1494,7 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(

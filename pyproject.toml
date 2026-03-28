@@ -12,7 +12,7 @@ dependencies = [
   "fastapi>=0.116.1",
   "filelock>=3.18.0",
   "rustworkx>=0.17.1",
-  "huggingface-hub>=0.33.4",
+  "huggingface-hub>=1.8.0",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
   "exo_pyo3_bindings",                         # rust bindings
@@ -29,6 +29,8 @@ dependencies = [
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
+  "mlx-vlm>=0.3.11",
+  "torchvision",
 ]
 
 [project.scripts]
@@ -114,6 +116,7 @@ root = "src"
 required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
+extra-build-dependencies = { "miniaudio" = ["setuptools", "cffi", "pycparser"] }
 
 ###
 # ruff configuration

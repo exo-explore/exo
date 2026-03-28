@@ -27,6 +27,12 @@ class ResponseInputTextPart(BaseModel, frozen=True):
     text: str
 
 
+class ResponseInputImagePart(BaseModel, frozen=True):
+    type: Literal["input_image"] = "input_image"
+    image_url: str | None = None
+    detail: str | None = None
+
+
 class ResponseOutputTextPart(BaseModel, frozen=True):
     """Output text content part (used when replaying assistant messages in input)."""
 
@@ -34,7 +40,9 @@ class ResponseOutputTextPart(BaseModel, frozen=True):
     text: str
 
 
-ResponseContentPart = ResponseInputTextPart | ResponseOutputTextPart
+ResponseContentPart = (
+    ResponseInputTextPart | ResponseInputImagePart | ResponseOutputTextPart
+)
 
 
 # Request input item types
