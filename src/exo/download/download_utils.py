@@ -886,7 +886,7 @@ async def download_shard(
                     prog = _make_gguf_progress(gguf_path.stat().st_size, gguf_path.stat().st_size, "complete")
                 else:
                     total = card.storage_size.in_bytes
-                    prog = _make_gguf_progress(0, total, "in_progress" if not skip_download else "pending")
+                    prog = _make_gguf_progress(0, total, "not_started")
                 try:
                     await on_progress(shard, prog)
                 except Exception:
