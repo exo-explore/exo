@@ -38,7 +38,8 @@ from exo.shared.types.profiling import (
 )
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
-from exo.shared.types.topology import Connection, RDMAConnection
+from exo.shared.types.multiaddr import Multiaddr
+from exo.shared.types.topology import Connection, RDMAConnection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerShutdown, RunnerStatus
@@ -334,24 +335,53 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             }
         case MacThunderboltConnections():
             conn_map = {
-                tb_ident.domain_uuid: (nid, tb_ident.rdma_interface)
+                tb_ident.domain_uuid: (nid, tb_ident.rdma_interface, tb_ident.link_speed)
                 for nid in state.node_thunderbolt
                 for tb_ident in state.node_thunderbolt[nid].interfaces
             }
-            as_rdma_conns = [
-                Connection(
-                    source=event.node_id,
-                    sink=conn_map[tb_conn.sink_uuid][0],
-                    edge=RDMAConnection(
-                        source_rdma_iface=conn_map[tb_conn.source_uuid][1],
-                        sink_rdma_iface=conn_map[tb_conn.sink_uuid][1],
-                    ),
-                )
-                for tb_conn in info.conns
-                if tb_conn.source_uuid in conn_map
-                if tb_conn.sink_uuid in conn_map
-            ]
+
+            def _is_tb5(link_speed: str) -> bool:
+                """TB5 has link speed > 40 Gb/s (e.g. 80 or 120 Gb/s)."""
+                import re
+                match = re.search(r"(\d+)\s*Gb", link_speed)
+                return match is not None and int(match.group(1)) > 40
+
+            as_rdma_conns: list[Connection] = []
+            as_socket_conns: list[Connection] = []
+            for tb_conn in info.conns:
+                if tb_conn.source_uuid not in conn_map or tb_conn.sink_uuid not in conn_map:
+                    continue
+                source_nid, source_rdma, source_speed = conn_map[tb_conn.source_uuid]
+                sink_nid, sink_rdma, sink_speed = conn_map[tb_conn.sink_uuid]
+                if _is_tb5(source_speed) and _is_tb5(sink_speed):
+                    as_rdma_conns.append(Connection(
+                        source=event.node_id,
+                        sink=sink_nid,
+                        edge=RDMAConnection(
+                            source_rdma_iface=source_rdma,
+                            sink_rdma_iface=sink_rdma,
+                        ),
+                    ))
+                else:
+                    # TB4 or older: create SocketConnection via Thunderbolt Bridge IP
+                    bridge_ip = next(
+                        (iface.ip_address for iface in state.node_network.get(sink_nid, NodeNetworkInfo()).interfaces
+                         if iface.interface_type == "thunderbolt"
+                         and not iface.ip_address.startswith("fe80")
+                         and ":" not in iface.ip_address),
+                        None,
+                    )
+                    if bridge_ip is not None:
+                        as_socket_conns.append(Connection(
+                            source=event.node_id,
+                            sink=sink_nid,
+                            edge=SocketConnection(
+                                sink_multiaddr=Multiaddr(address=f"/ip4/{bridge_ip}/tcp/52415"),
+                            ),
+                        ))
             topology.replace_all_out_rdma_connections(event.node_id, as_rdma_conns)
+            for conn in as_socket_conns:
+                topology.add_connection(conn)
         case ThunderboltBridgeInfo():
             new_tb_bridge: dict[NodeId, ThunderboltBridgeStatus] = {
                 **state.node_thunderbolt_bridge,

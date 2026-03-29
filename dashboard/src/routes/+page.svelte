@@ -147,9 +147,14 @@
     if (!rdmaCtl) return false;
     const ids = tbIdentifiers;
     if (!ids) return false;
-    // Find nodes with TB5 hardware (any TB interface)
+    // Find nodes with TB5 hardware (link speed > 40 Gb/s)
     const tb5NodeIds = Object.entries(ids)
-      .filter(([_, node]) => node.interfaces.length > 0)
+      .filter(([_, node]) =>
+        node.interfaces.some((iface: { linkSpeed: string }) => {
+          const match = iface.linkSpeed.match(/(\d+)\s*Gb/i);
+          return match != null && parseInt(match[1], 10) > 40;
+        }),
+      )
       .map(([id]) => id);
     if (tb5NodeIds.length < 2) return false;
     // At least one TB5 node has RDMA disabled
