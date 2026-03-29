@@ -7,17 +7,19 @@ import io
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from mlx_vlm.utils import ImageProcessor
 import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from mlx_vlm.prompt_utils import get_message_json
+from mlx_vlm.utils import load_image_processor
 from PIL import Image
 from safetensors import safe_open
 from transformers import AutoImageProcessor
-from transformers.image_processing_utils import BaseImageProcessor
 
 from exo.download.download_utils import build_model_path
 from exo.shared.models.model_cards import VisionCardConfig
@@ -137,7 +139,7 @@ class VisionEncoder:
         self._model_path = build_model_path(ModelId(config.weights_repo))
         self._vision_tower: nn.Module | None = None
         self._projector: nn.Module | None = None
-        self._processor: BaseImageProcessor | None = None
+        self._processor: "ImageProcessor | None" = None
         self._spatial_merge_size: int = 2
         self._merge_kernel_size: list[int] | None = None
         self._needs_nhwc: bool = False
@@ -223,10 +225,13 @@ class VisionEncoder:
             self._load_weights_from_model_repo()
 
         repo = processor_repo or str(self._model_path)
-        self._processor = AutoImageProcessor.from_pretrained(  # type: ignore
-            repo,
-            trust_remote_code=True,
-        )
+        image_proc = load_image_processor(repo)
+        if image_proc is not None:
+            self._processor = image_proc
+        else:
+            self._processor = AutoImageProcessor.from_pretrained(  # type: ignore
+                repo, trust_remote_code=True
+            )
         if processor_repo:
             self._merge_kernel_size = vision_cfg.get("merge_kernel_size", [2, 2])  # type: ignore
             self._needs_nhwc = True
@@ -331,8 +336,8 @@ class VisionEncoder:
             logger.info(f"Image {idx}: {img.width}x{img.height} mode={img.mode}")
 
         if self._config.processor_repo:
-            processed = self._processor.preprocess(  # type: ignore
-                [{"type": "image", "image": img} for img in pil_images],  # type: ignore
+            processed = self._processor.preprocess(
+                [{"type": "image", "image": img} for img in pil_images],
                 return_tensors="np",
             )
             pixel_values = mx.array(processed["pixel_values"])  # type: ignore

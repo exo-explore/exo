@@ -1,3 +1,4 @@
+import json
 from enum import Enum
 from typing import Annotated, Any
 
@@ -41,8 +42,6 @@ _card_cache: dict[ModelId, "ModelCard"] = {}
 
 
 def _detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
-    import json
-
     normalized = model_id.normalize()
     for model_dir in [d / normalized for d in EXO_MODELS_DIRS]:
         config_path = model_dir / "config.json"

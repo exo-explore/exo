@@ -221,7 +221,6 @@ def load_mlx_items(
         vision_processor: VisionProcessor | None = VisionProcessor(
             vision_config, bound_instance.bound_shard.model_card.model_id
         )
-        vision_processor.load()
     else:
         vision_processor = None
 
