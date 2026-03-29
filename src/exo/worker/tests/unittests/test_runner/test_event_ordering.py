@@ -115,7 +115,9 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
 def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     # initialize_mlx returns a mock group
     monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
-    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
+    monkeypatch.setattr(
+        mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer, None))
+    )
     monkeypatch.setattr(mlx_batch_generator, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_batch_generator, "_check_for_debug_prompts", nothin)
     monkeypatch.setattr(mlx_batch_generator, "mx_any", make_nothin(False))
