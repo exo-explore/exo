@@ -1,3 +1,4 @@
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Callable, cast
@@ -79,11 +80,47 @@ class ExoBatchGenerator:
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
-        self._exo_gen = MlxBatchGenerator(
-            model=self.model,
-            stop_tokens=set(eos_ids_from_tokenizer(self.tokenizer)),
-            prefill_step_size=4096,
-        )
+        use_speculative = os.environ.get("EXO_SPECULATIVE", "0") == "1"
+        stop_tokens = set(eos_ids_from_tokenizer(self.tokenizer))
+
+        if use_speculative:
+            try:
+                from exo.worker.engines.mlx.speculative.mtp_module import MTPPredictor
+                from exo.worker.engines.mlx.speculative.mtp_batch_generator import MTPBatchGenerator
+
+                mtp_weights = os.environ.get("EXO_MTP_WEIGHTS", "")
+                gamma = int(os.environ.get("EXO_SPECULATIVE_GAMMA", "2"))
+
+                if mtp_weights and os.path.exists(mtp_weights):
+                    mtp = MTPPredictor(self.model, mtp_weights, quantize=False)
+                    self._exo_gen = MTPBatchGenerator(
+                        model=self.model,
+                        mtp_predictor=mtp,
+                        gamma=gamma,
+                        stop_tokens=stop_tokens,
+                        prefill_step_size=4096,
+                    )
+                    logger.info(f"MTP speculative decoding enabled (γ={gamma})")
+                else:
+                    logger.warning(f"EXO_SPECULATIVE=1 but MTP weights not found at '{mtp_weights}'. Falling back to standard generation.")
+                    self._exo_gen = MlxBatchGenerator(
+                        model=self.model,
+                        stop_tokens=stop_tokens,
+                        prefill_step_size=4096,
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to initialize MTP speculative decoding: {e}. Falling back to standard generation.")
+                self._exo_gen = MlxBatchGenerator(
+                    model=self.model,
+                    stop_tokens=stop_tokens,
+                    prefill_step_size=4096,
+                )
+        else:
+            self._exo_gen = MlxBatchGenerator(
+                model=self.model,
+                stop_tokens=stop_tokens,
+                prefill_step_size=4096,
+            )
 
     @property
     def has_work(self) -> bool:
