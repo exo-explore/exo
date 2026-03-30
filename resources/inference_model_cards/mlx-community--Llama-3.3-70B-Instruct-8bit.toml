@@ -9,5 +9,7 @@ quantization = "8bit"
 base_model = "Llama 3.3 70B"
 capabilities = ["text"]
 
+context_length = 131072
+
 [storage_size]
 in_bytes = 76799803392

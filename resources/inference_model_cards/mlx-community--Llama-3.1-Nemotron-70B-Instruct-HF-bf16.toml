@@ -8,5 +8,7 @@ quantization = "bf16"
 base_model = "NVIDIA Llama-3.1-Nemotron-70B-Instruct"
 capabilities = ["text"]
 
+context_length = 131072
+
 [storage_size]
 in_bytes = 141107412992
