@@ -49,13 +49,16 @@ class MTPBatchGenerator(BatchGenerator):
         self._setup_hidden_capture()
 
     def _setup_hidden_capture(self):
-        """Monkey-patch model's final norm to capture pre-norm hidden state.
+        """Monkey-patch model's final norm and embed_tokens to capture states.
 
-        Needed for the first decode step and BS>1 fallback path.
-        During speculative verify, we use speculative_forward()'s return value instead.
+        Captures:
+        - pre_norm: hidden states before final RMSNorm (for MTP input)
+        - prompt_pre_norm: same but only when S>1 (prefill)
+        - prompt_tokens: input token ids when S>1 (for MTP cache prefill)
         """
         inner = getattr(self.model, 'model', None) or self.model.language_model.model
         original_norm = inner.norm
+        original_embed = inner.embed_tokens
         captured = self._captured
 
         class _CapturingNorm:
@@ -72,7 +75,20 @@ class MTPBatchGenerator(BatchGenerator):
             def __getattr__(self, name):
                 return getattr(self._orig, name)
 
+        class _CapturingEmbed:
+            def __init__(self, orig):
+                self._orig = orig
+
+            def __call__(self, x):
+                if x.shape[-1] > 1 if x.ndim == 1 else x.shape[1] > 1:
+                    captured['prompt_tokens'] = x
+                return self._orig(x)
+
+            def __getattr__(self, name):
+                return getattr(self._orig, name)
+
         inner.norm = _CapturingNorm(original_norm)
+        inner.embed_tokens = _CapturingEmbed(original_embed)
 
     def _next(self):
         batch = self.active_batch
@@ -113,15 +129,23 @@ class MTPBatchGenerator(BatchGenerator):
         decode_pre_norm = self._captured.get('pre_norm')
 
         # Batched MTP prefill
-        # prompt_pre_norm has S positions from the prefill chunk (prompt[0:S])
-        # Pair position i with token i+1 for MTP cache building
+        # prompt_pre_norm has S positions from the model prefill.
+        # In exo, prefill happens outside BatchGenerator, so batch.tokens
+        # only has the last few tokens. Use captured prompt_tokens instead.
         if prompt_pre_norm is not None:
             mx.eval(prompt_pre_norm)
-            toks = batch.tokens[0]
-            mx.eval(toks)
-            toks_list = toks.tolist()
+            prompt_toks = self._captured.get('prompt_tokens')
+            if prompt_toks is not None:
+                mx.eval(prompt_toks)
+                # prompt_toks shape: (1, S) or (S,) from embed_tokens input
+                toks_list = prompt_toks.flatten().tolist()
+            else:
+                # Fallback: use batch.tokens (works when BG does its own prefill)
+                toks = batch.tokens[0]
+                mx.eval(toks)
+                toks_list = toks.tolist()
             S_pre = prompt_pre_norm.shape[1]
-            if S_pre > 1:
+            if S_pre > 1 and len(toks_list) >= S_pre:
                 mtp_tokens = toks_list[1:S_pre]  # tokens 1..S_pre-1
                 _ = self.mtp.predict(
                     prompt_pre_norm[:, :-1, :],
