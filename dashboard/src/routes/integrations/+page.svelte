@@ -6,7 +6,9 @@
   import { instances, refreshState } from "$lib/stores/app.svelte";
   import { onMount } from "svelte";
 
-  const apiUrl = browser ? window.location.origin.replace("localhost", "127.0.0.1") : "http://127.0.0.1:52415";
+  const apiUrl = browser
+    ? window.location.origin.replace("localhost", "127.0.0.1")
+    : "http://127.0.0.1:52415";
 
   const instancesData = $derived(instances());
 
@@ -195,7 +197,9 @@
                 {
                   id: openClawModel,
                   name: "exo local",
-                  input: (modelCapabilities[openClawModel] || []).includes("vision")
+                  input: (modelCapabilities[openClawModel] || []).includes(
+                    "vision",
+                  )
                     ? ["text", "image"]
                     : ["text"],
                 },
@@ -259,6 +263,15 @@
     ].join("\n"),
   );
 
+  const firefoxConfig = $derived(
+    [
+      `1. Open about:config in Firefox`,
+      `2. Set browser.ml.chat.enabled to true`,
+      `3. Set browser.ml.chat.hideLocalhost to false`,
+      `4. Set browser.ml.chat.provider to: ${apiUrl}/`,
+    ].join("\n"),
+  );
+
   const tabs = [
     "Claude Code",
     "OpenCode",
@@ -266,6 +279,7 @@
     "OpenClaw",
     "Open WebUI",
     "n8n",
+    "Firefox",
   ] as const;
   type Tab = (typeof tabs)[number];
   const stored = browser ? localStorage.getItem("exo-integrations-tab") : null;
@@ -477,7 +491,10 @@
       {:else if activeTab === "OpenClaw"}
         {#if runningModels.length > 1}
           <div class="text-xs">
-            <span class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1">Model</span>
+            <span
+              class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1"
+              >Model</span
+            >
             <select bind:value={openClawModel} class={selectClass}>
               {#each runningModels as model}
                 <option value={model}>{model.split("/").pop()}</option>
@@ -546,6 +563,13 @@
           subtitle="n8n UI → Workflows"
           description="Create a workflow that uses your exo-powered model."
           config={n8nWorkflowSteps}
+        />
+      {:else if activeTab === "Firefox"}
+        <IntegrationCard
+          title="Firefox AI Chatbot"
+          subtitle="about:config"
+          description="Use the exo dashboard as Firefox's built-in AI chatbot. Requires Firefox 130+."
+          config={firefoxConfig}
         />
       {/if}
     </div>

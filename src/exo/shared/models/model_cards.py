@@ -242,6 +242,7 @@ class ConfigData(BaseModel):
             "decoder_layers",
         )
     )
+    max_position_embeddings: int = 0
     vision: VisionCardConfig | None = None
 
     @property
