@@ -88,10 +88,10 @@ class ExoBatchGenerator:
                 from exo.worker.engines.mlx.speculative.mtp_module import MTPPredictor
                 from exo.worker.engines.mlx.speculative.mtp_batch_generator import MTPBatchGenerator
 
-                mtp_weights = os.environ.get("EXO_MTP_WEIGHTS", "")
+                mtp_weights = self._resolve_mtp_weights()
                 gamma = int(os.environ.get("EXO_SPECULATIVE_GAMMA", "2"))
 
-                if mtp_weights and os.path.exists(mtp_weights):
+                if mtp_weights:
                     mtp = MTPPredictor(self.model, mtp_weights, quantize=False)
                     temp = float(os.environ.get("EXO_SPECULATIVE_TEMP", "0.7"))
                     alpha = float(os.environ.get("EXO_SPECULATIVE_ALPHA", "1.0"))
@@ -104,9 +104,9 @@ class ExoBatchGenerator:
                         stop_tokens=stop_tokens,
                         prefill_step_size=4096,
                     )
-                    logger.info(f"MTP speculative decoding enabled (γ={gamma})")
+                    logger.info(f"MTP speculative decoding enabled (γ={gamma}, T={temp})")
                 else:
-                    logger.warning(f"EXO_SPECULATIVE=1 but MTP weights not found at '{mtp_weights}'. Falling back to standard generation.")
+                    logger.warning("EXO_SPECULATIVE=1 but could not find MTP weights. Falling back to standard generation.")
                     self._exo_gen = MlxBatchGenerator(
                         model=self.model,
                         stop_tokens=stop_tokens,
@@ -125,6 +125,80 @@ class ExoBatchGenerator:
                 stop_tokens=stop_tokens,
                 prefill_step_size=4096,
             )
+
+    def _resolve_mtp_weights(self) -> str | None:
+        """Find MTP weights: explicit path, explicit HF model, or auto-extract."""
+        # 1. Explicit path
+        explicit_path = os.environ.get("EXO_MTP_WEIGHTS", "")
+        if explicit_path and os.path.exists(explicit_path):
+            return explicit_path
+
+        # 2. Explicit HF model repo containing MTP weights
+        mtp_model = os.environ.get("EXO_MTP_MODEL", "")
+
+        # 3. Auto-detect: if no EXO_MTP_MODEL set, try to infer from model config
+        if not mtp_model:
+            try:
+                inner = getattr(self.model, 'model', None) or self.model.language_model.model
+                args = getattr(inner, 'args', None)
+                if args and getattr(args, 'mtp_num_hidden_layers', 0) > 0:
+                    model_type = getattr(args, 'model_type', '')
+                    if 'qwen3_5' in model_type or 'qwen3.5' in str(type(self.model).__module__):
+                        # Default pairing for Qwen3.5-27B
+                        mtp_model = "Qwen/Qwen3.5-27B"
+                        logger.info(f"Auto-detected MTP model: {mtp_model}")
+            except Exception:
+                pass
+
+        if not mtp_model:
+            return None
+
+        # Download and extract MTP weights from HF repo
+        try:
+            return self._extract_mtp_from_hf(mtp_model)
+        except Exception as e:
+            logger.warning(f"Failed to extract MTP weights from {mtp_model}: {e}")
+            return None
+
+    def _extract_mtp_from_hf(self, repo_id: str) -> str:
+        """Download MTP tensors from HF repo and cache as a single safetensors file."""
+        import hashlib
+        from pathlib import Path
+        from huggingface_hub import snapshot_download
+        from safetensors.torch import load_file, save_file
+
+        cache_dir = Path.home() / ".cache" / "exo" / "mtp_weights"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_key = hashlib.md5(repo_id.encode()).hexdigest()[:12]
+        cached_path = cache_dir / f"mtp_{cache_key}.safetensors"
+
+        if cached_path.exists():
+            logger.info(f"Using cached MTP weights: {cached_path}")
+            return str(cached_path)
+
+        logger.info(f"Downloading MTP weights from {repo_id}...")
+        model_dir = snapshot_download(
+            repo_id,
+            allow_patterns=["*.safetensors", "*.json"],
+        )
+
+        # Extract MTP tensors from all safetensors files
+        mtp_tensors = {}
+        model_path = Path(model_dir)
+        for sf_file in sorted(model_path.glob("*.safetensors")):
+            tensors = load_file(str(sf_file))
+            for k, v in tensors.items():
+                if k.startswith("model.mtp."):
+                    # Strip "model." prefix to match our MTPPredictor format
+                    clean_key = k[len("model."):]
+                    mtp_tensors[clean_key] = v
+
+        if not mtp_tensors:
+            raise ValueError(f"No MTP tensors found in {repo_id}")
+
+        save_file(mtp_tensors, str(cached_path))
+        logger.info(f"Extracted {len(mtp_tensors)} MTP tensors → {cached_path} ({cached_path.stat().st_size / 1e6:.0f}MB)")
+        return str(cached_path)
 
     @property
     def has_work(self) -> bool:
