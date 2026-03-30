@@ -210,20 +210,6 @@ def load_mlx_items(
 
     mx.clear_cache()
 
-    # --- Load draft model for PP speculation (rank 0 only) ---
-    _draft_path = os.environ.get("EXO_PP_DRAFT_MODEL", "")
-    if _draft_path and group is not None and group.size() > 1 and group.rank() == 0:
-        try:
-            from .pp_speculation import load_draft_model
-            _draft_result = load_draft_model(_draft_path)
-            if _draft_result is not None:
-                model._pp_draft_model, model._pp_draft_cache = _draft_result  # type: ignore
-                logger.info(f"PP draft model loaded on rank 0: {_draft_path}")
-            else:
-                logger.warning(f"PP draft model failed to load: {_draft_path}")
-        except Exception as e:
-            logger.warning(f"PP draft model load error: {e}")
-
     return cast(Model, model), tokenizer
 
 
@@ -293,7 +279,20 @@ def shard_and_load(
     logger.debug("SHARDED")
     logger.debug(model)
 
+    # --- Load draft model for PP speculation (rank 0 only, before barrier) ---
+    _draft_path = os.environ.get("EXO_PP_DRAFT_MODEL", "")
+    if _draft_path and group.rank() == 0:
+        try:
+            from .pp_speculation import load_draft_model
+            _draft_result = load_draft_model(_draft_path)
+            if _draft_result is not None:
+                model._pp_draft_model, model._pp_draft_cache = _draft_result  # type: ignore
+                logger.info(f"PP draft model loaded on rank 0: {_draft_path}")
+        except Exception as e:
+            logger.warning(f"PP draft model load error: {e}")
+
     # Synchronize processes before generation to avoid timeout
+    # (rank 1 waits here while rank 0 finishes loading draft model)
     mx_barrier(group)
 
     return model, tokenizer
