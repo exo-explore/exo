@@ -591,7 +591,7 @@ def mlx_generate(
                     # Clear finish_reason from max_tokens=1 — this is just the first token
                     _first_fixed = GenerationResponse(
                         text=_first_out.text, token=_first_out.token,
-                        logprobs=_first_out.logprobs,
+                        logprobs=_first_out.logprobs, from_draft=False,
                         prompt_tokens=_first_out.prompt_tokens,
                         prompt_tps=_first_out.prompt_tps,
                         generation_tokens=_first_out.generation_tokens,
@@ -613,7 +613,7 @@ def mlx_generate(
                         if tok_id in tokenizer.eos_token_ids:
                             elapsed = time.perf_counter() - gen_start
                             yield GenerationResponse(
-                                text="", token=tok_id, logprobs=lp,
+                                text="", token=tok_id, logprobs=lp, from_draft=False,
                                 prompt_tokens=len(last_token), prompt_tps=prefill_tps or 0.0,
                                 generation_tokens=1, generation_tps=1.0/elapsed if elapsed > 0 else 0,
                                 peak_memory=mx.get_peak_memory()/1e9, finish_reason="stop",
@@ -622,7 +622,7 @@ def mlx_generate(
                         _detok.add_token(tok_id)
                         elapsed = time.perf_counter() - gen_start
                         yield GenerationResponse(
-                            text=_detok.last_segment, token=tok_id, logprobs=lp,
+                            text=_detok.last_segment, token=tok_id, logprobs=lp, from_draft=False,
                             prompt_tokens=len(last_token), prompt_tps=prefill_tps or 0.0,
                             generation_tokens=1, generation_tps=1.0/elapsed if elapsed > 0 else 0,
                             peak_memory=mx.get_peak_memory()/1e9,
