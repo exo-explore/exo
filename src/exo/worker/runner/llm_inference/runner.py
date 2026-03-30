@@ -271,10 +271,10 @@ class Runner:
 
         self.submit_text_generation(starting_task)
 
-        # For non-streaming requests, batch chunk events to avoid pubsub congestion.
-        # Accumulate intermediate responses and only send the final one.
-        _pending: dict[TaskId, list[GenerationResponse]] = {}
-        _STREAM_BATCH_SIZE = 8  # for streaming, send every N tokens
+        # For non-streaming requests, combine all tokens into ONE event to avoid
+        # pubsub congestion (500 individual events clog the pipeline for 60s+).
+        _pending_text: dict[TaskId, list[str]] = {}
+        _pending_thinking: dict[TaskId, list[str]] = {}
 
         while self.active_tasks:
             results = self.generator.step()
@@ -283,14 +283,12 @@ class Runner:
             for task_id, result in results:
                 match result:
                     case Cancelled():
-                        _pending.pop(task_id, None)
+                        _pending_text.pop(task_id, None)
+                        _pending_thinking.pop(task_id, None)
                         finished.append(task_id)
                     case Finished():
-                        # Flush any pending chunks before finishing
-                        for pending_resp in _pending.pop(task_id, []):
-                            self.send_response(
-                                pending_resp, self.active_tasks[task_id].command_id
-                            )
+                        _pending_text.pop(task_id, None)
+                        _pending_thinking.pop(task_id, None)
                         self.send_task_status(task_id, TaskStatus.Complete)
                         finished.append(task_id)
                     case GenerationResponse():
@@ -298,28 +296,45 @@ class Runner:
                         is_stream = task.task_params.stream if task else True
                         is_final = result.finish_reason is not None
 
-                        if is_final:
-                            # Always send the final chunk immediately
-                            for pending_resp in _pending.pop(task_id, []):
-                                self.send_response(
-                                    pending_resp, self.active_tasks[task_id].command_id
-                                )
+                        if is_stream:
+                            # Streaming: send every token
                             self.send_response(
                                 result, self.active_tasks[task_id].command_id
                             )
-                        elif is_stream:
-                            # Streaming: batch N tokens per pubsub message
-                            buf = _pending.setdefault(task_id, [])
-                            buf.append(result)
-                            if len(buf) >= _STREAM_BATCH_SIZE:
-                                for pending_resp in buf:
-                                    self.send_response(
-                                        pending_resp, self.active_tasks[task_id].command_id
-                                    )
-                                _pending[task_id] = []
+                        elif is_final:
+                            # Non-streaming final: combine all text into ONE chunk
+                            thinking = "".join(_pending_thinking.pop(task_id, []))
+                            text = "".join(_pending_text.pop(task_id, []))
+                            # Send thinking chunk if any
+                            if thinking:
+                                self.send_response(
+                                    GenerationResponse(
+                                        text=thinking, token=0,
+                                        finish_reason=None,
+                                        is_thinking=True,
+                                    ),
+                                    self.active_tasks[task_id].command_id,
+                                )
+                            # Send final content chunk with usage/stats
+                            self.send_response(
+                                GenerationResponse(
+                                    text=text + result.text,
+                                    token=result.token,
+                                    logprob=result.logprob,
+                                    top_logprobs=result.top_logprobs,
+                                    finish_reason=result.finish_reason,
+                                    stats=result.stats,
+                                    usage=result.usage,
+                                    is_thinking=result.is_thinking,
+                                ),
+                                self.active_tasks[task_id].command_id,
+                            )
                         else:
-                            # Non-streaming: accumulate, send only at end
-                            _pending.setdefault(task_id, []).append(result)
+                            # Non-streaming intermediate: accumulate locally
+                            if result.is_thinking:
+                                _pending_thinking.setdefault(task_id, []).append(result.text)
+                            else:
+                                _pending_text.setdefault(task_id, []).append(result.text)
                     case _:
                         self.send_response(
                             result, self.active_tasks[task_id].command_id
