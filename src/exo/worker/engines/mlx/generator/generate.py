@@ -565,11 +565,13 @@ def mlx_generate(
                 inner = getattr(model, "language_model", model)
                 _install_spec_layers(inner)
 
-                # Prefill draft cache with prompt (rank 0 only, instant — no PP needed)
-                if pp_rank == 0:
-                    for tok in last_token.tolist():
+                # Prefill draft cache with FULL prompt (rank 0 only, instant — no PP needed)
+                if pp_rank == 0 and _pp_draft is not None:
+                    _draft_prompt = all_prompt_tokens.tolist()
+                    for tok in _draft_prompt:
                         _pp_draft(mx.array([[tok]]), cache=_pp_draft_cache)
                     mx.eval([c.state if hasattr(c, 'state') else c for c in _pp_draft_cache])
+                    logger.info(f"Draft model prefilled with {len(_draft_prompt)} tokens")
 
                 # First token via standard PP (both ranks, synchronized)
                 _first_gen = stream_generate(
