@@ -509,35 +509,35 @@ EXPECTED_RUNNERS=0
 # MacBook excluded — OOMs at ~5K context with this model.
 # TODO: implement remote KV cache so MacBook serves as RDMA-backed
 # KV prefix cache server without running any transformer layers.
-echo "Creating Qwen3.5-397B instance (Studios PP / RDMA)..."
-if place_instance_with_retry "Qwen3.5-397B" "mlx-community/Qwen3.5-397B-A17B-4bit" "{
-    \"model_id\": \"mlx-community/Qwen3.5-397B-A17B-4bit\",
-    \"sharding\": \"Pipeline\",
-    \"instance_meta\": \"MlxJaccl\",
-    \"min_nodes\": 2,
-    \"node_ids\": [\"$M4_1_NODE_ID\", \"$M4_2_NODE_ID\"],
-    \"max_context_tokens\": 262144
-}"; then
-    EXPECTED_RUNNERS=$((EXPECTED_RUNNERS + 2))
-fi
+# Instance creation disabled — use the dashboard to load models manually.
+# echo "Creating Qwen3.5-397B instance (Studios PP / RDMA)..."
+# if place_instance_with_retry "Qwen3.5-397B" "mlx-community/Qwen3.5-397B-A17B-4bit" "{
+#     \"model_id\": \"mlx-community/Qwen3.5-397B-A17B-4bit\",
+#     \"sharding\": \"Pipeline\",
+#     \"instance_meta\": \"MlxJaccl\",
+#     \"min_nodes\": 2,
+#     \"node_ids\": [\"$M4_1_NODE_ID\", \"$M4_2_NODE_ID\"],
+#     \"max_context_tokens\": 262144
+# }"; then
+#     EXPECTED_RUNNERS=$((EXPECTED_RUNNERS + 2))
+# fi
+#
+# echo "Creating Qwen3.5-35B instance (MacBook)..."
+# if place_instance_with_retry "Qwen3.5-35B" "mlx-community/Qwen3.5-35B-A3B-4bit" "{
+#     \"model_id\": \"mlx-community/Qwen3.5-35B-A3B-4bit\",
+#     \"sharding\": \"Pipeline\",
+#     \"min_nodes\": 1,
+#     \"node_ids\": [\"$MBP_NODE_ID\"],
+#     \"max_context_tokens\": 50000
+# }"; then
+#     EXPECTED_RUNNERS=$((EXPECTED_RUNNERS + 1))
+# fi
 
-# ── Instance 2: Subagent model (MacBook, single node) ──
-echo "Creating Qwen3.5-35B instance (MacBook)..."
-if place_instance_with_retry "Qwen3.5-35B" "mlx-community/Qwen3.5-35B-A3B-4bit" "{
-    \"model_id\": \"mlx-community/Qwen3.5-35B-A3B-4bit\",
-    \"sharding\": \"Pipeline\",
-    \"min_nodes\": 1,
-    \"node_ids\": [\"$MBP_NODE_ID\"],
-    \"max_context_tokens\": 50000
-}"; then
-    EXPECTED_RUNNERS=$((EXPECTED_RUNNERS + 1))
-fi
+echo "Cluster is up. Load models via the dashboard."
+INSTANCES_READY=true
 
-if [ "$EXPECTED_RUNNERS" -eq 0 ]; then
-    echo "ERROR: No instances were created. Check the dashboard."
-    exit 1
-fi
-
+if false; then
+# (dead code — kept for reference)
 echo -n "Waiting for $EXPECTED_RUNNERS runner(s) to load..."
 INSTANCES_READY=false
 for i in {1..120}; do
@@ -555,6 +555,7 @@ if [ "$INSTANCES_READY" = false ]; then
     echo ""
     echo "WARNING: Only $READY_COUNT/$EXPECTED_RUNNERS runners loaded within timeout. Check the dashboard."
 fi
+fi  # end dead code block
 
 # Final environment export
 export IBV_FORK_SAFE=${IBV_FORK_SAFE:-1}
