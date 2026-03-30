@@ -206,6 +206,9 @@ class McpCallInputItem(BaseModel, frozen=True):
     name: str = ""
     arguments: str = ""
     server_label: str = ""
+    approval_request_id: str | None = None
+    error: str | None = None
+    output: str | None = None
     status: ResponseStatus | None = None
 
 
@@ -214,6 +217,7 @@ class McpListToolsInputItem(BaseModel, frozen=True):
     id: str | None = None
     server_label: str = ""
     tools: list[dict[str, Any]] = []
+    error: str | None = None
     status: ResponseStatus | None = None
 
 
@@ -230,7 +234,7 @@ class McpApprovalRequestInputItem(BaseModel, frozen=True):
 class McpApprovalResponseInputItem(BaseModel, frozen=True):
     type: Literal["mcp_approval_response"] = "mcp_approval_response"
     id: str | None = None
-    call_id: str = ""
+    approval_request_id: str = ""
     approve: bool = True
     reason: str = ""
     status: ResponseStatus | None = None
@@ -264,7 +268,6 @@ class CompactionInputItem(BaseModel, frozen=True):
 class ItemReferenceInputItem(BaseModel, frozen=True):
     type: Literal["item_reference"] = "item_reference"
     id: str | None = None
-    item_id: str = ""
 
 
 ResponseInputItem = (

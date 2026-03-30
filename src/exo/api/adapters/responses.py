@@ -317,7 +317,7 @@ async def responses_request_to_text_generation(
                     chat_template_messages.append(
                         {
                             "role": "tool",
-                            "tool_call_id": item.call_id,
+                            "tool_call_id": item.approval_request_id,
                             "content": f"{'Approved' if item.approve else 'Denied'}{': ' + item.reason if item.reason else ''}",
                         }
                     )
