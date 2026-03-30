@@ -271,11 +271,6 @@ class Runner:
 
         self.submit_text_generation(starting_task)
 
-        # For non-streaming requests, combine all tokens into ONE event to avoid
-        # pubsub congestion (500 individual events clog the pipeline for 60s+).
-        _pending_text: dict[TaskId, list[str]] = {}
-        _pending_thinking: dict[TaskId, list[str]] = {}
-
         while self.active_tasks:
             results = self.generator.step()
 
@@ -283,59 +278,10 @@ class Runner:
             for task_id, result in results:
                 match result:
                     case Cancelled():
-                        _pending_text.pop(task_id, None)
-                        _pending_thinking.pop(task_id, None)
                         finished.append(task_id)
                     case Finished():
-                        _pending_text.pop(task_id, None)
-                        _pending_thinking.pop(task_id, None)
                         self.send_task_status(task_id, TaskStatus.Complete)
                         finished.append(task_id)
-                    case GenerationResponse():
-                        task = self.active_tasks.get(task_id)
-                        is_stream = task.task_params.stream if task else True
-                        is_final = result.finish_reason is not None
-
-                        if is_stream:
-                            # Streaming: send every token
-                            self.send_response(
-                                result, self.active_tasks[task_id].command_id
-                            )
-                        elif is_final:
-                            # Non-streaming final: combine all text into ONE chunk
-                            thinking = "".join(_pending_thinking.pop(task_id, []))
-                            text = "".join(_pending_text.pop(task_id, []))
-                            # Send thinking chunk if any
-                            if thinking:
-                                self.send_response(
-                                    GenerationResponse(
-                                        text=thinking, token=0,
-                                        finish_reason=None,
-                                        usage=None,
-                                        is_thinking=True,
-                                    ),
-                                    self.active_tasks[task_id].command_id,
-                                )
-                            # Send final content chunk with usage/stats
-                            self.send_response(
-                                GenerationResponse(
-                                    text=text + result.text,
-                                    token=result.token,
-                                    logprob=result.logprob,
-                                    top_logprobs=result.top_logprobs,
-                                    finish_reason=result.finish_reason,
-                                    stats=result.stats,
-                                    usage=result.usage,
-                                    is_thinking=result.is_thinking,
-                                ),
-                                self.active_tasks[task_id].command_id,
-                            )
-                        else:
-                            # Non-streaming intermediate: accumulate locally
-                            if result.is_thinking:
-                                _pending_thinking.setdefault(task_id, []).append(result.text)
-                            else:
-                                _pending_text.setdefault(task_id, []).append(result.text)
                     case _:
                         self.send_response(
                             result, self.active_tasks[task_id].command_id
@@ -461,9 +407,8 @@ class Builder:
         kv_prefix_cache = KVPrefixCache(self.group)
 
         device_rank = 0 if self.group is None else self.group.rank()
-        if os.environ.get("EXO_NO_BATCH") or os.environ.get("EXO_PP_DRAFT_MODEL"):
-            logger.info("using SequentialGenerator"
-                        f" ({'PP speculation' if os.environ.get('EXO_PP_DRAFT_MODEL') else 'batching disabled'})")
+        if os.environ.get("EXO_NO_BATCH"):
+            logger.info("using SequentialGenerator (batching disabled)")
             return SequentialGenerator(
                 model=self.inference_model,
                 tokenizer=self.tokenizer,

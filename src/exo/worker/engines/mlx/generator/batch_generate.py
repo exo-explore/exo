@@ -1,6 +1,7 @@
+import os
 import time
 from dataclasses import dataclass, field
-from typing import Callable, cast
+from typing import Any, Callable, Generator, cast
 
 import mlx.core as mx
 from mlx_lm.generate import (
@@ -8,6 +9,7 @@ from mlx_lm.generate import (
 )
 from mlx_lm.generate import (
     generation_stream,
+    stream_generate,
 )
 from mlx_lm.models.cache import RotatingKVCache
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
@@ -29,9 +31,10 @@ from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
     encode_prompt,
+    has_non_kv_caches,
     make_kv_cache,
 )
-from exo.worker.engines.mlx.constants import DEFAULT_TOP_LOGPROBS, MAX_TOKENS
+from exo.worker.engines.mlx.constants import DEFAULT_TOP_LOGPROBS, KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.worker.engines.mlx.generator.generate import (
     ban_token_ids,
     eos_ids_from_tokenizer,
@@ -81,6 +84,11 @@ class ExoBatchGenerator:
 
     _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
+    _pp_spec_active: bool = field(init=False, default=False)
+    _pp_spec_gen: Generator[tuple[int, mx.array], None, None] | None = field(init=False, default=None)
+    _pp_spec_uid: int | None = field(init=False, default=None)
+    _pp_spec_eos: set[int] = field(init=False, default_factory=set)
+    _uid_counter: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:
         self._mlx_gen = MlxBatchGenerator(
@@ -89,6 +97,18 @@ class ExoBatchGenerator:
             prefill_step_size=4096,
         )
         self._mlx_gen._needs_topk = False  # pyright: ignore[reportAttributeAccessIssue]
+        self._pp_spec_eos = set(eos_ids_from_tokenizer(self.tokenizer))
+
+        # Enable PP speculation if draft model is configured and we're in PP mode
+        draft_path = os.environ.get("EXO_PP_DRAFT_MODEL", "")
+        if draft_path and self.group is not None and self.group.size() > 1:
+            try:
+                from ..pp_speculation import get_pipeline_info
+                if get_pipeline_info(self.model) is not None:
+                    self._pp_spec_active = True
+                    logger.info("PP speculation enabled in BatchGenerator")
+            except Exception:
+                pass
 
     @property
     def has_work(self) -> bool:
@@ -96,6 +116,7 @@ class ExoBatchGenerator:
             bool(self._active_tasks)
             or bool(self._mlx_gen.unprocessed_prompts)
             or self._mlx_gen.active_batch is not None
+            or self._pp_spec_gen is not None
         )
 
     def submit(
@@ -193,6 +214,13 @@ class ExoBatchGenerator:
 
         max_tokens = task_params.max_output_tokens or MAX_TOKENS
 
+        if self._pp_spec_active:
+            return self._submit_pp_spec(
+                task_params, all_prompt_tokens, prefix_hit_length, matched_index,
+                cache_snapshots, cache, last_tokens, sampler, logits_processors,
+                max_tokens, on_generation_token, _prefill_tps,
+            )
+
         uids = self._mlx_gen.insert(
             prompts=[last_tokens.tolist()],
             max_tokens=[max_tokens],
@@ -221,16 +249,139 @@ class ExoBatchGenerator:
 
         return uid
 
+    def _submit_pp_spec(
+        self,
+        task_params: TextGenerationTaskParams,
+        all_prompt_tokens: mx.array,
+        prefix_hit_length: int,
+        matched_index: int | None,
+        cache_snapshots: list[CacheSnapshot] | None,
+        cache: list[Any],
+        last_tokens: mx.array,
+        sampler: Callable,
+        logits_processors: list[Callable],
+        max_tokens: int,
+        on_generation_token: Callable[[], None] | None,
+        prefill_tps: float,
+    ) -> int:
+        """Set up PP speculative decode for this task."""
+        from ..pp_speculation import (
+            get_pipeline_info,
+            pp_speculative_decode_loop,
+            _install_spec_layers,
+        )
+
+        pp_info = get_pipeline_info(self.model)
+        assert pp_info is not None
+        pp_rank, pp_world_size, pp_group = pp_info
+
+        inner = getattr(self.model, "language_model", self.model)
+        _install_spec_layers(inner)
+
+        _pp_draft = getattr(self.model, "_pp_draft_model", None)
+        _pp_draft_cache = getattr(self.model, "_pp_draft_cache", None)
+
+        # Prefill draft cache with full prompt (rank 0 only)
+        if pp_rank == 0 and _pp_draft is not None:
+            for tok in all_prompt_tokens.tolist():
+                _pp_draft(mx.array([[tok]]), cache=_pp_draft_cache)
+            mx.eval([c.state if hasattr(c, 'state') else c for c in _pp_draft_cache])
+            logger.info(f"Draft model prefilled with {len(all_prompt_tokens)} tokens")
+
+        # First token via standard PP
+        _first_gen = stream_generate(
+            model=self.model, tokenizer=self.tokenizer, prompt=last_tokens,
+            max_tokens=1, sampler=sampler, logits_processors=logits_processors,
+            prompt_cache=cache, prefill_step_size=1,
+            kv_group_size=KV_GROUP_SIZE, kv_bits=KV_BITS,
+        )
+        _first_out = next(_first_gen)
+        first_y = mx.array([_first_out.token])
+        mx.eval(first_y)
+
+        logger.info(f"PP speculation active: rank={pp_rank}")
+
+        # Create the spec decode generator
+        self._pp_spec_gen = pp_speculative_decode_loop(
+            model=self.model, draft_model=_pp_draft,
+            prompt_cache=cache, draft_cache=_pp_draft_cache,
+            sampler=sampler, logits_processors=logits_processors,
+            first_y=first_y, first_logprobs=mx.zeros(1),
+            max_tokens=max_tokens - 1,
+            pp_rank=pp_rank, pp_world_size=pp_world_size,
+            pp_group=pp_group,
+        )
+
+        self._uid_counter += 1
+        uid = self._uid_counter
+        self._pp_spec_uid = uid
+
+        # Store first token to yield on first step()
+        self._pp_first_token = _first_out.token
+
+        self._active_tasks[uid] = _EngineTask(
+            uid=uid,
+            task_params=task_params,
+            all_prompt_tokens=all_prompt_tokens,
+            prefix_hit_length=prefix_hit_length,
+            matched_index=matched_index,
+            cache_snapshots=cache_snapshots or None,
+            detokenizer=self.tokenizer.detokenizer,
+            on_generation_token=on_generation_token,
+            generation_start_time=time.perf_counter(),
+            prefill_tps=prefill_tps,
+        )
+
+        return uid
+
+    def _step_pp_spec(self) -> list[MlxBatchGenerator.Response]:
+        """Get next token from PP speculative decode loop."""
+        uid = self._pp_spec_uid
+        assert uid is not None
+
+        # Yield the first token if we haven't yet
+        if hasattr(self, '_pp_first_token'):
+            tok = self._pp_first_token
+            del self._pp_first_token
+            finish = "stop" if tok in self._pp_spec_eos else None
+            return [MlxBatchGenerator.Response(
+                uid=uid, token=tok, logprobs=mx.zeros(1),
+                finish_reason=finish, prompt_cache=lambda: [],
+            )]
+
+        assert self._pp_spec_gen is not None
+        try:
+            tok_id, lp = next(self._pp_spec_gen)
+            finish = "stop" if tok_id in self._pp_spec_eos else None
+            return [MlxBatchGenerator.Response(
+                uid=uid, token=tok_id, logprobs=lp,
+                finish_reason=finish, prompt_cache=lambda: [],
+            )]
+        except StopIteration:
+            # max_tokens reached
+            self._pp_spec_gen = None
+            self._pp_spec_uid = None
+            return [MlxBatchGenerator.Response(
+                uid=uid, token=0, logprobs=mx.zeros(1),
+                finish_reason="length", prompt_cache=lambda: [],
+            )]
+
     def step(self) -> list[tuple[int, GenerationResponse]]:
         if not self.has_work:
             return []
 
-        self._mlx_gen._needs_topk = any(  # pyright: ignore[reportAttributeAccessIssue]
-            t.task_params.logprobs for t in self._active_tasks.values()
-        )
-        _step_tic = time.perf_counter()
-        responses = self._mlx_gen.next()
-        _next_elapsed = time.perf_counter() - _step_tic
+        # Use PP speculation decode if active
+        if self._pp_spec_gen is not None:
+            _step_tic = time.perf_counter()
+            responses = self._step_pp_spec()
+            _next_elapsed = time.perf_counter() - _step_tic
+        else:
+            self._mlx_gen._needs_topk = any(  # pyright: ignore[reportAttributeAccessIssue]
+                t.task_params.logprobs for t in self._active_tasks.values()
+            )
+            _step_tic = time.perf_counter()
+            responses = self._mlx_gen.next()
+            _next_elapsed = time.perf_counter() - _step_tic
 
         results: list[tuple[int, GenerationResponse]] = []
 
@@ -304,15 +455,26 @@ class ExoBatchGenerator:
             stats: GenerationStats | None = None
             usage: Usage | None = None
             if is_done:
-                gen_time_delta = (
-                    self._mlx_gen._stats.generation_time
-                    - state.generation_time_at_start
-                )
-                generation_tps = (
-                    state.completion_tokens / gen_time_delta
-                    if gen_time_delta > 0
-                    else 0.0
-                )
+                if self._pp_spec_gen is not None or self._pp_spec_uid is not None:
+                    gen_elapsed = time.perf_counter() - state.generation_start_time
+                    generation_tps = (
+                        state.completion_tokens / gen_elapsed
+                        if gen_elapsed > 0
+                        else 0.0
+                    )
+                    # Clean up spec state
+                    self._pp_spec_gen = None
+                    self._pp_spec_uid = None
+                else:
+                    gen_time_delta = (
+                        self._mlx_gen._stats.generation_time
+                        - state.generation_time_at_start
+                    )
+                    generation_tps = (
+                        state.completion_tokens / gen_time_delta
+                        if gen_time_delta > 0
+                        else 0.0
+                    )
 
                 stats = GenerationStats(
                     prompt_tps=state.prefill_tps,
