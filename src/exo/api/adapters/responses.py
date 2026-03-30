@@ -60,6 +60,7 @@ def _format_sse(event: ResponsesStreamEvent) -> str:
 
 
 def _extract_content(content: str | list[ResponseContentPart]) -> str:
+    """Extract plain text from a content field that may be a string or list of parts."""
     if isinstance(content, str):
         return content
     return "".join(
