@@ -95,11 +95,7 @@ class SpecPipelineFirstLayer(PipelineFirstLayer):
     """PipelineFirstLayer with PP decode mode: reads hidden from state list."""
 
     def __init__(self, base: PipelineFirstLayer):
-        # Steal base's attributes without re-init
-        nn.Module.__init__(self)
-        self._original_layer = base._original_layer  # type: ignore
-        self.r = base.r
-        self.group = base.group
+        super().__init__(base.original_layer, base.r, base.group)
         self.is_prefill = base.is_prefill
         # Speculation state
         self._pp_decode: bool = False
@@ -119,12 +115,7 @@ class SpecPipelineLastLayer(PipelineLastLayer):
     """PipelineLastLayer with PP decode + speculative modes."""
 
     def __init__(self, base: PipelineLastLayer):
-        nn.Module.__init__(self)
-        self._original_layer = base._original_layer  # type: ignore
-        self.r = base.r
-        self.s = base.s
-        self.group = base.group
-        self.original_layer_signature = base.original_layer_signature
+        super().__init__(base.original_layer, base.r, base.s, base.group)
         self.is_prefill = base.is_prefill
         self.queue_sends = base.queue_sends
         # Speculation state
