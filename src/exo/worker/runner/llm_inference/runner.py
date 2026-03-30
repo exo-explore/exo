@@ -224,6 +224,12 @@ class Runner:
 
                 self.generator.warmup()
 
+                # Load persisted KV cache from disk
+                if hasattr(self.generator, 'kv_prefix_cache') and self.generator.kv_prefix_cache is not None:
+                    loaded = self.generator.kv_prefix_cache.load_from_disk(self.generator.model)
+                    if loaded > 0:
+                        logger.info(f"Loaded {loaded} KV cache slot(s) from disk")
+
                 logger.info(
                     f"runner initialized in {time.time() - self.setup_start_time} seconds"
                 )
@@ -250,6 +256,9 @@ class Runner:
         logger.info("runner shutting down")
         self.update_status(RunnerShuttingDown())
         self.acknowledge_task(task)
+        if isinstance(self.generator, InferenceGenerator) and hasattr(self.generator, 'kv_prefix_cache'):
+            if self.generator.kv_prefix_cache is not None:
+                self.generator.kv_prefix_cache.flush_to_disk(force=True)
         if isinstance(self.generator, InferenceGenerator):
             self.generator.close()
         mx.clear_cache()
@@ -317,6 +326,11 @@ class Runner:
 
             except WouldBlock:
                 pass
+
+        # Flush KV cache to disk if idle long enough
+        if isinstance(self.generator, InferenceGenerator) and hasattr(self.generator, 'kv_prefix_cache'):
+            if self.generator.kv_prefix_cache is not None:
+                self.generator.kv_prefix_cache.flush_to_disk()
 
         self.update_status(RunnerReady())
         logger.info("runner ready")
@@ -412,7 +426,7 @@ class Builder:
                 self.tokenizer.tool_parser,  # type: ignore
             )
 
-        kv_prefix_cache = KVPrefixCache(self.group)
+        kv_prefix_cache = KVPrefixCache(self.group, model_id=self.model_id)
 
         device_rank = 0 if self.group is None else self.group.rank()
         if os.environ.get("EXO_NO_BATCH"):

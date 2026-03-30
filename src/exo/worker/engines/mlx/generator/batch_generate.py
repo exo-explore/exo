@@ -445,18 +445,27 @@ class ExoBatchGenerator:
                 if len(all_prompt_tokens) > 0
                 else 0.0
             )
-            if matched_index is not None and (
-                prefix_hit_length >= min_prefix_hit_length
-                and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
-            ):
-                self.kv_prefix_cache.update_kv_cache(
-                    matched_index,
-                    all_prompt_tokens,
-                    cache,
-                    cache_snapshots,
-                    restore_pos=prefix_hit_length,
-                    media_regions=media_regions,
-                )
+            if matched_index is not None:
+                cached_len = len(self.kv_prefix_cache.prompts[matched_index])
+                cached_coverage = prefix_hit_length / cached_len if cached_len > 0 else 0.0
+                is_extension = cached_coverage >= 0.95
+
+                if is_extension and (
+                    prefix_hit_length >= min_prefix_hit_length
+                    and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
+                ):
+                    self.kv_prefix_cache.update_kv_cache(
+                        matched_index,
+                        all_prompt_tokens,
+                        cache,
+                        cache_snapshots,
+                        restore_pos=prefix_hit_length,
+                        media_regions=media_regions,
+                    )
+                else:
+                    self.kv_prefix_cache.add_kv_cache(
+                        all_prompt_tokens, cache, cache_snapshots
+                    )
             else:
                 self.kv_prefix_cache.add_kv_cache(
                     all_prompt_tokens,

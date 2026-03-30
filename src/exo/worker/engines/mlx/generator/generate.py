@@ -715,18 +715,27 @@ def mlx_generate(
                     if len(all_prompt_tokens) > 0
                     else 0.0
                 )
-                if matched_index is not None and (
-                    prefix_hit_length >= min_prefix_hit_length
-                    and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
-                ):
-                    kv_prefix_cache.update_kv_cache(
-                        matched_index,
-                        full_prompt_tokens,
-                        caches,
-                        cache_snapshots,
-                        restore_pos=prefix_hit_length,
-                        media_regions=media_regions,
-                    )
+                if matched_index is not None:
+                    cached_len = len(kv_prefix_cache.prompts[matched_index])
+                    cached_coverage = prefix_hit_length / cached_len if cached_len > 0 else 0.0
+                    is_extension = cached_coverage >= 0.95
+
+                    if is_extension and (
+                        prefix_hit_length >= min_prefix_hit_length
+                        and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
+                    ):
+                        kv_prefix_cache.update_kv_cache(
+                            matched_index,
+                            full_prompt_tokens,
+                            caches,
+                            cache_snapshots,
+                            restore_pos=prefix_hit_length,
+                            media_regions=media_regions,
+                        )
+                    else:
+                        kv_prefix_cache.add_kv_cache(
+                            full_prompt_tokens, caches, cache_snapshots
+                        )
                 else:
                     kv_prefix_cache.add_kv_cache(
                         full_prompt_tokens,

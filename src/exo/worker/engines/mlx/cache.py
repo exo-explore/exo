@@ -16,6 +16,13 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType, Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
+import hashlib
+import time
+from pathlib import Path
+
+import numpy as np
+from mlx_lm.models.cache import save_prompt_cache, load_prompt_cache
+
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
@@ -80,7 +87,7 @@ def has_non_kv_caches(cache: KVCacheType) -> bool:
 
 
 class KVPrefixCache:
-    def __init__(self, group: mx.distributed.Group | None):
+    def __init__(self, group: mx.distributed.Group | None, model_id: str | None = None):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[KVCacheType] = []
         self._snapshots: list[list[CacheSnapshot] | None] = []
@@ -88,6 +95,15 @@ class KVPrefixCache:
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._access_counter: int = 0
         self._group = group
+        self._model_id = model_id
+        self._disk_dirty = False
+        self._flush_requested_at = 0.0
+        self._cache_dir: Path | None = None
+        if model_id is not None:
+            model_hash = hashlib.sha256(model_id.encode()).hexdigest()[:16]
+            self._cache_dir = Path(os.path.expanduser(f"~/.exo/kv-cache/{model_hash}"))
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"KV disk cache dir: {self._cache_dir}")
 
     def clear(self):
         """Clear all cached prompts and caches."""
@@ -113,6 +129,9 @@ class KVPrefixCache:
         self._access_counter += 1
         self._last_used.append(self._access_counter)
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
+        self._disk_dirty = True
+        if self._flush_requested_at == 0.0:
+            self._flush_requested_at = time.time()
 
     def update_kv_cache(
         self,
@@ -138,6 +157,9 @@ class KVPrefixCache:
         self._access_counter += 1
         self._last_used[index] = self._access_counter
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
+        self._disk_dirty = True
+        if self._flush_requested_at == 0.0:
+            self._flush_requested_at = time.time()
 
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
@@ -281,6 +303,73 @@ class KVPrefixCache:
             logger.info(
                 f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
             )
+
+
+    def flush_to_disk(self, force: bool = False) -> None:
+        """Save dirty slots to disk after 15s idle or on forced shutdown.
+
+        Uses mlx-lm's save_prompt_cache which calls mx.save_safetensors
+        directly — no numpy, no bf16 cast, writes from unified memory.
+        """
+        if self._cache_dir is None or not self._disk_dirty or len(self.caches) == 0:
+            return
+        if not force and (time.time() - self._flush_requested_at) < 15:
+            return
+
+        self._disk_dirty = False
+        self._flush_requested_at = 0.0
+
+        for i in range(len(self.caches)):
+            try:
+                t0 = time.time()
+                cache_path = str(self._cache_dir / f"slot_{i}.safetensors")
+                tokens_path = str(self._cache_dir / f"slot_{i}_tokens.npy")
+
+                # save_prompt_cache writes directly from MLX buffers (~1-2s)
+                save_prompt_cache(
+                    cache_path,
+                    self.caches[i],
+                    metadata={"model_id": self._model_id or "", "token_count": str(len(self.prompts[i]))},
+                )
+
+                # Save token array separately (small, fast)
+                np.save(tokens_path, np.array(self.prompts[i].tolist(), dtype=np.int32))
+
+                elapsed = (time.time() - t0) * 1000
+                size_mb = Path(cache_path).stat().st_size / 1024 / 1024
+                logger.info(f"Disk cache saved: slot_{i} ({size_mb:.0f} MB, {len(self.prompts[i])} tokens) in {elapsed:.0f}ms")
+            except Exception:
+                logger.warning(f"Failed to save slot {i} to disk", exc_info=True)
+
+    def load_from_disk(self, model) -> int:
+        """Load persisted slots from disk on startup."""
+        if self._cache_dir is None:
+            return 0
+
+        loaded = 0
+        for i in range(8):  # max 8 slots
+            cache_path = self._cache_dir / f"slot_{i}.safetensors"
+            tokens_path = self._cache_dir / f"slot_{i}_tokens.npy"
+
+            if not cache_path.exists() or not tokens_path.exists():
+                continue
+
+            try:
+                cache = load_prompt_cache(str(cache_path))
+                tokens_np = np.load(str(tokens_path))
+                tokens = mx.array(tokens_np.tolist())
+
+                self.prompts.append(tokens)
+                self.caches.append(cache)
+                self._snapshots.append(None)
+                self._access_counter += 1
+                self._last_used.append(self._access_counter)
+                loaded += 1
+                logger.info(f"Restored disk cache slot {i}: {len(tokens)} tokens")
+            except Exception:
+                logger.warning(f"Failed to load disk slot {i}", exc_info=True)
+
+        return loaded
 
     def get_memory_used_percentage(self) -> float:
         local_pressure: float = get_memory_used_percentage()
