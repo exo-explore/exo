@@ -230,10 +230,16 @@ def pp_speculative_decode_loop(
     embed_tokens = inner_model.embed_tokens
     hidden_size = getattr(embed_tokens, "dims", embed_tokens.weight.shape[1])
 
-    # Install speculative layer wrappers
-    spec_first, spec_last = _install_spec_layers(inner)
+    # Find speculative layer wrappers (already installed by caller)
+    spec_first, spec_last = None, None
+    for layer in inner.layers:  # type: ignore
+        if isinstance(layer, SpecPipelineFirstLayer):
+            spec_first = layer
+        elif isinstance(layer, SpecPipelineLastLayer):
+            spec_last = layer
     if spec_first is None and spec_last is None:
-        raise RuntimeError("No pipeline layers found — is the model pipeline-parallel?")
+        # Try installing if not already done
+        spec_first, spec_last = _install_spec_layers(inner)
 
     # Set up state list for hidden exchange
     _cache_state = [c.state if hasattr(c, 'state') else c for c in prompt_cache]
