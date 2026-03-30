@@ -1,5 +1,6 @@
 import functools
 import math
+import os
 import time
 from copy import deepcopy
 from typing import Callable, Generator, cast, get_args
@@ -534,19 +535,126 @@ def mlx_generate(
     logger.info("Starting decode")
     mx_barrier(group)
 
+    # --- PP idle-time speculation (additive, gated by EXO_PP_DRAFT_MODEL) ---
+    _pp_spec_gen = None
+    _draft_model_path = os.environ.get("EXO_PP_DRAFT_MODEL", "")
+    if _draft_model_path and group is not None and group.size() > 1:
+        try:
+            from ..pp_speculation import (
+                get_pipeline_info,
+                load_draft_model,
+                pp_speculative_decode_loop,
+            )
+            pp_info = get_pipeline_info(model)
+            if pp_info is not None:
+                pp_rank, pp_world_size, pp_group = pp_info
+                draft_result = load_draft_model(_draft_model_path)
+                if draft_result is not None:
+                    draft_model_obj, draft_cache = draft_result
+                    # Prefill draft model with same prompt
+                    for tok in last_token.tolist():
+                        draft_model_obj(mx.array([[tok]]), cache=draft_cache)
+                    mx.eval([c.state if hasattr(c, 'state') else c for c in draft_cache])
+
+                    # Run first token through main model to get initial y/logprobs
+                    from mlx_lm.generate import generate_step
+                    _first_gen = generate_step(
+                        last_token, model,
+                        max_tokens=max_tokens,
+                        sampler=sampler,
+                        logits_processors=logits_processors,
+                        prompt_cache=caches,
+                        prefill_step_size=1,
+                        kv_bits=KV_BITS,
+                        kv_group_size=KV_GROUP_SIZE,
+                    )
+                    first_y, first_logprobs = next(_first_gen)
+                    mx.eval(first_y, first_logprobs)
+
+                    logger.info(f"PP speculation enabled: rank={pp_rank}, draft={_draft_model_path}")
+
+                    def _spec_token_gen():
+                        """Adapter: yields GenerationResponse from speculation loop."""
+                        from mlx_lm.generate import GenerationResponse
+                        _detok = tokenizer.detokenizer
+                        gen_start = time.perf_counter()
+                        prompt_tps_val = prefill_tps or 0.0
+
+                        # Yield first token
+                        _detok.add_token(int(first_y.item()))
+                        yield GenerationResponse(
+                            text=_detok.last_segment,
+                            token=int(first_y.item()),
+                            logprobs=first_logprobs,
+                            prompt_tokens=len(last_token),
+                            prompt_tps=prompt_tps_val,
+                            generation_tokens=1,
+                            generation_tps=0.0,
+                            peak_memory=mx.get_peak_memory() / 1e9,
+                        )
+
+                        for tok_id, lp in pp_speculative_decode_loop(
+                            model=model,
+                            draft_model=draft_model_obj,
+                            prompt_cache=caches,
+                            draft_cache=draft_cache,
+                            sampler=sampler,
+                            logits_processors=logits_processors,
+                            first_y=first_y,
+                            first_logprobs=first_logprobs,
+                            max_tokens=max_tokens - 1,
+                            pp_rank=pp_rank,
+                            pp_world_size=pp_world_size,
+                            pp_group=pp_group,
+                        ):
+                            if tok_id in tokenizer.eos_token_ids:
+                                elapsed = time.perf_counter() - gen_start
+                                yield GenerationResponse(
+                                    text="",
+                                    token=tok_id,
+                                    logprobs=lp,
+                                    prompt_tokens=len(last_token),
+                                    prompt_tps=prompt_tps_val,
+                                    generation_tokens=1,
+                                    generation_tps=1.0 / elapsed if elapsed > 0 else 0,
+                                    peak_memory=mx.get_peak_memory() / 1e9,
+                                    finish_reason="stop",
+                                )
+                                return
+                            _detok.add_token(tok_id)
+                            elapsed = time.perf_counter() - gen_start
+                            yield GenerationResponse(
+                                text=_detok.last_segment,
+                                token=tok_id,
+                                logprobs=lp,
+                                prompt_tokens=len(last_token),
+                                prompt_tps=prompt_tps_val,
+                                generation_tokens=1,
+                                generation_tps=1.0 / elapsed if elapsed > 0 else 0,
+                                peak_memory=mx.get_peak_memory() / 1e9,
+                            )
+
+                    _pp_spec_gen = _spec_token_gen()
+        except Exception as e:
+            logger.warning(f"PP speculation setup failed: {e}", exc_info=True)
+            _pp_spec_gen = None
+
+    # Use speculation generator if available, otherwise standard stream_generate
+    _decode_gen = _pp_spec_gen if _pp_spec_gen is not None else stream_generate(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=last_token,
+        max_tokens=max_tokens,
+        sampler=sampler,
+        logits_processors=logits_processors,
+        prompt_cache=caches,
+        prefill_step_size=1,
+        kv_group_size=KV_GROUP_SIZE,
+        kv_bits=KV_BITS,
+    )
+
     for completion_tokens, out in enumerate(
-        stream_generate(
-            model=model,
-            tokenizer=tokenizer,
-            prompt=last_token,
-            max_tokens=max_tokens,
-            sampler=sampler,
-            logits_processors=logits_processors,
-            prompt_cache=caches,
-            prefill_step_size=1,
-            kv_group_size=KV_GROUP_SIZE,
-            kv_bits=KV_BITS,
-        ),
+        _decode_gen,
         start=1,
     ):
         generated_text_parts.append(out.text)
