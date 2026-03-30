@@ -542,9 +542,14 @@ def mlx_generate(
     _pp_spec_gen = None
     _pp_draft = getattr(model, "_pp_draft_model", None)
     _pp_draft_cache = getattr(model, "_pp_draft_cache", None)
+    # Both ranks must enter the speculation loop — check env var, not model attribute
+    # (draft model is only on rank 0, but rank 1 must participate in the protocol)
+    _has_pp_draft = bool(os.environ.get("EXO_PP_DRAFT_MODEL", ""))
+    logger.info(f"PP spec check: is_warmup={is_warmup}, has_draft_env={_has_pp_draft}, "
+                f"draft_model={'yes' if _pp_draft else 'no'}, "
+                f"group={'size=' + str(group.size()) if group else 'None'}")
     if (not is_warmup
-        and _pp_draft is not None
-        and _pp_draft_cache is not None
+        and _has_pp_draft
         and group is not None
         and group.size() > 1):
         try:
@@ -554,6 +559,7 @@ def mlx_generate(
                 _install_spec_layers,
             )
             pp_info = get_pipeline_info(model)
+            logger.info(f"PP spec: get_pipeline_info returned {pp_info}")
             if pp_info is not None:
                 pp_rank, pp_world_size, pp_group = pp_info
                 inner = getattr(model, "language_model", model)
