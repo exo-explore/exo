@@ -49,16 +49,14 @@ class MTPBatchGenerator(BatchGenerator):
         self._setup_hidden_capture()
 
     def _setup_hidden_capture(self):
-        """Monkey-patch model's final norm and embed_tokens to capture states.
+        """Monkey-patch model's final norm to capture pre-norm hidden state.
 
         Captures:
         - pre_norm: hidden states before final RMSNorm (for MTP input)
         - prompt_pre_norm: same but only when S>1 (prefill)
-        - prompt_tokens: input token ids when S>1 (for MTP cache prefill)
         """
         inner = getattr(self.model, 'model', None) or self.model.language_model.model
         original_norm = inner.norm
-        original_embed = inner.embed_tokens
         captured = self._captured
 
         class _CapturingNorm:
@@ -75,20 +73,7 @@ class MTPBatchGenerator(BatchGenerator):
             def __getattr__(self, name):
                 return getattr(self._orig, name)
 
-        class _CapturingEmbed:
-            def __init__(self, orig):
-                self._orig = orig
-
-            def __call__(self, x):
-                if x.shape[-1] > 1 if x.ndim == 1 else x.shape[1] > 1:
-                    captured['prompt_tokens'] = x
-                return self._orig(x)
-
-            def __getattr__(self, name):
-                return getattr(self._orig, name)
-
         inner.norm = _CapturingNorm(original_norm)
-        inner.embed_tokens = _CapturingEmbed(original_embed)
 
     def _next(self):
         batch = self.active_batch
@@ -118,47 +103,16 @@ class MTPBatchGenerator(BatchGenerator):
         return responses
 
     def _first_step_and_prefill(self, batch, uid):
-        """First decode step: run standard step, then prefill MTP cache."""
+        """First decode step. MTP cache already prefilled by ExoBatchGenerator.submit()."""
         responses = super()._next()
         if not responses:
             return responses
 
-        self.mtp.reset_cache()
-
-        prompt_pre_norm = self._captured.get('prompt_pre_norm')
+        # Capture decode pre_norm from this standard step for first speculative cycle
         decode_pre_norm = self._captured.get('pre_norm')
-
-        # Batched MTP prefill
-        # prompt_pre_norm has S positions from the model prefill.
-        # In exo, prefill happens outside BatchGenerator, so batch.tokens
-        # only has the last few tokens. Use captured prompt_tokens instead.
-        if prompt_pre_norm is not None:
-            mx.eval(prompt_pre_norm)
-            prompt_toks = self._captured.get('prompt_tokens')
-            if prompt_toks is not None:
-                mx.eval(prompt_toks)
-                # prompt_toks shape: (1, S) or (S,) from embed_tokens input
-                toks_list = prompt_toks.flatten().tolist()
-            else:
-                # Fallback: use batch.tokens (works when BG does its own prefill)
-                toks = batch.tokens[0]
-                mx.eval(toks)
-                toks_list = toks.tolist()
-            S_pre = prompt_pre_norm.shape[1]
-            if S_pre > 1 and len(toks_list) >= S_pre:
-                mtp_tokens = toks_list[1:S_pre]  # tokens 1..S_pre-1
-                _ = self.mtp.predict(
-                    prompt_pre_norm[:, :-1, :],
-                    mx.array([mtp_tokens])
-                )
-                mx.eval(_)
-
-        # Use decode pre_norm (from the S=1 step that just ran)
         if decode_pre_norm is not None:
             mx.eval(decode_pre_norm)
             self._mtp_pre_norm[uid] = decode_pre_norm[:, -1:, :]
-        elif prompt_pre_norm is not None:
-            self._mtp_pre_norm[uid] = prompt_pre_norm[:, -1:, :]
 
         self._mtp_prefilled.add(uid)
         return responses

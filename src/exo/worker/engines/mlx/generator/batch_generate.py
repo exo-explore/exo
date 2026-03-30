@@ -266,6 +266,22 @@ class ExoBatchGenerator:
             distributed_prompt_progress_callback,
         )
 
+        # MTP prefill: build MTP KV cache from prompt hidden states
+        if hasattr(self._exo_gen, 'mtp'):
+            prompt_pre_norm = self._exo_gen._captured.get('prompt_pre_norm')
+            if prompt_pre_norm is not None:
+                mx.eval(prompt_pre_norm)
+                self._exo_gen.mtp.reset_cache()
+                S_pre = prompt_pre_norm.shape[1]
+                if S_pre > 1:
+                    mtp_toks = all_prompt_tokens[1:S_pre].tolist()
+                    _ = self._exo_gen.mtp.predict(
+                        prompt_pre_norm[:, :-1, :],
+                        mx.array([mtp_toks])
+                    )
+                    mx.eval(_)
+                logger.info(f"MTP cache prefilled ({S_pre - 1} positions)")
+
         # We need to clamp rotating kv caches to max size so that mlx lm's _merge_caches behaves
         for c in cache:
             if (
