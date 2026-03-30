@@ -588,7 +588,18 @@ def mlx_generate(
                     from mlx_lm.generate import GenerationResponse
                     _detok = tokenizer.detokenizer
                     gen_start = time.perf_counter()
-                    yield _first_out
+                    # Clear finish_reason from max_tokens=1 — this is just the first token
+                    _first_fixed = GenerationResponse(
+                        text=_first_out.text, token=_first_out.token,
+                        logprobs=_first_out.logprobs,
+                        prompt_tokens=_first_out.prompt_tokens,
+                        prompt_tps=_first_out.prompt_tps,
+                        generation_tokens=_first_out.generation_tokens,
+                        generation_tps=_first_out.generation_tps,
+                        peak_memory=_first_out.peak_memory,
+                        finish_reason=None,
+                    )
+                    yield _first_fixed
 
                     for tok_id, lp in pp_speculative_decode_loop(
                         model=model, draft_model=_pp_draft,
