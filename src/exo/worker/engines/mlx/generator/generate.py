@@ -164,6 +164,12 @@ def pipeline_parallel_prefill(
 
                 flush_prefill_sends()
 
+                # Evaluate cache states after each chunk to free intermediate
+                # activations. Without this, all chunks' computation graphs
+                # accumulate in memory causing OOM on long prompts.
+                mx.eval([c.state for c in _prompt_cache])  # type: ignore
+                mx.clear_cache()
+
                 prompt_progress_callback(processed, total)
 
             for _ in range(n_trailing):
