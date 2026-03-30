@@ -131,6 +131,7 @@ prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
 override-dependencies = ["compressed-tensors==0.13.0", "torch==2.10.0"]
+constraint-dependencies = ["transformers>=5.0.0,<5.4.0"]
 
 [tool.uv.extra-build-dependencies]
 mlx = [

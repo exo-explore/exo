@@ -1,6 +1,6 @@
 { inputs, ... }:
 let
-  mkPythonSet = { self', pkgs, lib, editable ? false }:
+  mkPythonSet = { self', pkgs, lib, apple-sdk, editable ? false }:
     let
       inherit (pkgs.stdenv.hostPlatform) isDarwin isLinux isx86_64;
       inherit (pkgs.config) cudaSupport;
@@ -73,7 +73,6 @@ let
               };
               mlx_cuda_cccl_compat = pkgs.runCommand "cuda-cccl-compat" { } ''
                 mkdir -p $out/include
-                ${pkgs.tree}/bin/tree ${cudaPackages.cuda_cccl} -L 3
                 exit 1
                 ln -s ${cudaPackages.cuda_cccl}/include/cuda $out/include/cuda
                 ln -s ${cudaPackages.cuda_cccl}/include/nv $out/include/nv
@@ -88,13 +87,13 @@ let
               # TODO: non-sdk_26 support
               buildInputs = (old.buildInputs or [ ])
               ++ [ gguf-tools pkgs.fmt pkgs.nlohmann_json pkgs.openblas ]
-              ++ lib.optionals isDarwin [ pkgs.apple-sdk_26 ]
+              ++ lib.optionals isDarwin [ apple-sdk ]
               ++ lib.optionals cudaSupport (cudaLibs ++ [ cudaPackages.cudnn ]);
               patches = (old.patches or [ ])
               ++ lib.optionals cudaSupport [ ../nix/mlx_patch_fmod.patch ]
               ++ lib.optionals isDarwin [
                 (pkgs.replaceVars ../nix/darwin-build-fixes.patch {
-                  sdkVersion = pkgs.apple-sdk_26.version;
+                  sdkVersion = apple-sdk.version;
                   inherit (self'.packages.metal-toolchain) metalVersion;
                 })
               ];
@@ -126,14 +125,14 @@ let
                 (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_NVTX3" "${nvtx}")
               ] ++ lib.optionals isDarwin [
                 (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_METAL_CPP" "${metal_cpp}")
-                (lib.cmakeOptionType "string" "CMAKE_OSX_DEPLOYMENT_TARGET" "${pkgs.apple-sdk_26.version}")
-                (lib.cmakeOptionType "filepath" "CMAKE_OSX_SYSROOT" "${pkgs.apple-sdk_26.passthru.sdkroot}")
+                (lib.cmakeOptionType "string" "CMAKE_OSX_DEPLOYMENT_TARGET" "${apple-sdk.version}")
+                (lib.cmakeOptionType "filepath" "CMAKE_OSX_SYSROOT" "${apple-sdk.passthru.sdkroot}")
               ] ++ lib.optionals (isDarwin && isx86_64) [
                 (lib.cmakeBool "MLX_ENABLE_X64_MAC" true)
               ]);
             } // lib.optionalAttrs isDarwin {
-              SDKROOT = pkgs.apple-sdk_26.passthru.sdkroot;
-              MACOSX_DEPLOYMENT_TARGET = pkgs.apple-sdk_26.version;
+              SDKROOT = apple-sdk.passthru.sdkroot;
+              MACOSX_DEPLOYMENT_TARGET = apple-sdk.version;
             });
           exo-pyo3-bindings = pkgs.stdenv.mkDerivation {
             pname = "exo-pyo3-bindings";
@@ -332,6 +331,18 @@ let
             nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.autoAddDriverRunpath ];
             autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "libcuda.so.1" ];
           });
+        } // lib.optionalAttrs (cudaSupport && isx86_64) {
+          numba = prev.numba.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.tbb ];
+          });
+          intel-openmp = prev.intel-openmp.overrideAttrs (_old: {
+            postFixup = ''
+              rm -f $out/lib/libarcher.so
+              rm -f $out/lib/libomptarget.so
+              rm -f $out/lib/libomptarget.rtl.*.so*
+              rm -f $out/lib/libomptarget.sycl.wrap.so
+            '';
+          });
         };
 
       # Load workspace from uv.lock
@@ -355,39 +366,50 @@ let
       ])
     );
 
+  mkExo = args@{ self', pkgs, lib, ... }:
+    let
+      venv = ((mkPythonSet args).mkVirtualEnv "exo-env" {
+        exo = lib.optionals pkgs.config.cudaSupport [ "cuda" ];
+      }).overrideAttrs {
+        venvSkip = [ "lib/python3.13/site-packages/build_backend.py" ];
+      };
+    in
+    pkgs.runCommand "exo"
+      {
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+      }
+      ''
+        mkdir -p $out/bin
 
+        # Create wrapper script
+        makeWrapper ${venv}/bin/exo $out/bin/exo \
+          --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
+          --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
+          ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
+      '';
 in
 {
   perSystem =
     { self', pkgs, cudaPkgs, lib, ... }:
     let
       inherit (pkgs.stdenv.hostPlatform) isDarwin;
-      pythonSet = mkPythonSet { inherit self' pkgs lib; };
+      pythonSet = mkPythonSet { inherit self' pkgs lib; apple-sdk = pkgs.apple-sdk_26; };
       # taking cudaPkgs.cudaPackages_13.pkgs creates a new nixpkgs that defaults to cuda 13
-      cudaPythonSet = mkPythonSet { inherit self' lib; inherit (cudaPkgs.cudaPackages_13) pkgs; };
+      cudaPythonSet = mkPythonSet { inherit self' lib; inherit (cudaPkgs.cudaPackages_13) pkgs; apple-sdk = pkgs.apple-sdk_26; };
 
-      editablePythonSet = mkPythonSet { inherit self' lib pkgs; editable = true; };
+      editablePythonSet = mkPythonSet { inherit self' lib pkgs; apple-sdk = pkgs.apple-sdk_26; editable = true; };
       evenv = (editablePythonSet.mkVirtualEnv "exo-dev-env"
         {
           exo = [ "dev" ];
           exo-pyo3-bindings = [ ];
           exo-bench = [ ];
         }).overrideAttrs {
-        #venvIgnoreCollisions = venvCollisionPaths;
-        venvSkip = [ "lib/python3.13/site-packages/build_backend.py" ];
-      };
-      exoVenv = (pythonSet.mkVirtualEnv "exo-env" {
-        exo = [ ];
-        exo-pyo3-bindings = [ ];
-      }).overrideAttrs {
-        # venvIgnoreCollisions = venvCollisionPaths;
         venvSkip = [ "lib/python3.13/site-packages/build_backend.py" ];
       };
       exoCudaVenv = (cudaPythonSet.mkVirtualEnv "exo-env" {
         exo = [ "cuda" ];
         exo-pyo3-bindings = [ ];
       }).overrideAttrs {
-        # venvIgnoreCollisions = venvCollisionPaths;
         venvSkip = [ "lib/python3.13/site-packages/build_backend.py" ];
       };
 
@@ -399,16 +421,6 @@ in
         }
       ).overrideAttrs {
         # venvIgnoreCollisions = venvCollisionPaths;
-      };
-
-      mkPythonScript = name: path: pkgs.writeShellApplication {
-        inherit name;
-        runtimeInputs = [ exoVenv ];
-        runtimeEnv = {
-          EXO_DASHBOARD_DIR = self'.packages.dashboard;
-          EXO_RESOURCES_DIR = inputs.self + /resources;
-        };
-        text = ''exec python ${path} "$@"'';
       };
 
       benchVenv = pythonSet.mkVirtualEnv "exo-bench-env" {
@@ -427,20 +439,6 @@ in
         text = ''exec python ${path} "$@"'';
       };
 
-      exoPackage = pkgs.runCommand "exo"
-        {
-          nativeBuildInputs = [ pkgs.makeWrapper ];
-        }
-        ''
-          mkdir -p $out/bin
-
-          # Create wrapper script
-          makeWrapper ${exoVenv}/bin/exo $out/bin/exo \
-            --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
-            --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
-            ${lib.optionalString isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
-        '';
-
       exoCudaPackage = cudaPkgs.runCommand "exo"
         {
           nativeBuildInputs = [ cudaPkgs.makeWrapper ];
@@ -458,7 +456,7 @@ in
     in
     {
       packages = {
-        exo = exoPackage;
+        exo = mkExo { inherit self' lib pkgs; apple-sdk = pkgs.apple-sdk_26; };
         exo-cuda = exoCudaPackage;
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
         exo-eval = mkBenchScript "exo-eval" (inputs.self + /bench/exo_eval.py);
@@ -468,6 +466,7 @@ in
       } // lib.optionalAttrs isDarwin {
         # Test environment for running pytest outside of Nix sandbox (needs GPU access)
         exo-test-env = testVenv;
+        exo-osx14 = mkExo { inherit self' lib pkgs; apple-sdk = pkgs.apple-sdk_14; };
       };
 
       checks = {
