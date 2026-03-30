@@ -245,27 +245,44 @@ class MTPBatchGenerator(BatchGenerator):
                 (batch.tokens[0], mx.array([t for t, _ in all_tokens[1:]])))
         batch.num_tokens[0] += len(all_tokens)
 
-        # 10. Check stop conditions
+        # 10. Check stop conditions — truncate at stop token
         toc = time.perf_counter()
         self._stats.generation_time += toc - tic
         self._stats.generation_tokens += len(all_tokens)
 
-        finish_reason = None
-        for tok, _ in all_tokens:
+        # Find first stop token or length limit in all_tokens
+        stop_idx = None
+        for idx, (tok, _) in enumerate(all_tokens):
             if tok in self.stop_tokens:
-                finish_reason = "stop"
+                stop_idx = idx
                 break
             if batch.num_tokens[0] >= batch.max_tokens[0]:
-                finish_reason = "length"
+                stop_idx = idx
                 break
 
         first_tok, first_lp = all_tokens[0]
 
-        if finish_reason:
-            cache = batch.extract_cache(0)
-            self.active_batch = None
-            self._cleanup_uid(uid)
-            return [self.Response(uid, first_tok, first_lp, finish_reason, cache)]
+        if stop_idx is not None:
+            # Tokens before the stop are valid output — buffer them
+            # The stop token itself triggers finish_reason
+            valid_tokens = all_tokens[:stop_idx]
+            if valid_tokens:
+                # Yield first, buffer rest + a final stop entry
+                if len(valid_tokens) > 1:
+                    self._token_buffer[uid] = valid_tokens[1:]
+                # Append stop marker as last buffered token
+                stop_tok, stop_lp = all_tokens[stop_idx]
+                if uid not in self._token_buffer:
+                    self._token_buffer[uid] = []
+                self._token_buffer[uid].append((stop_tok, stop_lp))
+                mx.async_eval(batch.y)
+                return [self.Response(uid, first_tok, first_lp, None, lambda: None)]
+            else:
+                # Stop token is the first token — finish immediately
+                cache = batch.extract_cache(0)
+                self.active_batch = None
+                self._cleanup_uid(uid)
+                return [self.Response(uid, first_tok, first_lp, "stop", cache)]
 
         # Buffer remaining tokens
         if len(all_tokens) > 1:
