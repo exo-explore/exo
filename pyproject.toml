@@ -18,13 +18,14 @@ dependencies = [
   "exo_pyo3_bindings",                       # rust bindings
   "anyio==4.11.0",
   "mlx",
+  "mlx[cpu]; sys_platform == 'linux'",
   "mlx-lm",
   "tiktoken>=0.12.0",                        # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",
   "tomlkit>=0.14.0",
-  "mflux==0.16.9; sys_platform == 'darwin'",
+  "mflux==0.17.2; sys_platform == 'darwin'",
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
@@ -165,6 +166,8 @@ vllm = [
 ]
 fastsafetensors = ["setuptools", "pybind11"]
 torch = ["typing-extensions"]
+torchvision = ["torch"]
+torchaudio = ["torch"]
 
 ###
 # ruff configuration

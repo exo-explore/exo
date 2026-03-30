@@ -1,0 +1,20 @@
+diff --git a/mlx/backend/cuda/device/binary_ops.cuh b/mlx/backend/cuda/device/binary_ops.cuh
+index b0b79628..bbc377be 100644
+--- a/mlx/backend/cuda/device/binary_ops.cuh
++++ b/mlx/backend/cuda/device/binary_ops.cuh
+@@ -46,6 +46,15 @@ struct Remainder {
+       }
+     } else if constexpr (is_complex_v<T>) {
+       return x % y;
++    } else if constexpr (
++        cuda::std::is_same_v<T, __half> ||
++        cuda::std::is_same_v<T, __nv_bfloat16>) {
++      float yf = static_cast<float>(y);
++      float r = cuda::std::fmod(static_cast<float>(x), y);
++      if (r != 0.0f && ((r < 0.0f) != (yf < 0.0f))) {
++        r += yf;
++      }
++      return static_cast<T>(r);
+     } else {
+       T r = cuda::std::fmod(x, y);
+       if (r != 0 && (r < 0 != y < 0)) {
