@@ -283,9 +283,10 @@ class ExoBatchGenerator:
 
         # Prefill draft cache with full prompt (rank 0 only)
         if pp_rank == 0 and _pp_draft is not None:
-            for tok in all_prompt_tokens.tolist():
-                _pp_draft(mx.array([[tok]]), cache=_pp_draft_cache)
-            mx.eval([c.state if hasattr(c, 'state') else c for c in _pp_draft_cache])
+            _draft_chunk = 512
+            for i in range(0, len(all_prompt_tokens), _draft_chunk):
+                _pp_draft(all_prompt_tokens[i:i + _draft_chunk][None], cache=_pp_draft_cache)
+                mx.eval([c.state if hasattr(c, 'state') else c for c in _pp_draft_cache])
             logger.info(f"Draft model prefilled with {len(all_prompt_tokens)} tokens")
 
         # First token via standard PP
