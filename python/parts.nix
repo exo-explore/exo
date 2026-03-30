@@ -222,7 +222,7 @@
             });
           xgrammar = prev.xgrammar.overrideAttrs (old: {
             nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ cudaPkgs.cmake cudaPkgs.autoPatchelfHook ];
-            buildInputs = (old.buildInputs or [ ]) ++ [];
+            buildInputs = (old.buildInputs or [ ]) ++ [ ];
             # patches = (old.patches or [ ]) ++ [ ../nix/xgrammar_cmake.patch ];
           });
           vllm = prev.vllm.overrideAttrs (old: {
@@ -297,9 +297,6 @@
 
         in
         {
-          mlx-lm = prev.mlx-lm.overrideAttrs (old: {
-            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ ];
-          });
           mlx = prev.mlx.overrideAttrs (old: {
             nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.cmake ] ++ lib.optionals isDarwin [ self'.packages.metal-toolchain ];
             buildInputs = (old.buildInputs or [ ]) ++ [ gguf-tools pkgs.openblas pkgs.fmt ] ++ lib.optionals isDarwin [ pkgs.apple-sdk_26 ];
@@ -444,14 +441,14 @@
           nativeBuildInputs = [ pkgs.makeWrapper ];
         }
         ''
-          mkdir -p $out/bin
+                    mkdir -p $out/bin
 
-          # Create wrapper script
-          makeWrapper ${exoCudaVenv}/bin/exo $out/bin/exo \
-            --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
-            --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
-	    --prefix LD_LIBRARY_PATH : "${openssl.out}/lib:${lib.getLib pkgs.util-linux}/lib:${lib.getLib pkgs.systemd}/lib:${lib.getLib pkgs.numactl}/lib:${lib.getLib pkgs.stdenv.cc.cc.lib}/lib \
-            ${lib.optionalString isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
+                    # Create wrapper script
+                    makeWrapper ${exoCudaVenv}/bin/exo $out/bin/exo \
+                      --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
+                      --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
+          	    --prefix LD_LIBRARY_PATH : ${lib.getLib pkgs.util-linux}/lib:${lib.getLib pkgs.systemd}/lib:${lib.getLib pkgs.numactl}/lib:${lib.getLib pkgs.stdenv.cc.cc.lib}/lib \
+                      ${lib.optionalString isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
         '';
     in
     {

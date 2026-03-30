@@ -160,6 +160,7 @@ vllm = [
   "wheel",
   "markupsafe",
   "typing-extensions",
+  "torch",
 ]
 fastsafetensors = ["setuptools", "pybind11"]
 torch = ["typing-extensions"]
