@@ -87,7 +87,11 @@ class RunnerSupervisor:
         # With "fork", the parent's partial CUDA init (from device detection) is
         # inherited by the child, which conflicts with torch.compile's inductor
         # backend (cudagraph_mode=none) and causes CUDA illegal instruction errors.
-        ctx = mp.get_context("spawn") if isinstance(bound_instance.instance, VllmInstance) else mp
+        ctx = (
+            mp.get_context("spawn")
+            if isinstance(bound_instance.instance, VllmInstance)
+            else mp
+        )
         runner_process = ctx.Process(
             target=entrypoint,
             args=(

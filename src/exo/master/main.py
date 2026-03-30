@@ -94,7 +94,9 @@ class Master:
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
 
-    def _find_prefill_endpoints(self, decode_instance: Instance, decode_model_base: str) -> list[str]:
+    def _find_prefill_endpoints(
+        self, decode_instance: Instance, decode_model_base: str
+    ) -> list[str]:
         from exo.master.placement_utils import (
             _find_ip_prioritised as find_ip_prioritised,  # pyright: ignore[reportPrivateUsage]
         )
@@ -108,11 +110,18 @@ class Master:
             if instance.instance_id == decode_instance.instance_id:
                 continue
             vllm_instance_count += 1
-            first_shard = next(iter(instance.shard_assignments.runner_to_shard.values()), None)
+            first_shard = next(
+                iter(instance.shard_assignments.runner_to_shard.values()), None
+            )
             if first_shard is None:
-                logger.info(f"Prefill routing: VllmInstance {instance.instance_id} has no shards")
+                logger.info(
+                    f"Prefill routing: VllmInstance {instance.instance_id} has no shards"
+                )
                 continue
-            if derive_base_model(first_shard.model_card.base_model).lower() != decode_model_base.lower():
+            if (
+                derive_base_model(first_shard.model_card.base_model).lower()
+                != decode_model_base.lower()
+            ):
                 logger.info(
                     f"Prefill routing: VllmInstance {instance.instance_id} base_model "
                     f"{first_shard.model_card.base_model!r} != decode {decode_model_base!r}"
@@ -124,20 +133,34 @@ class Master:
             for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
                 runner_status = self.state.runners.get(runner_id)
                 if not isinstance(runner_status, (RunnerReady, RunnerRunning)):
-                    logger.info(f"Prefill routing: runner {runner_id} not ready ({type(runner_status).__name__})")
+                    logger.info(
+                        f"Prefill routing: runner {runner_id} not ready ({type(runner_status).__name__})"
+                    )
                     continue
                 port = runner_status.prefill_server_port
                 if port is None:
-                    logger.info(f"Prefill routing: runner {runner_id} has no prefill_server_port")
+                    logger.info(
+                        f"Prefill routing: runner {runner_id} has no prefill_server_port"
+                    )
                     continue
 
-                decode_node = next(iter(decode_instance.shard_assignments.node_to_runner.keys()), None)
+                decode_node = next(
+                    iter(decode_instance.shard_assignments.node_to_runner.keys()), None
+                )
                 if decode_node is None:
                     continue
 
-                ip = find_ip_prioritised(decode_node, node_id, self.state.topology, self.state.node_network, ring=True)
+                ip = find_ip_prioritised(
+                    decode_node,
+                    node_id,
+                    self.state.topology,
+                    self.state.node_network,
+                    ring=True,
+                )
                 if ip is None:
-                    logger.info(f"Prefill routing: no IP route from {decode_node} to {node_id}")
+                    logger.info(
+                        f"Prefill routing: no IP route from {decode_node} to {node_id}"
+                    )
                     continue
 
                 ip_type = "unknown"
@@ -147,7 +170,13 @@ class Master:
                         if iface.ip_address == ip:
                             ip_type = iface.interface_type
                             break
-                priority = {"thunderbolt": 0, "maybe_ethernet": 1, "ethernet": 2, "wifi": 3, "unknown": 4}.get(ip_type, 4)
+                priority = {
+                    "thunderbolt": 0,
+                    "maybe_ethernet": 1,
+                    "ethernet": 2,
+                    "wifi": 3,
+                    "unknown": 4,
+                }.get(ip_type, 4)
                 endpoints.append((priority, f"{ip}:{port}"))
 
         if not endpoints:
@@ -192,12 +221,26 @@ class Master:
                         case TextGeneration():
                             from exo.shared.models.model_cards import derive_base_model
 
-                            request_base = derive_base_model(str(command.task_params.model))
+                            request_base = derive_base_model(
+                                str(command.task_params.model)
+                            )
 
                             for instance in self.state.instances.values():
-                                exact_match = instance.shard_assignments.model_id == command.task_params.model
-                                first_shard = next(iter(instance.shard_assignments.runner_to_shard.values()), None)
-                                base_match = first_shard is not None and first_shard.model_card.base_model.lower() == request_base.lower()
+                                exact_match = (
+                                    instance.shard_assignments.model_id
+                                    == command.task_params.model
+                                )
+                                first_shard = next(
+                                    iter(
+                                        instance.shard_assignments.runner_to_shard.values()
+                                    ),
+                                    None,
+                                )
+                                base_match = (
+                                    first_shard is not None
+                                    and first_shard.model_card.base_model.lower()
+                                    == request_base.lower()
+                                )
                                 if not (exact_match or base_match):
                                     continue
                                 task_count = sum(
@@ -215,13 +258,19 @@ class Master:
                             available_instance_ids = sorted(
                                 instance_task_counts.keys(),
                                 key=lambda instance_id: (
-                                    0 if not isinstance(self.state.instances[instance_id], VllmInstance) else 1,
+                                    0
+                                    if not isinstance(
+                                        self.state.instances[instance_id], VllmInstance
+                                    )
+                                    else 1,
                                     instance_task_counts[instance_id],
                                 ),
                             )
 
                             task_id = TaskId()
-                            decode_instance = self.state.instances[available_instance_ids[0]]
+                            decode_instance = self.state.instances[
+                                available_instance_ids[0]
+                            ]
                             logger.info(
                                 f"Decode routing: model={command.task_params.model} base={request_base} "
                                 f"instance={available_instance_ids[0]} type={type(decode_instance).__name__} "
@@ -229,10 +278,16 @@ class Master:
                             )
                             task_params = command.task_params
                             if not task_params.prefill_endpoints:
-                                prefill_eps = self._find_prefill_endpoints(decode_instance, request_base)
-                                logger.info(f"Prefill endpoints resolved: {prefill_eps}")
+                                prefill_eps = self._find_prefill_endpoints(
+                                    decode_instance, request_base
+                                )
+                                logger.info(
+                                    f"Prefill endpoints resolved: {prefill_eps}"
+                                )
                                 if prefill_eps:
-                                    task_params = task_params.model_copy(update={"prefill_endpoints": prefill_eps})
+                                    task_params = task_params.model_copy(
+                                        update={"prefill_endpoints": prefill_eps}
+                                    )
 
                             generated_events.append(
                                 TaskCreated(

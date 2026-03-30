@@ -32,7 +32,10 @@ def _patched_yarn_init(
     super(rope_utils.YarnRoPE, self).__init__()
 
     def yarn_find_correction_dim(num_rotations: float) -> float:
-        return (dims * math.log(original_max_position_embeddings / (num_rotations * 2 * math.pi))) / (2 * math.log(base))
+        return (
+            dims
+            * math.log(original_max_position_embeddings / (num_rotations * 2 * math.pi))
+        ) / (2 * math.log(base))
 
     def yarn_find_correction_range() -> tuple[float, float]:
         low: float = yarn_find_correction_dim(beta_fast)
@@ -53,13 +56,18 @@ def _patched_yarn_init(
         linear_func = (mx.arange(dim, dtype=mx.float32) - min_val) / (max_val - min_val)
         return mx.clip(linear_func, 0, 1)
 
-    self.mscale = yarn_get_mscale(scaling_factor, mscale) / yarn_get_mscale(scaling_factor, mscale_all_dim)
+    self.mscale = yarn_get_mscale(scaling_factor, mscale) / yarn_get_mscale(
+        scaling_factor, mscale_all_dim
+    )
     pos_freqs = base ** (mx.arange(0, dims, 2, dtype=mx.float32) / dims)
     inv_freq_extrapolation = 1.0 / pos_freqs
     inv_freq_interpolation = 1.0 / (scaling_factor * pos_freqs)
     low, high = yarn_find_correction_range()
     inv_freq_mask = 1.0 - yarn_linear_ramp_mask(low, high, dims // 2)
-    inv_freq = inv_freq_interpolation * (1 - inv_freq_mask) + inv_freq_extrapolation * inv_freq_mask
+    inv_freq = (
+        inv_freq_interpolation * (1 - inv_freq_mask)
+        + inv_freq_extrapolation * inv_freq_mask
+    )
     self._freqs = 1.0 / inv_freq
     self.dims = dims
     self.traditional = traditional
@@ -73,7 +81,9 @@ def _patched_initialize_rope(
     max_position_embeddings: int | None = None,
 ) -> object:  # type: ignore
     if scaling_config is not None:
-        rope_type = scaling_config.get("type") or scaling_config.get("rope_type", "default")
+        rope_type = scaling_config.get("type") or scaling_config.get(
+            "rope_type", "default"
+        )
     else:
         rope_type = "default"
 
@@ -81,7 +91,14 @@ def _patched_initialize_rope(
         scaling_factor = scaling_config["factor"]  # type: ignore
         rope_kwargs = {
             key: scaling_config[key]  # type: ignore
-            for key in ["original_max_position_embeddings", "beta_fast", "beta_slow", "mscale", "mscale_all_dim", "truncate"]
+            for key in [
+                "original_max_position_embeddings",
+                "beta_fast",
+                "beta_slow",
+                "mscale",
+                "mscale_all_dim",
+                "truncate",
+            ]
             if key in scaling_config  # type: ignore
         }
         return rope_utils.YarnRoPE(
@@ -93,7 +110,9 @@ def _patched_initialize_rope(
             **rope_kwargs,
         )
 
-    return _original_initialize_rope(dims, base, traditional, scaling_config, max_position_embeddings)
+    return _original_initialize_rope(
+        dims, base, traditional, scaling_config, max_position_embeddings
+    )
 
 
 _original_initialize_rope = rope_utils.initialize_rope

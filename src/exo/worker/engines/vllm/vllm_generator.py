@@ -216,7 +216,10 @@ def vllm_generate(
     stop_ids = _stop_token_ids(tokenizer, model_id)
     DEFAULT_PREFILL_STEP_SIZE = 8192
     max_batch_tokens: int = (
-        getattr(engine.model_config, "max_num_batched_tokens", DEFAULT_PREFILL_STEP_SIZE) or DEFAULT_PREFILL_STEP_SIZE
+        getattr(
+            engine.model_config, "max_num_batched_tokens", DEFAULT_PREFILL_STEP_SIZE
+        )
+        or DEFAULT_PREFILL_STEP_SIZE
     )  # type: ignore[reportUnknownMemberType]
     start_time = time.perf_counter()
     first_token_time: float | None = None
@@ -589,7 +592,9 @@ def load_vllm_engine(
         with open(config_path) as f:
             model_config = json.load(f)
         text_config = model_config.get("text_config", model_config)
-        has_mamba = "mamba_ssm_dtype" in text_config or "linear_attention" in (text_config.get("layer_types") or [])
+        has_mamba = "mamba_ssm_dtype" in text_config or "linear_attention" in (
+            text_config.get("layer_types") or []
+        )
     if is_nvfp4 and not has_mamba:
         backends = ["FLASHINFER", "FLASH_ATTN", "TRITON_ATTN"]
     else:

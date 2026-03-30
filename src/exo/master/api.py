@@ -759,8 +759,13 @@ class API:
 
         request_base = derive_base_model(str(model_id))
         for instance in self.state.instances.values():
-            first_shard = next(iter(instance.shard_assignments.runner_to_shard.values()), None)
-            if first_shard is not None and first_shard.model_card.base_model.lower() == request_base.lower():
+            first_shard = next(
+                iter(instance.shard_assignments.runner_to_shard.values()), None
+            )
+            if (
+                first_shard is not None
+                and first_shard.model_card.base_model.lower() == request_base.lower()
+            ):
                 return instance.shard_assignments.model_id
 
         await self._trigger_notify_user_to_download_model(model_id)

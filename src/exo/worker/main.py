@@ -132,15 +132,23 @@ class Worker:
                         event.chunk.data
                     )
 
-    _IFACE_PRIORITY = {"ethernet": 0, "maybe_ethernet": 1, "wifi": 2, "unknown": 3, "thunderbolt": 4}
+    _IFACE_PRIORITY = {
+        "ethernet": 0,
+        "maybe_ethernet": 1,
+        "wifi": 2,
+        "unknown": 3,
+        "thunderbolt": 4,
+    }
 
     def _best_ip_for_node(self, node_id: NodeId) -> str | None:
         net = self.state.node_network.get(node_id)
         if not net or not net.interfaces:
             return None
         candidates = [
-            iface for iface in net.interfaces
-            if iface.ip_address not in ("127.0.0.1", "::1") and not iface.ip_address.startswith("fe80:")
+            iface
+            for iface in net.interfaces
+            if iface.ip_address not in ("127.0.0.1", "::1")
+            and not iface.ip_address.startswith("fe80:")
         ]
         if not candidates:
             return None
@@ -166,7 +174,9 @@ class Worker:
                         for other_inst in self.state.instances.values():
                             if rid not in other_inst.shard_assignments.runner_to_shard:
                                 continue
-                            other_base = derive_base_model(other_inst.shard_assignments.model_id)
+                            other_base = derive_base_model(
+                                other_inst.shard_assignments.model_id
+                            )
                             my_base = derive_base_model(my_model_id)
                             if other_base != my_base:
                                 continue
