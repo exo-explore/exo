@@ -37,3 +37,9 @@ def maybe_apply_patches(model: nn.Module, model_path: Path) -> None:
 
         logger.info("Detected Qwen3.5 MoE model, applying batched fused kernel patches")
         apply_qwen35_batched_fused_patches(model)
+
+    elif model_type == "qwen3_5":
+        from .qwen3_5.lpb_patch import apply_lpb_patches
+
+        logger.info("Detected Qwen3.5 dense model, applying LpB kernel patches")
+        apply_lpb_patches(model, batch_size=4)
