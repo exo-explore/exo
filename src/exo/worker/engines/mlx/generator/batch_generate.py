@@ -246,10 +246,16 @@ class ExoBatchGenerator:
         seed = task_params.seed if task_params.seed is not None else 42
         mx.random.seed(seed)
 
+        spec_temp_override = os.environ.get("EXO_SPECULATIVE_TEMP")
+        if spec_temp_override is not None:
+            sampling_temp = float(spec_temp_override)
+        elif task_params.temperature is not None:
+            sampling_temp = task_params.temperature
+        else:
+            sampling_temp = 0.7
+
         sampler = make_sampler(
-            temp=task_params.temperature
-            if task_params.temperature is not None
-            else 0.7,
+            temp=sampling_temp,
             top_p=task_params.top_p if task_params.top_p is not None else 1.0,
             min_p=task_params.min_p if task_params.min_p is not None else 0.05,
             top_k=task_params.top_k if task_params.top_k is not None else 0,
