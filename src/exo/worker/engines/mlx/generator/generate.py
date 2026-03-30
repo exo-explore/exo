@@ -557,6 +557,7 @@ def mlx_generate(
                 get_pipeline_info,
                 pp_speculative_decode_loop,
                 _install_spec_layers,
+                _configure_layers,
             )
             pp_info = get_pipeline_info(model)
             logger.info(f"PP spec: get_pipeline_info returned {pp_info}")
