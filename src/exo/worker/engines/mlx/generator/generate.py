@@ -536,9 +536,14 @@ def mlx_generate(
     logger.info("Starting decode")
     mx_barrier(group)
 
-    # --- PP idle-time speculation (additive, gated by EXO_PP_DRAFT_MODEL) ---
+    # --- PP idle-time speculation (DISABLED — causes warmup deadlock) ---
+    # TODO: Speculation setup must not run before stream_generate because
+    # both ranks must enter the PP decode loop simultaneously. Loading the
+    # draft model here creates a timing mismatch that deadlocks warmup.
+    # Needs redesign: either lazy-load on first decode step, or load at
+    # model init time (in utils_mlx.py), not in the decode path.
     _pp_spec_gen = None
-    _draft_model_path = os.environ.get("EXO_PP_DRAFT_MODEL", "")
+    _draft_model_path = ""  # os.environ.get("EXO_PP_DRAFT_MODEL", "")
     logger.info(f"PP speculation check: draft_model={_draft_model_path!r}, group={group is not None}, group_size={group.size() if group else 0}")
     if _draft_model_path and group is not None and group.size() > 1:
         try:
@@ -551,6 +556,8 @@ def mlx_generate(
             logger.info(f"PP speculation: pp_info={pp_info}")
             if pp_info is not None:
                 pp_rank, pp_world_size, pp_group = pp_info
+                if pp_rank != 0:
+                    raise RuntimeError("Speculation only runs on rank 0")
                 draft_result = load_draft_model(_draft_model_path)
                 if draft_result is not None:
                     draft_model_obj, draft_cache = draft_result
