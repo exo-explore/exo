@@ -311,6 +311,7 @@ class Runner:
                                     GenerationResponse(
                                         text=thinking, token=0,
                                         finish_reason=None,
+                                        usage=None,
                                         is_thinking=True,
                                     ),
                                     self.active_tasks[task_id].command_id,
