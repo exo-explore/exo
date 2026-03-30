@@ -93,10 +93,14 @@ class ExoBatchGenerator:
 
                 if mtp_weights and os.path.exists(mtp_weights):
                     mtp = MTPPredictor(self.model, mtp_weights, quantize=False)
+                    temp = float(os.environ.get("EXO_SPECULATIVE_TEMP", "0.7"))
+                    alpha = float(os.environ.get("EXO_SPECULATIVE_ALPHA", "1.0"))
                     self._exo_gen = MTPBatchGenerator(
                         model=self.model,
                         mtp_predictor=mtp,
                         gamma=gamma,
+                        temp=temp,
+                        alpha=alpha,
                         stop_tokens=stop_tokens,
                         prefill_step_size=4096,
                     )
