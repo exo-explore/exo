@@ -38,6 +38,4 @@ bench/**/*.json
 
 # tmp
 tmp/models
-mlx/
-mlx-lm/
 *.dylib

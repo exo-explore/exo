@@ -1,0 +1,6 @@
+[submodule "mlx"]
+	path = mlx
+	url = https://github.com/adurham/mlx.git
+[submodule "mlx-lm"]
+	path = mlx-lm
+	url = https://github.com/adurham/mlx-lm.git
