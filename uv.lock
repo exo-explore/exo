@@ -806,6 +806,7 @@ dependencies = [
     { name = "loguru", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "mflux", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "mlx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "mlx", marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "msgspec", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "openai-harmony", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -825,6 +826,7 @@ build = [
 ]
 cuda = [
     { name = "fastsafetensors", marker = "sys_platform == 'linux'" },
+    { name = "mlx", marker = "(sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'extra-3-exo-cuda') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "(sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "vllm", marker = "sys_platform == 'linux'" },
@@ -853,8 +855,10 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.33.4" },
     { name = "hypercorn", specifier = ">=0.18.0" },
     { name = "loguru", specifier = ">=0.7.3" },
-    { name = "mflux", marker = "sys_platform == 'darwin'", specifier = "==0.16.9" },
+    { name = "mflux", marker = "sys_platform == 'darwin'", specifier = "==0.17.2" },
     { name = "mlx", git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks" },
+    { name = "mlx", extras = ["cpu"], marker = "sys_platform == 'linux'", git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks" },
+    { name = "mlx", extras = ["cuda13"], marker = "sys_platform == 'linux' and extra == 'cuda'", git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks" },
     { name = "mlx-lm", git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Feval-left-padding-in-batched-rotation" },
     { name = "msgspec", specifier = ">=0.19.0" },
     { name = "nanobind", marker = "extra == 'build'" },
@@ -896,7 +900,8 @@ dependencies = [
     { name = "loguru", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "math-verify", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "protobuf", version = "7.34.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "protobuf", version = "5.29.6", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "protobuf", version = "7.34.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "tiktoken", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "transformers", marker = "(sys_platform == 'darwin' and extra == 'project-9-exo-bench') or (sys_platform == 'linux' and extra == 'project-9-exo-bench') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
@@ -2198,7 +2203,7 @@ wheels = [
 
 [[package]]
 name = "mflux"
-version = "0.16.9"
+version = "0.17.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -2212,6 +2217,7 @@ dependencies = [
     { name = "piexif", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pillow", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "platformdirs", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "protobuf", version = "5.29.6", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "regex", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "requests", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "safetensors", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -2224,9 +2230,9 @@ dependencies = [
     { name = "twine", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "urllib3", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e3/dc/73dfccae395df22623fbb6f748657700fd9372be22904a0dafb825dc42d2/mflux-0.16.9.tar.gz", hash = "sha256:ff35e9386b5f026a6b97c786b3426e5341105de3356e55ec1b0c5951ff0ac8c8", size = 764296, upload-time = "2026-03-07T11:54:45.031Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/75/65f791f54c9531b524813d18ff87a0d34866ef220a8fe2ad637437f3cb54/mflux-0.17.2.tar.gz", hash = "sha256:52dee2d27cf438a84648e5c1861b92ceb63a9ac06823d14452a78646a1d30ee7", size = 779264, upload-time = "2026-03-23T13:08:18.377Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/69/091df2d0f4a2677d5e2a8b326d568bd884d7ca37f15d3ff78e574aca2271/mflux-0.16.9-py3-none-any.whl", hash = "sha256:988e925653a024e81b46401fd5a2e423dd283428ba64949af4d9257e7df8ddd9", size = 1018804, upload-time = "2026-03-07T11:54:43.47Z" },
+    { url = "https://files.pythonhosted.org/packages/68/02/f94eca4e77b7d12685060461eb793cbc8c00e96cc7fe0ce376374201aed2/mflux-0.17.2-py3-none-any.whl", hash = "sha256:be1642b04847413c0a8ed1dae82ce1ca023e155b057d82a8301eca9c3fe08339", size = 1037451, upload-time = "2026-03-23T13:08:16.747Z" },
 ]
 
 [[package]]
@@ -2255,8 +2261,8 @@ image = [
 
 [[package]]
 name = "mlx"
-version = "0.30.7.dev20260312+257d5692"
-source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#257d5692fc7af6bba3b8afaeb63c549b7d1e43d5" }
+version = "0.31.2.dev20260330+e5e64331"
+source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#e5e64331830d9b04ae9082b843073f9c1fa7705e" }
 
 [[package]]
 name = "mlx-lm"
@@ -2267,8 +2273,9 @@ dependencies = [
     { name = "mlx", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (sys_platform == 'linux' and extra != 'extra-3-exo-cuda') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "protobuf", version = "5.29.6", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "protobuf", version = "6.33.5", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'extra-3-exo-cuda') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
-    { name = "protobuf", version = "7.34.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (sys_platform == 'linux' and extra != 'extra-3-exo-cuda') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
+    { name = "protobuf", version = "7.34.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'extra-3-exo-cuda') or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "sentencepiece", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
     { name = "transformers", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cuda' and extra == 'project-9-exo-bench')" },
@@ -3306,6 +3313,26 @@ wheels = [
 
 [[package]]
 name = "protobuf"
+version = "5.29.6"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
+    "python_full_version < '3.14' and sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
+    "sys_platform == 'darwin' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+    "sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7e/57/394a763c103e0edf87f0938dafcd918d53b4c011dfc5c8ae80f3b0452dbb/protobuf-5.29.6.tar.gz", hash = "sha256:da9ee6a5424b6b30fd5e45c5ea663aef540ca95f9ad99d1e887e819cdf9b8723", size = 425623, upload-time = "2026-02-04T22:54:40.584Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d4/88/9ee58ff7863c479d6f8346686d4636dd4c415b0cbeed7a6a7d0617639c2a/protobuf-5.29.6-cp310-abi3-win32.whl", hash = "sha256:62e8a3114992c7c647bce37dcc93647575fc52d50e48de30c6fcb28a6a291eb1", size = 423357, upload-time = "2026-02-04T22:54:25.805Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/66/2dc736a4d576847134fb6d80bd995c569b13cdc7b815d669050bf0ce2d2c/protobuf-5.29.6-cp310-abi3-win_amd64.whl", hash = "sha256:7e6ad413275be172f67fdee0f43484b6de5a904cc1c3ea9804cb6fe2ff366eda", size = 435175, upload-time = "2026-02-04T22:54:28.592Z" },
+    { url = "https://files.pythonhosted.org/packages/06/db/49b05966fd208ae3f44dcd33837b6243b4915c57561d730a43f881f24dea/protobuf-5.29.6-cp38-abi3-macosx_10_9_universal2.whl", hash = "sha256:b5a169e664b4057183a34bdc424540e86eea47560f3c123a0d64de4e137f9269", size = 418619, upload-time = "2026-02-04T22:54:30.266Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/d7/48cbf6b0c3c39761e47a99cb483405f0fde2be22cf00d71ef316ce52b458/protobuf-5.29.6-cp38-abi3-manylinux2014_aarch64.whl", hash = "sha256:a8866b2cff111f0f863c1b3b9e7572dc7eaea23a7fae27f6fc613304046483e6", size = 320284, upload-time = "2026-02-04T22:54:31.782Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/dd/cadd6ec43069247d91f6345fa7a0d2858bef6af366dbd7ba8f05d2c77d3b/protobuf-5.29.6-cp38-abi3-manylinux2014_x86_64.whl", hash = "sha256:e3387f44798ac1106af0233c04fb8abf543772ff241169946f698b3a9a3d3ab9", size = 320478, upload-time = "2026-02-04T22:54:32.909Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/cb/e3065b447186cb70aa65acc70c86baf482d82bf75625bf5a2c4f6919c6a3/protobuf-5.29.6-py3-none-any.whl", hash = "sha256:6b9edb641441b2da9fa8f428760fc136a49cf97a52076010cf22a2ff73438a86", size = 173126, upload-time = "2026-02-04T22:54:39.462Z" },
+]
+
+[[package]]
+name = "protobuf"
 version = "6.33.5"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
@@ -3330,10 +3357,6 @@ name = "protobuf"
 version = "7.34.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.14' and sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "python_full_version < '3.14' and sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
-    "sys_platform == 'darwin' and extra == 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
-    "sys_platform == 'darwin' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
     "python_full_version >= '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
     "python_full_version < '3.14' and sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra == 'project-9-exo-bench'",
     "sys_platform == 'linux' and extra != 'extra-3-exo-cuda' and extra != 'project-9-exo-bench'",
