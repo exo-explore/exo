@@ -1,3 +1,4 @@
+import json
 from enum import Enum
 from typing import Annotated, Any
 
@@ -13,6 +14,7 @@ from pydantic import (
     Field,
     PositiveInt,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -21,6 +23,7 @@ from tomlkit.exceptions import TOMLKitError
 from exo.shared.constants import (
     EXO_CUSTOM_MODEL_CARDS_DIR,
     EXO_ENABLE_IMAGE_MODELS,
+    EXO_MODELS_DIRS,
     RESOURCES_DIR,
 )
 from exo.shared.types.common import ModelId
@@ -38,6 +41,23 @@ _BUILTIN_CARD_DIRS = [
 _card_cache: dict[ModelId, "ModelCard"] = {}
 
 
+def _detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
+    normalized = model_id.normalize()
+    for model_dir in [d / normalized for d in EXO_MODELS_DIRS]:
+        config_path = model_dir / "config.json"
+        if not config_path.exists():
+            continue
+        try:
+            with open(config_path) as f:
+                raw = json.load(f)  # type: ignore
+            return ConfigData.model_validate(
+                raw, context={"model_id": str(model_id)}
+            ).vision
+        except Exception:
+            continue
+    return None
+
+
 async def _load_cards_from_dir(directory: Path, *, is_custom: bool) -> None:
     """Load all TOML model cards from a directory into the cache."""
     async for toml_file in directory.rglob("*.toml"):
@@ -45,6 +65,10 @@ async def _load_cards_from_dir(directory: Path, *, is_custom: bool) -> None:
             card = await ModelCard.load_from_path(toml_file)
             if is_custom:
                 card = card.model_copy(update={"is_custom": True})
+            if card.vision is None:
+                vision = _detect_vision_from_config(card.model_id)
+                if vision is not None:
+                    card = card.model_copy(update={"vision": vision})
             if card.model_id not in _card_cache:
                 _card_cache[card.model_id] = card
         except (ValidationError, TOMLKitError):
@@ -89,6 +113,14 @@ class ComponentInfo(CamelCaseModel):
     safetensors_index_filename: str | None = None
 
 
+class VisionCardConfig(CamelCaseModel):
+    image_token_id: int
+    model_type: str
+    weights_repo: str = ""
+    image_token: str | None = None
+    processor_repo: str | None = None
+
+
 class ModelCard(CamelCaseModel):
     model_id: ModelId
     storage_size: Memory
@@ -105,6 +137,17 @@ class ModelCard(CamelCaseModel):
     uses_cfg: bool = False
     trust_remote_code: bool = True
     is_custom: bool = False
+    vision: VisionCardConfig | None = None
+
+    @model_validator(mode="after")
+    def _fill_vision_weights_repo(self) -> "ModelCard":
+        if self.vision is not None and not self.vision.weights_repo:
+            object.__setattr__(
+                self,
+                "vision",
+                self.vision.model_copy(update={"weights_repo": str(self.model_id)}),
+            )
+        return self
 
     @field_validator("tasks", mode="before")
     @classmethod
@@ -162,6 +205,7 @@ class ModelCard(CamelCaseModel):
             tasks=[ModelTask.TextGeneration],
             trust_remote_code=False,
             is_custom=True,
+            vision=config_data.vision,
         )
 
 
@@ -196,6 +240,7 @@ class ConfigData(BaseModel):
             "decoder_layers",
         )
     )
+    vision: VisionCardConfig | None = None
 
     @property
     def supports_tensor(self) -> bool:
@@ -217,24 +262,36 @@ class ConfigData(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def defer_to_text_config(cls, data: dict[str, Any]):
+    def defer_to_text_config(cls, data: dict[str, Any], info: ValidationInfo):
         text_config = data.get("text_config")
-        if text_config is None:
-            return data
+        if text_config is not None:
+            for field in [
+                "architectures",
+                "hidden_size",
+                "num_key_value_heads",
+                "num_hidden_layers",
+                "num_layers",
+                "n_layer",
+                "n_layers",
+                "num_decoder_layers",
+                "decoder_layers",
+            ]:
+                if (val := text_config.get(field)) is not None:  # pyright: ignore[reportAny]
+                    data[field] = val
 
-        for field in [
-            "architectures",
-            "hidden_size",
-            "num_key_value_heads",
-            "num_hidden_layers",
-            "num_layers",
-            "n_layer",
-            "n_layers",
-            "num_decoder_layers",
-            "decoder_layers",
-        ]:
-            if (val := text_config.get(field)) is not None:  # pyright: ignore[reportAny]
-                data[field] = val
+        vision_config = data.get("vision_config")
+        image_token_id = data.get("image_token_id")
+        if vision_config is not None and image_token_id is not None:
+            model_type = str(
+                vision_config.get("model_type", data.get("model_type", ""))  # pyright: ignore[reportAny]
+            )
+            assert info.context is not None
+
+            data["vision"] = VisionCardConfig(
+                image_token_id=int(image_token_id),  # pyright: ignore[reportAny]
+                model_type=model_type,
+                weights_repo=info.context["model_id"],  # type: ignore
+            )
 
         return data
 
@@ -257,7 +314,9 @@ async def fetch_config_data(model_id: ModelId) -> ConfigData:
         ),
     )
     async with aiofiles.open(config_path, "r") as f:
-        return ConfigData.model_validate_json(await f.read())
+        return ConfigData.model_validate_json(
+            await f.read(), context={"model_id": str(model_id)}
+        )
 
 
 async def fetch_safetensors_size(model_id: ModelId) -> Memory:

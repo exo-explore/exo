@@ -5,7 +5,10 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from exo.worker.engines.mlx.vision import VisionProcessor
 
 # Monkey-patch for transformers 5.x compatibility
 # Kimi's tokenization_kimi.py imports bytes_to_unicode from the old location
@@ -168,7 +171,7 @@ def load_mlx_items(
     group: Group | None,
     on_timeout: TimeoutCallback | None,
     on_layer_loaded: LayerLoadedCallback | None,
-) -> tuple[Model, TokenizerWrapper]:
+) -> "tuple[Model, TokenizerWrapper, VisionProcessor | None]":
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
@@ -210,7 +213,18 @@ def load_mlx_items(
 
     mx.clear_cache()
 
-    return cast(Model, model), tokenizer
+    vision_config = bound_instance.bound_shard.model_card.vision
+
+    if vision_config is not None:
+        from exo.worker.engines.mlx.vision import VisionProcessor
+
+        vision_processor: VisionProcessor | None = VisionProcessor(
+            vision_config, bound_instance.bound_shard.model_card.model_id
+        )
+    else:
+        vision_processor = None
+
+    return cast(Model, model), tokenizer, vision_processor
 
 
 def shard_and_load(

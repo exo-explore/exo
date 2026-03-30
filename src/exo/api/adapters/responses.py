@@ -4,6 +4,10 @@ from collections.abc import AsyncGenerator
 from itertools import count
 from typing import Any
 
+from exo.api.adapters.chat_completions import (
+    extract_base64_from_data_url,
+    fetch_image_url,
+)
 from exo.api.types import Usage
 from exo.api.types.openai_responses import (
     FunctionCallInputItem,
@@ -16,6 +20,7 @@ from exo.api.types.openai_responses import (
     ResponseFunctionCallArgumentsDoneEvent,
     ResponseFunctionCallItem,
     ResponseInProgressEvent,
+    ResponseInputImagePart,
     ResponseInputMessage,
     ResponseItem,
     ResponseMessageItem,
@@ -58,19 +63,23 @@ def _extract_content(content: str | list[ResponseContentPart]) -> str:
     """Extract plain text from a content field that may be a string or list of parts."""
     if isinstance(content, str):
         return content
-    return "".join(part.text for part in content)
+    return "".join(
+        part.text for part in content if not isinstance(part, ResponseInputImagePart)
+    )
 
 
-def responses_request_to_text_generation(
+async def responses_request_to_text_generation(
     request: ResponsesRequest,
 ) -> TextGenerationTaskParams:
     input_value: list[InputMessage]
     built_chat_template: list[dict[str, Any]] | None = None
+    images: list[str] = []
     if isinstance(request.input, str):
         input_value = [InputMessage(role="user", content=request.input)]
     else:
         input_messages: list[InputMessage] = []
         chat_template_messages: list[dict[str, Any]] = []
+        has_images = False
 
         if request.instructions is not None:
             chat_template_messages.append(
@@ -80,12 +89,33 @@ def responses_request_to_text_generation(
         for item in request.input:
             if isinstance(item, ResponseInputMessage):
                 content = _extract_content(item.content)
+                if isinstance(item.content, list):
+                    for part in item.content:
+                        if isinstance(part, ResponseInputImagePart) and part.image_url:
+                            url = part.image_url
+                            if url.startswith(("http://", "https://")):
+                                images.append(await fetch_image_url(url))
+                            else:
+                                images.append(extract_base64_from_data_url(url))
+                            has_images = True
                 if item.role in ("user", "assistant", "developer"):
                     input_messages.append(InputMessage(role=item.role, content=content))
                 if item.role == "system":
                     chat_template_messages.append(
                         {"role": "system", "content": content}
                     )
+                elif has_images:
+                    multimodal: list[dict[str, Any]] = []
+                    if isinstance(item.content, list):
+                        for part in item.content:
+                            if isinstance(part, ResponseInputImagePart):
+                                multimodal.append({"type": "image"})
+                            elif hasattr(part, "text"):
+                                multimodal.append({"type": "text", "text": part.text})
+                    chat_template_messages.append(
+                        {"role": item.role, "content": multimodal}
+                    )
+                    has_images = False
                 else:
                     chat_template_messages.append(
                         {"role": item.role, "content": content}
@@ -165,6 +195,7 @@ def responses_request_to_text_generation(
         chat_template_messages=built_chat_template or request.chat_template_messages,
         reasoning_effort=resolved_effort,
         enable_thinking=resolved_thinking,
+        images=images,
     )
 
 

@@ -1,3 +1,4 @@
+import hashlib
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -9,6 +10,7 @@ from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
+from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     ForwarderCommand,
     ForwarderDownloadCommand,
@@ -38,6 +40,7 @@ from exo.shared.types.tasks import (
     Shutdown,
     Task,
     TaskStatus,
+    TextGeneration,
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
@@ -76,8 +79,9 @@ class Worker:
         self._system_id = SystemId()
 
         # Buffer for input image chunks (for image editing)
-        self.input_chunk_buffer: dict[CommandId, dict[int, str]] = {}
+        self.input_chunk_buffer: dict[CommandId, dict[int, InputImageChunk]] = {}
         self.input_chunk_counts: dict[CommandId, int] = {}
+        self.image_cache: dict[str, str] = {}
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
         self._stopped: anyio.Event = anyio.Event()
@@ -131,7 +135,7 @@ class Worker:
                         self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
 
                     self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
-                        event.chunk.data
+                        event.chunk
                     )
 
                 if isinstance(event, CustomModelCardAdded):
@@ -152,7 +156,6 @@ class Worker:
                 self.state.runners,
                 self.state.tasks,
                 self.input_chunk_buffer,
-                self.input_chunk_counts,
             )
             if task is None:
                 continue
@@ -245,7 +248,7 @@ class Worker:
                     # Assemble image from chunks and inject into task
                     cmd_id = task.command_id
                     chunks = self.input_chunk_buffer.get(cmd_id, {})
-                    assembled = "".join(chunks[i] for i in range(len(chunks)))
+                    assembled = "".join(chunks[i].data for i in range(len(chunks)))
                     logger.info(
                         f"Assembled input image from {len(chunks)} chunks, "
                         f"total size: {len(assembled)} bytes"
@@ -274,6 +277,52 @@ class Worker:
                         ),
                     )
                     # Cleanup buffers
+                    if cmd_id in self.input_chunk_buffer:
+                        del self.input_chunk_buffer[cmd_id]
+                    if cmd_id in self.input_chunk_counts:
+                        del self.input_chunk_counts[cmd_id]
+                    await self._start_runner_task(modified_task)
+
+                case TextGeneration() if (
+                    task.task_params.image_hashes
+                    or task.task_params.total_input_chunks > 0
+                ):
+                    cmd_id = task.command_id
+                    by_index: dict[int, str] = {}
+
+                    for idx, h in task.task_params.image_hashes.items():
+                        assert h in self.image_cache
+                        by_index[idx] = self.image_cache[h]
+
+                    if task.task_params.total_input_chunks > 0:
+                        chunk_buffer = self.input_chunk_buffer.get(cmd_id, {})
+                        per_image: defaultdict[int, list[InputImageChunk]] = (
+                            defaultdict(list)
+                        )
+                        for chunk in chunk_buffer.values():
+                            per_image[chunk.image_index].append(chunk)
+                        for img_idx in sorted(per_image):
+                            sorted_chunks = sorted(
+                                per_image[img_idx], key=lambda c: c.chunk_index
+                            )
+                            img = "".join(c.data for c in sorted_chunks)
+                            self.image_cache[
+                                hashlib.sha256(img.encode("ascii")).hexdigest()
+                            ] = img
+                            by_index[img_idx] = img
+                        logger.info(
+                            f"Assembled {len(per_image)} VLM image(s) "
+                            f"from {len(chunk_buffer)} chunks"
+                        )
+
+                    resolved_images = [by_index[i] for i in sorted(by_index)]
+                    modified_task = task.model_copy(
+                        update={
+                            "task_params": task.task_params.model_copy(
+                                update={"images": resolved_images}
+                            )
+                        }
+                    )
                     if cmd_id in self.input_chunk_buffer:
                         del self.input_chunk_buffer[cmd_id]
                     if cmd_id in self.input_chunk_counts:

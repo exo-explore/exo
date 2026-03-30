@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping, Sequence
 
+from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.tasks import (
     CancelTask,
@@ -49,8 +50,7 @@ def plan(
     instances: Mapping[InstanceId, Instance],
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
     tasks: Mapping[TaskId, Task],
-    input_chunk_buffer: Mapping[CommandId, dict[int, str]] | None = None,
-    input_chunk_counts: Mapping[CommandId, int] | None = None,
+    input_chunk_buffer: Mapping[CommandId, Mapping[int, InputImageChunk]] | None = None,
 ) -> Task | None:
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
@@ -272,7 +272,7 @@ def _pending_tasks(
     runners: Mapping[RunnerId, RunnerSupervisor],
     tasks: Mapping[TaskId, Task],
     all_runners: Mapping[RunnerId, RunnerStatus],
-    input_chunk_buffer: Mapping[CommandId, dict[int, str]],
+    input_chunk_buffer: Mapping[CommandId, Mapping[int, InputImageChunk]] | None,
 ) -> Task | None:
     for task in tasks.values():
         # for now, just forward chat completions
@@ -282,12 +282,15 @@ def _pending_tasks(
         if task.task_status not in (TaskStatus.Pending, TaskStatus.Running):
             continue
 
-        # For ImageEdits tasks, verify all input chunks have been received
-        if isinstance(task, ImageEdits) and task.task_params.total_input_chunks > 0:
+        # For tasks with images, verify all input chunks have been received
+        expected_image_chunks = 0
+        if isinstance(task, (ImageEdits, TextGeneration)):
+            expected_image_chunks = task.task_params.total_input_chunks
+        if expected_image_chunks > 0:
+            assert input_chunk_buffer is not None
             cmd_id = task.command_id
-            expected = task.task_params.total_input_chunks
             received = len(input_chunk_buffer.get(cmd_id, {}))
-            if received < expected:
+            if received < expected_image_chunks:
                 continue  # Wait for all chunks to arrive
 
         for runner in runners.values():
