@@ -17,6 +17,7 @@ from harness import (
     ExoClient,
     ExoHttpError,
     add_common_instance_args,
+    capture_cluster_snapshot,
     instance_id_from_instance,
     nodes_used_in_instance,
     resolve_model_short_id,
@@ -1006,6 +1007,7 @@ Examples:
         sys.exit(1)
 
     time.sleep(1)
+    cluster_snapshot = capture_cluster_snapshot(exo)
     all_results: list[ScenarioResult] = []
 
     try:
@@ -1084,16 +1086,19 @@ Examples:
                 print(f"  - {r.name} [{r.api}/{r.phase}]: {r.error}", file=log)
 
     json_results = [result_to_dict(r) for r in all_results]
+    output: dict[str, Any] = {"results": json_results}
+    if cluster_snapshot:
+        output["cluster"] = cluster_snapshot
 
     if args.stdout:
-        print(json.dumps(json_results, indent=2))
+        print(json.dumps(output, indent=2))
     else:
         json_path = args.json_out
         parent = os.path.dirname(json_path)
         if parent:
             os.makedirs(parent, exist_ok=True)
         with open(json_path, "w") as f:
-            json.dump(json_results, f, indent=2)
+            json.dump(output, f, indent=2)
             f.write("\n")
         print(f"\nJSON results written to {json_path}", file=log)
 

@@ -22,6 +22,7 @@ import contextlib
 import itertools
 import json
 import sys
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,7 +34,9 @@ from harness import (
     ExoClient,
     ExoHttpError,
     add_common_instance_args,
+    capture_cluster_snapshot,
     instance_id_from_instance,
+    node_ids_from_instance,
     nodes_used_in_instance,
     resolve_model_short_id,
     run_planning_phase,
@@ -129,6 +132,91 @@ def format_peak_memory(b: float) -> str:
             return f"{b:.2f}{unit}"
         b /= 1024.0
     raise ValueError("You're using petabytes of memory. Something went wrong...")
+
+
+_SAMPLER_METRICS = ("gpuUsage", "temp", "sysPower", "pcpuUsage", "ecpuUsage")
+
+
+class SystemMetricsSampler:
+    def __init__(self, client: ExoClient, node_ids: list[str], interval_s: float = 1.0):
+        self._client = client
+        self._node_ids = node_ids
+        self._interval_s = interval_s
+        self._samples: dict[str, list[tuple[float, dict[str, float]]]] = {
+            nid: [] for nid in node_ids
+        }
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def _poll_loop(self) -> None:
+        while not self._stop.is_set():
+            t = time.monotonic()
+            for nid in self._node_ids:
+                try:
+                    data = self._client.get_node_system(nid)
+                    if data:
+                        self._samples[nid].append(
+                            (t, {k: data.get(k, 0.0) for k in _SAMPLER_METRICS})
+                        )
+                except Exception:
+                    pass
+            self._stop.wait(self._interval_s)
+
+    def energy_between(self, t0: float, t1: float) -> float:
+        total_joules = 0.0
+        for _nid, samples in self._samples.items():
+            window = [(t, s["sysPower"]) for t, s in samples if t0 <= t <= t1]
+            if len(window) >= 2:
+                for i in range(1, len(window)):
+                    dt = window[i][0] - window[i - 1][0]
+                    avg_power = (window[i][1] + window[i - 1][1]) / 2
+                    total_joules += avg_power * dt
+            elif len(window) == 1:
+                total_joules += window[0][1] * (t1 - t0)
+        return total_joules
+
+    def summarize(self) -> dict[str, dict[str, dict[str, float]]]:
+        result: dict[str, dict[str, dict[str, float]]] = {}
+        for nid, samples in self._samples.items():
+            if not samples:
+                continue
+            metrics: dict[str, dict[str, float]] = {}
+            for key in _SAMPLER_METRICS:
+                values = [s[key] for t, s in samples]
+                metrics[key] = {
+                    "min": round(min(values), 2),
+                    "max": round(max(values), 2),
+                    "mean": round(mean(values), 2),
+                    "samples": len(values),
+                }
+            result[nid] = metrics
+        return result
+
+    def print_summary(self, placement_label: str) -> None:
+        summary = self.summarize()
+        if not summary:
+            return
+        logger.info(f"--- System Metrics ({placement_label}) ---")
+        for nid, metrics in summary.items():
+            gpu = metrics.get("gpuUsage", {})
+            temp = metrics.get("temp", {})
+            power = metrics.get("sysPower", {})
+            logger.info(
+                f"  {nid}:  "
+                f"GPU {gpu.get('mean', 0) * 100:.0f}% avg ({gpu.get('min', 0) * 100:.0f}–{gpu.get('max', 0) * 100:.0f}%)  |  "
+                f"{temp.get('mean', 0):.1f}°C avg  |  "
+                f"{power.get('mean', 0):.1f}W avg"
+            )
 
 
 def parse_int_list(values: list[str]) -> list[int]:
@@ -279,6 +367,17 @@ def main() -> int:
         action="store_true",
         help="Force all pp×tg combinations (cartesian product) even when lists have equal length.",
     )
+    ap.add_argument(
+        "--no-system-metrics",
+        action="store_true",
+        help="Disable GPU utilization, temperature, and power collection during inference.",
+    )
+    ap.add_argument(
+        "--metrics-interval",
+        type=float,
+        default=1.0,
+        help="System metrics polling interval in seconds (default: 1.0).",
+    )
     args = ap.parse_args()
 
     pp_list = parse_int_list(args.pp)
@@ -364,7 +463,9 @@ def main() -> int:
     else:
         logger.info("Download: model already cached")
 
+    cluster_snapshot = capture_cluster_snapshot(client)
     all_rows: list[dict[str, Any]] = []
+    all_system_metrics: dict[str, dict[str, dict[str, float]]] = {}
 
     for preview in selected:
         instance = preview["instance"]
@@ -390,6 +491,16 @@ def main() -> int:
 
         time.sleep(1)
 
+        sampler: SystemMetricsSampler | None = None
+        if not args.no_system_metrics:
+            nids = node_ids_from_instance(instance)
+            sampler = SystemMetricsSampler(
+                ExoClient(args.host, args.port, timeout_s=30),
+                nids,
+                interval_s=args.metrics_interval,
+            )
+            sampler.start()
+
         try:
             for i in range(args.warmup):
                 run_one_completion(
@@ -408,15 +519,18 @@ def main() -> int:
                 for concurrency in concurrency_list:
                     logger.info(f"--- pp={pp} tg={tg} concurrency={concurrency} ---")
                     runs: list[dict[str, Any]] = []
+                    inference_windows: list[tuple[float, float]] = []
                     for r in range(args.repeat):
                         time.sleep(3)
 
                         if concurrency <= 1:
                             # Sequential: single request
                             try:
+                                inf_t0 = time.monotonic()
                                 row, actual_pp_tokens = run_one_completion(
                                     client, full_model_id, pp, tg, prompt_sizer
                                 )
+                                inference_windows.append((inf_t0, time.monotonic()))
                             except Exception as e:
                                 logger.error(e)
                                 continue
@@ -457,6 +571,7 @@ def main() -> int:
                                     c, full_model_id, _pp, _tg, prompt_sizer
                                 )
 
+                            inf_t0 = time.monotonic()
                             with ThreadPoolExecutor(max_workers=concurrency) as pool:
                                 futures = {
                                     pool.submit(_run_concurrent, i): i
@@ -468,6 +583,7 @@ def main() -> int:
                                     except Exception as e:
                                         logger.error(f"Concurrent request failed: {e}")
                                         batch_errors += 1
+                            inference_windows.append((inf_t0, time.monotonic()))
 
                             for idx, (row, actual_pp_tokens) in enumerate(
                                 batch_results
@@ -522,13 +638,30 @@ def main() -> int:
                             x["stats"]["peak_memory_usage"]["inBytes"] for x in runs
                         )
 
-                        logger.info(
+                        summary = (
                             f"prompt_tps={prompt_tps:.2f} gen_tps={gen_tps:.2f}    "
                             f"prompt_tokens={ptok} gen_tokens={gtok}    "
-                            f"peak_memory={format_peak_memory(peak)}\n"
+                            f"peak_memory={format_peak_memory(peak)}"
                         )
+                        if sampler and inference_windows:
+                            joules = sum(
+                                sampler.energy_between(t0, t1)
+                                for t0, t1 in inference_windows
+                            )
+                            inf_seconds = sum(t1 - t0 for t0, t1 in inference_windows)
+                            avg_watts = joules / inf_seconds if inf_seconds > 0 else 0
+                            summary += f"    energy={joules:.1f}J ({avg_watts:.1f}W avg over {inf_seconds:.1f}s inference)"
+                        logger.info(f"{summary}\n")
                     time.sleep(2)
         finally:
+            if sampler:
+                sampler.stop()
+                placement_label = f"{sharding}/{instance_meta}/{n_nodes} nodes"
+                sampler.print_summary(placement_label)
+                placement_metrics = sampler.summarize()
+                if placement_metrics:
+                    all_system_metrics.update(placement_metrics)
+
             try:
                 client.request_json("DELETE", f"/instance/{instance_id}")
             except ExoHttpError as e:
@@ -539,11 +672,17 @@ def main() -> int:
 
             time.sleep(5)
 
+    output: dict[str, Any] = {"runs": all_rows}
+    if cluster_snapshot:
+        output["cluster"] = cluster_snapshot
+    if all_system_metrics:
+        output["system_metrics"] = all_system_metrics
+
     if args.stdout:
-        json.dump(all_rows, sys.stdout, indent=2, ensure_ascii=False)
+        json.dump(output, sys.stdout, indent=2, ensure_ascii=False)
     elif args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as f:
-            json.dump(all_rows, f, indent=2, ensure_ascii=False)
+            json.dump(output, f, indent=2, ensure_ascii=False)
         logger.debug(f"\nWrote results JSON: {args.json_out}")
 
     return 0
