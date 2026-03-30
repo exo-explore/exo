@@ -1,6 +1,7 @@
 import functools
 import math
 import os
+import sys
 import time
 from copy import deepcopy
 from typing import Callable, Generator, cast, get_args
@@ -638,7 +639,9 @@ def mlx_generate(
 
                     _pp_spec_gen = _spec_token_gen()
         except Exception as e:
-            logger.warning(f"PP speculation setup failed: {e}", exc_info=True)
+            import traceback
+            sys.stderr.write(f"[PP speculation] setup FAILED: {e}\n{traceback.format_exc()}\n")
+            sys.stderr.flush()
             _pp_spec_gen = None
 
     # Use speculation generator if available, otherwise standard stream_generate
