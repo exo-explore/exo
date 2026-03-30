@@ -2,7 +2,7 @@
 #  I think we want a lot of these as parameters?
 
 KV_GROUP_SIZE: int | None = 32
-KV_BITS: int | None = None
+KV_BITS: int | None = 4
 ATTENTION_KV_BITS: int | None = 4
 MAX_TOKENS: int = 32168
 MAX_KV_SIZE: int | None = 3200
