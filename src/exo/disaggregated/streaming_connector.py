@@ -25,7 +25,10 @@ def _to_bf16(t: torch.Tensor) -> torch.Tensor:
         return t
     return t.to(torch.bfloat16)
 
-_shared_queue: queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None] = queue.Queue()
+
+_shared_queue: queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None] = (
+    queue.Queue()
+)
 _shared_arrays_queue: queue.Queue[tuple[int, list[torch.Tensor]] | None] = queue.Queue()
 
 
@@ -60,7 +63,9 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):  # pyright: ignore[re
 
     _save_count: int = 0
 
-    def __init__(self, vllm_config: Any, role: KVConnectorRole, kv_cache_config: Any = None) -> None:  # type: ignore
+    def __init__(
+        self, vllm_config: Any, role: KVConnectorRole, kv_cache_config: Any = None
+    ) -> None:  # type: ignore
         super().__init__(vllm_config, role, kv_cache_config)  # pyright: ignore[reportUnknownMemberType]
         self._queue = _shared_queue
 
@@ -74,7 +79,9 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):  # pyright: ignore[re
     def wait_for_layer_load(self, layer_name: str) -> None:
         pass
 
-    def save_kv_layer(self, layer_name: str, kv_layer: Any, attn_metadata: Any, **kwargs: Any) -> None:  # pyright: ignore[reportAny]
+    def save_kv_layer(
+        self, layer_name: str, kv_layer: Any, attn_metadata: Any, **kwargs: Any
+    ) -> None:  # pyright: ignore[reportAny]
         slot_mapping = getattr(attn_metadata, "slot_mapping", None)  # pyright: ignore[reportAny]
         if slot_mapping is not None and slot_mapping.shape[0] <= 100:  # pyright: ignore[reportAny]
             return
@@ -117,13 +124,19 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):  # pyright: ignore[re
     def finish(self) -> None:
         self._queue.put(None)
 
-    def request_finished_all_groups(self, request: Any, block_ids: tuple[list[int], ...]) -> tuple[bool, dict[str, Any] | None]:  # pyright: ignore[reportAny]
+    def request_finished_all_groups(
+        self, request: Any, block_ids: tuple[list[int], ...]
+    ) -> tuple[bool, dict[str, Any] | None]:  # pyright: ignore[reportAny]
         return False, None
 
-    def get_num_new_matched_tokens(self, request: Any, num_computed_tokens: int) -> tuple[int, bool]:  # pyright: ignore[reportAny]
+    def get_num_new_matched_tokens(
+        self, request: Any, num_computed_tokens: int
+    ) -> tuple[int, bool]:  # pyright: ignore[reportAny]
         return 0, False
 
-    def update_state_after_alloc(self, request: Any, blocks: Any, num_external_tokens: int) -> None:  # pyright: ignore[reportAny]
+    def update_state_after_alloc(
+        self, request: Any, blocks: Any, num_external_tokens: int
+    ) -> None:  # pyright: ignore[reportAny]
         pass
 
     def build_connector_meta(self, scheduler_output: Any) -> StreamingConnectorMetadata:  # pyright: ignore[reportAny]

@@ -287,7 +287,9 @@ class TorchKVCache:
                         if stored is not None and target is not None:
                             n = min(len(bt), stored.shape[0])
                             if n > 0:
-                                target[bt[:n]] = stored[:n].to(device, non_blocking=True)
+                                target[bt[:n]] = stored[:n].to(
+                                    device, non_blocking=True
+                                )
                 continue
             if not isinstance(layer, KVLayerState):
                 continue

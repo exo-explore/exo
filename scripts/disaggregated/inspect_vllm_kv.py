@@ -42,7 +42,9 @@ def _build_layer_groups(kv_cache_config):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, help="Path to model")
-    parser.add_argument("--prompt", default="Hello, world! How are you today?", help="Prompt to prefill")
+    parser.add_argument(
+        "--prompt", default="Hello, world! How are you today?", help="Prompt to prefill"
+    )
     args = parser.parse_args()
 
     from exo.worker.engines.vllm.growable_cache import get_model_runner
@@ -83,9 +85,13 @@ def main():
         if isinstance(kv, list):
             shapes = [t.shape for t in kv]
             dtypes = [t.dtype for t in kv]
-            print(f"  Layer {i:3d}: list of {len(kv)} tensors — shapes={shapes}, dtypes={dtypes}")
+            print(
+                f"  Layer {i:3d}: list of {len(kv)} tensors — shapes={shapes}, dtypes={dtypes}"
+            )
         elif isinstance(kv, torch.Tensor):
-            print(f"  Layer {i:3d}: shape={tuple(kv.shape)}, dtype={kv.dtype}, device={kv.device}")
+            print(
+                f"  Layer {i:3d}: shape={tuple(kv.shape)}, dtype={kv.dtype}, device={kv.device}"
+            )
         else:
             print(f"  Layer {i:3d}: type={type(kv).__name__}")
     print(f"\n  Total layers with KV: {len(kv_caches)}\n")
@@ -109,11 +115,17 @@ def main():
     print(f"\n  Number of KV cache tensors: {len(kv_cache_config.kv_cache_tensors)}")
     for ti, tensor_spec in enumerate(kv_cache_config.kv_cache_tensors):
         shared = tensor_spec.shared_by[:3]
-        extra = f" ... +{len(tensor_spec.shared_by)-3}" if len(tensor_spec.shared_by) > 3 else ""
+        extra = (
+            f" ... +{len(tensor_spec.shared_by) - 3}"
+            if len(tensor_spec.shared_by) > 3
+            else ""
+        )
         print(f"  Tensor {ti}: shared_by={shared}{extra}")
 
     layer_to_group = _build_layer_groups(kv_cache_config)
-    print(f"\n  layer_to_group ({len(layer_to_group)} entries): {layer_to_group[:10]}{'...' if len(layer_to_group) > 10 else ''}")
+    print(
+        f"\n  layer_to_group ({len(layer_to_group)} entries): {layer_to_group[:10]}{'...' if len(layer_to_group) > 10 else ''}"
+    )
 
     coordinator = engine_core.scheduler.kv_cache_manager.coordinator
     null_block = coordinator.block_pool.null_block
@@ -132,9 +144,13 @@ def main():
         for gi, mgr in enumerate(coordinator.single_type_managers):
             blocks = mgr.req_to_blocks.get(internal_id)
             if blocks:
-                real_blocks = [b for b in blocks if b is not null_block and not b.is_null]
+                real_blocks = [
+                    b for b in blocks if b is not null_block and not b.is_null
+                ]
                 null_count = len(blocks) - len(real_blocks)
-                print(f"  Group {gi}: {len(real_blocks)} real blocks, {null_count} null blocks, block_size={mgr.block_size}")
+                print(
+                    f"  Group {gi}: {len(real_blocks)} real blocks, {null_count} null blocks, block_size={mgr.block_size}"
+                )
             else:
                 print(f"  Group {gi}: no blocks")
 

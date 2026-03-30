@@ -221,8 +221,6 @@ def _try_grow_cache(kv_cache_manager: "object") -> bool:
         return False
 
 
-
-
 def _grow_tensors(
     model_runner: "object",
     kv_cache_config: "object",
@@ -285,9 +283,19 @@ def _grow_tensors(
             old_kv = runner_kv_caches[i]
             if isinstance(old_kv, list) and isinstance(new_kv, list):
                 for j, (old_t, new_t) in enumerate(zip(old_kv, new_kv)):
-                    old_t.set_(new_t.storage(), new_t.storage_offset(), new_t.shape, new_t.stride())  # type: ignore
+                    old_t.set_(
+                        new_t.storage(),
+                        new_t.storage_offset(),
+                        new_t.shape,
+                        new_t.stride(),
+                    )  # type: ignore
             elif isinstance(old_kv, torch.Tensor) and isinstance(new_kv, torch.Tensor):
-                old_kv.set_(new_kv.storage(), new_kv.storage_offset(), new_kv.shape, new_kv.stride())  # type: ignore
+                old_kv.set_(
+                    new_kv.storage(),
+                    new_kv.storage_offset(),
+                    new_kv.shape,
+                    new_kv.stride(),
+                )  # type: ignore
             else:
                 runner_kv_caches[i] = new_kv
         else:
@@ -299,9 +307,21 @@ def _grow_tensors(
             old_entry = old_kv_list[0]
             if isinstance(old_entry, list) and isinstance(new_kv, list):
                 for j, (old_t, new_t) in enumerate(zip(old_entry, new_kv)):
-                    old_t.set_(new_t.storage(), new_t.storage_offset(), new_t.shape, new_t.stride())  # type: ignore
-            elif isinstance(old_entry, torch.Tensor) and isinstance(new_kv, torch.Tensor):
-                old_entry.set_(new_kv.storage(), new_kv.storage_offset(), new_kv.shape, new_kv.stride())  # type: ignore
+                    old_t.set_(
+                        new_t.storage(),
+                        new_t.storage_offset(),
+                        new_t.shape,
+                        new_t.stride(),
+                    )  # type: ignore
+            elif isinstance(old_entry, torch.Tensor) and isinstance(
+                new_kv, torch.Tensor
+            ):
+                old_entry.set_(
+                    new_kv.storage(),
+                    new_kv.storage_offset(),
+                    new_kv.shape,
+                    new_kv.stride(),
+                )  # type: ignore
             else:
                 forward_context[layer_name].kv_cache = [new_kv]  # type: ignore
         else:

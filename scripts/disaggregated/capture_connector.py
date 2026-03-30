@@ -29,7 +29,8 @@ class CaptureConnector(KVConnectorBase_V1):
 
     def save_kv_layer(self, layer_name, kv_layer, attn_metadata, **kwargs):
         import time
-        slot_mapping = getattr(attn_metadata, 'slot_mapping', None)
+
+        slot_mapping = getattr(attn_metadata, "slot_mapping", None)
         if slot_mapping is not None and slot_mapping.shape[0] <= 100:
             return
         t0 = time.perf_counter()
@@ -38,7 +39,7 @@ class CaptureConnector(KVConnectorBase_V1):
         if isinstance(kv_layer, (list, tuple)):
             captured_layers[layer_name] = [t.cpu().clone() for t in kv_layer]
         else:
-            slot_mapping = getattr(attn_metadata, 'slot_mapping', None)
+            slot_mapping = getattr(attn_metadata, "slot_mapping", None)
             if slot_mapping is not None:
                 if kv_layer.shape[0] == 2:
                     k_all = kv_layer[0]
@@ -70,7 +71,9 @@ class CaptureConnector(KVConnectorBase_V1):
                     }
                     t_copy = time.perf_counter() - t1
                 if "layers.3." in layer_name:
-                    print(f"    [attn save] sync={t_sync*1000:.1f}ms copy={t_copy*1000:.1f}ms tokens={keys.shape[0]}")
+                    print(
+                        f"    [attn save] sync={t_sync * 1000:.1f}ms copy={t_copy * 1000:.1f}ms tokens={keys.shape[0]}"
+                    )
             else:
                 captured_layers[layer_name] = kv_layer.cpu().clone()
 

@@ -216,7 +216,10 @@ def vllm_generate(
     stop_ids = _stop_token_ids(tokenizer, model_id)
     DEFAULT_PREFILL_STEP_SIZE = 8192
     max_batch_tokens: int = (
-        getattr(engine.model_config, "max_num_batched_tokens", DEFAULT_PREFILL_STEP_SIZE) or DEFAULT_PREFILL_STEP_SIZE
+        getattr(
+            engine.model_config, "max_num_batched_tokens", DEFAULT_PREFILL_STEP_SIZE
+        )
+        or DEFAULT_PREFILL_STEP_SIZE
     )  # type: ignore[reportUnknownMemberType]
     start_time = time.perf_counter()
     first_token_time: float | None = None

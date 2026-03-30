@@ -178,9 +178,13 @@ class ExoBatchGenerator:
                 cache_snapshots = [snapshot_ssm_states(cache)]
                 _prefill_tps = total_tokens / max(time.perf_counter() - t0, 0.001)
                 used_remote_prefill = True
-                logger.info(f"Remote prefill: {total_tokens} tokens at {_prefill_tps:.0f} tok/s")
+                logger.info(
+                    f"Remote prefill: {total_tokens} tokens at {_prefill_tps:.0f} tok/s"
+                )
             except Exception:
-                logger.opt(exception=True).warning("Remote prefill failed, falling back to local")
+                logger.opt(exception=True).warning(
+                    "Remote prefill failed, falling back to local"
+                )
 
         if not used_remote_prefill:
             _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
@@ -216,7 +220,11 @@ class ExoBatchGenerator:
                 matched_index,
             )
 
-        last_tokens = mx.array(all_prompt_tokens[-2:]) if used_remote_prefill else prompt_tokens[-2:]
+        last_tokens = (
+            mx.array(all_prompt_tokens[-2:])
+            if used_remote_prefill
+            else prompt_tokens[-2:]
+        )
 
         logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
             make_logits_processors(

@@ -76,7 +76,9 @@ def _tensor_to_bytes(t: torch.Tensor) -> bytes:
     return t.contiguous().numpy().tobytes()  # type: ignore
 
 
-def write_kv_chunk(stream: BinaryIO, layer_idx: int, keys: torch.Tensor, values: torch.Tensor) -> None:
+def write_kv_chunk(
+    stream: BinaryIO, layer_idx: int, keys: torch.Tensor, values: torch.Tensor
+) -> None:
     if keys.dim() == 4:
         keys = keys.reshape(-1, keys.shape[-2], keys.shape[-1])
         values = values.reshape(-1, values.shape[-2], values.shape[-1])
@@ -85,15 +87,23 @@ def write_kv_chunk(stream: BinaryIO, layer_idx: int, keys: torch.Tensor, values:
     num_tokens: int = keys.shape[0]
     n_heads: int = keys.shape[1]
     head_dim: int = keys.shape[2]
-    header = struct.pack(">BIIII", MSG_KV_CHUNK, layer_idx, num_tokens, n_heads, head_dim)
+    header = struct.pack(
+        ">BIIII", MSG_KV_CHUNK, layer_idx, num_tokens, n_heads, head_dim
+    )
     _write_exactly(stream, header + keys_bytes + values_bytes)
 
 
 def _dtype_to_str(dtype: torch.dtype) -> str:
-    return {torch.float16: "float16", torch.bfloat16: "bfloat16", torch.float32: "float32"}[dtype]
+    return {
+        torch.float16: "float16",
+        torch.bfloat16: "bfloat16",
+        torch.float32: "float32",
+    }[dtype]
 
 
-def write_arrays_state(stream: BinaryIO, layer_idx: int, arrays: list[torch.Tensor]) -> None:
+def write_arrays_state(
+    stream: BinaryIO, layer_idx: int, arrays: list[torch.Tensor]
+) -> None:
     buf = io.BytesIO()
     buf.write(struct.pack(">BI", MSG_ARRAYS_STATE, layer_idx))
     buf.write(struct.pack(">I", len(arrays)))
@@ -133,7 +143,9 @@ def read_message(stream: BinaryIO, header: dict[str, object]) -> Message | None:
         num_tokens: int
         n_heads: int
         head_dim: int
-        layer_idx, num_tokens, n_heads, head_dim = struct.unpack(">IIII", _read_exactly(stream, 16))  # pyright: ignore[reportAny]
+        layer_idx, num_tokens, n_heads, head_dim = struct.unpack(
+            ">IIII", _read_exactly(stream, 16)
+        )  # pyright: ignore[reportAny]
         dtype = _str_to_dtype(str(header["dtype"]))
         elem_size = _dtype_size(dtype)
         tensor_bytes: int = num_tokens * n_heads * head_dim * elem_size
@@ -141,18 +153,38 @@ def read_message(stream: BinaryIO, header: dict[str, object]) -> Message | None:
         values_raw = _read_exactly(stream, tensor_bytes)
         shape = (num_tokens, n_heads, head_dim)
         if dtype == torch.bfloat16:
-            keys: torch.Tensor = torch.frombuffer(bytearray(keys_raw), dtype=torch.int16).view(torch.bfloat16).reshape(shape).clone()  # type: ignore
-            values: torch.Tensor = torch.frombuffer(bytearray(values_raw), dtype=torch.int16).view(torch.bfloat16).reshape(shape).clone()  # type: ignore
+            keys: torch.Tensor = (
+                torch.frombuffer(bytearray(keys_raw), dtype=torch.int16)
+                .view(torch.bfloat16)
+                .reshape(shape)
+                .clone()
+            )  # type: ignore
+            values: torch.Tensor = (
+                torch.frombuffer(bytearray(values_raw), dtype=torch.int16)
+                .view(torch.bfloat16)
+                .reshape(shape)
+                .clone()
+            )  # type: ignore
         else:
-            keys = torch.frombuffer(bytearray(keys_raw), dtype=dtype).reshape(shape).clone()  # type: ignore
-            values = torch.frombuffer(bytearray(values_raw), dtype=dtype).reshape(shape).clone()  # type: ignore
-        return KVChunk(layer_idx=layer_idx, num_tokens=num_tokens, keys=keys, values=values)  # pyright: ignore[reportUnknownArgumentType]
+            keys = (
+                torch.frombuffer(bytearray(keys_raw), dtype=dtype)
+                .reshape(shape)
+                .clone()
+            )  # type: ignore
+            values = (
+                torch.frombuffer(bytearray(values_raw), dtype=dtype)
+                .reshape(shape)
+                .clone()
+            )  # type: ignore
+        return KVChunk(
+            layer_idx=layer_idx, num_tokens=num_tokens, keys=keys, values=values
+        )  # pyright: ignore[reportUnknownArgumentType]
 
     if msg_type == MSG_ARRAYS_STATE:
         arr_layer_idx: int
         num_arrays: int
-        arr_layer_idx, = struct.unpack(">I", _read_exactly(stream, 4))  # pyright: ignore[reportAny]
-        num_arrays, = struct.unpack(">I", _read_exactly(stream, 4))  # pyright: ignore[reportAny]
+        (arr_layer_idx,) = struct.unpack(">I", _read_exactly(stream, 4))  # pyright: ignore[reportAny]
+        (num_arrays,) = struct.unpack(">I", _read_exactly(stream, 4))  # pyright: ignore[reportAny]
         fallback_dtype = _str_to_dtype(str(header["dtype"]))
         arrays: list[torch.Tensor] = []
         for _ in range(num_arrays):
@@ -165,22 +197,31 @@ def read_message(stream: BinaryIO, header: dict[str, object]) -> Message | None:
                 arr_dtype = fallback_dtype
             elem_size = _dtype_size(arr_dtype)
             ndim: int
-            ndim, = struct.unpack(">I", _read_exactly(stream, 4))  # pyright: ignore[reportAny]
+            (ndim,) = struct.unpack(">I", _read_exactly(stream, 4))  # pyright: ignore[reportAny]
             shape_arr = struct.unpack(f">{ndim}I", _read_exactly(stream, ndim * 4))
             total_elems = 1
             for d in shape_arr:  # pyright: ignore[reportAny]
                 total_elems *= d  # pyright: ignore[reportAny]
             raw = _read_exactly(stream, total_elems * elem_size)
             if arr_dtype == torch.bfloat16:
-                t: torch.Tensor = torch.frombuffer(bytearray(raw), dtype=torch.int16).view(torch.bfloat16).reshape(shape_arr).clone()  # type: ignore
+                t: torch.Tensor = (
+                    torch.frombuffer(bytearray(raw), dtype=torch.int16)
+                    .view(torch.bfloat16)
+                    .reshape(shape_arr)
+                    .clone()
+                )  # type: ignore
             else:
-                t = torch.frombuffer(bytearray(raw), dtype=arr_dtype).reshape(shape_arr).clone()  # type: ignore
+                t = (
+                    torch.frombuffer(bytearray(raw), dtype=arr_dtype)
+                    .reshape(shape_arr)
+                    .clone()
+                )  # type: ignore
             arrays.append(t)  # pyright: ignore[reportUnknownArgumentType]
         return ArraysState(layer_idx=arr_layer_idx, arrays=arrays)
 
     if msg_type == MSG_DONE:
         total_tokens: int
-        total_tokens, = struct.unpack(">I", _read_exactly(stream, 4))  # pyright: ignore[reportAny]
+        (total_tokens,) = struct.unpack(">I", _read_exactly(stream, 4))  # pyright: ignore[reportAny]
         return Done(total_tokens=total_tokens)
 
     raise ValueError(f"Unknown message type: {msg_type:#x}")

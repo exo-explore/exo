@@ -240,7 +240,9 @@ class Runner:
                 )
                 builder_ref = self.generator
                 self.generator = self.generator.build()
-                self.prefill_server_port = getattr(builder_ref, "_prefill_server_port", None)
+                self.prefill_server_port = getattr(
+                    builder_ref, "_prefill_server_port", None
+                )
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerLoaded())
@@ -260,7 +262,9 @@ class Runner:
                 )
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
-                self.update_status(RunnerReady(prefill_server_port=self.prefill_server_port))
+                self.update_status(
+                    RunnerReady(prefill_server_port=self.prefill_server_port)
+                )
                 logger.info("runner ready")
 
             case TextGeneration() if isinstance(self.current_status, RunnerReady):
@@ -536,9 +540,11 @@ class VllmBuilder(Builder):
         overlapping = not os.environ.get("EXO_NO_OVERLAPPING_PREFILL_SENDS")
         if overlapping:
             from exo.disaggregated.streaming_connector import StreamingConnector
+
             kv_connector_cls = StreamingConnector
         else:
             from exo.disaggregated.batch_connector import BatchConnector
+
             kv_connector_cls = BatchConnector
 
         self._bound_runner_id = bound_instance.bound_runner_id
@@ -577,9 +583,19 @@ class VllmBuilder(Builder):
             def _on_prefill_status(running: bool) -> None:
                 port = prefill_port
                 if running:
-                    self.event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerRunning(prefill_server_port=port)))
+                    self.event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id,
+                            runner_status=RunnerRunning(prefill_server_port=port),
+                        )
+                    )
                 else:
-                    self.event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerReady(prefill_server_port=port)))
+                    self.event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id,
+                            runner_status=RunnerReady(prefill_server_port=port),
+                        )
+                    )
 
             self._prefill_server = start_prefill_server(
                 engine=self._engine,
