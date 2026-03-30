@@ -279,9 +279,11 @@ def shard_and_load(
     logger.debug("SHARDED")
     logger.debug(model)
 
-    # --- Load draft model for PP speculation (rank 0 only, before barrier) ---
+    # --- Load draft model for PP speculation (device_rank 0 only, before barrier) ---
+    # Use device_rank (stable, assigned by master) not group.rank() (JACCL, non-deterministic)
     _draft_path = os.environ.get("EXO_PP_DRAFT_MODEL", "")
-    if _draft_path and group.rank() == 0:
+    _is_pp_rank0 = isinstance(shard_metadata, PipelineShardMetadata) and shard_metadata.device_rank == 0
+    if _draft_path and _is_pp_rank0:
         try:
             from .pp_speculation import load_draft_model
             _draft_result = load_draft_model(_draft_path)
