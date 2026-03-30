@@ -271,6 +271,11 @@ class Runner:
 
         self.submit_text_generation(starting_task)
 
+        # For non-streaming requests, batch chunk events to avoid pubsub congestion.
+        # Accumulate intermediate responses and only send the final one.
+        _pending: dict[TaskId, list[GenerationResponse]] = {}
+        _STREAM_BATCH_SIZE = 8  # for streaming, send every N tokens
+
         while self.active_tasks:
             results = self.generator.step()
 
@@ -278,10 +283,43 @@ class Runner:
             for task_id, result in results:
                 match result:
                     case Cancelled():
+                        _pending.pop(task_id, None)
                         finished.append(task_id)
                     case Finished():
+                        # Flush any pending chunks before finishing
+                        for pending_resp in _pending.pop(task_id, []):
+                            self.send_response(
+                                pending_resp, self.active_tasks[task_id].command_id
+                            )
                         self.send_task_status(task_id, TaskStatus.Complete)
                         finished.append(task_id)
+                    case GenerationResponse():
+                        task = self.active_tasks.get(task_id)
+                        is_stream = task.task_params.stream if task else True
+                        is_final = result.finish_reason is not None
+
+                        if is_final:
+                            # Always send the final chunk immediately
+                            for pending_resp in _pending.pop(task_id, []):
+                                self.send_response(
+                                    pending_resp, self.active_tasks[task_id].command_id
+                                )
+                            self.send_response(
+                                result, self.active_tasks[task_id].command_id
+                            )
+                        elif is_stream:
+                            # Streaming: batch N tokens per pubsub message
+                            buf = _pending.setdefault(task_id, [])
+                            buf.append(result)
+                            if len(buf) >= _STREAM_BATCH_SIZE:
+                                for pending_resp in buf:
+                                    self.send_response(
+                                        pending_resp, self.active_tasks[task_id].command_id
+                                    )
+                                _pending[task_id] = []
+                        else:
+                            # Non-streaming: accumulate, send only at end
+                            _pending.setdefault(task_id, []).append(result)
                     case _:
                         self.send_response(
                             result, self.active_tasks[task_id].command_id
