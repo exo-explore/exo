@@ -1,12 +1,11 @@
 { inputs, ... }:
 {
   perSystem =
-    { config, self', pkgs, lib, system, ... }:
+    { self', pkgs, cudaPkgs, lib, ... }:
     let
-      pkgsCuda = import ../nix/cuda-pkgs.nix { nixpkgs = inputs.nixpkgs; inherit system; };
       # Load workspace from uv.lock
       workspace = inputs.uv2nix.lib.workspace.loadWorkspace {
-        workspaceRoot = inputs.self;
+        workspaceRoot = ../.;
       };
 
       # Create overlay from workspace
@@ -34,105 +33,369 @@
         };
       };
 
-      python = pkgs.python313;
+      inherit (pkgs.stdenv.hostPlatform) isDarwin isLinux;
 
       # Overlay to provide build systems and custom packages
-      buildSystemsOverlay = final: prev: {
-        # mlx-lm is a git dependency that needs setuptools
-        mlx-lm = prev.mlx-lm.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
+      cudaOverlay = final: prev:
+        let
+          torchLibs = [
+            final.nvidia-cuda-runtime
+            final.nvidia-cuda-nvrtc
+            final.nvidia-cuda-cupti
+            final.nvidia-nvjitlink
+            final.nvidia-cudnn-cu13
+            final.nvidia-cusparse
+            final.nvidia-cusparselt-cu13
+            final.nvidia-cufile
+            final.nvidia-nvshmem-cu13
+            final.nvidia-nccl-cu13
+            final.nvidia-cublas
+            final.nvidia-cufft
+            final.nvidia-curand
+            final.nvidia-cusolver
           ];
-        });
-        # rouge-score and sacrebleu don't declare setuptools as a build dependency
-        rouge-score = prev.rouge-score.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
+          cutlass = cudaPkgs.fetchFromGitHub {
+            name = "cutlass-source";
+            owner = "NVIDIA";
+            repo = "cutlass";
+            tag = "v4.2.1";
+            hash = "sha256-iP560D5Vwuj6wX1otJhwbvqe/X4mYVeKTpK533Wr5gY=";
+          };
+          triton-kernels = cudaPkgs.fetchFromGitHub {
+            owner = "triton-lang";
+            repo = "triton";
+            tag = "v3.6.0";
+            hash = "sha256-JFSpQn+WsNnh7CAPlcpOcUp0nyKXNbJEANdXqmkt4Tc=";
+          };
+
+          cutlass-flashmla = cudaPkgs.fetchFromGitHub {
+            owner = "NVIDIA";
+            repo = "cutlass";
+            rev = "147f5673d0c1c3dcf66f78d677fd647e4a020219";
+            hash = "sha256-dHQto08IwTDOIuFUp9jwm1MWkFi8v2YJ/UESrLuG71g=";
+          };
+
+          flashmla = cudaPkgs.stdenv.mkDerivation {
+            pname = "flashmla";
+            version = "1.0.0";
+
+            src = cudaPkgs.fetchFromGitHub {
+              name = "FlashMLA-source";
+              owner = "vllm-project";
+              repo = "FlashMLA";
+              rev = "c2afa9cb93e674d5a9120a170a6da57b89267208";
+              hash = "sha256-pKlwxV6G9iHag/jbu3bAyvYvnu5TbrQwUMFV0AlGC3s=";
+            };
+
+            dontConfigure = true;
+
+            buildPhase = ''
+              rm -rf csrc/cutlass
+              ln -sf ${cutlass-flashmla} csrc/cutlass
+            '';
+
+            installPhase = ''
+              cp -rva . $out
+            '';
+          };
+          qutlass = cudaPkgs.fetchFromGitHub {
+            name = "qutlass-source";
+            owner = "IST-DASLab";
+            repo = "qutlass";
+            rev = "830d2c4537c7396e14a02a46fbddd18b5d107c65";
+            hash = "sha256-aG4qd0vlwP+8gudfvHwhtXCFmBOJKQQTvcwahpEqC84=";
+          };
+          vllm-flash-attn = cudaPkgs.stdenv.mkDerivation {
+            pname = "vllm-flash-attn";
+            version = "2.7.2.post1";
+
+            src = cudaPkgs.fetchFromGitHub {
+              name = "flash-attention-source";
+              owner = "vllm-project";
+              repo = "flash-attention";
+              rev = "188be16520ceefdc625fdf71365585d2ee348fe2";
+              hash = "sha256-Osec+/IF3+UDtbIhDMBXzUeWJ7hDJNb5FpaVaziPSgM=";
+            };
+
+            patches = [
+              (cudaPkgs.fetchpatch {
+                url = "https://github.com/Dao-AILab/flash-attention/commit/dad67c88d4b6122c69d0bed1cebded0cded71cea.patch";
+                hash = "sha256-JSgXWItOp5KRpFbTQj/cZk+Tqez+4mEz5kmH5EUeQN4=";
+              })
+              (cudaPkgs.fetchpatch {
+                url = "https://github.com/Dao-AILab/flash-attention/commit/e26dd28e487117ee3e6bc4908682f41f31e6f83a.patch";
+                hash = "sha256-NkCEowXSi+tiWu74Qt+VPKKavx0H9JeteovSJKToK9A=";
+              })
+            ];
+
+            dontConfigure = true;
+
+            buildPhase = ''
+              rm -rf csrc/cutlass
+              ln -sf ${cutlass} csrc/cutlass
+            '';
+
+            installPhase = ''
+              cp -rva . $out
+            '';
+          };
+
+          cudaLibs = with cudaPkgs.cudaPackages_13; [
+            cuda_cudart
+            cuda_cccl
+            cuda_cupti
+            cuda_nvrtc
+            cuda_nvtx
+            cudnn
+            libcufile
+            libcublas
+            libcublas
+            libcufft
+            libcurand
+            libcusolver
+            libcusparse
+            libcusparse_lt
+            libcufile
+            libnvjitlink
+            libnvshmem
+            nccl
           ];
-        });
-        sacrebleu = prev.sacrebleu.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
-          ];
-        });
-        sqlitedict = prev.sqlitedict.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
-          ];
-        });
-        word2number = prev.word2number.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
-          ];
-        });
-      } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-        # Use our pure Nix-built MLX with Metal support (macOS only)
-        mlx = self'.packages.mlx;
-      };
+
+          cuda_cccl_compat = cudaPkgs.runCommand "cuda-cccl-compat" { } ''
+            mkdir -p $out/include
+            ln -s ${cudaPkgs.cudaPackages_13.cuda_cccl}/include $out/include/cccl
+          '';
+
+          cudaRoot = cudaPkgs.symlinkJoin {
+            name = "cuda-merged-exo";
+            paths = builtins.concatMap (p: [ (lib.getBin p) (lib.getLib p) (lib.getDev p) ]) (cudaLibs ++ [ cudaPkgs.cudaPackages_13.cuda_nvcc cuda_cccl_compat ]);
+          };
+        in
+        {
+          nvidia-cufile = prev.nvidia-cufile.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ [
+              cudaPkgs.rdma-core
+              cudaPkgs.autoAddDriverRunpath
+            ];
+            propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ [ cudaPkgs.util-linux ];
+          });
+          nvidia-cusolver = prev.nvidia-cusolver.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ (with cudaPkgs.cudaPackages_13; [ libnvjitlink libcublas libcusparse cudaPkgs.autoAddDriverRunpath ]);
+          });
+          nvidia-cusparse = prev.nvidia-cusparse.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ [ cudaPkgs.cudaPackages_13.libnvjitlink cudaPkgs.autoAddDriverRunpath ];
+          });
+          nvidia-nvshmem-cu13 = prev.nvidia-nvshmem-cu13.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ [ cudaPkgs.rdma-core cudaPkgs.pmix cudaPkgs.libfabric cudaPkgs.ucx cudaPkgs.openmpi cudaPkgs.autoAddDriverRunpath ];
+          });
+          nvidia-cutlass-dsl-libs-base = prev.nvidia-cutlass-dsl-libs-base.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ [ cudaPkgs.autoAddDriverRunpath ];
+            autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "libcuda.so.1" ];
+          });
+
+          torch = prev.torch.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ cudaLibs ++ [ cudaPkgs.autoAddDriverRunpath ];
+            autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "libcuda.so.1" ];
+          });
+          torchaudio = prev.torchaudio.overrideAttrs (old:
+            {
+              buildInputs = (old.buildInputs or [ ]) ++ [
+                final.torch
+                cudaPkgs.cudaPackages_13.cuda_cudart
+                cudaPkgs.autoAddDriverRunpath
+              ];
+              preFixup = (old.preFixup or "") + ''
+                addAutoPatchelfSearchPath "${final.torch}"
+              '';
+              autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "libcuda.so.1" ];
+            });
+          torchvision = prev.torchvision.overrideAttrs (old:
+            {
+              buildInputs = (old.buildInputs or [ ]) ++ [
+                final.torch
+                cudaPkgs.autoAddDriverRunpath
+              ];
+              preFixup = (old.preFixup or "") + ''
+                addAutoPatchelfSearchPath "${final.torch}"
+              '';
+              autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "libcuda.so.1" ];
+            });
+          xgrammar = prev.xgrammar.overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ cudaPkgs.cmake cudaPkgs.autoPatchelfHook ];
+            buildInputs = (old.buildInputs or [ ]) ++ [];
+            # patches = (old.patches or [ ]) ++ [ ../nix/xgrammar_cmake.patch ];
+          });
+          vllm = prev.vllm.overrideAttrs (old: {
+            patches = (old.patches or [ ]) ++ [ ../nix/vllm_uv2nix_cmake.patch ];
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+              cudaPkgs.cmake
+              cudaPkgs.ninja
+              cudaPkgs.autoAddDriverRunpath
+              cudaPkgs.cudaPackages_13.cuda_nvcc
+            ];
+            buildInputs = (old.buildInputs or [ ]) ++ cudaLibs;
+
+            CUDA_HOME = "${cudaRoot}";
+            CUDAToolkit_ROOT = "${cudaRoot}";
+            CUDACXX = "${cudaRoot}/bin/nvcc";
+            VLLM_CUTLASS_SRC_DIR = "${lib.getDev cutlass}";
+            VLLM_TARGET_DEVICE = "cuda";
+            TORCH_CUDA_ARCH_LIST = "12.0;12.1";
+            TRITON_KERNELS_SRC_DIR = "${lib.getDev triton-kernels}/python/triton_kernels/triton_kernels";
+            FLASH_MLA_SRC_DIR = "${lib.getDev flashmla}";
+            QUTLASS_SRC_DIR = "${lib.getDev qutlass}";
+            VLLM_FLASH_ATTN_SRC_DIR = "${lib.getDev vllm-flash-attn}";
+            CAFFE2_USE_CUDNN = "ON";
+            CAFFE2_USE_CUFILE = "ON";
+            CUTLASS_ENABLE_CUBLAS = "ON";
+            CUTLASS_NVCC_ARCHS_ENABLED = "12.0;12.1";
+
+            UV2NIX_CMAKE_FLAGS_JSON = builtins.toJSON [
+              "-DCUDAToolkit_ROOT=${cudaRoot}"
+              "-DCMAKE_CUDA_COMPILER=${cudaRoot}/bin/nvcc"
+              "-DCMAKE_PREFIX_PATH=${cudaRoot}"
+              "-DFETCHCONTENT_SOURCE_DIR_CUTLASS=${lib.getDev cutlass}"
+              "-DFLASH_MLA_SRC_DIR=${lib.getDev flashmla}"
+              "-DVLLM_FLASH_ATTN_SRC_DIR=${lib.getDev vllm-flash-attn}"
+              "-DQUTLASS_SRC_DIR=${lib.getDev qutlass}"
+              "-DTORCH_CUDA_ARCH_LIST=12.0;12.1"
+              "-DCUTLASS_NVCC_ARCHS_ENABLED=${cudaPkgs.cudaPackages_13.flags.cmakeCudaArchitecturesString}"
+              "-DCAFFE2_USE_CUDNN=ON"
+              "-DCAFFE2_USE_CUFILE=ON"
+              "-DCUTLASS_ENABLE_CUBLAS=ON"
+            ];
+          });
+        };
 
       # Additional overlay for Linux-specific fixes (type checking env).
       # Native wheels have shared lib dependencies we don't need at type-check time.
-      linuxOverlay = final: prev:
+      mlxOverlay = final: prev:
         let
           ignoreMissing = drv: drv.overrideAttrs { autoPatchelfIgnoreMissingDeps = [ "*" ]; };
           nvidiaPackages = lib.filterAttrs (name: _: lib.hasPrefix "nvidia-" name) prev;
-        in
-        lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
-          (lib.mapAttrs (_: ignoreMissing) nvidiaPackages) // {
-            mlx = ignoreMissing prev.mlx;
-            mlx-cuda-13 = prev.mlx-cuda-13.overrideAttrs (old: {
-              buildInputs = (old.buildInputs or [ ]) ++ [
-                final.nvidia-cublas
-                final.nvidia-cuda-nvrtc
-                final.nvidia-cudnn-cu13
-                final.nvidia-nccl-cu13
-              ];
-              preFixup = ''
-                addAutoPatchelfSearchPath ${final.nvidia-cublas}
-                addAutoPatchelfSearchPath ${final.nvidia-cuda-nvrtc}
-                addAutoPatchelfSearchPath ${final.nvidia-cudnn-cu13}
-                addAutoPatchelfSearchPath ${final.nvidia-nccl-cu13}
-              '';
-              autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
-            });
-            torch = ignoreMissing prev.torch;
-            triton = ignoreMissing prev.triton;
-          }
-        );
 
-      baseOverlays = [
-        inputs.pyproject-build-systems.overlays.default
-        overlay
-        exoOverlay
-        buildSystemsOverlay
-        linuxOverlay
-      ];
+          # Static dependencies included directly during compilation
+          gguf-tools = pkgs.fetchFromGitHub {
+            owner = "antirez";
+            repo = "gguf-tools";
+            rev = "8fa6eb65236618e28fd7710a0fba565f7faa1848";
+            hash = "sha256-15FvyPOFqTOr5vdWQoPnZz+mYH919++EtghjozDlnSA=";
+          };
+
+          metal_cpp = pkgs.fetchzip {
+            url = "https://developer.apple.com/metal/cpp/files/metal-cpp_26.zip";
+            hash = "sha256-7n2eI2lw/S+Us6l7YPAATKwcIbRRpaQ8VmES7S8ZjY8=";
+          };
+
+          nanobind = pkgs.fetchFromGitHub {
+            owner = "wjakob";
+            repo = "nanobind";
+            rev = "v2.10.2";
+            hash = "sha256-io44YhN+VpfHFWyvvLWSanRgbzA0whK8WlDNRi3hahU=";
+            fetchSubmodules = true;
+          };
+
+        in
+        {
+          mlx-lm = prev.mlx-lm.overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ ];
+          });
+          mlx = prev.mlx.overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.cmake ] ++ lib.optionals isDarwin [ self'.packages.metal-toolchain ];
+            buildInputs = (old.buildInputs or [ ]) ++ [ gguf-tools pkgs.openblas pkgs.fmt ] ++ lib.optionals isDarwin [ pkgs.apple-sdk_26 ];
+
+            postPatch = ''
+              substituteInPlace mlx/backend/cpu/jit_compiler.cpp \
+                --replace-fail "g++" "$CXX"
+            '';
+
+            DEV_RELEASE = 1;
+            CMAKE_ARGS = toString ([
+              (lib.cmakeBool "USE_SYSTEM_FMT" true)
+              (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_GGUFLIB" "${gguf-tools}")
+              (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_JSON" "${pkgs.nlohmann_json.src}")
+              (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_NANOBIND" "${nanobind}")
+              (lib.cmakeBool "FETCHCONTENT_FULLY_DISCONNECTED" true)
+              (lib.cmakeBool "MLX_BUILD_CPU" true)
+              (lib.cmakeOptionType "string" "CMAKE_INSTALL_LIBDIR" "lib")
+            ] ++ lib.optionals isDarwin [
+              (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_METAL_CPP" "${metal_cpp}")
+              (lib.cmakeBool "MLX_BUILD_METAL" true)
+            ] ++ lib.optionals pkgs.config.cudaSupport [
+              (lib.cmakeBool "MLX_BUILD_CUDA" true)
+            ]);
+
+          });
+        };
+
+
+      python = pkgs.python313;
 
       pythonSet = (pkgs.callPackage inputs.pyproject-nix.build.packages {
         inherit python;
       }).overrideScope (
-        lib.composeManyExtensions baseOverlays
+        lib.composeManyExtensions [
+          inputs.pyproject-build-systems.overlays.default
+          overlay
+          exoOverlay
+          mlxOverlay
+        ]
+      );
+      cudaPythonSet = (cudaPkgs.callPackage inputs.pyproject-nix.build.packages {
+        python = cudaPkgs.python313;
+      }).overrideScope (
+        lib.composeManyExtensions [
+          inputs.pyproject-build-systems.overlays.default
+          overlay
+          exoOverlay
+          mlxOverlay
+          cudaOverlay
+        ]
       );
       # mlx-cpu and mlx-cuda-13 both ship mlx/ site-packages files; keep first.
       # mlx-cpu/mlx-cuda-13 and nvidia-cudnn-cu12/cu13 ship overlapping files.
-      venvCollisionPaths = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+      venvCollisionPaths = lib.optionals isLinux [
+        "lib/python3.13/site-packages/cv2*"
         "lib/python3.13/site-packages/mlx*"
         "lib/python3.13/site-packages/nvidia*"
       ];
 
-      # Exclude bench deps from main env (bench has its own benchVenv)
-      exoDeps = removeAttrs workspace.deps.default [ "exo-bench" ];
-
-      exoVenv = (pythonSet.mkVirtualEnv "exo-env" exoDeps).overrideAttrs {
+      editablePythonSet = cudaPythonSet.overrideScope (
+        workspace.mkEditablePyprojectOverlay { root = "$REPO_ROOT"; members = [ "exo" "bench" ]; }
+      );
+      evenv = (editablePythonSet.mkVirtualEnv "exo-dev-env"
+        {
+          exo = [ "dev" "cuda" ];
+          exo-pyo3-bindings = [ ];
+          exo-bench = [ ];
+        }).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
+        venvSkip = [ "lib/python3.13/site-packages/build_backend.py" ];
+      };
+      exoVenv = (pythonSet.mkVirtualEnv "exo-env" {
+        exo = [ ];
+        exo-pyo3-bindings = [ ];
+      }).overrideAttrs {
+        venvIgnoreCollisions = venvCollisionPaths;
+        venvSkip = [ "lib/python3.13/site-packages/build_backend.py" ];
+      };
+      exoCudaVenv = (cudaPythonSet.mkVirtualEnv "exo-env" {
+        exo = [ "cuda" ];
+        exo-pyo3-bindings = [ ];
+      }).overrideAttrs {
+        venvIgnoreCollisions = venvCollisionPaths;
+        venvSkip = [ "lib/python3.13/site-packages/build_backend.py" ];
       };
 
+
+
       # Virtual environment with dev dependencies for testing
-      testVenv = (pythonSet.mkVirtualEnv "exo-test-env" (
-        exoDeps // {
+      testVenv = (pythonSet.mkVirtualEnv "exo-test-env"
+        {
           exo = [ "dev" ]; # Include pytest, pytest-asyncio, pytest-env
+          exo-pyo3-bindings = [ ];
         }
-      )).overrideAttrs {
+      ).overrideAttrs {
         venvIgnoreCollisions = venvCollisionPaths;
       };
 
@@ -173,56 +436,39 @@
           makeWrapper ${exoVenv}/bin/exo $out/bin/exo \
             --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
             --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
-            ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
+            ${lib.optionalString isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
         '';
 
-      vllmEnv = pkgsCuda.python313.withPackages (ps: [ ps.vllm ps.fastsafetensors ]);
-
-      vllmSite = pkgs.runCommand "vllm-site-filtered" { } ''
-        mkdir -p $out
-        for pkg in ${vllmEnv}/${python.sitePackages}/*; do
-          name=$(basename "$pkg")
-          case "$name" in
-            anyio*|pydantic*) ;;
-            *) ln -s "$pkg" "$out/$name" ;;
-          esac
-        done
-      '';
-
-      exoCudaDeps = exoDeps // {
-        mlx-cuda-13 = [ ];
-      };
-
-      exoCudaVenv = (pythonSet.mkVirtualEnv "exo-cuda-env" exoCudaDeps).overrideAttrs {
-        venvIgnoreCollisions = venvCollisionPaths;
-      };
-
-      exoCudaPackage = pkgs.runCommand "exo-cuda"
+      exoCudaPackage = cudaPkgs.runCommand "exo"
         {
           nativeBuildInputs = [ pkgs.makeWrapper ];
         }
         ''
           mkdir -p $out/bin
-          makeWrapper ${exoCudaVenv}/bin/exo $out/bin/exo-cuda \
+
+          # Create wrapper script
+          makeWrapper ${exoCudaVenv}/bin/exo $out/bin/exo \
             --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
             --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
-            --prefix PYTHONPATH : "${vllmSite}"
+	    --prefix LD_LIBRARY_PATH : "${openssl.out}/lib:${lib.getLib pkgs.util-linux}/lib:${lib.getLib pkgs.systemd}/lib:${lib.getLib pkgs.numactl}/lib:${lib.getLib pkgs.stdenv.cc.cc.lib}/lib \
+            ${lib.optionalString isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
         '';
     in
     {
       # Python package only available on macOS (requires MLX/Metal)
-      packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin
+      packages = (lib.optionalAttrs isDarwin
         {
-          exo = exoPackage;
           # Test environment for running pytest outside of Nix sandbox (needs GPU access)
           exo-test-env = testVenv;
-        } // lib.optionalAttrs (pkgsCuda != null) {
-        exo-cuda-unwrapped = exoCudaPackage;
-      } // {
+        }) // {
+        exo = exoPackage;
+        exo-cuda = exoCudaPackage;
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
         exo-eval = mkBenchScript "exo-eval" (inputs.self + /bench/exo_eval.py);
         exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);
         exo-get-all-models-on-cluster = mkSimplePythonScript "exo-get-all-models-on-cluster" (inputs.self + /tests/get_all_models_on_cluster.py);
+        editable-venv = evenv;
+        inherit python;
       };
 
       checks = {

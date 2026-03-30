@@ -1,0 +1,12 @@
+diff --git a/setup.py b/setup.py
+index 68861fe4b..fd4738089 100644
+--- a/setup.py
++++ b/setup.py
+@@ -150,6 +150,7 @@ class cmake_build_ext(build_ext):
+         cmake_args = [
+             "-DCMAKE_BUILD_TYPE={}".format(cfg),
+             "-DVLLM_TARGET_DEVICE={}".format(VLLM_TARGET_DEVICE),
++            *json.loads(os.environ.get("UV2NIX_CMAKE_FLAGS_JSON", "[]"))
+         ]
+ 
+         verbose = envs.VERBOSE
