@@ -345,6 +345,7 @@ def warmup_inference(
         prompt=warmup_prompt,
         kv_prefix_cache=None,
         group=group,
+        is_warmup=True,
     ):
         tokens_generated += 1
 
@@ -449,6 +450,7 @@ def mlx_generate(
     on_prefill_progress: Callable[[int, int], None] | None = None,
     distributed_prompt_progress_callback: Callable[[], None] | None = None,
     on_generation_token: Callable[[], None] | None = None,
+    is_warmup: bool = False,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -536,13 +538,86 @@ def mlx_generate(
     logger.info("Starting decode")
     mx_barrier(group)
 
-    # PP speculation: draft model is pre-loaded on model._pp_draft_model
-    # but the decode loop integration is not yet implemented.
-    # The speculation loop requires a different architecture — it can't
-    # run inside mlx_generate because warmup also calls mlx_generate
-    # and any asymmetric work deadlocks PP warmup.
-    # TODO: implement speculation at a layer above mlx_generate.
-    _decode_gen = stream_generate(
+    # --- PP idle-time speculation (skipped during warmup) ---
+    _pp_spec_gen = None
+    _pp_draft = getattr(model, "_pp_draft_model", None)
+    _pp_draft_cache = getattr(model, "_pp_draft_cache", None)
+    if (not is_warmup
+        and _pp_draft is not None
+        and _pp_draft_cache is not None
+        and group is not None
+        and group.size() > 1):
+        try:
+            from ..pp_speculation import (
+                get_pipeline_info,
+                pp_speculative_decode_loop,
+                _install_spec_layers,
+            )
+            pp_info = get_pipeline_info(model)
+            if pp_info is not None:
+                pp_rank, pp_world_size, pp_group = pp_info
+                inner = getattr(model, "language_model", model)
+                _install_spec_layers(inner)
+
+                # Prefill draft cache with prompt (rank 0 only, instant — no PP needed)
+                if pp_rank == 0:
+                    for tok in last_token.tolist():
+                        _pp_draft(mx.array([[tok]]), cache=_pp_draft_cache)
+                    mx.eval([c.state if hasattr(c, 'state') else c for c in _pp_draft_cache])
+
+                # First token via standard PP (both ranks, synchronized)
+                _first_gen = stream_generate(
+                    model=model, tokenizer=tokenizer, prompt=last_token,
+                    max_tokens=1, sampler=sampler, logits_processors=logits_processors,
+                    prompt_cache=caches, prefill_step_size=1,
+                    kv_group_size=KV_GROUP_SIZE, kv_bits=KV_BITS,
+                )
+                _first_out = next(_first_gen)
+                first_y = mx.array([_first_out.token])
+                mx.eval(first_y)
+
+                logger.info(f"PP speculation active: rank={pp_rank}")
+
+                def _spec_token_gen():
+                    from mlx_lm.generate import GenerationResponse
+                    _detok = tokenizer.detokenizer
+                    gen_start = time.perf_counter()
+                    yield _first_out
+
+                    for tok_id, lp in pp_speculative_decode_loop(
+                        model=model, draft_model=_pp_draft,
+                        prompt_cache=caches, draft_cache=_pp_draft_cache,
+                        sampler=sampler, logits_processors=logits_processors,
+                        first_y=first_y, first_logprobs=mx.zeros(1),
+                        max_tokens=max_tokens - 1,
+                        pp_rank=pp_rank, pp_world_size=pp_world_size,
+                        pp_group=pp_group,
+                    ):
+                        if tok_id in tokenizer.eos_token_ids:
+                            elapsed = time.perf_counter() - gen_start
+                            yield GenerationResponse(
+                                text="", token=tok_id, logprobs=lp,
+                                prompt_tokens=len(last_token), prompt_tps=prefill_tps or 0.0,
+                                generation_tokens=1, generation_tps=1.0/elapsed if elapsed > 0 else 0,
+                                peak_memory=mx.get_peak_memory()/1e9, finish_reason="stop",
+                            )
+                            return
+                        _detok.add_token(tok_id)
+                        elapsed = time.perf_counter() - gen_start
+                        yield GenerationResponse(
+                            text=_detok.last_segment, token=tok_id, logprobs=lp,
+                            prompt_tokens=len(last_token), prompt_tps=prefill_tps or 0.0,
+                            generation_tokens=1, generation_tps=1.0/elapsed if elapsed > 0 else 0,
+                            peak_memory=mx.get_peak_memory()/1e9,
+                        )
+
+                _pp_spec_gen = _spec_token_gen()
+        except Exception as e:
+            sys.stderr.write(f"[PP speculation] setup failed: {e}\n")
+            sys.stderr.flush()
+            _pp_spec_gen = None
+
+    _decode_gen = _pp_spec_gen if _pp_spec_gen is not None else stream_generate(
         model=model,
         tokenizer=tokenizer,
         prompt=last_token,
