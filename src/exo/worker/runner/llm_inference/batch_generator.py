@@ -345,6 +345,8 @@ class BatchGenerator(InferenceGenerator):
             group=self.group,
             model_id=self.model_id,
         )
+        # Warm up speculative cycle if MTP is enabled
+        self._mlx_gen.warmup_speculative(self.model, self.tokenizer)
 
     def submit(
         self,

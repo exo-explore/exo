@@ -200,6 +200,52 @@ class ExoBatchGenerator:
         logger.info(f"Extracted {len(mtp_tensors)} MTP tensors → {cached_path} ({cached_path.stat().st_size / 1e6:.0f}MB)")
         return str(cached_path)
 
+    def warmup_speculative(self, model, tokenizer) -> None:
+        """Warm up the speculative decoding path (MTP draft + verify kernels)."""
+        if not hasattr(self._exo_gen, 'mtp'):
+            return
+
+        from mlx_lm.models import cache as cache_mod
+        from exo.worker.engines.mlx.speculative.mtp_module import speculative_forward, draft_tokens
+
+        logger.info("Warming up speculative decoding kernels...")
+        mtp = self._exo_gen.mtp
+        gamma = self._exo_gen.gamma
+
+        # Small warmup: prefill a short prompt, run a few speculative cycles
+        warmup_prompt = tokenizer.encode("Warm up speculative decoding.")
+        cache = cache_mod.make_prompt_cache(model)
+        mtp.reset_cache()
+
+        # Prefill
+        pre_norm, logits = speculative_forward(model, mx.array([warmup_prompt]), cache)
+        mx.eval(pre_norm, logits)
+        next_token = mx.argmax(logits[0, -1], axis=-1).item()
+
+        # MTP prefill
+        if pre_norm.shape[1] > 1:
+            _ = mtp.predict(pre_norm[:, :-1, :], mx.array([warmup_prompt[1:]]))
+            mx.eval(_)
+
+        # Run a few speculative cycles to compile kernels
+        last_pn = pre_norm[:, -1:, :]
+        next_arr = mx.array([[next_token]])
+        for _ in range(3):
+            draft_ids, _ = draft_tokens(mtp, last_pn, next_arr, gamma, 0.0)
+            draft_concat = mx.concatenate([d.reshape(1, 1) for d in draft_ids], axis=1)
+            verify_input = mx.concatenate([next_arr, draft_concat], axis=1)
+            vpn, vl = speculative_forward(model, verify_input, cache, speculative=True)
+            all_next = mx.argmax(vl[0], axis=-1)
+            mx.eval(vpn, all_next)
+            # Accept all for warmup (don't care about correctness)
+            next_arr = all_next[0].reshape(1, 1)
+            last_pn = vpn[:, 0:1, :]
+            for i, c in enumerate(cache):
+                if hasattr(c, 'base'):
+                    cache[i] = c.base
+
+        logger.info("Speculative warmup complete")
+
     @property
     def has_work(self) -> bool:
         return (
