@@ -72,31 +72,37 @@ let
                 hash = "sha256-+8aBl9dKd2Uz50XoOr91NRyJ4OGJtzfDNNNYGQJ9b94=";
               };
               mlx_cuda_cccl_compat = pkgs.runCommand "cuda-cccl-compat" { } ''
-                		mkdir -p $out/include
-                                ${pkgs.tree}/bin/tree ${cudaPackages.cuda_cccl} -L 3
-                                exit 1
-                		ln -s ${cudaPackages.cuda_cccl}/include/cuda $out/include/cuda
-                		ln -s ${cudaPackages.cuda_cccl}/include/nv $out/include/nv
-                	      '';
+                mkdir -p $out/include
+                ${pkgs.tree}/bin/tree ${cudaPackages.cuda_cccl} -L 3
+                exit 1
+                ln -s ${cudaPackages.cuda_cccl}/include/cuda $out/include/cuda
+                ln -s ${cudaPackages.cuda_cccl}/include/nv $out/include/nv
+              '';
             in
             {
               nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.cmake ] ++ lib.optionals isDarwin [ self'.packages.metal-toolchain ] ++ lib.optionals cudaSupport [
                 cudaPackages.cuda_nvcc
                 pkgs.autoAddDriverRunpath
-		pkgs.autoPatchelfHook
+                pkgs.autoPatchelfHook
               ];
               # TODO: non-sdk_26 support
-              buildInputs = (old.buildInputs or [ ]) 
-		++ [ gguf-tools pkgs.fmt pkgs.nlohmann_json pkgs.openblas ] 
-		++ lib.optionals isDarwin [ pkgs.apple-sdk_26 ] 
-		++ lib.optionals cudaSupport (cudaLibs ++ [ cudaPackages.cudnn ]);
-              prePatch = ''${pkgs.tree}/bin/tree'';
-              patches = (old.patches or [ ]) ++ lib.optionals cudaSupport [ ../nix/mlx_patch_fmod.patch ];
-
+              buildInputs = (old.buildInputs or [ ])
+              ++ [ gguf-tools pkgs.fmt pkgs.nlohmann_json pkgs.openblas ]
+              ++ lib.optionals isDarwin [ pkgs.apple-sdk_26 ]
+              ++ lib.optionals cudaSupport (cudaLibs ++ [ cudaPackages.cudnn ]);
+              patches = (old.patches or [ ])
+              ++ lib.optionals cudaSupport [ ../nix/mlx_patch_fmod.patch ]
+              ++ lib.optionals isDarwin [
+                (pkgs.replaceVars ../nix/darwin-build-fixes.patch {
+                  sdkVersion = pkgs.apple-sdk_26.version;
+                  inherit (self'.packages.metal-toolchain) metalVersion;
+                })
+              ];
               postPatch = ''
                 substituteInPlace mlx/backend/cpu/jit_compiler.cpp \
                   --replace-fail "g++" "${lib.getExe' pkgs.stdenv.cc "c++"}"
               '';
+              autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ lib.optionals cudaSupport [ "libcuda.so.1" ];
 
               DEV_RELEASE = 1;
               CMAKE_ARGS = toString ([
@@ -120,10 +126,14 @@ let
                 (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_NVTX3" "${nvtx}")
               ] ++ lib.optionals isDarwin [
                 (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_METAL_CPP" "${metal_cpp}")
+                (lib.cmakeOptionType "string" "CMAKE_OSX_DEPLOYMENT_TARGET" "${pkgs.apple-sdk_26.version}")
+                (lib.cmakeOptionType "filepath" "CMAKE_OSX_SYSROOT" "${pkgs.apple-sdk_26.passthru.sdkroot}")
               ] ++ lib.optionals (isDarwin && isx86_64) [
                 (lib.cmakeBool "MLX_ENABLE_X64_MAC" true)
               ]);
-              autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ lib.optionals cudaSupport [ "libcuda.so.1" ];
+            } // lib.optionalAttrs isDarwin {
+              SDKROOT = pkgs.apple-sdk_26.passthru.sdkroot;
+              MACOSX_DEPLOYMENT_TARGET = pkgs.apple-sdk_26.version;
             });
           exo-pyo3-bindings = pkgs.stdenv.mkDerivation {
             pname = "exo-pyo3-bindings";
@@ -354,12 +364,12 @@ in
       inherit (pkgs.stdenv.hostPlatform) isDarwin;
       pythonSet = mkPythonSet { inherit self' pkgs lib; };
       # taking cudaPkgs.cudaPackages_13.pkgs creates a new nixpkgs that defaults to cuda 13
-      cudaPythonSet = mkPythonSet { inherit self' lib; pkgs = cudaPkgs.cudaPackages_13.pkgs; };
+      cudaPythonSet = mkPythonSet { inherit self' lib; inherit (cudaPkgs.cudaPackages_13) pkgs; };
 
-      editablePythonSet = mkPythonSet { inherit self' lib; pkgs = cudaPkgs.cudaPackages_13.pkgs; editable = true; };
+      editablePythonSet = mkPythonSet { inherit self' lib pkgs; editable = true; };
       evenv = (editablePythonSet.mkVirtualEnv "exo-dev-env"
         {
-          exo = [ "dev" "cuda" ];
+          exo = [ "dev" ];
           exo-pyo3-bindings = [ ];
           exo-bench = [ ];
         }).overrideAttrs {
