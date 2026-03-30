@@ -538,6 +538,7 @@ def mlx_generate(
     # --- PP idle-time speculation (additive, gated by EXO_PP_DRAFT_MODEL) ---
     _pp_spec_gen = None
     _draft_model_path = os.environ.get("EXO_PP_DRAFT_MODEL", "")
+    logger.info(f"PP speculation check: draft_model={_draft_model_path!r}, group={group is not None}, group_size={group.size() if group else 0}")
     if _draft_model_path and group is not None and group.size() > 1:
         try:
             from ..pp_speculation import (
@@ -546,6 +547,7 @@ def mlx_generate(
                 pp_speculative_decode_loop,
             )
             pp_info = get_pipeline_info(model)
+            logger.info(f"PP speculation: pp_info={pp_info}")
             if pp_info is not None:
                 pp_rank, pp_world_size, pp_group = pp_info
                 draft_result = load_draft_model(_draft_model_path)
