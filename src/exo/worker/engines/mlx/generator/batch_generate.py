@@ -470,7 +470,7 @@ class ExoBatchGenerator:
 
             logprob: float | None = None
             top_logprobs: list[TopLogprobItem] | None = None
-            if task_params.logprobs:
+            if task_params.logprobs and os.environ.get("EXO_DISABLE_LOGPROBS") != "1":
                 logprob, top_logprobs = extract_top_logprobs(
                     logprobs=response.logprobs,
                     tokenizer=self.tokenizer,
