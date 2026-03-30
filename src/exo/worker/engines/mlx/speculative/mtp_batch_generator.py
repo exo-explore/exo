@@ -45,6 +45,7 @@ class MTPBatchGenerator(BatchGenerator):
         self._captured = {}            # pre_norm / prompt_pre_norm from norm wrapper
         self._mtp_pre_norm = {}        # uid → (B, 1, D) pre-norm hidden state
         self._mtp_prefilled = set()    # uids with MTP cache prefilled
+        self._request_temp = {}        # uid → temperature from request
 
         self._setup_hidden_capture()
 
@@ -134,7 +135,7 @@ class MTPBatchGenerator(BatchGenerator):
             return super()._next()
 
         gamma = self.gamma
-        temp = self.temp
+        temp = self._request_temp.get(uid, self.temp)
         alpha = self.alpha
 
         # 1. Draft γ tokens (lazy chain, no eval)
@@ -303,3 +304,4 @@ class MTPBatchGenerator(BatchGenerator):
         self._mtp_pre_norm.pop(uid, None)
         self._mtp_prefilled.discard(uid)
         self._token_buffer.pop(uid, None)
+        self._request_temp.pop(uid, None)

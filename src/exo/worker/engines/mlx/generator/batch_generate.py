@@ -332,6 +332,11 @@ class ExoBatchGenerator:
 
         uid = uids[0]
 
+        # Pass request temperature to speculative cycle
+        if hasattr(self._exo_gen, '_request_temp'):
+            request_temp = task_params.temperature if task_params.temperature is not None else 0.7
+            self._exo_gen._request_temp[uid] = request_temp
+
         self._active_tasks[uid] = _EngineTask(
             uid=uid,
             task_params=task_params,
