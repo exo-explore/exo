@@ -155,7 +155,7 @@ class Worker:
                 self.state.instances,
                 self.state.runners,
                 self.state.tasks,
-                self.input_chunk_counts,
+                self.input_chunk_buffer,
             )
             if task is None:
                 continue
