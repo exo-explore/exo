@@ -224,6 +224,10 @@ def load_mlx_items(
     else:
         vision_processor = None
 
+    # Apply model-specific kernel fusion patches (Qwen3.5 MoE, Qwen3.5 dense LpB, etc.)
+    from exo.worker.engines.mlx.patches import maybe_apply_patches
+    maybe_apply_patches(cast(Model, model), model_path if group is None else build_model_path(bound_instance.bound_shard.model_card.model_id))
+
     return cast(Model, model), tokenizer, vision_processor
 
 

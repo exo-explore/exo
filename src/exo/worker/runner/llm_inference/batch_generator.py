@@ -358,6 +358,7 @@ class BatchGenerator(InferenceGenerator):
             group=self.group,
             model_id=self.model_id,
         )
+        self._mlx_gen.warmup_speculative(self.model, self.tokenizer)
 
     def submit(
         self,
