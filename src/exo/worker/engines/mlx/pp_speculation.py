@@ -267,30 +267,14 @@ def pp_speculative_decode_loop(
     try:
         n = 0
         while n < max_tokens:
-            # --- Check previous speculation ---
-            if is_rank0 and _draft_token is not None:
-                real_token = y.item()
-                if real_token == _draft_token:
-                    _accepted += 1
-                    # Draft was right — we already ran layers 0-29 speculatively
-                    # and _cache_state[_hidden_idx] has the correct hidden state.
-                    # Skip _pp_compute, go straight to hidden exchange.
-                    _draft_token = None
-                    _log(f"n={n} ACCEPT draft={real_token}")
-                else:
-                    _rejected += 1
-                    # Draft was wrong — restore main cache, recompute
-                    if _spec_snap is not None:
-                        _restore_cache(prompt_cache, _spec_snap)
-                    _spec_snap = None
-                    _draft_token = None
-                    _log(f"n={n} REJECT draft={_draft_token} real={real_token}")
-
-            # --- Rank 0: compute layers 0-29 (unless speculation hit) ---
-            if is_rank0 and _draft_token is None:
-                # Normal compute — need to run layers 0-29
-                sampled, lp = _pp_compute(y)
-                mx.eval(_cache_state[_hidden_idx])
+            # --- Rank 0: compute layers 0-29 ---
+            # If previous speculation was accepted, we already have the correct
+            # hidden from the speculative forward. Otherwise, compute normally.
+            if is_rank0:
+                if _draft_token is None:
+                    sampled, lp = _pp_compute(y)
+                    mx.eval(_cache_state[_hidden_idx])
+                # else: speculative hidden in _cache_state[_hidden_idx] is already correct
 
             # --- Hidden state exchange via all_gather ---
             gathered_hidden = mx.distributed.all_gather(
@@ -299,39 +283,24 @@ def pp_speculative_decode_loop(
             mx.eval(gathered_hidden)
 
             if not is_rank0:
-                # Rank 1: take rank 0's hidden state
                 _cache_state[_hidden_idx] = gathered_hidden[0:1].reshape(
                     _cache_state[_hidden_idx].shape
                 )
 
-            # --- Rank 1: compute layers 30-59 + sample ---
-            if is_last_rank:
-                sampled, lp = _pp_compute(y)
-
-            # --- Token exchange via all_gather ---
-            gathered_token = mx.distributed.all_gather(
-                sampled.reshape(1) if is_last_rank else mx.zeros(1, dtype=mx.int32),
-                group=pp_group,
-            )
-            mx.eval(gathered_token)
-            final_token = gathered_token[-1:]  # last rank's token
-
-            # --- Rank 0: draft during idle time (AFTER exchanges complete) ---
-            # In practice the idle time is during the hidden/token exchanges
-            # above. For K=1, we draft after getting the token since the next
-            # step will check if the draft matches.
+            # --- Rank 0: draft DURING rank 1's compute (idle time) ---
+            # Predict what token rank 1 will sample at this step.
+            # Then speculatively compute model(predicted_token) to pre-compute
+            # the hidden for the NEXT step (since predicted_token = next step's input).
             if is_rank0:
                 try:
-                    tok_id = int(final_token.item())
-                    # Draft next token
-                    draft_logits = draft_model(mx.array([[tok_id]]), cache=draft_cache)
+                    # Draft model predicts current step's output
+                    draft_logits = draft_model(mx.array([[y.item()]]), cache=draft_cache)
                     draft_tok = draft_logits[0, -1].argmax()
                     mx.eval(draft_tok)
                     _draft_token = int(draft_tok.item())
 
-                    # Snapshot main cache, then speculatively forward draft token
+                    # Snapshot cache, then speculatively compute for predicted token
                     _spec_snap = _snapshot_cache(prompt_cache)
-
                     if spec_last is not None:
                         spec_last._speculative = True
                     model(mx.array([[_draft_token]]), cache=prompt_cache)
@@ -345,6 +314,43 @@ def pp_speculative_decode_loop(
                     _spec_snap = None
                     if spec_last is not None:
                         spec_last._speculative = False
+
+            # --- Rank 1: compute layers 30-59 + sample ---
+            if is_last_rank:
+                sampled, lp = _pp_compute(y)
+
+            # --- Token exchange via all_gather ---
+            gathered_token = mx.distributed.all_gather(
+                sampled.reshape(1) if is_last_rank else mx.zeros(1, dtype=mx.int32),
+                group=pp_group,
+            )
+            mx.eval(gathered_token)
+            final_token = gathered_token[-1:]
+
+            # --- Verify draft against actual token ---
+            if is_rank0 and _draft_token is not None:
+                real_token = int(final_token.item())
+                if real_token == _draft_token:
+                    _accepted += 1
+                    _log(f"n={n} ACCEPT draft={_draft_token}")
+                    # Cache already has the correct speculative entry for next step.
+                    # Feed real token to draft model to keep its cache in sync.
+                    draft_model(mx.array([[real_token]]), cache=draft_cache)
+                else:
+                    _rejected += 1
+                    _log(f"n={n} REJECT draft={_draft_token} real={real_token}")
+                    # Restore main model cache
+                    if _spec_snap is not None:
+                        _restore_cache(prompt_cache, _spec_snap)
+                    _spec_snap = None
+                    _draft_token = None
+                    # Restore draft cache too (we fed y, but we should have fed real_token)
+                    # Draft already saw y, now feed real_token to correct its state
+                    draft_model(mx.array([[real_token]]), cache=draft_cache)
+            elif is_rank0:
+                # No draft was made (first step or previous error)
+                tok_id = int(final_token.item())
+                draft_model(mx.array([[tok_id]]), cache=draft_cache)
 
             yield int(final_token.item()), lp if is_last_rank else mx.zeros(1)
 
