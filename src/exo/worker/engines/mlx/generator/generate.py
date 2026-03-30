@@ -645,6 +645,7 @@ def mlx_generate(
             _pp_spec_gen = None
 
     # Use speculation generator if available, otherwise standard stream_generate
+    logger.info(f"Decode generator: {'PP_SPECULATION' if _pp_spec_gen is not None else 'stream_generate'}")
     _decode_gen = _pp_spec_gen if _pp_spec_gen is not None else stream_generate(
         model=model,
         tokenizer=tokenizer,
