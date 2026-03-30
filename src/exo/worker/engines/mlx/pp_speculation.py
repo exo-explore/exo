@@ -393,7 +393,8 @@ def load_draft_model(model_path: str) -> tuple[nn.Module, list[Any]] | None:
         model, _ = load(model_path)
         mx.eval(model.parameters())
         cache = make_prompt_cache(model)
-        _log(f"Draft model loaded: {sum(p.size for p in mx.utils.tree_flatten(model.parameters())) / 1e6:.0f}M params")
+        from mlx.utils import tree_flatten
+        _log(f"Draft model loaded: {sum(p.size for p in tree_flatten(model.parameters())) / 1e6:.0f}M params")
         return model, cache
     except Exception as e:
         _log(f"Failed to load draft model: {e}")
