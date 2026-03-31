@@ -536,12 +536,69 @@ def tensor_auto_parallel(
             return None
         return -1, segments
 
-    sharded_to_all_linear_in_place = partial(
+    _base_sharded_to_all_in_place = partial(
         shard_inplace,
         sharding=_sharded_to_all,  # type: ignore
         group=group,
         weights=shard_weights,
     )
+
+    _base_all_to_sharded_in_place = all_to_sharded_linear_in_place
+
+    def _quantized_moe_shard_inplace(
+        module: nn.Module,
+        sharding: Literal["all-to-sharded", "sharded-to-all"],
+        weights: list[float] | None = None,
+    ) -> None:
+        N = group.size()
+        r = group.rank()
+        gs = module.group_size  # pyright: ignore[reportAttributeAccessIssue]
+        bits = module.bits  # pyright: ignore[reportAttributeAccessIssue]
+        params = module.parameters()
+        scales = params["scales"]
+
+        if sharding == "all-to-sharded":
+            dim = params["weight"].shape[max(params["weight"].ndim - 2, 0)]
+            sizes = compute_shard_sizes(dim, N, gs, weights)
+            result: dict[str, Any] = {}
+            for key, param in params.items():
+                if not isinstance(param, mx.array):
+                    result[key] = param
+                    continue
+                axis = max(param.ndim - 2, 0)
+                indices = [sum(sizes[:i]) for i in range(1, len(sizes))]
+                result[key] = mx.contiguous(mx.split(param, indices, axis=axis)[r])
+        else:
+            num_groups = scales.shape[-1]
+            group_counts = compute_shard_sizes(num_groups, N, 1, weights)
+            weight_ppg = gs * bits // 32
+            result = {}
+            for key, param in params.items():
+                if not isinstance(param, mx.array):
+                    result[key] = param
+                    continue
+                if key == "weight":
+                    s = [gc * weight_ppg for gc in group_counts]
+                elif key in ("scales", "biases"):
+                    s = list(group_counts)
+                else:
+                    result[key] = param
+                    continue
+                indices = [sum(s[:i]) for i in range(1, len(s))]
+                result[key] = mx.contiguous(mx.split(param, indices, axis=-1)[r])
+        module.update(result)
+
+    def all_to_sharded_linear_in_place(module: nn.Module, **kwargs: Any) -> None:
+        if getattr(module, "group_size", 0) > 0 and getattr(module, "bits", 0) > 0 and "scales" in module.parameters():
+            _quantized_moe_shard_inplace(module, "all-to-sharded", weights=kwargs.get("weights"))
+        else:
+            _base_all_to_sharded_in_place(module, **kwargs)
+
+    def sharded_to_all_linear_in_place(module: nn.Module, **kwargs: Any) -> None:
+        if getattr(module, "group_size", 0) > 0 and getattr(module, "bits", 0) > 0 and "scales" in module.parameters():
+            _quantized_moe_shard_inplace(module, "sharded-to-all", weights=kwargs.get("weights"))
+        else:
+            _base_sharded_to_all_in_place(module, **kwargs)
 
     if isinstance(model, (LlamaModel, Ministral3Model)):
         tensor_parallel_sharding_strategy = LlamaShardingStrategy(
@@ -778,16 +835,20 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
                 layer.self_attn.k_proj.weight.shape[0] // head_dim
             )
 
+            mlp_unit = getattr(layer.mlp.gate_proj, "group_size", 1)
             layer.mlp.gate_proj = self.all_to_sharded_linear(
                 layer.mlp.gate_proj,
+                unit=mlp_unit,
                 weights=self._greedy_weights_for("gate", intermediate),
             )
             layer.mlp.down_proj = self.sharded_to_all_linear(
                 layer.mlp.down_proj,
+                unit=mlp_unit,
                 weights=self._greedy_weights_for("down", intermediate),
             )
             layer.mlp.up_proj = self.all_to_sharded_linear(
                 layer.mlp.up_proj,
+                unit=mlp_unit,
                 weights=self._greedy_weights_for("up", intermediate),
             )
             mx.eval(layer)
@@ -890,16 +951,20 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
             # Shard the MLP
             if isinstance(layer.mlp, (DeepseekV3MLP, DeepseekV32MLP)):
                 intermediate = layer.mlp.gate_proj.weight.shape[0]
+                mlp_unit = getattr(layer.mlp.gate_proj, "group_size", 1)
                 layer.mlp.gate_proj = self.all_to_sharded_linear(
                     layer.mlp.gate_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("gate", intermediate),
                 )
                 layer.mlp.down_proj = self.sharded_to_all_linear(
                     layer.mlp.down_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("down", intermediate),
                 )
                 layer.mlp.up_proj = self.all_to_sharded_linear(
                     layer.mlp.up_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("up", intermediate),
                 )
 
@@ -1037,16 +1102,20 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
 
             if isinstance(layer.mlp, Glm4MoeLiteMLP):
                 intermediate = layer.mlp.gate_proj.weight.shape[0]
+                mlp_unit = getattr(layer.mlp.gate_proj, "group_size", 1)
                 layer.mlp.gate_proj = self.all_to_sharded_linear(
                     layer.mlp.gate_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("gate", intermediate),
                 )
                 layer.mlp.down_proj = self.sharded_to_all_linear(
                     layer.mlp.down_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("down", intermediate),
                 )
                 layer.mlp.up_proj = self.all_to_sharded_linear(
                     layer.mlp.up_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("up", intermediate),
                 )
 
@@ -1516,16 +1585,20 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
             # Shard the MLP
             else:
                 intermediate = layer.mlp.gate_proj.weight.shape[0]
+                mlp_unit = getattr(layer.mlp.gate_proj, "group_size", 1)
                 layer.mlp.gate_proj = self.all_to_sharded_linear(
                     layer.mlp.gate_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("gate", intermediate),
                 )
                 layer.mlp.down_proj = self.sharded_to_all_linear(
                     layer.mlp.down_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("down", intermediate),
                 )
                 layer.mlp.up_proj = self.all_to_sharded_linear(
                     layer.mlp.up_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("up", intermediate),
                 )
 
@@ -1622,16 +1695,20 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
 
             else:
                 intermediate = layer.mlp.gate_proj.weight.shape[0]
+                mlp_unit = getattr(layer.mlp.gate_proj, "group_size", 1)
                 layer.mlp.gate_proj = self.all_to_sharded_linear(
                     layer.mlp.gate_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("gate", intermediate),
                 )
                 layer.mlp.down_proj = self.sharded_to_all_linear(
                     layer.mlp.down_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("down", intermediate),
                 )
                 layer.mlp.up_proj = self.all_to_sharded_linear(
                     layer.mlp.up_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("up", intermediate),
                 )
 
@@ -1792,16 +1869,20 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
 
             if isinstance(layer.mlp, Step35MLP):
                 intermediate = layer.mlp.gate_proj.weight.shape[0]
+                mlp_unit = getattr(layer.mlp.gate_proj, "group_size", 1)
                 layer.mlp.gate_proj = self.all_to_sharded_linear(
                     layer.mlp.gate_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("gate", intermediate),
                 )
                 layer.mlp.up_proj = self.all_to_sharded_linear(
                     layer.mlp.up_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("up", intermediate),
                 )
                 layer.mlp.down_proj = self.sharded_to_all_linear(
                     layer.mlp.down_proj,
+                    unit=mlp_unit,
                     weights=self._greedy_weights_for("down", intermediate),
                 )
             else:

@@ -49,7 +49,7 @@ let
       owner = "rltakashige";
       repo = "mlx-jaccl-fix-small-recv";
       rev = uvLockMlxRev;
-      hash = "sha256-GosFIWxIB48Egb1MqJrR3xhsUsQeWdRk5rV93USY6wQ=";
+      hash = "sha256-WZGQKGcKQR9uyXf5X/a1+79ycPdbcs/spfTykDUjLE4=";
     };
 
     patches = [

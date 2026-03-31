@@ -558,7 +558,7 @@ dependencies = [
     { name = "loguru", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mflux", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.30.6", source = { registry = "https://pypi.org/simple" }, extra = ["cpu"], marker = "sys_platform == 'linux'" },
-    { name = "mlx", version = "0.31.2.dev20260331+71bcd7a2", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=leo%2Fadd-uneven-sharding#71bcd7a2c6bfff535d00ed85a2ee78102d8dca03" }, marker = "sys_platform == 'darwin'" },
+    { name = "mlx", version = "0.31.2.dev20260401+fbfe79c7", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=leo%2Fadd-uneven-sharding#fbfe79c7b1238273969328abc5720ba18f7265d5" }, marker = "sys_platform == 'darwin'" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "msgspec", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1436,7 +1436,7 @@ dependencies = [
     { name = "huggingface-hub", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "matplotlib", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.30.6", source = { registry = "https://pypi.org/simple" }, extra = ["cuda13"], marker = "sys_platform == 'linux'" },
-    { name = "mlx", version = "0.31.2.dev20260331+71bcd7a2", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=leo%2Fadd-uneven-sharding#71bcd7a2c6bfff535d00ed85a2ee78102d8dca03" }, marker = "sys_platform == 'darwin'" },
+    { name = "mlx", version = "0.31.2.dev20260401+fbfe79c7", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=leo%2Fadd-uneven-sharding#fbfe79c7b1238273969328abc5720ba18f7265d5" }, marker = "sys_platform == 'darwin'" },
     { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "opencv-python", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "piexif", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1494,8 +1494,8 @@ cuda13 = [
 
 [[package]]
 name = "mlx"
-version = "0.31.2.dev20260331+71bcd7a2"
-source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=leo%2Fadd-uneven-sharding#71bcd7a2c6bfff535d00ed85a2ee78102d8dca03" }
+version = "0.31.2.dev20260401+fbfe79c7"
+source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=leo%2Fadd-uneven-sharding#fbfe79c7b1238273969328abc5720ba18f7265d5" }
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'darwin'",
     "python_full_version < '3.14' and sys_platform == 'darwin'",
@@ -1531,7 +1531,7 @@ version = "0.31.2"
 source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Ffix-arrayscache-leak#d36e9b661e55a5fc0f77fb6f17ea643aa2dc87aa" }
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "mlx", version = "0.31.2.dev20260331+71bcd7a2", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=leo%2Fadd-uneven-sharding#71bcd7a2c6bfff535d00ed85a2ee78102d8dca03" }, marker = "sys_platform == 'darwin'" },
+    { name = "mlx", version = "0.31.2.dev20260401+fbfe79c7", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=leo%2Fadd-uneven-sharding#fbfe79c7b1238273969328abc5720ba18f7265d5" }, marker = "sys_platform == 'darwin'" },
     { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "protobuf", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1548,7 +1548,7 @@ dependencies = [
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "miniaudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.30.6", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux'" },
-    { name = "mlx", version = "0.31.2.dev20260331+71bcd7a2", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=leo%2Fadd-uneven-sharding#71bcd7a2c6bfff535d00ed85a2ee78102d8dca03" }, marker = "sys_platform == 'darwin'" },
+    { name = "mlx", version = "0.31.2.dev20260401+fbfe79c7", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=leo%2Fadd-uneven-sharding#fbfe79c7b1238273969328abc5720ba18f7265d5" }, marker = "sys_platform == 'darwin'" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "opencv-python", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },

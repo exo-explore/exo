@@ -128,26 +128,12 @@ def place_instance(
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError("No cycles found with sufficient memory")
 
-    if command.sharding == Sharding.Tensor:
-        if not command.model_card.supports_tensor:
-            raise ValueError(
-                f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_card.model_id}"
-            )
-        # TODO: the condition here for tensor parallel is not correct, but it works good enough for now.
-        kv_heads = command.model_card.num_key_value_heads
-        cycles_with_sufficient_memory = [
-            cycle
-            for cycle in cycles_with_sufficient_memory
-            if command.model_card.hidden_size % len(cycle) == 0
-            and (kv_heads is None or kv_heads % len(cycle) == 0)
-        ]
-        if not cycles_with_sufficient_memory:
-            raise ValueError(
-                f"No tensor sharding found for model with "
-                f"hidden_size={command.model_card.hidden_size}"
-                f"{f', num_key_value_heads={kv_heads}' if kv_heads is not None else ''}"
-                f" across candidate cycles"
-            )
+    if command.sharding == Sharding.Tensor and not command.model_card.supports_tensor:
+        raise ValueError(
+            f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_card.model_id}"
+        )
+
+    # Uneven tensor sharding handles arbitrary world sizes — no divisibility check needed
     if command.sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
         "mlx-community/DeepSeek-V3.1-8bit"
     ):

@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import TypeAlias, final
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from exo.shared.models.model_cards import ModelCard
 from exo.utils.pydantic_ext import TaggedModel
@@ -90,6 +90,15 @@ class CfgShardMetadata(BaseShardMetadata):
 class TensorShardMetadata(BaseShardMetadata):
     shard_weights: list[float] | None = None
     shard_mode: TensorShardMode = TensorShardMode.Constant
+
+    @field_validator("shard_mode", mode="before")
+    @classmethod
+    def _coerce_shard_mode(cls, v: object) -> TensorShardMode:
+        if isinstance(v, str):
+            return TensorShardMode(v)
+        if isinstance(v, TensorShardMode):
+            return v
+        raise ValueError(f"expected TensorShardMode or str, got {type(v).__name__}")
 
 
 ShardMetadata: TypeAlias = (
