@@ -531,12 +531,13 @@ async def download_file_with_retry(
     skip_internet: bool = False,
     repo_url: str | None = None,
     session: aiohttp.ClientSession | None = None,
+    expected_size: int = 0,
 ) -> Path:
     n_attempts = 3
     for attempt in range(n_attempts):
         try:
             return await _download_file(
-                model_id, revision, path, target_dir, on_progress, skip_internet, repo_url=repo_url, session=session
+                model_id, revision, path, target_dir, on_progress, skip_internet, repo_url=repo_url, session=session, expected_size=expected_size
             )
         except HuggingFaceAuthenticationError:
             raise
@@ -573,6 +574,7 @@ async def _download_file(
     skip_internet: bool = False,
     repo_url: str | None = None,
     session: aiohttp.ClientSession | None = None,
+    expected_size: int = 0,
 ) -> Path:
     target_path = target_dir / path
 
@@ -610,7 +612,7 @@ async def _download_file(
         # P2P download from peer file server — no auth, no hash verification
         # Don't share the HF session; P2P is local with no TLS overhead
         return await _download_file_from_peer(
-            repo_url, model_id, path, target_dir, on_progress
+            repo_url, model_id, path, target_dir, on_progress, total_bytes=expected_size
         )
 
     length, etag = await file_meta(model_id, revision, path)
@@ -675,6 +677,7 @@ async def _download_file_from_peer(
     path: str,
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
+    total_bytes: int = 0,
 ) -> Path:
     """Download a file from a peer's file server over the local network.
 
@@ -691,29 +694,6 @@ async def _download_file_from_peer(
         "-o", str(partial_path),
         url,
     ]
-
-    # Get total size via HEAD request first for progress reporting
-    total_bytes = 0
-    try:
-        head_proc = await asyncio.create_subprocess_exec(
-            "curl", "-s", "-I", url,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        head_stdout, _ = await head_proc.communicate()
-        for line in head_stdout.decode().splitlines():
-            if line.lower().startswith("content-length:"):
-                total_bytes = int(line.split(":", 1)[1].strip())
-                break
-    except Exception:
-        pass
-
-    # Add existing partial size to total for progress
-    existing_bytes = 0
-    if await aios.path.exists(partial_path):
-        existing_bytes = (await aios.stat(partial_path)).st_size
-    if total_bytes > 0:
-        total_bytes += existing_bytes
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -1010,8 +990,8 @@ async def download_shard(
             start_time=time.time(),
         )
 
-    # P2P local transfers can handle more parallelism than HuggingFace CDN
-    effective_parallelism = len(filtered_file_list) if repo_url else max_parallel_downloads
+    # P2P can handle more parallelism than HF CDN, but don't spawn too many processes
+    effective_parallelism = min(16, len(filtered_file_list)) if repo_url else max_parallel_downloads
     semaphore = asyncio.Semaphore(effective_parallelism)
 
     def schedule_progress(
@@ -1037,6 +1017,7 @@ async def download_shard(
                 skip_internet=skip_internet,
                 repo_url=repo_url,
                 session=session,
+                expected_size=file.size or 0,
             )
 
     if not skip_download:
