@@ -4,16 +4,19 @@ Serves model files from EXO_MODELS_DIRS so that peer nodes can download
 model weights over the local network (e.g. Thunderbolt) instead of from
 HuggingFace.
 
+Uses sendfile() for zero-copy transfers — data goes straight from disk
+to socket without passing through Python.
+
 Listens on EXO_FILE_SERVER_PORT (default 52416).
 """
 
 import asyncio
+from pathlib import Path
 
 from aiohttp import web
 from loguru import logger
 
 from exo.shared.constants import (
-    EXO_DEFAULT_MODELS_DIR,
     EXO_FILE_SERVER_PORT,
     EXO_MODELS_DIRS,
     EXO_MODELS_READ_ONLY_DIRS,
@@ -37,7 +40,7 @@ async def _handle_model_file(request: web.Request) -> web.StreamResponse:
 
     The model_id is always two segments (e.g. mlx-community/Qwen3.5-397B-A17B-nvfp4).
     On disk it's normalized with "--" (e.g. mlx-community--Qwen3.5-397B-A17B-nvfp4).
-    Supports Range headers for resumable downloads.
+    Uses FileResponse for zero-copy sendfile() with Range header support.
     """
     full_match = request.match_info["path"]
     parts = full_match.split("/", 2)
@@ -50,69 +53,16 @@ async def _handle_model_file(request: web.Request) -> web.StreamResponse:
     normalized = model_id.replace("/", "--")
 
     # Search all model directories for the file
-    full_path = None
     for model_dir in _all_model_dirs():
-        candidate = (EXO_DEFAULT_MODELS_DIR.parent / model_dir / normalized / file_path)
-        # Use the directory directly since _all_model_dirs returns resolved paths
-        from pathlib import Path
-
         candidate = Path(model_dir) / normalized / file_path
         try:
             candidate = candidate.resolve()
             if candidate.is_file() and candidate.is_relative_to(model_dir):
-                full_path = candidate
-                break
+                return web.FileResponse(candidate)
         except (ValueError, OSError):
             continue
 
-    if full_path is None:
-        raise web.HTTPNotFound(text=f"File not found: {model_id}/{file_path}")
-
-    file_size = full_path.stat().st_size
-
-    # Parse Range header for resume support
-    range_header = request.headers.get("Range")
-    start = 0
-    if range_header and range_header.startswith("bytes="):
-        range_spec = range_header[6:]
-        range_parts = range_spec.split("-")
-        if range_parts[0]:
-            start = int(range_parts[0])
-
-    if start >= file_size:
-        raise web.HTTPRequestRangeNotSatisfiable(
-            headers={"Content-Range": f"bytes */{file_size}"}
-        )
-
-    remaining = file_size - start
-    status = 206 if start > 0 else 200
-
-    response = web.StreamResponse(
-        status=status,
-        headers={
-            "Content-Length": str(remaining),
-            "Content-Type": "application/octet-stream",
-            "Accept-Ranges": "bytes",
-        },
-    )
-
-    if start > 0:
-        response.headers["Content-Range"] = f"bytes {start}-{file_size - 1}/{file_size}"
-
-    await response.prepare(request)
-
-    chunk_size = 64 * 1024 * 1024  # 64MB chunks
-    with open(full_path, "rb") as f:
-        if start > 0:
-            f.seek(start)
-        while True:
-            chunk = f.read(chunk_size)
-            if not chunk:
-                break
-            await response.write(chunk)
-
-    await response.write_eof()
-    return response
+    raise web.HTTPNotFound(text=f"File not found: {model_id}/{file_path}")
 
 
 async def run_file_server() -> None:
