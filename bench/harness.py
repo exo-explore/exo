@@ -462,9 +462,8 @@ def run_planning_phase(
         )
         logger.info(f"Started download on {node_id}")
 
-    # Wait for downloads
-    start = time.time()
-    while time.time() - start < timeout:
+    # Wait for downloads (no timeout — poll until complete or failed)
+    while True:
         all_done = True
         for node_id in node_ids:
             node_downloads = client.get_node_downloads(node_id) or []
@@ -514,9 +513,7 @@ def run_planning_phase(
             if download_t0 is not None:
                 return time.perf_counter() - download_t0
             return None
-        time.sleep(1)
-
-    raise TimeoutError("Downloads did not complete in time")
+        time.sleep(10)
 
 
 def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
@@ -564,8 +561,8 @@ def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument(
         "--settle-timeout",
         type=float,
-        default=0,
-        help="Max seconds to wait for the cluster to produce valid placements (0 = try once).",
+        default=7200,
+        help="Max seconds to wait for the cluster to produce valid placements (default: 7200).",
     )
     ap.add_argument(
         "--danger-delete-downloads",
