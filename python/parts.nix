@@ -172,6 +172,14 @@ let
               '';
               autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ lib.optionals cudaSupport [ "libcuda.so.1" ];
             });
+          torch-c-dlpack-ext = prev.torch-c-dlpack-ext.overrideAttrs (old:
+            {
+              nativebuildInputs = (old.nativebuildInputs or [ ]) ++ [ pkgs.autoAddDriverRunpath ];
+              preFixup = (old.preFixup or "") + ''
+                addAutoPatchelfSearchPath "${final.torch}"
+	      '';
+              autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ lib.optionals cudaSupport [ "libcuda.so.1" ];
+            });
           xgrammar = prev.xgrammar.overrideAttrs (old: {
             nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.cmake pkgs.autoPatchelfHook ];
           });
