@@ -52,6 +52,7 @@ from exo.shared.types.worker.instances import (
     MlxRingInstance,
 )
 from exo.shared.types.worker.shards import (
+    AsymmetricTensorShardMetadata,
     CfgShardMetadata,
     PipelineShardMetadata,
     ShardMetadata,
@@ -65,6 +66,9 @@ from exo.worker.engines.mlx.auto_parallel import (
     get_layers,
     pipeline_auto_parallel,
     tensor_auto_parallel,
+)
+from exo.worker.engines.mlx.asymmetric_parallel import (
+    asymmetric_tensor_auto_parallel,
 )
 from exo.worker.runner.bootstrap import logger
 
@@ -275,6 +279,14 @@ def shard_and_load(
             model = tensor_auto_parallel(
                 model, group, timeout_seconds, on_timeout, on_layer_loaded
             )
+        case AsymmetricTensorShardMetadata():
+            ratios_list = [shard_metadata.ratio, 1.0 - shard_metadata.ratio]
+            logger.info(
+                f"loading model from {model_path} with asymmetric tensor parallelism "
+                f"(ratios={[f'{r:.0%}' for r in ratios_list]})"
+            )
+            model = asymmetric_tensor_auto_parallel(model, group, ratios_list)
+            eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = pipeline_auto_parallel(
