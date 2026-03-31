@@ -376,7 +376,9 @@ def make_kv_cache(
             quantized = 0
             for i, c in enumerate(caches):
                 if isinstance(c, KVCache):
-                    caches[i] = QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
+                    qc = QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
+                    qc.step = 16384
+                    caches[i] = qc
                     quantized += 1
             logger.info(f"Using quantized KV cache (bits={KV_CACHE_BITS}, group_size={CACHE_GROUP_SIZE}) for {quantized}/{len(caches)} layers")
         else:
