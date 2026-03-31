@@ -69,6 +69,35 @@ class ExoClient:
     def post_bench_chat_completions(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request_json("POST", "/bench/chat/completions", body=payload)
 
+    def get_state_path(self, path: str) -> Any:
+        try:
+            return self.request_json("GET", f"/state/{path}")
+        except ExoHttpError as e:
+            if e.status == 404:
+                return None
+            raise
+
+    def get_instance(self, instance_id: str) -> dict[str, Any] | None:
+        return self.get_state_path(f"instances/{instance_id}")
+
+    def get_runner(self, runner_id: str) -> dict[str, Any] | None:
+        return self.get_state_path(f"runners/{runner_id}")
+
+    def get_node_downloads(self, node_id: str) -> list[dict[str, Any]] | None:
+        return self.get_state_path(f"downloads/{node_id}")
+
+    def get_node_disk(self, node_id: str) -> dict[str, Any] | None:
+        return self.get_state_path(f"nodeDisk/{node_id}")
+
+    def get_node_system(self, node_id: str) -> dict[str, Any] | None:
+        return self.get_state_path(f"nodeSystem/{node_id}")
+
+    def get_node_identities(self) -> dict[str, Any] | None:
+        return self.get_state_path("nodeIdentities")
+
+    def get_topology(self) -> dict[str, Any] | None:
+        return self.get_state_path("topology")
+
 
 def unwrap_instance(instance: dict[str, Any]) -> dict[str, Any]:
     if len(instance) != 1:
@@ -97,6 +126,11 @@ def runner_ids_from_instance(instance: dict[str, Any]) -> list[str]:
     return list(runner_to_shard.keys())
 
 
+def node_ids_from_instance(instance: dict[str, Any]) -> list[str]:
+    inner = unwrap_instance(instance)
+    return list(inner["shardAssignments"]["nodeToRunner"].keys())
+
+
 def runner_ready(runner: dict[str, Any]) -> bool:
     return "RunnerReady" in runner
 
@@ -116,13 +150,12 @@ def wait_for_instance_ready(
 ) -> None:
     start_time = time.time()
     instance_existed = False
+    last_loaded: dict[str, int] = {}
     while time.time() - start_time < timeout:
-        state = client.request_json("GET", "/state")
-        instances = state.get("instances", {})
+        instance = client.get_instance(instance_id)
 
-        if instance_id not in instances:
+        if instance is None:
             if instance_existed:
-                # Instance was deleted after being created - likely due to runner failure
                 raise RuntimeError(
                     f"Instance {instance_id} was deleted (runner may have failed)"
                 )
@@ -130,18 +163,25 @@ def wait_for_instance_ready(
             continue
 
         instance_existed = True
-        instance = instances[instance_id]
-        runner_ids = runner_ids_from_instance(instance)
-        runners = state.get("runners", {})
+        rids = runner_ids_from_instance(instance)
 
-        # Check for failed runners first
-        for rid in runner_ids:
-            runner = runners.get(rid, {})
+        all_ready = True
+        for rid in rids:
+            runner = client.get_runner(rid) or {}
             if runner_failed(runner):
                 error_msg = get_runner_failed_message(runner) or "Unknown error"
                 raise RuntimeError(f"Runner {rid} failed: {error_msg}")
+            if "RunnerLoading" in runner:
+                loading = runner["RunnerLoading"]
+                loaded = loading.get("layersLoaded", 0)
+                total = loading.get("totalLayers", 0)
+                if total > 0 and last_loaded.get(rid) != loaded:
+                    last_loaded[rid] = loaded
+                    logger.debug(f"Runner {rid}: loading layers {loaded}/{total}")
+            if not runner_ready(runner):
+                all_ready = False
 
-        if all(runner_ready(runners.get(rid, {})) for rid in runner_ids):
+        if all_ready:
             return
 
         time.sleep(0.1)
@@ -163,6 +203,23 @@ def wait_for_instance_gone(
             raise
 
     raise TimeoutError(f"Instance {instance_id} did not get deleted within {timeout=}")
+
+
+def capture_cluster_snapshot(client: ExoClient) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {}
+    identities = client.get_node_identities()
+    if identities:
+        snapshot["nodeIdentities"] = identities
+    topology = client.get_topology()
+    if topology:
+        snapshot["topology"] = topology
+    node_memory = client.get_state_path("nodeMemory")
+    if node_memory:
+        snapshot["nodeMemory"] = node_memory
+    node_system = client.get_state_path("nodeSystem")
+    if node_system:
+        snapshot["nodeSystem"] = node_system
+    return snapshot
 
 
 def resolve_model_short_id(
@@ -326,16 +383,11 @@ def run_planning_phase(
     node_ids = list(inner["shardAssignments"]["nodeToRunner"].keys())
     runner_to_shard = inner["shardAssignments"]["runnerToShard"]
 
-    state = client.request_json("GET", "/state")
-    downloads = state.get("downloads", {})
-    node_disk = state.get("nodeDisk", {})
-
     needs_download = False
 
     for node_id in node_ids:
-        node_downloads = downloads.get(node_id, [])
+        node_downloads = client.get_node_downloads(node_id) or []
 
-        # Check if model already downloaded on this node
         already_downloaded = any(
             "DownloadCompleted" in p
             and unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"][
@@ -349,8 +401,7 @@ def run_planning_phase(
 
         needs_download = True
 
-        # Wait for disk info if settle_deadline is set
-        disk_info = node_disk.get(node_id, {})
+        disk_info = client.get_node_disk(node_id) or {}
         backoff = _SETTLE_INITIAL_BACKOFF_S
         while not disk_info and settle_deadline and time.monotonic() < settle_deadline:
             remaining = settle_deadline - time.monotonic()
@@ -359,9 +410,7 @@ def run_planning_phase(
             )
             time.sleep(min(backoff, remaining))
             backoff = min(backoff * _SETTLE_BACKOFF_MULTIPLIER, _SETTLE_MAX_BACKOFF_S)
-            state = client.request_json("GET", "/state")
-            node_disk = state.get("nodeDisk", {})
-            disk_info = node_disk.get(node_id, {})
+            disk_info = client.get_node_disk(node_id) or {}
 
         if not disk_info:
             logger.warning(f"No disk info for {node_id}, skipping space check")
@@ -377,7 +426,6 @@ def run_planning_phase(
                 f"have {avail // (1024**3)}GB. Use --danger-delete-downloads to free space."
             )
 
-        # Delete from smallest to largest (skip read-only models)
         completed = [
             (
                 unwrap_instance(p["DownloadCompleted"]["shardMetadata"])["modelCard"][
@@ -417,21 +465,20 @@ def run_planning_phase(
     # Wait for downloads
     start = time.time()
     while time.time() - start < timeout:
-        state = client.request_json("GET", "/state")
-        downloads = state.get("downloads", {})
         all_done = True
         for node_id in node_ids:
+            node_downloads = client.get_node_downloads(node_id) or []
             done = any(
                 "DownloadCompleted" in p
                 and unwrap_instance(p["DownloadCompleted"]["shardMetadata"])[
                     "modelCard"
                 ]["modelId"]
                 == full_model_id
-                for p in downloads.get(node_id, [])
+                for p in node_downloads
             )
             failed = [
                 p["DownloadFailed"]["errorMessage"]
-                for p in downloads.get(node_id, [])
+                for p in node_downloads
                 if "DownloadFailed" in p
                 and unwrap_instance(p["DownloadFailed"]["shardMetadata"])["modelCard"][
                     "modelId"
@@ -442,6 +489,27 @@ def run_planning_phase(
                 raise RuntimeError(f"Download failed on {node_id}: {failed[0]}")
             if not done:
                 all_done = False
+                ongoing = [
+                    p
+                    for p in node_downloads
+                    if "DownloadOngoing" in p
+                    and unwrap_instance(p["DownloadOngoing"]["shardMetadata"])[
+                        "modelCard"
+                    ]["modelId"]
+                    == full_model_id
+                ]
+                if ongoing:
+                    prog = ongoing[0]["DownloadOngoing"]["downloadProgress"]
+                    speed_mb = prog.get("speed", 0) / (1024 * 1024)
+                    eta_s = prog.get("etaMs", 0) / 1000
+                    dl_bytes = prog.get("downloaded", {}).get("inBytes", 0)
+                    total_bytes = prog.get("total", {}).get("inBytes", 0)
+                    pct = (dl_bytes / total_bytes * 100) if total_bytes else 0
+                    logger.info(
+                        f"Downloading on {node_id}: {pct:.1f}% @ {speed_mb:.1f} MB/s, "
+                        f"ETA {eta_s:.0f}s "
+                        f"({prog.get('completedFiles', 0)}/{prog.get('totalFiles', 0)} files)"
+                    )
         if all_done:
             if download_t0 is not None:
                 return time.perf_counter() - download_t0

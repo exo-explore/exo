@@ -9,5 +9,7 @@ quantization = "8bit"
 base_model = "Qwen3 Next 80B"
 capabilities = ["text"]
 
+context_length = 262144
+
 [storage_size]
 in_bytes = 88814387200

@@ -1,12 +1,36 @@
 """OpenAI Responses API adapter for converting requests/responses."""
 
+import json
 from collections.abc import AsyncGenerator
 from itertools import count
 from typing import Any
 
+from exo.api.adapters.chat_completions import (
+    extract_base64_from_data_url,
+    fetch_image_url,
+)
 from exo.api.types import Usage
 from exo.api.types.openai_responses import (
+    ApplyPatchCallInputItem,
+    ApplyPatchCallOutputInputItem,
+    CodeInterpreterCallInputItem,
+    CompactionInputItem,
+    ComputerCallInputItem,
+    ComputerCallOutputInputItem,
+    CustomToolCallInputItem,
+    CustomToolCallOutputInputItem,
+    FileSearchCallInputItem,
     FunctionCallInputItem,
+    FunctionCallOutputInputItem,
+    ImageGenerationCallInputItem,
+    ItemReferenceInputItem,
+    LocalShellCallInputItem,
+    LocalShellCallOutputInputItem,
+    McpApprovalRequestInputItem,
+    McpApprovalResponseInputItem,
+    McpCallInputItem,
+    McpListToolsInputItem,
+    ReasoningInputItem,
     ResponseCompletedEvent,
     ResponseContentPart,
     ResponseContentPartAddedEvent,
@@ -16,6 +40,7 @@ from exo.api.types.openai_responses import (
     ResponseFunctionCallArgumentsDoneEvent,
     ResponseFunctionCallItem,
     ResponseInProgressEvent,
+    ResponseInputImagePart,
     ResponseInputMessage,
     ResponseItem,
     ResponseMessageItem,
@@ -34,7 +59,13 @@ from exo.api.types.openai_responses import (
     ResponseTextDeltaEvent,
     ResponseTextDoneEvent,
     ResponseUsage,
+    ShellCallInputItem,
+    ShellCallOutputInputItem,
+    ToolSearchCallInputItem,
+    ToolSearchOutputInputItem,
+    WebSearchCallInputItem,
 )
+from exo.shared.logging import logger
 from exo.shared.types.chunks import (
     ErrorChunk,
     PrefillProgressChunk,
@@ -58,19 +89,23 @@ def _extract_content(content: str | list[ResponseContentPart]) -> str:
     """Extract plain text from a content field that may be a string or list of parts."""
     if isinstance(content, str):
         return content
-    return "".join(part.text for part in content)
+    return "".join(
+        part.text for part in content if not isinstance(part, ResponseInputImagePart)
+    )
 
 
-def responses_request_to_text_generation(
+async def responses_request_to_text_generation(
     request: ResponsesRequest,
 ) -> TextGenerationTaskParams:
     input_value: list[InputMessage]
     built_chat_template: list[dict[str, Any]] | None = None
+    images: list[str] = []
     if isinstance(request.input, str):
         input_value = [InputMessage(role="user", content=request.input)]
     else:
         input_messages: list[InputMessage] = []
         chat_template_messages: list[dict[str, Any]] = []
+        has_images = False
 
         if request.instructions is not None:
             chat_template_messages.append(
@@ -78,43 +113,216 @@ def responses_request_to_text_generation(
             )
 
         for item in request.input:
-            if isinstance(item, ResponseInputMessage):
-                content = _extract_content(item.content)
-                if item.role in ("user", "assistant", "developer"):
-                    input_messages.append(InputMessage(role=item.role, content=content))
-                if item.role == "system":
+            match item:
+                case ResponseInputMessage():
+                    content = _extract_content(item.content)
+                    if isinstance(item.content, list):
+                        for part in item.content:
+                            if (
+                                isinstance(part, ResponseInputImagePart)
+                                and part.image_url
+                            ):
+                                url = part.image_url
+                                if url.startswith(("http://", "https://")):
+                                    images.append(await fetch_image_url(url))
+                                else:
+                                    images.append(extract_base64_from_data_url(url))
+                                has_images = True
+                    if item.role in ("user", "assistant", "developer"):
+                        input_messages.append(
+                            InputMessage(role=item.role, content=content)
+                        )
+                    if item.role == "system":
+                        chat_template_messages.append(
+                            {"role": "system", "content": content}
+                        )
+                    elif has_images:
+                        multimodal: list[dict[str, Any]] = []
+                        if isinstance(item.content, list):
+                            for part in item.content:
+                                if isinstance(part, ResponseInputImagePart):
+                                    multimodal.append({"type": "image"})
+                                elif hasattr(part, "text"):
+                                    multimodal.append(
+                                        {"type": "text", "text": part.text}
+                                    )
+                        chat_template_messages.append(
+                            {"role": item.role, "content": multimodal}
+                        )
+                        has_images = False
+                    else:
+                        chat_template_messages.append(
+                            {"role": item.role, "content": content}
+                        )
+                case (
+                    FunctionCallInputItem()
+                    | McpCallInputItem()
+                    | CustomToolCallInputItem()
+                ):
                     chat_template_messages.append(
-                        {"role": "system", "content": content}
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": item.call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": item.name,
+                                        "arguments": item.arguments,
+                                    },
+                                }
+                            ],
+                        }
                     )
-                else:
+                case (
+                    LocalShellCallInputItem()
+                    | ShellCallInputItem()
+                    | ComputerCallInputItem()
+                ):
                     chat_template_messages.append(
-                        {"role": item.role, "content": content}
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": item.call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": item.type,
+                                        "arguments": json.dumps(item.action),
+                                    },
+                                }
+                            ],
+                        }
                     )
-            elif isinstance(item, FunctionCallInputItem):
-                chat_template_messages.append(
-                    {
-                        "role": "assistant",
-                        "content": "",
-                        "tool_calls": [
+                case ApplyPatchCallInputItem():
+                    chat_template_messages.append(
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": item.call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": "apply_patch",
+                                        "arguments": json.dumps({"patch": item.patch}),
+                                    },
+                                }
+                            ],
+                        }
+                    )
+                case (
+                    WebSearchCallInputItem()
+                    | FileSearchCallInputItem()
+                    | CodeInterpreterCallInputItem()
+                    | ImageGenerationCallInputItem()
+                    | ToolSearchCallInputItem()
+                ):
+                    args: dict[str, Any] = {}
+                    if isinstance(item, WebSearchCallInputItem):
+                        args = {"query": item.query}
+                    elif isinstance(item, FileSearchCallInputItem):
+                        args = {"queries": item.queries}
+                    elif isinstance(item, CodeInterpreterCallInputItem):
+                        args = {"code": item.code}
+                    elif isinstance(item, ImageGenerationCallInputItem):
+                        args = {"prompt": item.prompt}
+                    else:
+                        args = {"query": item.query}
+                    chat_template_messages.append(
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": item.call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": item.type,
+                                        "arguments": json.dumps(args),
+                                    },
+                                }
+                            ],
+                        }
+                    )
+                case (
+                    FunctionCallOutputInputItem()
+                    | LocalShellCallOutputInputItem()
+                    | ShellCallOutputInputItem()
+                    | ApplyPatchCallOutputInputItem()
+                    | ComputerCallOutputInputItem()
+                    | CustomToolCallOutputInputItem()
+                    | ToolSearchOutputInputItem()
+                ):
+                    output = (
+                        item.output
+                        if isinstance(item.output, str)
+                        else json.dumps(item.output)
+                    )
+                    chat_template_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": item.call_id,
+                            "content": output,
+                        }
+                    )
+                case ReasoningInputItem():
+                    reasoning_text = ""
+                    if item.content:
+                        reasoning_text = "".join(
+                            entry.get("text", "") for entry in item.content
+                        )
+                    elif item.summary:
+                        reasoning_text = "".join(
+                            entry.get("text", "") for entry in item.summary
+                        )
+                    if reasoning_text:
+                        chat_template_messages.append(
+                            {"role": "assistant", "content": reasoning_text}
+                        )
+                case CompactionInputItem():
+                    if item.summary:
+                        chat_template_messages.append(
+                            {"role": "system", "content": item.summary}
+                        )
+                case McpListToolsInputItem():
+                    tools_desc = ", ".join(t.get("name", "") for t in item.tools)
+                    if tools_desc:
+                        chat_template_messages.append(
                             {
-                                "id": item.call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": item.name,
-                                    "arguments": item.arguments,
-                                },
+                                "role": "system",
+                                "content": f"Available MCP tools ({item.server_label}): {tools_desc}",
                             }
-                        ],
-                    }
-                )
-            else:
-                chat_template_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": item.call_id,
-                        "content": item.output,
-                    }
-                )
+                        )
+                case McpApprovalRequestInputItem():
+                    chat_template_messages.append(
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": item.call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": item.name,
+                                        "arguments": item.arguments,
+                                    },
+                                }
+                            ],
+                        }
+                    )
+                case McpApprovalResponseInputItem():
+                    chat_template_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": item.approval_request_id,
+                            "content": f"{'Approved' if item.approve else 'Denied'}{': ' + item.reason if item.reason else ''}",
+                        }
+                    )
+                case ItemReferenceInputItem():
+                    logger.info("Cannot handle ItemReferenceInputItem, skipping")
 
         input_value = (
             input_messages
@@ -165,6 +373,7 @@ def responses_request_to_text_generation(
         chat_template_messages=built_chat_template or request.chat_template_messages,
         reasoning_effort=resolved_effort,
         enable_thinking=resolved_thinking,
+        images=images,
     )
 
 
