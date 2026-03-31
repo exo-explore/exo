@@ -168,7 +168,6 @@ def pipeline_parallel_prefill(
                 # activations. Without this, all chunks' computation graphs
                 # accumulate in memory causing OOM on long prompts.
                 mx.eval([c.state for c in _prompt_cache])  # type: ignore
-                mx.clear_cache()
 
                 prompt_progress_callback(processed, total)
 
@@ -251,7 +250,7 @@ def prefill(
 
     is_pipeline = _has_pipeline_communication_layer(model)
 
-    prefill_step_size = 512
+    prefill_step_size = 4096
 
     try:
         if is_pipeline and num_tokens >= prefill_step_size:
