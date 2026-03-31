@@ -529,12 +529,13 @@ async def download_file_with_retry(
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
     on_connection_lost: Callable[[], None] = lambda: None,
     skip_internet: bool = False,
+    repo_url: str | None = None,
 ) -> Path:
     n_attempts = 3
     for attempt in range(n_attempts):
         try:
             return await _download_file(
-                model_id, revision, path, target_dir, on_progress, skip_internet
+                model_id, revision, path, target_dir, on_progress, skip_internet, repo_url=repo_url
             )
         except HuggingFaceAuthenticationError:
             raise
@@ -569,11 +570,12 @@ async def _download_file(
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
     skip_internet: bool = False,
+    repo_url: str | None = None,
 ) -> Path:
     target_path = target_dir / path
 
     if await aios.path.exists(target_path):
-        if skip_internet:
+        if skip_internet or repo_url:
             return target_path
 
         local_size = (await aios.stat(target_path)).st_size
@@ -601,6 +603,13 @@ async def _download_file(
         )
 
     await aios.makedirs((target_dir / path).parent, exist_ok=True)
+
+    if repo_url:
+        # P2P download from peer file server — no auth, no hash verification
+        return await _download_file_from_peer(
+            repo_url, model_id, path, target_dir, on_progress
+        )
+
     length, etag = await file_meta(model_id, revision, path)
     remote_hash = etag[:-5] if etag.endswith("-gzip") else etag
     partial_path = target_dir / f"{path}.partial"
@@ -649,6 +658,51 @@ async def _download_file(
     await aios.rename(partial_path, target_dir / path)
     on_progress(length, length, True)
     return target_dir / path
+
+
+async def _download_file_from_peer(
+    repo_url: str,
+    model_id: ModelId,
+    path: str,
+    target_dir: Path,
+    on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
+) -> Path:
+    """Download a file from a peer's file server over the local network."""
+    target_path = target_dir / path
+    url = f"{repo_url}/{model_id}/{path}"
+    partial_path = target_dir / f"{path}.partial"
+    resume_byte_pos = (
+        (await aios.stat(partial_path)).st_size
+        if (await aios.path.exists(partial_path))
+        else None
+    )
+
+    headers: dict[str, str] = {}
+    if resume_byte_pos:
+        headers["Range"] = f"bytes={resume_byte_pos}-"
+
+    n_read = resume_byte_pos or 0
+    async with (
+        create_http_session(timeout_profile="long") as session,
+        session.get(url, headers=headers) as r,
+    ):
+        if r.status == 404:
+            raise FileNotFoundError(f"File not found on peer: {url}")
+        assert r.status in [200, 206], (
+            f"Failed to download {path} from peer {url}: {r.status}"
+        )
+        total_bytes = n_read + int(r.headers.get("Content-Length", 0))
+        async with aiofiles.open(
+            partial_path, "ab" if resume_byte_pos else "wb"
+        ) as f:
+            while chunk := await r.content.read(8 * 1024 * 1024):
+                n_read = n_read + (await f.write(chunk))
+                on_progress(n_read, total_bytes, False)
+
+    await aios.rename(partial_path, target_path)
+    on_progress(n_read, n_read, True)
+    logger.info(f"P2P download complete: {path} from {repo_url}")
+    return target_path
 
 
 def calculate_repo_progress(
@@ -768,6 +822,7 @@ async def download_shard(
     skip_internet: bool = False,
     allow_patterns: list[str] | None = None,
     on_connection_lost: Callable[[], None] = lambda: None,
+    repo_url: str | None = None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
         logger.debug(f"Downloading {shard.model_card.model_id=}")
@@ -931,6 +986,7 @@ async def download_shard(
                 ),
                 on_connection_lost=on_connection_lost,
                 skip_internet=skip_internet,
+                repo_url=repo_url,
             )
 
     if not skip_download:

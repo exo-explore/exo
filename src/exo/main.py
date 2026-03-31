@@ -13,6 +13,7 @@ from pydantic import PositiveInt
 import exo.routing.topics as topics
 from exo.api.main import API
 from exo.download.coordinator import DownloadCoordinator
+from exo.download.file_server import run_file_server
 from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
@@ -155,6 +156,7 @@ class Node:
                 tg.start_soon(self.master.run)
             if self.api:
                 tg.start_soon(self.api.run)
+            tg.start_soon(run_file_server)
             tg.start_soon(self._elect_loop)
 
     def shutdown(self):

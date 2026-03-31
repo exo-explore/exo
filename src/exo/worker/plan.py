@@ -2,8 +2,10 @@
 
 from collections.abc import Mapping, Sequence
 
+from exo.shared.constants import EXO_FILE_SERVER_PORT
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.profiling import NodeNetworkInfo
 from exo.shared.types.tasks import (
     CancelTask,
     ConnectToGroup,
@@ -51,13 +53,14 @@ def plan(
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
     tasks: Mapping[TaskId, Task],
     input_chunk_buffer: Mapping[CommandId, Mapping[int, InputImageChunk]] | None = None,
+    node_network: Mapping[NodeId, NodeNetworkInfo] | None = None,
 ) -> Task | None:
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
         _cancel_tasks(runners, tasks)
         or _kill_runner(runners, all_runners, instances)
         or _create_runner(node_id, runners, instances)
-        or _model_needs_download(node_id, runners, global_download_status)
+        or _model_needs_download(node_id, runners, global_download_status, node_network or {})
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
@@ -112,10 +115,48 @@ def _create_runner(
         )
 
 
+def find_peer_repo_url(
+    node_id: NodeId,
+    model_id: str,
+    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+) -> str | None:
+    """Find a peer that already has the model downloaded and return its file server URL.
+
+    Prefers Thunderbolt IPv4 IPs over other interfaces to maximize transfer speed.
+    Skips IPv6 link-local addresses (fe80::) which aiohttp cannot connect to.
+    """
+    for peer_id, peer_downloads in global_download_status.items():
+        if peer_id == node_id:
+            continue
+        for dp in peer_downloads:
+            if (
+                isinstance(dp, DownloadCompleted)
+                and dp.shard_metadata.model_card.model_id == model_id
+            ):
+                net_info = node_network.get(peer_id)
+                if net_info is None or not net_info.interfaces:
+                    continue
+                best_ip: str | None = None
+                for iface in net_info.interfaces:
+                    ip = iface.ip_address
+                    if ":" in ip or ip.startswith("fe80"):
+                        continue
+                    if iface.interface_type == "thunderbolt":
+                        best_ip = ip
+                        break
+                    if best_ip is None:
+                        best_ip = ip
+                if best_ip:
+                    return f"http://{best_ip}:{EXO_FILE_SERVER_PORT}"
+    return None
+
+
 def _model_needs_download(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
 ) -> DownloadModel | None:
     local_downloads = global_download_status.get(node_id, [])
     download_status = {
@@ -131,10 +172,14 @@ def _model_needs_download(
                 (DownloadOngoing, DownloadCompleted, DownloadFailed),
             )
         ):
+            repo_url = find_peer_repo_url(
+                node_id, model_id, global_download_status, node_network
+            )
             # We don't invalidate download_status randomly in case a file gets deleted on disk
             return DownloadModel(
                 instance_id=runner.bound_instance.instance.instance_id,
                 shard_metadata=runner.bound_instance.bound_shard,
+                repo_url=repo_url,
             )
 
 
