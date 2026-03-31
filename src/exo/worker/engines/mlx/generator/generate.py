@@ -169,10 +169,18 @@ def pipeline_parallel_prefill(
                 # accumulate in memory causing OOM on long prompts.
                 mx.eval([c.state for c in _prompt_cache])  # type: ignore
 
-                # Break shared-buffer references in DeltaNet caches.
-                # ArraysCache stores slices of larger tensors (conv_input, state)
-                # that keep the parent buffer alive via MLX's zero-copy slicing.
-                # mx.contiguous creates independent copies, freeing the parents.
+                # Break shared-buffer references in DeltaNet (ArraysCache) entries.
+                #
+                # Even after mx.eval materializes the cache arrays, MLX slices
+                # share the parent tensor's Data buffer via shared_ptr. The model-
+                # level mx.contiguous (in GatedDeltaNet.__call__) handles new
+                # cache writes, but after eval the materialized arrays may still
+                # reference computation graph buffers. This second pass ensures
+                # all ArraysCache entries are fully independent copies.
+                #
+                # Without this: ~540 KB/tok leak, 24K token ceiling on 128GB.
+                # With this:    ~20 KB/tok,  100K+ tokens feasible.
+                # See prefill_memory_leak_fix.md in project memory for full analysis.
                 for _c in _prompt_cache:
                     if isinstance(_c, ArraysCache):
                         _c.cache = [mx.contiguous(x) if x is not None else x for x in _c.cache]
