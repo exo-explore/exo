@@ -25,6 +25,7 @@ from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadFailed,
     DownloadOngoing,
+    DownloadPaused,
     DownloadProgress,
 )
 from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
@@ -169,7 +170,7 @@ def _model_needs_download(
             model_id not in download_status
             or not isinstance(
                 download_status[model_id],
-                (DownloadOngoing, DownloadCompleted, DownloadFailed),
+                (DownloadOngoing, DownloadCompleted, DownloadFailed, DownloadPaused),
             )
         ):
             repo_url = find_peer_repo_url(

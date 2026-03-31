@@ -33,6 +33,7 @@ from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadFailed,
     DownloadOngoing,
+    DownloadPaused,
     DownloadPending,
     DownloadProgress,
 )
@@ -155,17 +156,17 @@ class DownloadCoordinator:
 
     async def _cancel_download(self, model_id: ModelId) -> None:
         if model_id in self.active_downloads and model_id in self.download_status:
-            logger.info(f"Cancelling download for {model_id}")
+            logger.info(f"Pausing download for {model_id}")
             self.active_downloads[model_id].cancel()
             current_status = self.download_status[model_id]
-            pending = DownloadPending(
+            paused = DownloadPaused(
                 shard_metadata=current_status.shard_metadata,
                 node_id=self.node_id,
                 model_directory=self._default_model_dir(model_id),
             )
-            self.download_status[model_id] = pending
+            self.download_status[model_id] = paused
             await self.event_sender.send(
-                NodeDownloadProgress(download_progress=pending)
+                NodeDownloadProgress(download_progress=paused)
             )
 
     async def _start_download(self, shard: ShardMetadata, repo_url: str | None = None) -> None:

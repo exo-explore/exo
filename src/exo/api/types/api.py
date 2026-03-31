@@ -430,12 +430,12 @@ class DeleteDownloadResponse(CamelCaseModel):
     command_id: CommandId
 
 
-class CancelDownloadParams(CamelCaseModel):
+class PauseDownloadParams(CamelCaseModel):
     target_node_id: NodeId
     model_id: ModelId
 
 
-class CancelDownloadResponse(CamelCaseModel):
+class PauseDownloadResponse(CamelCaseModel):
     command_id: CommandId
 
 

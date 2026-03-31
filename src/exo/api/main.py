@@ -55,8 +55,6 @@ from exo.api.types import (
     BenchImageGenerationResponse,
     BenchImageGenerationTaskParams,
     CancelCommandResponse,
-    CancelDownloadParams,
-    CancelDownloadResponse,
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionRequest,
@@ -82,6 +80,8 @@ from exo.api.types import (
     ImageSize,
     ModelList,
     ModelListModel,
+    PauseDownloadParams,
+    PauseDownloadResponse,
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
@@ -353,7 +353,7 @@ class API:
         self.app.get("/state/{path:path}")(self.get_state)
         self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
-        self.app.post("/download/cancel")(self.cancel_download)
+        self.app.post("/download/pause")(self.pause_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.get("/v1/traces")(self.list_traces)
         self.app.post("/v1/traces/delete")(self.delete_traces)
@@ -1873,15 +1873,15 @@ class API:
         await self._send_download(command)
         return StartDownloadResponse(command_id=command.command_id)
 
-    async def cancel_download(
-        self, payload: CancelDownloadParams
-    ) -> CancelDownloadResponse:
+    async def pause_download(
+        self, payload: PauseDownloadParams
+    ) -> PauseDownloadResponse:
         command = CancelDownload(
             target_node_id=payload.target_node_id,
             model_id=ModelId(payload.model_id),
         )
         await self._send_download(command)
-        return CancelDownloadResponse(command_id=command.command_id)
+        return PauseDownloadResponse(command_id=command.command_id)
 
     async def delete_download(
         self, node_id: NodeId, model_id: ModelId
