@@ -253,7 +253,6 @@ def run_one_completion(
     elapsed = time.perf_counter() - t0
 
     stats = out.get("generation_stats")
-    power = out.get("power_usage") or {}
 
     # Extract preview, handling None content (common for thinking models)
     choices = out.get("choices") or [{}]
@@ -265,7 +264,6 @@ def run_one_completion(
         "elapsed_s": elapsed,
         "output_text_preview": preview,
         "stats": stats,
-        "power_usage": power,
     }, pp_tokens
 
 
@@ -715,23 +713,10 @@ def main() -> int:
                         peak = mean(
                             x["stats"]["peak_memory_usage"]["inBytes"] for x in runs
                         )
-                        avg_power = mean(
-                            x["power_usage"].get("total_avg_sys_power_watts", 0.0)
-                            for x in runs
-                        )
-                        total_energy = sum(
-                            x["power_usage"].get("total_energy_joules", 0.0)
-                            for x in runs
-                        )
-
-                        power_str = ""
-                        if avg_power > 0:
-                            power_str = f"    power={avg_power:.1f}W  energy={total_energy:.1f}J"
-
                         summary = (
                             f"prompt_tps={prompt_tps:.2f} gen_tps={gen_tps:.2f}    "
                             f"prompt_tokens={ptok} gen_tokens={gtok}    "
-                            f"peak_memory={format_peak_memory(peak)}{power_str}"
+                            f"peak_memory={format_peak_memory(peak)}"
                         )
                         if sampler and inference_windows:
                             joules = sum(
