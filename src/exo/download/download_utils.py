@@ -676,40 +676,80 @@ async def _download_file_from_peer(
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
 ) -> Path:
-    """Download a file from a peer's file server over the local network."""
+    """Download a file from a peer's file server over the local network.
+
+    Uses curl subprocess for zero-copy transfer — data goes from socket to
+    disk entirely in C without passing through Python.
+    """
     target_path = target_dir / path
     url = f"{repo_url}/{model_id}/{path}"
     partial_path = target_dir / f"{path}.partial"
-    resume_byte_pos = (
-        (await aios.stat(partial_path)).st_size
-        if (await aios.path.exists(partial_path))
-        else None
+
+    # Build curl command: -C - for auto-resume, -f for fail on HTTP errors
+    cmd = [
+        "curl", "-f", "-s", "-C", "-",
+        "-o", str(partial_path),
+        url,
+    ]
+
+    # Get total size via HEAD request first for progress reporting
+    total_bytes = 0
+    try:
+        head_proc = await asyncio.create_subprocess_exec(
+            "curl", "-s", "-I", url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        head_stdout, _ = await head_proc.communicate()
+        for line in head_stdout.decode().splitlines():
+            if line.lower().startswith("content-length:"):
+                total_bytes = int(line.split(":", 1)[1].strip())
+                break
+    except Exception:
+        pass
+
+    # Add existing partial size to total for progress
+    existing_bytes = 0
+    if await aios.path.exists(partial_path):
+        existing_bytes = (await aios.stat(partial_path)).st_size
+    if total_bytes > 0:
+        total_bytes += existing_bytes
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
     )
 
-    headers: dict[str, str] = {}
-    if resume_byte_pos:
-        headers["Range"] = f"bytes={resume_byte_pos}-"
+    # Poll file size for progress while curl runs
+    while proc.returncode is None:
+        await asyncio.sleep(0.5)
+        try:
+            if await aios.path.exists(partial_path):
+                current_size = (await aios.stat(partial_path)).st_size
+                if total_bytes > 0:
+                    on_progress(current_size, total_bytes, False)
+        except OSError:
+            pass
+        if proc.returncode is None:
+            # Check if process is still running without blocking
+            try:
+                proc_result = await asyncio.wait_for(proc.wait(), timeout=0.01)
+                if proc_result is not None:
+                    break
+            except TimeoutError:
+                pass
 
-    n_read = resume_byte_pos or 0
-    async with (
-        create_http_session(timeout_profile="long") as session,
-        session.get(url, headers=headers) as r,
-    ):
-            if r.status == 404:
-                raise FileNotFoundError(f"File not found on peer: {url}")
-            assert r.status in [200, 206], (
-                f"Failed to download {path} from peer {url}: {r.status}"
-            )
-            total_bytes = n_read + int(r.headers.get("Content-Length", 0))
-            async with aiofiles.open(
-                partial_path, "ab" if resume_byte_pos else "wb"
-            ) as f:
-                while chunk := await r.content.read(64 * 1024 * 1024):
-                    n_read = n_read + (await f.write(chunk))
-                    on_progress(n_read, total_bytes, False)
+    returncode = await proc.wait()
+    if returncode != 0:
+        stderr_bytes = await proc.stderr.read() if proc.stderr else b""
+        raise RuntimeError(
+            f"curl failed for {url} (exit {returncode}): {stderr_bytes.decode().strip()}"
+        )
 
+    final_size = (await aios.stat(partial_path)).st_size
     await aios.rename(partial_path, target_path)
-    on_progress(n_read, n_read, True)
+    on_progress(final_size, final_size, True)
     logger.info(f"P2P download complete: {path} from {repo_url}")
     return target_path
 
