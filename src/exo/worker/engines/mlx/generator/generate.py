@@ -245,6 +245,10 @@ def prefill(
 
     set_pipeline_prefill(model, is_prefill=True)
 
+    # Release any cached Metal buffers before prefill to maximize headroom
+    # for the forward pass intermediates during long context prefills.
+    mx.clear_cache()
+
     mx_barrier(group)
     logger.info("Starting prefill")
 

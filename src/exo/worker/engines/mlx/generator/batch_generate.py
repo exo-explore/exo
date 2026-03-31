@@ -287,6 +287,7 @@ class ExoBatchGenerator:
             for i in range(0, len(all_prompt_tokens), _draft_chunk):
                 _pp_draft(all_prompt_tokens[i:i + _draft_chunk][None], cache=_pp_draft_cache)
                 mx.eval([c.state if hasattr(c, 'state') else c for c in _pp_draft_cache])
+            mx.clear_cache()
             logger.info(f"Draft model prefilled with {len(all_prompt_tokens)} tokens")
 
         # First token via standard PP
