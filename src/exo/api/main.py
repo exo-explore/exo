@@ -383,6 +383,7 @@ class API:
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
+            tensor_strategy=payload.tensor_strategy,
         )
         await self._send(command)
 

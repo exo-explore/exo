@@ -12,6 +12,8 @@ import numpy as np
 import pytest
 from mlx.nn.layers.distributed import compute_shard_sizes
 
+from exo.shared.types.worker.shards import TensorShardMode
+
 RANDOM_SEED = 42
 INPUT_TOKENS = [1, 100, 200, 300]
 
@@ -608,7 +610,7 @@ class TestGreedyShardingTP2:
             world_size=2,
             base_port=_next_port_block(),
             shard_weights=[2.0, 1.0],
-            shard_mode="Greedy",
+            shard_mode=TensorShardMode.Greedy,
         )
 
         diff = float(np.max(np.abs(single_logits - tp2_logits)))

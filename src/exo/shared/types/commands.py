@@ -9,7 +9,7 @@ from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, NodeId, SystemId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding, ShardMetadata
+from exo.shared.types.worker.shards import Sharding, ShardMetadata, TensorShardStrategy
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
@@ -38,6 +38,7 @@ class PlaceInstance(BaseCommand):
     sharding: Sharding
     instance_meta: InstanceMeta
     min_nodes: int
+    tensor_strategy: TensorShardStrategy = TensorShardStrategy.Naive
 
 
 class CreateInstance(BaseCommand):

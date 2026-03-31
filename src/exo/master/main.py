@@ -298,6 +298,7 @@ class Master:
                                 self.state.instances,
                                 self.state.node_memory,
                                 self.state.node_network,
+                                node_identities=self.state.node_identities,
                                 download_status=self.state.downloads,
                             )
                             transition_events = get_transition_events(

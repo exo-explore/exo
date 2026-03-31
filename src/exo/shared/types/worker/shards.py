@@ -17,6 +17,13 @@ class TensorShardMode(str, Enum):
     Constant = "Constant"
 
 
+class TensorShardStrategy(str, Enum):
+    Naive = "Naive"
+    Memory = "Memory"
+    Compute = "Compute"
+    Bandwidth = "Bandwidth"
+
+
 class BaseShardMetadata(TaggedModel):
     """
     Defines a specific shard of the model that is ready to be run on a device.

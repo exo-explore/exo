@@ -9,6 +9,12 @@ import mlx.core as mx
 from base import Module
 from mlx.nn.layers.linear import Linear
 
+def compute_shard_sizes(
+    dim: int,
+    N: int,
+    unit: int = ...,
+    weights: list[float] | None = ...,
+) -> list[int]: ...
 @lru_cache
 def sum_gradients(
     group: mx.distributed.Group,
@@ -20,6 +26,8 @@ def shard_inplace(
     *,
     segments: Union[int, list[int]] = ...,
     group: Optional[mx.distributed.Group] = ...,
+    unit: int = ...,
+    weights: list[float] | None = ...,
 ) -> None:
     """Shard a module in-place by updating its parameter dictionary with the
     sharded parameter dictionary.
@@ -51,6 +59,8 @@ def shard_linear(
     *,
     segments: Union[int, list[int]] = ...,
     group: Optional[mx.distributed.Group] = ...,
+    unit: int = ...,
+    weights: list[float] | None = ...,
 ) -> Linear:
     """Create a new linear layer that has its parameters sharded and also
     performs distributed communication either in the forward or backward

@@ -378,7 +378,20 @@ def main() -> int:
         default=1.0,
         help="System metrics polling interval in seconds (default: 1.0).",
     )
+    ap.add_argument(
+        "--tensor-strategies",
+        nargs="+",
+        default=["Naive"],
+        help="Tensor shard strategies to benchmark. Choices: Naive, Memory, Compute, Bandwidth, all. Default: Naive.",
+    )
     args = ap.parse_args()
+
+    tensor_strategies = []
+    for s in args.tensor_strategies:
+        if s.lower() == "all":
+            tensor_strategies = ["Naive", "Memory", "Compute", "Bandwidth"]
+            break
+        tensor_strategies.append(s)
 
     pp_list = parse_int_list(args.pp)
     tg_list = parse_int_list(args.tg)
@@ -467,20 +480,45 @@ def main() -> int:
     all_rows: list[dict[str, Any]] = []
     all_system_metrics: dict[str, dict[str, dict[str, float]]] = {}
 
+    placement_runs: list[tuple[dict[str, Any], str]] = []
     for preview in selected:
+        sharding = str(preview["sharding"])
+        if sharding == "Tensor":
+            for ts in tensor_strategies:
+                placement_runs.append((preview, ts))
+        else:
+            placement_runs.append((preview, "Naive"))
+
+    for preview, tensor_strategy in placement_runs:
         instance = preview["instance"]
         instance_id = instance_id_from_instance(instance)
 
         sharding = str(preview["sharding"])
         instance_meta = str(preview["instance_meta"])
         n_nodes = nodes_used_in_instance(instance)
+        strategy_label = (
+            f" / strategy={tensor_strategy}" if sharding == "Tensor" else ""
+        )
 
         logger.info("=" * 80)
         logger.info(
-            f"PLACEMENT: {sharding} / {instance_meta} / nodes={n_nodes} / instance_id={instance_id}"
+            f"PLACEMENT: {sharding} / {instance_meta} / nodes={n_nodes}{strategy_label} / instance_id={instance_id}"
         )
 
-        client.request_json("POST", "/instance", body={"instance": instance})
+        if sharding == "Tensor" and tensor_strategy != "Naive":
+            client.request_json(
+                "POST",
+                "/place_instance",
+                body={
+                    "model_id": full_model_id,
+                    "sharding": sharding,
+                    "instance_meta": instance_meta,
+                    "min_nodes": n_nodes,
+                    "tensor_strategy": tensor_strategy,
+                },
+            )
+        else:
+            client.request_json("POST", "/instance", body={"instance": instance})
         try:
             wait_for_instance_ready(client, instance_id)
         except (RuntimeError, TimeoutError) as e:
@@ -541,6 +579,7 @@ def main() -> int:
                                     "placement_sharding": sharding,
                                     "placement_instance_meta": instance_meta,
                                     "placement_nodes": n_nodes,
+                                    "tensor_strategy": tensor_strategy,
                                     "instance_id": instance_id,
                                     "pp_tokens": actual_pp_tokens,
                                     "tg": tg,
@@ -595,6 +634,7 @@ def main() -> int:
                                         "placement_sharding": sharding,
                                         "placement_instance_meta": instance_meta,
                                         "placement_nodes": n_nodes,
+                                        "tensor_strategy": tensor_strategy,
                                         "instance_id": instance_id,
                                         "pp_tokens": actual_pp_tokens,
                                         "tg": tg,
@@ -656,7 +696,9 @@ def main() -> int:
         finally:
             if sampler:
                 sampler.stop()
-                placement_label = f"{sharding}/{instance_meta}/{n_nodes} nodes"
+                placement_label = (
+                    f"{sharding}/{instance_meta}/{n_nodes} nodes{strategy_label}"
+                )
                 sampler.print_summary(placement_label)
                 placement_metrics = sampler.summarize()
                 if placement_metrics:

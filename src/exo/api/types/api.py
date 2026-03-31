@@ -10,7 +10,7 @@ from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.text_generation import ReasoningEffort
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding, ShardMetadata
+from exo.shared.types.worker.shards import Sharding, ShardMetadata, TensorShardStrategy
 from exo.utils.pydantic_ext import CamelCaseModel
 
 FinishReason = Literal[
@@ -253,6 +253,7 @@ class PlaceInstanceParams(BaseModel):
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
+    tensor_strategy: TensorShardStrategy = TensorShardStrategy.Naive
 
 
 class CreateInstanceParams(BaseModel):

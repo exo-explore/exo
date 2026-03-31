@@ -886,6 +886,8 @@
   }
 
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
+  let selectedTensorStrategy = $state<string>("Naive");
+  let showAdvancedSettings = $state(false);
   type InstanceMeta = "MlxRing" | "MlxJaccl";
 
   // Launch defaults persistence
@@ -1446,6 +1448,8 @@
             sharding: selectedSharding,
             instance_meta: selectedInstanceType,
             min_nodes: 1,
+            tensor_strategy:
+              selectedSharding === "Tensor" ? selectedTensorStrategy : "Naive",
           }),
         });
       }
@@ -5874,6 +5878,61 @@
                     </div>
                   </div>
                 </div>
+
+                <!-- Advanced Settings -->
+                {#if selectedSharding === "Tensor"}
+                  <div class="border-t border-exo-medium-gray/30 pt-3 mt-3">
+                    <button
+                      onclick={() =>
+                        (showAdvancedSettings = !showAdvancedSettings)}
+                      class="flex items-center gap-2 text-xs text-white/40 font-mono hover:text-white/60 transition-colors cursor-pointer"
+                    >
+                      <span
+                        class="transition-transform duration-200 {showAdvancedSettings
+                          ? 'rotate-90'
+                          : ''}">▶</span
+                      >
+                      Advanced
+                    </button>
+                    {#if showAdvancedSettings}
+                      <div class="mt-3 space-y-3">
+                        <div>
+                          <div class="text-xs text-white/50 font-mono mb-2">
+                            Tensor Strategy:
+                          </div>
+                          <div class="flex gap-2 flex-wrap">
+                            {#each ["Naive", "Memory", "Compute", "Bandwidth"] as strategy}
+                              <button
+                                onclick={() => {
+                                  selectedTensorStrategy = strategy;
+                                  saveLaunchDefaults();
+                                }}
+                                class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedTensorStrategy ===
+                                strategy
+                                  ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                                  : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                              >
+                                <span
+                                  class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedTensorStrategy ===
+                                  strategy
+                                    ? 'border-exo-yellow'
+                                    : 'border-exo-medium-gray'}"
+                                >
+                                  {#if selectedTensorStrategy === strategy}
+                                    <span
+                                      class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                                    ></span>
+                                  {/if}
+                                </span>
+                                {strategy}
+                              </button>
+                            {/each}
+                          </div>
+                        </div>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
               {/if}
             </div>
 

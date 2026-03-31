@@ -6,7 +6,7 @@ from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.profiling import MemoryUsage, NodeIdentity, NodeNetworkInfo
 from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
@@ -15,7 +15,53 @@ from exo.shared.types.worker.shards import (
     Sharding,
     ShardMetadata,
     TensorShardMetadata,
+    TensorShardMode,
+    TensorShardStrategy,
 )
+
+# FP32 TFLOPS by chip_id (used for Compute strategy)
+APPLE_SILICON_FLOPS: dict[str, float] = {
+    "Apple M1": 2.6,
+    "Apple M1 Pro": 5.3,
+    "Apple M1 Max": 10.4,
+    "Apple M1 Ultra": 21.0,
+    "Apple M2": 3.6,
+    "Apple M2 Pro": 6.8,
+    "Apple M2 Max": 13.6,
+    "Apple M2 Ultra": 27.2,
+    "Apple M3": 3.5,
+    "Apple M3 Pro": 5.0,
+    "Apple M3 Max": 14.2,
+    "Apple M3 Ultra": 28.4,
+    "Apple M4": 4.3,
+    "Apple M4 Pro": 9.2,
+    "Apple M4 Max": 18.4,
+    "Apple M5": 4.2,
+    "Apple M5 Pro": 8.3,
+    "Apple M5 Max": 19.9,
+}
+
+# Memory bandwidth in GB/s by chip_id (used for Bandwidth strategy)
+APPLE_SILICON_BANDWIDTH: dict[str, float] = {
+    "Apple M1": 68,
+    "Apple M1 Pro": 200,
+    "Apple M1 Max": 400,
+    "Apple M1 Ultra": 800,
+    "Apple M2": 100,
+    "Apple M2 Pro": 200,
+    "Apple M2 Max": 400,
+    "Apple M2 Ultra": 800,
+    "Apple M3": 100,
+    "Apple M3 Pro": 150,
+    "Apple M3 Max": 400,
+    "Apple M3 Ultra": 800,
+    "Apple M4": 120,
+    "Apple M4 Pro": 273,
+    "Apple M4 Max": 546,
+    "Apple M5": 154,
+    "Apple M5 Pro": 307,
+    "Apple M5 Max": 614,
+}
 
 
 def filter_cycles_by_memory(
@@ -243,11 +289,38 @@ def _get_shard_assignments_for_pure_pipeline(
 def get_shard_assignments_for_tensor_parallel(
     model_card: ModelCard,
     cycle: Cycle,
+    node_memory: Mapping[NodeId, MemoryUsage] | None = None,
+    strategy: TensorShardStrategy = TensorShardStrategy.Naive,
+    node_identities: Mapping[NodeId, NodeIdentity] | None = None,
 ):
     total_layers = model_card.n_layers
     world_size = len(cycle)
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
+
+    shard_weights: list[float] | None = None
+    shard_mode = TensorShardMode.Constant
+    match strategy:
+        case TensorShardStrategy.Naive:
+            pass
+        case TensorShardStrategy.Memory:
+            if node_memory is not None:
+                shard_weights = [
+                    node_memory[node_id].ram_available.in_gb for node_id in cycle
+                ]
+            shard_mode = TensorShardMode.Greedy
+        case TensorShardStrategy.Compute:
+            if node_identities is not None:
+                shard_weights = [
+                    APPLE_SILICON_FLOPS.get(node_identities[nid].chip_id, 1.0)
+                    for nid in cycle
+                ]
+        case TensorShardStrategy.Bandwidth:
+            if node_identities is not None:
+                shard_weights = [
+                    APPLE_SILICON_BANDWIDTH.get(node_identities[nid].chip_id, 1.0)
+                    for nid in cycle
+                ]
 
     for i, node_id in enumerate(cycle):
         shard = TensorShardMetadata(
@@ -257,6 +330,8 @@ def get_shard_assignments_for_tensor_parallel(
             start_layer=0,
             end_layer=total_layers,
             n_layers=total_layers,
+            shard_weights=shard_weights,
+            shard_mode=shard_mode,
         )
 
         runner_id = RunnerId()
@@ -278,6 +353,8 @@ def get_shard_assignments(
     cycle: Cycle,
     sharding: Sharding,
     node_memory: Mapping[NodeId, MemoryUsage],
+    tensor_strategy: TensorShardStrategy = TensorShardStrategy.Naive,
+    node_identities: Mapping[NodeId, NodeIdentity] | None = None,
 ) -> ShardAssignments:
     match sharding:
         case Sharding.Pipeline:
@@ -290,6 +367,9 @@ def get_shard_assignments(
             return get_shard_assignments_for_tensor_parallel(
                 model_card=model_card,
                 cycle=cycle,
+                node_memory=node_memory,
+                strategy=tensor_strategy,
+                node_identities=node_identities,
             )
 
 

@@ -271,7 +271,10 @@ def shard_and_load(
 
     match shard_metadata:
         case TensorShardMetadata():
-            logger.info(f"loading model from {model_path} with tensor parallelism")
+            logger.info(
+                f"loading model from {model_path} with tensor parallelism "
+                f"(weights={shard_metadata.shard_weights}, mode={shard_metadata.shard_mode})"
+            )
             model = tensor_auto_parallel(
                 model,
                 group,
