@@ -608,8 +608,9 @@ async def _download_file(
 
     if repo_url:
         # P2P download from peer file server — no auth, no hash verification
+        # Don't share the HF session; P2P is local with no TLS overhead
         return await _download_file_from_peer(
-            repo_url, model_id, path, target_dir, on_progress, session=session
+            repo_url, model_id, path, target_dir, on_progress
         )
 
     length, etag = await file_meta(model_id, revision, path)
@@ -674,7 +675,6 @@ async def _download_file_from_peer(
     path: str,
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
-    session: aiohttp.ClientSession | None = None,
 ) -> Path:
     """Download a file from a peer's file server over the local network."""
     target_path = target_dir / path
@@ -691,10 +691,10 @@ async def _download_file_from_peer(
         headers["Range"] = f"bytes={resume_byte_pos}-"
 
     n_read = resume_byte_pos or 0
-
-    async def _do_peer_download(s: aiohttp.ClientSession) -> None:
-        nonlocal n_read
-        async with s.get(url, headers=headers) as r:
+    async with (
+        create_http_session(timeout_profile="long") as session,
+        session.get(url, headers=headers) as r,
+    ):
             if r.status == 404:
                 raise FileNotFoundError(f"File not found on peer: {url}")
             assert r.status in [200, 206], (
@@ -707,12 +707,6 @@ async def _download_file_from_peer(
                 while chunk := await r.content.read(8 * 1024 * 1024):
                     n_read = n_read + (await f.write(chunk))
                     on_progress(n_read, total_bytes, False)
-
-    if session is not None:
-        await _do_peer_download(session)
-    else:
-        async with create_http_session(timeout_profile="long") as fallback_session:
-            await _do_peer_download(fallback_session)
 
     await aios.rename(partial_path, target_path)
     on_progress(n_read, n_read, True)
