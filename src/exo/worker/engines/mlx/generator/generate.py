@@ -169,6 +169,15 @@ def pipeline_parallel_prefill(
                 # accumulate in memory causing OOM on long prompts.
                 mx.eval([c.state for c in _prompt_cache])  # type: ignore
 
+                # Break shared-buffer references in DeltaNet caches.
+                # ArraysCache stores slices of larger tensors (conv_input, state)
+                # that keep the parent buffer alive via MLX's zero-copy slicing.
+                # mx.contiguous creates independent copies, freeing the parents.
+                for _c in _prompt_cache:
+                    if isinstance(_c, ArraysCache):
+                        _c.cache = [mx.contiguous(x) if x is not None else x for x in _c.cache]
+                        mx.eval(*[x for x in _c.cache if x is not None])
+
                 prompt_progress_callback(processed, total)
 
             for _ in range(n_trailing):
