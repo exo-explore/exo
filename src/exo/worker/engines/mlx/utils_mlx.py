@@ -273,7 +273,13 @@ def shard_and_load(
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
             model = tensor_auto_parallel(
-                model, group, timeout_seconds, on_timeout, on_layer_loaded
+                model,
+                group,
+                timeout_seconds,
+                on_timeout,
+                on_layer_loaded,
+                shard_weights=shard_metadata.shard_weights,
+                shard_mode=shard_metadata.shard_mode,
             )
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")

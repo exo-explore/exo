@@ -12,6 +12,11 @@ class Sharding(str, Enum):
     Pipeline = "Pipeline"
 
 
+class TensorShardMode(str, Enum):
+    Greedy = "Greedy"
+    Constant = "Constant"
+
+
 class BaseShardMetadata(TaggedModel):
     """
     Defines a specific shard of the model that is ready to be run on a device.
@@ -76,7 +81,8 @@ class CfgShardMetadata(BaseShardMetadata):
 
 @final
 class TensorShardMetadata(BaseShardMetadata):
-    pass
+    shard_weights: list[float] | None = None
+    shard_mode: TensorShardMode = TensorShardMode.Constant
 
 
 ShardMetadata: TypeAlias = (

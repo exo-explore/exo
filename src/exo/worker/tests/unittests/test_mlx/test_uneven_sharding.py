@@ -8,7 +8,6 @@ import tempfile
 import traceback
 
 import mlx.core as mx
-import mlx.nn as nn
 import numpy as np
 import pytest
 from mlx.nn.layers.distributed import compute_shard_sizes
@@ -251,9 +250,8 @@ def _forward(model, tokens):
 
 def _create_hostfile(world_size, base_port):
     hosts = [f"127.0.0.1:{base_port + i}" for i in range(world_size)]
-    f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-    json.dump(hosts, f)
-    f.close()
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(hosts, f)
     return f.name
 
 
@@ -266,7 +264,15 @@ def _run_single_device(config, result_queue):
         result_queue.put((0, False, f"{e}\n{traceback.format_exc()}"))
 
 
-def _run_tensor_device(rank, world_size, hostfile_path, config, result_queue):
+def _run_tensor_device(
+    rank,
+    world_size,
+    hostfile_path,
+    config,
+    result_queue,
+    shard_weights=None,
+    shard_mode=None,
+):
     os.environ["MLX_HOSTFILE"] = hostfile_path
     os.environ["MLX_RANK"] = str(rank)
 
@@ -278,7 +284,13 @@ def _run_tensor_device(rank, world_size, hostfile_path, config, result_queue):
         from exo.worker.engines.mlx.auto_parallel import tensor_auto_parallel
 
         model = tensor_auto_parallel(
-            model, group, timeout_seconds=60.0, on_timeout=None, on_layer_loaded=None
+            model,
+            group,
+            timeout_seconds=60.0,
+            on_timeout=None,
+            on_layer_loaded=None,
+            shard_weights=shard_weights,
+            shard_mode=shard_mode,
         )
 
         logits = _forward(model, INPUT_TOKENS)
@@ -302,7 +314,7 @@ def _run_single(config):
     return value
 
 
-def _run_tensor(config, world_size, base_port):
+def _run_tensor(config, world_size, base_port, shard_weights=None, shard_mode=None):
     ctx = mp.get_context("spawn")
     hostfile_path = _create_hostfile(world_size, base_port)
     try:
@@ -311,7 +323,15 @@ def _run_tensor(config, world_size, base_port):
         for rank in range(world_size):
             p = ctx.Process(
                 target=_run_tensor_device,
-                args=(rank, world_size, hostfile_path, config, result_queue),
+                args=(
+                    rank,
+                    world_size,
+                    hostfile_path,
+                    config,
+                    result_queue,
+                    shard_weights,
+                    shard_mode,
+                ),
             )
             p.start()
             processes.append(p)
@@ -332,7 +352,9 @@ def _run_tensor(config, world_size, base_port):
             rank, success, value = result_queue.get()
             results[rank] = (success, value)
 
-        assert len(results) == world_size, f"Missing results: got {list(results.keys())}"
+        assert len(results) == world_size, (
+            f"Missing results: got {list(results.keys())}"
+        )
         for rank, (success, value) in results.items():
             assert success, f"Rank {rank} failed: {value}"
 
@@ -394,7 +416,9 @@ class TestWeightSplitMath:
             w_shards = mx.split(weight, w_indices, axis=-1)
             x_shards = mx.split(x, x_indices, axis=-1)
 
-            partial_outputs = [xs @ ws.T for xs, ws in zip(x_shards, w_shards)]
+            partial_outputs = [
+                xs @ ws.T for xs, ws in zip(x_shards, w_shards, strict=True)
+            ]
             reconstructed = sum(partial_outputs)
             mx.eval(reconstructed)
 
@@ -410,7 +434,13 @@ class TestWeightSplitMath:
         x = mx.random.normal((1, 4, 256))
 
         full_output = mx.quantized_matmul(
-            x, qw, scales=scales, biases=biases, transpose=True, group_size=group_size, bits=bits
+            x,
+            qw,
+            scales=scales,
+            biases=biases,
+            transpose=True,
+            group_size=group_size,
+            bits=bits,
         )
         mx.eval(full_output)
 
@@ -424,10 +454,17 @@ class TestWeightSplitMath:
 
             partial = [
                 mx.quantized_matmul(
-                    x, qw_s, scales=sc_s, biases=bi_s,
-                    transpose=True, group_size=group_size, bits=bits,
+                    x,
+                    qw_s,
+                    scales=sc_s,
+                    biases=bi_s,
+                    transpose=True,
+                    group_size=group_size,
+                    bits=bits,
                 )
-                for qw_s, sc_s, bi_s in zip(qw_shards, scales_shards, biases_shards)
+                for qw_s, sc_s, bi_s in zip(
+                    qw_shards, scales_shards, biases_shards, strict=True
+                )
             ]
             reconstructed = mx.concatenate(partial, axis=-1)
             mx.eval(reconstructed)
@@ -444,11 +481,16 @@ class TestWeightSplitMath:
         x = mx.random.normal((1, 4, 256))
 
         full_output = mx.quantized_matmul(
-            x, qw, scales=scales, biases=biases, transpose=True, group_size=group_size, bits=bits
+            x,
+            qw,
+            scales=scales,
+            biases=biases,
+            transpose=True,
+            group_size=group_size,
+            bits=bits,
         )
         mx.eval(full_output)
 
-        pack_factor = 32 // bits
         num_quant_groups = scales.shape[-1]
         for n in [2]:
             # Split in quantization-group space (same as _shard_quantized_s2a)
@@ -469,10 +511,17 @@ class TestWeightSplitMath:
 
             partial = [
                 mx.quantized_matmul(
-                    xs, qw_s, scales=sc_s, biases=bi_s,
-                    transpose=True, group_size=group_size, bits=bits,
+                    xs,
+                    qw_s,
+                    scales=sc_s,
+                    biases=bi_s,
+                    transpose=True,
+                    group_size=group_size,
+                    bits=bits,
                 )
-                for xs, qw_s, sc_s, bi_s in zip(x_shards, qw_shards, scales_shards, biases_shards)
+                for xs, qw_s, sc_s, bi_s in zip(
+                    x_shards, qw_shards, scales_shards, biases_shards, strict=True
+                )
             ]
             reconstructed = sum(partial)
             mx.eval(reconstructed)
@@ -482,13 +531,13 @@ class TestWeightSplitMath:
 
 
 # Port allocation: 31200-31999 (non-colliding with conftest 29600-29800 and qwen35 29950-31100)
-_BASE_PORT = 31200
+_BASE_PORT = 40000
 _port_counter = 0
 
 
 def _next_port_block():
     global _port_counter
-    port = _BASE_PORT + _port_counter * 100
+    port = _BASE_PORT + _port_counter * 10
     _port_counter += 1
     return port
 
@@ -515,3 +564,52 @@ class TestTensorParallelTP3:
 
         diff = float(np.max(np.abs(single_logits - tp3_logits)))
         assert diff < 3e-6, f"{model_name} tp=3 logit diff: {diff}"
+
+
+@pytest.mark.slow
+class TestWeightedShardingTP2:
+    @pytest.mark.parametrize("model_name", list(REDUCED_CONFIGS.keys()))
+    def test_weighted_tp2_matches_single(self, model_name):
+        config = REDUCED_CONFIGS[model_name]
+        single_logits = _run_single(config)
+        tp2_logits = _run_tensor(
+            config, world_size=2, base_port=_next_port_block(), shard_weights=[2.0, 1.0]
+        )
+
+        diff = float(np.max(np.abs(single_logits - tp2_logits)))
+        assert diff < 3e-6, f"{model_name} weighted tp=2 logit diff: {diff}"
+
+
+@pytest.mark.slow
+class TestWeightedShardingTP3:
+    @pytest.mark.parametrize("model_name", list(REDUCED_CONFIGS.keys()))
+    def test_weighted_tp3_matches_single(self, model_name):
+        config = REDUCED_CONFIGS[model_name]
+        single_logits = _run_single(config)
+        tp3_logits = _run_tensor(
+            config,
+            world_size=3,
+            base_port=_next_port_block(),
+            shard_weights=[3.0, 2.0, 1.0],
+        )
+
+        diff = float(np.max(np.abs(single_logits - tp3_logits)))
+        assert diff < 3e-6, f"{model_name} weighted tp=3 logit diff: {diff}"
+
+
+@pytest.mark.slow
+class TestGreedyShardingTP2:
+    @pytest.mark.parametrize("model_name", list(REDUCED_CONFIGS.keys()))
+    def test_greedy_tp2_matches_single(self, model_name):
+        config = REDUCED_CONFIGS[model_name]
+        single_logits = _run_single(config)
+        tp2_logits = _run_tensor(
+            config,
+            world_size=2,
+            base_port=_next_port_block(),
+            shard_weights=[2.0, 1.0],
+            shard_mode="Greedy",
+        )
+
+        diff = float(np.max(np.abs(single_logits - tp2_logits)))
+        assert diff < 3e-6, f"{model_name} greedy tp=2 logit diff: {diff}"
