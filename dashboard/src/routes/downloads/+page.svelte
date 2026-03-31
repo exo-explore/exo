@@ -9,6 +9,7 @@
     refreshState,
     lastUpdate as lastUpdateStore,
     startDownload,
+    pauseDownload,
     deleteDownload,
   } from "$lib/stores/app.svelte";
   import {
@@ -533,6 +534,25 @@
                         <span class="text-[10px] text-white/70"
                           >{formatSpeed(cell.speed)}</span
                         >
+                        <button
+                          type="button"
+                          class="text-white/50 hover:text-exo-yellow transition-colors mt-0.5 cursor-pointer"
+                          onclick={() =>
+                            pauseDownload(col.nodeId, row.modelId)}
+                          title="Pause download"
+                        >
+                          <svg
+                            class="w-5 h-5"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                          >
+                            <path
+                              fill-rule="evenodd"
+                              d="M5 4a1 1 0 011 1v10a1 1 0 11-2 0V5a1 1 0 011-1zm10 0a1 1 0 011 1v10a1 1 0 11-2 0V5a1 1 0 011-1z"
+                              clip-rule="evenodd"
+                            ></path>
+                          </svg>
+                        </button>
                       </div>
                     {:else if cell.kind === "pending"}
                       <div
