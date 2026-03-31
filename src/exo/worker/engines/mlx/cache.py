@@ -368,6 +368,13 @@ def make_kv_cache(
 ) -> KVCacheType:
     assert hasattr(model, "layers")
 
+    if KV_CACHE_BITS is not None:
+        logger.info(f"Using quantized KV cache (bits={KV_CACHE_BITS}, group_size={CACHE_GROUP_SIZE})")
+        return [
+            QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
+            for _ in model.layers
+        ]
+
     if hasattr(model, "make_cache"):
         logger.info("Using MLX LM's make cache")
         caches: KVCacheType = model.make_cache()  # type: ignore
@@ -381,15 +388,8 @@ def make_kv_cache(
         return caches
 
     if max_kv_size is None:
-        if KV_CACHE_BITS is None:
-            logger.info("Using default KV cache")
-            return [KVCache() for _ in model.layers]
-        else:
-            logger.info("Using quantized KV cache")
-            return [
-                QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
-                for _ in model.layers
-            ]
+        logger.info("Using default KV cache")
+        return [KVCache() for _ in model.layers]
     else:
         logger.info(f"Using rotating KV cache with {max_kv_size=} with {keep=}")
         return [RotatingKVCache(max_size=max_kv_size, keep=keep) for _ in model.layers]
