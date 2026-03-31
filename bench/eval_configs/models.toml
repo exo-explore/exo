@@ -175,6 +175,34 @@ patterns = ["DeepSeek-V3.1"]
 reasoning = true
 temperature = 0.0
 
+[[model]]
+name = "DeepSeek V3.2"
+patterns = ["DeepSeek-V3.2"]
+reasoning = true
+temperature = 1.0
+top_p = 0.95
+enable_thinking = true
+
+# ─── NVIDIA Nemotron ───────────────────────────────────────────────────
+# Source: HuggingFace model cards
+# All variants: temp=1.0, top_p=0.95, enable_thinking=true
+
+[[model]]
+name = "Nemotron Cascade 2 30B A3B"
+patterns = ["Nemotron-Cascade-2-30B-A3B"]
+reasoning = true
+temperature = 1.0
+top_p = 0.95
+enable_thinking = true
+
+[[model]]
+name = "Nemotron 3 Super 120B A12B"
+patterns = ["Nemotron-3-Super-120B-A12B", "NVIDIA-Nemotron-3-Super-120B-A12B"]
+reasoning = true
+temperature = 1.0
+top_p = 0.95
+enable_thinking = true
+
 # ─── GLM (ZhipuAI / THUDM) ──────────────────────────────────────────
 # Source: HuggingFace model cards + generation_config.json + docs.z.ai
 # GLM 4.5+: temp=1.0, top_p=0.95
