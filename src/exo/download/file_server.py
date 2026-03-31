@@ -101,7 +101,7 @@ async def _handle_model_file(request: web.Request) -> web.StreamResponse:
 
     await response.prepare(request)
 
-    chunk_size = 8 * 1024 * 1024  # 8MB chunks
+    chunk_size = 64 * 1024 * 1024  # 64MB chunks
     with open(full_path, "rb") as f:
         if start > 0:
             f.seek(start)

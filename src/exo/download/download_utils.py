@@ -704,7 +704,7 @@ async def _download_file_from_peer(
             async with aiofiles.open(
                 partial_path, "ab" if resume_byte_pos else "wb"
             ) as f:
-                while chunk := await r.content.read(8 * 1024 * 1024):
+                while chunk := await r.content.read(64 * 1024 * 1024):
                     n_read = n_read + (await f.write(chunk))
                     on_progress(n_read, total_bytes, False)
 
@@ -974,7 +974,9 @@ async def download_shard(
             start_time=time.time(),
         )
 
-    semaphore = asyncio.Semaphore(max_parallel_downloads)
+    # P2P local transfers can handle more parallelism than HuggingFace CDN
+    effective_parallelism = len(filtered_file_list) if repo_url else max_parallel_downloads
+    semaphore = asyncio.Semaphore(effective_parallelism)
 
     def schedule_progress(
         file: FileListEntry, curr_bytes: int, total_bytes: int, is_renamed: bool
