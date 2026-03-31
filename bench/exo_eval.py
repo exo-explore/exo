@@ -62,6 +62,12 @@ from loguru import logger
 # ---------------------------------------------------------------------------
 
 MAX_RETRIES = 30
+INSTANCE_HEALTH_CHECK_AFTER = 3  # Check instance health after this many consecutive failures
+
+
+class InstanceFailedError(RuntimeError):
+    """Raised when the exo instance is detected as failed/gone."""
+    pass
 DEFAULT_MAX_TOKENS = 16_384
 REASONING_MAX_TOKENS = 131_072
 TEMPERATURE_NON_REASONING = 0.0
@@ -595,6 +601,16 @@ async def _call_api(
     )
 
 
+async def _check_instance_health(base_url: str) -> bool:
+    """Return True if the exo instance is still reachable."""
+    try:
+        async with httpx.AsyncClient() as c:
+            resp = await c.get(f"{base_url}/models", timeout=5.0)
+            return resp.status_code == 200
+    except Exception:
+        return False
+
+
 async def call_with_retries(
     client: httpx.AsyncClient,
     base_url: str,
@@ -609,8 +625,11 @@ async def call_with_retries(
     top_k: int | None = None,
     min_p: float | None = None,
     enable_thinking: bool | None = None,
+    instance_failed: asyncio.Event | None = None,
 ) -> ApiResult | None:
     for attempt in range(MAX_RETRIES):
+        if instance_failed and instance_failed.is_set():
+            raise InstanceFailedError("Instance already marked as failed")
         try:
             return await _call_api(
                 client,
@@ -628,6 +647,12 @@ async def call_with_retries(
                 enable_thinking,
             )
         except Exception as e:
+            is_conn_error = isinstance(e, (httpx.ConnectError, httpx.RemoteProtocolError, ConnectionRefusedError, OSError))
+            if is_conn_error and attempt >= INSTANCE_HEALTH_CHECK_AFTER:
+                if not await _check_instance_health(base_url):
+                    if instance_failed:
+                        instance_failed.set()
+                    raise InstanceFailedError(f"Instance is down after {attempt + 1} failures: {e}")
             if attempt < MAX_RETRIES - 1:
                 wait = min(2**attempt, 60)
                 logger.warning(
@@ -738,6 +763,7 @@ async def evaluate_benchmark(
         logger.info(f"Loaded {len(checkpoint_data)} checkpointed results")
 
     semaphore = asyncio.Semaphore(concurrency)
+    instance_failed = asyncio.Event()
     results: list[QuestionResult | None] = [None] * total
     completed = 0
     lock = asyncio.Lock()
@@ -756,6 +782,10 @@ async def evaluate_benchmark(
         nonlocal completed
         system_msg = None
         question_id = _get_question_id(idx, doc)
+
+        # Bail out early if instance is already dead
+        if instance_failed.is_set():
+            return
 
         # Check checkpoint
         if question_id in checkpoint_data:
@@ -801,22 +831,43 @@ async def evaluate_benchmark(
             raise ValueError(f"Unknown benchmark: {benchmark_name}")
 
         async with semaphore:
+            if instance_failed.is_set():
+                return
             t0 = time.monotonic()
-            api_result = await call_with_retries(
-                http_client,
-                base_url,
-                model,
-                prompt,
-                temperature,
-                max_tokens,
-                timeout,
-                system_message=system_msg,
-                reasoning_effort=reasoning_effort,
-                top_p=top_p,
-                top_k=top_k,
-                min_p=min_p,
-                enable_thinking=enable_thinking,
-            )
+            try:
+                # Race the API call against the instance_failed event
+                api_task = asyncio.create_task(call_with_retries(
+                    http_client,
+                    base_url,
+                    model,
+                    prompt,
+                    temperature,
+                    max_tokens,
+                    timeout,
+                    system_message=system_msg,
+                    reasoning_effort=reasoning_effort,
+                    top_p=top_p,
+                    top_k=top_k,
+                    min_p=min_p,
+                    enable_thinking=enable_thinking,
+                    instance_failed=instance_failed,
+                ))
+                failed_waiter = asyncio.create_task(instance_failed.wait())
+                done, pending = await asyncio.wait(
+                    [api_task, failed_waiter],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for p in pending:
+                    p.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await p
+                if instance_failed.is_set() and api_task not in done:
+                    logger.error(f"Instance failed, aborting {question_id}")
+                    return
+                api_result = api_task.result()
+            except InstanceFailedError:
+                logger.error(f"Instance failed, skipping {question_id}")
+                return
             elapsed = time.monotonic() - t0
 
         if api_result is None:
@@ -938,8 +989,8 @@ async def evaluate_benchmark(
 
         results[idx] = result
 
-        # Write checkpoint
-        if checkpoint_path is not None:
+        # Write checkpoint (skip failures so they get retried on resume)
+        if checkpoint_path is not None and not result.error and result.response:
             _write_checkpoint(checkpoint_path, result)
 
         async with lock:
@@ -957,9 +1008,35 @@ async def evaluate_benchmark(
             + (f" {result.extracted_answer}" if result.extracted_answer else "")
         )
 
+    async def _health_monitor() -> None:
+        """Periodically check if the instance is still alive."""
+        # Wait a bit before first check to let things start
+        await asyncio.sleep(10)
+        while not instance_failed.is_set():
+            if not await _check_instance_health(base_url):
+                # Double-check to avoid false positives
+                await asyncio.sleep(2)
+                if not await _check_instance_health(base_url):
+                    logger.error("Health monitor: instance is down!")
+                    instance_failed.set()
+                    return
+            await asyncio.sleep(5)
+
     async with httpx.AsyncClient() as http_client:
+        monitor = asyncio.create_task(_health_monitor())
         tasks = [process_question(i, doc, http_client) for i, doc in enumerate(ds)]
         await asyncio.gather(*tasks)
+        monitor.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await monitor
+
+    if instance_failed.is_set():
+        completed_count = sum(1 for r in results if r is not None)
+        logger.error(
+            f"Instance failed! Completed {completed_count}/{total} problems. "
+            f"Checkpoint saved — restart to resume remaining problems."
+        )
+        raise InstanceFailedError("Instance failed during evaluation")
 
     return [r for r in results if r is not None]
 
@@ -1448,6 +1525,18 @@ def main() -> int:
             )
             if download_duration is not None:
                 logger.info(f"Download: {download_duration:.1f}s")
+
+            # Delete any existing instances to free resources before placing
+            try:
+                state = client.request_json("GET", "/state")
+                for old_id in list(state.get("instances", {}).keys()):
+                    logger.info(f"Deleting stale instance {old_id}")
+                    with contextlib.suppress(ExoHttpError):
+                        client.request_json("DELETE", f"/instance/{old_id}")
+                if state.get("instances"):
+                    time.sleep(2)
+            except Exception:
+                pass
 
             client.request_json("POST", "/instance", body={"instance": instance})
             try:
