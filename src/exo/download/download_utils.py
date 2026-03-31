@@ -721,30 +721,26 @@ async def _download_file_from_peer(
         stderr=asyncio.subprocess.PIPE,
     )
 
-    # Poll file size for progress while curl runs
-    while proc.returncode is None:
-        await asyncio.sleep(0.5)
-        try:
-            if await aios.path.exists(partial_path):
-                current_size = (await aios.stat(partial_path)).st_size
-                if total_bytes > 0:
-                    on_progress(current_size, total_bytes, False)
-        except OSError:
-            pass
-        if proc.returncode is None:
-            # Check if process is still running without blocking
+    async def _poll_progress() -> None:
+        while True:
+            await asyncio.sleep(2)
             try:
-                proc_result = await asyncio.wait_for(proc.wait(), timeout=0.01)
-                if proc_result is not None:
-                    break
-            except TimeoutError:
+                if await aios.path.exists(partial_path):
+                    current_size = (await aios.stat(partial_path)).st_size
+                    if total_bytes > 0:
+                        on_progress(current_size, total_bytes, False)
+            except OSError:
                 pass
 
-    returncode = await proc.wait()
-    if returncode != 0:
-        stderr_bytes = await proc.stderr.read() if proc.stderr else b""
+    progress_task = asyncio.create_task(_poll_progress())
+    try:
+        _, stderr_bytes = await proc.communicate()
+    finally:
+        progress_task.cancel()
+
+    if proc.returncode != 0:
         raise RuntimeError(
-            f"curl failed for {url} (exit {returncode}): {stderr_bytes.decode().strip()}"
+            f"curl failed for {url} (exit {proc.returncode}): {stderr_bytes.decode().strip()}"
         )
 
     final_size = (await aios.stat(partial_path)).st_size
