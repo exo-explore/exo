@@ -316,7 +316,15 @@ def make_kv_cache(
 
     if hasattr(model, "make_cache"):
         logger.info("Using MLX LM's make cache")
-        return model.make_cache()  # type: ignore
+        caches: KVCacheType = model.make_cache()  # type: ignore
+        # Increase KVCache step size to reduce Metal allocator fragmentation.
+        # Default step=256 causes a mx.concatenate expansion every prefill chunk,
+        # fragmenting memory (~11 GB overhead at 24k tokens). A larger step lets
+        # the cache pre-allocate and write in-place for most of the prefill.
+        for c in caches:
+            if isinstance(c, KVCache):
+                c.step = 16384
+        return caches
 
     if max_kv_size is None:
         if KV_CACHE_BITS is None:

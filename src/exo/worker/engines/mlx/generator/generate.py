@@ -169,32 +169,6 @@ def pipeline_parallel_prefill(
                 # accumulate in memory causing OOM on long prompts.
                 mx.eval([c.state for c in _prompt_cache])  # type: ignore
 
-                if i % 3 == 0 or i == n_real - 1:
-                    active = mx.metal.get_active_memory() / 1024**3
-                    peak = mx.metal.get_peak_memory() / 1024**3
-                    cache_mem = mx.metal.get_cache_memory() / 1024**3
-                    # Measure actual cache tensor sizes
-                    kv_bytes = 0
-                    arr_bytes = 0
-                    for c in _prompt_cache:
-                        s = c.state
-                        if isinstance(s, (list, tuple)):
-                            if len(s) == 2 and s[0] is not None and hasattr(s[0], 'shape') and len(s[0].shape) == 3:
-                                # ArraysCache: [conv_state, recurrent_state]
-                                for x in s:
-                                    if x is not None:
-                                        arr_bytes += x.nbytes
-                            else:
-                                # KVCache: (keys, values)
-                                for x in s:
-                                    if x is not None:
-                                        kv_bytes += x.nbytes
-                    logger.info(
-                        f"[R{rank}] chunk {i}/{n_real}: processed={processed}/{total} "
-                        f"active={active:.2f}GB peak={peak:.2f}GB cache={cache_mem:.2f}GB "
-                        f"kv_tensors={kv_bytes/1024**2:.1f}MB arr_tensors={arr_bytes/1024**2:.1f}MB"
-                    )
-
                 prompt_progress_callback(processed, total)
 
             for _ in range(n_trailing):
