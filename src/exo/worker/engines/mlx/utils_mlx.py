@@ -280,7 +280,10 @@ def shard_and_load(
                 model, group, timeout_seconds, on_timeout, on_layer_loaded
             )
         case AsymmetricTensorShardMetadata():
-            ratios_list = [shard_metadata.ratio, 1.0 - shard_metadata.ratio]
+            # ratio is rank-0's share; same value on every shard so all
+            # ranks agree on the split point.
+            rank0_ratio = shard_metadata.ratio
+            ratios_list = [rank0_ratio, 1.0 - rank0_ratio]
             logger.info(
                 f"loading model from {model_path} with asymmetric tensor parallelism "
                 f"(ratios={[f'{r:.0%}' for r in ratios_list]})"

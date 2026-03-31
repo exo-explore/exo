@@ -129,6 +129,19 @@ def place_instance(
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError("No cycles found with sufficient memory")
 
+    # Asymmetric TP currently only supports Qwen3.5 at the worker level.
+    asymmetric_tp_families = {"qwen3_5"}
+
+    if (
+        command.sharding == Sharding.AsymmetricTensor
+        and command.model_card.family not in asymmetric_tp_families
+    ):
+        raise ValueError(
+            f"Asymmetric tensor parallelism is not yet supported for "
+            f"family '{command.model_card.family}'. "
+            f"Supported: {asymmetric_tp_families}"
+        )
+
     if command.sharding in (Sharding.Tensor, Sharding.AsymmetricTensor):
         if not command.model_card.supports_tensor:
             raise ValueError(
@@ -153,25 +166,31 @@ def place_instance(
 
             # Auto-upgrade to AsymmetricTensor when equal TP won't fit on
             # the smallest node but asymmetric split would.
-            for cycle in cycles_with_sufficient_memory:
-                equal_share = command.model_card.storage_size.in_bytes / len(cycle)
-                min_node_mem = min(
-                    node_memory[nid].ram_available.in_bytes for nid in cycle
-                )
-                if equal_share > min_node_mem * 0.9:
-                    # Equal split too tight — try asymmetric
-                    total_mem = sum(
+            # Only for model families with tested asymmetric TP support.
+            if command.model_card.family in asymmetric_tp_families:
+                for cycle in cycles_with_sufficient_memory:
+                    equal_share = command.model_card.storage_size.in_bytes / len(cycle)
+                    min_node_mem = min(
                         node_memory[nid].ram_available.in_bytes for nid in cycle
                     )
-                    if command.model_card.storage_size.in_bytes < total_mem * 0.85:
-                        logger.info(
-                            "Equal tensor split won't fit on smallest node "
-                            f"({min_node_mem / 1e9:.0f}GB available, "
-                            f"needs {equal_share / 1e9:.0f}GB). "
-                            "Auto-upgrading to AsymmetricTensor."
+                    if equal_share > min_node_mem * 0.9:
+                        # Equal split too tight — try asymmetric
+                        total_mem = sum(
+                            node_memory[nid].ram_available.in_bytes
+                            for nid in cycle
                         )
-                        command.sharding = Sharding.AsymmetricTensor
-                    break
+                        if (
+                            command.model_card.storage_size.in_bytes
+                            < total_mem * 0.85
+                        ):
+                            logger.info(
+                                "Equal tensor split won't fit on smallest node "
+                                f"({min_node_mem / 1e9:.0f}GB available, "
+                                f"needs {equal_share / 1e9:.0f}GB). "
+                                "Auto-upgrading to AsymmetricTensor."
+                            )
+                            command.sharding = Sharding.AsymmetricTensor
+                        break
     if command.sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
         "mlx-community/DeepSeek-V3.1-8bit"
     ):

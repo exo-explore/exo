@@ -99,8 +99,9 @@ class AsymmetricTensorShardMetadata(BaseShardMetadata):
     ratio: float = Field(
         ge=0.0,
         le=1.0,
-        description="Fraction of each weight tensor this node holds. "
-        "e.g. 0.75 means this node gets 75% of each weight's split dimension.",
+        description="Split point for rank 0, shared across all ranks. "
+        "e.g. 0.75 means rank 0 gets the first 75% and rank 1 gets the last 25%. "
+        "Every rank stores the same value so all workers agree on the split.",
     )
 
 

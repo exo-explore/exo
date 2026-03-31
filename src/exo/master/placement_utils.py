@@ -287,13 +287,19 @@ def get_shard_assignments_for_asymmetric_tensor_parallel(
     total_layers = model_card.n_layers
     world_size = len(cycle)
 
-    # Compute memory fractions
+    # Sort nodes so the largest-memory node is rank 0.  The ratio solver
+    # returns ratios[0] > 0.5, so rank 0 must be the bigger machine.
+    sorted_nodes = sorted(
+        cycle, key=lambda nid: node_memory[nid].ram_available.in_bytes, reverse=True
+    )
+
+    # Compute memory fractions (largest first)
     total_available = sum(
-        node_memory[node_id].ram_available.in_bytes for node_id in cycle
+        node_memory[node_id].ram_available.in_bytes for node_id in sorted_nodes
     )
     memory_fractions = [
         node_memory[node_id].ram_available.in_bytes / total_available
-        for node_id in cycle
+        for node_id in sorted_nodes
     ]
 
     from exo.worker.engines.mlx.asymmetric_parallel import find_valid_ratios
@@ -301,7 +307,11 @@ def get_shard_assignments_for_asymmetric_tensor_parallel(
     ratios = find_valid_ratios(
         memory_fractions=memory_fractions,
         hidden_size=model_card.hidden_size,
-        num_attention_heads=model_card.num_attention_heads or 32,
+        # ModelCard only carries num_key_value_heads, not num_attention_heads.
+        # hidden_size divisibility is a sufficient constraint for the ratio
+        # solver; per-head validation happens at load time when the model
+        # config is available.
+        num_attention_heads=model_card.hidden_size // 128,  # conservative estimate from head_dim=128
         num_key_value_heads=model_card.num_key_value_heads or 2,
     )
     if ratios is None:
@@ -312,7 +322,12 @@ def get_shard_assignments_for_asymmetric_tensor_parallel(
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
-    for i, node_id in enumerate(cycle):
+    # Store rank-0's ratio on every shard so all ranks agree on the
+    # same global split point.  The worker uses group.rank() to decide
+    # which slice it keeps.
+    rank0_ratio = ratios[0]
+
+    for i, node_id in enumerate(sorted_nodes):
         shard = AsymmetricTensorShardMetadata(
             model_card=model_card,
             device_rank=i,
@@ -320,7 +335,7 @@ def get_shard_assignments_for_asymmetric_tensor_parallel(
             start_layer=0,
             end_layer=total_layers,
             n_layers=total_layers,
-            ratio=ratios[i],
+            ratio=rank0_ratio,
         )
         runner_id = RunnerId()
         runner_to_shard[runner_id] = shard
