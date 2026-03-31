@@ -8,6 +8,8 @@ import type { DocumentInitParameters } from "pdfjs-dist/types/src/display/api";
 GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/pdf.worker.mjs`;
 
 const PDF_PAGE_SCALE = 2.0;
+const PDF_MAX_PAGES = 20;
+const PDF_MAX_TEXT_CHARS = 100_000;
 
 export interface ChatUploadedFile {
   id: string;
@@ -211,10 +213,11 @@ async function extractPdfContent(
     useSystemFonts: true,
   } as DocumentInitParameters).promise;
 
+  const numPages = Math.min(pdf.numPages, PDF_MAX_PAGES);
   const pageTexts: string[] = [];
   const pageImages: string[] = [];
 
-  for (let i = 1; i <= pdf.numPages; i++) {
+  for (let i = 1; i <= numPages; i++) {
     const page = await pdf.getPage(i);
 
     const content = await page.getTextContent();
@@ -228,7 +231,7 @@ async function extractPdfContent(
     const ctx = canvas.getContext("2d");
     if (ctx) {
       await page.render({ canvasContext: ctx as any, viewport }).promise;
-      const blob = await canvas.convertToBlob({ type: "image/png" });
+      const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.8 });
       const reader = new FileReader();
       const dataUrl = await new Promise<string>((resolve, reject) => {
         reader.onload = () => resolve(reader.result as string);
@@ -239,10 +242,15 @@ async function extractPdfContent(
     }
   }
 
-  return {
-    text: pageTexts.join("\n\n").trim(),
-    pageImages,
-  };
+  let text = pageTexts.join("\n\n").trim();
+  if (text.length > PDF_MAX_TEXT_CHARS) {
+    text = text.slice(0, PDF_MAX_TEXT_CHARS) + "\n\n[truncated]";
+  }
+  if (pdf.numPages > PDF_MAX_PAGES) {
+    text += `\n\n[showing ${PDF_MAX_PAGES} of ${pdf.numPages} pages]`;
+  }
+
+  return { text, pageImages };
 }
 
 /**
