@@ -169,6 +169,15 @@ def pipeline_parallel_prefill(
                 # accumulate in memory causing OOM on long prompts.
                 mx.eval([c.state for c in _prompt_cache])  # type: ignore
 
+                if i % 3 == 0 or i == n_real - 1:
+                    active = mx.metal.get_active_memory() / 1024**3
+                    peak = mx.metal.get_peak_memory() / 1024**3
+                    cache_mem = mx.metal.get_cache_memory() / 1024**3
+                    logger.info(
+                        f"[R{rank}] chunk {i}/{n_real}: processed={processed}/{total} "
+                        f"active={active:.2f}GB peak={peak:.2f}GB cache={cache_mem:.2f}GB"
+                    )
+
                 prompt_progress_callback(processed, total)
 
             for _ in range(n_trailing):
