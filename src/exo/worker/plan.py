@@ -138,16 +138,18 @@ def find_peer_repo_url(
                 net_info = node_network.get(peer_id)
                 if net_info is None or not net_info.interfaces:
                     continue
+                # Rank IPs by interface priority: thunderbolt > maybe_ethernet > ethernet > other
+                iface_priority = {"thunderbolt": 0, "maybe_ethernet": 1, "ethernet": 2}
                 best_ip: str | None = None
+                best_priority = 99
                 for iface in net_info.interfaces:
                     ip = iface.ip_address
-                    if ":" in ip or ip.startswith("fe80"):
+                    if ":" in ip or ip.startswith(("fe80", "127.", "169.254.")):
                         continue
-                    if iface.interface_type == "thunderbolt":
+                    priority = iface_priority.get(iface.interface_type, 10)
+                    if priority < best_priority:
                         best_ip = ip
-                        break
-                    if best_ip is None:
-                        best_ip = ip
+                        best_priority = priority
                 if best_ip:
                     return f"http://{best_ip}:{EXO_FILE_SERVER_PORT}"
     return None
