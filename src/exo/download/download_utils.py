@@ -530,12 +530,13 @@ async def download_file_with_retry(
     on_connection_lost: Callable[[], None] = lambda: None,
     skip_internet: bool = False,
     repo_url: str | None = None,
+    session: aiohttp.ClientSession | None = None,
 ) -> Path:
     n_attempts = 3
     for attempt in range(n_attempts):
         try:
             return await _download_file(
-                model_id, revision, path, target_dir, on_progress, skip_internet, repo_url=repo_url
+                model_id, revision, path, target_dir, on_progress, skip_internet, repo_url=repo_url, session=session
             )
         except HuggingFaceAuthenticationError:
             raise
@@ -571,6 +572,7 @@ async def _download_file(
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
     skip_internet: bool = False,
     repo_url: str | None = None,
+    session: aiohttp.ClientSession | None = None,
 ) -> Path:
     target_path = target_dir / path
 
@@ -607,7 +609,7 @@ async def _download_file(
     if repo_url:
         # P2P download from peer file server — no auth, no hash verification
         return await _download_file_from_peer(
-            repo_url, model_id, path, target_dir, on_progress
+            repo_url, model_id, path, target_dir, on_progress, session=session
         )
 
     length, etag = await file_meta(model_id, revision, path)
@@ -624,24 +626,30 @@ async def _download_file(
         if resume_byte_pos:
             headers["Range"] = f"bytes={resume_byte_pos}-"
         n_read = resume_byte_pos or 0
-        async with (
-            create_http_session(timeout_profile="long") as session,
-            session.get(url, headers=headers) as r,
-        ):
-            if r.status == 404:
-                raise FileNotFoundError(f"File not found: {url}")
-            if r.status in [401, 403]:
-                msg = await _build_auth_error_message(r.status, model_id)
-                raise HuggingFaceAuthenticationError(msg)
-            assert r.status in [200, 206], (
-                f"Failed to download {path} from {url}: {r.status}"
-            )
-            async with aiofiles.open(
-                partial_path, "ab" if resume_byte_pos else "wb"
-            ) as f:
-                while chunk := await r.content.read(8 * 1024 * 1024):
-                    n_read = n_read + (await f.write(chunk))
-                    on_progress(n_read, length, False)
+
+        async def _do_hf_download(s: aiohttp.ClientSession) -> None:
+            nonlocal n_read
+            async with s.get(url, headers=headers) as r:
+                if r.status == 404:
+                    raise FileNotFoundError(f"File not found: {url}")
+                if r.status in [401, 403]:
+                    msg = await _build_auth_error_message(r.status, model_id)
+                    raise HuggingFaceAuthenticationError(msg)
+                assert r.status in [200, 206], (
+                    f"Failed to download {path} from {url}: {r.status}"
+                )
+                async with aiofiles.open(
+                    partial_path, "ab" if resume_byte_pos else "wb"
+                ) as f:
+                    while chunk := await r.content.read(8 * 1024 * 1024):
+                        n_read = n_read + (await f.write(chunk))
+                        on_progress(n_read, length, False)
+
+        if session is not None:
+            await _do_hf_download(session)
+        else:
+            async with create_http_session(timeout_profile="long") as fallback_session:
+                await _do_hf_download(fallback_session)
 
     final_hash = await calc_hash(
         partial_path, hash_type="sha256" if len(remote_hash) == 64 else "sha1"
@@ -666,6 +674,7 @@ async def _download_file_from_peer(
     path: str,
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
+    session: aiohttp.ClientSession | None = None,
 ) -> Path:
     """Download a file from a peer's file server over the local network."""
     target_path = target_dir / path
@@ -682,22 +691,28 @@ async def _download_file_from_peer(
         headers["Range"] = f"bytes={resume_byte_pos}-"
 
     n_read = resume_byte_pos or 0
-    async with (
-        create_http_session(timeout_profile="long") as session,
-        session.get(url, headers=headers) as r,
-    ):
-        if r.status == 404:
-            raise FileNotFoundError(f"File not found on peer: {url}")
-        assert r.status in [200, 206], (
-            f"Failed to download {path} from peer {url}: {r.status}"
-        )
-        total_bytes = n_read + int(r.headers.get("Content-Length", 0))
-        async with aiofiles.open(
-            partial_path, "ab" if resume_byte_pos else "wb"
-        ) as f:
-            while chunk := await r.content.read(8 * 1024 * 1024):
-                n_read = n_read + (await f.write(chunk))
-                on_progress(n_read, total_bytes, False)
+
+    async def _do_peer_download(s: aiohttp.ClientSession) -> None:
+        nonlocal n_read
+        async with s.get(url, headers=headers) as r:
+            if r.status == 404:
+                raise FileNotFoundError(f"File not found on peer: {url}")
+            assert r.status in [200, 206], (
+                f"Failed to download {path} from peer {url}: {r.status}"
+            )
+            total_bytes = n_read + int(r.headers.get("Content-Length", 0))
+            async with aiofiles.open(
+                partial_path, "ab" if resume_byte_pos else "wb"
+            ) as f:
+                while chunk := await r.content.read(8 * 1024 * 1024):
+                    n_read = n_read + (await f.write(chunk))
+                    on_progress(n_read, total_bytes, False)
+
+    if session is not None:
+        await _do_peer_download(session)
+    else:
+        async with create_http_session(timeout_profile="long") as fallback_session:
+            await _do_peer_download(fallback_session)
 
     await aios.rename(partial_path, target_path)
     on_progress(n_read, n_read, True)
@@ -974,7 +989,9 @@ async def download_shard(
             on_progress_wrapper(file, curr_bytes, total_bytes, is_renamed)
         )
 
-    async def download_with_semaphore(file: FileListEntry) -> None:
+    async def download_with_semaphore(
+        file: FileListEntry, session: aiohttp.ClientSession
+    ) -> None:
         async with semaphore:
             await download_file_with_retry(
                 model_id,
@@ -987,12 +1004,14 @@ async def download_shard(
                 on_connection_lost=on_connection_lost,
                 skip_internet=skip_internet,
                 repo_url=repo_url,
+                session=session,
             )
 
     if not skip_download:
-        await asyncio.gather(
-            *[download_with_semaphore(file) for file in filtered_file_list]
-        )
+        async with create_http_session(timeout_profile="long") as session:
+            await asyncio.gather(
+                *[download_with_semaphore(file, session) for file in filtered_file_list]
+            )
     final_repo_progress = calculate_repo_progress(
         shard, model_id, revision, file_progress, all_start_time
     )
