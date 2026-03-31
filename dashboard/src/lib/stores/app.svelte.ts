@@ -2279,7 +2279,10 @@ class AppStore {
             preview: file.preview,
             mimeType: file.type,
           });
-        } else if (file.pageImages || (file.textContent && file.type === "application/pdf")) {
+        } else if (
+          file.pageImages ||
+          (file.textContent && file.type === "application/pdf")
+        ) {
           attachments.push({
             type: "pdf",
             name: file.name,

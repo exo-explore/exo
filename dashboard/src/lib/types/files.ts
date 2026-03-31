@@ -231,7 +231,10 @@ async function extractPdfContent(
     const ctx = canvas.getContext("2d");
     if (ctx) {
       await page.render({ canvasContext: ctx as any, viewport }).promise;
-      const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.8 });
+      const blob = await canvas.convertToBlob({
+        type: "image/jpeg",
+        quality: 0.8,
+      });
       const reader = new FileReader();
       const dataUrl = await new Promise<string>((resolve, reject) => {
         reader.onload = () => resolve(reader.result as string);
