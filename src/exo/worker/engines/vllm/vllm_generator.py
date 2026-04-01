@@ -584,16 +584,22 @@ def load_vllm_engine(
 
     is_nvfp4 = "nvfp4" in model_path.lower() or "nvfp4" in str(model_id).lower()
     has_mamba = False
+    is_mxfp4 = False
     config_path = Path(model_path) / "config.json"
     if config_path.exists():
         with open(config_path) as f:
             model_config = json.load(f)
         text_config = model_config.get("text_config", model_config)
         has_mamba = "mamba_ssm_dtype" in text_config or "linear_attention" in (text_config.get("layer_types") or [])
-    if is_nvfp4 and not has_mamba:
-        backends = ["FLASHINFER", "FLASH_ATTN", "TRITON_ATTN"]
-    else:
+        quant_config = model_config.get("quantization_config") or text_config.get("quantization_config")
+        if quant_config and quant_config.get("quant_method") == "mxfp4":
+            is_mxfp4 = True
+    if is_mxfp4:
+        os.environ.setdefault("VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8", "1")
+    if has_mamba:
         backends = ["FLASH_ATTN", "TRITON_ATTN"]
+    else:
+        backends = ["FLASHINFER", "FLASH_ATTN", "TRITON_ATTN"]
 
     engine: LLMEngine | None = None
     for backend in backends:

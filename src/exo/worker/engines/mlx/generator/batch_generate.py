@@ -157,7 +157,7 @@ class ExoBatchGenerator:
         if (
             uncached_count > 1000
             and task_params.prefill_endpoints
-            and not is_bench
+            and (not is_bench or task_params.disaggregated_bench)
         ):
             from exo.disaggregated.prefill_client import remote_prefill
 

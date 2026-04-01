@@ -225,7 +225,7 @@ class ChatCompletionRequest(BaseModel):
 
 
 class BenchChatCompletionRequest(ChatCompletionRequest):
-    pass
+    disaggregated: bool = False
 
 
 class AddCustomModelParams(BaseModel):

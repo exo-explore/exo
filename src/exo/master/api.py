@@ -741,7 +741,9 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        task_params = task_params.model_copy(update={"stream": False, "bench": True})
+        task_params = task_params.model_copy(
+            update={"stream": False, "bench": True, **({"disaggregated_bench": True} if payload.disaggregated else {})}
+        )
 
         command = TextGeneration(task_params=task_params)
         await self._send(command)
