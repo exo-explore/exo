@@ -9,9 +9,11 @@ from loguru import logger
 from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
 from exo.shared.apply import apply
+from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
+    DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
     StartDownload,
@@ -23,6 +25,7 @@ from exo.shared.types.events import (
     Event,
     IndexedEvent,
     InputChunkReceived,
+    InstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
     TaskCreated,
@@ -44,6 +47,7 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
+from exo.shared.types.worker.instances import InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
@@ -84,6 +88,9 @@ class Worker:
         self.image_cache: dict[str, str] = {}
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
+        self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
+            base=0.5, cap=10.0
+        )
         self._stopped: anyio.Event = anyio.Event()
 
     async def run(self):
@@ -127,6 +134,9 @@ class Worker:
                 self.state = apply(self.state, event=event)
                 event = event.event
 
+                if isinstance(event, InstanceDeleted):
+                    self._instance_backoff.reset(event.instance_id)
+
                 # Buffer input image chunks for image editing
                 if isinstance(event, InputChunkReceived):
                     cmd_id = event.command_id
@@ -156,15 +166,24 @@ class Worker:
                 self.state.runners,
                 self.state.tasks,
                 self.input_chunk_buffer,
+                self._instance_backoff,
+                self._download_backoff,
             )
             if task is None:
                 continue
 
-            # Gate DownloadModel on backoff BEFORE emitting TaskCreated
-            # to prevent flooding the event log with useless events
-            if isinstance(task, DownloadModel):
-                model_id = task.shard_metadata.model_card.model_id
-                if not self._download_backoff.should_proceed(model_id):
+            if isinstance(task, CreateRunner):
+                iid = task.instance_id
+                if self._instance_backoff.attempts(iid) >= EXO_MAX_INSTANCE_RETRIES:
+                    logger.warning(
+                        f"Instance {iid} exceeded {EXO_MAX_INSTANCE_RETRIES} retries, requesting deletion"
+                    )
+                    await self.command_sender.send(
+                        ForwarderCommand(
+                            origin=self._system_id,
+                            command=DeleteInstance(instance_id=iid),
+                        )
+                    )
                     continue
 
             logger.info(f"Worker plan: {task.__class__.__name__}")
@@ -175,6 +194,7 @@ class Worker:
             match task:
                 case CreateRunner():
                     self._create_supervisor(task)
+                    self._instance_backoff.record_attempt(task.instance_id)
                     await self.event_sender.send(
                         TaskStatusUpdated(
                             task_id=task.task_id, task_status=TaskStatus.Complete
