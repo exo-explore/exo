@@ -189,6 +189,14 @@ async def test_cancel_active_download_transitions_to_pending() -> None:
         # Wait for the download to actually start (blocking in ensure_shard)
         await asyncio.wait_for(slow_downloader.download_started.wait(), timeout=2.0)
 
+        # Drain any events emitted before the cancel (initial DownloadPending, DownloadOngoing)
+        while True:
+            try:
+                async with asyncio.timeout(0.1):
+                    await event_recv.receive()
+            except TimeoutError:
+                break
+
         # Cancel the download
         await cmd_send.send(
             ForwarderDownloadCommand(
@@ -197,10 +205,11 @@ async def test_cancel_active_download_transitions_to_pending() -> None:
             )
         )
 
-        # Should receive a DownloadPending event
+        # Should receive a DownloadPending event with preserved progress
         pending = await _wait_for_pending(event_recv, MODEL_ID)
         assert pending is not None, "Cancel should emit DownloadPending"
         assert pending.shard_metadata.model_card.model_id == MODEL_ID
+        assert pending.total == Memory.from_mb(100), "Should preserve total bytes"
 
         # Give coordinator time to clean up
         await asyncio.sleep(0.05)
