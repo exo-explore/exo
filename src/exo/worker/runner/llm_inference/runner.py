@@ -243,6 +243,10 @@ class Runner:
 
     def shutdown(self, task: Task):
         logger.info("runner shutting down")
+        # Force flush KV cache to disk before shutdown
+        _kv = getattr(getattr(self, "generator", None), "kv_prefix_cache", None)
+        if _kv is not None:
+            _kv.flush_to_disk(force=True)
         self.update_status(RunnerShuttingDown())
         self.acknowledge_task(task)
         if isinstance(self.generator, InferenceGenerator):
@@ -312,6 +316,11 @@ class Runner:
 
             except WouldBlock:
                 pass
+
+        # Flush KV cache to disk on idle
+        _kv = getattr(getattr(self, "generator", None), "kv_prefix_cache", None)
+        if _kv is not None:
+            _kv.flush_to_disk()
 
         self.update_status(RunnerReady())
         logger.info("runner ready")
@@ -404,7 +413,7 @@ class Builder:
                 self.tokenizer.tool_parser,  # type: ignore
             )
 
-        kv_prefix_cache = KVPrefixCache(self.group)
+        kv_prefix_cache = KVPrefixCache(self.group, model_id=self.model_id)  # Checkpoint 2A: disk persistence
 
         device_rank = 0 if self.group is None else self.group.rank()
         if os.environ.get("EXO_NO_BATCH"):

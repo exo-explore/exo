@@ -17,6 +17,12 @@ from exo.shared.types.mlx import KVCacheType, Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
 
+# Checkpoint 2A: disk persistence
+import hashlib
+import json
+import time as _time
+from pathlib import Path as _Path
+
 
 # Fraction of device memory above which LRU eviction kicks in.
 # Smaller machines need more aggressive eviction.
@@ -76,13 +82,19 @@ def has_non_kv_caches(cache: KVCacheType) -> bool:
 
 
 class KVPrefixCache:
-    def __init__(self, group: mx.distributed.Group | None):
+    def __init__(self, group: mx.distributed.Group | None, model_id: str = ""):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[KVCacheType] = []
         self._snapshots: list[list[CacheSnapshot] | None] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._access_counter: int = 0
         self._group = group
+        # Disk persistence state
+        self._model_id = model_id
+        self._disk_dir = self._init_disk_dir() if model_id else None
+        self._disk_dirty = False
+        self._flush_requested_at: float = 0.0
+        self._hot_slot_disk_id: int | None = None
 
     def clear(self):
         """Clear all cached prompts and caches."""
@@ -97,13 +109,25 @@ class KVPrefixCache:
         cache: KVCacheType,
         ssm_snapshots: list[CacheSnapshot] | None = None,
     ):
-        """Add a new cache entry. Evicts LRU entries if memory is high."""
-        self._evict_if_needed()
+        """Add a new cache entry. Single hot slot: flush current to disk first."""
+        if self._disk_dir and len(self.caches) > 0:
+            if self._disk_dirty:
+                self._flush_hot_slot()
+            self.prompts.clear()
+            self.caches.clear()
+            self._snapshots.clear()
+            self._last_used.clear()
+            self._hot_slot_disk_id = None
+        else:
+            self._evict_if_needed()
         self.prompts.append(prompt_tokens)
         self.caches.append(deepcopy(cache))
         self._snapshots.append(ssm_snapshots)
         self._access_counter += 1
         self._last_used.append(self._access_counter)
+        self._disk_dirty = True
+        if not self._flush_requested_at:
+            self._flush_requested_at = _time.time()
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
 
     def update_kv_cache(
@@ -127,7 +151,10 @@ class KVPrefixCache:
         self._snapshots[index] = merged or None
         self._access_counter += 1
         self._last_used[index] = self._access_counter
-        logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
+        self._disk_dirty = True
+        if not self._flush_requested_at:
+            self._flush_requested_at = _time.time()
+        logger.info(f"KV cache updated (index {index}, disk slot {self._hot_slot_disk_id}): {len(prompt_tokens)} tokens")
 
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
@@ -178,7 +205,20 @@ class KVPrefixCache:
             if length > best_length:
                 best_index, best_length = i, length
 
+        # Disk fallback: cross-conversation match or no in-memory match
+        if best_index is not None and self._disk_dir:
+            _cached_len = len(self.prompts[best_index])
+            _cached_cov = best_length / _cached_len if _cached_len > 0 else 0.0
+            if best_length < _cached_len - 1:
+                _disk_result = self._try_load_from_disk(model, prompt_tokens, min_prefix=best_length)
+                if _disk_result is not None:
+                    return _disk_result
+
         if best_index is None:
+            if self._disk_dir:
+                _disk_result = self._try_load_from_disk(model, prompt_tokens)
+                if _disk_result is not None:
+                    return _disk_result
             return make_kv_cache(model), prompt_tokens, None
 
         # For exact match: trim to max_length-1 so remaining has the last token
@@ -227,6 +267,155 @@ class KVPrefixCache:
             logger.info(
                 f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
             )
+
+    # ── Disk persistence methods ──
+
+    def _init_disk_dir(self):
+        h = hashlib.sha256(self._model_id.encode()).hexdigest()[:16]
+        d = _Path.home() / ".exo" / "kv-cache" / h
+        d.mkdir(parents=True, exist_ok=True)
+        logger.info(f"KV cache disk dir: {d}")
+        return d
+
+    def _list_disk_slots(self):
+        """List all disk slot IDs."""
+        if not self._disk_dir:
+            return []
+        slots = []
+        for f in self._disk_dir.glob("slot_*_tokens.safetensors"):
+            try:
+                slot_id = int(f.stem.split("_")[1])
+                slots.append(slot_id)
+            except (IndexError, ValueError):
+                continue
+        return sorted(slots)
+
+    def _next_disk_slot_id(self):
+        existing = self._list_disk_slots()
+        return max(existing) + 1 if existing else 0
+
+    def _flush_hot_slot(self):
+        """Save current hot slot to disk immediately."""
+        if len(self.caches) == 0:
+            return
+        try:
+            from mlx_lm.models.cache import save_prompt_cache
+            slot_id = self._hot_slot_disk_id if self._hot_slot_disk_id is not None else self._next_disk_slot_id()
+            base = self._disk_dir / f"slot_{slot_id}"
+            # Save cache (atomic: write tmp then rename)
+            tmp_cache = str(base) + "_tmp_cache.safetensors"
+            save_prompt_cache(tmp_cache, list(self.caches[0]))
+            os.rename(tmp_cache, str(base) + "_cache.safetensors")
+            # Save tokens
+            tmp_tokens = str(base) + "_tmp_tokens.safetensors"
+            mx.save_safetensors(tmp_tokens, {"tokens": self.prompts[0]})
+            os.rename(tmp_tokens, str(base) + "_tokens.safetensors")
+            # Save metadata
+            meta = {"model_id": self._model_id, "token_count": int(len(self.prompts[0])), "timestamp": _time.time()}
+            with open(str(base) + "_meta.json", "w") as f:
+                json.dump(meta, f)
+            self._hot_slot_disk_id = slot_id
+            self._disk_dirty = False
+            self._flush_requested_at = 0.0
+            logger.info(f"KV cache flushed to disk: slot_{slot_id} ({len(self.prompts[0])} tokens)")
+        except Exception as e:
+            logger.warning(f"KV cache disk flush failed: {e}")
+
+    def _evict_stale_disk_slots(self, max_age_hours=24):
+        """Delete disk slots older than max_age_hours."""
+        if not self._disk_dir:
+            return
+        cutoff = _time.time() - (max_age_hours * 3600)
+        for meta_file in self._disk_dir.glob("slot_*_meta.json"):
+            try:
+                with open(meta_file) as f:
+                    meta = json.load(f)
+                if meta.get("timestamp", 0) < cutoff:
+                    slot_id = int(meta_file.stem.split("_")[1])
+                    if slot_id == self._hot_slot_disk_id:
+                        continue
+                    base = self._disk_dir / f"slot_{slot_id}"
+                    for ext in ["_cache.safetensors", "_tokens.safetensors", "_meta.json"]:
+                        try:
+                            os.remove(str(base) + ext)
+                        except FileNotFoundError:
+                            pass
+                    logger.info(f"KV cache evicted stale disk slot_{slot_id}")
+            except Exception:
+                continue
+
+    def flush_to_disk(self, force=False):
+        """Flush hot slot to disk if dirty and idle for 15s (or force)."""
+        if not self._disk_dir or not self._disk_dirty:
+            return
+        if not force and (_time.time() - self._flush_requested_at) < 15:
+            return
+        self._flush_hot_slot()
+        self._evict_stale_disk_slots()
+
+    def _search_disk(self, prompt_tokens):
+        """Search disk slots for best prefix match. Returns (slot_id, prefix_length) or (None, 0)."""
+        if not self._disk_dir:
+            return None, 0
+        best_id = None
+        best_length = 0
+        for slot_id in self._list_disk_slots():
+            if slot_id == self._hot_slot_disk_id:
+                continue
+            token_file = self._disk_dir / f"slot_{slot_id}_tokens.safetensors"
+            try:
+                cached_tokens = mx.load(str(token_file))["tokens"]
+                prefix_len = get_prefix_length(prompt_tokens, cached_tokens)
+            except Exception:
+                continue
+            if prefix_len > best_length:
+                best_length = prefix_len
+                best_id = slot_id
+        return best_id, best_length
+
+    def _try_load_from_disk(self, model, prompt_tokens, min_prefix=0):
+        """Search disk for matching slot. If found, swap it in and return (cache, remaining, index)."""
+        disk_id, prefix_len = self._search_disk(prompt_tokens)
+        if disk_id is None or prefix_len <= min_prefix or prefix_len < 1000:
+            return None
+        try:
+            from mlx_lm.models.cache import load_prompt_cache
+            # Flush current hot slot if dirty
+            if self._disk_dirty and len(self.caches) > 0:
+                self._flush_hot_slot()
+            # Clear RAM
+            self.prompts.clear()
+            self.caches.clear()
+            self._snapshots.clear()
+            self._last_used.clear()
+            # Load from disk
+            base = self._disk_dir / f"slot_{disk_id}"
+            cache = load_prompt_cache(str(base) + "_cache.safetensors")
+            tokens = mx.load(str(base) + "_tokens.safetensors")["tokens"]
+            # Install as hot slot
+            self.prompts.append(tokens)
+            self.caches.append(cache)
+            self._snapshots.append(None)
+            self._access_counter += 1
+            self._last_used.append(self._access_counter)
+            self._hot_slot_disk_id = disk_id
+            self._disk_dirty = False
+            self._flush_requested_at = 0.0
+            logger.info(f"KV cache loaded from disk: slot_{disk_id} ({len(tokens)} tokens)")
+            # Trim and return
+            prompt_cache = deepcopy(cache)
+            cached_length = cache_length(cache)
+            tokens_to_trim = cached_length - prefix_len
+            if tokens_to_trim > 0:
+                trim_cache(prompt_cache, tokens_to_trim)
+                for c in prompt_cache:
+                    if hasattr(c, "offset"):
+                        c.offset = prefix_len
+            remaining = prompt_tokens[prefix_len:]
+            return prompt_cache, remaining, 0
+        except Exception as e:
+            logger.warning(f"KV cache disk load failed for slot_{disk_id}: {e}")
+            return None
 
     def get_memory_used_percentage(self) -> float:
         local_pressure: float = get_memory_used_percentage()
