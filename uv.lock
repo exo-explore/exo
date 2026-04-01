@@ -485,7 +485,7 @@ dependencies = [
     { name = "loguru", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mflux", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.30.6", source = { registry = "https://pypi.org/simple" }, extra = ["cpu"], marker = "sys_platform == 'linux'" },
-    { name = "mlx", version = "0.31.2.dev20260330+5e471942", source = { git = "https://github.com/adurham/mlx.git?branch=main#5e4719429e8cf4986f548b9b88d669c421292f9b" }, marker = "sys_platform == 'darwin'" },
+    { name = "mlx", version = "0.31.2.dev20260401+9c140a11", source = { git = "https://github.com/adurham/mlx.git?branch=main#9c140a11a08985db177f564f5aed4f23a6075ee6" }, marker = "sys_platform == 'darwin'" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "msgspec", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1363,7 +1363,7 @@ dependencies = [
     { name = "huggingface-hub", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "matplotlib", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.30.6", source = { registry = "https://pypi.org/simple" }, extra = ["cuda13"], marker = "sys_platform == 'linux'" },
-    { name = "mlx", version = "0.31.2.dev20260330+5e471942", source = { git = "https://github.com/adurham/mlx.git?branch=main#5e4719429e8cf4986f548b9b88d669c421292f9b" }, marker = "sys_platform == 'darwin'" },
+    { name = "mlx", version = "0.31.2.dev20260401+9c140a11", source = { git = "https://github.com/adurham/mlx.git?branch=main#9c140a11a08985db177f564f5aed4f23a6075ee6" }, marker = "sys_platform == 'darwin'" },
     { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "opencv-python", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "piexif", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1421,8 +1421,8 @@ cuda13 = [
 
 [[package]]
 name = "mlx"
-version = "0.31.2.dev20260330+5e471942"
-source = { git = "https://github.com/adurham/mlx.git?branch=main#5e4719429e8cf4986f548b9b88d669c421292f9b" }
+version = "0.31.2.dev20260401+9c140a11"
+source = { git = "https://github.com/adurham/mlx.git?branch=main#9c140a11a08985db177f564f5aed4f23a6075ee6" }
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'darwin'",
     "python_full_version < '3.14' and sys_platform == 'darwin'",
@@ -1455,10 +1455,10 @@ wheels = [
 [[package]]
 name = "mlx-lm"
 version = "0.31.2"
-source = { git = "https://github.com/adurham/mlx-lm.git?branch=main#fbe20b70da40d4861556e1730b310428d970f545" }
+source = { git = "https://github.com/adurham/mlx-lm.git?branch=main#163be5d58adb8375fb4bea8983b95059516ca819" }
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "mlx", version = "0.31.2.dev20260330+5e471942", source = { git = "https://github.com/adurham/mlx.git?branch=main#5e4719429e8cf4986f548b9b88d669c421292f9b" }, marker = "sys_platform == 'darwin'" },
+    { name = "mlx", version = "0.31.2.dev20260401+9c140a11", source = { git = "https://github.com/adurham/mlx.git?branch=main#9c140a11a08985db177f564f5aed4f23a6075ee6" }, marker = "sys_platform == 'darwin'" },
     { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "protobuf", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1475,7 +1475,7 @@ dependencies = [
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "miniaudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.30.6", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux'" },
-    { name = "mlx", version = "0.31.2.dev20260330+5e471942", source = { git = "https://github.com/adurham/mlx.git?branch=main#5e4719429e8cf4986f548b9b88d669c421292f9b" }, marker = "sys_platform == 'darwin'" },
+    { name = "mlx", version = "0.31.2.dev20260401+9c140a11", source = { git = "https://github.com/adurham/mlx.git?branch=main#9c140a11a08985db177f564f5aed4f23a6075ee6" }, marker = "sys_platform == 'darwin'" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "opencv-python", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
