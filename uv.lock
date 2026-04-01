@@ -1455,7 +1455,7 @@ wheels = [
 [[package]]
 name = "mlx-lm"
 version = "0.31.2"
-source = { git = "https://github.com/adurham/mlx-lm.git?branch=main#e70b623afc435c6678462dbe0e2b7eee794bef9a" }
+source = { git = "https://github.com/adurham/mlx-lm.git?branch=main#4db77ae4cd5fe350122efa93f9343089c1074b7b" }
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.31.2.dev20260330+5e471942", source = { git = "https://github.com/adurham/mlx.git?branch=main#5e4719429e8cf4986f548b9b88d669c421292f9b" }, marker = "sys_platform == 'darwin'" },
