@@ -1,19 +1,24 @@
-"""Model-specific kernel fusion patches for MLX inference.
-
-Detects model type after loading and applies optimized kernel patches.
-Currently supports:
-- Qwen3.5 MoE (model_type: qwen3_5_moe): batched fused oproj (GDN + GQA + MoE)
-
-Set EXO_FUSED_KERNELS=0 to disable all patches (vanilla mode).
-Default: EXO_FUSED_KERNELS=1 (enabled).
-"""
-
 import json
 import os
 from pathlib import Path
 
 import mlx.nn as nn
 from loguru import logger
+
+from exo.worker.engines.mlx.patches.opt_batch_gen import apply_batch_gen_patch
+from exo.worker.engines.mlx.patches.standard_yarn_rope import patch_yarn_rope
+
+_applied = False
+
+
+def apply_mlx_patches() -> None:
+    global _applied
+    if _applied:
+        return
+    _applied = True
+    patch_yarn_rope()
+    # patch_gdn_softplus()
+    apply_batch_gen_patch()
 
 
 def maybe_apply_patches(model: nn.Module, model_path: Path) -> None:
