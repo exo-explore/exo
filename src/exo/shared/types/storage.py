@@ -17,7 +17,10 @@ class StorageConfig(FrozenModel):
         """Parse from a TOML config dict (e.g. from tomllib)."""
         max_storage: Memory | None = None
         if "max_storage_gb" in data:
-            max_storage = Memory.from_gb(float(data["max_storage_gb"]))  # pyright: ignore[reportAny]
+            gb = float(data["max_storage_gb"])  # pyright: ignore[reportAny]
+            if gb < 0:
+                raise ValueError(f"max_storage_gb must be non-negative, got {gb}")
+            max_storage = Memory.from_gb(gb)
         policy: StoragePolicy = data.get("storage_policy", "manual")  # pyright: ignore[reportAny]
         return cls(max_storage=max_storage, storage_policy=policy)
 
