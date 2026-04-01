@@ -227,6 +227,12 @@ def pipeline_parallel_prefill(
                         _c.cache = [mx.contiguous(x) if x is not None else x for x in _c.cache]
                         mx.eval(*[x for x in _c.cache if x is not None])
 
+                # Log memory every 5 chunks for profiling
+                if i % 5 == 0 or i == n_real - 1:
+                    active_gb = mx.metal.get_active_memory() / 1024**3
+                    peak_gb = mx.metal.get_peak_memory() / 1024**3
+                    logger.info(f"[MEM] prefill chunk {i+1}/{n_real} ({processed} tokens): active={active_gb:.2f} GB, peak={peak_gb:.2f} GB")
+
                 prompt_progress_callback(processed, total)
 
             for _ in range(n_trailing):
@@ -308,6 +314,12 @@ def prefill(
     mx.clear_cache()
 
     mx_barrier(group)
+    # Memory checkpoint before prefill
+    mx.eval(mx.zeros(1))
+    active_gb = mx.metal.get_active_memory() / 1024**3
+    peak_gb = mx.metal.get_peak_memory() / 1024**3
+    cache_gb = mx.metal.get_cache_memory() / 1024**3
+    logger.info(f"[MEM] before prefill ({num_tokens} tokens): active={active_gb:.2f} GB, peak={peak_gb:.2f} GB, cache={cache_gb:.2f} GB")
     logger.info("Starting prefill")
 
     is_pipeline = _has_pipeline_communication_layer(model)
@@ -631,6 +643,12 @@ def mlx_generate(
     think_start = tokenizer.think_start
     think_end = tokenizer.think_end
 
+    # Memory checkpoint after prefill, before decode
+    mx.eval(mx.zeros(1))
+    active_gb = mx.metal.get_active_memory() / 1024**3
+    peak_gb = mx.metal.get_peak_memory() / 1024**3
+    cache_gb = mx.metal.get_cache_memory() / 1024**3
+    logger.info(f"[MEM] after prefill, before decode: active={active_gb:.2f} GB, peak={peak_gb:.2f} GB, cache={cache_gb:.2f} GB")
     logger.info("Starting decode")
     mx_barrier(group)
 

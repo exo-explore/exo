@@ -5,6 +5,8 @@ from enum import Enum
 
 import mlx.core as mx
 from anyio import WouldBlock
+
+
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelTask
@@ -67,6 +69,14 @@ from exo.worker.runner.llm_inference.batch_generator import (
 
 from .batch_generator import Cancelled, Finished
 from .tool_parsers import make_mlx_parser
+
+
+def _mem_checkpoint(label: str) -> None:
+    mx.eval(mx.zeros(1))  # force pending evals
+    active = mx.metal.get_active_memory() / 1024**3
+    peak = mx.metal.get_peak_memory() / 1024**3
+    cache = mx.metal.get_cache_memory() / 1024**3
+    logger.info(f"[MEM] {label}: active={active:.2f} GB, peak={peak:.2f} GB, cache={cache:.2f} GB")
 
 
 class ExitCode(str, Enum):
@@ -213,6 +223,7 @@ class Runner:
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerLoaded())
+                _mem_checkpoint("after model load")
                 logger.info("runner loaded")
 
             case StartWarmup() if isinstance(self.current_status, RunnerLoaded):
@@ -230,6 +241,7 @@ class Runner:
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerReady())
+                _mem_checkpoint("after warmup")
                 logger.info("runner ready")
 
             case TextGeneration() if isinstance(self.current_status, RunnerReady):
