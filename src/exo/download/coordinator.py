@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -102,8 +101,8 @@ class DownloadCoordinator:
         shard: ShardMetadata,
         found: Path,
         total: Memory,
-    ) -> DownloadCompleted:
-        return DownloadCompleted(
+    ) -> ModelReady:
+        return ModelReady(
             shard_metadata=shard,
             node_id=self.node_id,
             total=total,
@@ -303,7 +302,7 @@ class DownloadCoordinator:
                     shard, found, initial_progress.total
                 )
             else:
-                completed = DownloadCompleted(
+                completed = ModelReady(
                     shard_metadata=shard,
                     node_id=self.node_id,
                     total=initial_progress.total,
@@ -365,9 +364,6 @@ class DownloadCoordinator:
                 await self.event_sender.send(
                     NodeDownloadProgress(download_progress=failed)
                 )
-            except anyio.get_cancelled_exc_class():
-                # ignore cancellation - let cleanup do its thing
-                pass
             finally:
                 self.active_downloads.pop(model_id, None)
 
@@ -450,11 +446,11 @@ class DownloadCoordinator:
                             resolve_existing_model, model_id
                         )
                         if found is not None:
-                            status: DownloadProgress = self._completed_from_path(
+                            status: ModelStatus = self._completed_from_path(
                                 progress.shard, found, progress.total
                             )
                         else:
-                            status = DownloadCompleted(
+                            status = ModelReady(
                                 node_id=self.node_id,
                                 shard_metadata=progress.shard,
                                 total=progress.total,
@@ -506,10 +502,8 @@ class DownloadCoordinator:
                                 end_layer=card.n_layers,
                                 n_layers=card.n_layers,
                             )
-                            path_completed: DownloadProgress = (
-                                self._completed_from_path(
-                                    path_shard, found, card.storage_size
-                                )
+                            path_completed: ModelStatus = self._completed_from_path(
+                                path_shard, found, card.storage_size
                             )
                             self.download_status[mid] = path_completed
                             await self.event_sender.send(

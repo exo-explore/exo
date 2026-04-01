@@ -107,7 +107,7 @@ class TestStartDownloadAutoEviction:
         new_callable=AsyncMock,
         return_value=True,
     )
-    @patch("exo.download.coordinator.resolve_model_in_path", return_value=None)
+    @patch("exo.download.coordinator.resolve_existing_model", return_value=None)
     async def test_evicts_oldest_model_to_fit_new_download(
         self, _mock_resolve: AsyncMock, mock_delete: AsyncMock
     ) -> None:
@@ -135,7 +135,7 @@ class TestStartDownloadAutoEviction:
         new_callable=AsyncMock,
         return_value=True,
     )
-    @patch("exo.download.coordinator.resolve_model_in_path", return_value=None)
+    @patch("exo.download.coordinator.resolve_existing_model", return_value=None)
     async def test_evicts_multiple_in_lru_order(
         self, _mock_resolve: AsyncMock, mock_delete: AsyncMock
     ) -> None:
@@ -168,7 +168,7 @@ class TestStartDownloadAutoEviction:
         new_callable=AsyncMock,
         return_value=True,
     )
-    @patch("exo.download.coordinator.resolve_model_in_path", return_value=None)
+    @patch("exo.download.coordinator.resolve_existing_model", return_value=None)
     async def test_rejects_when_cannot_free_enough_space(
         self, _mock_resolve: AsyncMock, mock_delete: AsyncMock
     ) -> None:
@@ -191,7 +191,7 @@ class TestStartDownloadAutoEviction:
         new_callable=AsyncMock,
         return_value=True,
     )
-    @patch("exo.download.coordinator.resolve_model_in_path", return_value=None)
+    @patch("exo.download.coordinator.resolve_existing_model", return_value=None)
     async def test_no_eviction_when_space_available(
         self, _mock_resolve: AsyncMock, mock_delete: AsyncMock
     ) -> None:
@@ -216,7 +216,7 @@ class TestStartDownloadAutoEviction:
         new_callable=AsyncMock,
         return_value=True,
     )
-    @patch("exo.download.coordinator.resolve_model_in_path", return_value=None)
+    @patch("exo.download.coordinator.resolve_existing_model", return_value=None)
     async def test_manual_policy_rejects_instead_of_evicting(
         self, _mock_resolve: AsyncMock, mock_delete: AsyncMock
     ) -> None:
@@ -237,7 +237,7 @@ class TestStartDownloadAutoEviction:
         new_callable=AsyncMock,
         return_value=True,
     )
-    @patch("exo.download.coordinator.resolve_model_in_path", return_value=None)
+    @patch("exo.download.coordinator.resolve_existing_model", return_value=None)
     async def test_eviction_emits_not_downloading_event_for_evicted_model(
         self, _mock_resolve: AsyncMock, mock_delete: AsyncMock
     ) -> None:
@@ -280,7 +280,7 @@ class TestActiveModelProtection:
         new_callable=AsyncMock,
         return_value=True,
     )
-    @patch("exo.download.coordinator.resolve_model_in_path", return_value=None)
+    @patch("exo.download.coordinator.resolve_existing_model", return_value=None)
     async def test_active_model_not_evicted(
         self, _mock_resolve: AsyncMock, mock_delete: AsyncMock
     ) -> None:
@@ -311,7 +311,7 @@ class TestActiveModelProtection:
         new_callable=AsyncMock,
         return_value=True,
     )
-    @patch("exo.download.coordinator.resolve_model_in_path", return_value=None)
+    @patch("exo.download.coordinator.resolve_existing_model", return_value=None)
     async def test_all_active_models_rejected(
         self, _mock_resolve: AsyncMock, mock_delete: AsyncMock
     ) -> None:
@@ -340,7 +340,7 @@ class TestDiskDeleteFailure:
         new_callable=AsyncMock,
         return_value=False,
     )
-    @patch("exo.download.coordinator.resolve_model_in_path", return_value=None)
+    @patch("exo.download.coordinator.resolve_existing_model", return_value=None)
     async def test_eviction_rejected_on_disk_delete_failure(
         self, _mock_resolve: AsyncMock, mock_delete: AsyncMock
     ) -> None:
@@ -418,7 +418,7 @@ class TestEvictionEvents:
         new_callable=AsyncMock,
         return_value=True,
     )
-    @patch("exo.download.coordinator.resolve_model_in_path", return_value=None)
+    @patch("exo.download.coordinator.resolve_existing_model", return_value=None)
     async def test_eviction_emits_not_downloading_event(
         self, _mock_resolve: AsyncMock, mock_delete: AsyncMock
     ) -> None:
@@ -453,7 +453,7 @@ class TestEvictionEvents:
         new_callable=AsyncMock,
         return_value=True,
     )
-    @patch("exo.download.coordinator.resolve_model_in_path", return_value=None)
+    @patch("exo.download.coordinator.resolve_existing_model", return_value=None)
     async def test_multi_eviction_emits_event_per_model(
         self, _mock_resolve: AsyncMock, _mock_delete: AsyncMock
     ) -> None:
