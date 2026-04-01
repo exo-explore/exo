@@ -1,11 +1,9 @@
 import time
-from typing import Generic, TypeVar, final
-
-K = TypeVar("K")
+from typing import final
 
 
 @final
-class KeyedBackoff(Generic[K]):
+class KeyedBackoff[K]:
     """Tracks exponential backoff state per key."""
 
     def __init__(self, base: float = 0.5, cap: float = 10.0):

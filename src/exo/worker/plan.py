@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 
 from exo.shared.types.chunks import InputImageChunk
-from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.common import CommandId, ModelId, NodeId
 from exo.shared.types.tasks import (
     CancelTask,
     ConnectToGroup,
@@ -39,6 +39,7 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
+from exo.utils.keyed_backoff import KeyedBackoff
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
 
@@ -50,18 +51,22 @@ def plan(
     instances: Mapping[InstanceId, Instance],
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
     tasks: Mapping[TaskId, Task],
-    input_chunk_buffer: Mapping[CommandId, Mapping[int, InputImageChunk]] | None = None,
+    input_chunk_buffer: Mapping[CommandId, Mapping[int, InputImageChunk]],
+    instance_backoff: KeyedBackoff[InstanceId],
+    download_backoff: KeyedBackoff[ModelId],
 ) -> Task | None:
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
         _cancel_tasks(runners, tasks)
         or _kill_runner(runners, all_runners, instances)
-        or _create_runner(node_id, runners, instances)
-        or _model_needs_download(node_id, runners, global_download_status)
+        or _create_runner(node_id, runners, instances, instance_backoff)
+        or _model_needs_download(
+            node_id, runners, global_download_status, download_backoff
+        )
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
-        or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer or {})
+        or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer)
     )
 
 
@@ -92,8 +97,12 @@ def _create_runner(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
     instances: Mapping[InstanceId, Instance],
+    instance_backoff: KeyedBackoff[InstanceId],
 ) -> CreateRunner | None:
     for instance in instances.values():
+        if not instance_backoff.should_proceed(instance.instance_id):
+            continue
+
         runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
         if runner_id is None:
             continue
@@ -116,6 +125,7 @@ def _model_needs_download(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    download_backoff: KeyedBackoff[ModelId],
 ) -> DownloadModel | None:
     local_downloads = global_download_status.get(node_id, [])
     download_status = {
@@ -124,12 +134,16 @@ def _model_needs_download(
 
     for runner in runners.values():
         model_id = runner.bound_instance.bound_shard.model_card.model_id
-        if isinstance(runner.status, RunnerIdle) and (
-            model_id not in download_status
-            or not isinstance(
-                download_status[model_id],
-                (DownloadOngoing, DownloadCompleted, DownloadFailed),
+        if (
+            isinstance(runner.status, RunnerIdle)
+            and (
+                model_id not in download_status
+                or not isinstance(
+                    download_status[model_id],
+                    (DownloadOngoing, DownloadCompleted, DownloadFailed),
+                )
             )
+            and download_backoff.should_proceed(model_id)
         ):
             # We don't invalidate download_status randomly in case a file gets deleted on disk
             return DownloadModel(
@@ -272,7 +286,7 @@ def _pending_tasks(
     runners: Mapping[RunnerId, RunnerSupervisor],
     tasks: Mapping[TaskId, Task],
     all_runners: Mapping[RunnerId, RunnerStatus],
-    input_chunk_buffer: Mapping[CommandId, Mapping[int, InputImageChunk]] | None,
+    input_chunk_buffer: Mapping[CommandId, Mapping[int, InputImageChunk]],
 ) -> Task | None:
     for task in tasks.values():
         # for now, just forward chat completions
@@ -287,7 +301,6 @@ def _pending_tasks(
         if isinstance(task, (ImageEdits, TextGeneration)):
             expected_image_chunks = task.task_params.total_input_chunks
         if expected_image_chunks > 0:
-            assert input_chunk_buffer is not None
             cmd_id = task.command_id
             received = len(input_chunk_buffer.get(cmd_id, {}))
             if received < expected_image_chunks:

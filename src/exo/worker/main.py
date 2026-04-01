@@ -89,7 +89,7 @@ class Worker:
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
         self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
-            base=2.0, cap=30.0
+            base=0.5, cap=10.0
         )
         self._stopped: anyio.Event = anyio.Event()
 
@@ -166,6 +166,8 @@ class Worker:
                 self.state.runners,
                 self.state.tasks,
                 self.input_chunk_buffer,
+                self._instance_backoff,
+                self._download_backoff,
             )
             if task is None:
                 continue
@@ -183,15 +185,6 @@ class Worker:
                         )
                     )
                     continue
-                if not self._instance_backoff.should_proceed(iid):
-                    continue
-
-            # Gate DownloadModel on backoff BEFORE emitting TaskCreated
-            # to prevent flooding the event log with useless events
-            if isinstance(task, DownloadModel):
-                model_id = task.shard_metadata.model_card.model_id
-                if not self._download_backoff.should_proceed(model_id):
-                    continue
 
             logger.info(f"Worker plan: {task.__class__.__name__}")
             assert task.task_status
@@ -201,6 +194,7 @@ class Worker:
             match task:
                 case CreateRunner():
                     self._create_supervisor(task)
+                    self._instance_backoff.record_attempt(task.instance_id)
                     await self.event_sender.send(
                         TaskStatusUpdated(
                             task_id=task.task_id, task_status=TaskStatus.Complete
@@ -248,7 +242,7 @@ class Worker:
                                 task_status=TaskStatus.Running,
                             )
                         )
-                case Shutdown(runner_id=runner_id, instance_id=instance_id):
+                case Shutdown(runner_id=runner_id):
                     runner = self.runners.pop(runner_id)
                     try:
                         with fail_after(3):
@@ -261,8 +255,6 @@ class Worker:
                         )
                     finally:
                         runner.shutdown()
-                    if instance_id in self.state.instances:
-                        self._instance_backoff.record_attempt(instance_id)
                 case CancelTask(
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):
