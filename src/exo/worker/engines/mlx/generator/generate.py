@@ -324,7 +324,7 @@ def prefill(
 
     is_pipeline = _has_pipeline_communication_layer(model)
 
-    prefill_step_size = 4096
+    prefill_step_size = 2048
 
     try:
         if is_pipeline and num_tokens >= prefill_step_size:
