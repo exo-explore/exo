@@ -680,13 +680,16 @@ def mlx_generate(
                 inner = getattr(model, "language_model", model)
                 _install_spec_layers(inner)
 
-                # Prefill draft cache with FULL prompt (rank 0 only, instant — no PP needed)
+                # Prefill draft cache with tail of prompt (rank 0 only, instant — no PP needed)
+                # The draft model uses a RotatingKVCache, so only recent tokens matter.
                 if pp_rank == 0 and _pp_draft is not None:
-                    _draft_prompt = all_prompt_tokens.tolist()
-                    for tok in _draft_prompt:
-                        _pp_draft(mx.array([[tok]]), cache=_pp_draft_cache)
-                    mx.eval([c.state if hasattr(c, 'state') else c for c in _pp_draft_cache])
-                    logger.info(f"Draft model prefilled with {len(_draft_prompt)} tokens")
+                    _draft_kv_window = int(os.environ.get("EXO_DRAFT_KV_WINDOW", "4096"))
+                    _draft_prompt = all_prompt_tokens[-_draft_kv_window:]
+                    _draft_chunk = 512
+                    for i in range(0, len(_draft_prompt), _draft_chunk):
+                        _pp_draft(_draft_prompt[i:i + _draft_chunk][None], cache=_pp_draft_cache)
+                        mx.eval([c.state if hasattr(c, 'state') else c for c in _pp_draft_cache])
+                    logger.info(f"Draft model prefilled with {len(_draft_prompt)} tokens (of {len(all_prompt_tokens)} total)")
 
                 # First token via standard PP (both ranks, synchronized)
                 _first_gen = stream_generate(

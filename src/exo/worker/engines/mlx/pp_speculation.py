@@ -389,6 +389,9 @@ def pp_speculative_decode_loop(
 # Draft model loading
 # ---------------------------------------------------------------------------
 
+_DRAFT_KV_WINDOW = int(os.environ.get("EXO_DRAFT_KV_WINDOW", "4096"))
+
+
 def load_draft_model(model_path: str) -> tuple[nn.Module, list[Any]] | None:
     """Load a small draft model for speculation. Returns (model, cache) or None."""
     try:
@@ -398,8 +401,8 @@ def load_draft_model(model_path: str) -> tuple[nn.Module, list[Any]] | None:
         _log(f"Loading draft model: {model_path}")
         model, _ = load(model_path)
         mx.eval(model.parameters())
-        cache = make_prompt_cache(model)
-        _log(f"Draft model loaded successfully")
+        cache = make_prompt_cache(model, max_kv_size=_DRAFT_KV_WINDOW)
+        _log(f"Draft model loaded (KV window={_DRAFT_KV_WINDOW})")
         return model, cache
     except Exception as e:
         _log(f"Failed to load draft model: {e}")
