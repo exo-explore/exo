@@ -149,9 +149,7 @@ class Runner:
         self.send_task_status(task.task_id, TaskStatus.Running)
 
         match task:
-            case ConnectToGroup() if isinstance(
-                self.current_status, (RunnerIdle, RunnerFailed)
-            ):
+            case ConnectToGroup() if isinstance(self.current_status, RunnerIdle):
                 assert isinstance(self.generator, Builder)
                 logger.info("runner connecting")
                 self.update_status(RunnerConnecting())
