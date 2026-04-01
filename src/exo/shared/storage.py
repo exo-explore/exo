@@ -184,7 +184,7 @@ async def load_storage_config(
         if raw.strip():
             data = tomllib.loads(raw)
             base = StorageConfig.from_disk(data)
-    except Exception:
+    except (OSError, tomllib.TOMLDecodeError, ValueError, KeyError):
         logger.warning("Failed to read storage config from config file, using defaults")
 
     resolved_max_storage = (

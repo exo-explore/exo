@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -372,9 +371,6 @@ class DownloadCoordinator:
                 await self.event_sender.send(
                     NodeDownloadProgress(download_progress=failed)
                 )
-            except anyio.get_cancelled_exc_class():
-                # ignore cancellation - let cleanup do its thing
-                pass
             finally:
                 self.active_downloads.pop(model_id, None)
 
@@ -540,10 +536,8 @@ class DownloadCoordinator:
                                 end_layer=card.n_layers,
                                 n_layers=card.n_layers,
                             )
-                            path_completed: ModelStatus = (
-                                self._completed_from_path(
-                                    path_shard, found, card.storage_size
-                                )
+                            path_completed: ModelStatus = self._completed_from_path(
+                                path_shard, found, card.storage_size
                             )
                             self.download_status[mid] = path_completed
                             await self.event_sender.send(
