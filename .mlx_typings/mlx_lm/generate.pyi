@@ -30,7 +30,7 @@ def str2bool(string):  # -> bool:
 def setup_arg_parser():  # -> ArgumentParser:
     """Set up and return the argument parser."""
 
-generation_stream = ...
+generation_stream: mx.Stream
 
 @contextlib.contextmanager
 def wired_limit(
@@ -266,12 +266,12 @@ def _merge_caches(caches: Any) -> List[Any]: ...
 class Batch:
     uids: List[int]
     y: mx.array
-    logprobs: mx.array
+    logprobs: List[mx.array] | mx.array
     max_tokens: List[int]
     num_tokens: List[int]
     cache: List[Any]
-    samplers: List[Any]
-    logits_processors: List[Any]
+    samplers: List[Callable[[mx.array], mx.array] | None]
+    logits_processors: List[List[Callable[[mx.array, mx.array], mx.array]]]
     tokens: List[mx.array]
     def __len__(self) -> int: ...
     def filter(self, keep_idx: List[int]) -> None: ...
@@ -279,13 +279,18 @@ class Batch:
     def extract_cache(self, idx: int) -> List[Any]: ...
 
 class BatchGenerator:
-    model: Any
+    model: nn.Module
+    sampler: Callable[[mx.array], mx.array]
+    stop_tokens: set[int]
     max_kv_size: Optional[int]
     prefill_step_size: int
+    completion_batch_size: int
+    prefill_batch_size: int
     unprocessed_prompts: List[Any]
     active_batch: Optional[Batch]
     prompt_progress_callback: Callable[[List[Tuple[int, int, int]]], None]
     _stats: BatchStats
+    _next_count: int
 
     @dataclass
     class Response:

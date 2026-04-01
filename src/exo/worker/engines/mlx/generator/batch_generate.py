@@ -105,6 +105,7 @@ class ExoBatchGenerator:
                         prefill_step_size=4096,
                     )
                     logger.info(f"MTP speculative decoding enabled (γ={gamma}, T={temp})")
+                    self.warmup_speculative(self.model, self.tokenizer)
                 else:
                     logger.warning("EXO_SPECULATIVE=1 but could not find MTP weights. Falling back to standard generation.")
                     self._exo_gen = MlxBatchGenerator(

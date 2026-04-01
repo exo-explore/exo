@@ -2396,7 +2396,7 @@ def degrees(a: array, /, *, stream: Stream | Device | None = ...) -> array:
         array: The angles in degrees.
     """
 
-def depends(inputs: array | Sequence[array], dependencies: array | Sequence[array]):
+def depends[T](inputs: T, dependencies: array | Sequence[array]) -> T:
     """
     Insert dependencies between arrays in the graph. The outputs are
     identical to ``inputs`` but with dependencies on ``dependencies``.
