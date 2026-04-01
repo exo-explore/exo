@@ -131,6 +131,24 @@ def node_ids_from_instance(instance: dict[str, Any]) -> list[str]:
     return list(inner["shardAssignments"]["nodeToRunner"].keys())
 
 
+def shard_split_summary(instance: dict[str, Any]) -> str:
+    inner = unwrap_instance(instance)
+    runner_to_shard = inner["shardAssignments"]["runnerToShard"]
+    parts: list[str] = []
+    for rid, shard_wrapper in runner_to_shard.items():
+        shard = next(iter(shard_wrapper.values()))
+        start = shard.get("startLayer", "?")
+        end = shard.get("endLayer", "?")
+        n = shard.get("nLayers", "?")
+        weights = shard.get("shardWeights")
+        rank = shard.get("deviceRank", "?")
+        part = f"rank {rank}: layers [{start},{end})/{n}"
+        if weights:
+            part += f" weights={[round(w, 3) for w in weights]}"
+        parts.append(part)
+    return " | ".join(parts)
+
+
 def runner_ready(runner: dict[str, Any]) -> bool:
     return "RunnerReady" in runner
 
@@ -151,6 +169,7 @@ def wait_for_instance_ready(
     start_time = time.time()
     instance_existed = False
     last_loaded: dict[str, int] = {}
+    last_states: dict[str, str] = {}
     while time.time() - start_time < timeout:
         instance = client.get_instance(instance_id)
 
@@ -166,20 +185,28 @@ def wait_for_instance_ready(
         rids = runner_ids_from_instance(instance)
 
         all_ready = True
+        runner_states: dict[str, str] = {}
         for rid in rids:
             runner = client.get_runner(rid) or {}
             if runner_failed(runner):
                 error_msg = get_runner_failed_message(runner) or "Unknown error"
                 raise RuntimeError(f"Runner {rid} failed: {error_msg}")
+            state_tag = next(iter(runner), "Unknown")
             if "RunnerLoading" in runner:
                 loading = runner["RunnerLoading"]
                 loaded = loading.get("layersLoaded", 0)
                 total = loading.get("totalLayers", 0)
-                if total > 0 and last_loaded.get(rid) != loaded:
+                if total > 0:
                     last_loaded[rid] = loaded
-                    logger.debug(f"Runner {rid}: loading layers {loaded}/{total}")
+                    state_tag = f"Loading {loaded}/{total}"
+            runner_states[rid] = state_tag
             if not runner_ready(runner):
                 all_ready = False
+
+        if runner_states != last_states:
+            last_states = runner_states
+            parts = [f"{rid[:8]}: {state}" for rid, state in runner_states.items()]
+            logger.debug(f"Runners: {', '.join(parts)}")
 
         if all_ready:
             return
@@ -187,6 +214,24 @@ def wait_for_instance_ready(
         time.sleep(0.1)
 
     raise TimeoutError(f"Instance {instance_id} did not become ready within {timeout=}")
+
+
+def get_all_instance_ids(client: ExoClient) -> set[str]:
+    instances = client.get_state_path("instances") or {}
+    return set(instances.keys())
+
+
+def wait_for_new_instance(
+    client: ExoClient, before_ids: set[str], timeout: float = 60.0
+) -> str:
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        current_ids = get_all_instance_ids(client)
+        new_ids = current_ids - before_ids
+        if new_ids:
+            return next(iter(new_ids))
+        time.sleep(0.2)
+    raise TimeoutError(f"No new instance appeared within {timeout}s")
 
 
 def wait_for_instance_gone(

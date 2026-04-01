@@ -489,6 +489,41 @@ def patch_tensor_model[T](model: T) -> T:
     return model
 
 
+def _kv_balanced_q_sizes(
+    q_dim: int, N: int, gqa_repeat: int, head_unit: int, num_kv: int
+) -> list[int]:
+    group_elems = gqa_repeat * head_unit
+    if q_dim // group_elems >= N:
+        return compute_shard_sizes(q_dim, N, group_elems)
+    best_m = 1
+    best_diff = float("inf")
+    for m in range(1, gqa_repeat):
+        side = (gqa_repeat - m) * head_unit
+        mid = m * num_kv * head_unit
+        if abs(side - mid) < best_diff:
+            best_diff = abs(side - mid)
+            best_m = m
+    side = (gqa_repeat - best_m) * head_unit
+    mid = best_m * num_kv * head_unit
+    return [side, mid, side]
+
+
+def _slice_kv_proj(module: nn.Module, kv_start: int, kv_end: int, head_dim: int) -> None:
+    params = module.parameters()
+    row_start = kv_start * head_dim
+    row_end = kv_end * head_dim
+    gs = getattr(module, "group_size", 0)
+    if gs > 0 and "scales" in params:
+        module.weight = params["weight"][row_start:row_end]
+        module.scales = params["scales"][row_start:row_end]
+        if "biases" in params:
+            module.biases = params["biases"][row_start:row_end]
+    else:
+        module.weight = params["weight"][row_start:row_end]
+    if "bias" in params and params["bias"].ndim > 0:
+        module.bias = params["bias"][row_start:row_end]
+
+
 def tensor_auto_parallel(
     model: nn.Module,
     group: mx.distributed.Group,
@@ -806,34 +841,58 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
             head_dim = layer.self_attn.head_dim
             n_kv = layer.self_attn.n_kv_heads or layer.self_attn.n_heads
             assert layer.self_attn.n_heads % n_kv == 0, "Breaks assumptions"
-            gqa_unit = head_dim * (layer.self_attn.n_heads // n_kv)
             q_dim = layer.self_attn.q_proj.weight.shape[0]
             k_dim = layer.self_attn.k_proj.weight.shape[0]
             intermediate = layer.mlp.gate_proj.weight.shape[0]
-            layer.self_attn.q_proj = self.all_to_sharded_linear(
-                layer.self_attn.q_proj,
-                unit=gqa_unit,
-                weights=self._greedy_weights_for("q", q_dim, gqa_unit),
-            )
-            layer.self_attn.k_proj = self.all_to_sharded_linear(
-                layer.self_attn.k_proj,
-                unit=head_dim,
-                weights=self._greedy_weights_for("k", k_dim, head_dim),
-            )
-            layer.self_attn.v_proj = self.all_to_sharded_linear(
-                layer.self_attn.v_proj,
-                unit=head_dim,
-                weights=self._greedy_weights_for("v", k_dim, head_dim),
-            )
-            layer.self_attn.o_proj = self.sharded_to_all_linear(
-                layer.self_attn.o_proj,
-                unit=gqa_unit,
-                weights=self._greedy_weights_for("o", q_dim, gqa_unit),
-            )
+            if n_kv >= self.N:
+                gqa_unit = head_dim * (layer.self_attn.n_heads // n_kv)
+                layer.self_attn.q_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_proj,
+                    unit=gqa_unit,
+                    weights=self._greedy_weights_for("q", q_dim, gqa_unit),
+                )
+                layer.self_attn.k_proj = self.all_to_sharded_linear(
+                    layer.self_attn.k_proj,
+                    unit=head_dim,
+                    weights=self._greedy_weights_for("k", k_dim, head_dim),
+                )
+                layer.self_attn.v_proj = self.all_to_sharded_linear(
+                    layer.self_attn.v_proj,
+                    unit=head_dim,
+                    weights=self._greedy_weights_for("v", k_dim, head_dim),
+                )
+                layer.self_attn.o_proj = self.sharded_to_all_linear(
+                    layer.self_attn.o_proj,
+                    unit=gqa_unit,
+                    weights=self._greedy_weights_for("o", q_dim, gqa_unit),
+                )
+                layer.self_attn.n_kv_heads = (
+                    layer.self_attn.k_proj.weight.shape[0] // head_dim
+                )
+            else:
+                q_unit = head_dim
+                gqa_repeat = layer.self_attn.n_heads // n_kv
+                kv_bal = _kv_balanced_q_sizes(q_dim, self.N, gqa_repeat, head_dim, n_kv)
+                kv_bal_w = [float(s) for s in kv_bal]
+                layer.self_attn.q_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_proj,
+                    unit=q_unit,
+                    weights=kv_bal_w,
+                )
+                layer.self_attn.o_proj = self.sharded_to_all_linear(
+                    layer.self_attn.o_proj,
+                    unit=q_unit,
+                    weights=kv_bal_w,
+                )
+                local_q_heads = layer.self_attn.q_proj.weight.shape[0] // head_dim
+                q_offset = sum(kv_bal[: self.group.rank()])
+                start_head = q_offset // head_dim
+                kv_start = start_head // gqa_repeat
+                kv_end = (start_head + local_q_heads - 1) // gqa_repeat + 1
+                _slice_kv_proj(layer.self_attn.k_proj, kv_start, kv_end, head_dim)
+                _slice_kv_proj(layer.self_attn.v_proj, kv_start, kv_end, head_dim)
+                layer.self_attn.n_kv_heads = kv_end - kv_start
             layer.self_attn.n_heads = layer.self_attn.q_proj.weight.shape[0] // head_dim
-            layer.self_attn.n_kv_heads = (
-                layer.self_attn.k_proj.weight.shape[0] // head_dim
-            )
 
             mlp_unit = getattr(layer.mlp.gate_proj, "group_size", 1)
             layer.mlp.gate_proj = self.all_to_sharded_linear(
@@ -976,36 +1035,32 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                         -1
                     ]
                     shared_up_dim = layer.mlp.shared_experts.up_proj.weight.shape[0]
+                    shared_greedy = self._greedy_weights_for("shared_gate", shared_gate_dim)
                     self.all_to_sharded_linear_in_place(
                         layer.mlp.shared_experts.gate_proj,
-                        weights=self._greedy_weights_for(
-                            "shared_gate", shared_gate_dim
-                        ),
+                        weights=shared_greedy,
                     )
                     self.sharded_to_all_linear_in_place(
                         layer.mlp.shared_experts.down_proj,
-                        weights=self._greedy_weights_for(
-                            "shared_down", shared_down_dim
-                        ),
+                        weights=shared_greedy,
                     )
                     self.all_to_sharded_linear_in_place(
                         layer.mlp.shared_experts.up_proj,
-                        weights=self._greedy_weights_for("shared_up", shared_up_dim),
+                        weights=shared_greedy,
                     )
                 moe_gate_dim = int(layer.mlp.switch_mlp.gate_proj.weight.shape[1])
-                moe_down_dim = int(layer.mlp.switch_mlp.down_proj.weight.shape[-1])
-                moe_up_dim = int(layer.mlp.switch_mlp.up_proj.weight.shape[1])
+                moe_greedy = self._greedy_weights_for("moe_gate", moe_gate_dim)
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.switch_mlp.gate_proj,
-                    weights=self._greedy_weights_for("moe_gate", moe_gate_dim),
+                    weights=moe_greedy,
                 )
                 self.sharded_to_all_linear_in_place(
                     layer.mlp.switch_mlp.down_proj,
-                    weights=self._greedy_weights_for("moe_down", moe_down_dim),
+                    weights=moe_greedy,
                 )
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.switch_mlp.up_proj,
-                    weights=self._greedy_weights_for("moe_up", moe_up_dim),
+                    weights=moe_greedy,
                 )
                 layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
                 layer.mlp.sharding_group = self.group
@@ -1126,36 +1181,32 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
                         -1
                     ]
                     shared_up_dim = layer.mlp.shared_experts.up_proj.weight.shape[0]
+                    shared_greedy = self._greedy_weights_for("shared_gate", shared_gate_dim)
                     self.all_to_sharded_linear_in_place(
                         layer.mlp.shared_experts.gate_proj,
-                        weights=self._greedy_weights_for(
-                            "shared_gate", shared_gate_dim
-                        ),
+                        weights=shared_greedy,
                     )
                     self.sharded_to_all_linear_in_place(
                         layer.mlp.shared_experts.down_proj,
-                        weights=self._greedy_weights_for(
-                            "shared_down", shared_down_dim
-                        ),
+                        weights=shared_greedy,
                     )
                     self.all_to_sharded_linear_in_place(
                         layer.mlp.shared_experts.up_proj,
-                        weights=self._greedy_weights_for("shared_up", shared_up_dim),
+                        weights=shared_greedy,
                     )
                 moe_gate_dim = int(layer.mlp.switch_mlp.gate_proj.weight.shape[1])
-                moe_down_dim = int(layer.mlp.switch_mlp.down_proj.weight.shape[-1])
-                moe_up_dim = int(layer.mlp.switch_mlp.up_proj.weight.shape[1])
+                moe_greedy = self._greedy_weights_for("moe_gate", moe_gate_dim)
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.switch_mlp.gate_proj,
-                    weights=self._greedy_weights_for("moe_gate", moe_gate_dim),
+                    weights=moe_greedy,
                 )
                 self.sharded_to_all_linear_in_place(
                     layer.mlp.switch_mlp.down_proj,
-                    weights=self._greedy_weights_for("moe_down", moe_down_dim),
+                    weights=moe_greedy,
                 )
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.switch_mlp.up_proj,
-                    weights=self._greedy_weights_for("moe_up", moe_up_dim),
+                    weights=moe_greedy,
                 )
                 layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
                 layer.mlp.sharding_group = self.group  # type: ignore
@@ -1258,38 +1309,61 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
             # Shard the self attention
             head_dim = layer.self_attn.head_dim
-            gqa_unit = head_dim * (
-                layer.self_attn.num_attention_heads
-                // layer.self_attn.num_key_value_heads
-            )
+            n_kv = layer.self_attn.num_key_value_heads
             q_dim = layer.self_attn.q_proj.weight.shape[0]
             k_dim = layer.self_attn.k_proj.weight.shape[0]
-            layer.self_attn.q_proj = self.all_to_sharded_linear(
-                layer.self_attn.q_proj,
-                unit=gqa_unit,
-                weights=self._greedy_weights_for("q", q_dim, gqa_unit),
-            )
-            layer.self_attn.k_proj = self.all_to_sharded_linear(
-                layer.self_attn.k_proj,
-                unit=head_dim,
-                weights=self._greedy_weights_for("k", k_dim, head_dim),
-            )
-            layer.self_attn.v_proj = self.all_to_sharded_linear(
-                layer.self_attn.v_proj,
-                unit=head_dim,
-                weights=self._greedy_weights_for("v", k_dim, head_dim),
-            )
-            layer.self_attn.o_proj = self.sharded_to_all_linear(
-                layer.self_attn.o_proj,
-                unit=gqa_unit,
-                weights=self._greedy_weights_for("o", q_dim, gqa_unit),
-            )
-
+            if n_kv >= self.N:
+                gqa_unit = head_dim * (
+                    layer.self_attn.num_attention_heads // n_kv
+                )
+                layer.self_attn.q_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_proj,
+                    unit=gqa_unit,
+                    weights=self._greedy_weights_for("q", q_dim, gqa_unit),
+                )
+                layer.self_attn.k_proj = self.all_to_sharded_linear(
+                    layer.self_attn.k_proj,
+                    unit=head_dim,
+                    weights=self._greedy_weights_for("k", k_dim, head_dim),
+                )
+                layer.self_attn.v_proj = self.all_to_sharded_linear(
+                    layer.self_attn.v_proj,
+                    unit=head_dim,
+                    weights=self._greedy_weights_for("v", k_dim, head_dim),
+                )
+                layer.self_attn.o_proj = self.sharded_to_all_linear(
+                    layer.self_attn.o_proj,
+                    unit=gqa_unit,
+                    weights=self._greedy_weights_for("o", q_dim, gqa_unit),
+                )
+                layer.self_attn.num_key_value_heads = (
+                    layer.self_attn.k_proj.weight.shape[0] // head_dim
+                )
+            else:
+                q_unit = head_dim
+                gqa_repeat = layer.self_attn.num_attention_heads // n_kv
+                kv_bal = _kv_balanced_q_sizes(q_dim, self.N, gqa_repeat, head_dim, n_kv)
+                kv_bal_w = [float(s) for s in kv_bal]
+                layer.self_attn.q_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_proj,
+                    unit=q_unit,
+                    weights=kv_bal_w,
+                )
+                layer.self_attn.o_proj = self.sharded_to_all_linear(
+                    layer.self_attn.o_proj,
+                    unit=q_unit,
+                    weights=kv_bal_w,
+                )
+                local_q_heads = layer.self_attn.q_proj.weight.shape[0] // head_dim
+                q_offset = sum(kv_bal[: self.group.rank()])
+                start_head = q_offset // head_dim
+                kv_start = start_head // gqa_repeat
+                kv_end = (start_head + local_q_heads - 1) // gqa_repeat + 1
+                _slice_kv_proj(layer.self_attn.k_proj, kv_start, kv_end, head_dim)
+                _slice_kv_proj(layer.self_attn.v_proj, kv_start, kv_end, head_dim)
+                layer.self_attn.num_key_value_heads = kv_end - kv_start
             layer.self_attn.num_attention_heads = (
                 layer.self_attn.q_proj.weight.shape[0] // head_dim
-            )
-            layer.self_attn.num_key_value_heads = (
-                layer.self_attn.k_proj.weight.shape[0] // head_dim
             )
 
             layer.self_attn = WrappedMiniMaxAttention(layer.self_attn, self.group)  # pyright: ignore[reportAttributeAccessIssue,reportArgumentType]
@@ -1298,21 +1372,18 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             moe_gate_dim = int(
                 layer.block_sparse_moe.switch_mlp.gate_proj.weight.shape[1]
             )
-            moe_down_dim = int(
-                layer.block_sparse_moe.switch_mlp.down_proj.weight.shape[-1]
-            )
-            moe_up_dim = int(layer.block_sparse_moe.switch_mlp.up_proj.weight.shape[1])
+            moe_greedy = self._greedy_weights_for("moe_gate", moe_gate_dim)
             self.all_to_sharded_linear_in_place(
                 layer.block_sparse_moe.switch_mlp.gate_proj,
-                weights=self._greedy_weights_for("moe_gate", moe_gate_dim),
+                weights=moe_greedy,
             )
             self.sharded_to_all_linear_in_place(
                 layer.block_sparse_moe.switch_mlp.down_proj,
-                weights=self._greedy_weights_for("moe_down", moe_down_dim),
+                weights=moe_greedy,
             )
             self.all_to_sharded_linear_in_place(
                 layer.block_sparse_moe.switch_mlp.up_proj,
-                weights=self._greedy_weights_for("moe_up", moe_up_dim),
+                weights=moe_greedy,
             )
             layer.block_sparse_moe = ShardedMoE(layer.block_sparse_moe)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
             layer.block_sparse_moe.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
@@ -1341,36 +1412,59 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                 head_dim = (
                     layer.self_attn.q_proj.weight.shape[0] // layer.self_attn.n_heads
                 )
-                gqa_unit = head_dim * (
-                    layer.self_attn.n_heads // layer.self_attn.n_kv_heads
-                )
+                n_kv = layer.self_attn.n_kv_heads
                 q_dim = layer.self_attn.q_proj.weight.shape[0]
                 k_dim = layer.self_attn.k_proj.weight.shape[0]
-                layer.self_attn.q_proj = self.all_to_sharded_linear(
-                    layer.self_attn.q_proj,
-                    unit=gqa_unit,
-                    weights=self._greedy_weights_for("q", q_dim, gqa_unit),
-                )
-                layer.self_attn.k_proj = self.all_to_sharded_linear(
-                    layer.self_attn.k_proj,
-                    unit=head_dim,
-                    weights=self._greedy_weights_for("k", k_dim, head_dim),
-                )
-                layer.self_attn.v_proj = self.all_to_sharded_linear(
-                    layer.self_attn.v_proj,
-                    unit=head_dim,
-                    weights=self._greedy_weights_for("v", k_dim, head_dim),
-                )
-                layer.self_attn.o_proj = self.sharded_to_all_linear(
-                    layer.self_attn.o_proj,
-                    unit=gqa_unit,
-                    weights=self._greedy_weights_for("o", q_dim, gqa_unit),
-                )
+                if n_kv >= self.N:
+                    gqa_unit = head_dim * (layer.self_attn.n_heads // n_kv)
+                    layer.self_attn.q_proj = self.all_to_sharded_linear(
+                        layer.self_attn.q_proj,
+                        unit=gqa_unit,
+                        weights=self._greedy_weights_for("q", q_dim, gqa_unit),
+                    )
+                    layer.self_attn.k_proj = self.all_to_sharded_linear(
+                        layer.self_attn.k_proj,
+                        unit=head_dim,
+                        weights=self._greedy_weights_for("k", k_dim, head_dim),
+                    )
+                    layer.self_attn.v_proj = self.all_to_sharded_linear(
+                        layer.self_attn.v_proj,
+                        unit=head_dim,
+                        weights=self._greedy_weights_for("v", k_dim, head_dim),
+                    )
+                    layer.self_attn.o_proj = self.sharded_to_all_linear(
+                        layer.self_attn.o_proj,
+                        unit=gqa_unit,
+                        weights=self._greedy_weights_for("o", q_dim, gqa_unit),
+                    )
+                    layer.self_attn.n_kv_heads = (
+                        layer.self_attn.k_proj.weight.shape[0] // head_dim
+                    )
+                else:
+                    q_unit = head_dim * n_kv
+                    gqa_repeat = layer.self_attn.n_heads // n_kv
+                    kv_bal = _kv_balanced_q_sizes(q_dim, self.N, gqa_repeat, head_dim, n_kv)
+                    kv_bal_w = [s // q_unit for s in kv_bal]
+                    layer.self_attn.q_proj = self.all_to_sharded_linear(
+                        layer.self_attn.q_proj,
+                        unit=q_unit,
+                        weights=kv_bal_w,
+                    )
+                    layer.self_attn.o_proj = self.sharded_to_all_linear(
+                        layer.self_attn.o_proj,
+                        unit=q_unit,
+                        weights=kv_bal_w,
+                    )
+                    local_q_heads = layer.self_attn.q_proj.weight.shape[0] // head_dim
+                    q_offset = sum(kv_bal[:self.group.rank()])
+                    start_head = q_offset // head_dim
+                    kv_s = start_head // gqa_repeat
+                    kv_e = (start_head + local_q_heads - 1) // gqa_repeat + 1
+                    _slice_kv_proj(layer.self_attn.k_proj, kv_s, kv_e, head_dim)
+                    _slice_kv_proj(layer.self_attn.v_proj, kv_s, kv_e, head_dim)
+                    layer.self_attn.n_kv_heads = kv_e - kv_s
                 layer.self_attn.n_heads = (
                     layer.self_attn.q_proj.weight.shape[0] // head_dim
-                )
-                layer.self_attn.n_kv_heads = (
-                    layer.self_attn.k_proj.weight.shape[0] // head_dim
                 )
             else:
                 assert isinstance(layer, (Qwen3NextDecoderLayer, Qwen3_5DecoderLayer))
@@ -1397,11 +1491,14 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                         value_dim = linear_attn.value_dim
                         b_dim = linear_attn.in_proj_b.weight.shape[0]
                         a_dim = linear_attn.in_proj_a.weight.shape[0]
+                        v_per_k = linear_attn.num_v_heads // linear_attn.num_k_heads
+                        k_sizes = compute_shard_sizes(key_dim, self.N, head_k_dim)
+                        v_sizes = [(s // head_k_dim) * v_per_k * head_v_dim for s in k_sizes]
+                        qkv_sizes = [k_sizes[r] * 2 + v_sizes[r] for r in range(self.N)]
+                        qkv_w = [float(s) for s in qkv_sizes]
+                        v_w = [float(s) for s in v_sizes]
                         k_greedy = self._greedy_weights_for(
                             "linear_k_dim", key_dim, head_k_dim
-                        )
-                        v_greedy = self._greedy_weights_for(
-                            "linear_v_dim", value_dim, head_v_dim
                         )
                         linear_attn.in_proj_qkv = shard_linear(
                             linear_attn.in_proj_qkv,
@@ -1409,49 +1506,54 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                             segments=[key_dim, key_dim + key_dim],
                             unit=head_k_dim,
                             group=self.group,
-                            weights=k_greedy,
+                            weights=qkv_w,
                         )
                         linear_attn.in_proj_z = self.all_to_sharded_linear(
                             linear_attn.in_proj_z,
                             unit=head_v_dim,
-                            weights=v_greedy,
+                            weights=v_w,
                         )
                         linear_attn.in_proj_b = self.all_to_sharded_linear(
                             linear_attn.in_proj_b,
-                            weights=self._greedy_weights_for("linear_b", b_dim),
+                            weights=v_w,
                         )
                         linear_attn.in_proj_a = self.all_to_sharded_linear(
                             linear_attn.in_proj_a,
-                            weights=self._greedy_weights_for("linear_a", a_dim),
+                            weights=v_w,
                         )
                     is_qwen3next = isinstance(linear_attn, Qwen3NextGatedDeltaNet)
                     out_dim = linear_attn.out_proj.weight.shape[-1]
-                    out_w = (
-                        v_greedy
-                        if not is_qwen3next
-                        else self._greedy_weights_for(
-                            "linear_out", out_dim, linear_attn.head_v_dim
+                    if not is_qwen3next:
+                        linear_attn.out_proj = self.sharded_to_all_linear(
+                            linear_attn.out_proj,
+                            unit=linear_attn.head_v_dim,
+                            weights=v_w,
                         )
-                    )
-                    linear_attn.out_proj = self.sharded_to_all_linear(
-                        linear_attn.out_proj,
-                        unit=linear_attn.head_v_dim,
-                        weights=out_w,
-                    )
+                    else:
+                        linear_attn.out_proj = self.sharded_to_all_linear(
+                            linear_attn.out_proj,
+                            unit=linear_attn.head_k_dim,
+                            weights=self._greedy_weights_for(
+                                "linear_out", out_dim, linear_attn.head_k_dim
+                            ),
+                        )
 
                     rank = self.group.rank()
                     key_dim = linear_attn.key_dim
                     value_dim = linear_attn.value_dim
                     head_k_dim = linear_attn.head_k_dim
                     head_v_dim = linear_attn.head_v_dim
-                    k_w = k_greedy if not is_qwen3next else self.shard_weights
-                    v_w = v_greedy if not is_qwen3next else self.shard_weights
-                    key_shard_sizes = compute_shard_sizes(
-                        key_dim, self.N, unit=head_k_dim, weights=k_w
-                    )
-                    value_shard_sizes = compute_shard_sizes(
-                        value_dim, self.N, unit=head_v_dim, weights=v_w
-                    )
+                    if not is_qwen3next:
+                        key_shard_sizes = k_sizes
+                        value_shard_sizes = v_sizes
+                    else:
+                        k_w = self.shard_weights
+                        key_shard_sizes = compute_shard_sizes(
+                            key_dim, self.N, unit=head_k_dim, weights=k_w
+                        )
+                        value_shard_sizes = compute_shard_sizes(
+                            value_dim, self.N, unit=head_k_dim, weights=k_w
+                        )
                     key_dim_shard = key_shard_sizes[rank]
                     value_dim_shard = value_shard_sizes[rank]
                     key_dim_offset = sum(key_shard_sizes[:rank])
@@ -1468,8 +1570,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                     )
                     conv_indices = mx.concatenate([q_idx, k_idx, v_idx])
                     linear_attn.conv1d.weight = linear_attn.conv1d.weight[conv_indices]
-                    new_conv_dim = key_dim_shard * 2 + value_dim_shard
-                    linear_attn.conv1d.groups = new_conv_dim
+                    linear_attn.conv1d.groups = len(conv_indices)
 
                     num_k_per_rank = key_dim_shard // head_k_dim
                     num_v_per_rank = value_dim_shard // head_v_dim
@@ -1489,48 +1590,74 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                     linear_attn.value_dim = (
                         linear_attn.head_v_dim * linear_attn.num_v_heads
                     )
-                    linear_attn.conv_dim = (
-                        linear_attn.key_dim * 2 + linear_attn.value_dim
+                    linear_attn.conv_dim = int(
+                        linear_attn.in_proj_qkv.weight.shape[0]
                     )
                 else:
+                    n_kv = layer.self_attn.num_key_value_heads
                     kv_head_dim = (
-                        layer.self_attn.k_proj.weight.shape[0]
-                        // layer.self_attn.num_key_value_heads
+                        layer.self_attn.k_proj.weight.shape[0] // n_kv
                     )
                     gqa_repeat = (
-                        layer.self_attn.num_attention_heads
-                        // layer.self_attn.num_key_value_heads
+                        layer.self_attn.num_attention_heads // n_kv
                     )
                     q_dim = layer.self_attn.q_proj.weight.shape[0]
                     k_dim = layer.self_attn.k_proj.weight.shape[0]
-                    qo_greedy = self._greedy_weights_for(
-                        "qwen_qo", q_dim, kv_head_dim * 2 * gqa_repeat
-                    )
-                    layer.self_attn.q_proj = self.all_to_sharded_linear(
-                        layer.self_attn.q_proj,
-                        unit=kv_head_dim * 2 * gqa_repeat,
-                        weights=qo_greedy,
-                    )
-                    layer.self_attn.k_proj = self.all_to_sharded_linear(
-                        layer.self_attn.k_proj,
-                        unit=kv_head_dim,
-                        weights=self._greedy_weights_for("k", k_dim, kv_head_dim),
-                    )
-                    layer.self_attn.v_proj = self.all_to_sharded_linear(
-                        layer.self_attn.v_proj,
-                        unit=kv_head_dim,
-                        weights=self._greedy_weights_for("v", k_dim, kv_head_dim),
-                    )
-                    layer.self_attn.o_proj = self.sharded_to_all_linear(
-                        layer.self_attn.o_proj,
-                        unit=kv_head_dim * gqa_repeat,
-                        weights=qo_greedy,
-                    )
+                    if n_kv >= self.N:
+                        q_unit = kv_head_dim * 2 * gqa_repeat
+                        qo_greedy = self._greedy_weights_for(
+                            "qwen_qo", q_dim, q_unit
+                        )
+                        layer.self_attn.q_proj = self.all_to_sharded_linear(
+                            layer.self_attn.q_proj,
+                            unit=q_unit,
+                            weights=qo_greedy,
+                        )
+                        layer.self_attn.k_proj = self.all_to_sharded_linear(
+                            layer.self_attn.k_proj,
+                            unit=kv_head_dim,
+                            weights=self._greedy_weights_for("k", k_dim, kv_head_dim),
+                        )
+                        layer.self_attn.v_proj = self.all_to_sharded_linear(
+                            layer.self_attn.v_proj,
+                            unit=kv_head_dim,
+                            weights=self._greedy_weights_for("v", k_dim, kv_head_dim),
+                        )
+                        layer.self_attn.o_proj = self.sharded_to_all_linear(
+                            layer.self_attn.o_proj,
+                            unit=kv_head_dim * gqa_repeat,
+                            weights=qo_greedy,
+                        )
+                        layer.self_attn.num_key_value_heads = (
+                            layer.self_attn.k_proj.weight.shape[0] // kv_head_dim
+                        )
+                    else:
+                        q_unit = kv_head_dim * 2
+                        gqa_repeat_q = layer.self_attn.num_attention_heads // n_kv
+                        kv_bal = _kv_balanced_q_sizes(q_dim, self.N, gqa_repeat_q, kv_head_dim * 2, n_kv)
+                        kv_bal_w = [float(s) for s in kv_bal]
+                        layer.self_attn.q_proj = self.all_to_sharded_linear(
+                            layer.self_attn.q_proj,
+                            unit=q_unit,
+                            weights=kv_bal_w,
+                        )
+                        o_bal = [s // 2 for s in kv_bal]
+                        o_bal_w = [float(s) for s in o_bal]
+                        layer.self_attn.o_proj = self.sharded_to_all_linear(
+                            layer.self_attn.o_proj,
+                            unit=kv_head_dim,
+                            weights=o_bal_w,
+                        )
+                        local_q_heads = layer.self_attn.q_proj.weight.shape[0] // (kv_head_dim * 2)
+                        q_offset = sum(kv_bal[:self.group.rank()])
+                        start_head = q_offset // (kv_head_dim * 2)
+                        kv_s = start_head // gqa_repeat_q
+                        kv_e = (start_head + local_q_heads - 1) // gqa_repeat_q + 1
+                        _slice_kv_proj(layer.self_attn.k_proj, kv_s, kv_e, kv_head_dim)
+                        _slice_kv_proj(layer.self_attn.v_proj, kv_s, kv_e, kv_head_dim)
+                        layer.self_attn.num_key_value_heads = kv_e - kv_s
                     layer.self_attn.num_attention_heads = (
                         layer.self_attn.q_proj.weight.shape[0] // (kv_head_dim * 2)
-                    )
-                    layer.self_attn.num_key_value_heads = (
-                        layer.self_attn.k_proj.weight.shape[0] // kv_head_dim
                     )
 
             # Shard the MoE.
@@ -1543,19 +1670,18 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                 ),
             ):
                 moe_gate_dim = int(layer.mlp.switch_mlp.gate_proj.weight.shape[1])
-                moe_down_dim = int(layer.mlp.switch_mlp.down_proj.weight.shape[-1])
-                moe_up_dim = int(layer.mlp.switch_mlp.up_proj.weight.shape[1])
+                moe_greedy = self._greedy_weights_for("moe_gate", moe_gate_dim)
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.switch_mlp.gate_proj,
-                    weights=self._greedy_weights_for("moe_gate", moe_gate_dim),
+                    weights=moe_greedy,
                 )
                 self.sharded_to_all_linear_in_place(
                     layer.mlp.switch_mlp.down_proj,
-                    weights=self._greedy_weights_for("moe_down", moe_down_dim),
+                    weights=moe_greedy,
                 )
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.switch_mlp.up_proj,
-                    weights=self._greedy_weights_for("moe_up", moe_up_dim),
+                    weights=moe_greedy,
                 )
                 if isinstance(
                     layer.mlp, (Qwen3NextSparseMoeBlock, Qwen3_5SparseMoeBlock)
@@ -1563,21 +1689,18 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                     shared_gate_dim = layer.mlp.shared_expert.gate_proj.weight.shape[0]
                     shared_down_dim = layer.mlp.shared_expert.down_proj.weight.shape[-1]
                     shared_up_dim = layer.mlp.shared_expert.up_proj.weight.shape[0]
+                    shared_greedy = self._greedy_weights_for("shared_gate", shared_gate_dim)
                     self.all_to_sharded_linear_in_place(
                         layer.mlp.shared_expert.gate_proj,
-                        weights=self._greedy_weights_for(
-                            "shared_gate", shared_gate_dim
-                        ),
+                        weights=shared_greedy,
                     )
                     self.sharded_to_all_linear_in_place(
                         layer.mlp.shared_expert.down_proj,
-                        weights=self._greedy_weights_for(
-                            "shared_down", shared_down_dim
-                        ),
+                        weights=shared_greedy,
                     )
                     self.all_to_sharded_linear_in_place(
                         layer.mlp.shared_expert.up_proj,
-                        weights=self._greedy_weights_for("shared_up", shared_up_dim),
+                        weights=shared_greedy,
                     )
                 layer.mlp = ShardedMoE(layer.mlp)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
                 layer.mlp.sharding_group = self.group
@@ -1622,51 +1745,73 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
             eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
 
             head_dim = layer.self_attn.q_proj.weight.shape[0] // layer.self_attn.n_heads
-            gqa_unit = head_dim * (
-                layer.self_attn.n_heads // layer.self_attn.n_kv_heads
-            )
+            n_kv = layer.self_attn.n_kv_heads
             q_dim = layer.self_attn.q_proj.weight.shape[0]
             k_dim = layer.self_attn.k_proj.weight.shape[0]
-            layer.self_attn.q_proj = self.all_to_sharded_linear(
-                layer.self_attn.q_proj,
-                unit=gqa_unit,
-                weights=self._greedy_weights_for("q", q_dim, gqa_unit),
-            )
-            layer.self_attn.k_proj = self.all_to_sharded_linear(
-                layer.self_attn.k_proj,
-                unit=head_dim,
-                weights=self._greedy_weights_for("k", k_dim, head_dim),
-            )
-            layer.self_attn.v_proj = self.all_to_sharded_linear(
-                layer.self_attn.v_proj,
-                unit=head_dim,
-                weights=self._greedy_weights_for("v", k_dim, head_dim),
-            )
-            layer.self_attn.o_proj = self.sharded_to_all_linear(
-                layer.self_attn.o_proj,
-                unit=gqa_unit,
-                weights=self._greedy_weights_for("o", q_dim, gqa_unit),
-            )
+            if n_kv >= self.N:
+                gqa_unit = head_dim * (layer.self_attn.n_heads // n_kv)
+                layer.self_attn.q_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_proj,
+                    unit=gqa_unit,
+                    weights=self._greedy_weights_for("q", q_dim, gqa_unit),
+                )
+                layer.self_attn.k_proj = self.all_to_sharded_linear(
+                    layer.self_attn.k_proj,
+                    unit=head_dim,
+                    weights=self._greedy_weights_for("k", k_dim, head_dim),
+                )
+                layer.self_attn.v_proj = self.all_to_sharded_linear(
+                    layer.self_attn.v_proj,
+                    unit=head_dim,
+                    weights=self._greedy_weights_for("v", k_dim, head_dim),
+                )
+                layer.self_attn.o_proj = self.sharded_to_all_linear(
+                    layer.self_attn.o_proj,
+                    unit=gqa_unit,
+                    weights=self._greedy_weights_for("o", q_dim, gqa_unit),
+                )
+                layer.self_attn.n_kv_heads = (
+                    layer.self_attn.k_proj.weight.shape[0] // head_dim
+                )
+            else:
+                q_unit = head_dim
+                gqa_repeat = layer.self_attn.n_heads // n_kv
+                kv_bal = _kv_balanced_q_sizes(q_dim, self.N, gqa_repeat, head_dim, n_kv)
+                kv_bal_w = [float(s) for s in kv_bal]
+                layer.self_attn.q_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_proj,
+                    unit=q_unit,
+                    weights=kv_bal_w,
+                )
+                layer.self_attn.o_proj = self.sharded_to_all_linear(
+                    layer.self_attn.o_proj,
+                    unit=q_unit,
+                    weights=kv_bal_w,
+                )
+                local_q_heads = layer.self_attn.q_proj.weight.shape[0] // head_dim
+                q_offset = sum(kv_bal[:self.group.rank()])
+                start_head = q_offset // head_dim
+                kv_s = start_head // gqa_repeat
+                kv_e = (start_head + local_q_heads - 1) // gqa_repeat + 1
+                _slice_kv_proj(layer.self_attn.k_proj, kv_s, kv_e, head_dim)
+                _slice_kv_proj(layer.self_attn.v_proj, kv_s, kv_e, head_dim)
+                layer.self_attn.n_kv_heads = kv_e - kv_s
             layer.self_attn.n_heads = layer.self_attn.q_proj.weight.shape[0] // head_dim
-            layer.self_attn.n_kv_heads = (
-                layer.self_attn.k_proj.weight.shape[0] // head_dim
-            )
 
             if isinstance(layer.mlp, MoE):
                 moe_gate_dim = int(layer.mlp.switch_mlp.gate_proj.weight.shape[1])
-                moe_down_dim = int(layer.mlp.switch_mlp.down_proj.weight.shape[-1])
-                moe_up_dim = int(layer.mlp.switch_mlp.up_proj.weight.shape[1])
+                moe_greedy = self._greedy_weights_for("moe_gate", moe_gate_dim)
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.switch_mlp.gate_proj,
-                    weights=self._greedy_weights_for("moe_gate", moe_gate_dim),
+                    weights=moe_greedy,
                 )
                 self.sharded_to_all_linear_in_place(
                     layer.mlp.switch_mlp.down_proj,
-                    weights=self._greedy_weights_for("moe_down", moe_down_dim),
+                    weights=moe_greedy,
                 )
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.switch_mlp.up_proj,
-                    weights=self._greedy_weights_for("moe_up", moe_up_dim),
+                    weights=moe_greedy,
                 )
                 if getattr(layer.mlp, "shared_experts", None) is not None:
                     shared_gate_dim = layer.mlp.shared_experts.gate_proj.weight.shape[0]
@@ -1674,21 +1819,18 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
                         -1
                     ]
                     shared_up_dim = layer.mlp.shared_experts.up_proj.weight.shape[0]
+                    shared_greedy = self._greedy_weights_for("shared_gate", shared_gate_dim)
                     self.all_to_sharded_linear_in_place(
                         layer.mlp.shared_experts.gate_proj,
-                        weights=self._greedy_weights_for(
-                            "shared_gate", shared_gate_dim
-                        ),
+                        weights=shared_greedy,
                     )
                     self.sharded_to_all_linear_in_place(
                         layer.mlp.shared_experts.down_proj,
-                        weights=self._greedy_weights_for(
-                            "shared_down", shared_down_dim
-                        ),
+                        weights=shared_greedy,
                     )
                     self.all_to_sharded_linear_in_place(
                         layer.mlp.shared_experts.up_proj,
-                        weights=self._greedy_weights_for("shared_up", shared_up_dim),
+                        weights=shared_greedy,
                     )
                 layer.mlp = ShardedMoE(layer.mlp)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
                 layer.mlp.sharding_group = self.group
@@ -1733,38 +1875,61 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
             eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
             head_dim = layer.self_attn.head_dim
             original_num_heads = layer.self_attn.num_attention_heads
-            gqa_unit = head_dim * (
-                layer.self_attn.num_attention_heads
-                // layer.self_attn.num_key_value_heads
-            )
+            n_kv = layer.self_attn.num_key_value_heads
             q_dim = layer.self_attn.q_proj.weight.shape[0]
             k_dim = layer.self_attn.k_proj.weight.shape[0]
-            layer.self_attn.q_proj = self.all_to_sharded_linear(
-                layer.self_attn.q_proj,
-                unit=gqa_unit,
-                weights=self._greedy_weights_for("q", q_dim, gqa_unit),
-            )
-            layer.self_attn.k_proj = self.all_to_sharded_linear(
-                layer.self_attn.k_proj,
-                unit=head_dim,
-                weights=self._greedy_weights_for("k", k_dim, head_dim),
-            )
-            layer.self_attn.v_proj = self.all_to_sharded_linear(
-                layer.self_attn.v_proj,
-                unit=head_dim,
-                weights=self._greedy_weights_for("v", k_dim, head_dim),
-            )
-            layer.self_attn.o_proj = self.sharded_to_all_linear(
-                layer.self_attn.o_proj,
-                unit=gqa_unit,
-                weights=self._greedy_weights_for("o", q_dim, gqa_unit),
-            )
-
+            if n_kv >= self.N:
+                gqa_unit = head_dim * (original_num_heads // n_kv)
+                layer.self_attn.q_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_proj,
+                    unit=gqa_unit,
+                    weights=self._greedy_weights_for("q", q_dim, gqa_unit),
+                )
+                layer.self_attn.k_proj = self.all_to_sharded_linear(
+                    layer.self_attn.k_proj,
+                    unit=head_dim,
+                    weights=self._greedy_weights_for("k", k_dim, head_dim),
+                )
+                layer.self_attn.v_proj = self.all_to_sharded_linear(
+                    layer.self_attn.v_proj,
+                    unit=head_dim,
+                    weights=self._greedy_weights_for("v", k_dim, head_dim),
+                )
+                layer.self_attn.o_proj = self.sharded_to_all_linear(
+                    layer.self_attn.o_proj,
+                    unit=gqa_unit,
+                    weights=self._greedy_weights_for("o", q_dim, gqa_unit),
+                )
+                layer.self_attn.num_key_value_heads = (
+                    layer.self_attn.k_proj.weight.shape[0] // head_dim
+                )
+                q_unit_for_sinks = gqa_unit
+            else:
+                q_unit = head_dim
+                gqa_repeat = original_num_heads // n_kv
+                kv_bal = _kv_balanced_q_sizes(q_dim, self.N, gqa_repeat, head_dim, n_kv)
+                kv_bal_w = [float(s) for s in kv_bal]
+                layer.self_attn.q_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_proj,
+                    unit=q_unit,
+                    weights=kv_bal_w,
+                )
+                layer.self_attn.o_proj = self.sharded_to_all_linear(
+                    layer.self_attn.o_proj,
+                    unit=q_unit,
+                    weights=kv_bal_w,
+                )
+                local_q_heads = layer.self_attn.q_proj.weight.shape[0] // head_dim
+                q_offset = sum(kv_bal[:self.group.rank()])
+                start_head = q_offset // head_dim
+                kv_s = start_head // gqa_repeat
+                kv_e = (start_head + local_q_heads - 1) // gqa_repeat + 1
+                _slice_kv_proj(layer.self_attn.k_proj, kv_s, kv_e, head_dim)
+                _slice_kv_proj(layer.self_attn.v_proj, kv_s, kv_e, head_dim)
+                layer.self_attn.num_key_value_heads = kv_e - kv_s
+                q_unit_for_sinks = q_unit
             layer.self_attn.num_attention_heads = (
                 layer.self_attn.q_proj.weight.shape[0] // head_dim
-            )
-            layer.self_attn.num_key_value_heads = (
-                layer.self_attn.k_proj.weight.shape[0] // head_dim
             )
             layer.self_attn.num_key_value_groups = (
                 layer.self_attn.num_attention_heads
@@ -1779,7 +1944,7 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
                 else compute_shard_sizes(
                     original_num_heads,
                     self.N,
-                    unit=gqa_unit // head_dim,
+                    unit=q_unit_for_sinks // head_dim,
                     weights=self.shard_weights,
                 )
             )
@@ -1790,17 +1955,18 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
             moe_gate_dim = int(layer.mlp.experts.gate_proj.weight.shape[1])
             moe_down_dim = int(layer.mlp.experts.down_proj.weight.shape[-1])
             moe_up_dim = int(layer.mlp.experts.up_proj.weight.shape[1])
+            moe_greedy = self._greedy_weights_for("moe_gate", moe_gate_dim)
             self.all_to_sharded_linear_in_place(
                 layer.mlp.experts.gate_proj,
-                weights=self._greedy_weights_for("moe_gate", moe_gate_dim),
+                weights=moe_greedy,
             )
             self.sharded_to_all_linear_in_place(
                 layer.mlp.experts.down_proj,
-                weights=self._greedy_weights_for("moe_down", moe_down_dim),
+                weights=moe_greedy,
             )
             self.all_to_sharded_linear_in_place(
                 layer.mlp.experts.up_proj,
-                weights=self._greedy_weights_for("moe_up", moe_up_dim),
+                weights=moe_greedy,
             )
 
             layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
@@ -1825,42 +1991,66 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
         for i, layer in enumerate(model.layers):
             eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
             head_dim = layer.self_attn.head_dim
-            gqa_unit = head_dim * (
-                layer.self_attn.num_heads // layer.self_attn.num_kv_heads
-            )
+            n_kv = layer.self_attn.num_kv_heads
             q_dim = layer.self_attn.q_proj.weight.shape[0]
             k_dim = layer.self_attn.k_proj.weight.shape[0]
-            layer.self_attn.q_proj = self.all_to_sharded_linear(
-                layer.self_attn.q_proj,
-                unit=gqa_unit,
-                weights=self._greedy_weights_for("q", q_dim, gqa_unit),
-            )
-            layer.self_attn.k_proj = self.all_to_sharded_linear(
-                layer.self_attn.k_proj,
-                unit=head_dim,
-                weights=self._greedy_weights_for("k", k_dim, head_dim),
-            )
-            layer.self_attn.v_proj = self.all_to_sharded_linear(
-                layer.self_attn.v_proj,
-                unit=head_dim,
-                weights=self._greedy_weights_for("v", k_dim, head_dim),
-            )
-            layer.self_attn.o_proj = self.sharded_to_all_linear(
-                layer.self_attn.o_proj,
-                unit=gqa_unit,
-                weights=self._greedy_weights_for("o", q_dim, gqa_unit),
-            )
-
+            if n_kv >= self.N:
+                gqa_unit = head_dim * (layer.self_attn.num_heads // n_kv)
+                layer.self_attn.q_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_proj,
+                    unit=gqa_unit,
+                    weights=self._greedy_weights_for("q", q_dim, gqa_unit),
+                )
+                layer.self_attn.k_proj = self.all_to_sharded_linear(
+                    layer.self_attn.k_proj,
+                    unit=head_dim,
+                    weights=self._greedy_weights_for("k", k_dim, head_dim),
+                )
+                layer.self_attn.v_proj = self.all_to_sharded_linear(
+                    layer.self_attn.v_proj,
+                    unit=head_dim,
+                    weights=self._greedy_weights_for("v", k_dim, head_dim),
+                )
+                layer.self_attn.o_proj = self.sharded_to_all_linear(
+                    layer.self_attn.o_proj,
+                    unit=gqa_unit,
+                    weights=self._greedy_weights_for("o", q_dim, gqa_unit),
+                )
+                layer.self_attn.num_kv_heads = (
+                    layer.self_attn.k_proj.weight.shape[0] // head_dim
+                )
+                q_unit_for_g = gqa_unit
+            else:
+                q_unit = head_dim
+                gqa_repeat = layer.self_attn.num_heads // n_kv
+                kv_bal = _kv_balanced_q_sizes(q_dim, self.N, gqa_repeat, head_dim, n_kv)
+                kv_bal_w = [float(s) for s in kv_bal]
+                layer.self_attn.q_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_proj,
+                    unit=q_unit,
+                    weights=kv_bal_w,
+                )
+                layer.self_attn.o_proj = self.sharded_to_all_linear(
+                    layer.self_attn.o_proj,
+                    unit=q_unit,
+                    weights=kv_bal_w,
+                )
+                local_q_heads = layer.self_attn.q_proj.weight.shape[0] // head_dim
+                q_offset = sum(kv_bal[:self.group.rank()])
+                start_head = q_offset // head_dim
+                kv_s = start_head // gqa_repeat
+                kv_e = (start_head + local_q_heads - 1) // gqa_repeat + 1
+                _slice_kv_proj(layer.self_attn.k_proj, kv_s, kv_e, head_dim)
+                _slice_kv_proj(layer.self_attn.v_proj, kv_s, kv_e, head_dim)
+                layer.self_attn.num_kv_heads = kv_e - kv_s
+                q_unit_for_g = q_unit
             layer.self_attn.num_heads = (
                 layer.self_attn.q_proj.weight.shape[0] // head_dim
-            )
-            layer.self_attn.num_kv_heads = (
-                layer.self_attn.k_proj.weight.shape[0] // head_dim
             )
 
             if getattr(layer.self_attn, "use_head_wise_attn_gate", False):
                 g_dim = layer.self_attn.g_proj.weight.shape[0]
-                g_unit = gqa_unit // head_dim
+                g_unit = q_unit_for_g // head_dim
                 layer.self_attn.g_proj = self.all_to_sharded_linear(
                     layer.self_attn.g_proj,
                     unit=g_unit,
@@ -1890,32 +2080,32 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
                 shared_gate_dim = layer.mlp.share_expert.gate_proj.weight.shape[0]
                 shared_up_dim = layer.mlp.share_expert.up_proj.weight.shape[0]
                 shared_down_dim = layer.mlp.share_expert.down_proj.weight.shape[-1]
+                shared_greedy = self._greedy_weights_for("shared_gate", shared_gate_dim)
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.share_expert.gate_proj,
-                    weights=self._greedy_weights_for("shared_gate", shared_gate_dim),
+                    weights=shared_greedy,
                 )
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.share_expert.up_proj,
-                    weights=self._greedy_weights_for("shared_up", shared_up_dim),
+                    weights=shared_greedy,
                 )
                 self.sharded_to_all_linear_in_place(
                     layer.mlp.share_expert.down_proj,
-                    weights=self._greedy_weights_for("shared_down", shared_down_dim),
+                    weights=shared_greedy,
                 )
                 moe_gate_dim = int(layer.mlp.switch_mlp.gate_proj.weight.shape[1])
-                moe_up_dim = int(layer.mlp.switch_mlp.up_proj.weight.shape[1])
-                moe_down_dim = int(layer.mlp.switch_mlp.down_proj.weight.shape[-1])
+                moe_greedy = self._greedy_weights_for("moe_gate", moe_gate_dim)
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.switch_mlp.gate_proj,
-                    weights=self._greedy_weights_for("moe_gate", moe_gate_dim),
+                    weights=moe_greedy,
                 )
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.switch_mlp.up_proj,
-                    weights=self._greedy_weights_for("moe_up", moe_up_dim),
+                    weights=moe_greedy,
                 )
                 self.sharded_to_all_linear_in_place(
                     layer.mlp.switch_mlp.down_proj,
-                    weights=self._greedy_weights_for("moe_down", moe_down_dim),
+                    weights=moe_greedy,
                 )
 
             mx.eval(layer)
@@ -1942,35 +2132,58 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
 
             if isinstance(mixer, NemotronHAttention):
                 attn_head_dim = mixer.head_dim
-                gqa_unit = attn_head_dim * (
-                    mixer.num_heads // mixer.num_key_value_heads
-                )
+                n_kv = mixer.num_key_value_heads
                 q_dim = mixer.q_proj.weight.shape[0]
                 k_dim = mixer.k_proj.weight.shape[0]
-                mixer.q_proj = self.all_to_sharded_linear(
-                    mixer.q_proj,
-                    unit=gqa_unit,
-                    weights=self._greedy_weights_for("q", q_dim, gqa_unit),
-                )
-                mixer.k_proj = self.all_to_sharded_linear(
-                    mixer.k_proj,
-                    unit=attn_head_dim,
-                    weights=self._greedy_weights_for("k", k_dim, attn_head_dim),
-                )
-                mixer.v_proj = self.all_to_sharded_linear(
-                    mixer.v_proj,
-                    unit=attn_head_dim,
-                    weights=self._greedy_weights_for("v", k_dim, attn_head_dim),
-                )
-                mixer.o_proj = self.sharded_to_all_linear(
-                    mixer.o_proj,
-                    unit=gqa_unit,
-                    weights=self._greedy_weights_for("o", q_dim, gqa_unit),
-                )
+                if n_kv >= self.N:
+                    gqa_unit = attn_head_dim * (mixer.num_heads // n_kv)
+                    mixer.q_proj = self.all_to_sharded_linear(
+                        mixer.q_proj,
+                        unit=gqa_unit,
+                        weights=self._greedy_weights_for("q", q_dim, gqa_unit),
+                    )
+                    mixer.k_proj = self.all_to_sharded_linear(
+                        mixer.k_proj,
+                        unit=attn_head_dim,
+                        weights=self._greedy_weights_for("k", k_dim, attn_head_dim),
+                    )
+                    mixer.v_proj = self.all_to_sharded_linear(
+                        mixer.v_proj,
+                        unit=attn_head_dim,
+                        weights=self._greedy_weights_for("v", k_dim, attn_head_dim),
+                    )
+                    mixer.o_proj = self.sharded_to_all_linear(
+                        mixer.o_proj,
+                        unit=gqa_unit,
+                        weights=self._greedy_weights_for("o", q_dim, gqa_unit),
+                    )
+                    mixer.num_key_value_heads = (
+                        mixer.k_proj.weight.shape[0] // attn_head_dim
+                    )
+                else:
+                    q_unit = attn_head_dim
+                    gqa_repeat = mixer.num_heads // n_kv
+                    kv_bal = _kv_balanced_q_sizes(q_dim, self.N, gqa_repeat, attn_head_dim, n_kv)
+                    kv_bal_w = [float(s) for s in kv_bal]
+                    mixer.q_proj = self.all_to_sharded_linear(
+                        mixer.q_proj,
+                        unit=q_unit,
+                        weights=kv_bal_w,
+                    )
+                    mixer.o_proj = self.sharded_to_all_linear(
+                        mixer.o_proj,
+                        unit=q_unit,
+                        weights=kv_bal_w,
+                    )
+                    local_q_heads = mixer.q_proj.weight.shape[0] // attn_head_dim
+                    q_offset = sum(kv_bal[:self.group.rank()])
+                    start_head = q_offset // attn_head_dim
+                    kv_s = start_head // gqa_repeat
+                    kv_e = (start_head + local_q_heads - 1) // gqa_repeat + 1
+                    _slice_kv_proj(mixer.k_proj, kv_s, kv_e, attn_head_dim)
+                    _slice_kv_proj(mixer.v_proj, kv_s, kv_e, attn_head_dim)
+                    mixer.num_key_value_heads = kv_e - kv_s
                 mixer.num_heads = mixer.q_proj.weight.shape[0] // attn_head_dim
-                mixer.num_key_value_heads = (
-                    mixer.k_proj.weight.shape[0] // attn_head_dim
-                )
 
             elif isinstance(mixer, NemotronHMamba2Mixer):
                 self._shard_mamba2_mixer(mixer, rank)
@@ -1978,28 +2191,25 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
             elif isinstance(mixer, NemotronHMoE):
                 # Shard routed experts (SwitchMLP uses fc1/fc2)
                 moe_fc1_dim = int(mixer.switch_mlp.fc1.weight.shape[1])
-                moe_fc2_dim = int(mixer.switch_mlp.fc2.weight.shape[-1])
+                moe_greedy = self._greedy_weights_for("moe_gate", moe_fc1_dim)
                 self.all_to_sharded_linear_in_place(
                     mixer.switch_mlp.fc1,
-                    weights=self._greedy_weights_for("moe_gate", moe_fc1_dim),
+                    weights=moe_greedy,
                 )
                 self.sharded_to_all_linear_in_place(
                     mixer.switch_mlp.fc2,
-                    weights=self._greedy_weights_for("moe_down", moe_fc2_dim),
+                    weights=moe_greedy,
                 )
-                # Shard shared expert in-place (no all-reduce — ShardedMoE handles that)
                 if hasattr(mixer, "shared_experts"):
-                    shared_up_dim = mixer.shared_experts.up_proj.weight.shape[0]
-                    shared_down_dim = mixer.shared_experts.down_proj.weight.shape[-1]
+                    shared_gate_dim = mixer.shared_experts.up_proj.weight.shape[0]
+                    shared_greedy = self._greedy_weights_for("shared_gate", shared_gate_dim)
                     self.all_to_sharded_linear_in_place(
                         mixer.shared_experts.up_proj,
-                        weights=self._greedy_weights_for("shared_up", shared_up_dim),
+                        weights=shared_greedy,
                     )
                     self.sharded_to_all_linear_in_place(
                         mixer.shared_experts.down_proj,
-                        weights=self._greedy_weights_for(
-                            "shared_down", shared_down_dim
-                        ),
+                        weights=shared_greedy,
                     )
                 mixer = ShardedMoE(mixer)  # pyright: ignore[reportArgumentType]
                 mixer.sharding_group = self.group

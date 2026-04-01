@@ -35,14 +35,17 @@ from harness import (
     ExoHttpError,
     add_common_instance_args,
     capture_cluster_snapshot,
+    get_all_instance_ids,
     instance_id_from_instance,
     node_ids_from_instance,
     nodes_used_in_instance,
     resolve_model_short_id,
     run_planning_phase,
     settle_and_fetch_placements,
+    shard_split_summary,
     wait_for_instance_gone,
     wait_for_instance_ready,
+    wait_for_new_instance,
 )
 from loguru import logger
 from transformers import AutoTokenizer
@@ -506,6 +509,7 @@ def main() -> int:
         )
 
         if sharding == "Tensor" and tensor_strategy != "Naive":
+            before_ids = get_all_instance_ids(client)
             client.request_json(
                 "POST",
                 "/place_instance",
@@ -517,8 +521,13 @@ def main() -> int:
                     "tensor_strategy": tensor_strategy,
                 },
             )
+            instance_id = wait_for_new_instance(client, before_ids)
+            instance = client.get_instance(instance_id)
+            logger.info(f"place_instance created instance_id={instance_id}")
+            logger.info(f"Shard split: {shard_split_summary(instance)}")
         else:
             client.request_json("POST", "/instance", body={"instance": instance})
+            logger.info(f"Shard split: {shard_split_summary(instance)}")
         try:
             wait_for_instance_ready(client, instance_id)
         except (RuntimeError, TimeoutError) as e:
