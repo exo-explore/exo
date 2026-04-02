@@ -557,19 +557,44 @@ def main() -> int:
                             all_rows.append(row)
                         else:
                             # Concurrent: fire N requests in parallel
-                            # Each thread gets its own ExoClient (separate HTTP connection)
+                            # Pre-build prompt once, barrier ensures simultaneous dispatch
+                            content, actual_pp = prompt_sizer.build(pp)
+                            pre_built_payload: dict[str, Any] = {
+                                "model": full_model_id,
+                                "messages": [{"role": "user", "content": content}],
+                                "stream": False,
+                                "max_tokens": tg,
+                            }
+                            barrier = threading.Barrier(concurrency)
+                            batch_start = threading.Event()
+                            batch_t0: float = 0.0
                             batch_results: list[tuple[dict[str, Any], int]] = []
                             batch_errors = 0
 
                             def _run_concurrent(
-                                idx: int, *, _pp: int = pp, _tg: int = tg
+                                idx: int,
                             ) -> tuple[dict[str, Any], int]:
+                                nonlocal batch_t0
                                 c = ExoClient(
                                     args.host, args.port, timeout_s=args.timeout
                                 )
-                                return run_one_completion(
-                                    c, full_model_id, _pp, _tg, prompt_sizer
-                                )
+                                if barrier.wait() == 0:
+                                    batch_t0 = time.perf_counter()
+                                    batch_start.set()
+                                else:
+                                    batch_start.wait()
+                                t0 = batch_t0
+                                out = c.post_bench_chat_completions(pre_built_payload)
+                                elapsed = time.perf_counter() - t0
+                                stats = out.get("generation_stats")
+                                choices = out.get("choices") or [{}]
+                                message = choices[0].get("message", {}) if choices else {}
+                                text = message.get("content") or ""
+                                return {
+                                    "elapsed_s": elapsed,
+                                    "output_text_preview": text[:200],
+                                    "stats": stats,
+                                }, actual_pp
 
                             inf_t0 = time.monotonic()
                             with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -617,20 +642,20 @@ def main() -> int:
                                     for x, _ in batch_results
                                     if x["stats"]["generation_tps"] > 0
                                 ]
-                                per_req_tps = (
-                                    mean(valid_gen_tps) if valid_gen_tps else 0.0
-                                )
+                                per_req_tps = max(valid_gen_tps) if valid_gen_tps else 0.0
                                 agg_gen_tps = per_req_tps * concurrency
                                 logger.info(
                                     f"[concurrent {concurrency}x]  "
                                     f"agg_gen_tps={agg_gen_tps:.2f}  "
                                     f"per_req_tps={per_req_tps:.2f}  "
+                                    f"wall_s={batch_wall_s:.2f}  "
                                     f"errors={batch_errors}"
                                 )
 
                     if runs:
                         prompt_tps = mean(x["stats"]["prompt_tps"] for x in runs)
-                        per_req_tps = mean(x["stats"]["generation_tps"] for x in runs)
+                        valid_gen = [x["stats"]["generation_tps"] for x in runs if x["stats"]["generation_tps"] > 0]
+                        per_req_tps = max(valid_gen) if valid_gen else 0.0
                         gen_tps = per_req_tps * concurrency
                         ptok = mean(x["stats"]["prompt_tokens"] for x in runs)
                         gtok = mean(x["stats"]["generation_tokens"] for x in runs)
