@@ -218,6 +218,8 @@ def pipeline_parallel_prefill(
             model(prompt[-1:][None], cache=_prompt_cache)
             quantize_cache_fn(_prompt_cache)
         flush_prefill_sends()
+        if distributed_prompt_progress_callback is not None:
+            distributed_prompt_progress_callback()
 
     assert _prompt_cache is not None
     with mx.stream(generation_stream):
