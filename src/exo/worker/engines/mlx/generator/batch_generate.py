@@ -1,4 +1,5 @@
 import contextlib
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Callable, cast
@@ -96,12 +97,147 @@ class ExoBatchGenerator:
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
-        self._mlx_gen = MlxBatchGenerator(
-            model=self.model,
-            stop_tokens=set(eos_ids_from_tokenizer(self.tokenizer)),
-            prefill_step_size=4096,
-        )
+        use_speculative = os.environ.get("EXO_SPECULATIVE", "0") == "1"
+        stop_tokens = set(eos_ids_from_tokenizer(self.tokenizer))
+
+        if use_speculative:
+            try:
+                from exo.worker.engines.mlx.speculative.mtp_module import MTPPredictor
+                from exo.worker.engines.mlx.speculative.mtp_batch_generator import MTPBatchGenerator
+
+                mtp_weights = self._resolve_mtp_weights()
+                gamma = int(os.environ.get("EXO_SPECULATIVE_GAMMA", "2"))
+
+                if mtp_weights:
+                    mtp = MTPPredictor(self.model, mtp_weights, quantize=False)
+                    temp = float(os.environ.get("EXO_SPECULATIVE_TEMP", "0.7"))
+                    alpha = float(os.environ.get("EXO_SPECULATIVE_ALPHA", "1.0"))
+                    self._mlx_gen = MTPBatchGenerator(
+                        model=self.model,
+                        mtp_predictor=mtp,
+                        gamma=gamma,
+                        temp=temp,
+                        alpha=alpha,
+                        stop_tokens=stop_tokens,
+                        prefill_step_size=4096,
+                    )
+                    logger.info(f"MTP speculative decoding enabled (γ={gamma}, T={temp})")
+                    self.warmup_speculative(self.model, self.tokenizer)
+                else:
+                    logger.warning("EXO_SPECULATIVE=1 but could not find MTP weights. Falling back.")
+                    self._mlx_gen = MlxBatchGenerator(model=self.model, stop_tokens=stop_tokens, prefill_step_size=4096)
+            except Exception as e:
+                logger.warning(f"Failed to init MTP speculative: {e}. Falling back.")
+                self._mlx_gen = MlxBatchGenerator(model=self.model, stop_tokens=stop_tokens, prefill_step_size=4096)
+        else:
+            self._mlx_gen = MlxBatchGenerator(model=self.model, stop_tokens=stop_tokens, prefill_step_size=4096)
+
         self._mlx_gen._needs_topk = False  # pyright: ignore[reportAttributeAccessIssue]
+
+    def _resolve_mtp_weights(self) -> str | None:
+        """Find MTP weights: explicit path, explicit HF model, or auto-extract."""
+        explicit_path = os.environ.get("EXO_MTP_WEIGHTS", "")
+        if explicit_path and os.path.exists(explicit_path):
+            return explicit_path
+
+        mtp_model = os.environ.get("EXO_MTP_MODEL", "")
+        if not mtp_model:
+            try:
+                inner = getattr(self.model, 'model', None) or self.model.language_model.model
+                args = getattr(inner, 'args', None)
+                if args and getattr(args, 'mtp_num_hidden_layers', 0) > 0:
+                    model_type = getattr(args, 'model_type', '')
+                    if 'qwen3_5' in model_type or 'qwen3.5' in str(type(self.model).__module__):
+                        mtp_model = "Qwen/Qwen3.5-27B"
+                        logger.info(f"Auto-detected MTP model: {mtp_model}")
+            except Exception:
+                pass
+
+        if not mtp_model:
+            return None
+
+        try:
+            return self._extract_mtp_from_hf(mtp_model)
+        except Exception as e:
+            logger.warning(f"Failed to extract MTP weights from {mtp_model}: {e}")
+            return None
+
+    def _extract_mtp_from_hf(self, repo_id: str) -> str:
+        """Download MTP tensors from HF repo and cache as a single safetensors file."""
+        import hashlib
+        from pathlib import Path
+        from huggingface_hub import snapshot_download
+        from safetensors.torch import load_file, save_file
+
+        cache_dir = Path.home() / ".cache" / "exo" / "mtp_weights"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_key = hashlib.md5(repo_id.encode()).hexdigest()[:12]
+        cached_path = cache_dir / f"mtp_{cache_key}.safetensors"
+
+        if cached_path.exists():
+            logger.info(f"Using cached MTP weights: {cached_path}")
+            return str(cached_path)
+
+        logger.info(f"Downloading MTP weights from {repo_id}...")
+        model_dir = snapshot_download(repo_id, allow_patterns=["*.safetensors", "*.json"])
+
+        mtp_tensors = {}
+        from pathlib import Path as P
+        model_path = P(model_dir)
+        for sf_file in sorted(model_path.glob("*.safetensors")):
+            tensors = load_file(str(sf_file))
+            for k, v in tensors.items():
+                if k.startswith("model.mtp."):
+                    clean_key = k.replace("model.mtp.", "")
+                    mtp_tensors[clean_key] = v
+
+        if not mtp_tensors:
+            raise ValueError(f"No MTP tensors found in {repo_id}")
+
+        save_file(mtp_tensors, str(cached_path))
+        logger.info(f"Cached {len(mtp_tensors)} MTP tensors to {cached_path}")
+        return str(cached_path)
+
+    def warmup_speculative(self, model, tokenizer) -> None:
+        """Warm up the speculative decoding path (MTP draft + verify kernels)."""
+        if not hasattr(self._mlx_gen, 'mtp'):
+            return
+
+        from mlx_lm.models import cache as cache_mod
+        from exo.worker.engines.mlx.speculative.mtp_module import speculative_forward, draft_tokens
+
+        logger.info("Warming up speculative decoding kernels...")
+        mtp = self._mlx_gen.mtp
+        gamma = self._mlx_gen.gamma
+
+        warmup_prompt = tokenizer.encode("Warm up speculative decoding.")
+        cache = cache_mod.make_prompt_cache(model)
+        mtp.reset_cache()
+
+        pre_norm, logits = speculative_forward(model, mx.array([warmup_prompt]), cache)
+        mx.eval(pre_norm, logits)
+        next_token = mx.argmax(logits[0, -1], axis=-1).item()
+
+        if pre_norm.shape[1] > 1:
+            _ = mtp.predict(pre_norm[:, :-1, :], mx.array([warmup_prompt[1:]]))
+            mx.eval(_)
+
+        last_pn = pre_norm[:, -1:, :]
+        next_arr = mx.array([[next_token]])
+        for _ in range(3):
+            draft_ids, _ = draft_tokens(mtp, last_pn, next_arr, gamma, 0.0)
+            draft_concat = mx.concatenate([d.reshape(1, 1) for d in draft_ids], axis=1)
+            verify_input = mx.concatenate([next_arr, draft_concat], axis=1)
+            vpn, vl = speculative_forward(model, verify_input, cache, speculative=True)
+            all_next = mx.argmax(vl[0], axis=-1)
+            mx.eval(vpn, all_next)
+            next_arr = all_next[0].reshape(1, 1)
+            last_pn = vpn[:, 0:1, :]
+            for i, c in enumerate(cache):
+                if hasattr(c, 'base'):
+                    cache[i] = c.base
+
+        logger.info("Speculative warmup complete")
 
     @property
     def has_work(self) -> bool:
@@ -254,6 +390,31 @@ class ExoBatchGenerator:
 
         uid = uids[0]
 
+        # MTP prefill: build MTP cache from prompt hidden states
+        if hasattr(self._mlx_gen, 'mtp'):
+            prompt_pre_norm = self._mlx_gen._captured.get('prompt_pre_norm')
+            if prompt_pre_norm is not None:
+                mx.eval(prompt_pre_norm)
+                self._mlx_gen.mtp.reset_cache()
+                S_pre = prompt_pre_norm.shape[1]
+                if S_pre > 1:
+                    toks_list = all_prompt_tokens.tolist() if hasattr(all_prompt_tokens, 'tolist') else list(all_prompt_tokens)
+                    mtp_tokens = toks_list[1:S_pre]
+                    _ = self._mlx_gen.mtp.predict(
+                        prompt_pre_norm[:, :-1, :],
+                        mx.array([mtp_tokens])
+                    )
+                    mx.eval(_)
+                    logger.info(f"MTP cache prefilled ({S_pre} positions)")
+
+        # Set per-request temperature for speculative
+        if hasattr(self._mlx_gen, '_request_temp'):
+            env_temp = os.environ.get("EXO_SPECULATIVE_TEMP")
+            if env_temp is not None:
+                self._mlx_gen._request_temp[uid] = float(env_temp)
+            elif task_params.temperature is not None:
+                self._mlx_gen._request_temp[uid] = task_params.temperature
+
         self._active_tasks[uid] = _EngineTask(
             uid=uid,
             task_params=task_params,
@@ -337,7 +498,7 @@ class ExoBatchGenerator:
 
             logprob: float | None = None
             top_logprobs: list[TopLogprobItem] | None = None
-            if task_params.logprobs:
+            if task_params.logprobs and os.environ.get("EXO_DISABLE_LOGPROBS") != "1":
                 with mx.stream(generation_stream):
                     logprob, top_logprobs = extract_top_logprobs(
                         logprobs=response.logprobs,
