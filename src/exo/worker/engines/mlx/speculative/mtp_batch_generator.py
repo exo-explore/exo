@@ -92,10 +92,13 @@ class MTPBatchGenerator(BatchGenerator):
                 and len(self.unprocessed_prompts) == 0):
             uid = batch.uids[0]
             if uid not in self._mtp_prefilled:
+                logger.info(f"[MTP] first_step_and_prefill uid={uid}")
                 return self._first_step_and_prefill(batch, uid)
+            logger.info(f"[MTP] speculative_next uid={uid} buf={len(self._token_buffer.get(uid, []))}")
             return self._speculative_next()
 
         # Standard path (BS>1 or no batch)
+        logger.info(f"[MTP] standard path batch={batch is not None} len={len(batch) if batch else 0} unprocessed={len(self.unprocessed_prompts)}")
         responses = super()._next()
         if responses and batch is not None and len(batch) == 1:
             if 'pre_norm' in self._captured:
