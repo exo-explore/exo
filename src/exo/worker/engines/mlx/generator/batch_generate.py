@@ -127,6 +127,7 @@ class ExoBatchGenerator:
                     prefill_step_size=4096,
                 )
                 logger.info(f"DFlash speculative decoding enabled (V={verify_len}, BS={block_size}, T={temp})")
+                self.warmup_dflash(self.model, self.tokenizer, drafter)
             except Exception as e:
                 logger.warning(f"Failed to init DFlash speculative: {e}. Falling back.")
                 self._mlx_gen = MlxBatchGenerator(model=self.model, stop_tokens=stop_tokens, prefill_step_size=4096)
@@ -267,6 +268,52 @@ class ExoBatchGenerator:
                     cache[i] = c.base
 
         logger.info("Speculative warmup complete")
+
+    def warmup_dflash(self, model, tokenizer, drafter) -> None:
+        """Warm up the DFlash speculative decoding path."""
+        from mlx_lm.models import cache as cache_mod
+        from exo.worker.engines.mlx.speculative.dflash_speculative import dflash_speculative_forward
+
+        logger.info("Warming up DFlash speculative decoding kernels...")
+
+        warmup_prompt = tokenizer.encode("Warm up speculative decoding.")
+        cache = cache_mod.make_prompt_cache(model)
+        drafter.reset_draft_cache()
+
+        # Prefill: capture target hidden states
+        target_hidden, _, logits = dflash_speculative_forward(
+            model, mx.array([warmup_prompt]), cache, drafter.target_layer_ids)
+        mx.eval(target_hidden, logits)
+        next_token = mx.argmax(logits[0, -1], axis=-1).item()
+
+        # Run a few draft + verify cycles to compile all kernels
+        bs = drafter.block_size
+        start = len(warmup_prompt)
+        for _ in range(3):
+            block_ids = mx.full((1, bs), drafter.mask_token_id, dtype=mx.int32)
+            block_ids[:, 0] = next_token
+            draft_logits = drafter.draft(target_hidden, block_ids, start)
+            mx.eval(draft_logits)
+            drafter.crop_draft_cache(start)
+
+            drafts = mx.argmax(draft_logits, axis=-1).squeeze(0).tolist()[:5]
+            verify_input = mx.array([[next_token] + drafts])
+            target_hidden, _, vl = dflash_speculative_forward(
+                model, verify_input, cache, drafter.target_layer_ids, speculative=True)
+            mx.eval(target_hidden, vl)
+
+            # Rollback for next iteration
+            for i, c in enumerate(cache):
+                if hasattr(c, 'offset'):
+                    c.offset -= len(drafts)
+                elif hasattr(c, 'rollback'):
+                    c.rollback(0)
+            for i, c in enumerate(cache):
+                if hasattr(c, 'base'):
+                    cache[i] = c.base
+
+        drafter.reset_draft_cache()
+        logger.info("DFlash warmup complete")
 
     @property
     def has_work(self) -> bool:
