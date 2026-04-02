@@ -319,6 +319,7 @@ def pp_speculative_decode_loop(
                     mx.eval(sent)
 
                 # -- Draft DURING rank 1's compute (the ~14ms idle window) --
+                _draft_q: float = 0.0
                 try:
                     draft_logits = draft_model(mx.array([[y.item()]]), cache=draft_cache)
                     draft_probs = mx.softmax(draft_logits[0, -1])
@@ -326,10 +327,11 @@ def pp_speculative_decode_loop(
                     q_val = draft_probs[draft_tok]
                     mx.eval(draft_tok, q_val)
                     _draft_token = int(draft_tok.item())
+                    _draft_q = float(q_val.item())
 
-                    # Send draft info to rank 1 for speculative acceptance
-                    mx.eval(mx.distributed.send(
-                        mx.array([float(_draft_token), q_val.item()]),
+                    # Async send draft info — don't block, overlaps with spec forward
+                    mx.async_eval(mx.distributed.send(
+                        mx.array([float(_draft_token), _draft_q]),
                         (pp_rank + 1) % pp_world_size, group=pp_group
                     ))
 
@@ -338,11 +340,12 @@ def pp_speculative_decode_loop(
                     _log(f"n={n} drafted={_draft_token}")
                 except Exception:
                     _draft_token = None
+                    _draft_q = 0.0
                     _spec_snap = None
                     if spec_last is not None:
                         spec_last._speculative = False
                     # Send sentinel so rank 1 doesn't block on recv
-                    mx.eval(mx.distributed.send(
+                    mx.async_eval(mx.distributed.send(
                         mx.array([-1.0, 0.0]),
                         (pp_rank + 1) % pp_world_size, group=pp_group
                     ))
@@ -351,7 +354,7 @@ def pp_speculative_decode_loop(
             if is_last_rank:
                 sampled, lp = _rank1_compute(y)
 
-                # Receive draft info from rank 0 and apply speculative acceptance
+                # Receive draft info and apply speculative acceptance
                 draft_info = mx.distributed.recv_like(
                     mx.zeros(2), (pp_rank - 1) % pp_world_size, group=pp_group
                 )
@@ -360,7 +363,6 @@ def pp_speculative_decode_loop(
                 _q_val = float(draft_info[1].item())
 
                 if _d_id >= 0 and _q_val > 0:
-                    # Temperature-adjusted main model probability for draft token
                     _p_val = float(mx.softmax(lp / temp)[_d_id].item()) if temp > 0 else (1.0 if int(sampled.item()) == _d_id else 0.0)
                     _accept_prob = min(1.0, _p_val / _q_val)
                     if random.random() < _accept_prob:
