@@ -158,10 +158,17 @@ class DownloadCoordinator:
             logger.info(f"Cancelling download for {model_id}")
             self.active_downloads[model_id].cancel()
             current_status = self.download_status[model_id]
+            downloaded = Memory()
+            total = Memory()
+            if isinstance(current_status, DownloadOngoing):
+                downloaded = current_status.download_progress.downloaded
+                total = current_status.download_progress.total
             pending = DownloadPending(
                 shard_metadata=current_status.shard_metadata,
                 node_id=self.node_id,
                 model_directory=self._default_model_dir(model_id),
+                downloaded=downloaded,
+                total=total,
             )
             self.download_status[model_id] = pending
             await self.event_sender.send(
