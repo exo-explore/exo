@@ -515,7 +515,6 @@ class ExoBatchGenerator:
         self._mlx_gen._needs_topk = any(  # pyright: ignore[reportAttributeAccessIssue]
             t.task_params.logprobs for t in self._active_tasks.values()
         )
-        print(f"[EXO] step() calling _mlx_gen.next(), type={type(self._mlx_gen).__name__}")
         _step_tic = time.perf_counter()
         responses = self._mlx_gen.next()
         _next_elapsed = time.perf_counter() - _step_tic
