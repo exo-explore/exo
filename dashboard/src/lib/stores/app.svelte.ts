@@ -3257,6 +3257,31 @@ class AppStore {
   }
 
   /**
+   * Cancel/pause an active download on a specific node
+   */
+  async cancelDownload(nodeId: string, modelId: string): Promise<void> {
+    try {
+      const response = await fetch("/download/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetNodeId: nodeId,
+          modelId: modelId,
+        }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to cancel download: ${response.status} - ${errorText}`,
+        );
+      }
+    } catch (error) {
+      console.error("Error cancelling download:", error);
+      throw error;
+    }
+  }
+
+  /**
    * Delete a downloaded model from a specific node
    */
   async deleteDownload(nodeId: string, modelId: string): Promise<void> {
@@ -3477,6 +3502,8 @@ export const resetImageGenerationParams = () =>
 // Download actions
 export const startDownload = (nodeId: string, shardMetadata: object) =>
   appStore.startDownload(nodeId, shardMetadata);
+export const cancelDownload = (nodeId: string, modelId: string) =>
+  appStore.cancelDownload(nodeId, modelId);
 export const deleteDownload = (nodeId: string, modelId: string) =>
   appStore.deleteDownload(nodeId, modelId);
 
