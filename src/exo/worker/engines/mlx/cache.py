@@ -1,3 +1,4 @@
+import gc
 import os
 from copy import deepcopy
 from typing import TYPE_CHECKING
@@ -266,6 +267,7 @@ class KVPrefixCache:
         if len(self.caches) == 0:
             return
 
+        evicted_any = False
         # Evict LRU entries until below threshold
         while (
             len(self.caches) > 0
@@ -278,9 +280,17 @@ class KVPrefixCache:
             self._snapshots.pop(lru_index)
             self._media_regions.pop(lru_index)
             self._last_used.pop(lru_index)
+            evicted_any = True
             logger.info(
                 f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
             )
+
+        if evicted_any:
+            # Force Python GC to release array references, then clear Metal buffer cache.
+            # Without this, evicted MLX arrays stay allocated until the next GC cycle,
+            # leaking ~3-4 GB between long-context requests.
+            gc.collect()
+            mx.clear_cache()
 
     def get_memory_used_percentage(self) -> float:
         local_pressure: float = get_memory_used_percentage()
