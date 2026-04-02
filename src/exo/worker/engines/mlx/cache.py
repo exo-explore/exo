@@ -300,6 +300,7 @@ class KVPrefixCache:
             return
         try:
             from mlx_lm.models.cache import save_prompt_cache
+            self._disk_dir.mkdir(parents=True, exist_ok=True)
             slot_id = self._hot_slot_disk_id if self._hot_slot_disk_id is not None else self._next_disk_slot_id()
             base = self._disk_dir / f"slot_{slot_id}"
             # Save cache (atomic: write tmp then rename)

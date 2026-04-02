@@ -320,7 +320,7 @@ class Runner:
         # Flush KV cache to disk on idle
         _kv = getattr(getattr(self, "generator", None), "kv_prefix_cache", None)
         if _kv is not None:
-            _kv.flush_to_disk()
+            _kv.flush_to_disk(force=True)
 
         self.update_status(RunnerReady())
         logger.info("runner ready")
