@@ -70,7 +70,8 @@ echo "Starting cluster setup..."
 echo "-----------------------------------------------------"
 
 # Define nodes to start (using SSH config aliases)
-NODES=("macstudio-m4-1" "macstudio-m4-2" "macbook-m4")
+NODES=("macstudio-m4-1" "macstudio-m4-2")
+# NODES=("macstudio-m4-1" "macstudio-m4-2" "macbook-m4")
 
     # Thunderbolt Connectivity Check
     echo "Discovering active Thunderbolt IPs..."
@@ -107,34 +108,33 @@ find_shared_ip() {
 echo "Fetching active Thunderbolt IPs from all nodes..."
 TB_M4_1_IPS=$(get_node_tb_ips "macstudio-m4-1")
 TB_M4_2_IPS=$(get_node_tb_ips "macstudio-m4-2")
-TB_MBP_IPS=$(get_node_tb_ips "macbook-m4")
+# TB_MBP_IPS=$(get_node_tb_ips "macbook-m4")
 
 # Match IPs by their shared broadcast domains
 M4_1_TO_M4_2=$(find_shared_ip "$TB_M4_1_IPS" "$TB_M4_2_IPS")
-M4_1_TO_MBP=$(find_shared_ip "$TB_M4_1_IPS" "$TB_MBP_IPS")
+# M4_1_TO_MBP=$(find_shared_ip "$TB_M4_1_IPS" "$TB_MBP_IPS")
 
 M4_2_TO_M4_1=$(find_shared_ip "$TB_M4_2_IPS" "$TB_M4_1_IPS")
-M4_2_TO_MBP=$(find_shared_ip "$TB_M4_2_IPS" "$TB_MBP_IPS")
+# M4_2_TO_MBP=$(find_shared_ip "$TB_M4_2_IPS" "$TB_MBP_IPS")
 
-MBP_TO_M4_1=$(find_shared_ip "$TB_MBP_IPS" "$TB_M4_1_IPS")
-MBP_TO_M4_2=$(find_shared_ip "$TB_MBP_IPS" "$TB_M4_2_IPS")
+# MBP_TO_M4_1=$(find_shared_ip "$TB_MBP_IPS" "$TB_M4_1_IPS")
+# MBP_TO_M4_2=$(find_shared_ip "$TB_MBP_IPS" "$TB_M4_2_IPS")
 
-echo "macstudio-m4-1 routes: -> M4-2 ($M4_1_TO_M4_2), -> MBP ($M4_1_TO_MBP)"
-echo "macstudio-m4-2 routes: -> M4-1 ($M4_2_TO_M4_1), -> MBP ($M4_2_TO_MBP)"
-echo "macbook-m4   routes: -> M4-1 ($MBP_TO_M4_1), -> M4-2 ($MBP_TO_M4_2)"
+echo "macstudio-m4-1 routes: -> M4-2 ($M4_1_TO_M4_2)"
+echo "macstudio-m4-2 routes: -> M4-1 ($M4_2_TO_M4_1)"
 
-# Verify all 6 connection points were successfully discovered
-if [ -z "$M4_1_TO_M4_2" ] || [ -z "$M4_1_TO_MBP" ] || [ -z "$M4_2_TO_M4_1" ] || [ -z "$M4_2_TO_MBP" ] || [ -z "$MBP_TO_M4_1" ] || [ -z "$MBP_TO_M4_2" ]; then
-    echo "CRITICAL ERROR: Could not map a full 3-way Thunderbolt mesh subnet topology!"
+# Verify Studio-to-Studio connection was discovered
+if [ -z "$M4_1_TO_M4_2" ] || [ -z "$M4_2_TO_M4_1" ]; then
+    echo "CRITICAL ERROR: Could not map Studio-to-Studio Thunderbolt topology!"
     exit 1
 fi
 
-# Validate each node has 2 active Thunderbolt interfaces (catches loose cables)
+# Validate each Studio has at least 1 active Thunderbolt interface
 echo "Verifying direct Thunderbolt links..."
-for node in macstudio-m4-1 macstudio-m4-2 macbook-m4; do
+for node in macstudio-m4-1 macstudio-m4-2; do
     active_count=$(echo "$(get_node_tb_ips "$node")" | grep -c '.')
-    if [ "$active_count" -lt 2 ]; then
-        echo "CRITICAL ERROR: $node has only $active_count active Thunderbolt interface(s) — expected 2."
+    if [ "$active_count" -lt 1 ]; then
+        echo "CRITICAL ERROR: $node has no active Thunderbolt interfaces."
         echo "Check physical Thunderbolt cable connections!"
         exit 1
     fi
@@ -144,7 +144,7 @@ done
 # Direct-link pings — clear any stale cross-subnet routes from previous runs first,
 # then ping. Without routes, pings can only succeed over direct physical links — no relay.
 echo "Testing direct-link connectivity (clearing stale routes first)..."
-for node in macstudio-m4-1 macstudio-m4-2 macbook-m4; do
+for node in macstudio-m4-1 macstudio-m4-2; do
     ssh "$node" "for r in \$(netstat -rn | awk '/192\.168\.(200|201|202)\./{print \$1}' | sort -u); do sudo route delete -net \$r 2>/dev/null; done" &> /dev/null
 done
 
@@ -152,22 +152,14 @@ done
 if ! ssh macstudio-m4-1 "ping -c 1 -W 1 $M4_2_TO_M4_1" &> /dev/null; then echo "ERROR: macstudio-m4-1 cannot directly reach M4-2 ($M4_2_TO_M4_1). Check cable!"; exit 1; fi
 if ! ssh macstudio-m4-2 "ping -c 1 -W 1 $M4_1_TO_M4_2" &> /dev/null; then echo "ERROR: macstudio-m4-2 cannot directly reach M4-1 ($M4_1_TO_M4_2). Check cable!"; exit 1; fi
 
-# M4-1 ↔ MBP (direct link)
-if ! ssh macstudio-m4-1 "ping -c 1 -W 1 $MBP_TO_M4_1" &> /dev/null; then echo "ERROR: macstudio-m4-1 cannot directly reach MBP ($MBP_TO_M4_1). Check cable!"; exit 1; fi
-if ! ssh macbook-m4 "ping -c 1 -W 1 $M4_1_TO_MBP" &> /dev/null; then echo "ERROR: macbook-m4 cannot directly reach M4-1 ($M4_1_TO_MBP). Check cable!"; exit 1; fi
-
-# M4-2 ↔ MBP (direct link)
-if ! ssh macstudio-m4-2 "ping -c 1 -W 1 $MBP_TO_M4_2" &> /dev/null; then echo "ERROR: macstudio-m4-2 cannot directly reach MBP ($MBP_TO_M4_2). Check cable!"; exit 1; fi
-if ! ssh macbook-m4 "ping -c 1 -W 1 $M4_2_TO_MBP" &> /dev/null; then echo "ERROR: macbook-m4 cannot directly reach M4-2 ($M4_2_TO_MBP). Check cable!"; exit 1; fi
-
-echo "All 6 direct Thunderbolt links verified ✓"
+echo "All direct Thunderbolt links verified ✓"
 
 # RoCEv2 (RDMA) Per-Device Port State Check
 # Only checks RDMA ports corresponding to TB interfaces that have active IPs (in use).
 # PORT_DOWN on unconnected TB ports is expected and harmless.
 echo "Checking per-device RDMA port states (active TB interfaces only)..."
 RDMA_HEALTHY=true
-for NODE in macstudio-m4-1 macstudio-m4-2 macbook-m4; do
+for NODE in macstudio-m4-1 macstudio-m4-2; do
     echo -n "  $NODE: "
     # Get only the RDMA devices whose underlying interface has an active IP
     PORT_STATUS=$(ssh "$NODE" 'for dev in rdma_en1 rdma_en2 rdma_en3 rdma_en4 rdma_en5; do
@@ -210,7 +202,7 @@ fi
 # A degraded Thunderbolt cable will pass `ping` (using USB-C fallback Ethernet), but fail to allocate
 # an RDMA Protection Domain, causing `jaccl` to instantly crash when Exo starts.
 echo "Verifying RoCEv2 (RDMA) support over Thunderbolt..."
-for NODE in macstudio-m4-1 macstudio-m4-2 macbook-m4; do
+for NODE in macstudio-m4-1 macstudio-m4-2; do
     echo -n "  Testing RDMA allocation on $NODE... "
     # We use `timeout 2` because a successful PD allocation will hang waiting for a coordinator.
     # We run it within the uv environment to ensure mlx is available.
@@ -233,19 +225,17 @@ done
 echo "Enabling IP forwarding and configuring cross-subnet routes..."
 
 SUBNET_M4_1_M4_2=$(echo "$M4_1_TO_M4_2" | awk -F. '{print $1"."$2"."$3".0/24"}')
-SUBNET_M4_1_MBP=$(echo "$M4_1_TO_MBP" | awk -F. '{print $1"."$2"."$3".0/24"}')
-SUBNET_M4_2_MBP=$(echo "$M4_2_TO_MBP" | awk -F. '{print $1"."$2"."$3".0/24"}')
+# SUBNET_M4_1_MBP=$(echo "$M4_1_TO_MBP" | awk -F. '{print $1"."$2"."$3".0/24"}')
+# SUBNET_M4_2_MBP=$(echo "$M4_2_TO_MBP" | awk -F. '{print $1"."$2"."$3".0/24"}')
 
-for NODE in macstudio-m4-1 macstudio-m4-2 macbook-m4; do
+for NODE in macstudio-m4-1 macstudio-m4-2; do
     ssh "$NODE" "sudo sysctl -w net.inet.ip.forwarding=1" &> /dev/null
 done
 
-# M4-1 is NOT on the M4-2<->MBP subnet → route via M4-2
-ssh macstudio-m4-1 "sudo route delete -net $SUBNET_M4_2_MBP 2>/dev/null; sudo route add -net $SUBNET_M4_2_MBP $M4_2_TO_M4_1" &> /dev/null
-# M4-2 is NOT on the M4-1<->MBP subnet → route via M4-1
-ssh macstudio-m4-2 "sudo route delete -net $SUBNET_M4_1_MBP 2>/dev/null; sudo route add -net $SUBNET_M4_1_MBP $M4_1_TO_M4_2" &> /dev/null
-# MBP is NOT on the M4-1<->M4-2 subnet → route via M4-1
-ssh macbook-m4 "sudo route delete -net $SUBNET_M4_1_M4_2 2>/dev/null; sudo route add -net $SUBNET_M4_1_M4_2 $M4_1_TO_MBP" &> /dev/null
+# Cross-subnet routes only needed for 3-node mesh (MacBook disconnected)
+# ssh macstudio-m4-1 "sudo route delete -net $SUBNET_M4_2_MBP 2>/dev/null; sudo route add -net $SUBNET_M4_2_MBP $M4_2_TO_M4_1" &> /dev/null
+# ssh macstudio-m4-2 "sudo route delete -net $SUBNET_M4_1_MBP 2>/dev/null; sudo route add -net $SUBNET_M4_1_MBP $M4_1_TO_M4_2" &> /dev/null
+# ssh macbook-m4 "sudo route delete -net $SUBNET_M4_1_M4_2 2>/dev/null; sudo route add -net $SUBNET_M4_1_M4_2 $M4_1_TO_MBP" &> /dev/null
 
 echo "Cross-subnet routes configured."
 
@@ -334,13 +324,12 @@ done
 echo "Verifying commit consistency between nodes..."
 COMMIT_M4_1=$(ssh macstudio-m4-1 "cd ~/repos/exo && git rev-parse --short HEAD")
 COMMIT_M4_2=$(ssh macstudio-m4-2 "cd ~/repos/exo && git rev-parse --short HEAD")
-COMMIT_MBP=$(ssh macbook-m4 "cd ~/repos/exo && git rev-parse --short HEAD")
+# COMMIT_MBP=$(ssh macbook-m4 "cd ~/repos/exo && git rev-parse --short HEAD")
 
-if [ "$COMMIT_M4_1" != "$COMMIT_M4_2" ] || [ "$COMMIT_M4_1" != "$COMMIT_MBP" ]; then
+if [ "$COMMIT_M4_1" != "$COMMIT_M4_2" ]; then
     echo "CRITICAL ERROR: Cluster out of sync!"
     echo "macstudio-m4-1: $COMMIT_M4_1"
     echo "macstudio-m4-2: $COMMIT_M4_2"
-    echo "macbook-m4: $COMMIT_MBP"
     exit 1
 fi
 echo "Nodes synchronized on commit $COMMIT_M4_1."
@@ -395,7 +384,7 @@ for i in {1..90}; do
     if [ -z "$node_count" ] || [ "$node_count" == "null" ]; then node_count=0; fi
     if [ -z "$identity_count" ] || [ "$identity_count" == "null" ]; then identity_count=0; fi
 
-    if [ "$node_count" -ge 3 ] && [ "$identity_count" -ge 3 ]; then
+    if [ "$node_count" -ge ${#NODES[@]} ] && [ "$identity_count" -ge ${#NODES[@]} ]; then
         echo " HEALTHY! (Nodes: $node_count, Identities: $identity_count)"
         CLUSTER_READY=true
         break
@@ -438,9 +427,9 @@ for i in {1..15}; do
     NODE_STATE=$(curl -s "$API/state")
     M4_1_NODE_ID=$(echo "$NODE_STATE" | jq -r '.nodeIdentities | to_entries[] | select(.value.friendlyName | test("Studio.*M4-1")) | .key')
     M4_2_NODE_ID=$(echo "$NODE_STATE" | jq -r '.nodeIdentities | to_entries[] | select(.value.friendlyName | test("Studio.*M4-2")) | .key')
-    MBP_NODE_ID=$(echo "$NODE_STATE" | jq -r '.nodeIdentities | to_entries[] | select(.value.friendlyName | test("MacBook")) | .key')
+    # MBP_NODE_ID=$(echo "$NODE_STATE" | jq -r '.nodeIdentities | to_entries[] | select(.value.friendlyName | test("MacBook")) | .key')
 
-    if [ -n "$M4_1_NODE_ID" ] && [ -n "$M4_2_NODE_ID" ] && [ -n "$MBP_NODE_ID" ]; then
+    if [ -n "$M4_1_NODE_ID" ] && [ -n "$M4_2_NODE_ID" ]; then
         break
     fi
     echo "  Waiting for node identities to propagate..."
@@ -449,9 +438,8 @@ done
 
 echo "  Mac Studio M4-1: $M4_1_NODE_ID"
 echo "  Mac Studio M4-2: $M4_2_NODE_ID"
-echo "  MacBook Pro:     $MBP_NODE_ID"
 
-if [ -z "$M4_1_NODE_ID" ] || [ -z "$M4_2_NODE_ID" ] || [ -z "$MBP_NODE_ID" ]; then
+if [ -z "$M4_1_NODE_ID" ] || [ -z "$M4_2_NODE_ID" ]; then
     echo "ERROR: Could not resolve all node IDs. Skipping instance creation."
     echo "Create instances manually from the dashboard."
     exit 1
