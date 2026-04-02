@@ -17,7 +17,10 @@ def apply_mlx_patches() -> None:
         return
     _applied = True
     patch_yarn_rope()
-    apply_batch_gen_patch()
+    # Skip fast_next patch when speculative is enabled — it bypasses _next()
+    # which MTPBatchGenerator overrides for speculative decoding
+    if os.environ.get("EXO_SPECULATIVE") != "1":
+        apply_batch_gen_patch()
 
 
 def maybe_apply_patches(model: nn.Module, model_path: Path) -> None:
