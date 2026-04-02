@@ -373,6 +373,22 @@ class GenerationBatch:
         all_tokens: Optional[List[int]]
         ...
 
+    model: nn.Module
+    uids: List[int]
+    prompt_cache: List[Any]
+    tokens: List[List[int]]
+    samplers: Optional[List[Callable[[mx.array], mx.array]]]
+    fallback_sampler: Callable[[mx.array], mx.array]
+    logits_processors: Optional[List[List[Callable[[mx.array, mx.array], mx.array]]]]
+    state_machines: List[SequenceStateMachine]
+    max_tokens: List[int]
+    _current_tokens: Optional[mx.array]
+    _current_logprobs: List[mx.array]
+    _next_tokens: mx.array
+    _next_logprobs: List[mx.array]
+    _token_context: List[mx.array]
+    _num_tokens: List[int]
+
     def __init__(
         self,
         model: nn.Module,
@@ -388,17 +404,11 @@ class GenerationBatch:
         state_machines: List[SequenceStateMachine],
         max_tokens: List[int],
     ) -> None: ...
-    def __len__(self):  # -> int:
-        ...
-    def extend(self, batch):  # -> None:
-        """Extend this batch with another generation batch."""
-        ...
-
+    def __len__(self) -> int: ...
+    def extend(self, batch: GenerationBatch) -> None: ...
     def extract_cache(self, idx: int) -> List[Any]: ...
-    def filter(self, keep: List[int]):  # -> None:
-        """Filter the batch to keep only the specified indices."""
-        ...
-
+    def filter(self, keep: List[int]) -> None: ...
+    def _step(self) -> Tuple[List[int], List[mx.array]]: ...
     def next(self) -> List[Response]:
         """
         Generate the next batch of tokens.
@@ -446,6 +456,14 @@ class BatchGenerator:
     _unprocessed_sequences: deque[tuple[Any, ...]]
     _prompt_batch: PromptProcessingBatch
     _generation_batch: GenerationBatch
+    _currently_processing: list[Any]
+    _gen_tokens_counter: int
+    _steps_counter: int
+    def _next(
+        self,
+    ) -> tuple[
+        List[PromptProcessingBatch.Response], List[GenerationBatch.Response]
+    ]: ...
     def insert(
         self,
         prompts: List[List[int]],

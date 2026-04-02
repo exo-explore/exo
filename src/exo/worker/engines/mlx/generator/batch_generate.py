@@ -276,6 +276,10 @@ class ExoBatchGenerator:
         if not self.has_work:
             return []
 
+        gb = self._mlx_gen._generation_batch
+        gb._needs_topk = any(  # pyright: ignore[reportAttributeAccessIssue]
+            t.task_params.logprobs for t in self._active_tasks.values()
+        )
         _step_tic = time.perf_counter()
         _, responses = self._mlx_gen.next()
         _next_elapsed = time.perf_counter() - _step_tic
@@ -304,7 +308,9 @@ class ExoBatchGenerator:
             state.completion_tokens += 1
             if state.task_params.bench:
                 delta = now - state.first_gen_token_time
-                logger.debug(f"[bench] uid={response.uid} tok#{state.completion_tokens} {text!r} t={delta:.4f}s")
+                logger.debug(
+                    f"[bench] uid={response.uid} tok#{state.completion_tokens} {text!r} t={delta:.4f}s"
+                )
             state.generated_text_parts.append(text)
             state.potential_stop_sequence_text += text
 
@@ -354,13 +360,13 @@ class ExoBatchGenerator:
             stats: GenerationStats | None = None
             usage: Usage | None = None
             if is_done:
-                if (
-                    state.first_gen_token_time is not None
-                    and state.last_gen_token_time is not None
-                    and state.completion_tokens > 1
-                ):
+                if state.completion_tokens > 1:
                     gen_span = state.last_gen_token_time - state.first_gen_token_time
-                    generation_tps = (state.completion_tokens - 1) / gen_span if gen_span > 0 else 0.0
+                    generation_tps = (
+                        (state.completion_tokens - 1) / gen_span
+                        if gen_span > 0
+                        else 0.0
+                    )
                 else:
                     generation_tps = 0.0
 

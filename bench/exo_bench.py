@@ -573,28 +573,34 @@ def main() -> int:
 
                             def _run_concurrent(
                                 idx: int,
+                                _barrier: threading.Barrier = barrier,
+                                _batch_start: threading.Event = batch_start,
+                                _payload: dict[str, Any] = pre_built_payload,
+                                _actual_pp: int = actual_pp,
                             ) -> tuple[dict[str, Any], int]:
                                 nonlocal batch_t0
                                 c = ExoClient(
                                     args.host, args.port, timeout_s=args.timeout
                                 )
-                                if barrier.wait() == 0:
+                                if _barrier.wait() == 0:
                                     batch_t0 = time.perf_counter()
-                                    batch_start.set()
+                                    _batch_start.set()
                                 else:
-                                    batch_start.wait()
+                                    _batch_start.wait()
                                 t0 = batch_t0
-                                out = c.post_bench_chat_completions(pre_built_payload)
+                                out = c.post_bench_chat_completions(_payload)
                                 elapsed = time.perf_counter() - t0
                                 stats = out.get("generation_stats")
                                 choices = out.get("choices") or [{}]
-                                message = choices[0].get("message", {}) if choices else {}
+                                message = (
+                                    choices[0].get("message", {}) if choices else {}
+                                )
                                 text = message.get("content") or ""
                                 return {
                                     "elapsed_s": elapsed,
                                     "output_text_preview": text[:200],
                                     "stats": stats,
-                                }, actual_pp
+                                }, _actual_pp
 
                             inf_t0 = time.monotonic()
                             with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -637,12 +643,17 @@ def main() -> int:
                                 all_rows.append(row)
 
                             if batch_results:
+                                batch_wall_s = max(
+                                    x["elapsed_s"] for x, _ in batch_results
+                                )
                                 valid_gen_tps = [
                                     x["stats"]["generation_tps"]
                                     for x, _ in batch_results
                                     if x["stats"]["generation_tps"] > 0
                                 ]
-                                per_req_tps = max(valid_gen_tps) if valid_gen_tps else 0.0
+                                per_req_tps = (
+                                    max(valid_gen_tps) if valid_gen_tps else 0.0
+                                )
                                 agg_gen_tps = per_req_tps * concurrency
                                 logger.info(
                                     f"[concurrent {concurrency}x]  "
@@ -654,7 +665,11 @@ def main() -> int:
 
                     if runs:
                         prompt_tps = mean(x["stats"]["prompt_tps"] for x in runs)
-                        valid_gen = [x["stats"]["generation_tps"] for x in runs if x["stats"]["generation_tps"] > 0]
+                        valid_gen = [
+                            x["stats"]["generation_tps"]
+                            for x in runs
+                            if x["stats"]["generation_tps"] > 0
+                        ]
                         per_req_tps = max(valid_gen) if valid_gen else 0.0
                         gen_tps = per_req_tps * concurrency
                         ptok = mean(x["stats"]["prompt_tokens"] for x in runs)
