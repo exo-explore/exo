@@ -98,7 +98,11 @@ class MTPBatchGenerator(BatchGenerator):
             return self._speculative_next()
 
         # Standard path (BS>1 or no batch)
-        print(f"[MTP] standard path batch={batch is not None} len={len(batch) if batch else 0} unprocessed={len(self.unprocessed_prompts)}")
+        if not hasattr(self, '_std_count'):
+            self._std_count = 0
+        self._std_count += 1
+        if self._std_count <= 5:
+            print(f"[MTP] standard path #{self._std_count} batch={batch is not None} len={len(batch) if batch else 0} unprocessed={len(self.unprocessed_prompts)}")
         responses = super()._next()
         if responses and batch is not None and len(batch) == 1:
             if 'pre_norm' in self._captured:
