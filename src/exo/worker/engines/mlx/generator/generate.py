@@ -729,6 +729,7 @@ def mlx_generate(
                         max_tokens=max_tokens - 1,
                         pp_rank=pp_rank, pp_world_size=pp_world_size,
                         pp_group=pp_group,
+                        temp=task.temperature if task.temperature is not None else 0.7,
                     ):
                         if tok_id in tokenizer.eos_token_ids:
                             elapsed = time.perf_counter() - gen_start

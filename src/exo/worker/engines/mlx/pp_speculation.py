@@ -21,6 +21,7 @@ Overlap strategy:
 """
 
 import os
+import random
 import sys
 import time
 from copy import deepcopy
@@ -219,6 +220,7 @@ def pp_speculative_decode_loop(
     pp_rank: int,
     pp_world_size: int,
     pp_group: mx.distributed.Group,
+    temp: float = 0.7,
 ) -> Generator[tuple[int, mx.array], None, None]:
     """PP decode loop with idle-time speculation. Yields (token_id, logprobs).
 
@@ -319,9 +321,17 @@ def pp_speculative_decode_loop(
                 # -- Draft DURING rank 1's compute (the ~14ms idle window) --
                 try:
                     draft_logits = draft_model(mx.array([[y.item()]]), cache=draft_cache)
-                    draft_tok = draft_logits[0, -1].argmax()
-                    mx.eval(draft_tok)
+                    draft_probs = mx.softmax(draft_logits[0, -1])
+                    draft_tok = draft_probs.argmax()
+                    q_val = draft_probs[draft_tok]
+                    mx.eval(draft_tok, q_val)
                     _draft_token = int(draft_tok.item())
+
+                    # Send draft info to rank 1 for speculative acceptance
+                    mx.eval(mx.distributed.send(
+                        mx.array([float(_draft_token), q_val.item()]),
+                        (pp_rank + 1) % pp_world_size, group=pp_group
+                    ))
 
                     _spec_snap = _snapshot_cache(prompt_cache)
                     _rank0_speculative_fwd(_draft_token)
@@ -331,10 +341,30 @@ def pp_speculative_decode_loop(
                     _spec_snap = None
                     if spec_last is not None:
                         spec_last._speculative = False
+                    # Send sentinel so rank 1 doesn't block on recv
+                    mx.eval(mx.distributed.send(
+                        mx.array([-1.0, 0.0]),
+                        (pp_rank + 1) % pp_world_size, group=pp_group
+                    ))
 
             # ==== RANK 1: recv hidden + compute + sample (parallel with rank 0's draft) ====
             if is_last_rank:
                 sampled, lp = _rank1_compute(y)
+
+                # Receive draft info from rank 0 and apply speculative acceptance
+                draft_info = mx.distributed.recv_like(
+                    mx.zeros(2), (pp_rank - 1) % pp_world_size, group=pp_group
+                )
+                mx.eval(draft_info)
+                _d_id = int(draft_info[0].item())
+                _q_val = float(draft_info[1].item())
+
+                if _d_id >= 0 and _q_val > 0:
+                    # Temperature-adjusted main model probability for draft token
+                    _p_val = float(mx.softmax(lp / temp)[_d_id].item()) if temp > 0 else (1.0 if int(sampled.item()) == _d_id else 0.0)
+                    _accept_prob = min(1.0, _p_val / _q_val)
+                    if random.random() < _accept_prob:
+                        sampled = mx.array([_d_id])
 
             # ==== TOKEN EXCHANGE (both ranks sync here) ====
             gathered_token = mx.distributed.all_gather(

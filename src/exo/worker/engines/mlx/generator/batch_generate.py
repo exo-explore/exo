@@ -365,6 +365,7 @@ class ExoBatchGenerator:
             max_tokens=max_tokens - 1,
             pp_rank=pp_rank, pp_world_size=pp_world_size,
             pp_group=pp_group,
+            temp=task_params.temperature if task_params.temperature is not None else 0.7,
         )
 
         self._uid_counter += 1
