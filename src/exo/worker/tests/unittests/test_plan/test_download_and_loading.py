@@ -8,6 +8,7 @@ from exo.shared.types.worker.runners import (
     RunnerConnected,
     RunnerIdle,
 )
+from exo.utils.keyed_backoff import KeyedBackoff
 from exo.worker.tests.constants import (
     INSTANCE_1_ID,
     MODEL_A_ID,
@@ -52,6 +53,9 @@ def test_plan_requests_download_when_waiting_and_shard_not_downloaded():
         instances=instances,
         all_runners=all_runners,
         tasks={},
+        input_chunk_buffer={},
+        instance_backoff=KeyedBackoff(),
+        download_backoff=KeyedBackoff(),
     )
 
     assert isinstance(result, plan_mod.DownloadModel)
@@ -104,6 +108,9 @@ def test_plan_loads_model_when_all_shards_downloaded_and_waiting():
         instances=instances,
         all_runners=all_runners,
         tasks={},
+        input_chunk_buffer={},
+        instance_backoff=KeyedBackoff(),
+        download_backoff=KeyedBackoff(),
     )
 
     assert isinstance(result, LoadModel)
@@ -146,6 +153,9 @@ def test_plan_does_not_request_download_when_shard_already_downloaded():
         instances=instances,
         all_runners=all_runners,
         tasks={},
+        input_chunk_buffer={},
+        instance_backoff=KeyedBackoff(),
+        download_backoff=KeyedBackoff(),
     )
 
     assert not isinstance(result, plan_mod.DownloadModel)
@@ -193,6 +203,9 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
         instances=instances,
         all_runners=all_runners,
         tasks={},
+        input_chunk_buffer={},
+        instance_backoff=KeyedBackoff(),
+        download_backoff=KeyedBackoff(),
     )
 
     assert result is None
@@ -213,6 +226,9 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
         instances=instances,
         all_runners=all_runners,
         tasks={},
+        input_chunk_buffer={},
+        instance_backoff=KeyedBackoff(),
+        download_backoff=KeyedBackoff(),
     )
 
     assert result is not None

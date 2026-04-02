@@ -68,6 +68,7 @@ class InputImageChunk(BaseChunk):
     data: str
     chunk_index: int
     total_chunks: int
+    image_index: int = 0
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():  # pyright: ignore[reportAny]

@@ -29,6 +29,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     mx_all_gather_tasks,
     mx_any,
 )
+from exo.worker.engines.mlx.vision import VisionProcessor
 from exo.worker.runner.bootstrap import logger
 
 from .model_output_parsers import apply_all_parsers
@@ -120,6 +121,7 @@ class SequentialGenerator(InferenceGenerator):
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
+    vision_processor: VisionProcessor | None = None
     check_for_cancel_every: int = 50
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
@@ -304,6 +306,7 @@ class SequentialGenerator(InferenceGenerator):
             distributed_prompt_progress_callback=distributed_prompt_progress_callback,
             on_generation_token=on_generation_token,
             group=self.group,
+            vision_processor=self.vision_processor,
         )
 
     def close(self) -> None:
@@ -322,6 +325,7 @@ class BatchGenerator(InferenceGenerator):
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
     check_for_cancel_every: int = 50
+    vision_processor: VisionProcessor | None = None
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -344,6 +348,7 @@ class BatchGenerator(InferenceGenerator):
             tokenizer=self.tokenizer,
             group=self.group,
             kv_prefix_cache=self.kv_prefix_cache,
+            vision_processor=self.vision_processor,
         )
 
     def warmup(self):

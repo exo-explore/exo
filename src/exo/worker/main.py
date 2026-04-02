@@ -1,3 +1,4 @@
+import hashlib
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -8,8 +9,11 @@ from loguru import logger
 from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
 from exo.shared.apply import apply
+from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
+from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
+    DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
     StartDownload,
@@ -21,6 +25,7 @@ from exo.shared.types.events import (
     Event,
     IndexedEvent,
     InputChunkReceived,
+    InstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
     TaskCreated,
@@ -38,9 +43,11 @@ from exo.shared.types.tasks import (
     Shutdown,
     Task,
     TaskStatus,
+    TextGeneration,
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
+from exo.shared.types.worker.instances import InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
@@ -76,10 +83,14 @@ class Worker:
         self._system_id = SystemId()
 
         # Buffer for input image chunks (for image editing)
-        self.input_chunk_buffer: dict[CommandId, dict[int, str]] = {}
+        self.input_chunk_buffer: dict[CommandId, dict[int, InputImageChunk]] = {}
         self.input_chunk_counts: dict[CommandId, int] = {}
+        self.image_cache: dict[str, str] = {}
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
+        self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
+            base=0.5, cap=10.0
+        )
         self._stopped: anyio.Event = anyio.Event()
 
     async def run(self):
@@ -123,6 +134,9 @@ class Worker:
                 self.state = apply(self.state, event=event)
                 event = event.event
 
+                if isinstance(event, InstanceDeleted):
+                    self._instance_backoff.reset(event.instance_id)
+
                 # Buffer input image chunks for image editing
                 if isinstance(event, InputChunkReceived):
                     cmd_id = event.command_id
@@ -131,7 +145,7 @@ class Worker:
                         self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
 
                     self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
-                        event.chunk.data
+                        event.chunk
                     )
 
                 if isinstance(event, CustomModelCardAdded):
@@ -152,16 +166,24 @@ class Worker:
                 self.state.runners,
                 self.state.tasks,
                 self.input_chunk_buffer,
-                self.input_chunk_counts,
+                self._instance_backoff,
+                self._download_backoff,
             )
             if task is None:
                 continue
 
-            # Gate DownloadModel on backoff BEFORE emitting TaskCreated
-            # to prevent flooding the event log with useless events
-            if isinstance(task, DownloadModel):
-                model_id = task.shard_metadata.model_card.model_id
-                if not self._download_backoff.should_proceed(model_id):
+            if isinstance(task, CreateRunner):
+                iid = task.instance_id
+                if self._instance_backoff.attempts(iid) >= EXO_MAX_INSTANCE_RETRIES:
+                    logger.warning(
+                        f"Instance {iid} exceeded {EXO_MAX_INSTANCE_RETRIES} retries, requesting deletion"
+                    )
+                    await self.command_sender.send(
+                        ForwarderCommand(
+                            origin=self._system_id,
+                            command=DeleteInstance(instance_id=iid),
+                        )
+                    )
                     continue
 
             logger.info(f"Worker plan: {task.__class__.__name__}")
@@ -172,6 +194,7 @@ class Worker:
             match task:
                 case CreateRunner():
                     self._create_supervisor(task)
+                    self._instance_backoff.record_attempt(task.instance_id)
                     await self.event_sender.send(
                         TaskStatusUpdated(
                             task_id=task.task_id, task_status=TaskStatus.Complete
@@ -245,7 +268,7 @@ class Worker:
                     # Assemble image from chunks and inject into task
                     cmd_id = task.command_id
                     chunks = self.input_chunk_buffer.get(cmd_id, {})
-                    assembled = "".join(chunks[i] for i in range(len(chunks)))
+                    assembled = "".join(chunks[i].data for i in range(len(chunks)))
                     logger.info(
                         f"Assembled input image from {len(chunks)} chunks, "
                         f"total size: {len(assembled)} bytes"
@@ -274,6 +297,52 @@ class Worker:
                         ),
                     )
                     # Cleanup buffers
+                    if cmd_id in self.input_chunk_buffer:
+                        del self.input_chunk_buffer[cmd_id]
+                    if cmd_id in self.input_chunk_counts:
+                        del self.input_chunk_counts[cmd_id]
+                    await self._start_runner_task(modified_task)
+
+                case TextGeneration() if (
+                    task.task_params.image_hashes
+                    or task.task_params.total_input_chunks > 0
+                ):
+                    cmd_id = task.command_id
+                    by_index: dict[int, str] = {}
+
+                    for idx, h in task.task_params.image_hashes.items():
+                        assert h in self.image_cache
+                        by_index[idx] = self.image_cache[h]
+
+                    if task.task_params.total_input_chunks > 0:
+                        chunk_buffer = self.input_chunk_buffer.get(cmd_id, {})
+                        per_image: defaultdict[int, list[InputImageChunk]] = (
+                            defaultdict(list)
+                        )
+                        for chunk in chunk_buffer.values():
+                            per_image[chunk.image_index].append(chunk)
+                        for img_idx in sorted(per_image):
+                            sorted_chunks = sorted(
+                                per_image[img_idx], key=lambda c: c.chunk_index
+                            )
+                            img = "".join(c.data for c in sorted_chunks)
+                            self.image_cache[
+                                hashlib.sha256(img.encode("ascii")).hexdigest()
+                            ] = img
+                            by_index[img_idx] = img
+                        logger.info(
+                            f"Assembled {len(per_image)} VLM image(s) "
+                            f"from {len(chunk_buffer)} chunks"
+                        )
+
+                    resolved_images = [by_index[i] for i in sorted(by_index)]
+                    modified_task = task.model_copy(
+                        update={
+                            "task_params": task.task_params.model_copy(
+                                update={"images": resolved_images}
+                            )
+                        }
+                    )
                     if cmd_id in self.input_chunk_buffer:
                         del self.input_chunk_buffer[cmd_id]
                     if cmd_id in self.input_chunk_counts:

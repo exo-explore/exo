@@ -1,3 +1,4 @@
+import contextlib
 import functools
 import math
 import time
@@ -54,12 +55,52 @@ from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
     mx_barrier,
+    system_prompt_token_count,
+)
+from exo.worker.engines.mlx.vision import (
+    MediaRegion,
+    VisionProcessor,
+    VisionResult,
+    get_inner_model,
+    prepare_vision,
 )
 from exo.worker.runner.bootstrap import logger
 
 generation_stream = mx.new_stream(mx.default_device())
 
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
+
+
+@contextlib.contextmanager
+def patch_embed_tokens(
+    model: Model, embeddings: mx.array, start_offset: int = 0, token_count: int = 0
+) -> Generator[None]:
+    inner = get_inner_model(model)  # type: ignore
+    original_embed = inner.embed_tokens  # type: ignore
+    end_offset = start_offset + token_count
+    offset = [start_offset]
+
+    def _inject(input_ids: mx.array) -> mx.array:
+        start = offset[0]
+        if start >= end_offset:
+            return original_embed(input_ids)  # type: ignore
+        chunk_len = input_ids.shape[-1]
+        end = min(start + chunk_len, end_offset)
+        offset[0] = end
+        if end - start < chunk_len:
+            return original_embed(input_ids)  # type: ignore
+        return embeddings[:, start:end, :]
+
+    for attr in dir(original_embed):  # type: ignore
+        if not attr.startswith("_") and not hasattr(_inject, attr):
+            with contextlib.suppress(AttributeError, TypeError):
+                setattr(_inject, attr, getattr(original_embed, attr))  # type: ignore
+
+    inner.embed_tokens = _inject
+    try:
+        yield
+    finally:
+        inner.embed_tokens = original_embed
 
 
 class PrefillCancelled(BaseException):
@@ -447,6 +488,7 @@ def mlx_generate(
     on_prefill_progress: Callable[[int, int], None] | None = None,
     distributed_prompt_progress_callback: Callable[[], None] | None = None,
     on_generation_token: Callable[[], None] | None = None,
+    vision_processor: VisionProcessor | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -457,6 +499,27 @@ def mlx_generate(
     # Encode prompt once at the top and fix unmatched think tags
     all_prompt_tokens = encode_prompt(tokenizer, prompt)
     all_prompt_tokens = fix_unmatched_think_end_tokens(all_prompt_tokens, tokenizer)
+    min_prefix_hit_length = max(1000, system_prompt_token_count(task, tokenizer))
+
+    vision: VisionResult | None = None
+    if vision_processor is not None:
+        try:
+            vision = prepare_vision(
+                images=task.images,
+                chat_template_messages=task.chat_template_messages,
+                vision_processor=vision_processor,
+                tokenizer=tokenizer,
+                model=model,
+                model_id=task.model,
+                task_params=task,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Vision processing failed, falling back to text-only"
+            )
+    if vision is not None:
+        all_prompt_tokens = vision.prompt_tokens
+    media_regions: list[MediaRegion] = vision.media_regions if vision else []
 
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench
@@ -471,7 +534,7 @@ def mlx_generate(
         prompt_tokens = all_prompt_tokens
     else:
         caches, prompt_tokens, matched_index = kv_prefix_cache.get_kv_cache(
-            model, all_prompt_tokens
+            model, all_prompt_tokens, media_regions=media_regions
         )
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
         if prefix_hit_length > 0:
@@ -505,17 +568,24 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
-    # Prefill cache with all tokens except the last one
-    prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
-        model,
-        tokenizer,
-        sampler,
-        prompt_tokens[:-1],
-        caches,
-        group,
-        on_prefill_progress,
-        distributed_prompt_progress_callback,
+    maybe_vision_ctx = (
+        patch_embed_tokens(
+            model, vision.embeddings, prefix_hit_length, len(prompt_tokens) - 1
+        )
+        if vision is not None
+        else contextlib.nullcontext()
     )
+    with maybe_vision_ctx:
+        prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
+            model,
+            tokenizer,
+            sampler,
+            prompt_tokens[:-1],
+            caches,
+            group,
+            on_prefill_progress,
+            distributed_prompt_progress_callback,
+        )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
     # stream_generate starts from the last token
@@ -646,8 +716,8 @@ def mlx_generate(
                     else 0.0
                 )
                 if matched_index is not None and (
-                    prefix_hit_length > 1000
-                    or hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
+                    prefix_hit_length >= min_prefix_hit_length
+                    and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
                 ):
                     kv_prefix_cache.update_kv_cache(
                         matched_index,
@@ -655,10 +725,14 @@ def mlx_generate(
                         caches,
                         cache_snapshots,
                         restore_pos=prefix_hit_length,
+                        media_regions=media_regions,
                     )
                 else:
                     kv_prefix_cache.add_kv_cache(
-                        full_prompt_tokens, caches, cache_snapshots
+                        full_prompt_tokens,
+                        caches,
+                        cache_snapshots,
+                        media_regions=media_regions,
                     )
 
         if on_generation_token is not None:

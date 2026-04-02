@@ -257,11 +257,12 @@ interface RawStateResponse {
 }
 
 export interface MessageAttachment {
-  type: "image" | "text" | "file" | "generated-image";
+  type: "image" | "text" | "file" | "generated-image" | "pdf";
   name: string;
   content?: string;
   preview?: string;
   mimeType?: string;
+  pageImages?: string[];
 }
 
 export interface TopLogprob {
@@ -2242,6 +2243,7 @@ class AppStore {
       type: string;
       textContent?: string;
       preview?: string;
+      pageImages?: string[];
     }[],
     enableThinking?: boolean | null,
   ): Promise<void> {
@@ -2277,6 +2279,20 @@ class AppStore {
             preview: file.preview,
             mimeType: file.type,
           });
+        } else if (
+          file.pageImages ||
+          (file.textContent && file.type === "application/pdf")
+        ) {
+          attachments.push({
+            type: "pdf",
+            name: file.name,
+            content: file.textContent,
+            pageImages: file.pageImages,
+            mimeType: file.type,
+          });
+          if (file.textContent) {
+            fileContext += `\n\n[File: ${file.name}]\n\`\`\`\n${file.textContent}\n\`\`\``;
+          }
         } else if (file.textContent) {
           attachments.push({
             type: "text",
@@ -2344,13 +2360,70 @@ class AppStore {
       const apiMessages = [
         systemPrompt,
         ...targetConversation.messages.slice(0, -1).map((m) => {
-          // Build content including any text file attachments
+          // Check if this message has image or PDF attachments
+          const visualAttachments = m.attachments?.filter(
+            (a) =>
+              (a.type === "image" && a.preview) ||
+              (a.type === "pdf" && a.pageImages?.length),
+          );
+
+          if (visualAttachments && visualAttachments.length > 0) {
+            // Build multimodal content array (OpenAI vision format)
+            const contentParts: Array<
+              | { type: "text"; text: string }
+              | { type: "image_url"; image_url: { url: string } }
+            > = [];
+
+            // Add image parts first
+            for (const att of visualAttachments) {
+              if (att.type === "image" && att.preview) {
+                contentParts.push({
+                  type: "image_url",
+                  image_url: { url: att.preview },
+                });
+              } else if (att.type === "pdf" && att.pageImages) {
+                for (const pageImg of att.pageImages) {
+                  contentParts.push({
+                    type: "image_url",
+                    image_url: { url: pageImg },
+                  });
+                }
+              }
+            }
+
+            // Build text content including any text/pdf file attachments
+            let textContent = m.content;
+            if (m.attachments) {
+              for (const attachment of m.attachments) {
+                if (
+                  (attachment.type === "text" || attachment.type === "pdf") &&
+                  attachment.content
+                ) {
+                  textContent += `\n\n[File: ${attachment.name}]\n\`\`\`\n${attachment.content}\n\`\`\``;
+                }
+              }
+            }
+
+            if (textContent) {
+              contentParts.push({ type: "text", text: textContent });
+            }
+
+            return {
+              role: m.role,
+              content: contentParts,
+            };
+          }
+
+          // Text-only message (original path)
           let msgContent = m.content;
 
-          // Add text attachments as context
+          // Add text/pdf attachments as context
           if (m.attachments) {
             for (const attachment of m.attachments) {
-              if (attachment.type === "text" && attachment.content) {
+              if (
+                (attachment.type === "text" || attachment.type === "pdf") &&
+                attachment.content
+              ) {
                 msgContent += `\n\n[File: ${attachment.name}]\n\`\`\`\n${attachment.content}\n\`\`\``;
               }
             }
@@ -3305,6 +3378,7 @@ export const sendMessage = (
     type: string;
     textContent?: string;
     preview?: string;
+    pageImages?: string[];
   }[],
   enableThinking?: boolean | null,
 ) => appStore.sendMessage(content, files, enableThinking);

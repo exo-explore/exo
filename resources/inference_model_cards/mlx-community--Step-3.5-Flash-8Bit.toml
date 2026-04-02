@@ -9,5 +9,7 @@ quantization = "8bit"
 base_model = "Step 3.5 Flash"
 capabilities = ["text", "thinking", "thinking_toggle"]
 
+context_length = 262144
+
 [storage_size]
 in_bytes = 209082699847
