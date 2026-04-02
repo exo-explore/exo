@@ -4,6 +4,7 @@ import sys
 import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from importlib.metadata import version as pkg_version
 from subprocess import CalledProcessError
 from typing import Self, cast
 
@@ -16,6 +17,7 @@ from pydantic import ValidationError
 from exo.shared.constants import EXO_CONFIG_FILE, EXO_DEFAULT_MODELS_DIR
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
+    BENCH_COMPAT,
     DiskUsage,
     MemoryUsage,
     NetworkInterfaceInfo,
@@ -185,6 +187,8 @@ class StaticNodeInformation(TaggedModel):
     chip: str
     os_version: str
     os_build_version: str
+    exo_version: str
+    bench_compat: str
 
     @classmethod
     async def gather(cls) -> Self:
@@ -194,6 +198,8 @@ class StaticNodeInformation(TaggedModel):
             chip=chip,
             os_version=get_os_version(),
             os_build_version=await get_os_build_version(),
+            exo_version=pkg_version("exo"),
+            bench_compat=BENCH_COMPAT,
         )
 
 

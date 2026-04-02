@@ -75,6 +75,9 @@ class NetworkInterfaceInfo(CamelCaseModel):
     interface_type: InterfaceType = "unknown"
 
 
+BENCH_COMPAT: str = "0.3.69.1"
+
+
 class NodeIdentity(CamelCaseModel):
     """Static and slow-changing node identification data."""
 
@@ -83,6 +86,8 @@ class NodeIdentity(CamelCaseModel):
     friendly_name: str = "Unknown"
     os_version: str = "Unknown"
     os_build_version: str = "Unknown"
+    exo_version: str = "Unknown"
+    bench_compat: str = "Unknown"
 
 
 class NodeNetworkInfo(CamelCaseModel):

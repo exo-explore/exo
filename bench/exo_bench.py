@@ -45,7 +45,13 @@ from harness import (
     wait_for_instance_ready,
 )
 from loguru import logger
+from packaging.version import InvalidVersion, Version
 from transformers import AutoTokenizer
+
+from exo.shared.types.profiling import BENCH_COMPAT
+
+MIN_BENCH_COMPAT = Version("0.3.69.1")
+MAX_BENCH_COMPAT = Version(BENCH_COMPAT)
 
 # Monkey-patch for transformers 5.x compatibility
 # Kimi's tokenization_kimi.py imports bytes_to_unicode from the old location
@@ -435,6 +441,7 @@ def main() -> int:
         reverse=True,
     )
 
+    logger.info(f"exo-bench benchCompat={BENCH_COMPAT}")
     logger.debug(f"exo-bench model: short_id={short_id} full_id={full_model_id}")
     logger.info(f"placements: {len(selected)}")
     for p in selected:
@@ -464,6 +471,30 @@ def main() -> int:
         logger.info("Download: model already cached")
 
     cluster_snapshot = capture_cluster_snapshot(client)
+
+    node_identities = cluster_snapshot.get("nodeIdentities", {})
+    for node_id, identity in node_identities.items():
+        bench_compat_str = identity.get("benchCompat", "Unknown")
+        exo_ver = identity.get("exoVersion", "Unknown")
+        if bench_compat_str == "Unknown":
+            logger.error(
+                f"Node {node_id} (exo {exo_ver}) does not report benchCompat — "
+                f"requires {MIN_BENCH_COMPAT}–{MAX_BENCH_COMPAT}. "
+                f"Update exo on this node."
+            )
+            return 1
+        try:
+            bench_compat = Version(bench_compat_str)
+        except InvalidVersion:
+            logger.error(f"Node {node_id} has invalid benchCompat {bench_compat_str!r}")
+            return 1
+        if bench_compat < MIN_BENCH_COMPAT or bench_compat > MAX_BENCH_COMPAT:
+            logger.error(
+                f"Node {node_id} benchCompat {bench_compat} outside supported range "
+                f"{MIN_BENCH_COMPAT}–{MAX_BENCH_COMPAT}"
+            )
+            return 1
+
     all_rows: list[dict[str, Any]] = []
     all_system_metrics: dict[str, dict[str, dict[str, float]]] = {}
 
@@ -713,7 +744,7 @@ def main() -> int:
 
             time.sleep(5)
 
-    output: dict[str, Any] = {"runs": all_rows}
+    output: dict[str, Any] = {"bench_compat": BENCH_COMPAT, "runs": all_rows}
     if cluster_snapshot:
         output["cluster"] = cluster_snapshot
     if all_system_metrics:

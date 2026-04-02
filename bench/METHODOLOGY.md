@@ -100,6 +100,14 @@ Before measurement begins, `--warmup N` (default: 0) discarded requests are sent
 
 ---
 
+## Compatibility Version
+
+Each exo node reports a `benchCompat` version (e.g. `"0.3.69.1"`) — the exo release version plus a bench-specific revision. This tracks bench-relevant changes independently of the release cycle: timing methodology, stats format, endpoint behavior, etc.
+
+Before benchmarking, exo bench checks every node's `benchCompat` against a supported range. If any node has an unknown or out-of-range version, the benchmark aborts. This prevents silently producing inaccurate results with incompatible nodes.
+
+---
+
 ## System Metrics
 
 A background thread polls each node at 1 Hz, collecting:

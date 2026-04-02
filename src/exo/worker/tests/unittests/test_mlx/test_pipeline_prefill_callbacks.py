@@ -329,16 +329,16 @@ class TestPipelineNoDeadlock:
     """Pipeline prefill must not deadlock at any rank count or prompt length."""
 
     @pytest.mark.parametrize(
-        "layer_splits,prompt_tokens",
+        "layer_splits,prompt_tokens,base_port",
         [
-            (LAYER_SPLITS_2WAY, 128),
-            (LAYER_SPLITS_2WAY, 4096),
-            (LAYER_SPLITS_2WAY, 8192),
-            (LAYER_SPLITS_2WAY, 16384),
-            (LAYER_SPLITS_4WAY, 128),
-            (LAYER_SPLITS_4WAY, 4096),
-            (LAYER_SPLITS_4WAY, 8192),
-            (LAYER_SPLITS_4WAY, 16384),
+            (LAYER_SPLITS_2WAY, 128, 29650),
+            (LAYER_SPLITS_2WAY, 4096, 29654),
+            (LAYER_SPLITS_2WAY, 8192, 29658),
+            (LAYER_SPLITS_2WAY, 16384, 29662),
+            (LAYER_SPLITS_4WAY, 128, 29666),
+            (LAYER_SPLITS_4WAY, 4096, 29670),
+            (LAYER_SPLITS_4WAY, 8192, 29674),
+            (LAYER_SPLITS_4WAY, 16384, 29678),
         ],
         ids=[
             "2rank_128tok",
@@ -355,12 +355,13 @@ class TestPipelineNoDeadlock:
         self,
         layer_splits: list[tuple[int, int]],
         prompt_tokens: int,
+        base_port: int,
     ) -> None:
         """Pipeline must complete without deadlock at various prompt lengths."""
         pipeline_results = _run_pipeline_test(
             layer_splits=layer_splits,
             prompt_tokens=prompt_tokens,
-            base_port=29650,
+            base_port=base_port,
             timeout=60,
         )
         # If we get here, no deadlock. Verify all ranks produced output.
