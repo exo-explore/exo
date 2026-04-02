@@ -98,9 +98,40 @@ class ExoBatchGenerator:
 
     def __post_init__(self) -> None:
         use_speculative = os.environ.get("EXO_SPECULATIVE", "0") == "1"
+        spec_mode = os.environ.get("EXO_SPECULATIVE_MODE", "mtp")
         stop_tokens = set(eos_ids_from_tokenizer(self.tokenizer))
+        temp = float(os.environ.get("EXO_SPECULATIVE_TEMP", "0.7"))
+        alpha = float(os.environ.get("EXO_SPECULATIVE_ALPHA", "1.0"))
 
-        if use_speculative:
+        if use_speculative and spec_mode == "dflash":
+            try:
+                from exo.worker.engines.mlx.speculative.dflash_module import DFlashDrafter
+                from exo.worker.engines.mlx.speculative.dflash_batch_generator import DFlashBatchGenerator
+                from exo.worker.engines.mlx.speculative.bf16_lpb_patch import apply_bf16_lpb_patches
+
+                dflash_path = os.environ.get("EXO_DFLASH_MODEL", "z-lab/Qwen3.5-27B-DFlash")
+                verify_len = int(os.environ.get("EXO_DFLASH_VERIFY", "5"))
+                block_size = int(os.environ.get("EXO_DFLASH_BLOCK_SIZE", "6"))
+
+                drafter = DFlashDrafter(self.model, dflash_path)
+                apply_bf16_lpb_patches(drafter)
+
+                self._mlx_gen = DFlashBatchGenerator(
+                    model=self.model,
+                    drafter=drafter,
+                    verify_len=verify_len,
+                    block_size=block_size,
+                    temp=temp,
+                    alpha=alpha,
+                    stop_tokens=stop_tokens,
+                    prefill_step_size=4096,
+                )
+                logger.info(f"DFlash speculative decoding enabled (V={verify_len}, BS={block_size}, T={temp})")
+            except Exception as e:
+                logger.warning(f"Failed to init DFlash speculative: {e}. Falling back.")
+                self._mlx_gen = MlxBatchGenerator(model=self.model, stop_tokens=stop_tokens, prefill_step_size=4096)
+
+        elif use_speculative and spec_mode == "mtp":
             try:
                 from exo.worker.engines.mlx.speculative.mtp_module import MTPPredictor
                 from exo.worker.engines.mlx.speculative.mtp_batch_generator import MTPBatchGenerator
@@ -110,8 +141,6 @@ class ExoBatchGenerator:
 
                 if mtp_weights:
                     mtp = MTPPredictor(self.model, mtp_weights, quantize=False)
-                    temp = float(os.environ.get("EXO_SPECULATIVE_TEMP", "0.7"))
-                    alpha = float(os.environ.get("EXO_SPECULATIVE_ALPHA", "1.0"))
                     self._mlx_gen = MTPBatchGenerator(
                         model=self.model,
                         mtp_predictor=mtp,
@@ -439,6 +468,7 @@ class ExoBatchGenerator:
         self._mlx_gen._needs_topk = any(  # pyright: ignore[reportAttributeAccessIssue]
             t.task_params.logprobs for t in self._active_tasks.values()
         )
+        print(f"[EXO] step() calling _mlx_gen.next(), type={type(self._mlx_gen).__name__}")
         _step_tic = time.perf_counter()
         responses = self._mlx_gen.next()
         _next_elapsed = time.perf_counter() - _step_tic
