@@ -116,7 +116,7 @@ class ExoBatchGenerator:
                 gamma = int(os.environ.get("EXO_SPECULATIVE_GAMMA", "2"))
 
                 if mtp_weights:
-                    mtp = MTPPredictor(self.model, mtp_weights, quantize=False)
+                    mtp = MTPPredictor(self.model, mtp_weights, quantize=True)
                     temp = float(os.environ.get("EXO_SPECULATIVE_TEMP", "0.7"))
                     alpha = float(os.environ.get("EXO_SPECULATIVE_ALPHA", "1.0"))
                     self._mlx_gen = MTPBatchGenerator(
