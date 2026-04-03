@@ -229,8 +229,24 @@ class MTPPredictor:
         print(f"  Dims: hidden={hidden_size}, heads={num_heads}, kv_heads={num_kv_heads}, "
               f"head_dim={head_dim}, MLP={'MoE' if self.is_moe else f'dense({intermediate})'}")
 
+        # Detect pre-quantized weights (have .scales/.biases companions)
+        _is_prequantized = any(k.endswith('.scales') for k in weights)
+
         # Build layers from weights — all dimension-agnostic
-        def make_linear(w):
+        def make_linear(w, key_prefix: str = ''):
+            if _is_prequantized and f'{key_prefix}.scales' in weights:
+                # Pre-quantized: build QuantizedLinear directly
+                scales = weights[f'{key_prefix}.scales']
+                biases = weights[f'{key_prefix}.biases']
+                ql = nn.QuantizedLinear(
+                    input_dims=w.shape[0] * 32 // 4,  # packed uint32
+                    output_dims=scales.shape[0],
+                    bias=False, group_size=64, bits=4,
+                )
+                ql.weight = w
+                ql.scales = scales
+                ql.biases = biases
+                return ql
             out_dim, in_dim = w.shape
             l = nn.Linear(in_dim, out_dim, bias=False)
             l.weight = w
@@ -242,11 +258,11 @@ class MTPPredictor:
         self.pre_fc_norm_embedding = nn.RMSNorm(hidden_size)
         self.pre_fc_norm_embedding.weight = weights['mtp.pre_fc_norm_embedding.weight']
 
-        self.fc = make_linear(fc_w)
-        self.q_proj = make_linear(q_w)
-        self.k_proj = make_linear(k_w)
-        self.v_proj = make_linear(weights['mtp.layers.0.self_attn.v_proj.weight'])
-        self.o_proj = make_linear(o_w)
+        self.fc = make_linear(fc_w, 'mtp.fc')
+        self.q_proj = make_linear(q_w, 'mtp.layers.0.self_attn.q_proj')
+        self.k_proj = make_linear(k_w, 'mtp.layers.0.self_attn.k_proj')
+        self.v_proj = make_linear(weights['mtp.layers.0.self_attn.v_proj.weight'], 'mtp.layers.0.self_attn.v_proj')
+        self.o_proj = make_linear(o_w, 'mtp.layers.0.self_attn.o_proj')
 
         self.q_norm = nn.RMSNorm(head_dim)
         self.k_norm = nn.RMSNorm(head_dim)
@@ -283,20 +299,19 @@ class MTPPredictor:
 
             # Load MTP MoE weights — remap HF expert names to mlx-lm SwitchLinear
             prefix = 'mtp.layers.0.mlp.'
-            # Direct weights: gate, shared_expert, shared_expert_gate
             direct_keys = {}
             expert_weights = {}  # {proj_name: {expert_idx: weight}}
             for k, v in weights.items():
                 if not k.startswith(prefix):
                     continue
                 name = k[len(prefix):]
-                # Check if it's an individual expert weight
                 if name.startswith('experts.'):
-                    # experts.N.{gate,up,down}_proj.weight → stack into switch_mlp
+                    # experts.N.{gate,up,down}_proj.{weight,scales,biases}
                     parts = name.split('.')
                     idx = int(parts[1])
                     proj = parts[2]  # gate_proj, up_proj, down_proj
-                    key = f'{proj}.{parts[3]}'  # gate_proj.weight
+                    suffix = '.'.join(parts[3:])  # weight, scales, or biases
+                    key = f'{proj}.{suffix}'
                     if key not in expert_weights:
                         expert_weights[key] = {}
                     expert_weights[key][idx] = v
@@ -310,17 +325,20 @@ class MTPPredictor:
                 stacked = mx.stack([idx_map[i] for i in range(n_experts)])
                 moe_weights.append((f'switch_mlp.{proj_key}', stacked))
 
-            # Add direct weights
             for name, v in direct_keys.items():
                 moe_weights.append((name, v))
+
+            # For pre-quantized weights, convert MoE linears to QuantizedLinear first
+            if _is_prequantized:
+                nn.quantize(self.mlp, group_size=64, bits=4)
 
             self.mlp.load_weights(moe_weights)
             print(f"  MoE MLP: {len(moe_weights)} weight groups loaded "
                   f"({len(expert_weights)} stacked expert projections)")
         elif skip_mlp:
-            print(f"  MLP skipped (skip_mlp=True, saves ~{sum(w.nbytes for k, w in weights.items() if 'mlp' in k or 'expert' in k or 'gate' in k.split('.')[0]) / 1e9:.1f} GB)")
+            print(f"  MLP skipped (skip_mlp=True)")
         else:
-            self.gate_proj = make_linear(gate_w)
+            self.gate_proj = make_linear(gate_w, 'mtp.layers.0.mlp.gate_proj')
             self.up_proj = make_linear(weights['mtp.layers.0.mlp.up_proj.weight'])
             self.down_proj = make_linear(weights['mtp.layers.0.mlp.down_proj.weight'])
 
@@ -351,8 +369,8 @@ class MTPPredictor:
             self._quantize_linears()
 
         total_params = sum(w.size for w in weights.values())
-        print(f"  MTP loaded: {len(weights)} tensors, {total_params / 1e6:.1f}M params"
-              f"{' (quantized 8-bit gs=64)' if quantize else ' (bf16)'}")
+        q_label = ' (pre-quantized 4-bit)' if _is_prequantized else (' (quantized 8-bit gs=64)' if quantize else ' (bf16)')
+        print(f"  MTP loaded: {len(weights)} tensors, {total_params / 1e6:.1f}M params{q_label}")
 
     def _quantize_linears(self):
         """Quantize all MTP linear layers to 8-bit gs=64."""
