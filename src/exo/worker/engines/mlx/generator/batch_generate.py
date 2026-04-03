@@ -165,17 +165,18 @@ class ExoBatchGenerator:
                 inner = getattr(self.model, 'model', None) or self.model.language_model.model
                 args = getattr(inner, 'args', None)
                 model_type = getattr(args, 'model_type', '') if args else ''
+                logger.debug(f"MTP resolve: model={type(self.model).__name__}, inner={type(inner).__name__}, "
+                             f"has_args={args is not None}, model_type={model_type!r}, "
+                             f"mtp_layers={getattr(args, 'mtp_num_hidden_layers', 'N/A')}")
                 if args and getattr(args, 'mtp_num_hidden_layers', 0) > 0:
                     if 'qwen3_5' in model_type or 'qwen3.5' in str(type(self.model).__module__):
                         mtp_model = "Qwen/Qwen3.5-27B"
                         logger.info(f"Auto-detected MTP model: {mtp_model}")
                 elif model_type == 'qwen3_5_moe':
-                    # MoE models have MTP weights embedded in the full HF repo
-                    # but mtp_num_hidden_layers may not be set in the MLX config
                     mtp_model = "Qwen/Qwen3.5-397B-A17B"
                     logger.info(f"Auto-detected MTP model for MoE: {mtp_model}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"MTP resolve failed: {e}")
 
         if not mtp_model:
             return None
