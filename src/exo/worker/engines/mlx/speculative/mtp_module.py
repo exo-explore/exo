@@ -239,7 +239,7 @@ class MTPPredictor:
                 scales = weights[f'{key_prefix}.scales']
                 biases = weights[f'{key_prefix}.biases']
                 ql = nn.QuantizedLinear(
-                    input_dims=w.shape[0] * 32 // 4,  # packed uint32
+                    input_dims=w.shape[1] * 32 // 4,  # packed uint32 → original dims
                     output_dims=scales.shape[0],
                     bias=False, group_size=64, bits=4,
                 )
@@ -332,7 +332,7 @@ class MTPPredictor:
             if _is_prequantized:
                 nn.quantize(self.mlp, group_size=64, bits=4)
 
-            self.mlp.load_weights(moe_weights)
+            self.mlp.load_weights(moe_weights, strict=False)
             print(f"  MoE MLP: {len(moe_weights)} weight groups loaded "
                   f"({len(expert_weights)} stacked expert projections)")
         elif skip_mlp:
