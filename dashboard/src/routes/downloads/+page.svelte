@@ -9,7 +9,7 @@
     refreshState,
     lastUpdate as lastUpdateStore,
     startDownload,
-    pauseDownload,
+    cancelDownload,
     deleteDownload,
   } from "$lib/stores/app.svelte";
   import {
@@ -350,6 +350,59 @@
   });
 </script>
 
+{#snippet trashIcon()}
+  <svg
+    class="w-5 h-5"
+    viewBox="0 0 20 20"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+  >
+    <path
+      d="M4 6h12M8 6V4h4v2m1 0v10a1 1 0 01-1 1H8a1 1 0 01-1-1V6h6"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    ></path>
+  </svg>
+{/snippet}
+
+{#snippet downloadIcon(size?: string)}
+  <svg
+    class={size ?? "w-5 h-5"}
+    viewBox="0 0 20 20"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+  >
+    <path
+      d="M10 3v10m0 0l-3-3m3 3l3-3M3 17h14"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    ></path>
+  </svg>
+{/snippet}
+
+{#snippet pauseIcon()}
+  <svg class="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+    <path
+      fill-rule="evenodd"
+      d="M6 4h2v12H6V4zm6 0h2v12h-2V4z"
+      clip-rule="evenodd"
+    ></path>
+  </svg>
+{/snippet}
+
+{#snippet deleteButton(nodeId: string, modelId: string)}
+  <button
+    type="button"
+    class="text-white/50 hover:text-red-400 transition-colors cursor-pointer"
+    onclick={() => deleteDownload(nodeId, modelId)}
+    title="Delete from this node"
+  >
+    {@render trashIcon()}
+  </button>
+{/snippet}
+
 <div class="min-h-screen bg-exo-dark-gray text-white">
   <HeaderNav showHome={true} />
   <div class="max-w-7xl mx-auto px-4 lg:px-8 py-6 space-y-6">
@@ -487,27 +540,7 @@
                         <span class="text-xs text-white/70"
                           >{formatBytes(cell.totalBytes)}</span
                         >
-                        <button
-                          type="button"
-                          class="text-white/50 hover:text-red-400 transition-colors mt-0.5 cursor-pointer"
-                          onclick={() =>
-                            deleteDownload(col.nodeId, row.modelId)}
-                          title="Delete from this node"
-                        >
-                          <svg
-                            class="w-5 h-5"
-                            viewBox="0 0 20 20"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                          >
-                            <path
-                              d="M4 6h12M8 6V4h4v2m1 0v10a1 1 0 01-1 1H8a1 1 0 01-1-1V6h6"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                            ></path>
-                          </svg>
-                        </button>
+                        {@render deleteButton(col.nodeId, row.modelId)}
                       </div>
                     {:else if cell.kind === "downloading"}
                       <div
@@ -534,25 +567,18 @@
                         <span class="text-[10px] text-white/70"
                           >{formatSpeed(cell.speed)}</span
                         >
-                        <button
-                          type="button"
-                          class="text-white/50 hover:text-exo-yellow transition-colors mt-0.5 cursor-pointer"
-                          onclick={() =>
-                            pauseDownload(col.nodeId, row.modelId)}
-                          title="Pause download"
-                        >
-                          <svg
-                            class="w-5 h-5"
-                            viewBox="0 0 20 20"
-                            fill="currentColor"
+                        <div class="flex gap-1 mt-0.5">
+                          <button
+                            type="button"
+                            class="text-white/50 hover:text-exo-yellow transition-colors cursor-pointer"
+                            onclick={() =>
+                              cancelDownload(col.nodeId, row.modelId)}
+                            title="Pause download"
                           >
-                            <path
-                              fill-rule="evenodd"
-                              d="M5 4a1 1 0 011 1v10a1 1 0 11-2 0V5a1 1 0 011-1zm10 0a1 1 0 011 1v10a1 1 0 11-2 0V5a1 1 0 011-1z"
-                              clip-rule="evenodd"
-                            ></path>
-                          </svg>
-                        </button>
+                            {@render pauseIcon()}
+                          </button>
+                          {@render deleteButton(col.nodeId, row.modelId)}
+                        </div>
                       </div>
                     {:else if cell.kind === "pending"}
                       <div
@@ -578,7 +604,7 @@
                               ).toFixed(1)}%"
                             ></div>
                           </div>
-                          <div class="flex gap-2 items-center">
+                          <div class="flex gap-1">
                             {#if row.shardMetadata}
                               <button
                                 type="button"
@@ -587,42 +613,14 @@
                                   startDownload(col.nodeId, row.shardMetadata!)}
                                 title="Resume download on this node"
                               >
-                                <svg
-                                  class="w-5 h-5"
-                                  viewBox="0 0 20 20"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  stroke-width="2"
-                                >
-                                  <path
-                                    d="M10 3v10m0 0l-3-3m3 3l3-3M3 17h14"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                  ></path>
-                                </svg>
+                                {@render downloadIcon()}
                               </button>
-                            {/if}
-                            <button
-                              type="button"
-                              class="text-white/50 hover:text-red-400 transition-colors cursor-pointer"
-                              onclick={() =>
-                                deleteDownload(col.nodeId, row.modelId)}
-                              title="Delete from this node"
-                            >
-                              <svg
-                                class="w-5 h-5"
-                                viewBox="0 0 20 20"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
+                            {:else}
+                              <span class="text-white/50 text-[10px]"
+                                >paused</span
                               >
-                                <path
-                                  d="M4 6h12M8 6V4h4v2m1 0v10a1 1 0 01-1 1H8a1 1 0 01-1-1V6h6"
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                ></path>
-                              </svg>
-                            </button>
+                            {/if}
+                            {@render deleteButton(col.nodeId, row.modelId)}
                           </div>
                         {:else if row.shardMetadata}
                           <button
@@ -632,19 +630,7 @@
                               startDownload(col.nodeId, row.shardMetadata!)}
                             title="Start download on this node"
                           >
-                            <svg
-                              class="w-6 h-6"
-                              viewBox="0 0 20 20"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                d="M10 3v10m0 0l-3-3m3 3l3-3M3 17h14"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                              ></path>
-                            </svg>
+                            {@render downloadIcon("w-6 h-6")}
                           </button>
                         {:else}
                           <span class="text-white/40 text-sm">...</span>
@@ -666,7 +652,7 @@
                             clip-rule="evenodd"
                           ></path>
                         </svg>
-                        <div class="flex gap-2 items-center">
+                        <div class="flex gap-1">
                           {#if row.shardMetadata}
                             <button
                               type="button"
@@ -675,42 +661,10 @@
                                 startDownload(col.nodeId, row.shardMetadata!)}
                               title="Retry download on this node"
                             >
-                              <svg
-                                class="w-5 h-5"
-                                viewBox="0 0 20 20"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                              >
-                                <path
-                                  d="M10 3v10m0 0l-3-3m3 3l3-3M3 17h14"
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                ></path>
-                              </svg>
+                              {@render downloadIcon()}
                             </button>
                           {/if}
-                          <button
-                            type="button"
-                            class="text-white/50 hover:text-red-400 transition-colors cursor-pointer"
-                            onclick={() =>
-                              deleteDownload(col.nodeId, row.modelId)}
-                            title="Delete from this node"
-                          >
-                            <svg
-                              class="w-5 h-5"
-                              viewBox="0 0 20 20"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                d="M4 6h12M8 6V4h4v2m1 0v10a1 1 0 01-1 1H8a1 1 0 01-1-1V6h6"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                              ></path>
-                            </svg>
-                          </button>
+                          {@render deleteButton(col.nodeId, row.modelId)}
                         </div>
                       </div>
                     {:else}
@@ -729,19 +683,7 @@
                               startDownload(col.nodeId, row.shardMetadata!)}
                             title="Download to this node"
                           >
-                            <svg
-                              class="w-5 h-5"
-                              viewBox="0 0 20 20"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                d="M10 3v10m0 0l-3-3m3 3l3-3M3 17h14"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                              ></path>
-                            </svg>
+                            {@render downloadIcon()}
                           </button>
                         {/if}
                       </div>
