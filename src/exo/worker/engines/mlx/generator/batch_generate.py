@@ -164,11 +164,16 @@ class ExoBatchGenerator:
             try:
                 inner = getattr(self.model, 'model', None) or self.model.language_model.model
                 args = getattr(inner, 'args', None)
+                model_type = getattr(args, 'model_type', '') if args else ''
                 if args and getattr(args, 'mtp_num_hidden_layers', 0) > 0:
-                    model_type = getattr(args, 'model_type', '')
                     if 'qwen3_5' in model_type or 'qwen3.5' in str(type(self.model).__module__):
                         mtp_model = "Qwen/Qwen3.5-27B"
                         logger.info(f"Auto-detected MTP model: {mtp_model}")
+                elif model_type == 'qwen3_5_moe':
+                    # MoE models have MTP weights embedded in the full HF repo
+                    # but mtp_num_hidden_layers may not be set in the MLX config
+                    mtp_model = "Qwen/Qwen3.5-397B-A17B"
+                    logger.info(f"Auto-detected MTP model for MoE: {mtp_model}")
             except Exception:
                 pass
 
@@ -182,10 +187,15 @@ class ExoBatchGenerator:
             return None
 
     def _extract_mtp_from_hf(self, repo_id: str) -> str:
-        """Download MTP tensors from HF repo and cache as a single safetensors file."""
+        """Download MTP tensors from HF repo and cache as a single safetensors file.
+
+        Uses the weight index to only download shards containing MTP weights,
+        avoiding a full model download for large models (e.g. 397B = 220GB).
+        """
         import hashlib
+        import json
         from pathlib import Path
-        from huggingface_hub import snapshot_download
+        from huggingface_hub import hf_hub_download
         from safetensors.torch import load_file, save_file
 
         cache_dir = Path.home() / ".cache" / "exo" / "mtp_weights"
@@ -198,17 +208,42 @@ class ExoBatchGenerator:
             return str(cached_path)
 
         logger.info(f"Downloading MTP weights from {repo_id}...")
-        model_dir = snapshot_download(repo_id, allow_patterns=["*.safetensors", "*.json"])
+
+        # Use weight index to find only the shards containing MTP weights
+        try:
+            idx_path = hf_hub_download(repo_id, "model.safetensors.index.json")
+            with open(idx_path) as f:
+                idx = json.load(f)
+            mtp_shards = {
+                shard for key, shard in idx["weight_map"].items()
+                if key.startswith("model.mtp.") or key.startswith("mtp.")
+            }
+            logger.info(f"MTP weights span {len(mtp_shards)} of {len(set(idx['weight_map'].values()))} shards")
+        except Exception:
+            mtp_shards = None
 
         mtp_tensors = {}
-        from pathlib import Path as P
-        model_path = P(model_dir)
-        for sf_file in sorted(model_path.glob("*.safetensors")):
-            tensors = load_file(str(sf_file))
-            for k, v in tensors.items():
-                if k.startswith("model.mtp."):
-                    clean_key = k.replace("model.mtp.", "")
-                    mtp_tensors[clean_key] = v
+
+        if mtp_shards:
+            # Download only the shards containing MTP weights
+            for shard_name in sorted(mtp_shards):
+                shard_path = hf_hub_download(repo_id, shard_name)
+                tensors = load_file(shard_path)
+                for k, v in tensors.items():
+                    if k.startswith("model.mtp."):
+                        mtp_tensors[k.replace("model.mtp.", "")] = v
+                    elif k.startswith("mtp."):
+                        mtp_tensors[k] = v
+        else:
+            # Fallback: download all safetensors (small models)
+            from huggingface_hub import snapshot_download
+            model_dir = snapshot_download(repo_id, allow_patterns=["*.safetensors", "*.json"])
+            model_path = Path(model_dir)
+            for sf_file in sorted(model_path.glob("*.safetensors")):
+                tensors = load_file(str(sf_file))
+                for k, v in tensors.items():
+                    if k.startswith("model.mtp."):
+                        mtp_tensors[k.replace("model.mtp.", "")] = v
 
         if not mtp_tensors:
             raise ValueError(f"No MTP tensors found in {repo_id}")
