@@ -367,6 +367,7 @@ def pp_speculative_decode_loop(
                 try:
                     if mtp_predictor is not None and _mtp_hidden is not None:
                         # MTP drafting: use pre-norm hidden from rank 1's previous step
+                        _log(f"n={n} MTP predict: hidden={_mtp_hidden.shape} {_mtp_hidden.dtype}, tok={y.item()}")
                         logits = mtp_predictor.predict(_mtp_hidden, mx.array([[y.item()]]))
                         draft_tok = logits.argmax(axis=-1)
                         mx.eval(draft_tok)
