@@ -246,18 +246,13 @@ class MTPPredictor:
         # Build layers from weights — all dimension-agnostic
         def make_linear(w, key_prefix: str = ''):
             if _is_prequantized and f'{key_prefix}.scales' in weights:
-                # Pre-quantized: create Linear then quantize, then load real weights
+                # Pre-quantized: build QuantizedLinear and update weights via module.update()
                 scales = weights[f'{key_prefix}.scales']
                 biases = weights[f'{key_prefix}.biases']
-                in_dims = w.shape[1] * 32 // 4  # unpack
+                in_dims = w.shape[1] * 32 // 4  # unpack packed input_dims
                 out_dims = w.shape[0]
-                lin = nn.Linear(in_dims, out_dims, bias=False)
-                ql = nn.QuantizedLinear.from_linear(lin, group_size=64, bits=4)
-                ql.load_weights([
-                    ('weight', w),
-                    ('scales', scales),
-                    ('biases', biases),
-                ])
+                ql = nn.QuantizedLinear(in_dims, out_dims, bias=False, group_size=64, bits=4)
+                ql.update({'weight': w, 'scales': scales, 'biases': biases})
                 return ql
             out_dim, in_dim = w.shape
             l = nn.Linear(in_dim, out_dim, bias=False)
