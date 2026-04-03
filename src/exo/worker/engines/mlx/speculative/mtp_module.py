@@ -335,10 +335,6 @@ class MTPPredictor:
             for name, v in direct_keys.items():
                 moe_weights.append((name, v))
 
-            # For pre-quantized weights, convert MoE linears to QuantizedLinear first
-            if _is_prequantized:
-                nn.quantize(self.mlp, group_size=64, bits=4)
-
             self.mlp.load_weights(moe_weights, strict=False)
             print(f"  MoE MLP: {len(moe_weights)} weight groups loaded "
                   f"({len(expert_weights)} stacked expert projections)")
