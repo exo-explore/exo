@@ -341,6 +341,8 @@ def pp_speculative_decode_loop(
             sampled = sampler(lp)
             return sampled, lp.squeeze(0)
 
+    _log(f"decode loop start: max_tokens={max_tokens}, mtp={'yes' if mtp_predictor else 'no'}")
+
     try:
         n = 0
         while n < max_tokens:
