@@ -200,16 +200,25 @@ class MTPPredictor:
             print(f"  Sanitized {len(shifted)} norm weights (+1.0 shift)")
 
         # Infer all dimensions from weight shapes (works for any Qwen3.5 size)
+        # For pre-quantized 4-bit: shape[0] = output_dims (unchanged),
+        # shape[1] = input_dims * bits / 32 (packed). Unpack with * 32 / bits.
+        def _dim(w, axis):
+            """Get original dimension, unpacking if pre-quantized."""
+            d = w.shape[axis]
+            if _is_prequantized and w.dtype == mx.uint32:
+                d = d * 32 // 4  # 4-bit packing
+            return d
+
         fc_w = weights['mtp.fc.weight']
-        hidden_size = fc_w.shape[0]                    # 4096 (9B) or 5120 (27B)
-        fc_in = fc_w.shape[1]                          # 2 * hidden_size
+        hidden_size = _dim(fc_w, 0)                    # 4096 (9B) or 5120 (27B)
+        fc_in = _dim(fc_w, 1)                          # 2 * hidden_size
 
         q_w = weights['mtp.layers.0.self_attn.q_proj.weight']
-        q_out = q_w.shape[0]                           # num_heads * head_dim * 2 (gate)
+        q_out = _dim(q_w, 0)                           # num_heads * head_dim * 2 (gate)
         k_w = weights['mtp.layers.0.self_attn.k_proj.weight']
-        kv_out = k_w.shape[0]                          # num_kv_heads * head_dim
+        kv_out = _dim(k_w, 0)                          # num_kv_heads * head_dim
         o_w = weights['mtp.layers.0.self_attn.o_proj.weight']
-        o_in = o_w.shape[1]                            # num_heads * head_dim
+        o_in = _dim(o_w, 1)                            # num_heads * head_dim
 
         # Detect MoE vs dense MLP
         self.is_moe = 'mtp.layers.0.mlp.gate.weight' in weights
