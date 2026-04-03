@@ -206,10 +206,12 @@ class MTPPredictor:
         # For pre-quantized 4-bit: shape[0] = output_dims (unchanged),
         # shape[1] = input_dims * bits / 32 (packed). Unpack with * 32 / bits.
         def _dim(w, axis):
-            """Get original dimension, unpacking if pre-quantized."""
+            """Get original dimension, unpacking if pre-quantized.
+            Only axis 1 is packed (input_dims * bits / 32). Axis 0 is output_dims (unchanged).
+            """
             d = w.shape[axis]
-            if _is_prequantized and w.dtype == mx.uint32:
-                d = d * 32 // 4  # 4-bit packing
+            if _is_prequantized and w.dtype == mx.uint32 and axis == 1:
+                d = d * 32 // 4  # 4-bit packing: unpack input_dims
             return d
 
         fc_w = weights['mtp.fc.weight']
