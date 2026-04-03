@@ -159,13 +159,14 @@ class MTPPredictor:
       - predict(): run MTP to get next-next-token logits
     """
 
-    def __init__(self, model, mtp_weights_path, quantize=True):
+    def __init__(self, model, mtp_weights_path, quantize=True, skip_mlp=False):
         """Load MTP weights and attach to the main model.
 
         Args:
             model: loaded Qwen3.5-27B model
             mtp_weights_path: path to mtp_weights.safetensors
             quantize: quantize MTP linears to 8-bit gs=64
+            skip_mlp: skip MoE/MLP weights (saves ~13GB for PP mode)
         """
         self.model = model
         self._inner = getattr(model, 'model', None) or model.language_model.model
@@ -261,7 +262,9 @@ class MTPPredictor:
         self.post_attention_layernorm = nn.RMSNorm(hidden_size)
         self.post_attention_layernorm.weight = weights['mtp.layers.0.post_attention_layernorm.weight']
 
-        if self.is_moe:
+        self.skip_mlp = skip_mlp
+
+        if self.is_moe and not skip_mlp:
             # Reuse mlx-lm's SparseMoeBlock from the target model
             moe_layer = None
             for layer in self._inner.layers:
@@ -314,6 +317,8 @@ class MTPPredictor:
             self.mlp.load_weights(moe_weights)
             print(f"  MoE MLP: {len(moe_weights)} weight groups loaded "
                   f"({len(expert_weights)} stacked expert projections)")
+        elif skip_mlp:
+            print(f"  MLP skipped (skip_mlp=True, saves ~{sum(w.nbytes for k, w in weights.items() if 'mlp' in k or 'expert' in k or 'gate' in k.split('.')[0]) / 1e9:.1f} GB)")
         else:
             self.gate_proj = make_linear(gate_w)
             self.up_proj = make_linear(weights['mtp.layers.0.mlp.up_proj.weight'])
@@ -427,6 +432,9 @@ class MTPPredictor:
         output = output.transpose(0, 2, 1, 3).reshape(B, S, -1)
 
         h = residual + self.o_proj(output * mx.sigmoid(gate))
+
+        if self.skip_mlp:
+            return h  # post-attention, skip FFN (lightweight mode for PP)
 
         residual = h
         h = self.post_attention_layernorm(h)

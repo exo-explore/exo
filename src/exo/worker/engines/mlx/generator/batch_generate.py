@@ -150,6 +150,23 @@ class ExoBatchGenerator:
                 if get_pipeline_info(self.model) is not None:
                     self._pp_spec_active = True
                     logger.info("PP speculation enabled in BatchGenerator")
+                    # Load lightweight MTP for PP (skip MoE MLP to save ~13GB)
+                    if use_speculative:
+                        mtp_weights = self._resolve_mtp_weights()
+                        if mtp_weights:
+                            try:
+                                self._pp_mtp = MTPPredictor(
+                                    self.model, mtp_weights,
+                                    quantize=False, skip_mlp=True,
+                                )
+                                logger.info("PP MTP loaded (attention-only, skip_mlp=True)")
+                            except Exception as e:
+                                logger.warning(f"PP MTP load failed: {e}")
+                                self._pp_mtp = None
+                        else:
+                            self._pp_mtp = None
+                    else:
+                        self._pp_mtp = None
             except Exception:
                 pass
 
@@ -558,8 +575,8 @@ class ExoBatchGenerator:
 
         logger.info(f"PP speculation active: rank={pp_rank}")
 
-        # Get MTP predictor if available (loaded during ExoBatchGenerator init)
-        _pp_mtp = getattr(self._mlx_gen, 'mtp', None)
+        # Get PP MTP predictor (lightweight, skip_mlp=True)
+        _pp_mtp = getattr(self, '_pp_mtp', None)
         if _pp_mtp is not None:
             logger.info("PP speculation using MTP for drafting")
 
