@@ -129,7 +129,7 @@ class ExoBatchGenerator:
                         prefill_step_size=4096,
                     )
                     logger.info(f"MTP speculative decoding enabled (γ={gamma}, T={temp})")
-                    self.warmup_speculative(self.model, self.tokenizer)
+                    # Skip warmup — OOMs on 397B (Metal abort, uncatchable)
                 else:
                     logger.warning("EXO_SPECULATIVE=1 but could not find MTP weights. Falling back.")
                     self._mlx_gen = MlxBatchGenerator(model=self.model, stop_tokens=stop_tokens, prefill_step_size=4096)
