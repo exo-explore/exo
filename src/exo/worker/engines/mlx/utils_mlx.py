@@ -193,6 +193,8 @@ def load_mlx_items(
         mx.eval(model)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
+        from exo.worker.engines.mlx.patches import maybe_apply_patches
+        maybe_apply_patches(model, model_path)
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
 
     else:
