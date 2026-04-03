@@ -353,11 +353,17 @@ class MTPPredictor:
         """Quantize all MTP linear layers to 8-bit gs=64."""
         for name in ['fc', 'q_proj', 'k_proj', 'v_proj', 'o_proj',
                       'gate_proj', 'up_proj', 'down_proj']:
-            linear = getattr(self, name)
+            linear = getattr(self, name, None)
+            if linear is None:
+                continue  # MoE models don't have dense MLP projections
             linear.weight = linear.weight.astype(mx.bfloat16)
             q = nn.QuantizedLinear.from_linear(linear, group_size=64, bits=8)
             mx.eval(q.parameters())
             setattr(self, name, q)
+        # For MoE, quantize the MoE block if present
+        if self.is_moe and hasattr(self, 'mlp'):
+            nn.quantize(self.mlp, group_size=64, bits=8)
+            mx.eval(self.mlp.parameters())
 
     def reset_cache(self):
         """Reset the MTP KV cache (call at start of generation)."""
