@@ -203,6 +203,35 @@ def _configure_layers(
 
 
 # ---------------------------------------------------------------------------
+# Hidden state capture (for MTP integration)
+# ---------------------------------------------------------------------------
+
+def _install_hidden_capture(model: nn.Module) -> dict[str, mx.array]:
+    """Wrap model's final norm to capture pre-norm hidden state (rank 1 only).
+
+    Returns a dict that will contain {'pre_norm': tensor} after each forward pass.
+    The captured tensor is the input to the final RMSNorm — exactly what MTP needs.
+    """
+    inner = getattr(model, "language_model", model)
+    inner_model = getattr(inner, "model", inner)
+    original_norm = inner_model.norm
+    captured: dict[str, mx.array] = {}
+
+    class _CapturingNorm(nn.Module):
+        def __init__(self, orig: nn.RMSNorm):
+            super().__init__()
+            self._orig = orig
+            self.weight = orig.weight
+
+        def __call__(self, x: mx.array) -> mx.array:
+            captured['pre_norm'] = x
+            return self._orig(x)
+
+    inner_model.norm = _CapturingNorm(original_norm)
+    return captured
+
+
+# ---------------------------------------------------------------------------
 # Core decode loop with PP idle-time speculation (overlapped)
 # ---------------------------------------------------------------------------
 
@@ -219,6 +248,7 @@ def pp_speculative_decode_loop(
     pp_rank: int,
     pp_world_size: int,
     pp_group: mx.distributed.Group,
+    mtp_predictor: Any | None = None,
 ) -> Generator[tuple[int, mx.array], None, None]:
     """PP decode loop with idle-time speculation. Yields (token_id, logprobs).
 
@@ -228,7 +258,8 @@ def pp_speculative_decode_loop(
        - Rank 0: draft + speculative forward (during rank 1's compute)
        - Rank 1: RECV hidden, compute layers 30-59, sample token
     3. all_gather: exchange sampled token (both ranks get it)
-    4. Verify: if draft matches, skip rank 0's compute next step
+    4. Hidden exchange: rank 1 sends pre-norm hidden to rank 0 (for MTP)
+    5. Verify: if draft matches, skip rank 0's compute next step
     """
     is_rank0 = pp_rank == 0
     is_last_rank = pp_rank == pp_world_size - 1
@@ -259,11 +290,23 @@ def pp_speculative_decode_loop(
     if is_rank0:
         _lm_head_owner._skip_lm_head = True  # type: ignore
 
+    # Install hidden state capture on rank 1 (for MTP feedback)
+    _captured: dict[str, mx.array] = {}
+    if is_last_rank and mtp_predictor is not None:
+        _captured = _install_hidden_capture(model)
+
+    # MTP state (rank 0 only)
+    _mtp_hidden: mx.array | None = None  # pre-norm hidden from rank 1
+    if is_rank0 and mtp_predictor is not None:
+        mtp_predictor.reset_cache()
+
     # Speculation state
     _draft_token: int | None = None
     _spec_snap: list[Any] | None = None
     _accepted = 0
     _rejected = 0
+    _mtp_accepted = 0
+    _mtp_rejected = 0
 
     y = first_y
     logprobs = first_logprobs
@@ -317,15 +360,26 @@ def pp_speculative_decode_loop(
                     mx.eval(sent)
 
                 # -- Draft DURING rank 1's compute (the ~14ms idle window) --
+                _used_mtp = False
                 try:
-                    draft_logits = draft_model(mx.array([[y.item()]]), cache=draft_cache)
-                    draft_tok = draft_logits[0, -1].argmax()
-                    mx.eval(draft_tok)
-                    _draft_token = int(draft_tok.item())
+                    if mtp_predictor is not None and _mtp_hidden is not None:
+                        # MTP drafting: use pre-norm hidden from rank 1's previous step
+                        logits = mtp_predictor.predict(_mtp_hidden, mx.array([[y.item()]]))
+                        draft_tok = logits.argmax(axis=-1)
+                        mx.eval(draft_tok)
+                        _draft_token = int(draft_tok.item())
+                        _used_mtp = True
+                    elif draft_model is not None:
+                        # Fallback: 0.8B draft model (step 0 or no MTP)
+                        draft_logits = draft_model(mx.array([[y.item()]]), cache=draft_cache)
+                        draft_tok = draft_logits[0, -1].argmax()
+                        mx.eval(draft_tok)
+                        _draft_token = int(draft_tok.item())
 
-                    _spec_snap = _snapshot_cache(prompt_cache)
-                    _rank0_speculative_fwd(_draft_token)
-                    _log(f"n={n} drafted={_draft_token}")
+                    if _draft_token is not None:
+                        _spec_snap = _snapshot_cache(prompt_cache)
+                        _rank0_speculative_fwd(_draft_token)
+                        _log(f"n={n} drafted={_draft_token} ({'mtp' if _used_mtp else 'draft'})")
                 except Exception:
                     _draft_token = None
                     _spec_snap = None
@@ -344,26 +398,48 @@ def pp_speculative_decode_loop(
             mx.eval(gathered_token)
             final_token = gathered_token[-1:]
 
+            # ==== HIDDEN STATE EXCHANGE (rank 1 → rank 0, for MTP drafting) ====
+            if mtp_predictor is not None:
+                if is_last_rank and 'pre_norm' in _captured:
+                    # Send last-position pre-norm hidden to rank 0
+                    _pn = _captured['pre_norm'][:, -1:, :].astype(mx.bfloat16)
+                    mx.eval(_pn)
+                    _sent = mx.distributed.send(_pn, 0, group=pp_group)
+                    mx.eval(_sent)
+                elif is_rank0:
+                    _mtp_hidden = mx.distributed.recv_like(
+                        mx.zeros((1, 1, hidden_size), dtype=mx.bfloat16),
+                        pp_world_size - 1, group=pp_group,
+                    )
+                    mx.eval(_mtp_hidden)
+
             # ==== VERIFY draft ====
             if is_rank0 and _draft_token is not None:
                 real_token = int(final_token.item())
                 if real_token == _draft_token:
                     _accepted += 1
+                    if _used_mtp:
+                        _mtp_accepted += 1
                     _log(f"n={n} ACCEPT draft={_draft_token}")
                     # Advance draft cache with accepted token
-                    draft_model(mx.array([[real_token]]), cache=draft_cache)
+                    if draft_model is not None:
+                        draft_model(mx.array([[real_token]]), cache=draft_cache)
                 else:
                     _rejected += 1
+                    if _used_mtp:
+                        _mtp_rejected += 1
                     _log(f"n={n} REJECT draft={_draft_token} real={real_token}")
                     if _spec_snap is not None:
                         _restore_cache(prompt_cache, _spec_snap)
                     _spec_snap = None
                     _draft_token = None
                     # Correct draft model's cache
-                    draft_model(mx.array([[real_token]]), cache=draft_cache)
+                    if draft_model is not None:
+                        draft_model(mx.array([[real_token]]), cache=draft_cache)
             elif is_rank0:
                 # First step or error: advance draft cache
-                draft_model(mx.array([[int(final_token.item())]]), cache=draft_cache)
+                if draft_model is not None:
+                    draft_model(mx.array([[int(final_token.item())]]), cache=draft_cache)
 
             yield int(final_token.item()), lp if is_last_rank else mx.zeros(1)
 
@@ -383,6 +459,10 @@ def pp_speculative_decode_loop(
         if total > 0:
             _log(f"Final: {_accepted}/{total} accepted ({_accepted/total*100:.0f}%), "
                  f"{_rejected} rejected")
+        mtp_total = _mtp_accepted + _mtp_rejected
+        if mtp_total > 0:
+            _log(f"MTP: {_mtp_accepted}/{mtp_total} accepted ({_mtp_accepted/mtp_total*100:.0f}%), "
+                 f"draft-fallback: {total - mtp_total} steps")
 
 
 # ---------------------------------------------------------------------------

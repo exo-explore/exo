@@ -558,6 +558,11 @@ class ExoBatchGenerator:
 
         logger.info(f"PP speculation active: rank={pp_rank}")
 
+        # Get MTP predictor if available (loaded during ExoBatchGenerator init)
+        _pp_mtp = getattr(self._mlx_gen, 'mtp', None)
+        if _pp_mtp is not None:
+            logger.info("PP speculation using MTP for drafting")
+
         # Create the spec decode generator
         self._pp_spec_gen = pp_speculative_decode_loop(
             model=self.model, draft_model=_pp_draft,
@@ -567,6 +572,7 @@ class ExoBatchGenerator:
             max_tokens=max_tokens - 1,
             pp_rank=pp_rank, pp_world_size=pp_world_size,
             pp_group=pp_group,
+            mtp_predictor=_pp_mtp,
         )
 
         self._uid_counter += 1
