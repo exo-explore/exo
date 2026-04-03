@@ -95,6 +95,7 @@
               autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
             });
             torch = ignoreMissing prev.torch;
+            torchvision = ignoreMissing prev.torchvision;
             triton = ignoreMissing prev.triton;
           }
         );
