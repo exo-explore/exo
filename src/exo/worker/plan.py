@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from exo.shared.constants import EXO_FILE_SERVER_PORT
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, ModelId, NodeId
+from exo.shared.types.profiling import NodeNetworkInfo
 from exo.shared.types.tasks import (
     CancelTask,
     ConnectToGroup,
