@@ -360,10 +360,15 @@ class MTPPredictor:
             q = nn.QuantizedLinear.from_linear(linear, group_size=64, bits=8)
             mx.eval(q.parameters())
             setattr(self, name, q)
-        # For MoE, quantize the MoE block if present
+        # For MoE, quantize expert weights in-place to reduce memory
+        # (nn.quantize on the whole block OOMs — quantize one expert at a time)
         if self.is_moe and hasattr(self, 'mlp'):
-            nn.quantize(self.mlp, group_size=64, bits=8)
-            mx.eval(self.mlp.parameters())
+            if hasattr(self.mlp, 'switch_mlp'):
+                nn.quantize(self.mlp.switch_mlp, group_size=64, bits=8)
+                mx.eval(self.mlp.switch_mlp.parameters())
+            if hasattr(self.mlp, 'shared_expert'):
+                nn.quantize(self.mlp.shared_expert, group_size=64, bits=8)
+                mx.eval(self.mlp.shared_expert.parameters())
 
     def reset_cache(self):
         """Reset the MTP KV cache (call at start of generation)."""
