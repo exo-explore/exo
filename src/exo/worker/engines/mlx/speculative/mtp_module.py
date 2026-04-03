@@ -335,7 +335,7 @@ class MTPPredictor:
 
             _missing = self.mlp.load_weights(moe_weights, strict=False)
             if _missing:
-                print(f"  MoE WARNING: {len(_missing)} keys not loaded: {_missing[:5]}")
+                print(f"  MoE WARNING: {len(_missing)} keys not loaded: {list(_missing)[:5]}")
             print(f"  MoE MLP: {len(moe_weights)} weight groups loaded "
                   f"({len(expert_weights)} stacked expert projections)")
         elif skip_mlp:
