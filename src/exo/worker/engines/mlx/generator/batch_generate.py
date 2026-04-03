@@ -150,15 +150,16 @@ class ExoBatchGenerator:
                 if get_pipeline_info(self.model) is not None:
                     self._pp_spec_active = True
                     logger.info("PP speculation enabled in BatchGenerator")
-                    # Load MTP for PP speculation (prefer pre-quantized 4-bit)
+                    # Load lightweight MTP for PP (skip MoE MLP, only 0.3GB)
                     if use_speculative:
                         mtp_weights = self._resolve_mtp_weights()
                         if mtp_weights:
                             try:
                                 self._pp_mtp = MTPPredictor(
-                                    self.model, mtp_weights, quantize=False,
+                                    self.model, mtp_weights,
+                                    quantize=False, skip_mlp=True,
                                 )
-                                logger.info(f"PP MTP loaded from {mtp_weights}")
+                                logger.info("PP MTP loaded (attention-only, 0.3GB)")
                             except Exception as e:
                                 logger.warning(f"PP MTP load failed: {e}")
                                 self._pp_mtp = None
@@ -224,12 +225,6 @@ class ExoBatchGenerator:
         cache_dir = Path.home() / ".cache" / "exo" / "mtp_weights"
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_key = hashlib.md5(repo_id.encode()).hexdigest()[:12]
-
-        # Prefer pre-quantized 4-bit cache if available
-        q4_path = cache_dir / f"mtp_{cache_key}_q4.safetensors"
-        if q4_path.exists():
-            logger.info(f"Using pre-quantized MTP weights: {q4_path}")
-            return str(q4_path)
 
         cached_path = cache_dir / f"mtp_{cache_key}.safetensors"
         if cached_path.exists():
