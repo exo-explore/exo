@@ -439,6 +439,15 @@ class CancelDownloadResponse(CamelCaseModel):
     command_id: CommandId
 
 
+class PauseDownloadParams(CamelCaseModel):
+    target_node_id: NodeId
+    model_id: ModelId
+
+
+class PauseDownloadResponse(CamelCaseModel):
+    command_id: CommandId
+
+
 class TraceEventResponse(CamelCaseModel):
     name: str
     start_us: int
