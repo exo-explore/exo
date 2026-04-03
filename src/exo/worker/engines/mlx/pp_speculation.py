@@ -346,6 +346,7 @@ def pp_speculative_decode_loop(
     try:
         n = 0
         while n < max_tokens:
+            _log(f"n={n} step start rank={'0' if is_rank0 else '1'}")
             # ==== RANK 0: compute + send hidden, then draft during idle time ====
             if is_rank0:
                 if _draft_token is None:
@@ -400,6 +401,7 @@ def pp_speculative_decode_loop(
             mx.eval(gathered_token)
             final_token = gathered_token[-1:]
 
+            _log(f"n={n} all_gather done, token={int(final_token.item())}")
             # ==== HIDDEN STATE EXCHANGE (rank 1 → rank 0, for MTP drafting) ====
             if mtp_predictor is not None:
                 if is_last_rank and 'pre_norm' in _captured:
@@ -415,6 +417,7 @@ def pp_speculative_decode_loop(
                     )
                     mx.eval(_mtp_hidden)
 
+            _log(f"n={n} hidden exchange done")
             # ==== VERIFY draft ====
             if is_rank0 and _draft_token is not None:
                 real_token = int(final_token.item())
