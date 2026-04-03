@@ -163,8 +163,14 @@ class ExoBatchGenerator:
         if not mtp_model:
             try:
                 inner = getattr(self.model, 'model', None) or self.model.language_model.model
-                args = getattr(inner, 'args', None)
+                # args may be on the outer Model, inner TextModel, or inner.model
+                args = (getattr(self.model, 'args', None)
+                        or getattr(inner, 'args', None)
+                        or getattr(getattr(inner, 'model', None), 'args', None))
+                # model_type may be directly on args or nested in text_config
                 model_type = getattr(args, 'model_type', '') if args else ''
+                if not model_type and args and hasattr(args, 'text_config'):
+                    model_type = args.text_config.get('model_type', '')
                 logger.warning(f"MTP resolve: model={type(self.model).__name__}, inner={type(inner).__name__}, "
                                f"has_args={args is not None}, model_type={model_type!r}, "
                                f"mtp_layers={getattr(args, 'mtp_num_hidden_layers', 'N/A')}")
