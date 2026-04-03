@@ -160,7 +160,8 @@ class ExoBatchGenerator:
                                 )
                                 logger.info(f"PP MTP loaded from {mtp_weights}")
                             except Exception as e:
-                                logger.warning(f"PP MTP load failed: {e}")
+                                import traceback
+                                logger.warning(f"PP MTP load failed: {e}\n{traceback.format_exc()}")
                                 self._pp_mtp = None
                         else:
                             self._pp_mtp = None
