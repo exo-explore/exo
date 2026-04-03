@@ -335,7 +335,11 @@ class MTPPredictor:
             for name, v in direct_keys.items():
                 moe_weights.append((name, v))
 
-            self.mlp.load_weights(moe_weights, strict=False)
+            if _is_prequantized:
+                nn.quantize(self.mlp, group_size=64, bits=4)
+            _missing = self.mlp.load_weights(moe_weights, strict=False)
+            if _missing:
+                print(f"  MoE WARNING: {len(_missing)} keys not loaded: {_missing[:5]}")
             print(f"  MoE MLP: {len(moe_weights)} weight groups loaded "
                   f"({len(expert_weights)} stacked expert projections)")
         elif skip_mlp:
