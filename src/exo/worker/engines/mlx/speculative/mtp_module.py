@@ -199,6 +199,9 @@ class MTPPredictor:
         if shifted:
             print(f"  Sanitized {len(shifted)} norm weights (+1.0 shift)")
 
+        # Detect pre-quantized weights (have .scales/.biases companions)
+        _is_prequantized = any(k.endswith('.scales') for k in weights)
+
         # Infer all dimensions from weight shapes (works for any Qwen3.5 size)
         # For pre-quantized 4-bit: shape[0] = output_dims (unchanged),
         # shape[1] = input_dims * bits / 32 (packed). Unpack with * 32 / bits.
@@ -237,9 +240,6 @@ class MTPPredictor:
 
         print(f"  Dims: hidden={hidden_size}, heads={num_heads}, kv_heads={num_kv_heads}, "
               f"head_dim={head_dim}, MLP={'MoE' if self.is_moe else f'dense({intermediate})'}")
-
-        # Detect pre-quantized weights (have .scales/.biases companions)
-        _is_prequantized = any(k.endswith('.scales') for k in weights)
 
         # Build layers from weights — all dimension-agnostic
         def make_linear(w, key_prefix: str = ''):
