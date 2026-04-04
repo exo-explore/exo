@@ -20,6 +20,7 @@ Overlap strategy:
 - Token exchange uses all_gather (both ranks need the sampled token).
 """
 
+import logging
 import os
 import sys
 import time
@@ -37,6 +38,8 @@ from .auto_parallel import (
     PipelineFirstLayer,
     PipelineLastLayer,
 )
+
+logger = logging.getLogger(__name__)
 
 _TRACE = os.environ.get("EXO_TRACING_ENABLED", "false").lower() in ("true", "1")
 
@@ -459,12 +462,11 @@ def pp_speculative_decode_loop(
 
         total = _accepted + _rejected
         if total > 0:
-            _log(f"Final: {_accepted}/{total} accepted ({_accepted/total*100:.0f}%), "
-                 f"{_rejected} rejected")
+            logger.debug(f"PP speculation: {_accepted}/{total} accepted ({_accepted/total*100:.0f}%)")
         mtp_total = _mtp_accepted + _mtp_rejected
         if mtp_total > 0:
-            _log(f"MTP: {_mtp_accepted}/{mtp_total} accepted ({_mtp_accepted/mtp_total*100:.0f}%), "
-                 f"draft-fallback: {total - mtp_total} steps")
+            logger.debug(f"MTP: {_mtp_accepted}/{mtp_total} accepted ({_mtp_accepted/mtp_total*100:.0f}%), "
+                         f"draft-fallback: {total - mtp_total} steps")
 
 
 # ---------------------------------------------------------------------------
