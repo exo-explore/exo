@@ -20,7 +20,6 @@ Overlap strategy:
 - Token exchange uses all_gather (both ranks need the sampled token).
 """
 
-import logging
 import os
 import sys
 import time
@@ -39,7 +38,8 @@ from .auto_parallel import (
     PipelineLastLayer,
 )
 
-logger = logging.getLogger(__name__)
+import loguru
+logger: "loguru.Logger" = loguru.logger
 
 _TRACE = os.environ.get("EXO_TRACING_ENABLED", "false").lower() in ("true", "1")
 
