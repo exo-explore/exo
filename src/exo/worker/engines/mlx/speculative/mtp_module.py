@@ -297,10 +297,15 @@ class MTPPredictor:
             if moe_layer is None:
                 raise RuntimeError("MTP has MoE weights but target model has no MoE layer")
 
-            # Deep copy one of the model's existing (already quantized) MoE blocks
-            # This preserves the exact QuantizedSwitchLinear structure
-            import copy
-            self.mlp = copy.deepcopy(moe_layer)
+            # Create a fresh MoE block with same class/config as target
+            moe_class = type(moe_layer)
+            args = (getattr(self._text_model, 'args', None)
+                    or getattr(getattr(self._text_model, 'model', None), 'args', None)
+                    or getattr(self.model, 'args', None))
+            self.mlp = moe_class(args)
+            # Quantize the fresh block to match the pre-quantized weight format
+            if _is_prequantized:
+                nn.quantize(self.mlp, group_size=64, bits=4)
 
             # Load MTP MoE weights — remap HF expert names to mlx-lm SwitchLinear
             prefix = 'mtp.layers.0.mlp.'
