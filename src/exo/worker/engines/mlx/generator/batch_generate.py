@@ -94,6 +94,7 @@ class ExoBatchGenerator:
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
     vision_processor: VisionProcessor | None = None
+    model_id: str = ""
 
     _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
@@ -171,44 +172,158 @@ class ExoBatchGenerator:
                 pass
 
     def _resolve_mtp_weights(self) -> str | None:
-        """Find MTP weights: explicit path, explicit HF model, or auto-extract."""
+        """Find MTP weights: explicit path, local model dir, or HF repo extraction.
+
+        Detection order:
+        1. EXO_MTP_WEIGHTS env var (explicit path)
+        2. Pre-quantized cache (~/.cache/exo/mtp_weights/mtp_*_q4.safetensors)
+        3. Bf16 cache (~/.cache/exo/mtp_weights/mtp_*.safetensors)
+        4. Local model directory (check weight index for mtp.* keys)
+        5. HF repo download (selective shard download)
+        """
+        import hashlib
+        from pathlib import Path
+
+        # 1. Explicit path
         explicit_path = os.environ.get("EXO_MTP_WEIGHTS", "")
         if explicit_path and os.path.exists(explicit_path):
             return explicit_path
 
-        mtp_model = os.environ.get("EXO_MTP_MODEL", "")
-        if not mtp_model:
-            try:
-                inner = getattr(self.model, 'model', None) or self.model.language_model.model
-                # args may be on the outer Model, inner TextModel, or inner.model
-                args = (getattr(self.model, 'args', None)
-                        or getattr(inner, 'args', None)
-                        or getattr(getattr(inner, 'model', None), 'args', None))
-                # model_type may be directly on args or nested in text_config
-                model_type = getattr(args, 'model_type', '') if args else ''
-                if not model_type and args and hasattr(args, 'text_config'):
-                    model_type = args.text_config.get('model_type', '')
-                logger.warning(f"MTP resolve: model={type(self.model).__name__}, inner={type(inner).__name__}, "
-                               f"has_args={args is not None}, model_type={model_type!r}, "
-                               f"mtp_layers={getattr(args, 'mtp_num_hidden_layers', 'N/A')}")
-                if args and getattr(args, 'mtp_num_hidden_layers', 0) > 0:
-                    if 'qwen3_5' in model_type or 'qwen3.5' in str(type(self.model).__module__):
-                        mtp_model = "Qwen/Qwen3.5-27B"
-                        logger.info(f"Auto-detected MTP model: {mtp_model}")
-                elif model_type == 'qwen3_5_moe':
-                    mtp_model = "Qwen/Qwen3.5-397B-A17B"
-                    logger.info(f"Auto-detected MTP model for MoE: {mtp_model}")
-            except Exception as e:
-                logger.warning(f"MTP resolve failed: {e}")
-
-        if not mtp_model:
+        # Determine source HF repo for MTP weights
+        mtp_repo = os.environ.get("EXO_MTP_MODEL", "")
+        if not mtp_repo:
+            mtp_repo = self._detect_mtp_repo()
+        if not mtp_repo:
             return None
 
+        # 2-3. Check cache
+        cache_dir = Path.home() / ".cache" / "exo" / "mtp_weights"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_key = hashlib.md5(mtp_repo.encode()).hexdigest()[:12]
+
+        q4_path = cache_dir / f"mtp_{cache_key}_q4.safetensors"
+        if q4_path.exists():
+            logger.info(f"Using pre-quantized MTP weights: {q4_path}")
+            return str(q4_path)
+
+        bf16_path = cache_dir / f"mtp_{cache_key}.safetensors"
+        if bf16_path.exists():
+            logger.info(f"Using cached MTP weights: {bf16_path}")
+            return str(bf16_path)
+
+        # 4. Check local model directory for MTP weights
+        if self.model_id:
+            from exo.download.download_utils import build_model_path
+            from exo.shared.types.common import ModelId
+            local_path = self._extract_mtp_from_local(
+                build_model_path(ModelId(self.model_id)), cache_dir, cache_key
+            )
+            if local_path:
+                return local_path
+
+        # 5. Download from HF repo
         try:
-            return self._extract_mtp_from_hf(mtp_model)
+            return self._extract_mtp_from_hf(mtp_repo)
         except Exception as e:
-            logger.warning(f"Failed to extract MTP weights from {mtp_model}: {e}")
+            logger.warning(f"Failed to extract MTP weights from {mtp_repo}: {e}")
             return None
+
+    def _detect_mtp_repo(self) -> str:
+        """Detect the HF repo containing MTP weights for this model.
+
+        Checks model args for mtp_num_hidden_layers and model_type to determine
+        which HF repo has the MTP weights. Returns '' if MTP not supported.
+        """
+        try:
+            inner = getattr(self.model, 'model', None) or self.model.language_model.model
+            args = (getattr(self.model, 'args', None)
+                    or getattr(inner, 'args', None)
+                    or getattr(getattr(inner, 'model', None), 'args', None))
+            model_type = getattr(args, 'model_type', '') if args else ''
+            if not model_type and args and hasattr(args, 'text_config'):
+                model_type = args.text_config.get('model_type', '')
+
+            # Check if model has MTP layers configured
+            has_mtp = args and getattr(args, 'mtp_num_hidden_layers', 0) > 0
+
+            if has_mtp or 'qwen3_5' in model_type:
+                # Map model_id to original HF repo (strip mlx-community prefix + quant suffix)
+                repo = self._model_id_to_hf_repo(self.model_id) if self.model_id else ''
+                if repo:
+                    logger.info(f"Auto-detected MTP repo: {repo} (model_type={model_type})")
+                    return repo
+
+                # Fallback: known model type mappings
+                if model_type == 'qwen3_5_moe':
+                    return "Qwen/Qwen3.5-397B-A17B"
+                elif 'qwen3_5' in model_type:
+                    return "Qwen/Qwen3.5-27B"
+        except Exception as e:
+            logger.warning(f"MTP detection failed: {e}")
+        return ''
+
+    @staticmethod
+    def _model_id_to_hf_repo(model_id: str) -> str:
+        """Map an MLX model ID to the original HF repo containing MTP weights.
+
+        e.g. 'mlx-community/Qwen3.5-397B-A17B-4bit' → 'Qwen/Qwen3.5-397B-A17B'
+        """
+        # Strip common MLX community prefixes
+        name = model_id
+        if name.startswith('mlx-community/'):
+            name = name[len('mlx-community/'):]
+
+        # Strip quantization suffixes
+        for suffix in ['-4bit', '-8bit', '-bf16', '-fp16', '-MLX-4bit', '-MLX-8bit', '-MLX']:
+            if name.endswith(suffix):
+                name = name[:-len(suffix)]
+                break
+
+        # Map to original Qwen repo
+        if name.startswith('Qwen3'):
+            return f"Qwen/{name}"
+
+        return ''
+
+    def _extract_mtp_from_local(self, model_dir, cache_dir, cache_key) -> str | None:
+        """Check local model directory for MTP weights and extract if found."""
+        import json
+        from pathlib import Path
+
+        model_dir = Path(model_dir)
+        idx_path = model_dir / "model.safetensors.index.json"
+        if not idx_path.exists():
+            return None
+
+        with open(idx_path) as f:
+            idx = json.load(f)
+
+        mtp_keys = [k for k in idx["weight_map"] if k.startswith("mtp.")]
+        if not mtp_keys:
+            return None
+
+        mtp_shards = sorted({idx["weight_map"][k] for k in mtp_keys})
+        logger.info(f"Found {len(mtp_keys)} MTP weights in local model ({len(mtp_shards)} shards)")
+
+        # Extract MTP tensors from local shards
+        from safetensors.torch import load_file, save_file
+        mtp_tensors = {}
+        for shard_name in mtp_shards:
+            shard_path = model_dir / shard_name
+            if not shard_path.exists():
+                return None  # shard missing, can't extract locally
+            tensors = load_file(str(shard_path))
+            for k, v in tensors.items():
+                if k.startswith("mtp."):
+                    mtp_tensors[k] = v
+
+        if not mtp_tensors:
+            return None
+
+        cached_path = cache_dir / f"mtp_{cache_key}.safetensors"
+        save_file(mtp_tensors, str(cached_path))
+        logger.info(f"Extracted {len(mtp_tensors)} MTP tensors from local model → {cached_path}")
+        return str(cached_path)
 
     def _extract_mtp_from_hf(self, repo_id: str) -> str:
         """Download MTP tensors from HF repo and cache as a single safetensors file.
@@ -225,17 +340,7 @@ class ExoBatchGenerator:
         cache_dir = Path.home() / ".cache" / "exo" / "mtp_weights"
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_key = hashlib.md5(repo_id.encode()).hexdigest()[:12]
-
-        # Prefer pre-quantized 4-bit cache if available (3.7GB vs 13.2GB)
-        q4_path = cache_dir / f"mtp_{cache_key}_q4.safetensors"
-        if q4_path.exists():
-            logger.info(f"Using pre-quantized MTP weights: {q4_path}")
-            return str(q4_path)
-
         cached_path = cache_dir / f"mtp_{cache_key}.safetensors"
-        if cached_path.exists():
-            logger.info(f"Using cached MTP weights: {cached_path}")
-            return str(cached_path)
 
         logger.info(f"Downloading MTP weights from {repo_id}...")
 

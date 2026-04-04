@@ -349,6 +349,7 @@ class BatchGenerator(InferenceGenerator):
             group=self.group,
             kv_prefix_cache=self.kv_prefix_cache,
             vision_processor=self.vision_processor,
+            model_id=self.model_id,
         )
 
     def warmup(self):
