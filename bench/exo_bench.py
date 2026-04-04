@@ -237,28 +237,74 @@ def run_one_completion(
     prompt_sizer: PromptSizer,
     *,
     use_prefix_cache: bool = False,
+    stream: bool = False,
 ) -> tuple[dict[str, Any], int]:
     content, pp_tokens = prompt_sizer.build(pp_hint)
     payload: dict[str, Any] = {
         "model": model_id,
         "messages": [{"role": "user", "content": content}],
-        "stream": False,
         "max_tokens": tg,
         "logprobs": False,
         "use_prefix_cache": use_prefix_cache,
     }
 
-    t0 = time.perf_counter()
-    out = client.post_bench_chat_completions(payload)
-    elapsed = time.perf_counter() - t0
+    if not stream:
+        payload["stream"] = False
+        t0 = time.perf_counter()
+        out = client.post_bench_chat_completions(payload)
+        elapsed = time.perf_counter() - t0
 
-    stats = out.get("generation_stats")
+        stats = out.get("generation_stats")
+        choices = out.get("choices") or [{}]
+        message = choices[0].get("message", {}) if choices else {}
+        content = message.get("content") or ""
+        preview = content[:200] if content else ""
+    else:
+        tokens = 0
+        first_token_time = None
+        t0 = time.perf_counter()
+        text_parts: list[str] = []
+        stats = None
 
-    # Extract preview, handling None content (common for thinking models)
-    choices = out.get("choices") or [{}]
-    message = choices[0].get("message", {}) if choices else {}
-    content = message.get("content") or ""
-    preview = content[:200] if content else ""
+        for raw_line in client.stream_bench_chat_completions(payload):
+            line = raw_line.strip()
+            if line.startswith(": generation_stats "):
+                try:
+                    stats = json.loads(line[len(": generation_stats "):])
+                except json.JSONDecodeError:
+                    pass
+                continue
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                if delta.get("content"):
+                    if first_token_time is None:
+                        first_token_time = time.perf_counter()
+                    tokens += 1
+                    text_parts.append(delta["content"])
+            except json.JSONDecodeError:
+                pass
+
+        elapsed = time.perf_counter() - t0
+        preview = "".join(text_parts)[:200]
+
+        if not stats:
+            ttft = (first_token_time - t0) if first_token_time else elapsed
+            gen_time = elapsed - ttft if tokens > 1 else elapsed
+            gen_tps = (tokens - 1) / gen_time if tokens > 1 and gen_time > 0 else 0.0
+            prompt_tps = pp_tokens / ttft if ttft > 0 else 0.0
+            stats = {
+                "prompt_tokens": pp_tokens,
+                "generation_tokens": tokens,
+                "prompt_tps": round(prompt_tps, 2),
+                "generation_tps": round(gen_tps, 2),
+                "peak_memory_usage": {"inBytes": 0},
+            }
 
     return {
         "elapsed_s": elapsed,
@@ -379,6 +425,11 @@ def main() -> int:
         "--all-combinations",
         action="store_true",
         help="Force all pp×tg combinations (cartesian product) even when lists have equal length.",
+    )
+    ap.add_argument(
+        "--stream",
+        action="store_true",
+        help="Use /bench/chat/completions with streaming SSE response (bench=True still applies: no EOS detection, no KV cache).",
     )
     ap.add_argument(
         "--no-system-metrics",
@@ -557,16 +608,12 @@ def main() -> int:
             )
             sampler.start()
 
+        def _do_one(c: ExoClient, pp: int, tg: int) -> tuple[dict[str, Any], int]:
+            return run_one_completion(c, full_model_id, pp, tg, prompt_sizer, use_prefix_cache=args.use_prefix_cache, stream=args.stream)
+
         try:
             for i in range(args.warmup):
-                run_one_completion(
-                    client,
-                    full_model_id,
-                    pp_list[0],
-                    tg_list[0],
-                    prompt_sizer,
-                    use_prefix_cache=args.use_prefix_cache,
-                )
+                _do_one(client, pp_list[0], tg_list[0])
                 logger.debug(f"  warmup {i + 1}/{args.warmup} done")
 
             # If pp and tg lists have same length, run in tandem (zip)
@@ -588,14 +635,7 @@ def main() -> int:
                             # Sequential: single request
                             try:
                                 inf_t0 = time.monotonic()
-                                row, actual_pp_tokens = run_one_completion(
-                                    client,
-                                    full_model_id,
-                                    pp,
-                                    tg,
-                                    prompt_sizer,
-                                    use_prefix_cache=args.use_prefix_cache,
-                                )
+                                row, actual_pp_tokens = _do_one(client, pp, tg)
                                 inference_windows.append((inf_t0, time.monotonic()))
                             except Exception as e:
                                 logger.error(e)
@@ -744,9 +784,10 @@ def main() -> int:
                         gen_tps = per_req_tps * concurrency
                         ptok = mean(x["stats"]["prompt_tokens"] for x in runs)
                         gtok = mean(x["stats"]["generation_tokens"] for x in runs)
-                        peak = mean(
-                            x["stats"]["peak_memory_usage"]["inBytes"] for x in runs
-                        )
+                        def _peak_bytes(s: dict[str, Any]) -> float:
+                            pm = s["peak_memory_usage"]
+                            return pm.get("inBytes") or pm.get("in_bytes", 0)
+                        peak = mean(_peak_bytes(x["stats"]) for x in runs)
                         summary = (
                             f"prompt_tps={prompt_tps:.2f} gen_tps={gen_tps:.2f}    "
                             f"prompt_tokens={ptok} gen_tokens={gtok}    "
