@@ -338,6 +338,7 @@ class MTPPredictor:
             for name, v in direct_keys.items():
                 moe_weights.append((name, v))
 
+            print(f"  MoE loading {len(moe_weights)} weight groups, keys: {[k for k,_ in moe_weights][:10]}...")
             _missing = self.mlp.load_weights(moe_weights, strict=False)
             if _missing:
                 print(f"  MoE note: {len(_missing)} module-level keys unmatched: {list(_missing)[:5]}")
@@ -345,6 +346,8 @@ class MTPPredictor:
             if hasattr(self.mlp, 'switch_mlp') and hasattr(self.mlp.switch_mlp, 'gate_proj'):
                 gp = self.mlp.switch_mlp.gate_proj
                 print(f"  MoE verify: switch_mlp.gate_proj.weight={gp.weight.dtype} {gp.weight.shape}")
+            if hasattr(self.mlp, 'gate'):
+                print(f"  MoE verify: gate.weight={self.mlp.gate.weight.dtype} {self.mlp.gate.weight.shape}")
             print(f"  MoE MLP: {len(moe_weights)} weight groups loaded "
                   f"({len(expert_weights)} stacked expert projections)")
         elif skip_mlp:
