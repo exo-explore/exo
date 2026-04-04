@@ -367,7 +367,9 @@ def pp_speculative_decode_loop(
                 try:
                     if mtp_predictor is not None and _mtp_hidden is not None:
                         # MTP drafting: use pre-norm hidden from rank 1's previous step
-                        _log(f"n={n} MTP predict: hidden={_mtp_hidden.shape} {_mtp_hidden.dtype}, tok={y.item()}, fc.weight={mtp_predictor.fc.weight.dtype}")
+                        _mlp_ok = "no_mlp" if mtp_predictor.skip_mlp else (
+                            f"gate={mtp_predictor.mlp.gate.weight.dtype}" if hasattr(mtp_predictor, 'mlp') else "no_moe")
+                        _log(f"n={n} MTP: fc={mtp_predictor.fc.weight.dtype} {_mlp_ok}")
                         logits = mtp_predictor.predict(_mtp_hidden, mx.array([[y.item()]]))
                         draft_tok = logits.argmax(axis=-1)
                         mx.eval(draft_tok)
