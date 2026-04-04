@@ -6,6 +6,7 @@ import http.client
 import json
 import os
 import time
+from collections.abc import Iterator
 from typing import Any
 from urllib.parse import urlencode
 
@@ -68,6 +69,25 @@ class ExoClient:
 
     def post_bench_chat_completions(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request_json("POST", "/bench/chat/completions", body=payload)
+
+    def stream_bench_chat_completions(self, payload: dict[str, Any]) -> Iterator[str]:
+        """POST /bench/chat/completions with stream=True, yielding raw SSE lines."""
+        payload = {**payload, "stream": True}
+        data = json.dumps(payload).encode("utf-8")
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=self.timeout_s)
+        try:
+            conn.request("POST", "/bench/chat/completions", body=data, headers={
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            })
+            resp = conn.getresponse()
+            if resp.status >= 400:
+                raw = resp.read().decode("utf-8", errors="replace")
+                raise ExoHttpError(resp.status, resp.reason, raw[:300])
+            for line in resp:
+                yield line.decode("utf-8", errors="replace")
+        finally:
+            conn.close()
 
     def get_state_path(self, path: str) -> Any:
         try:

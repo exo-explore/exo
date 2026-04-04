@@ -331,7 +331,7 @@ class API:
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
         )
-        self.app.post("/bench/chat/completions")(self.bench_chat_completions)
+        self.app.post("/bench/chat/completions", response_model=None)(self.bench_chat_completions)
         self.app.post("/v1/images/generations", response_model=None)(
             self.image_generations
         )
@@ -839,7 +839,7 @@ class API:
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
-    ) -> BenchChatCompletionResponse:
+    ) -> BenchChatCompletionResponse | StreamingResponse:
         task_params = await chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
@@ -855,6 +855,22 @@ class API:
         )
 
         command = await self._send_text_generation_with_images(task_params)
+
+        if payload.stream:
+            return StreamingResponse(
+                with_sse_keepalive(
+                    generate_chat_stream(
+                        command.command_id,
+                        self._token_chunk_stream(command.command_id),
+                    ),
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "close",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
         return await self._collect_text_generation_with_stats(command.command_id)
 
