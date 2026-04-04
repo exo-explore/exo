@@ -387,7 +387,8 @@ def pp_speculative_decode_loop(
                         _rank0_speculative_fwd(_draft_token)
                         _log(f"n={n} drafted={_draft_token} ({'mtp' if _used_mtp else 'draft'})")
                 except Exception as _draft_err:
-                    _log(f"n={n} draft FAILED: {_draft_err}")
+                    import traceback
+                    _log(f"n={n} draft FAILED: {_draft_err}\n{''.join(traceback.format_tb(_draft_err.__traceback__))}")
                     _draft_token = None
                     _spec_snap = None
                     if spec_last is not None:
