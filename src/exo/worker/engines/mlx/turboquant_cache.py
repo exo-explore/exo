@@ -92,7 +92,6 @@ class TurboQuantKVCache(_BaseCache):
         self.keys_main: tuple[mx.array, mx.array, mx.array] | None = None
         self.values_main: tuple[mx.array, mx.array, mx.array] | None = None
         self.residual_t: mx.array | None = None
-        self.value_dtype: type | None = None
         self.bits = config.bits
         self.group_size = config.group_size
         self.value_group_size = config.group_size
@@ -147,7 +146,6 @@ class TurboQuantKVCache(_BaseCache):
         self, keys: mx.array, values: mx.array
     ) -> tuple[tuple[tuple[mx.array, ...], mx.array], tuple[mx.array, ...] | mx.array]:
         self._init_params(keys.shape[-1])
-        self.value_dtype = values.dtype
 
         q_keys, residual_t = self._quantize_keys(keys)
         q_values = self._quantize_values(values)
