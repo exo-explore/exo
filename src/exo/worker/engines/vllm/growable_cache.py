@@ -63,14 +63,6 @@ def _patch_determine_available_memory() -> None:
         if compile_cache.exists():
             shutil.rmtree(compile_cache, ignore_errors=True)
 
-        real_empty_cache = torch.cuda.empty_cache
-        torch.cuda.empty_cache = lambda: None  # type: ignore
-        try:
-            original(self)
-        except (AssertionError, Exception):
-            pass
-        finally:
-            torch.cuda.empty_cache = real_empty_cache  # type: ignore
         free_bytes, _ = torch.cuda.mem_get_info()
         initial = max(int(free_bytes * INITIAL_FRACTION), 1)
         self._growable_max_kv_bytes = free_bytes
@@ -122,9 +114,17 @@ def _patch_initialize_kv_cache_tensors() -> None:
 
 
 def _patch_initialize_from_config() -> None:
+    from vllm.v1.worker.gpu_model_runner import GPUModelRunner
     from vllm.v1.worker.gpu_worker import Worker
 
     original = Worker.initialize_from_config
+    original_init_attn = GPUModelRunner.initialize_attn_backend
+
+    def clear_and_reinit_attn(self: "GPUModelRunner", *args: object, **kwargs: object) -> None:
+        self.attn_groups.clear()
+        original_init_attn(self, *args, **kwargs)
+
+    GPUModelRunner.initialize_attn_backend = clear_and_reinit_attn  # type: ignore[reportAttributeAccessIssue]
 
     def patched(self: "Worker", kv_cache_config: "object") -> None:
         original(self, kv_cache_config)
@@ -160,11 +160,22 @@ def _patch_allocate_slots() -> None:
         **kwargs: "object",
     ) -> "object":
         result = original(self, request, num_new_tokens, *args, **kwargs)
-        if result is None and _try_grow_cache(self):
+        while result is None and _try_grow_cache(self):
             result = original(self, request, num_new_tokens, *args, **kwargs)
         return result
 
     KVCacheManager.allocate_slots = patched  # type: ignore
+
+    if hasattr(KVCacheManager, "can_fit_full_sequence"):
+        original_can_fit = KVCacheManager.can_fit_full_sequence
+
+        def patched_can_fit(self: "KVCacheManager", *args: "object", **kwargs: "object") -> bool:
+            result = original_can_fit(self, *args, **kwargs)
+            while not result and _try_grow_cache(self):
+                result = original_can_fit(self, *args, **kwargs)
+            return result
+
+        KVCacheManager.can_fit_full_sequence = patched_can_fit  # type: ignore
 
 
 def _try_grow_cache(kv_cache_manager: "object") -> bool:
@@ -284,7 +295,7 @@ def _grow_tensors(
 
     for layer_name, new_kv in new_kv_caches.items():
         old_kv_list = forward_context[layer_name].kv_cache  # type: ignore
-        if old_kv_list and len(old_kv_list) > 0:
+        if old_kv_list is not None and (not isinstance(old_kv_list, torch.Tensor) or old_kv_list.numel() > 0):
             old_entry = old_kv_list[0]
             if isinstance(old_entry, list) and isinstance(new_kv, list):
                 for j, (old_t, new_t) in enumerate(zip(old_entry, new_kv)):
@@ -442,3 +453,5 @@ def _patch_get_computed_blocks() -> None:
         return self.empty_kv_cache_blocks, num_matched
 
     KVCacheManager.get_computed_blocks = patched  # type: ignore[reportAttributeAccessIssue]
+
+

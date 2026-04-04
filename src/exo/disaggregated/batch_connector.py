@@ -62,7 +62,7 @@ class BatchConnector(KVConnectorBase_V1, SupportsHMA):  # pyright: ignore[report
         if isinstance(kv_layer, (list, tuple)):
             from exo.disaggregated.streaming_connector import _to_bf16
 
-            _shared_captured_arrays[layer_idx] = [_to_bf16(t).cpu() for t in kv_layer]  # pyright: ignore[reportAny]
+            _shared_captured_arrays[layer_idx] = [_to_bf16(t).to("cpu", non_blocking=True) for t in kv_layer]  # pyright: ignore[reportAny]
             return
 
         if slot_mapping is not None:
@@ -86,13 +86,13 @@ class BatchConnector(KVConnectorBase_V1, SupportsHMA):  # pyright: ignore[report
             prev = self.captured_layers.get(layer_idx)
             if prev is not None:
                 self.captured_layers[layer_idx] = {
-                    "keys": torch.cat([prev["keys"], keys.cpu()], dim=0),  # type: ignore
-                    "values": torch.cat([prev["values"], values.cpu()], dim=0),  # type: ignore
+                    "keys": torch.cat([prev["keys"], keys.to("cpu", non_blocking=True)], dim=0),  # type: ignore
+                    "values": torch.cat([prev["values"], values.to("cpu", non_blocking=True)], dim=0),  # type: ignore
                 }
             else:
                 self.captured_layers[layer_idx] = {
-                    "keys": keys.cpu(),  # pyright: ignore[reportAny]
-                    "values": values.cpu(),  # pyright: ignore[reportAny]
+                    "keys": keys.to("cpu", non_blocking=True),  # pyright: ignore[reportAny]
+                    "values": values.to("cpu", non_blocking=True),  # pyright: ignore[reportAny]
                 }
 
     def wait_for_save(self) -> None:

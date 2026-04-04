@@ -104,8 +104,8 @@ def entrypoint(
         if isinstance(bound_instance.instance, VllmInstance):
             os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
             os.environ["VLLM_KV_CACHE_LAYOUT"] = "NHD"
-            # os.environ["VLLM_BATCH_INVARIANT"] = "1"
-            _ensure_cuda_libs()
+            if "/usr/local/cuda-13.2/compat" not in os.environ.get("LD_LIBRARY_PATH", ""):
+                _ensure_cuda_libs()
             _ensure_tiktoken_encodings()
             from exo.shared.constants import EXO_MODELS_DIR
             from exo.worker.runner.llm_inference.runner import Runner, VllmBuilder

@@ -594,8 +594,6 @@ def load_vllm_engine(
         quant_config = model_config.get("quantization_config") or text_config.get("quantization_config")
         if quant_config and quant_config.get("quant_method") == "mxfp4":
             is_mxfp4 = True
-    if is_mxfp4:
-        os.environ.setdefault("VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8", "1")
     if has_mamba:
         backends = ["FLASH_ATTN", "TRITON_ATTN"]
     else:
@@ -623,8 +621,12 @@ def load_vllm_engine(
             engine = LLMEngine.from_engine_args(engine_args)
             logger.info(f"vLLM engine using attention backend: {backend}")
             break
-        except (ValueError, RuntimeError) as e:
+        except (ValueError, RuntimeError, NotImplementedError) as e:
             logger.warning(f"Attention backend {backend} failed: {e}, trying next")
+            engine = None
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
             continue
 
     if engine is None:

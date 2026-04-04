@@ -85,7 +85,7 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):  # pyright: ignore[re
         layer_idx = int(m.group(1))
 
         if isinstance(kv_layer, (list, tuple)):
-            arrays = [_to_bf16(t).cpu() for t in kv_layer]  # pyright: ignore[reportAny]
+            arrays = [_to_bf16(t).to("cpu", non_blocking=True) for t in kv_layer]  # pyright: ignore[reportAny]
             _shared_arrays_queue.put((layer_idx, arrays))
             return
 
@@ -107,9 +107,9 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):  # pyright: ignore[re
             values = v_flat[safe_sm][valid]  # pyright: ignore[reportAny]
             keys = _to_bf16(keys)  # pyright: ignore[reportAny]
             values = _to_bf16(values)  # pyright: ignore[reportAny]
-            self._queue.put((layer_idx, keys.cpu(), values.cpu()))  # pyright: ignore[reportAny]
+            self._queue.put((layer_idx, keys.to("cpu", non_blocking=True), values.to("cpu", non_blocking=True)))  # pyright: ignore[reportAny]
         else:
-            self._queue.put((layer_idx, kv_layer.cpu().clone(), kv_layer.cpu().clone()))  # pyright: ignore[reportAny]
+            self._queue.put((layer_idx, kv_layer.to("cpu", non_blocking=True).clone(), kv_layer.to("cpu", non_blocking=True).clone()))  # pyright: ignore[reportAny]
 
     def wait_for_save(self) -> None:
         pass

@@ -1,5 +1,6 @@
 import contextlib
 import multiprocessing as mp
+import os
 import signal
 from dataclasses import dataclass, field
 from typing import Self
@@ -88,6 +89,18 @@ class RunnerSupervisor:
         # inherited by the child, which conflicts with torch.compile's inductor
         # backend (cudagraph_mode=none) and causes CUDA illegal instruction errors.
         ctx = mp.get_context("spawn") if isinstance(bound_instance.instance, VllmInstance) else mp
+        if isinstance(bound_instance.instance, VllmInstance):
+            if os.path.isdir("/usr/local/cuda-13.2/compat"):
+                os.environ["LD_LIBRARY_PATH"] = "/usr/local/cuda-13.2/compat:" + os.environ.get("LD_LIBRARY_PATH", "")
+            cublas_preload = []
+            for lib in ["libcublasLt.so.13", "libcublas.so.13"]:
+                path = f"/usr/local/cuda-13.2/lib64/{lib}"
+                if os.path.exists(path):
+                    cublas_preload.append(path)
+            if cublas_preload:
+                existing = os.environ.get("LD_PRELOAD", "")
+                os.environ["LD_PRELOAD"] = ":".join(cublas_preload) + (":" + existing if existing else "")
+            os.environ["FLASHINFER_DISABLE_VERSION_CHECK"] = "1"
         runner_process = ctx.Process(
             target=entrypoint,
             args=(
