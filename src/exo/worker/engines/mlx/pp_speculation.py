@@ -300,14 +300,13 @@ def pp_speculative_decode_loop(
     if is_rank0 and mtp_predictor is not None:
         mtp_predictor.reset_cache()
 
-    # Speculation state — supports K>1 draft tokens queued
-    _draft_queue: list[int] = []          # queued draft tokens (first = next to verify)
-    _spec_snaps: list[list[Any]] = []     # cache snapshots for each draft
+    # Speculation state
+    _draft_token: int | None = None
+    _spec_snap: list[Any] | None = None
     _accepted = 0
     _rejected = 0
     _mtp_accepted = 0
     _mtp_rejected = 0
-    _mtp_k = int(os.environ.get("EXO_MTP_K", "2"))  # number of tokens to draft per idle window
 
     y = first_y
     logprobs = first_logprobs
@@ -349,7 +348,7 @@ def pp_speculative_decode_loop(
         while n < max_tokens:
             # ==== RANK 0: compute + send hidden, then draft during idle time ====
             if is_rank0:
-                if not _draft_queue:
+                if _draft_token is None:
                     # Normal: compute layers 0-29, send hidden to rank 1
                     _rank0_compute(y)
                 else:
@@ -365,38 +364,28 @@ def pp_speculative_decode_loop(
                 # -- Draft DURING rank 1's compute (the ~14ms idle window) --
                 _used_mtp = False
                 try:
-                    if mtp_predictor is not None and _mtp_hidden is not None and not _draft_queue:
-                        # MTP K-token drafting: chain predictions
+                    if mtp_predictor is not None and _mtp_hidden is not None:
+                        # MTP drafting: use pre-norm hidden from rank 1's previous step
+                        logits = mtp_predictor.predict(_mtp_hidden, mx.array([[y.item()]]))
+                        draft_tok = logits.argmax(axis=-1)
+                        mx.eval(draft_tok)
+                        _draft_token = int(draft_tok.item())
                         _used_mtp = True
-                        _h = _mtp_hidden
-                        _tok = mx.array([[y.item()]])
-                        for _ki in range(_mtp_k):
-                            logits, _h = mtp_predictor.predict(_h, _tok, return_hidden=True)
-                            draft_tok = logits.argmax(axis=-1)
-                            mx.eval(draft_tok)
-                            _dt = int(draft_tok.item())
-                            _spec_snaps.append(_snapshot_cache(prompt_cache))
-                            _rank0_speculative_fwd(_dt)
-                            _draft_queue.append(_dt)
-                            _tok = mx.array([[_dt]])
-                        _log(f"n={n} drafted K={len(_draft_queue)} tokens={_draft_queue} (mtp)")
-                    elif not _draft_queue and draft_model is not None:
+                    elif draft_model is not None:
                         # Fallback: 0.8B draft model (step 0 or no MTP)
                         draft_logits = draft_model(mx.array([[y.item()]]), cache=draft_cache)
                         draft_tok = draft_logits[0, -1].argmax()
                         mx.eval(draft_tok)
-                        _dt = int(draft_tok.item())
-                        _spec_snaps.append(_snapshot_cache(prompt_cache))
-                        _rank0_speculative_fwd(_dt)
-                        _draft_queue.append(_dt)
-                        _log(f"n={n} drafted={_dt} (draft)")
+                        _draft_token = int(draft_tok.item())
+
+                    if _draft_token is not None:
+                        _spec_snap = _snapshot_cache(prompt_cache)
+                        _rank0_speculative_fwd(_draft_token)
+                        _log(f"n={n} drafted={_draft_token} ({'mtp' if _used_mtp else 'draft'})")
                 except Exception as _draft_err:
                     _log(f"n={n} draft FAILED: {_draft_err}")
-                    # Rollback all queued drafts
-                    if _spec_snaps:
-                        _restore_cache(prompt_cache, _spec_snaps[0])
-                    _draft_queue.clear()
-                    _spec_snaps.clear()
+                    _draft_token = None
+                    _spec_snap = None
                     if spec_last is not None:
                         spec_last._speculative = False
 
@@ -428,17 +417,13 @@ def pp_speculative_decode_loop(
                     mx.eval(_mtp_hidden)
 
             # ==== VERIFY draft ====
-            if is_rank0 and _draft_queue:
+            if is_rank0 and _draft_token is not None:
                 real_token = int(final_token.item())
-                _expected = _draft_queue[0]
-                if real_token == _expected:
+                if real_token == _draft_token:
                     _accepted += 1
                     if _used_mtp:
                         _mtp_accepted += 1
-                    _log(f"n={n} ACCEPT draft={_expected} (queue={len(_draft_queue)-1} left)")
-                    # Pop accepted draft, keep remaining queue
-                    _draft_queue.pop(0)
-                    _spec_snaps.pop(0)
+                    _log(f"n={n} ACCEPT draft={_draft_token}")
                     # Advance draft cache with accepted token
                     if draft_model is not None:
                         draft_model(mx.array([[real_token]]), cache=draft_cache)
@@ -446,12 +431,11 @@ def pp_speculative_decode_loop(
                     _rejected += 1
                     if _used_mtp:
                         _mtp_rejected += 1
-                    _log(f"n={n} REJECT draft={_expected} real={real_token} (discarding {len(_draft_queue)} queued)")
-                    # Rollback to earliest snapshot and discard all queued drafts
-                    if _spec_snaps:
-                        _restore_cache(prompt_cache, _spec_snaps[0])
-                    _draft_queue.clear()
-                    _spec_snaps.clear()
+                    _log(f"n={n} REJECT draft={_draft_token} real={real_token}")
+                    if _spec_snap is not None:
+                        _restore_cache(prompt_cache, _spec_snap)
+                    _spec_snap = None
+                    _draft_token = None
                     # Correct draft model's cache
                     if draft_model is not None:
                         draft_model(mx.array([[real_token]]), cache=draft_cache)
