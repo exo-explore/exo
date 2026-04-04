@@ -95,7 +95,13 @@ class KVPrefixCache:
         self._media_regions: list[list["MediaRegion"]] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._access_counter: int = 0
+        self._pinned: set[int] = set()  # indices protected from eviction
         self._group = group
+
+    def pin(self, index: int) -> None:
+        """Mark a cache entry as non-evictable."""
+        if 0 <= index < len(self.caches):
+            self._pinned.add(index)
 
     def clear(self):
         """Clear all cached prompts and caches."""
@@ -104,6 +110,7 @@ class KVPrefixCache:
         self._snapshots.clear()
         self._media_regions.clear()
         self._last_used.clear()
+        self._pinned.clear()
 
     def add_kv_cache(
         self,
@@ -270,7 +277,10 @@ class KVPrefixCache:
         return match_length
 
     def _evict_if_needed(self):
-        """Evict least recently used entries while memory usage is high."""
+        """Evict least recently used entries while memory usage is high.
+
+        Pinned entries (via pin()) are never evicted.
+        """
         if len(self.caches) == 0:
             return
 
@@ -280,13 +290,22 @@ class KVPrefixCache:
             len(self.caches) > 0
             and self.get_memory_used_percentage() > _MEMORY_THRESHOLD
         ):
-            lru_index = self._last_used.index(min(self._last_used))
+            # Find LRU among non-pinned entries
+            candidates = [
+                (i, ts) for i, ts in enumerate(self._last_used)
+                if i not in self._pinned
+            ]
+            if not candidates:
+                break  # all entries are pinned, can't evict
+            lru_index = min(candidates, key=lambda x: x[1])[0]
             evicted_tokens = len(self.prompts[lru_index])
             self.prompts.pop(lru_index)
             self.caches.pop(lru_index)
             self._snapshots.pop(lru_index)
             self._media_regions.pop(lru_index)
             self._last_used.pop(lru_index)
+            # Adjust pinned indices after removal
+            self._pinned = {p - 1 if p > lru_index else p for p in self._pinned if p != lru_index}
             evicted_any = True
             logger.info(
                 f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
