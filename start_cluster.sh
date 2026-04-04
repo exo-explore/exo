@@ -13,8 +13,13 @@
 : "${EXO_PROFILE_LAYERS:=0}"
 : "${EXO_LAYER_EVAL_INTERVAL:=1}"
 : "${EXO_DRAFT_KV_WINDOW:=4096}"
-: "${EXO_KV_CACHE_BITS:=4}"
 : "${EXO_TURBOQUANT:=1}"
+# KV_CACHE_BITS and TURBOQUANT are mutually exclusive — TurboQuant does its own quantization
+if [ -n "$EXO_TURBOQUANT" ]; then
+    EXO_KV_CACHE_BITS=""
+else
+    : "${EXO_KV_CACHE_BITS:=4}"
+fi
 : "${EXO_SPECULATIVE:=1}"
 : "${EXO_SPECULATIVE_GAMMA:=3}"
 : "${LOG_LEVEL:=DEBUG}"
