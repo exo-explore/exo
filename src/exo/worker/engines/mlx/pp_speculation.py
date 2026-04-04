@@ -437,6 +437,8 @@ def pp_speculative_decode_loop(
                     _log(f"n={n} REJECT draft={_draft_token} real={real_token}")
                     if _spec_snap is not None:
                         _restore_cache(prompt_cache, _spec_snap)
+                    if mtp_predictor is not None and mtp_predictor.kv_cache is not None:
+                        mtp_predictor.kv_cache.trim(1)
                     _spec_snap = None
                     _draft_token = None
                     if not _used_mtp and draft_model is not None:
