@@ -765,19 +765,19 @@ class ExoBatchGenerator:
         if hasattr(self, '_pp_first_token'):
             tok = self._pp_first_token
             del self._pp_first_token
-            # Don't check EOS here — outer step() handles stop detection
-            # (tokenizer EOS includes <think> which is not generation-ending)
+            is_eos = tok in self._pp_spec_eos
             return [MlxBatchGenerator.Response(
                 uid=uid, token=tok, logprobs=mx.zeros(1),
-                finish_reason=None, prompt_cache=lambda: [],
+                finish_reason="stop" if is_eos else None, prompt_cache=lambda: [],
             )]
 
         assert self._pp_spec_gen is not None
         try:
             tok_id, lp = next(self._pp_spec_gen)
+            is_eos = tok_id in self._pp_spec_eos
             return [MlxBatchGenerator.Response(
                 uid=uid, token=tok_id, logprobs=lp,
-                finish_reason=None, prompt_cache=lambda: [],
+                finish_reason="stop" if is_eos else None, prompt_cache=lambda: [],
             )]
         except StopIteration:
             # max_tokens reached
