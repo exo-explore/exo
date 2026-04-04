@@ -309,28 +309,94 @@ def shard_and_load(
         except Exception as e:
             logger.warning(f"PP draft model load error: {e}")
 
-    # --- Prepare MTP weights (all PP ranks, before barrier) ---
-    # Ensures MTP weights are downloaded and cached before the runner goes ready.
-    # Both ranks need to prepare since either could be rank 0 on next election.
+    # --- Prepare MTP weights (rank 0 prepares, others pull via P2P) ---
+    # Rank 0 downloads + quantizes MTP weights before barrier.
+    # After barrier, other ranks download the q4 file from rank 0's file server.
     _is_pp = isinstance(shard_metadata, PipelineShardMetadata)
     if _is_pp and os.environ.get("EXO_SPECULATIVE", "0") == "1":
         try:
             from .generator.batch_generate import ExoBatchGenerator
             _model_id = bound_instance.bound_shard.model_card.model_id
-            _resolver = ExoBatchGenerator.__new__(ExoBatchGenerator)
-            _resolver.model = model
-            _resolver.model_id = _model_id
-            _mtp_path = _resolver._resolve_mtp_weights()
-            if _mtp_path:
-                logger.info(f"MTP weights ready: {_mtp_path}")
+            if _is_pp_rank0:
+                # Rank 0: download + quantize
+                _resolver = ExoBatchGenerator.__new__(ExoBatchGenerator)
+                _resolver.model = model
+                _resolver.model_id = _model_id
+                _mtp_path = _resolver._resolve_mtp_weights()
+                if _mtp_path:
+                    logger.info(f"MTP weights ready (rank 0): {_mtp_path}")
         except Exception as e:
             logger.warning(f"MTP weight preparation failed: {e}")
 
     # Synchronize processes before generation to avoid timeout
-    # (rank 1 waits here while rank 0 finishes loading draft model)
+    # (rank 1 waits here while rank 0 finishes loading draft model + MTP quantization)
     mx_barrier(group)
 
+    # --- Non-rank-0 nodes: pull MTP q4 from rank 0's file server ---
+    if _is_pp and os.environ.get("EXO_SPECULATIVE", "0") == "1" and not _is_pp_rank0:
+        try:
+            import hashlib
+            from pathlib import Path as _Path
+            from .generator.batch_generate import ExoBatchGenerator
+
+            _model_id = bound_instance.bound_shard.model_card.model_id
+            _resolver = ExoBatchGenerator.__new__(ExoBatchGenerator)
+            _resolver.model = model
+            _resolver.model_id = _model_id
+            _mtp_repo = _resolver._detect_mtp_repo()
+            if _mtp_repo:
+                _cache_dir = _Path.home() / ".cache" / "exo" / "mtp_weights"
+                _cache_dir.mkdir(parents=True, exist_ok=True)
+                _cache_key = hashlib.md5(_mtp_repo.encode()).hexdigest()[:12]
+                _q4_path = _cache_dir / f"mtp_{_cache_key}_q4.safetensors"
+
+                if not _q4_path.exists():
+                    # Try P2P download from rank 0's file server
+                    _q4_filename = _q4_path.name
+                    from exo.shared.constants import EXO_FILE_SERVER_PORT
+                    _rank0_ip = _find_rank0_ip(bound_instance, shard_metadata)
+                    _downloaded = False
+                    if _rank0_ip:
+                        _url = f"http://{_rank0_ip}:{EXO_FILE_SERVER_PORT}/mtp_cache/{_q4_filename}"
+                        try:
+                            import urllib.request
+                            logger.info(f"Downloading MTP q4 from rank 0: {_url}")
+                            urllib.request.urlretrieve(_url, str(_q4_path))
+                            logger.info(f"MTP q4 downloaded via P2P: {_q4_path}")
+                            _downloaded = True
+                        except Exception as e:
+                            logger.warning(f"P2P download failed ({e}), falling back to local")
+
+                    if not _downloaded:
+                        _resolver._resolve_mtp_weights()
+                else:
+                    logger.info(f"MTP weights ready (cached): {_q4_path}")
+        except Exception as e:
+            logger.warning(f"MTP preparation failed on non-rank-0: {e}")
+
     return model, tokenizer
+
+
+def _find_rank0_ip(bound_instance: "BoundInstance", shard_metadata: "ShardMetadata") -> str | None:
+    """Find rank 0's IP for P2P file transfer."""
+    if not isinstance(shard_metadata, PipelineShardMetadata):
+        return None
+
+    instance = bound_instance.instance
+    if not hasattr(instance, 'jaccl_coordinators'):
+        return None
+
+    # jaccl_coordinators maps node_id → coordinator_address (ip:port)
+    # Rank 0 is the first node in the shard assignments
+    shard_assignments = instance.shard_assignments
+    if not shard_assignments or not shard_assignments.node_ids:
+        return None
+
+    rank0_node_id = shard_assignments.node_ids[0]
+    coordinator = instance.jaccl_coordinators.get(rank0_node_id, "")
+    if ":" in coordinator:
+        return coordinator.split(":")[0]
+    return None
 
 
 def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:

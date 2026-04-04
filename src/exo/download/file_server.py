@@ -111,9 +111,39 @@ async def _handle_model_file(request: web.Request) -> web.StreamResponse:
     return response
 
 
+async def _handle_mtp_cache(request: web.Request) -> web.StreamResponse:
+    """Serve MTP cache files: GET /mtp_cache/{filename}"""
+    filename = request.match_info["filename"]
+    # Sanitize: only allow safetensors files, no path traversal
+    if "/" in filename or ".." in filename or not filename.endswith(".safetensors"):
+        raise web.HTTPNotFound()
+
+    cache_dir = Path.home() / ".cache" / "exo" / "mtp_weights"
+    full_path = cache_dir / filename
+    if not full_path.exists():
+        raise web.HTTPNotFound()
+
+    file_size = full_path.stat().st_size
+    response = web.StreamResponse(
+        status=200,
+        headers={
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(file_size),
+        },
+    )
+    await response.prepare(request)
+    chunk_size = 64 * 1024 * 1024
+    with open(full_path, "rb") as f:
+        while chunk := f.read(chunk_size):
+            await response.write(chunk)
+    await response.write_eof()
+    return response
+
+
 async def run_file_server() -> None:
     """Start the model file server on EXO_FILE_SERVER_PORT."""
     app = web.Application()
+    app.router.add_get("/mtp_cache/{filename}", _handle_mtp_cache)
     app.router.add_get("/{path:.*}", _handle_model_file)
 
     runner = web.AppRunner(app, access_log=None)
