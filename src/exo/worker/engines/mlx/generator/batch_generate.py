@@ -208,10 +208,7 @@ class ExoBatchGenerator:
 
         bf16_path = cache_dir / f"mtp_{cache_key}.safetensors"
         if bf16_path.exists():
-            # Auto-quantize bf16 → q4 on first load
-            q4 = self._auto_quantize_mtp(bf16_path, q4_path)
-            if q4:
-                return q4
+            logger.info(f"Using cached MTP weights: {bf16_path}")
             return str(bf16_path)
 
         # 4. Check local model directory for MTP weights
@@ -222,15 +219,13 @@ class ExoBatchGenerator:
                 build_model_path(ModelId(self.model_id)), cache_dir, cache_key
             )
             if local_path:
-                q4 = self._auto_quantize_mtp(Path(local_path), q4_path)
-                return q4 or local_path
+                return local_path
 
         # 5. Download from HF repo
         try:
             dl_path = self._extract_mtp_from_hf(mtp_repo)
             if dl_path:
-                q4 = self._auto_quantize_mtp(Path(dl_path), q4_path)
-                return q4 or dl_path
+                return dl_path
         except Exception as e:
             logger.warning(f"Failed to extract MTP weights from {mtp_repo}: {e}")
         return None
