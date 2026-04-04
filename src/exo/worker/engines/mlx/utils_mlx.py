@@ -309,6 +309,23 @@ def shard_and_load(
         except Exception as e:
             logger.warning(f"PP draft model load error: {e}")
 
+    # --- Prepare MTP weights (all PP ranks, before barrier) ---
+    # Ensures MTP weights are downloaded and cached before the runner goes ready.
+    # Both ranks need to prepare since either could be rank 0 on next election.
+    _is_pp = isinstance(shard_metadata, PipelineShardMetadata)
+    if _is_pp and os.environ.get("EXO_SPECULATIVE", "0") == "1":
+        try:
+            from .generator.batch_generate import ExoBatchGenerator
+            _model_id = bound_instance.bound_shard.model_card.model_id
+            _resolver = ExoBatchGenerator.__new__(ExoBatchGenerator)
+            _resolver.model = model
+            _resolver.model_id = _model_id
+            _mtp_path = _resolver._resolve_mtp_weights()
+            if _mtp_path:
+                logger.info(f"MTP weights ready: {_mtp_path}")
+        except Exception as e:
+            logger.warning(f"MTP weight preparation failed: {e}")
+
     # Synchronize processes before generation to avoid timeout
     # (rank 1 waits here while rank 0 finishes loading draft model)
     mx_barrier(group)

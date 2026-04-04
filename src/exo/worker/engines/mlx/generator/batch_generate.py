@@ -208,7 +208,10 @@ class ExoBatchGenerator:
 
         bf16_path = cache_dir / f"mtp_{cache_key}.safetensors"
         if bf16_path.exists():
-            logger.info(f"Using cached MTP weights: {bf16_path}")
+            # Auto-quantize bf16 → q4 on first load
+            q4 = self._auto_quantize_mtp(bf16_path, q4_path)
+            if q4:
+                return q4
             return str(bf16_path)
 
         # 4. Check local model directory for MTP weights
@@ -219,14 +222,18 @@ class ExoBatchGenerator:
                 build_model_path(ModelId(self.model_id)), cache_dir, cache_key
             )
             if local_path:
-                return local_path
+                q4 = self._auto_quantize_mtp(Path(local_path), q4_path)
+                return q4 or local_path
 
         # 5. Download from HF repo
         try:
-            return self._extract_mtp_from_hf(mtp_repo)
+            dl_path = self._extract_mtp_from_hf(mtp_repo)
+            if dl_path:
+                q4 = self._auto_quantize_mtp(Path(dl_path), q4_path)
+                return q4 or dl_path
         except Exception as e:
             logger.warning(f"Failed to extract MTP weights from {mtp_repo}: {e}")
-            return None
+        return None
 
     def _detect_mtp_repo(self) -> str:
         """Detect the HF repo containing MTP weights for this model.
@@ -324,6 +331,35 @@ class ExoBatchGenerator:
         save_file(mtp_tensors, str(cached_path))
         logger.info(f"Extracted {len(mtp_tensors)} MTP tensors from local model → {cached_path}")
         return str(cached_path)
+
+    @staticmethod
+    def _auto_quantize_mtp(bf16_path, q4_path) -> str | None:
+        """Auto-quantize bf16 MTP weights to 4-bit. Returns q4 path or None on failure."""
+        try:
+            import mlx.core as mx
+            import mlx.nn as nn
+
+            logger.info(f"Auto-quantizing MTP weights → {q4_path}")
+            weights = mx.load(str(bf16_path))
+            q_weights = {}
+            for k, v in weights.items():
+                if v.ndim == 2 and min(v.shape) >= 64:
+                    lin = nn.Linear(v.shape[1], v.shape[0], bias=False)
+                    lin.weight = v
+                    ql = nn.QuantizedLinear.from_linear(lin, group_size=64, bits=4)
+                    q_weights[k] = ql.weight
+                    q_weights[k.replace('.weight', '.scales')] = ql.scales
+                    q_weights[k.replace('.weight', '.biases')] = ql.biases
+                    mx.eval(ql.weight, ql.scales, ql.biases)
+                    del lin, ql
+                else:
+                    q_weights[k] = v
+            mx.save_safetensors(str(q4_path), q_weights)
+            logger.info(f"Auto-quantized MTP: {len(q_weights)} tensors → {q4_path}")
+            return str(q4_path)
+        except Exception as e:
+            logger.warning(f"Auto-quantize MTP failed: {e}")
+            return None
 
     def _extract_mtp_from_hf(self, repo_id: str) -> str:
         """Download MTP tensors from HF repo and cache as a single safetensors file.
