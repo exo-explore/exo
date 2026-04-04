@@ -13,6 +13,11 @@ QUANTIZE_MODEL_MODE: str | None = "affine"
 CACHE_GROUP_SIZE: int = 64
 KV_CACHE_BITS: int | None = int(os.environ["EXO_KV_CACHE_BITS"]) if os.environ.get("EXO_KV_CACHE_BITS") else None
 
+# TurboQuant KV cache (rotation-aware quantization + residual correction)
+TURBOQUANT_ENABLED: bool = bool(os.environ.get("EXO_TURBOQUANT", ""))
+TURBOQUANT_BITS: int = int(os.environ.get("EXO_TURBOQUANT_BITS", "4"))
+TURBOQUANT_SKETCH_DIM: int = int(os.environ.get("EXO_TURBOQUANT_SKETCH_DIM", "4"))
+
 DEFAULT_TOP_LOGPROBS: int = 5
 
 # TODO: We should really make this opt-in, but Kimi requires trust_remote_code=True

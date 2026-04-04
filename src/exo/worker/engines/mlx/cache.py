@@ -16,7 +16,13 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType, Model
-from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
+from exo.worker.engines.mlx.constants import (
+    CACHE_GROUP_SIZE,
+    KV_CACHE_BITS,
+    TURBOQUANT_ENABLED,
+    TURBOQUANT_BITS,
+    TURBOQUANT_SKETCH_DIM,
+)
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
@@ -378,7 +384,28 @@ def make_kv_cache(
 
     if hasattr(model, "make_cache"):
         caches: KVCacheType = model.make_cache()  # type: ignore
-        if KV_CACHE_BITS is not None:
+        if TURBOQUANT_ENABLED:
+            from exo.worker.engines.mlx.turboquant_cache import (
+                TurboQuantConfig,
+                TurboQuantKVCache,
+                patch_attention_dispatch,
+            )
+            patch_attention_dispatch()
+            tq_config = TurboQuantConfig(
+                bits=TURBOQUANT_BITS,
+                group_size=CACHE_GROUP_SIZE,
+                sketch_dim=TURBOQUANT_SKETCH_DIM,
+            )
+            replaced = 0
+            for i, c in enumerate(caches):
+                if isinstance(c, KVCache):
+                    caches[i] = TurboQuantKVCache(tq_config)
+                    replaced += 1
+            logger.info(
+                f"Using TurboQuant KV cache (bits={TURBOQUANT_BITS}, sketch_dim={TURBOQUANT_SKETCH_DIM}) "
+                f"for {replaced}/{len(caches)} layers"
+            )
+        elif KV_CACHE_BITS is not None:
             # Replace KVCache entries with QuantizedKVCache, but keep
             # ArraysCache (DeltaNet/SSM) and other cache types unchanged.
             quantized = 0
