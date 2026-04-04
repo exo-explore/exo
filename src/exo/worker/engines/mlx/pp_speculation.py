@@ -371,8 +371,8 @@ def pp_speculative_decode_loop(
                         mx.eval(draft_tok)
                         _draft_token = int(draft_tok.item())
                         _used_mtp = True
-                    elif draft_model is not None:
-                        # Fallback: 0.8B draft model (step 0 or no MTP)
+                    elif mtp_predictor is None and draft_model is not None:
+                        # 0.8B draft model (only when MTP is not available)
                         draft_logits = draft_model(mx.array([[y.item()]]), cache=draft_cache)
                         draft_tok = draft_logits[0, -1].argmax()
                         mx.eval(draft_tok)
@@ -424,8 +424,8 @@ def pp_speculative_decode_loop(
                     if _used_mtp:
                         _mtp_accepted += 1
                     _log(f"n={n} ACCEPT draft={_draft_token}")
-                    # Advance draft cache with accepted token
-                    if draft_model is not None:
+                    # Advance draft cache with accepted token (only when using draft model)
+                    if not _used_mtp and draft_model is not None:
                         draft_model(mx.array([[real_token]]), cache=draft_cache)
                 else:
                     _rejected += 1
@@ -436,12 +436,11 @@ def pp_speculative_decode_loop(
                         _restore_cache(prompt_cache, _spec_snap)
                     _spec_snap = None
                     _draft_token = None
-                    # Correct draft model's cache
-                    if draft_model is not None:
+                    if not _used_mtp and draft_model is not None:
                         draft_model(mx.array([[real_token]]), cache=draft_cache)
             elif is_rank0:
-                # First step or error: advance draft cache
-                if draft_model is not None:
+                # First step or error: advance draft cache (only when using draft model)
+                if mtp_predictor is None and draft_model is not None:
                     draft_model(mx.array([[int(final_token.item())]]), cache=draft_cache)
 
             yield int(final_token.item()), lp if is_last_rank else mx.zeros(1)
