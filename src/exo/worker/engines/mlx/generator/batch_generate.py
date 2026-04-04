@@ -571,18 +571,21 @@ class ExoBatchGenerator:
                 c._idx = c.max_size
 
         if not is_bench:
-            min_prefix_hit_length = max(
-                1000, system_prompt_token_count(task_params, self.tokenizer)
-            )
-            self._save_prefix_cache(
-                all_prompt_tokens,
-                list(cache),
-                cache_snapshots,
-                prefix_hit_length,
-                matched_index,
-                min_prefix_hit_length,
-                media_regions,
-            )
+            # Skip prefix cache when TurboQuant is active (deepcopy not yet supported)
+            from exo.worker.engines.mlx.constants import TURBOQUANT_ENABLED
+            if not TURBOQUANT_ENABLED:
+                min_prefix_hit_length = max(
+                    1000, system_prompt_token_count(task_params, self.tokenizer)
+                )
+                self._save_prefix_cache(
+                    all_prompt_tokens,
+                    list(cache),
+                    cache_snapshots,
+                    prefix_hit_length,
+                    matched_index,
+                    min_prefix_hit_length,
+                    media_regions,
+                )
 
         last_tokens = prompt_tokens[-2:]
 
