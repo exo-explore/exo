@@ -346,7 +346,6 @@ def pp_speculative_decode_loop(
     try:
         n = 0
         while n < max_tokens:
-            _log(f"n={n} step start rank={'0' if is_rank0 else '1'}")
             # ==== RANK 0: compute + send hidden, then draft during idle time ====
             if is_rank0:
                 if _draft_token is None:
@@ -367,9 +366,6 @@ def pp_speculative_decode_loop(
                 try:
                     if mtp_predictor is not None and _mtp_hidden is not None:
                         # MTP drafting: use pre-norm hidden from rank 1's previous step
-                        _mlp_ok = "no_mlp" if mtp_predictor.skip_mlp else (
-                            f"gate={mtp_predictor.mlp.gate.weight.dtype}" if hasattr(mtp_predictor, 'mlp') else "no_moe")
-                        _log(f"n={n} MTP: fc={mtp_predictor.fc.weight.dtype} {_mlp_ok}")
                         logits = mtp_predictor.predict(_mtp_hidden, mx.array([[y.item()]]))
                         draft_tok = logits.argmax(axis=-1)
                         mx.eval(draft_tok)
@@ -387,8 +383,7 @@ def pp_speculative_decode_loop(
                         _rank0_speculative_fwd(_draft_token)
                         _log(f"n={n} drafted={_draft_token} ({'mtp' if _used_mtp else 'draft'})")
                 except Exception as _draft_err:
-                    import traceback
-                    _log(f"n={n} draft FAILED: {_draft_err}\n{''.join(traceback.format_tb(_draft_err.__traceback__))}")
+                    _log(f"n={n} draft FAILED: {_draft_err}")
                     _draft_token = None
                     _spec_snap = None
                     if spec_last is not None:
@@ -406,7 +401,6 @@ def pp_speculative_decode_loop(
             mx.eval(gathered_token)
             final_token = gathered_token[-1:]
 
-            _log(f"n={n} all_gather done, token={int(final_token.item())}")
             # ==== HIDDEN STATE EXCHANGE (rank 1 → rank 0, for MTP drafting) ====
             if mtp_predictor is not None:
                 if is_last_rank and 'pre_norm' in _captured:
@@ -422,7 +416,6 @@ def pp_speculative_decode_loop(
                     )
                     mx.eval(_mtp_hidden)
 
-            _log(f"n={n} hidden exchange done")
             # ==== VERIFY draft ====
             if is_rank0 and _draft_token is not None:
                 real_token = int(final_token.item())
