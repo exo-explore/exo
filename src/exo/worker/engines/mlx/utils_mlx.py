@@ -232,18 +232,19 @@ def load_mlx_items(
                     if not _q4_path.exists():
                         _q4_filename = _q4_path.name
                         from exo.shared.constants import EXO_FILE_SERVER_PORT
-                        _rank0_ip = _find_rank0_ip(bound_instance, shard_meta)
+                        _peer_ips = _find_peer_ips()
                         _downloaded = False
-                        if _rank0_ip:
-                            _url = f"http://{_rank0_ip}:{EXO_FILE_SERVER_PORT}/mtp_cache/{_q4_filename}"
+                        for _ip in _peer_ips:
+                            _url = f"http://{_ip}:{EXO_FILE_SERVER_PORT}/mtp_cache/{_q4_filename}"
                             try:
                                 import urllib.request
-                                logger.info(f"Downloading MTP q4 from rank 0: {_url}")
+                                logger.info(f"Downloading MTP q4 from peer: {_url}")
                                 urllib.request.urlretrieve(_url, str(_q4_path))
                                 logger.info(f"MTP q4 downloaded via P2P: {_q4_path}")
                                 _downloaded = True
+                                break
                             except Exception as e:
-                                logger.warning(f"P2P MTP download failed ({e}), falling back")
+                                logger.warning(f"P2P MTP download from {_ip} failed: {e}")
 
                         if not _downloaded:
                             _resolver._resolve_mtp_weights()
@@ -426,26 +427,12 @@ def _prepare_mtp_weights(model_id: str, model_path: Path) -> None:
             logger.info(f"MTP weights ready (rank 0, bf16): {bf16_path}")
 
 
-def _find_rank0_ip(bound_instance: "BoundInstance", shard_metadata: "ShardMetadata") -> str | None:
-    """Find rank 0's IP for P2P file transfer."""
-    if not isinstance(shard_metadata, PipelineShardMetadata):
-        return None
-
-    instance = bound_instance.instance
-    if not hasattr(instance, 'jaccl_coordinators'):
-        return None
-
-    # jaccl_coordinators maps node_id → coordinator_address (ip:port)
-    # Rank 0 is the first node in the shard assignments
-    shard_assignments = instance.shard_assignments
-    if not shard_assignments or not shard_assignments.node_ids:
-        return None
-
-    rank0_node_id = shard_assignments.node_ids[0]
-    coordinator = instance.jaccl_coordinators.get(rank0_node_id, "")
-    if ":" in coordinator:
-        return coordinator.split(":")[0]
-    return None
+def _find_peer_ips() -> list[str]:
+    """Find peer IPs from EXO_DISCOVERY_PEERS for P2P file transfer."""
+    import re
+    peers = os.environ.get("EXO_DISCOVERY_PEERS", "")
+    # Format: /ip4/192.168.x.x/tcp/52415/p2p/...
+    return re.findall(r'/ip4/([\d.]+)/', peers)
 
 
 def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:
