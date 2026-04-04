@@ -21,7 +21,6 @@ from typing import Optional
 
 import numpy as np
 import mlx.core as mx
-from mlx.utils import tree_map
 from mlx_lm.models.cache import _BaseCache, create_attention_mask
 
 
@@ -33,6 +32,7 @@ from mlx_lm.models.cache import _BaseCache, create_attention_mask
 class ProjectionSpec:
     signs: mx.array       # (dim,) random ±1
     perm: mx.array        # (dim,) random permutation indices
+    inv_perm: mx.array    # (dim,) inverse permutation for dequant path
     sketch_idx: mx.array  # (sketch_dim,) indices for residual sketch
     sketch_signs: mx.array  # (sketch_dim,) random ±1 for sketch
 
@@ -40,11 +40,15 @@ class ProjectionSpec:
 def make_projection(dim: int, sketch_dim: int, seed: int) -> ProjectionSpec:
     rng = np.random.default_rng(seed)
     signs = mx.array(rng.choice([-1.0, 1.0], size=(dim,)).astype(np.float32))
-    perm = mx.array(rng.permutation(dim).astype(np.int32))
+    perm_np = rng.permutation(dim).astype(np.int32)
+    inv_perm_np = np.empty_like(perm_np)
+    inv_perm_np[perm_np] = np.arange(dim, dtype=np.int32)
+    perm = mx.array(perm_np)
+    inv_perm = mx.array(inv_perm_np)
     sketch_dim = min(sketch_dim, dim)
     sketch_idx = mx.array(rng.choice(dim, size=(sketch_dim,), replace=False).astype(np.int32))
     sketch_signs = mx.array(rng.choice([-1.0, 1.0], size=(sketch_dim,)).astype(np.float32))
-    return ProjectionSpec(signs=signs, perm=perm, sketch_idx=sketch_idx, sketch_signs=sketch_signs)
+    return ProjectionSpec(signs=signs, perm=perm, inv_perm=inv_perm, sketch_idx=sketch_idx, sketch_signs=sketch_signs)
 
 
 def apply_rotation(x: mx.array, spec: ProjectionSpec) -> mx.array:
@@ -52,9 +56,11 @@ def apply_rotation(x: mx.array, spec: ProjectionSpec) -> mx.array:
     return mx.take(x * signs, spec.perm, axis=-1)
 
 
-def apply_sketch(x: mx.array, spec: ProjectionSpec) -> mx.array:
-    sketch_signs = spec.sketch_signs.astype(x.dtype) if spec.sketch_signs.dtype != x.dtype else spec.sketch_signs
-    return mx.take(x, spec.sketch_idx, axis=-1) * sketch_signs
+def apply_inverse_rotation(x: mx.array, spec: ProjectionSpec) -> mx.array:
+    """Undo apply_rotation: inverse permutation then multiply by signs."""
+    signs = spec.signs.astype(x.dtype) if spec.signs.dtype != x.dtype else spec.signs
+    unperm = mx.take(x, spec.inv_perm, axis=-1)
+    return unperm * signs  # signs are self-inverse (±1 × ±1 = 1)
 
 
 # ---------------------------------------------------------------------------
@@ -254,70 +260,28 @@ def turboquant_scaled_dot_product_attention(
     scale: float,
     mask: mx.array | None,
 ) -> mx.array:
-    """Compute attention directly against quantized keys (no decompression).
+    """Dequantize rotated keys, inverse-rotate, then use fused FlashAttention SDPA.
 
-    Uses mx.quantized_matmul for Q×K^T and softmax×V, plus an optional
-    residual correction from the sign-sketch.
+    Keys are stored rotated+quantized at lower bits (3-bit default). The rotation
+    preserves quality at lower bits. At attention time we dequant + inverse-rotate
+    to get fp16 keys, then use the fast fused SDPA kernel.
     """
-    q_keys, residual_t = key_state
-    B, n_q_heads, _, D = queries.shape
-    n_kv_heads = q_keys[0].shape[-3]
-    n_repeats = n_q_heads // n_kv_heads
+    q_keys, _residual_t = key_state
 
-    q = queries * scale
+    # Dequantize keys and inverse-rotate back to original space
+    dk = mx.dequantize(*q_keys, group_size=cache.group_size, bits=cache.config.bits)
+    dk = apply_inverse_rotation(dk, cache.projection)
 
-    if n_repeats > 1:
-        q = mx.reshape(q, (B, n_kv_heads, n_repeats, q.shape[-2], D))
-        q_keys = tree_map(lambda x: mx.expand_dims(x, axis=-3), q_keys)
-        if residual_t is not None:
-            residual_t = mx.expand_dims(residual_t, axis=2)
-        if cache.config.quantize_values:
-            value_state = tree_map(lambda x: mx.expand_dims(x, axis=-3), value_state)
-        else:
-            value_state = mx.expand_dims(value_state, axis=-3)
-
-    # Rotate queries with the same projection used for keys
-    q_rot = apply_rotation(q, cache.projection)
-
-    # Q×K^T via quantized_matmul (no decompression needed)
-    scores = mx.quantized_matmul(
-        q_rot, *q_keys, transpose=True,
-        group_size=cache.group_size, bits=cache.config.bits,
-    )
-
-    # Residual correction (optional — skipped when use_residual=False)
-    if residual_t is not None:
-        q_proj = mx.take(q_rot, cache.projection.sketch_idx, axis=-1)
-        sketch_signs = cache.projection.sketch_signs.astype(q_proj.dtype)
-        residual = mx.matmul(q_proj * sketch_signs, residual_t).astype(scores.dtype)
-        scores = scores + (cache.config.residual_scale * residual)
-
-    # Mask
-    if mask is not None:
-        if isinstance(mask, str):
-            qL, kL = scores.shape[-2:]
-            mask = mx.arange(kL - qL, kL)[:, None] >= mx.arange(kL)[None]
-        if mask.dtype == mx.bool_:
-            scores = mx.where(mask, scores, mx.finfo(scores.dtype).min)
-        else:
-            scores = scores + mask
-
-    weights = mx.softmax(scores, axis=-1, precise=True)
-
-    # softmax×V via quantized_matmul
+    # Dequantize values (no rotation on values)
     if cache.config.quantize_values:
-        out = mx.quantized_matmul(
-            weights, *value_state, transpose=False,
-            group_size=cache.value_group_size, bits=cache.config.value_bits,
-        )
+        dv = mx.dequantize(*value_state, group_size=cache.value_group_size, bits=cache.config.value_bits)
     else:
-        out = mx.matmul(weights, value_state)
+        dv = value_state
 
-    out = out.astype(queries.dtype)
-    if n_repeats > 1:
-        out = mx.reshape(out, (B, n_q_heads, out.shape[-2], out.shape[-1]))
-
-    return out
+    # Use fused FlashAttention SDPA — the fast path
+    return mx.fast.scaled_dot_product_attention(
+        queries, dk, dv, scale=scale, mask=mask,
+    )
 
 
 # ---------------------------------------------------------------------------
