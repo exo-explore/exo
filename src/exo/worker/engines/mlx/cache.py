@@ -22,6 +22,7 @@ from exo.worker.engines.mlx.constants import (
     TURBOQUANT_ENABLED,
     TURBOQUANT_BITS,
     TURBOQUANT_SKETCH_DIM,
+    TURBOQUANT_RESIDUAL,
 )
 from exo.worker.runner.bootstrap import logger
 
@@ -395,6 +396,7 @@ def make_kv_cache(
                 bits=TURBOQUANT_BITS,
                 group_size=CACHE_GROUP_SIZE,
                 sketch_dim=TURBOQUANT_SKETCH_DIM,
+                use_residual=TURBOQUANT_RESIDUAL,
             )
             replaced = 0
             for i, c in enumerate(caches):

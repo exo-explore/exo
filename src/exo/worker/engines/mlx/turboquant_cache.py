@@ -63,12 +63,13 @@ def apply_sketch(x: mx.array, spec: ProjectionSpec) -> mx.array:
 
 @dataclass(slots=True)
 class TurboQuantConfig:
-    bits: int = 4
+    bits: int = 3           # key bits — rotation allows lower bits than affine-only
     group_size: int = 64
-    value_bits: int = 4
+    value_bits: int = 4     # value bits — keep higher for weighted sum accuracy
     quantize_values: bool = True
     sketch_dim: int = 4
     residual_scale: float = 1.0
+    use_residual: bool = True  # disable to save compute on decode-heavy workloads
     seed: int = 0
 
 
@@ -124,17 +125,19 @@ class TurboQuantKVCache(_BaseCache):
     def _append_residual(self, current: mx.array | None, update: mx.array) -> mx.array:
         return update if current is None else mx.concatenate([current, update], axis=-1)
 
-    def _quantize_keys(self, keys: mx.array) -> tuple[tuple[mx.array, mx.array, mx.array], mx.array]:
+    def _quantize_keys(self, keys: mx.array) -> tuple[tuple[mx.array, mx.array, mx.array], mx.array | None]:
         assert self.projection is not None
         rotated = apply_rotation(keys.astype(mx.bfloat16), self.projection)
         q_keys = mx.quantize(rotated, group_size=self.group_size, bits=self.config.bits)
-        dequant = mx.dequantize(*q_keys, group_size=self.group_size, bits=self.config.bits)
-        residual = rotated.astype(mx.float32) - dequant.astype(mx.float32)
-        proj = apply_sketch(residual, self.projection).astype(mx.bfloat16)
-        signs = mx.where(proj >= 0, 1.0, -1.0).astype(mx.bfloat16)
-        rms = mx.sqrt(mx.mean(mx.square(residual), axis=-1, keepdims=True)).astype(mx.bfloat16)
-        residual_t = mx.swapaxes(signs * rms, -1, -2)
-        return q_keys, residual_t
+        if self.config.use_residual:
+            dequant = mx.dequantize(*q_keys, group_size=self.group_size, bits=self.config.bits)
+            residual = rotated.astype(mx.float32) - dequant.astype(mx.float32)
+            proj = apply_sketch(residual, self.projection).astype(mx.bfloat16)
+            signs = mx.where(proj >= 0, 1.0, -1.0).astype(mx.bfloat16)
+            rms = mx.sqrt(mx.mean(mx.square(residual), axis=-1, keepdims=True)).astype(mx.bfloat16)
+            residual_t = mx.swapaxes(signs * rms, -1, -2)
+            return q_keys, residual_t
+        return q_keys, None
 
     def _quantize_values(self, values: mx.array) -> tuple[mx.array, mx.array, mx.array] | mx.array:
         self.value_group_size = self._effective_group_size(values.shape[-1])
@@ -155,7 +158,8 @@ class TurboQuantKVCache(_BaseCache):
             self.values_main = self._append_tuple(self.values_main, q_values)
         else:
             self.values_main = self._append_array(self.values_main, q_values)
-        self.residual_t = self._append_residual(self.residual_t, residual_t)
+        if residual_t is not None:
+            self.residual_t = self._append_residual(self.residual_t, residual_t)
         self.offset += keys.shape[2]
 
         return self.key_state, self.value_state
@@ -244,7 +248,7 @@ class TurboQuantKVCache(_BaseCache):
 
 def turboquant_scaled_dot_product_attention(
     queries: mx.array,
-    key_state: tuple[tuple[mx.array, ...], mx.array],
+    key_state: tuple[tuple[mx.array, ...], mx.array | None],
     value_state: tuple[mx.array, ...] | mx.array,
     cache: TurboQuantKVCache,
     scale: float,
@@ -252,8 +256,8 @@ def turboquant_scaled_dot_product_attention(
 ) -> mx.array:
     """Compute attention directly against quantized keys (no decompression).
 
-    Uses mx.quantized_matmul for Q×K^T and softmax×V, plus a residual
-    correction from the sign-sketch to account for quantization error.
+    Uses mx.quantized_matmul for Q×K^T and softmax×V, plus an optional
+    residual correction from the sign-sketch.
     """
     q_keys, residual_t = key_state
     B, n_q_heads, _, D = queries.shape
@@ -265,7 +269,8 @@ def turboquant_scaled_dot_product_attention(
     if n_repeats > 1:
         q = mx.reshape(q, (B, n_kv_heads, n_repeats, q.shape[-2], D))
         q_keys = tree_map(lambda x: mx.expand_dims(x, axis=-3), q_keys)
-        residual_t = mx.expand_dims(residual_t, axis=2)
+        if residual_t is not None:
+            residual_t = mx.expand_dims(residual_t, axis=2)
         if cache.config.quantize_values:
             value_state = tree_map(lambda x: mx.expand_dims(x, axis=-3), value_state)
         else:
@@ -280,11 +285,12 @@ def turboquant_scaled_dot_product_attention(
         group_size=cache.group_size, bits=cache.config.bits,
     )
 
-    # Residual correction: project query through sketch, multiply with stored residual
-    q_proj = mx.take(q_rot, cache.projection.sketch_idx, axis=-1)
-    sketch_signs = cache.projection.sketch_signs.astype(q_proj.dtype)
-    residual = mx.matmul(q_proj * sketch_signs, residual_t).astype(scores.dtype)
-    scores = scores + (cache.config.residual_scale * residual)
+    # Residual correction (optional — skipped when use_residual=False)
+    if residual_t is not None:
+        q_proj = mx.take(q_rot, cache.projection.sketch_idx, axis=-1)
+        sketch_signs = cache.projection.sketch_signs.astype(q_proj.dtype)
+        residual = mx.matmul(q_proj * sketch_signs, residual_t).astype(scores.dtype)
+        scores = scores + (cache.config.residual_scale * residual)
 
     # Mask
     if mask is not None:

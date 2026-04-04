@@ -15,8 +15,9 @@ KV_CACHE_BITS: int | None = int(os.environ["EXO_KV_CACHE_BITS"]) if os.environ.g
 
 # TurboQuant KV cache (rotation-aware quantization + residual correction)
 TURBOQUANT_ENABLED: bool = bool(os.environ.get("EXO_TURBOQUANT", ""))
-TURBOQUANT_BITS: int = int(os.environ.get("EXO_TURBOQUANT_BITS", "4"))
+TURBOQUANT_BITS: int = int(os.environ.get("EXO_TURBOQUANT_BITS", "3"))
 TURBOQUANT_SKETCH_DIM: int = int(os.environ.get("EXO_TURBOQUANT_SKETCH_DIM", "4"))
+TURBOQUANT_RESIDUAL: bool = os.environ.get("EXO_TURBOQUANT_RESIDUAL", "0") == "1"
 
 DEFAULT_TOP_LOGPROBS: int = 5
 
