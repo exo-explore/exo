@@ -304,8 +304,16 @@ class MTPPredictor:
                     or getattr(self.model, 'args', None))
             self.mlp = moe_class(args)
             # Quantize the fresh block to match the pre-quantized weight format
+            # Skip layers that were too small to quantize (min dim < 64)
             if _is_prequantized:
-                nn.quantize(self.mlp, group_size=64, bits=4)
+                def _q_predicate(path, m):
+                    if not hasattr(m, 'to_quantized'):
+                        return False
+                    w = getattr(m, 'weight', None)
+                    if w is not None and min(w.shape) < 64:
+                        return False
+                    return True
+                nn.quantize(self.mlp, group_size=64, bits=4, class_predicate=_q_predicate)
 
             # Load MTP MoE weights — remap HF expert names to mlx-lm SwitchLinear
             prefix = 'mtp.layers.0.mlp.'
