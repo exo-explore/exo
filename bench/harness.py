@@ -69,6 +69,10 @@ class ExoClient:
     def post_bench_chat_completions(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request_json("POST", "/bench/chat/completions", body=payload)
 
+    def post_bench_disaggregated(self, payload: dict[str, Any]) -> dict[str, Any]:
+        payload["disaggregated"] = True
+        return self.request_json("POST", "/bench/chat/completions", body=payload)
+
 
 def unwrap_instance(instance: dict[str, Any]) -> dict[str, Any]:
     if len(instance) != 1:

@@ -70,3 +70,5 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     min_p: float | None = None
     repetition_penalty: float | None = None
     repetition_context_size: int | None = None
+    prefill_endpoints: list[str] | None = None
+    disaggregated_bench: bool = False

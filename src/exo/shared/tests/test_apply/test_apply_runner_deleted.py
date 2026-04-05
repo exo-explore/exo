@@ -8,7 +8,7 @@ def test_apply_runner_shutdown_removes_runner():
     runner_id = RunnerId()
     state = State(runners={runner_id: RunnerIdle()})
 
-    new_state = apply_runner_status_updated(
+    new_state = appprefilly_runner_status_updated(
         RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerShutdown()), state
     )
 

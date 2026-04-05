@@ -9,6 +9,10 @@
     quantization: string;
   }
 
+  function normalizeBaseModel(s: string): string {
+    return s.toLowerCase().replace(/[-_]/g, " ").trim();
+  }
+
   // Auto mode tier list (for when user just starts typing)
   export const AUTO_TIERS: string[][] = [
     // Tier 1 (frontier)
@@ -43,8 +47,9 @@
 
   /** Return the tier index (0 = best) for a base_model name. */
   export function getAutoTierIndex(baseModel: string): number {
+    const norm = normalizeBaseModel(baseModel);
     for (let i = 0; i < AUTO_TIERS.length; i++) {
-      if (AUTO_TIERS[i].includes(baseModel)) return i;
+      if (AUTO_TIERS[i].some((t) => normalizeBaseModel(t) === norm)) return i;
     }
     return AUTO_TIERS.length; // not in any tier → lowest priority
   }
@@ -60,7 +65,7 @@
         const variants = modelList
           .filter(
             (m) =>
-              m.base_model === baseModel &&
+              normalizeBaseModel(m.base_model) === normalizeBaseModel(baseModel) &&
               (m.storage_size_megabytes || 0) / 1024 <= memoryGB &&
               (m.storage_size_megabytes || 0) > 0,
           )
@@ -162,7 +167,7 @@
   /** For a given base_model name, find the biggest quant variant that fits in memory. */
   function pickBestVariant(baseModel: string): ChatModelInfo | null {
     const variants = models
-      .filter((m) => m.base_model === baseModel && fitsInMemory(m))
+      .filter((m) => normalizeBaseModel(m.base_model) === normalizeBaseModel(baseModel) && fitsInMemory(m))
       .sort((a, b) => getModelSizeGB(b) - getModelSizeGB(a));
     return variants[0] ?? null;
   }

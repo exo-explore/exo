@@ -38,6 +38,35 @@ CARD_SEARCH_PATH = [
 
 _card_cache: dict[ModelId, "ModelCard"] = {}
 
+import re
+
+_QUANT_SUFFIXES = re.compile(
+    r"[-_ ](?:MLX|MXFP[0-9]+|NVFP[0-9]+|GPTQ|AWQ|GGUF|fp16|bf16|fp8|int[0-9]+|[0-9]+(?:\.[0-9]+)?bit|Q[0-9]+(?:_[A-Z0-9]+)?|gs[0-9]+)(?:[-_ ](?:MLX|Q[0-9]+|Int[0-9]+|[A-Z0-9]+|gs[0-9]+))*$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_base_model(s: str) -> str:
+    return s.replace("-", " ").replace("_", " ").replace("  ", " ").strip()
+
+
+def derive_base_model(model_id: str) -> str:
+    short = model_id.split("/")[-1] if "/" in model_id else model_id
+    base = _QUANT_SUFFIXES.sub("", short)
+    return _normalize_base_model(base)
+
+
+def derive_family(model_id: str) -> str:
+    short = model_id.split("/")[-1] if "/" in model_id else model_id
+    short = _QUANT_SUFFIXES.sub("", short).lower().replace("_", "-")
+    parts = re.split(r"[-.]", short)
+    family_parts: list[str] = []
+    for p in parts:
+        if p.isdigit() or re.match(r"^\d+[bm]?$", p, re.IGNORECASE):
+            break
+        family_parts.append(p)
+    return "-".join(family_parts) if family_parts else short
+
 
 async def _refresh_card_cache():
     for path in CARD_SEARCH_PATH:
@@ -93,6 +122,15 @@ class ModelCard(CamelCaseModel):
     uses_cfg: bool = False
     trust_remote_code: bool = True
 
+    @model_validator(mode="after")
+    def _ensure_derived_fields(self) -> "ModelCard":
+        if not self.base_model:
+            self.base_model = derive_base_model(self.model_id)
+        else:
+            stripped = _QUANT_SUFFIXES.sub("", self.base_model)
+            self.base_model = _normalize_base_model(stripped)
+        return self
+
     @field_validator("tasks", mode="before")
     @classmethod
     def _validate_tasks(cls, v: list[str | ModelTask]) -> list[ModelTask]:
@@ -132,6 +170,9 @@ class ModelCard(CamelCaseModel):
         num_layers = config_data.layer_count
         mem_size_bytes = await fetch_safetensors_size(model_id)
 
+        base_model = derive_base_model(model_id)
+        family = (config_data.model_type or "").replace("_", "-")
+
         mc = ModelCard(
             model_id=ModelId(model_id),
             storage_size=mem_size_bytes,
@@ -141,6 +182,8 @@ class ModelCard(CamelCaseModel):
             num_key_value_heads=config_data.num_key_value_heads,
             tasks=[ModelTask.TextGeneration],
             trust_remote_code=False,
+            base_model=base_model,
+            family=family,
         )
         await mc.save_to_custom_dir()
         _card_cache[model_id] = mc
@@ -170,6 +213,7 @@ def is_custom_card(model_id: ModelId) -> bool:
 class ConfigData(BaseModel):
     model_config = {"extra": "ignore"}  # Allow unknown fields
 
+    model_type: str | None = None
     architectures: list[str] | None = None
     hidden_size: Annotated[int, Field(ge=0)] | None = None
     num_key_value_heads: PositiveInt | None = None
