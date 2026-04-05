@@ -19,7 +19,6 @@ from typing import Any, Optional
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx.nn.layers.activations import silu as nn_silu
 
 # Map moe block id → parent decoder layer (avoids circular refs in model tree)
 _parent_layer_map = {}
@@ -64,14 +63,88 @@ def _oproj_decoder_call(self, x, mask=None, cache=None):
 
 
 def _vanilla_decoder_call(self, x, mask=None, cache=None):
-    """Original vanilla DecoderLayer.__call__ (fallback for B>8 or S>1)."""
+    """Vanilla DecoderLayer.__call__ with fused projections for prefill.
+
+    Uses merged b+a projection (1 dispatch instead of 2) for GDN layers
+    when the merged weight is available.
+    """
     if self.is_linear:
-        r = self.linear_attn(self.input_layernorm(x), mask, cache)
+        attn = self.linear_attn
+        if hasattr(attn, '_prefill_ba_w') and x.shape[1] > 1:
+            r = _fused_prefill_gdn_call(attn, self.input_layernorm(x), mask, cache)
+        else:
+            r = attn(self.input_layernorm(x), mask, cache)
     else:
         r = self.self_attn(self.input_layernorm(x), mask, cache)
     h = x + r
     out = self.mlp(self.post_attention_layernorm(h))
     return h + out
+
+
+def _fused_prefill_gdn_call(self, inputs, mask=None, cache=None):
+    """GDN __call__ with merged in_proj_b + in_proj_a (1 dispatch instead of 2)."""
+    from mlx_lm.models.gated_delta import gated_delta_update
+
+    B, S, _ = inputs.shape
+
+    qkv = self.in_proj_qkv(inputs)
+    z = self.in_proj_z(inputs).reshape(B, S, self.num_v_heads, self.head_v_dim)
+
+    # Fused b+a: single quantized_matmul, split output
+    ba = mx.quantized_matmul(
+        inputs,
+        self._prefill_ba_w,
+        self._prefill_ba_s,
+        self._prefill_ba_b,
+        transpose=True,
+        group_size=self._prefill_ba_gs,
+        bits=self._prefill_ba_bits,
+    )
+    n_b = self._prefill_ba_n_b
+    b = ba[..., :n_b]
+    a = ba[..., n_b:]
+
+    if cache is not None and cache[0] is not None:
+        conv_state = cache[0]
+    else:
+        conv_state = mx.zeros(
+            (B, self.conv_kernel_size - 1, self.conv_dim),
+            dtype=inputs.dtype,
+        )
+
+    if mask is not None:
+        qkv = mx.where(mask[..., None], qkv, 0)
+    conv_input = mx.concatenate([conv_state, qkv], axis=1)
+    if cache is not None:
+        cache[0] = conv_input[:, -(self.conv_kernel_size - 1) :]
+    conv_out = nn.silu(self.conv1d(conv_input))
+
+    q, k, v = [
+        t.reshape(B, S, h, d)
+        for t, h, d in zip(
+            mx.split(conv_out, [self.key_dim, 2 * self.key_dim], -1),
+            [self.num_k_heads, self.num_k_heads, self.num_v_heads],
+            [self.head_k_dim, self.head_k_dim, self.head_v_dim],
+        )
+    ]
+
+    state = cache[1] if cache else None
+    inv_scale = k.shape[-1] ** -0.5
+    q = (inv_scale**2) * mx.fast.rms_norm(q, None, 1e-6)
+    k = inv_scale * mx.fast.rms_norm(k, None, 1e-6)
+
+    out, state = gated_delta_update(
+        q, k, v, a, b,
+        self.A_log, self.dt_bias,
+        state, mask,
+        use_kernel=True,
+    )
+
+    if cache is not None:
+        cache[1] = state
+
+    out = self.norm(out, z)
+    return self.out_proj(out.reshape(B, S, -1))
 
 
 def _fused_gdn_decoder_call(self, x, mask=None, cache=None):

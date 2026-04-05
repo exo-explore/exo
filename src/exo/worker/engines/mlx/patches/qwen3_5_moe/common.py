@@ -280,6 +280,15 @@ def _patch_gdn_proj_weights(attn):
     )
     mx.eval(W_merged, S_merged, B_merged)
 
+    # Merged b+a for prefill (N_B+N_A=64 instead of two N=32 dispatches)
+    attn._prefill_ba_w = mx.concatenate([attn.in_proj_b.weight, attn.in_proj_a.weight], axis=0)
+    attn._prefill_ba_s = mx.concatenate([attn.in_proj_b.scales, attn.in_proj_a.scales], axis=0)
+    attn._prefill_ba_b = mx.concatenate([attn.in_proj_b.biases, attn.in_proj_a.biases], axis=0)
+    attn._prefill_ba_gs = attn.in_proj_b.group_size
+    attn._prefill_ba_bits = attn.in_proj_b.bits
+    attn._prefill_ba_n_b = attn.in_proj_b.weight.shape[0]  # N_B
+    mx.eval(attn._prefill_ba_w, attn._prefill_ba_s, attn._prefill_ba_b)
+
 
 def _patch_gqa_proj_weights(attn):
     """Merge GQA q_proj, k_proj, v_proj weights into contiguous buffers.

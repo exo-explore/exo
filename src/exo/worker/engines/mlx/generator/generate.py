@@ -218,16 +218,13 @@ def pipeline_parallel_prefill(
                 request_trace.record(f"prefill.chunk{i}.eval_cache", _t_eval)
 
                 # Break shared-buffer references in DeltaNet (ArraysCache) entries.
-                # NOTE: This MUST be a separate eval from the cache state eval above.
-                # On R1, eval_cache materializes the cache (~313ms) during the pipeline
-                # bubble while R0 waits. Merging contiguous into that eval moves the
-                # work into the forward time, making R1's forward slower and increasing
-                # the pipeline bubble — net 4s regression on 16K prefill.
+                # Use async_eval so the CPU can proceed to the next chunk's forward
+                # while the GPU finishes contiguous on the same command queue.
                 _t_contig = time.perf_counter()
                 for _c in _prompt_cache:
                     if isinstance(_c, ArraysCache):
                         _c.cache = [mx.contiguous(x) if x is not None else x for x in _c.cache]
-                        mx.eval(*[x for x in _c.cache if x is not None])
+                        mx.async_eval(*[x for x in _c.cache if x is not None])
                 request_trace.record(f"prefill.chunk{i}.contiguous", _t_contig)
 
                 # Log memory every 5 chunks for profiling
