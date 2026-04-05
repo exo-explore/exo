@@ -365,18 +365,16 @@ def pp_speculative_decode_loop(
             _t0 = time.perf_counter()
             if is_rank0:
                 if _draft_token is None:
-                    # Normal: compute layers 0-29, send hidden to rank 1
                     _rank0_compute(y)
                 else:
-                    # Previous draft accepted: hidden already precomputed.
-                    # Send it directly to rank 1.
                     mx.eval(_cache_state[_hidden_idx])
                     sent = mx.distributed.send(
                         _cache_state[_hidden_idx],
                         (pp_rank + 1) % pp_world_size, group=pp_group
                     )
                     mx.eval(sent)
-            _prof_r0_compute += time.perf_counter() - _t0
+            _dt_r0_compute = time.perf_counter() - _t0
+            _prof_r0_compute += _dt_r0_compute
 
             # -- Draft DURING rank 1's compute (the ~14ms idle window) --
             _t0 = time.perf_counter()
@@ -384,14 +382,12 @@ def pp_speculative_decode_loop(
                 _used_mtp = False
                 try:
                     if mtp_predictor is not None and _mtp_hidden is not None:
-                        # MTP drafting: use pre-norm hidden from rank 1's previous step
                         logits = mtp_predictor.predict(_mtp_hidden, mx.array([[y.item()]]))
                         draft_tok = logits.argmax(axis=-1)
                         mx.eval(draft_tok)
                         _draft_token = int(draft_tok.item())
                         _used_mtp = True
                     elif mtp_predictor is None and draft_model is not None:
-                        # 0.8B draft model (only when MTP is not available)
                         draft_logits = draft_model(mx.array([[y.item()]]), cache=draft_cache)
                         draft_tok = draft_logits[0, -1].argmax()
                         mx.eval(draft_tok)
@@ -407,13 +403,15 @@ def pp_speculative_decode_loop(
                     _spec_snap = None
                     if spec_last is not None:
                         spec_last._speculative = False
-            _prof_r0_draft += time.perf_counter() - _t0
+            _dt_r0_draft = time.perf_counter() - _t0
+            _prof_r0_draft += _dt_r0_draft
 
             # ==== RANK 1: recv hidden + compute + sample (parallel with rank 0's draft) ====
             _t0 = time.perf_counter()
             if is_last_rank:
                 sampled, lp = _rank1_compute(y)
-            _prof_r1_compute += time.perf_counter() - _t0
+            _dt_r1_compute = time.perf_counter() - _t0
+            _prof_r1_compute += _dt_r1_compute
 
             # ==== TOKEN EXCHANGE (both ranks sync here) ====
             _t0 = time.perf_counter()
@@ -423,13 +421,13 @@ def pp_speculative_decode_loop(
             )
             mx.eval(gathered_token)
             final_token = gathered_token[-1:]
-            _prof_token_exchange += time.perf_counter() - _t0
+            _dt_tok_xchg = time.perf_counter() - _t0
+            _prof_token_exchange += _dt_tok_xchg
 
             # ==== HIDDEN STATE EXCHANGE (rank 1 → rank 0, for MTP drafting) ====
             _t0 = time.perf_counter()
             if mtp_predictor is not None:
                 if is_last_rank and 'pre_norm' in _captured:
-                    # Send last-position pre-norm hidden to rank 0
                     _pn = _captured['pre_norm'][:, -1:, :].astype(mx.bfloat16)
                     mx.eval(_pn)
                     _sent = mx.distributed.send(_pn, 0, group=pp_group)
@@ -440,7 +438,8 @@ def pp_speculative_decode_loop(
                         pp_world_size - 1, group=pp_group,
                     )
                     mx.eval(_mtp_hidden)
-            _prof_hidden_exchange += time.perf_counter() - _t0
+            _dt_hidden_xchg = time.perf_counter() - _t0
+            _prof_hidden_exchange += _dt_hidden_xchg
 
             # ==== VERIFY draft ====
             _t0 = time.perf_counter()
@@ -451,7 +450,6 @@ def pp_speculative_decode_loop(
                     if _used_mtp:
                         _mtp_accepted += 1
                     _log(f"n={n} ACCEPT draft={_draft_token}")
-                    # Advance draft cache with accepted token (only when using draft model)
                     if not _used_mtp and draft_model is not None:
                         draft_model(mx.array([[real_token]]), cache=draft_cache)
                 else:
@@ -468,22 +466,40 @@ def pp_speculative_decode_loop(
                     if not _used_mtp and draft_model is not None:
                         draft_model(mx.array([[real_token]]), cache=draft_cache)
             elif is_rank0:
-                # First step or error: advance draft cache (only when using draft model)
                 if mtp_predictor is None and draft_model is not None:
                     draft_model(mx.array([[int(final_token.item())]]), cache=draft_cache)
-            _prof_verify += time.perf_counter() - _t0
+            _dt_verify = time.perf_counter() - _t0
+            _prof_verify += _dt_verify
 
             yield int(final_token.item()), lp if is_last_rank else mx.zeros(1)
 
             y = final_token
             n += 1
 
+            _dt_clear_cache = 0.0
             if n % 256 == 0:
                 _t0 = time.perf_counter()
                 mx.clear_cache()
-                _prof_clear_cache += time.perf_counter() - _t0
+                _dt_clear_cache = time.perf_counter() - _t0
+                _prof_clear_cache += _dt_clear_cache
 
-            _prof_total += time.perf_counter() - _loop_tic
+            _loop_dt = time.perf_counter() - _loop_tic
+            _prof_total += _loop_dt
+
+            # ── per-step outlier log (>25ms) ──
+            if _TRACE and _loop_dt > 0.025:
+                logger.info(
+                    f"[PROF pp-spec OUTLIER R{pp_rank} n={n}] "
+                    f"loop={_loop_dt*1000:.1f}ms "
+                    f"r0_compute={_dt_r0_compute*1000:.1f}ms "
+                    f"r0_draft={_dt_r0_draft*1000:.1f}ms "
+                    f"r1_compute={_dt_r1_compute*1000:.1f}ms "
+                    f"tok_xchg={_dt_tok_xchg*1000:.1f}ms "
+                    f"hidden_xchg={_dt_hidden_xchg*1000:.1f}ms "
+                    f"verify={_dt_verify*1000:.1f}ms "
+                    f"clear_cache={_dt_clear_cache*1000:.1f}ms "
+                    f"draft_accepted={'yes' if is_rank0 and _draft_token is not None else 'no'}"
+                )
 
             # ── periodic profiling log ──
             if _TRACE and n % 64 == 0:
