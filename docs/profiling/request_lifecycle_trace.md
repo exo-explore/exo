@@ -238,13 +238,15 @@ No errors, no degradation across runs.
    - 1,362 spans per request, 99.44% of wall time accounted for
    - Gated on `EXO_TRACING_ENABLED=1`, zero overhead when disabled
 
-4. **Merged eval barriers in prefill** (pending)
-   - Two separate `mx.eval` calls per prefill chunk (cache state + contiguous fix) merged into one
-   - Eliminates one GPU pipeline flush per chunk
-
-5. **Rolling SSM snapshots** (pending)
+4. **Rolling SSM snapshots** (pending)
    - Only keep last 2 SSM snapshots during prefill (rollback uses `snapshots[-2]` exclusively)
    - Previously deep-copied entire cache (22 DeltaNet + 8 attention layers) after every chunk
+
+5. **Eval barrier merge attempted and reverted** (2026-04-05)
+   - Merging the two `mx.eval` calls per chunk (cache state + contiguous) into one is WORSE.
+   - Reason: On R1, eval_cache (313ms) runs during the pipeline bubble while R0 waits.
+     Moving contiguous into the same eval shifts work into R1's forward time, making the
+     pipeline bubble larger. Net result: +4s regression on 16K prefill.
 
 ---
 

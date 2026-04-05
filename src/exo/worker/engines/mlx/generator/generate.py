@@ -213,23 +213,22 @@ def pipeline_parallel_prefill(
                 flush_prefill_sends()
                 request_trace.record(f"prefill.chunk{i}.flush_sends", _t_flush)
 
-                # Materialize cache + break shared-buffer references in a single eval.
-                # Previously this was two separate mx.eval barriers, flushing the
-                # GPU pipeline twice.  contiguous() on unevaluated arrays is safe —
-                # it just inserts a copy node before the eval.
                 _t_eval = time.perf_counter()
+                mx.eval([c.state for c in _prompt_cache])  # type: ignore
+                request_trace.record(f"prefill.chunk{i}.eval_cache", _t_eval)
+
+                # Break shared-buffer references in DeltaNet (ArraysCache) entries.
+                # NOTE: This MUST be a separate eval from the cache state eval above.
+                # On R1, eval_cache materializes the cache (~313ms) during the pipeline
+                # bubble while R0 waits. Merging contiguous into that eval moves the
+                # work into the forward time, making R1's forward slower and increasing
+                # the pipeline bubble — net 4s regression on 16K prefill.
+                _t_contig = time.perf_counter()
                 for _c in _prompt_cache:
                     if isinstance(_c, ArraysCache):
                         _c.cache = [mx.contiguous(x) if x is not None else x for x in _c.cache]
-                all_states = []
-                for _c in _prompt_cache:
-                    s = _c.state  # type: ignore
-                    if isinstance(s, tuple):
-                        all_states.extend([x for x in s if isinstance(x, mx.array)])
-                    elif isinstance(s, mx.array):
-                        all_states.append(s)
-                mx.eval(*all_states)
-                request_trace.record(f"prefill.chunk{i}.eval_cache", _t_eval)
+                        mx.eval(*[x for x in _c.cache if x is not None])
+                request_trace.record(f"prefill.chunk{i}.contiguous", _t_contig)
 
                 # Log memory every 5 chunks for profiling
                 if i % 5 == 0 or i == n_real - 1:
