@@ -347,9 +347,13 @@ def shard_and_load(
 
     # --- Load draft model for PP speculation (device_rank 0 only, before barrier) ---
     # Use device_rank (stable, assigned by master) not group.rank() (JACCL, non-deterministic)
+    # Skip draft model when MTP is available — MTP replaces it and saves ~1-2 GB.
     _draft_path = os.environ.get("EXO_PP_DRAFT_MODEL", "")
     _is_pp_rank0 = isinstance(shard_metadata, PipelineShardMetadata) and shard_metadata.device_rank == 0
-    if _draft_path and _is_pp_rank0:
+    _has_mtp = os.environ.get("EXO_SPECULATIVE", "0") == "1" and any(
+        (Path.home() / ".cache" / "exo" / "mtp_weights").glob("mtp_*_q4.safetensors")
+    ) if (Path.home() / ".cache" / "exo" / "mtp_weights").exists() else False
+    if not _has_mtp and _draft_path and _is_pp_rank0:
         try:
             from .pp_speculation import load_draft_model
             _draft_result = load_draft_model(_draft_path)
@@ -358,6 +362,8 @@ def shard_and_load(
                 logger.info(f"PP draft model loaded on rank 0: {_draft_path}")
         except Exception as e:
             logger.warning(f"PP draft model load error: {e}")
+    elif _has_mtp and _draft_path and _is_pp_rank0:
+        logger.info("Skipping draft model load — MTP is available (saves ~1-2 GB)")
 
     # Synchronize processes before generation to avoid timeout
     # (rank 1 waits here while rank 0 finishes loading draft model + MTP quantization)
