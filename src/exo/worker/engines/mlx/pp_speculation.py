@@ -448,6 +448,10 @@ def pp_speculative_decode_loop(
                         pp_world_size - 1, group=pp_group,
                     )
                     mx.eval(_mtp_hidden)
+                    # Cast back to model's compute dtype after bf16 transport
+                    if _mtp_hidden.dtype != mx.float16:
+                        from exo.worker.engines.mlx.patches.qwen3_5_moe.common import COMPUTE_DTYPE
+                        _mtp_hidden = _mtp_hidden.astype(COMPUTE_DTYPE)
             _dt_hidden_xchg = time.perf_counter() - _t0
             _prof_hidden_exchange += _dt_hidden_xchg
 
