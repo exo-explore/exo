@@ -109,9 +109,14 @@ class SpecPipelineFirstLayer(PipelineFirstLayer):
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self._pp_recv and self.r != 0:
             # Recv hidden from previous rank (blocks until rank 0 sends)
+            # JACCL/RDMA requires bf16 for transport
+            x_dtype = x.dtype
+            x_bf16 = x.astype(mx.bfloat16) if x_dtype != mx.bfloat16 else x
+            mx.eval(x_bf16)
+            x = mx.distributed.recv_like(x_bf16, (self.r - 1), group=self.group)
             mx.eval(x)
-            x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
-            mx.eval(x)
+            if x_dtype != mx.bfloat16:
+                x = x.astype(x_dtype)
             return self.original_layer(x, *args, **kwargs)
         # Normal path (prefill or rank 0)
         return super().__call__(x, *args, **kwargs)
@@ -141,10 +146,12 @@ class SpecPipelineLastLayer(PipelineLastLayer):
 
         if self._pp_send:
             # Send mode (rank 0): compute, send to rank 1, store locally
+            # JACCL/RDMA requires bf16 for transport
             output = self.original_layer(x, *args, **kwargs)
             mx.eval(output)
             if self.r != self.s - 1:
-                sent = mx.distributed.send(output, (self.r + 1) % self.s, group=self.group)
+                out_bf16 = output.astype(mx.bfloat16) if output.dtype != mx.bfloat16 else output
+                sent = mx.distributed.send(out_bf16, (self.r + 1) % self.s, group=self.group)
                 mx.eval(sent)
             if self._state_list is not None:
                 self._state_list[self._hidden_idx] = output
@@ -368,8 +375,11 @@ def pp_speculative_decode_loop(
                     _rank0_compute(y)
                 else:
                     mx.eval(_cache_state[_hidden_idx])
+                    _to_send = _cache_state[_hidden_idx]
+                    if _to_send.dtype != mx.bfloat16:
+                        _to_send = _to_send.astype(mx.bfloat16)
                     sent = mx.distributed.send(
-                        _cache_state[_hidden_idx],
+                        _to_send,
                         (pp_rank + 1) % pp_world_size, group=pp_group
                     )
                     mx.eval(sent)
