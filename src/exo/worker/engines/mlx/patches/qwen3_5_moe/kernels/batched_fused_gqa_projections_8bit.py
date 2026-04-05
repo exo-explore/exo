@@ -14,6 +14,8 @@ All constants baked into Metal source. B unrolled at code-generation time.
 
 import mlx.core as mx
 
+from ..common import COMPUTE_DTYPE, METAL_HALF_TYPE
+
 
 def ceil_div(a, b):
     return (a + b - 1) // b
@@ -159,7 +161,7 @@ def _get_batched_proj_kernel(K, N_Q, N_GATE, N_K, N_V, B, group_size=64):
             name=f"batched_fused_gqa_proj_K{K}_NQ{N_Q}_B{B}",
             input_names=["x", "W_merged", "S_merged", "B_merged"],
             output_names=["q_out", "gate_out", "k_out", "v_out"],
-            source=_gen_batched_fused_gqa_proj_source(K, N_Q, N_GATE, N_K, N_V, B, group_size),
+            source=_gen_batched_fused_gqa_proj_source(K, N_Q, N_GATE, N_K, N_V, B, group_size).replace("bfloat16_t", METAL_HALF_TYPE),
         )
     return _batched_proj_cache[key]
 
@@ -194,7 +196,7 @@ def batched_fused_gqa_projections(x, W_merged, S_merged, B_merged, proj_dims,
         output_shapes=[
             (B * N_Q,), (B * N_GATE,), (B * N_K,), (B * N_V,),
         ],
-        output_dtypes=[mx.bfloat16, mx.float32, mx.bfloat16, mx.bfloat16],
+        output_dtypes=[COMPUTE_DTYPE, mx.float32, COMPUTE_DTYPE, COMPUTE_DTYPE],
         grid=(32, total_tg * 2, 1),
         threadgroup=(32, 2, 1),
     )

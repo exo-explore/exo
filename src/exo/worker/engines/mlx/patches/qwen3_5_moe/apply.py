@@ -15,6 +15,7 @@ from .common import (
     _patch_oproj_gate_rms,
     _patch_gdn_proj_weights,
     _patch_gqa_proj_weights,
+    convert_model_to_compute_dtype,
 )
 from mlx_lm.models.qwen3_5 import DecoderLayer
 from mlx_lm.models.qwen3_next import Qwen3NextAttention, Qwen3NextSparseMoeBlock
@@ -28,6 +29,9 @@ def apply_qwen35_batched_fused_patches(model: nn.Module) -> None:
     + batched oproj MoE (4 custom dispatches). Works with BatchGenerator for
     any batch size 1..8. Falls back to vanilla for B>8 or S>1.
     """
+    # Convert all bf16 parameters to fp16 before weight prep
+    convert_model_to_compute_dtype(model)
+
     layers = model.layers  # type: ignore[attr-defined]
     n_layers = len(layers)
 

@@ -42,6 +42,7 @@ import loguru
 logger: "loguru.Logger" = loguru.logger
 
 _TRACE = os.environ.get("EXO_TRACING_ENABLED", "false").lower() in ("true", "1")
+_compute_dtype = mx.bfloat16 if os.environ.get("EXO_COMPUTE_DTYPE", "fp16") == "bf16" else mx.float16
 
 
 def _log(msg: str) -> None:
@@ -428,13 +429,13 @@ def pp_speculative_decode_loop(
             _t0 = time.perf_counter()
             if mtp_predictor is not None:
                 if is_last_rank and 'pre_norm' in _captured:
-                    _pn = _captured['pre_norm'][:, -1:, :].astype(mx.bfloat16)
+                    _pn = _captured['pre_norm'][:, -1:, :].astype(_compute_dtype)
                     mx.eval(_pn)
                     _sent = mx.distributed.send(_pn, 0, group=pp_group)
                     mx.eval(_sent)
                 elif is_rank0:
                     _mtp_hidden = mx.distributed.recv_like(
-                        mx.zeros((1, 1, hidden_size), dtype=mx.bfloat16),
+                        mx.zeros((1, 1, hidden_size), dtype=_compute_dtype),
                         pp_world_size - 1, group=pp_group,
                     )
                     mx.eval(_mtp_hidden)

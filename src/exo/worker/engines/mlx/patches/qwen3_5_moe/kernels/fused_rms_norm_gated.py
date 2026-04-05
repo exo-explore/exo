@@ -15,6 +15,8 @@ Dv=128 = 32 threads × 4 elements → exactly 1 SG.
 
 import mlx.core as mx
 
+from ..common import COMPUTE_DTYPE, METAL_HALF_TYPE
+
 
 def _gen_fused_rms_norm_gated_source():
     """Generate Metal source for fused RMSNormGated.
@@ -82,7 +84,7 @@ def _get_fused_rms_norm_gated_kernel():
             name="fused_rms_norm_gated",
             input_names=["gdn_out", "z_silu", "weight"],
             output_names=["out"],
-            source=_gen_fused_rms_norm_gated_source(),
+            source=_gen_fused_rms_norm_gated_source().replace("bfloat16_t", METAL_HALF_TYPE),
         )
     return _fused_rms_norm_gated_kernel
 
@@ -110,7 +112,7 @@ def fused_rms_norm_gated(gdn_out, z_silu, weight, batch_size=1):
     results = kern(
         inputs=[gdn_flat, z_flat, weight],
         output_shapes=[(B * 4096,)],
-        output_dtypes=[mx.bfloat16],
+        output_dtypes=[COMPUTE_DTYPE],
         grid=(n_heads * 32, 1, B),
         threadgroup=(32, 1, 1),
     )

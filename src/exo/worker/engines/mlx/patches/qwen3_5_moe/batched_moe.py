@@ -7,6 +7,7 @@ Falls back to vanilla MoE when called without _residual (from vanilla decoder pa
 
 import mlx.core as mx
 
+from .common import COMPUTE_DTYPE
 from .kernels.batched_merged_down_proj_8bit import batched_merged_down_proj_8bit
 from .kernels.batched_oproj_gate_gemv_8bit import batched_oproj_gate_gemv
 from .kernels.batched_softmax_topk_swiglu_8bit import batched_softmax_topk_swiglu_8bit
@@ -44,8 +45,8 @@ def _batched_oproj_moe_call(self, attn_out_3d, _residual=None):
     n_active = self.top_k
     E = self._oproj_n_experts
 
-    attn_out = attn_out_3d.reshape(B_dim, K_attn).astype(mx.bfloat16)
-    residual = _residual.reshape(B_dim, K).astype(mx.bfloat16)
+    attn_out = attn_out_3d.reshape(B_dim, K_attn).astype(COMPUTE_DTYPE)
+    residual = _residual.reshape(B_dim, K).astype(COMPUTE_DTYPE)
 
     # ── Dispatch 1: batched o_proj + gate GEMVs ──
     h_scaled, h_out, x2_partials, gate_part_a, gate_part_b = \

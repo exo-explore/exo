@@ -23,6 +23,8 @@ Grid: (32, total_tg * 2, B), TG: (32, 2, 1)
 
 import mlx.core as mx
 
+from ..common import COMPUTE_DTYPE, METAL_HALF_TYPE
+
 
 def ceil_div(a, b):
     return (a + b - 1) // b
@@ -205,7 +207,7 @@ def _get_fused_gdn_proj_kernel(K, N_QKV, N_Z, N_B, N_A, group_size=64):
                 "A_log_arr", "dt_bias_arr",
             ],
             output_names=["qkv_out", "z_silu_out", "b_out", "a_out", "conv_state_out"],
-            source=_gen_fused_gdn_projections_source(K, N_QKV, N_Z, N_B, N_A, group_size),
+            source=_gen_fused_gdn_projections_source(K, N_QKV, N_Z, N_B, N_A, group_size).replace("bfloat16_t", METAL_HALF_TYPE),
         )
     return _fused_gdn_proj_cache[key]
 
@@ -274,7 +276,7 @@ def fused_gdn_projections(
             (B * N_A,),                # g_out (f32)
             (B * 3 * N_QKV,),          # conv_state_out
         ],
-        output_dtypes=[mx.bfloat16, mx.float32, mx.float32, mx.float32, mx.bfloat16],
+        output_dtypes=[COMPUTE_DTYPE, mx.float32, mx.float32, mx.float32, COMPUTE_DTYPE],
         grid=(32, total_tg * 2, B),
         threadgroup=(32, 2, 1),
     )

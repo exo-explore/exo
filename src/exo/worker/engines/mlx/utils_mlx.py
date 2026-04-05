@@ -342,6 +342,18 @@ def shard_and_load(
     # TODO: Do we need this?
     mx.eval(model)
 
+    # Convert bf16 → fp16 for Qwen3.5 MoE if COMPUTE_DTYPE is fp16
+    config_path = model_path / "config.json"
+    if config_path.exists():
+        import json
+        with open(config_path) as f:
+            _cfg = json.load(f)
+        if _cfg.get("model_type") == "qwen3_5_moe":
+            from exo.worker.engines.mlx.patches.qwen3_5_moe.common import (
+                convert_model_to_compute_dtype,
+            )
+            convert_model_to_compute_dtype(model)
+
     logger.debug("SHARDED")
     logger.debug(model)
 

@@ -12,6 +12,8 @@ All constants baked into Metal source. B is unrolled at code-generation time.
 """
 import mlx.core as mx
 
+from ..common import COMPUTE_DTYPE, METAL_HALF_TYPE
+
 
 def ceil_div(a, b):
     return (a + b - 1) // b
@@ -268,7 +270,7 @@ def _get_batched_oproj_kernel(n_experts, M, K_attn, K_hidden, B, group_size=64, 
             ],
             output_names=["h_scaled", "h_out", "x2_partials",
                           "gate_part_a", "gate_part_b"],
-            source=_gen_batched_oproj_source(n_experts, M, K_attn, K_hidden, B, group_size, gate_bm),
+            source=_gen_batched_oproj_source(n_experts, M, K_attn, K_hidden, B, group_size, gate_bm).replace("bfloat16_t", METAL_HALF_TYPE),
         )
     return _batched_oproj_cache[key]
 
@@ -320,7 +322,7 @@ def batched_oproj_gate_gemv(W_oproj, S_oproj, B_oproj,
             (B * n_oproj_tg,),
             (B * n_experts,), (B * n_experts,),
         ],
-        output_dtypes=[mx.bfloat16, mx.bfloat16, mx.float32, mx.float32, mx.float32],
+        output_dtypes=[COMPUTE_DTYPE, COMPUTE_DTYPE, mx.float32, mx.float32, mx.float32],
         grid=(total_tg * 32, 8, 1),
         threadgroup=(32, 8, 1),
     )

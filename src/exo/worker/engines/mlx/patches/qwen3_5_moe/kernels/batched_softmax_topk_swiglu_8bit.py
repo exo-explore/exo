@@ -23,6 +23,8 @@ Body (after TG barrier):
 """
 import mlx.core as mx
 
+from ..common import METAL_HALF_TYPE
+
 
 def ceil_div(a, b):
     return (a + b - 1) // b
@@ -468,7 +470,8 @@ def _get_batched_softmax_topk_swiglu_kernel(
                           "norm_scores", "gate_raw"],
             source=_gen_batched_softmax_topk_swiglu_source(
                 N_INTER, SHARED_INTER, K, n_active, B,
-                n_experts, top_k, norm_topk, group_size, n_oproj_tg),
+                n_experts, top_k, norm_topk, group_size, n_oproj_tg,
+            ).replace("bfloat16_t", METAL_HALF_TYPE),
         )
     return _batched_softmax_topk_swiglu_cache[key]
 

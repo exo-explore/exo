@@ -20,6 +20,8 @@ Usage:
     logits_t2 = mtp.predict(pre_norm, token_t1)       # token t+2
 """
 
+import os
+
 import mlx.core as mx
 import mlx.nn as nn
 
@@ -402,7 +404,8 @@ class MTPPredictor:
             linear = getattr(self, name, None)
             if linear is None:
                 continue  # MoE models don't have dense MLP projections
-            linear.weight = linear.weight.astype(mx.bfloat16)
+            _cdtype = mx.bfloat16 if os.environ.get("EXO_COMPUTE_DTYPE", "fp16") == "bf16" else mx.float16
+            linear.weight = linear.weight.astype(_cdtype)
             q = nn.QuantizedLinear.from_linear(linear, group_size=64, bits=8)
             mx.eval(q.parameters())
             setattr(self, name, q)

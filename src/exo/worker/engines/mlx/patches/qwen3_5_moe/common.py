@@ -13,15 +13,57 @@ Functions:
   build_model            — build Qwen3.5 MoE layers with 8-bit quantization
 """
 
+import os
 from types import SimpleNamespace
 
 import mlx.core as mx
 import mlx.nn as nn
+from loguru import logger
 from mlx_lm.models.qwen3_5 import (
     DecoderLayer,
     TextModelArgs,
 )
 from mlx_lm.models.qwen3_next import Qwen3NextSparseMoeBlock
+
+# ── Compute dtype configuration ──
+# EXO_COMPUTE_DTYPE controls the activation/accumulation dtype for inference.
+# "fp16" (default): ~7% faster quantized_matmul on M4, same gather_qmm perf.
+# "bf16": original dtype matching safetensors storage.
+_DTYPE_STR = os.environ.get("EXO_COMPUTE_DTYPE", "fp16")
+COMPUTE_DTYPE: mx.Dtype = mx.bfloat16 if _DTYPE_STR == "bf16" else mx.float16
+METAL_HALF_TYPE: str = "bfloat16_t" if _DTYPE_STR == "bf16" else "half"
+
+
+def convert_model_to_compute_dtype(model: nn.Module) -> None:
+    """Convert all bf16 model parameters to COMPUTE_DTYPE after loading.
+
+    Walks all parameters (including quantized scales/biases, norm weights,
+    conv weights, etc.) and converts bf16 → fp16. This ensures the entire
+    compute graph runs in fp16 without bf16 upcasts.
+    """
+    if COMPUTE_DTYPE == mx.bfloat16:
+        return
+
+    from mlx.utils import tree_flatten, tree_unflatten
+
+    flat = tree_flatten(model.parameters())
+    n_converted = 0
+    converted = []
+    for path, param in flat:
+        if isinstance(param, mx.array) and param.dtype == mx.bfloat16:
+            converted.append((path, param.astype(COMPUTE_DTYPE)))
+            n_converted += 1
+        else:
+            converted.append((path, param))
+
+    if n_converted > 0:
+        model.update(tree_unflatten(converted))
+        mx.eval(model.parameters())
+
+    logger.info(
+        f"Converted {n_converted} parameters from bf16 → {_DTYPE_STR} "
+        f"(COMPUTE_DTYPE={COMPUTE_DTYPE})"
+    )
 
 
 def ceil_div(a, b):
@@ -108,7 +150,7 @@ def dequantize_shared_expert(moe):
             w_bf16 = mx.dequantize(
                 proj.weight, proj.scales, proj.biases,
                 group_size=proj.group_size, bits=proj.bits,
-            ).astype(mx.bfloat16)
+            ).astype(COMPUTE_DTYPE)
             mx.eval(w_bf16)
             setattr(shared, proj_name, SimpleNamespace(weight=w_bf16))
 
@@ -158,16 +200,16 @@ def _patch_oproj_gate_rms(layer, gate_bm=8):
     mx.eval(W_gate_f32, W_oproj_f32)
 
     # ── RMSNorm weight ──
-    rms_weight = layer.post_attention_layernorm.weight.astype(mx.bfloat16)
+    rms_weight = layer.post_attention_layernorm.weight.astype(COMPUTE_DTYPE)
 
     # ── W_fused = dequant(W_gate) · diag(w_rms) ──
     w_rms_f32 = rms_weight.astype(mx.float32)
-    W_fused = (W_gate_f32 * w_rms_f32).astype(mx.bfloat16)
+    W_fused = (W_gate_f32 * w_rms_f32).astype(COMPUTE_DTYPE)
     mx.eval(W_fused)
     del W_gate_f32  # free ~8 MB (E=512) or ~1 MB (E=64)
 
     # ── M1 = W_fused @ W_oproj — precomputed in f32, stored bf16 ──
-    M1 = (W_fused.astype(mx.float32) @ W_oproj_f32).astype(mx.bfloat16)
+    M1 = (W_fused.astype(mx.float32) @ W_oproj_f32).astype(COMPUTE_DTYPE)
     mx.eval(M1)
     del W_oproj_f32  # free ~128 MB
 
@@ -344,10 +386,10 @@ def make_qwen_random_cache(layer, config, prefill_len):
         attn = layer.linear_attn
         cache[0] = mx.random.normal(
             (1, attn.conv_kernel_size - 1, attn.conv_dim)
-        ).astype(mx.bfloat16)
+        ).astype(COMPUTE_DTYPE)
         cache[1] = mx.random.normal(
             (1, attn.num_v_heads, attn.head_k_dim, attn.head_v_dim)
-        ).astype(mx.bfloat16)
+        ).astype(COMPUTE_DTYPE)
         return cache
     else:
         from mlx_lm.models.cache import KVCache
@@ -356,8 +398,8 @@ def make_qwen_random_cache(layer, config, prefill_len):
         alloc_len = n_steps * KVCache.step
         n_kv = config.num_key_value_heads
         hd = config.head_dim
-        cache.keys = mx.random.normal((1, n_kv, alloc_len, hd)).astype(mx.bfloat16)
-        cache.values = mx.random.normal((1, n_kv, alloc_len, hd)).astype(mx.bfloat16)
+        cache.keys = mx.random.normal((1, n_kv, alloc_len, hd)).astype(COMPUTE_DTYPE)
+        cache.values = mx.random.normal((1, n_kv, alloc_len, hd)).astype(COMPUTE_DTYPE)
         cache.offset = prefill_len
         return cache
 
@@ -438,32 +480,32 @@ def build_model(n_experts=16, n_layers=1, top_k=4,
     layers = [DecoderLayer(config, idx) for idx in range(n_layers)]
 
     for li, layer in enumerate(layers):
-        # Cast all attention/SSM params to bf16 before quantizing, matching
-        # real safetensors model where all non-quantized params are bf16.
+        # Cast all attention/SSM params to COMPUTE_DTYPE before quantizing,
+        # matching real model where non-quantized params get converted.
         # nn.quantize only touches nn.Linear; other params (conv1d, dt_bias,
         # norm, A_log) must be cast manually.
         attn_mod = layer.linear_attn if layer.is_linear else layer.self_attn
         for name, mod in attn_mod.named_modules():
             if isinstance(mod, nn.Linear):
-                mod.weight = mod.weight.astype(mx.bfloat16)
+                mod.weight = mod.weight.astype(COMPUTE_DTYPE)
             elif isinstance(mod, nn.Conv1d):
-                mod.weight = mod.weight.astype(mx.bfloat16)
-        # Cast leaf parameters (dt_bias, norm.weight, q/k_norm) to bf16
+                mod.weight = mod.weight.astype(COMPUTE_DTYPE)
+        # Cast leaf parameters (dt_bias, norm.weight, q/k_norm)
         # A_log stays f32 (matches real model)
         if layer.is_linear:
             gdn = layer.linear_attn
-            gdn.dt_bias = gdn.dt_bias.astype(mx.bfloat16)
-            gdn.norm.weight = gdn.norm.weight.astype(mx.bfloat16)
+            gdn.dt_bias = gdn.dt_bias.astype(COMPUTE_DTYPE)
+            gdn.norm.weight = gdn.norm.weight.astype(COMPUTE_DTYPE)
         else:
             gqa = layer.self_attn
-            gqa.q_norm.weight = gqa.q_norm.weight.astype(mx.bfloat16)
-            gqa.k_norm.weight = gqa.k_norm.weight.astype(mx.bfloat16)
+            gqa.q_norm.weight = gqa.q_norm.weight.astype(COMPUTE_DTYPE)
+            gqa.k_norm.weight = gqa.k_norm.weight.astype(COMPUTE_DTYPE)
         nn.quantize(attn_mod, bits=BITS, group_size=GROUP_SIZE)
         mx.eval(attn_mod.parameters())
 
-        # RMSNorm to bf16 (norms are never quantized)
-        layer.input_layernorm.weight = layer.input_layernorm.weight.astype(mx.bfloat16)
-        layer.post_attention_layernorm.weight = layer.post_attention_layernorm.weight.astype(mx.bfloat16)
+        # RMSNorm to COMPUTE_DTYPE (norms are never quantized)
+        layer.input_layernorm.weight = layer.input_layernorm.weight.astype(COMPUTE_DTYPE)
+        layer.post_attention_layernorm.weight = layer.post_attention_layernorm.weight.astype(COMPUTE_DTYPE)
         mx.eval(layer.input_layernorm.weight, layer.post_attention_layernorm.weight)
 
         # MoE block: quantize everything to 8-bit gs=64

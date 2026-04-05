@@ -16,6 +16,8 @@ Dk=128 = 32 threads × 4 elements → exactly 1 SG, no cross-SG reduction.
 
 import mlx.core as mx
 
+from ..common import COMPUTE_DTYPE, METAL_HALF_TYPE
+
 
 def _gen_fused_qk_rmsnorm_source():
     """Generate Metal source for fused Q/K per-head L2-norm.
@@ -94,7 +96,7 @@ def _get_fused_qk_rmsnorm_kernel():
             name="fused_qk_rmsnorm",
             input_names=["qkv"],
             output_names=["qk_out"],
-            source=_gen_fused_qk_rmsnorm_source(),
+            source=_gen_fused_qk_rmsnorm_source().replace("bfloat16_t", METAL_HALF_TYPE),
         )
     return _fused_qk_rmsnorm_kernel
 
@@ -121,7 +123,7 @@ def fused_qk_rmsnorm(qkv_conv_silu, batch_size=1):
     results = kern(
         inputs=[qkv_flat],
         output_shapes=[(B * 4096,)],
-        output_dtypes=[mx.bfloat16],
+        output_dtypes=[COMPUTE_DTYPE],
         grid=(n_heads * 32, 1, B),
         threadgroup=(32, 1, 1),
     )

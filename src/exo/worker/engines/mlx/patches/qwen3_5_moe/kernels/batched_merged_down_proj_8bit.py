@@ -13,6 +13,8 @@ All constants baked into Metal source (no scalar kernel inputs).
 """
 import mlx.core as mx
 
+from ..common import METAL_HALF_TYPE
+
 
 def ceil_div(a, b):
     return (a + b - 1) // b
@@ -196,7 +198,8 @@ def _get_batched_down_kernel(K_OUT, N_IN, SHARED_N_IN, n_active, B, group_size=6
                          "X_routed", "X_shared", "inds"],
             output_names=["Y_routed", "Y_shared"],
             source=_gen_batched_merged_down_8bit_source(
-                K_OUT, N_IN, SHARED_N_IN, n_active, B, group_size),
+                K_OUT, N_IN, SHARED_N_IN, n_active, B, group_size,
+            ).replace("bfloat16_t", METAL_HALF_TYPE),
         )
     return _batched_down_cache[key]
 
