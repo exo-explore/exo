@@ -41,6 +41,7 @@ from exo.worker.engines.mlx.generator.generate import (
     prefill,
 )
 from exo.worker.engines.mlx.utils_mlx import (
+    detect_thinking_prompt_suffix,
     fix_unmatched_think_end_tokens,
     system_prompt_token_count,
 )
@@ -269,6 +270,7 @@ class ExoBatchGenerator:
             prefill_tps=_prefill_tps,
             generation_time_at_start=self._mlx_gen._stats.generation_time,
             media_regions=media_regions,
+            in_thinking=detect_thinking_prompt_suffix(prompt, self.tokenizer),
         )
 
         return uid
