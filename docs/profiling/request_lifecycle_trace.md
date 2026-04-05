@@ -207,7 +207,20 @@ All times relative to request arrival. Measured with `time.perf_counter()` (µs 
 
 ---
 
-## Benchmark Results (2026-04-05, commit `570504b3`)
+## Benchmark Results
+
+### Current (2026-04-05, commit `5546b726`)
+
+| Test | Prompt Tokens | Completion Tokens | Time | Throughput | vs Previous |
+|------|--------------|-------------------|------|------------|-------------|
+| Short prompt (cold) | 25 | 258 | 6.7–6.9s | 37–38 tok/s | same |
+| Short prompt (warm) | 25 | 258 | 5.3–5.4s | 48.0–48.9 tok/s | same |
+| Long generation | 25 | 1,026 | 19.4–19.5s | 52.6–52.9 tok/s | **+6%** |
+| 16K prompt (cold) | 16,070 | 33 | 36.6s | 439 tok/s prefill | same |
+| 16K prompt (KV cache hit) | 26,410 | 33 | 1.4–1.9s | — | **~70% faster** |
+| Stress (3 sequential) | 18 | 130 | 2.9–3.2s | 41–45 tok/s | same |
+
+### Previous baseline (2026-04-05, commit `570504b3`)
 
 | Test | Prompt Tokens | Completion Tokens | Time | Throughput |
 |------|--------------|-------------------|------|------------|
@@ -217,8 +230,6 @@ All times relative to request arrival. Measured with `time.perf_counter()` (µs 
 | 16K prompt (cold) | 16,010 | 257 | 40.6s | 467 tok/s prefill |
 | 16K prompt (KV cache hit) | 16,010 | 257 | 6.4s | prefill skipped |
 | Stress (3 sequential) | 20 | 129 | 3.0–3.2s | 40.0–42.4 tok/s |
-
-No errors, no degradation across runs.
 
 ---
 
@@ -247,6 +258,25 @@ No errors, no degradation across runs.
    - Reason: On R1, eval_cache (313ms) runs during the pipeline bubble while R0 waits.
      Moving contiguous into the same eval shifts work into R1's forward time, making the
      pipeline bubble larger. Net result: +4s regression on 16K prefill.
+
+6. **Fused MoE dispatches for prefill** (`d6d4f3c8`)
+   - Fuse routed gate+up into single `gather_qmm` (3→2 dispatches per MoE layer × 30)
+   - Fuse shared expert gate+up into single `quantized_matmul` (2→1 dispatches × 30)
+   - Merge GDN in_proj_b + in_proj_a (N=32+32→64, eliminates 1 underutilized dispatch × 22)
+   - Prefill forward time unchanged (dispatch overhead savings ~20µs each, invisible vs 3s/chunk)
+   - **Decode throughput improved +6%** (49.8 → 52.8 tok/s on long generation)
+   - **KV cache hit latency improved ~70%** (6.4s → 1.9s)
+
+7. **EXO_PP_LAYER_SPLIT env var** (`498de7cc`)
+   - Override proportional layer allocation for pipeline parallel stages
+   - Format: "33,27" gives R0=33 layers, R1=27 layers
+   - Tested 33/27 split: total compute unchanged, just redistributed
+
+8. **fp16 compute dtype attempted and reverted** (`ea6fa664`→`a9e08330`)
+   - Changed all bf16 activations/weights to fp16 (EXO_COMPUTE_DTYPE=fp16)
+   - JACCL/RDMA transport doesn't support fp16 — required bf16 casts at all 9 PP boundaries
+   - MLX quantized_matmul kernels are only optimized for bf16 inputs — fp16 caused 7× decode slowdown
+   - Infrastructure remains for future use if MLX adds fp16 kernel support
 
 ---
 
@@ -284,14 +314,22 @@ MLX dispatch overhead for multiple matmuls per chunk dominates. The sequential k
 
 ## Remaining Optimization Opportunities
 
-### High impact
-- **Increase prefill chunk size** (`EXO_PREFILL_STEP_SIZE=8192`): T=4096/rank instead of 2048. Expected 20-25% prefill speedup from better MoE GPU utilization. Simple env var change, needs end-to-end validation for pipeline bubble tradeoff.
-- **Fuse MoE for prefill**: The 4-dispatch fused Metal kernels (batched_moe.py) currently only work for decode (S=1, B≤8). Adapting for prefill S>1 would reduce gather_qmm overhead. Expected additional 10-20%.
+### Investigated and ruled out
+- **Larger prefill chunks** (`EXO_PREFILL_STEP_SIZE=8192`): 19% WORSE due to O(T²) attention cost within chunks outweighing MoE efficiency gains.
+- **Fuse MoE dispatches for prefill**: Implemented (gate+up fusion, shared expert fusion, b+a merge). Dispatch savings (~20µs each) are invisible vs 3s/chunk forward. No prefill improvement, but +6% decode.
+- **fp16 compute dtype**: MLX quantized kernels only optimized for bf16. 7× decode slowdown.
+- **Chunkwise DeltaNet**: 2.7× slower than sequential kernel due to MLX dispatch overhead.
+- **gather_qmm block tuning (BM=128)**: No improvement — already at 97% of achievable ceiling.
+- **Per-expert regular qmm (128 dispatches)**: 33% slower than gather_qmm.
+- **Layer rebalancing (33/27 split)**: Total compute unchanged.
 
-### Actionable (Python/orchestration layer)
-- **Pre-warm `agree_on_tasks`**: First request pays ~1,063,000µs for distributed rank synchronization. Could be done during model warmup so first real request doesn't block.
+### Worth investigating
+- **`distributed_prompt_progress_callback`**: Takes **340ms per prefill chunk** (~2.7s total for 16K). This is the largest non-compute overhead in the prefill loop. Reducing or deferring this callback could save 2-3s.
+- **Attention scaling at long context**: Per-chunk forward grows from 3.0s (chunk 0) to 6.4s (chunk 36) for 77K context. The ~90ms/chunk growth is from 7-8 GQA full-attention layers doing SDPA against the growing KV cache. Sliding window or sparse attention for these layers would help long-context prefill.
+- **Pre-warm `agree_on_tasks`**: First request pays ~1,063,000µs for distributed rank synchronization. Could be done during model warmup.
 
 ### Inherent (architecture-limited)
-- **PP pipeline bubble (12.6% of prefill)**: R0 waits for R1 at each chunk boundary. Inherent to 2-rank PP. Fewer, larger chunks reduce total barrier count.
-- **Decode outlier steps (22.6% of decode)**: MTP draft rejection penalty (37,000µs vs 17,000µs normal). 88% acceptance rate with K=1 MTP. Cannot improve without K>1 speculation or better draft quality.
+- **PP pipeline bubble (12.6% of prefill)**: R0 waits for R1 at each chunk boundary. Inherent to 2-rank PP.
+- **Decode outlier steps (22.6% of decode)**: MTP draft rejection penalty (37,000µs vs 17,000µs normal). 88-90% acceptance rate with K=1 MTP.
+- **GPU efficiency ceiling**: MoE at 32% GPU eff (97% of achievable ceiling for 8-bit gather_qmm at these shapes). Projections at 42%. These are near the practical limit for M4 Max with quantized workloads.
 - **CPU overhead**: 120µs/token (<1% of decode step). Already negligible.
