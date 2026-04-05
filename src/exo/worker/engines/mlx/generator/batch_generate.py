@@ -155,7 +155,7 @@ class ExoBatchGenerator:
         used_remote_prefill = False
         uncached_count = len(prompt_tokens)
         if (
-            uncached_count > 1000
+            uncached_count > 2000
             and task_params.prefill_endpoints
             and (not is_bench or task_params.disaggregated_bench)
         ):
