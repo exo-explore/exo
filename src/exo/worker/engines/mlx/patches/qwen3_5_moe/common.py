@@ -29,7 +29,7 @@ from mlx_lm.models.qwen3_next import Qwen3NextSparseMoeBlock
 # EXO_COMPUTE_DTYPE controls the activation/accumulation dtype for inference.
 # "fp16" (default): ~7% faster quantized_matmul on M4, same gather_qmm perf.
 # "bf16": original dtype matching safetensors storage.
-_DTYPE_STR = os.environ.get("EXO_COMPUTE_DTYPE", "fp16")
+_DTYPE_STR = os.environ.get("EXO_COMPUTE_DTYPE", "bf16")
 COMPUTE_DTYPE: mx.Dtype = mx.bfloat16 if _DTYPE_STR == "bf16" else mx.float16
 METAL_HALF_TYPE: str = "bfloat16_t" if _DTYPE_STR == "bf16" else "half"
 
