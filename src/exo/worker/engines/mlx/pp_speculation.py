@@ -477,7 +477,7 @@ def pp_speculative_decode_loop(
             n += 1
 
             _dt_clear_cache = 0.0
-            if n % 256 == 0:
+            if n % 2048 == 0:
                 _t0 = time.perf_counter()
                 mx.clear_cache()
                 _dt_clear_cache = time.perf_counter() - _t0

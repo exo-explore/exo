@@ -217,7 +217,7 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
         _Prof.response_build += time.perf_counter() - _t0
 
     self._next_count += 1
-    if self._next_count % 512 == 0:
+    if self._next_count % 2048 == 0:
         _t0 = time.perf_counter()
         mx.clear_cache()
         if _TRACE:
