@@ -240,14 +240,16 @@ def pipeline_parallel_prefill(
     finally:
         clear_prefill_sends()
 
-    # Post-loop: process remaining 1 token + add +1 entry to match stream_generate.
+    # Post-loop: process the remaining 1 token not covered by the chunk loop.
+    # The chunk loop processes total-1 tokens; this handles the last one.
+    # (Previously did 2 forward passes to match stream_generate's extra generated
+    # token, but that's unnecessary — prefill() trims conditionally now.)
     _t_post = time.perf_counter()
-    for _ in range(2):
-        with mx.stream(generation_stream):
-            model(prompt[-1:][None], cache=_prompt_cache)
-            quantize_cache_fn(_prompt_cache)
-        flush_prefill_sends()
-    request_trace.record("prefill.post_loop_tokens", _t_post)
+    with mx.stream(generation_stream):
+        model(prompt[-1:][None], cache=_prompt_cache)
+        quantize_cache_fn(_prompt_cache)
+    flush_prefill_sends()
+    request_trace.record("prefill.post_loop_token", _t_post)
 
     assert _prompt_cache is not None
     with mx.stream(generation_stream):
@@ -371,8 +373,11 @@ def prefill(
     set_pipeline_queue_sends(model, queue_sends=False)
     set_pipeline_prefill(model, is_prefill=False)
 
-    # stream_generate added 1 extra generated token to the cache, so we should trim it.
-    # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
+    # Trim extra entries from the cache so the decode path can reprocess last_tokens[-2:].
+    # - stream_generate path: generated 1 extra token → trim(2) (generated + last prompt token)
+    # - pipeline_parallel path: 1 post-loop token, no generation → trim(1)
+    # SSM/ArraysCache layers are rolled back to snapshots[-2] (state after last real chunk).
+    _trim_n = 1 if (is_pipeline and num_tokens >= prefill_step_size) else 2
     with T("prefill.cache_trim_and_rollback"):
         pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
         for i, c in enumerate(cache):
@@ -382,7 +387,7 @@ def prefill(
                     cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
             else:
                 assert not isinstance(c, (ArraysCache, RotatingKVCache))
-                c.trim(2)
+                c.trim(_trim_n)
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
