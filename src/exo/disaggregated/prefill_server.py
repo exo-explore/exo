@@ -598,7 +598,7 @@ class _PrefillHandler(socketserver.StreamRequestHandler):
     def setup(self) -> None:
         super().setup()
         self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # type: ignore
-        self.request.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)  # type: ignore
+        self.request.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16 * 1024 * 1024)  # type: ignore
 
     def handle(self) -> None:
         try:

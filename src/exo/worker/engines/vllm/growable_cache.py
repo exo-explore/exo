@@ -4,7 +4,7 @@ from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 from exo.shared.logging import logger
 from exo.worker.engines.mlx.cache import KVPrefixCache
 
-INITIAL_FRACTION = 0.05
+INITIAL_FRACTION = 0.8
 GROWTH_HEADROOM_BYTES = 512 * 1024 * 1024
 MIN_GROWTH_BLOCKS = 16
 
@@ -46,6 +46,7 @@ def patch_vllm() -> None:
     _patch_get_computed_blocks()
     _patch_moe_sum()
     _patch_marlin_w2_thread_config()
+    _patch_vit_attn_backend_for_blackwell()
     logger.info("vLLM growable KV cache patch applied")
 
 
@@ -346,6 +347,34 @@ def _patch_marlin_w2_thread_config() -> None:
         return original_gemm(*args, **kwargs)
 
     ops.moe_wna16_marlin_gemm = patched_gemm  # type: ignore
+
+
+def _patch_vit_attn_backend_for_blackwell() -> None:
+    """On Blackwell (sm >= 10), prioritise FLASHINFER for ViT attention.
+
+    vLLM's default list puts FLASH_ATTN first, but the FA kernel binary
+    doesn't actually support sm_12x — it just passes the capability check.
+    """
+    major, _ = torch.cuda.get_device_capability()
+    if major < 10:
+        return
+
+    try:
+        from vllm.platforms.cuda import CudaPlatform
+        from vllm.v1.attention.backends.registry import AttentionBackendEnum
+    except ImportError:
+        return
+
+    def patched_get_supported(cls: "object") -> "list[AttentionBackendEnum]":
+        return [
+            AttentionBackendEnum.FLASHINFER,
+            AttentionBackendEnum.TORCH_SDPA,
+            AttentionBackendEnum.TRITON_ATTN,
+            AttentionBackendEnum.FLASH_ATTN,
+        ]
+
+    CudaPlatform.get_supported_vit_attn_backends = classmethod(patched_get_supported)  # type: ignore
+    logger.info("Patched ViT attention backend order for Blackwell: FLASHINFER first")
 
 
 def _patch_get_computed_blocks() -> None:

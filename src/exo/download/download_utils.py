@@ -734,6 +734,26 @@ async def download_shard(
     target_dir = await ensure_models_dir() / str(shard.model_card.model_id).replace(
         "/", "--"
     )
+    # If the model directory already exists (e.g. via symlink) and is complete, return immediately
+    if await aios.path.exists(target_dir) and is_model_directory_complete(target_dir):
+        logger.info(f"Model {shard.model_card.model_id} already exists at {target_dir}, skipping download")
+        total_size = shard.model_card.storage_size.in_bytes
+        complete_progress = RepoDownloadProgress(
+            repo_id=shard.model_card.model_id,
+            repo_revision="main",
+            shard=shard,
+            completed_files=0,
+            total_files=0,
+            downloaded=Memory.from_bytes(total_size),
+            downloaded_this_session=Memory.from_bytes(0),
+            total=Memory.from_bytes(total_size),
+            overall_speed=0,
+            overall_eta=timedelta(0),
+            status="complete",
+            file_progress={},
+        )
+        await on_progress(shard, complete_progress)
+        return target_dir, complete_progress
     if not skip_download:
         await aios.makedirs(target_dir, exist_ok=True)
 
