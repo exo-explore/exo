@@ -1,3 +1,4 @@
+import os
 from collections.abc import Generator, Mapping
 
 from loguru import logger
@@ -99,12 +100,33 @@ def _allocate_and_validate_layers(
     total_memory: Memory,
     model_card: ModelCard,
 ) -> list[int]:
-    layer_allocations = allocate_layers_proportionally(
-        total_layers=model_card.n_layers,
-        memory_fractions=[
-            node_memory[node_id].ram_available / total_memory for node_id in node_ids
-        ],
-    )
+    # EXO_PP_LAYER_SPLIT overrides proportional allocation.
+    # Format: "33,27" for a 2-node split giving R0=33 layers, R1=27 layers.
+    # Use this to balance pipeline stages when one rank is consistently faster.
+    layer_split_override = os.environ.get("EXO_PP_LAYER_SPLIT", "")
+    if layer_split_override:
+        layer_allocations = [int(x) for x in layer_split_override.split(",")]
+        if len(layer_allocations) != len(node_ids):
+            raise ValueError(
+                f"EXO_PP_LAYER_SPLIT has {len(layer_allocations)} entries "
+                f"but {len(node_ids)} nodes"
+            )
+        if sum(layer_allocations) != model_card.n_layers:
+            raise ValueError(
+                f"EXO_PP_LAYER_SPLIT sums to {sum(layer_allocations)} "
+                f"but model has {model_card.n_layers} layers"
+            )
+        logger.info(
+            f"Using EXO_PP_LAYER_SPLIT override: {layer_allocations} "
+            f"(total={model_card.n_layers})"
+        )
+    else:
+        layer_allocations = allocate_layers_proportionally(
+            total_layers=model_card.n_layers,
+            memory_fractions=[
+                node_memory[node_id].ram_available / total_memory for node_id in node_ids
+            ],
+        )
 
     total_storage = model_card.storage_size
     total_layers = model_card.n_layers
