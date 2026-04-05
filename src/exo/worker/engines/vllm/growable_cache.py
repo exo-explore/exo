@@ -4,7 +4,7 @@ from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 from exo.shared.logging import logger
 from exo.worker.engines.mlx.cache import KVPrefixCache
 
-INITIAL_FRACTION = 0.05
+INITIAL_FRACTION = 0.8
 GROWTH_HEADROOM_BYTES = 512 * 1024 * 1024
 MIN_GROWTH_BLOCKS = 16
 
