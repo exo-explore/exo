@@ -1,8 +1,8 @@
 # Request Lifecycle Trace — Qwen3.5-397B-A17B-4bit on 2x M4 Max (PP/RDMA)
 
 **Date:** 2026-04-05
-**Commit:** `19d8081d`
-**Test:** 16,010 prompt tokens → 257 decode tokens, 42,500ms wall clock
+**Commit:** `570504b3` (latest, includes post-loop optimization + clear_cache bump)
+**Test:** 16,010 prompt tokens → 257 decode tokens
 **Config:** `EXO_PREFILL_STEP_SIZE=4096`, `EXO_KV_CACHE_BITS=4`, `EXO_SPECULATIVE=1`, PP speculation with MTP drafting
 
 All times relative to request arrival. Measured with `time.perf_counter()` (µs resolution).
@@ -204,3 +204,51 @@ All times relative to request arrival. Measured with `time.perf_counter()` (µs 
 | Runner cleanup (status update + trace dump) | 135,946 | 0.3% |
 | Inter-span overhead (Python call/dispatch across 1,362 spans) | 104,054 | 0.2% |
 | **Total unaccounted** | **240,000** | **0.56%** |
+
+---
+
+## Benchmark Results (2026-04-05, commit `570504b3`)
+
+| Test | Prompt Tokens | Completion Tokens | Time | Throughput |
+|------|--------------|-------------------|------|------------|
+| Short prompt (cold) | 20 | 257 | 6.7s | 38.2 tok/s |
+| Short prompt (warm) | 20 | 257 | 5.4s | 47.7–48.0 tok/s |
+| Long generation | 35 | 1,025 | 20.6–20.8s | 49.3–49.8 tok/s |
+| 16K prompt (cold) | 16,010 | 257 | 40.6s | 467 tok/s prefill |
+| 16K prompt (KV cache hit) | 16,010 | 257 | 6.4s | prefill skipped |
+| Stress (3 sequential) | 20 | 129 | 3.0–3.2s | 40.0–42.4 tok/s |
+
+No errors, no degradation across runs.
+
+---
+
+## Optimizations Applied in This Session
+
+1. **`mx.clear_cache()` interval bumped from 256/512 → 2048 tokens** (`af1567f0`)
+   - Eliminated a guaranteed 17,000µs stall every 256 decode tokens
+   - No memory impact during steady-state decode
+
+2. **Redundant post-loop forward pass eliminated** (`570504b3`)
+   - `pipeline_parallel_prefill` was doing 2 forward passes on `prompt[-1:]` after the chunk loop; only 1 is needed
+   - Changed `trim(2)` → `trim(1)` for pipeline path (stream_generate path unchanged)
+   - Saved ~111,000µs per 16K prefill
+
+3. **µs-resolution request trace system** (`3c19ac9e`, `79c02840`)
+   - `RequestTrace` singleton records every span from request arrival through decode completion
+   - 1,362 spans per request, 99.44% of wall time accounted for
+   - Gated on `EXO_TRACING_ENABLED=1`, zero overhead when disabled
+
+---
+
+## Remaining Optimization Opportunities
+
+### Actionable (Python/orchestration layer)
+- **Pre-warm `agree_on_tasks`**: First request pays ~1,063,000µs for distributed rank synchronization. Could be done during model warmup so first real request doesn't block.
+
+### Requires Metal/kernel work
+- **DeltaNet chunkwise parallel kernel**: 22/30 layers per rank are DeltaNet (SSM). GPU forward compute is 73.7% of prefill time. Optimizing the Metal kernel for DeltaNet's chunkwise parallel algorithm is the single highest-impact opportunity remaining.
+
+### Inherent (architecture-limited)
+- **PP pipeline bubble (12.6% of prefill)**: R0 waits for R1 at each chunk boundary. Inherent to 2-rank PP. Only reducible by rebalancing layer distribution or making R1's layers faster.
+- **Decode outlier steps (22.6% of decode)**: MTP draft rejection penalty (37,000µs vs 17,000µs normal). 88% acceptance rate with K=1 MTP. Cannot improve without K>1 speculation or better draft quality.
+- **CPU overhead**: 120µs/token (<1% of decode step). Already negligible.
