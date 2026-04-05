@@ -460,60 +460,70 @@ if [ -z "$M4_1_NODE_ID" ] || [ -z "$M4_2_NODE_ID" ]; then
     exit 1
 fi
 
-place_instance_with_retry() {
+create_instance_with_retry() {
+    # Two-step instance creation (same as dashboard):
+    #   1. GET /instance/placement — computes shard assignments (retries until state is ready)
+    #   2. POST /instance — creates the instance with the computed placement
     local label="$1"
     local model_id="$2"
-    local payload="$3"
-    local expected_count="${4:-1}"  # how many instances of this model_id are expected
-    local max_attempts=20
+    local sharding="${3:-Pipeline}"
+    local instance_meta="${4:-MlxJaccl}"
+    local min_nodes="${5:-2}"
+    local max_attempts=30
+
     for attempt in $(seq 1 $max_attempts); do
-        # Before each attempt, check if enough instances for this model already exist
+        # Check if instance already exists
         local existing
         existing=$(curl -s "$API/state" | jq -r --arg m "$model_id" \
             '[.. | objects | select(has("shardAssignments")) | select(.shardAssignments.modelId == $m)] | length' 2>/dev/null)
-        if [ -n "$existing" ] && [ "$existing" != "null" ] && [ "$existing" -ge "$expected_count" ] 2>/dev/null; then
-            echo "  Instance for $label already exists ($existing/$expected_count), skipping."
+        if [ -n "$existing" ] && [ "$existing" != "null" ] && [ "$existing" -ge 1 ] 2>/dev/null; then
+            echo "  Instance for $label already exists, skipping."
             return 0
         fi
 
-        local http_code raw_response
-        raw_response=$(curl -s -w '\n%{http_code}' -X POST "$API/place_instance" \
-            -H "Content-Type: application/json" \
-            -d "$payload")
-        http_code=$(echo "$raw_response" | tail -1)
-        raw_response=$(echo "$raw_response" | sed '$d')
+        # Step 1: GET /instance/placement to compute shard assignments
+        local placement_response placement_code
+        placement_response=$(curl -s -w '\n%{http_code}' -G "$API/instance/placement" \
+            --data-urlencode "model_id=$model_id" \
+            --data-urlencode "sharding=$sharding" \
+            --data-urlencode "instance_meta=$instance_meta" \
+            --data-urlencode "min_nodes=$min_nodes")
+        placement_code=$(echo "$placement_response" | tail -1)
+        placement_response=$(echo "$placement_response" | sed '$d')
 
-        # Parse message from response (handles both top-level and nested error formats)
-        local msg
-        msg=$(echo "$raw_response" | jq -r '.message // .error.message // .detail // empty' 2>/dev/null)
-
-        # Success
-        if [ -n "$http_code" ] && [ "$http_code" -ge 200 ] 2>/dev/null && [ "$http_code" -lt 300 ] 2>/dev/null; then
-            echo "  ${msg:-OK}"
-            return 0
-        fi
-
-        # These 400s happen when node_memory/node_network/RDMA aren't populated yet — retryable
-        if echo "$msg" | grep -qi "sufficient memory\|devices to be able to communicate\|RDMA connections\|jaccl backend\|No running instance found for draft model\|No tensor sharding found"; then
+        if [ -z "$placement_code" ] || [ "$placement_code" -lt 200 ] 2>/dev/null || [ "$placement_code" -ge 300 ] 2>/dev/null; then
+            local err_msg
+            err_msg=$(echo "$placement_response" | jq -r '.detail // .error.message // empty' 2>/dev/null)
             if [ "$attempt" -lt "$max_attempts" ]; then
-                echo "  Attempt $attempt/$max_attempts: cluster state still propagating, retrying in 5s..."
+                echo "  Attempt $attempt/$max_attempts: placement not ready ($err_msg), retrying in 5s..."
                 sleep 5
                 continue
+            else
+                echo "  ERROR: Placement failed after $max_attempts attempts: $err_msg"
+                return 1
             fi
         fi
 
-        # Any other 4xx = real client error, don't retry
-        if [ -n "$http_code" ] && [ "$http_code" -ge 400 ] 2>/dev/null && [ "$http_code" -lt 500 ] 2>/dev/null; then
-            echo "  ERROR (HTTP $http_code): ${msg:-$raw_response}"
-            return 1
-        fi
+        # Step 2: POST /instance with the placement result
+        local create_payload
+        create_payload=$(echo "$placement_response" | jq -c '{instance: .}')
 
-        # 5xx or no response — API not ready, safe to retry
-        if [ "$attempt" -lt "$max_attempts" ]; then
-            echo "  Attempt $attempt/$max_attempts: API not ready (HTTP $http_code), retrying in 3s..."
-            sleep 3
+        local create_response create_code
+        create_response=$(curl -s -w '\n%{http_code}' -X POST "$API/instance" \
+            -H "Content-Type: application/json" \
+            -d "$create_payload")
+        create_code=$(echo "$create_response" | tail -1)
+        create_response=$(echo "$create_response" | sed '$d')
+
+        if [ -n "$create_code" ] && [ "$create_code" -ge 200 ] 2>/dev/null && [ "$create_code" -lt 300 ] 2>/dev/null; then
+            local msg
+            msg=$(echo "$create_response" | jq -r '.message // empty' 2>/dev/null)
+            echo "  ${msg:-Instance created.}"
+            return 0
         else
-            echo "  ERROR: Failed after $max_attempts attempts. HTTP $http_code: $raw_response"
+            local err_msg
+            err_msg=$(echo "$create_response" | jq -r '.detail // .error.message // empty' 2>/dev/null)
+            echo "  ERROR creating instance (HTTP $create_code): $err_msg"
             return 1
         fi
     done
@@ -523,14 +533,7 @@ EXPECTED_RUNNERS=0
 
 # ── Instance 1: Primary model (2-node Pipeline Parallel over RDMA) ──
 echo "Creating Qwen3.5-397B instance (Studios PP / RDMA)..."
-if place_instance_with_retry "Qwen3.5-397B" "mlx-community/Qwen3.5-397B-A17B-4bit" "{
-    \"model_id\": \"mlx-community/Qwen3.5-397B-A17B-4bit\",
-    \"sharding\": \"Pipeline\",
-    \"instance_meta\": \"MlxJaccl\",
-    \"min_nodes\": 2,
-    \"node_ids\": [\"$M4_1_NODE_ID\", \"$M4_2_NODE_ID\"],
-    \"max_context_tokens\": 262144
-}"; then
+if create_instance_with_retry "Qwen3.5-397B" "mlx-community/Qwen3.5-397B-A17B-4bit" "Pipeline" "MlxJaccl" 2; then
     EXPECTED_RUNNERS=$((EXPECTED_RUNNERS + 2))
 fi
 
