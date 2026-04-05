@@ -20,7 +20,7 @@ if [ -n "$EXO_TURBOQUANT" ]; then
 else
     : "${EXO_KV_CACHE_BITS:=4}"
 fi
-: "${EXO_COMPUTE_DTYPE:=bf16}"
+: "${EXO_COMPUTE_DTYPE:=fp16}"
 : "${EXO_SPECULATIVE:=1}"
 : "${EXO_SPECULATIVE_GAMMA:=3}"
 : "${LOG_LEVEL:=DEBUG}"

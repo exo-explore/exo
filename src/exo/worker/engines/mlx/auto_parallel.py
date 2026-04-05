@@ -163,9 +163,15 @@ class PipelineFirstLayer(CustomMlxLayer):
         if self.r != 0:
             # We want to avoid GPU timeout errors by evalling the distributed operation
             # so that it stays on CPU, which does not have a timeout.
+            # JACCL/RDMA requires bf16 for transport — cast to bf16 for recv template,
+            # then cast back to the model's compute dtype after receiving.
+            x_dtype = x.dtype
+            x_bf16 = x.astype(mx.bfloat16) if x.dtype != mx.bfloat16 else x
+            mx.eval(x_bf16)
+            x = mx.distributed.recv_like(x_bf16, (self.r - 1), group=self.group)
             mx.eval(x)
-            x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
-            mx.eval(x)
+            if x_dtype != mx.bfloat16:
+                x = x.astype(x_dtype)
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -197,13 +203,16 @@ class PipelineLastLayer(CustomMlxLayer):
         mx.eval(output)
 
         if self.r != self.s - 1:
+            # JACCL/RDMA requires bf16 for transport — cast before send.
+            out_dtype = output.dtype
+            output_to_send = output.astype(mx.bfloat16) if output.dtype != mx.bfloat16 else output
             if self.queue_sends:
                 _pending_prefill_sends.append(
-                    (output, (self.r + 1) % self.s, self.group)
+                    (output_to_send, (self.r + 1) % self.s, self.group)
                 )
             else:
                 output = mx.distributed.send(
-                    output, (self.r + 1) % self.s, group=self.group
+                    output_to_send, (self.r + 1) % self.s, group=self.group
                 )
             if cache is not None:
                 # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
