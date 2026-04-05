@@ -602,7 +602,6 @@ def main() -> int:
                                     "stats": stats,
                                 }, _actual_pp
 
-                            inf_t0 = time.monotonic()
                             with ThreadPoolExecutor(max_workers=concurrency) as pool:
                                 futures = {
                                     pool.submit(_run_concurrent, i): i
@@ -614,6 +613,11 @@ def main() -> int:
                                     except Exception as e:
                                         logger.error(f"Concurrent request failed: {e}")
                                         batch_errors += 1
+                            batch_wall_s = (
+                                max(x["elapsed_s"] for x, _ in batch_results)
+                                if batch_results
+                                else time.perf_counter() - batch_t0
+                            )
                             inference_windows.append((inf_t0, time.monotonic()))
 
                             for idx, (row, actual_pp_tokens) in enumerate(
@@ -643,9 +647,6 @@ def main() -> int:
                                 all_rows.append(row)
 
                             if batch_results:
-                                batch_wall_s = max(
-                                    x["elapsed_s"] for x, _ in batch_results
-                                )
                                 valid_gen_tps = [
                                     x["stats"]["generation_tps"]
                                     for x, _ in batch_results

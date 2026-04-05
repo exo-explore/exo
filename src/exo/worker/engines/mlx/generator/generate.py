@@ -53,6 +53,7 @@ from exo.worker.engines.mlx.constants import (
 )
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
+    detect_thinking_prompt_suffix,
     fix_unmatched_think_end_tokens,
     mx_barrier,
     system_prompt_token_count,
@@ -604,7 +605,7 @@ def mlx_generate(
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
     usage: Usage | None = None
-    in_thinking = False
+    in_thinking = detect_thinking_prompt_suffix(prompt, tokenizer)
     reasoning_tokens = 0
     think_start = tokenizer.think_start
     think_end = tokenizer.think_end
