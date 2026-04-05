@@ -594,7 +594,13 @@ def load_vllm_engine(
         quant_config = model_config.get("quantization_config") or text_config.get("quantization_config")
         if quant_config and quant_config.get("quant_method") == "mxfp4":
             is_mxfp4 = True
-    if has_mamba:
+    major, _ = torch.cuda.get_device_capability()
+    if major >= 10:
+        # Blackwell (sm_12x): FlashAttention kernels not built for this arch.
+        # Use FLASHINFER which has native Blackwell support, even for hybrid
+        # Mamba/attention models.
+        backends = ["FLASHINFER"]
+    elif has_mamba:
         backends = ["FLASH_ATTN", "TRITON_ATTN"]
     else:
         backends = ["FLASHINFER", "FLASH_ATTN", "TRITON_ATTN"]
@@ -605,14 +611,13 @@ def load_vllm_engine(
             engine_args = EngineArgs(
                 model=model_path,
                 served_model_name=str(model_id),
-                gpu_memory_utilization=0.05,
+                gpu_memory_utilization=0.8,
                 trust_remote_code=trust_remote_code,
                 load_format="fastsafetensors",
                 enable_prefix_caching=False,
                 attention_backend=backend,
                 compilation_config={"cudagraph_mode": "none"},
                 disable_log_stats=True,
-                max_num_batched_tokens=4096,
                 kv_transfer_config=kv_transfer_config,  # type: ignore
                 disable_hybrid_kv_cache_manager=False,
                 limit_mm_per_prompt={"image": 0, "video": 0},
