@@ -193,12 +193,6 @@ def pipeline_parallel_prefill(
                 if distributed_prompt_progress_callback is not None:
                     distributed_prompt_progress_callback()
 
-            # Only call distributed callback every N chunks during real prefill.
-            # Each callback triggers 5 blocking distributed collectives (agree_on_cancellations
-            # + agree_on_tasks) that act as pipeline barriers. During prefill there are no new
-            # tasks to agree on, so we only need occasional cancellation checks.
-            _dist_cb_every = max(1, n_real // 2)  # at most 2 sync points during prefill
-
             for i in range(n_real):
                 chunk_size = real_chunk_sizes[i]
                 _t_fwd = time.perf_counter()
@@ -210,7 +204,7 @@ def pipeline_parallel_prefill(
                 request_trace.record(f"prefill.chunk{i}.forward({chunk_size}tok)", _t_fwd)
                 processed += chunk_size
 
-                if distributed_prompt_progress_callback is not None and (i + 1) % _dist_cb_every == 0:
+                if distributed_prompt_progress_callback is not None:
                     _t_cb = time.perf_counter()
                     distributed_prompt_progress_callback()
                     request_trace.record(f"prefill.chunk{i}.distributed_cb", _t_cb)
