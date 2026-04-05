@@ -615,6 +615,7 @@ def load_vllm_engine(
                 max_num_batched_tokens=4096,
                 kv_transfer_config=kv_transfer_config,  # type: ignore
                 disable_hybrid_kv_cache_manager=False,
+                limit_mm_per_prompt={"image": 0, "video": 0},
             )
 
             set_weight_loading_callback(on_layer_loaded)
