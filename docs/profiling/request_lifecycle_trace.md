@@ -201,14 +201,6 @@ All times relative to request arrival. Measured with `time.perf_counter()` (µs 
 | PP spec setup | 322,000 | 0.8% |
 | Decode | 5,076,000 | 11.9% |
 | TTFT overhead (encode, template, cache lookup) | 13,179 | <0.1% |
-| Unaccounted | 1,721,821 | 4.1% |
-
-### Unaccounted Time Analysis (1,721,821µs / 4.1%)
-
-The "unaccounted" time is distributed across:
-- Python function call overhead between traced spans (~50µs per span × ~300 spans ≈ 15,000µs)
-- `batch_gen.step()` framework (task queue management, output parsing) per decode token (~30µs × 257 ≈ 7,710µs)
-- Runner loop overhead (match/dispatch, finished list management) per decode token (~50µs × 257 ≈ 12,850µs)
-- Trailing distributed callback after last prefill chunk: 3,419,000µs on R0 (pipeline drain)
-- The trailing callback is counted in prefill but the wall-clock stagger between R0 finishing prefill and R1 finishing prefill contributes to the gap
-- Time between `pp_spec.decode_loop_start` marker and first actual decode step (~80,000µs warmup)
+| Runner cleanup (status update + trace dump) | 135,946 | 0.3% |
+| Inter-span overhead (Python call/dispatch across 1,362 spans) | 104,054 | 0.2% |
+| **Total unaccounted** | **240,000** | **0.56%** |
