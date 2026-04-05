@@ -238,17 +238,58 @@ No errors, no degradation across runs.
    - 1,362 spans per request, 99.44% of wall time accounted for
    - Gated on `EXO_TRACING_ENABLED=1`, zero overhead when disabled
 
+4. **Merged eval barriers in prefill** (pending)
+   - Two separate `mx.eval` calls per prefill chunk (cache state + contiguous fix) merged into one
+   - Eliminates one GPU pipeline flush per chunk
+
+5. **Rolling SSM snapshots** (pending)
+   - Only keep last 2 SSM snapshots during prefill (rollback uses `snapshots[-2]` exclusively)
+   - Previously deep-copied entire cache (22 DeltaNet + 8 attention layers) after every chunk
+
 ---
 
+## Forward Compute Breakdown (2026-04-05, isolated component benchmarks)
+
+The 73.7% "GPU forward compute" is ALL layer computation, not just DeltaNet. Component-level benchmarking reveals the actual breakdown per prefill chunk (T=2048, TP=2, one rank):
+
+| Component | Time (ms) | % of Forward | GPU Efficiency | Notes |
+|-----------|----------|-------------|---------------|-------|
+| **MoE (gather_qmm × 30 layers)** | **2,106** | **65%** | **21%** | 128 experts, ~128 tok/expert, 6 GB weights/layer |
+| Projections (~100 qlinear) | 1,021 | 32% | 42% | qkv+z+b+a+out per DeltaNet, qkv+out per attn |
+| DeltaNet kernel (22 layers) | 97 | 3% | 13% | Sequential recurrence — fast, latency-limited |
+| Conv1d + RMSNorm + other | ~50 | <2% | — | |
+
+**Key finding**: MoE dominates at 65% of forward time with only 21% GPU efficiency. The DeltaNet recurrence kernel is only 3% — the previous claim that it was "THE bottleneck" was incorrect (it confused "22/30 layers are DeltaNet type" with "DeltaNet kernel dominates time").
+
+### MoE Efficiency Scales with Sequence Length
+
+| T/rank | MoE ms/tok/layer | vs T=2048 | 16K prompt total compute |
+|--------|-----------------|-----------|-------------------------|
+| 2048 | 1.03 | baseline | 25,824ms |
+| 4096 | 0.71 | -31% | 20,596ms |
+| 8192 | 0.62 | -40% | 19,062ms |
+
+Larger prefill chunks → more tokens per expert → better GPU utilization. Increasing `EXO_PREFILL_STEP_SIZE` from 4096 to 8192 (T=4096/rank) reduces per-token MoE cost by 31%.
+
+### Chunkwise DeltaNet: Not Viable (ops-based)
+
+Benchmarked an MLX ops-based chunkwise parallel algorithm (matmul decomposition, C=64 chunk size) against the sequential Metal kernel:
+- Sequential kernel: 4.6ms/layer for T=2048 (single Metal dispatch, state in registers)
+- Chunkwise ops (no forward substitution): 12.4ms projected (2.7× slower)
+- Chunkwise ops (with forward substitution): 62ms projected (13× slower)
+
+MLX dispatch overhead for multiple matmuls per chunk dominates. The sequential kernel is already efficient for its workload.
+
 ## Remaining Optimization Opportunities
+
+### High impact
+- **Increase prefill chunk size** (`EXO_PREFILL_STEP_SIZE=8192`): T=4096/rank instead of 2048. Expected 20-25% prefill speedup from better MoE GPU utilization. Simple env var change, needs end-to-end validation for pipeline bubble tradeoff.
+- **Fuse MoE for prefill**: The 4-dispatch fused Metal kernels (batched_moe.py) currently only work for decode (S=1, B≤8). Adapting for prefill S>1 would reduce gather_qmm overhead. Expected additional 10-20%.
 
 ### Actionable (Python/orchestration layer)
 - **Pre-warm `agree_on_tasks`**: First request pays ~1,063,000µs for distributed rank synchronization. Could be done during model warmup so first real request doesn't block.
 
-### Requires Metal/kernel work
-- **DeltaNet chunkwise parallel kernel**: 22/30 layers per rank are DeltaNet (SSM). GPU forward compute is 73.7% of prefill time. Optimizing the Metal kernel for DeltaNet's chunkwise parallel algorithm is the single highest-impact opportunity remaining.
-
 ### Inherent (architecture-limited)
-- **PP pipeline bubble (12.6% of prefill)**: R0 waits for R1 at each chunk boundary. Inherent to 2-rank PP. Only reducible by rebalancing layer distribution or making R1's layers faster.
+- **PP pipeline bubble (12.6% of prefill)**: R0 waits for R1 at each chunk boundary. Inherent to 2-rank PP. Fewer, larger chunks reduce total barrier count.
 - **Decode outlier steps (22.6% of decode)**: MTP draft rejection penalty (37,000µs vs 17,000µs normal). 88% acceptance rate with K=1 MTP. Cannot improve without K>1 speculation or better draft quality.
 - **CPU overhead**: 120µs/token (<1% of decode step). Already negligible.

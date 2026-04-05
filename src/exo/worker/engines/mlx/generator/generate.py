@@ -213,17 +213,23 @@ def pipeline_parallel_prefill(
                 flush_prefill_sends()
                 request_trace.record(f"prefill.chunk{i}.flush_sends", _t_flush)
 
+                # Materialize cache + break shared-buffer references in a single eval.
+                # Previously this was two separate mx.eval barriers, flushing the
+                # GPU pipeline twice.  contiguous() on unevaluated arrays is safe —
+                # it just inserts a copy node before the eval.
                 _t_eval = time.perf_counter()
-                mx.eval([c.state for c in _prompt_cache])  # type: ignore
-                request_trace.record(f"prefill.chunk{i}.eval_cache", _t_eval)
-
-                # Break shared-buffer references in DeltaNet (ArraysCache) entries.
-                _t_contig = time.perf_counter()
                 for _c in _prompt_cache:
                     if isinstance(_c, ArraysCache):
                         _c.cache = [mx.contiguous(x) if x is not None else x for x in _c.cache]
-                        mx.eval(*[x for x in _c.cache if x is not None])
-                request_trace.record(f"prefill.chunk{i}.contiguous", _t_contig)
+                all_states = []
+                for _c in _prompt_cache:
+                    s = _c.state  # type: ignore
+                    if isinstance(s, tuple):
+                        all_states.extend([x for x in s if isinstance(x, mx.array)])
+                    elif isinstance(s, mx.array):
+                        all_states.append(s)
+                mx.eval(*all_states)
+                request_trace.record(f"prefill.chunk{i}.eval_cache", _t_eval)
 
                 # Log memory every 5 chunks for profiling
                 if i % 5 == 0 or i == n_real - 1:
@@ -299,6 +305,11 @@ def prefill(
             f"Prefill progress: {processed}/{total} tokens ({tok_per_sec:.1f} tok/s)"
         )
         if has_ssm:
+            # Only keep the last 2 snapshots — the rollback at the end uses
+            # snapshots[-2] exclusively.  Earlier snapshots are never read, so
+            # deepcopy-ing the entire cache on every chunk is wasted work.
+            if len(snapshots) >= 2:
+                snapshots.pop(0)
             snapshots.append(snapshot_ssm_states(cache))
 
         if on_prefill_progress is not None:
