@@ -225,10 +225,16 @@ class PipelineLastLayer(CustomMlxLayer):
                 mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
+            # JACCL/RDMA requires bf16 for transport
+            gather_dtype = output.dtype
+            if output.dtype != mx.bfloat16:
+                output = output.astype(mx.bfloat16)
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
             mx.eval(output)
+            if gather_dtype != mx.bfloat16:
+                output = output.astype(gather_dtype)
 
         return output
 
