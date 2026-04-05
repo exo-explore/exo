@@ -3,7 +3,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from exo.shared.types.api import ToolCallItem
+from exo.api.types import ToolCallItem
 
 
 @dataclass

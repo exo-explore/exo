@@ -2,6 +2,15 @@
  * File attachment types for the chat interface
  */
 
+import { getDocument, GlobalWorkerOptions, version } from "pdfjs-dist";
+import type { DocumentInitParameters } from "pdfjs-dist/types/src/display/api";
+
+GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/pdf.worker.mjs`;
+
+const PDF_PAGE_SCALE = 2.0;
+const PDF_MAX_PAGES = 20;
+const PDF_MAX_TEXT_CHARS = 100_000;
+
 export interface ChatUploadedFile {
   id: string;
   name: string;
@@ -10,6 +19,7 @@ export interface ChatUploadedFile {
   file: File;
   preview?: string;
   textContent?: string;
+  pageImages?: string[];
 }
 
 export interface ChatAttachment {
@@ -194,6 +204,58 @@ export function readFileAsText(file: File): Promise<string> {
   });
 }
 
+async function extractPdfContent(
+  file: File,
+): Promise<{ text: string; pageImages: string[] }> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await getDocument({
+    data: new Uint8Array(arrayBuffer),
+    useSystemFonts: true,
+  } as DocumentInitParameters).promise;
+
+  const numPages = Math.min(pdf.numPages, PDF_MAX_PAGES);
+  const pageTexts: string[] = [];
+  const pageImages: string[] = [];
+
+  for (let i = 1; i <= numPages; i++) {
+    const page = await pdf.getPage(i);
+
+    const content = await page.getTextContent();
+    const strings = content.items
+      .filter((item: any) => "str" in item)
+      .map((item: any) => item.str as string);
+    pageTexts.push(strings.join(" "));
+
+    const viewport = page.getViewport({ scale: PDF_PAGE_SCALE });
+    const canvas = new OffscreenCanvas(viewport.width, viewport.height);
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      await page.render({ canvasContext: ctx as any, viewport }).promise;
+      const blob = await canvas.convertToBlob({
+        type: "image/jpeg",
+        quality: 0.8,
+      });
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+      pageImages.push(dataUrl);
+    }
+  }
+
+  let text = pageTexts.join("\n\n").trim();
+  if (text.length > PDF_MAX_TEXT_CHARS) {
+    text = text.slice(0, PDF_MAX_TEXT_CHARS) + "\n\n[truncated]";
+  }
+  if (pdf.numPages > PDF_MAX_PAGES) {
+    text += `\n\n[showing ${PDF_MAX_PAGES} of ${pdf.numPages} pages]`;
+  }
+
+  return { text, pageImages };
+}
+
 /**
  * Process uploaded files into ChatUploadedFile format
  */
@@ -223,7 +285,12 @@ export async function processUploadedFiles(
         const textContent = await readFileAsText(file);
         results.push({ ...base, textContent });
       } else if (category === "pdf") {
-        results.push(base);
+        const { text, pageImages } = await extractPdfContent(file);
+        results.push({
+          ...base,
+          textContent: text || undefined,
+          pageImages: pageImages.length > 0 ? pageImages : undefined,
+        });
       } else if (category === "audio") {
         const preview = await readFileAsDataURL(file);
         results.push({ ...base, preview });

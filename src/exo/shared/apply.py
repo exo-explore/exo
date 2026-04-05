@@ -7,6 +7,8 @@ from loguru import logger
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
+    CustomModelCardAdded,
+    CustomModelCardDeleted,
     Event,
     IndexedEvent,
     InputChunkReceived,
@@ -65,6 +67,8 @@ def event_apply(event: Event, state: State) -> State:
             | InputChunkReceived()
             | TracesCollected()
             | TracesMerged()
+            | CustomModelCardAdded()
+            | CustomModelCardDeleted()
         ):  # Pass-through events that don't modify state
             return state
         case InstanceCreated():
@@ -115,7 +119,13 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
 
     replaced = False
     for i, existing_dp in enumerate(current):
-        if existing_dp.shard_metadata == dp.shard_metadata:
+        # TODO(ciaran): deduplicate by model_id for now. Will need to use
+        # shard_metadata again when pipeline and tensor downloads differ.
+        # For now this is fine
+        if (
+            existing_dp.shard_metadata.model_card.model_id
+            == dp.shard_metadata.model_card.model_id
+        ):
             current[i] = dp
             replaced = True
             break

@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import hashlib
 import json
 import random
 import time
@@ -7,7 +8,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import anyio
@@ -21,17 +22,18 @@ from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
 
-from exo.master.adapters.chat_completions import (
+from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
+    fetch_image_url,
     generate_chat_stream,
 )
-from exo.master.adapters.claude import (
+from exo.api.adapters.claude import (
     claude_request_to_text_generation,
     collect_claude_response,
     generate_claude_stream,
 )
-from exo.master.adapters.ollama import (
+from exo.api.adapters.ollama import (
     collect_ollama_chat_response,
     collect_ollama_generate_response,
     generate_ollama_chat_stream,
@@ -39,34 +41,13 @@ from exo.master.adapters.ollama import (
     ollama_generate_request_to_text_generation,
     ollama_request_to_text_generation,
 )
-from exo.master.adapters.responses import (
+from exo.api.adapters.responses import (
     collect_responses_response,
     generate_responses_stream,
     responses_request_to_text_generation,
 )
-from exo.master.event_log import DiskEventLog
-from exo.master.image_store import ImageStore
-from exo.master.placement import place_instance as get_instance_placements
-from exo.shared.apply import apply
-from exo.shared.constants import (
-    DASHBOARD_DIR,
-    EXO_CACHE_HOME,
-    EXO_EVENT_LOG_DIR,
-    EXO_IMAGE_CACHE_DIR,
-    EXO_MAX_CHUNK_SIZE,
-    EXO_TRACING_CACHE_DIR,
-)
-from exo.shared.election import ElectionMessage
-from exo.shared.logging import InterceptLogger
-from exo.shared.models.model_cards import (
-    ModelCard,
-    ModelId,
-    delete_custom_card,
-    get_model_cards,
-    is_custom_card,
-)
-from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
-from exo.shared.types.api import (
+from exo.api.keepalive import with_sse_keepalive
+from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
     BenchChatCompletionRequest,
@@ -74,6 +55,8 @@ from exo.shared.types.api import (
     BenchImageGenerationResponse,
     BenchImageGenerationTaskParams,
     CancelCommandResponse,
+    CancelDownloadParams,
+    CancelDownloadResponse,
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionRequest,
@@ -114,6 +97,48 @@ from exo.shared.types.api import (
     TraceStatsResponse,
     normalize_image_size,
 )
+from exo.api.types.claude_api import (
+    ClaudeMessagesRequest,
+    ClaudeMessagesResponse,
+)
+from exo.api.types.ollama_api import (
+    OllamaChatRequest,
+    OllamaChatResponse,
+    OllamaGenerateRequest,
+    OllamaGenerateResponse,
+    OllamaModelDetails,
+    OllamaModelTag,
+    OllamaPsModel,
+    OllamaPsResponse,
+    OllamaShowRequest,
+    OllamaShowResponse,
+    OllamaTagsResponse,
+)
+from exo.api.types.openai_responses import (
+    ResponsesRequest,
+    ResponsesResponse,
+)
+from exo.master.image_store import ImageStore
+from exo.master.placement import place_instance as get_instance_placements
+from exo.shared.apply import apply
+from exo.shared.constants import (
+    DASHBOARD_DIR,
+    EXO_CACHE_HOME,
+    EXO_EVENT_LOG_DIR,
+    EXO_IMAGE_CACHE_DIR,
+    EXO_MAX_CHUNK_SIZE,
+    EXO_TRACING_CACHE_DIR,
+)
+from exo.shared.election import ElectionMessage
+from exo.shared.logging import InterceptLogger
+from exo.shared.models.model_cards import (
+    ModelCard,
+    ModelId,
+    add_to_card_cache,
+    get_card,
+    get_model_cards,
+)
+from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
     ErrorChunk,
     ImageChunk,
@@ -122,13 +147,12 @@ from exo.shared.types.chunks import (
     TokenChunk,
     ToolCallChunk,
 )
-from exo.shared.types.claude_api import (
-    ClaudeMessagesRequest,
-    ClaudeMessagesResponse,
-)
 from exo.shared.types.commands import (
+    AddCustomModelCard,
+    CancelDownload,
     Command,
     CreateInstance,
+    DeleteCustomModelCard,
     DeleteDownload,
     DeleteInstance,
     DownloadCommand,
@@ -151,29 +175,14 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.ollama_api import (
-    OllamaChatRequest,
-    OllamaChatResponse,
-    OllamaGenerateRequest,
-    OllamaGenerateResponse,
-    OllamaModelDetails,
-    OllamaModelTag,
-    OllamaPsModel,
-    OllamaPsResponse,
-    OllamaShowRequest,
-    OllamaShowResponse,
-    OllamaTagsResponse,
-)
-from exo.shared.types.openai_responses import (
-    ResponsesRequest,
-    ResponsesResponse,
-)
 from exo.shared.types.state import State
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
 
@@ -340,10 +349,12 @@ class API:
         self.app.get("/ollama/api/ps")(self.ollama_ps)
         self.app.get("/ollama/api/version")(self.ollama_version)
 
-        self.app.get("/state")(lambda: self.state)
+        self.app.get("/state")(self.get_state)
+        self.app.get("/state/{path:path}")(self.get_state)
         self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
+        self.app.post("/download/cancel")(self.cancel_download)
         self.app.get("/v1/traces")(self.list_traces)
         self.app.post("/v1/traces/delete")(self.delete_traces)
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
@@ -351,6 +362,24 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
+
+    def get_state(self, path: str = ""):
+        if path == "":
+            return self.state
+        try:
+            x = self.state.model_dump(by_alias=True)
+            for attr in path.split("/"):
+                if attr != "":
+                    if isinstance(x, dict):
+                        x = x[attr]  # pyright: ignore[reportUnknownVariableType]
+                    elif isinstance(x, list):
+                        x = x[int(attr)]  # pyright: ignore[reportUnknownVariableType]
+            return cast(Any, x)  # pyright: ignore[reportAny]
+        except Exception as e:
+            raise HTTPException(
+                status_code=404,
+                detail=f"unable to find path '{path.replace('/', '.')}' in state json",
+            ) from e
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -413,6 +442,7 @@ class API:
                 node_network=self.state.node_network,
                 topology=self.state.topology,
                 current_instances=self.state.instances,
+                download_status=self.state.downloads,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -475,6 +505,7 @@ class API:
                     topology=self.state.topology,
                     current_instances=self.state.instances,
                     required_nodes=required_nodes,
+                    download_status=self.state.downloads,
                 )
             except ValueError as exc:
                 if (model_card.model_id, sharding, instance_meta, 0) not in seen:
@@ -697,24 +728,87 @@ class API:
             "TODO: we should send a notification to the user to download the model"
         )
 
+    _sent_image_hashes: set[str] = set()
+
+    async def _send_text_generation_with_images(
+        self, task_params: TextGenerationTaskParams
+    ) -> TextGeneration:
+        images = task_params.images
+        if not images:
+            command = TextGeneration(task_params=task_params)
+            await self._send(command)
+            return command
+
+        hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
+
+        cached_hashes: dict[int, str] = {}
+        new_images: list[tuple[int, str]] = []
+        for idx, (img, h) in enumerate(zip(images, hashes, strict=True)):
+            if h in self._sent_image_hashes:
+                cached_hashes[idx] = h
+            else:
+                self._sent_image_hashes.add(h)
+                new_images.append((idx, img))
+
+        if not new_images:
+            task_params = task_params.model_copy(
+                update={"images": [], "image_hashes": cached_hashes}
+            )
+            command = TextGeneration(task_params=task_params)
+            await self._send(command)
+            return command
+
+        all_chunks: list[tuple[int, str]] = []
+        for img_idx, img_data in new_images:
+            for i in range(0, len(img_data), EXO_MAX_CHUNK_SIZE):
+                all_chunks.append((img_idx, img_data[i : i + EXO_MAX_CHUNK_SIZE]))
+
+        task_params = task_params.model_copy(
+            update={
+                "images": [],
+                "image_hashes": cached_hashes,
+                "total_input_chunks": len(all_chunks),
+                "image_count": len(new_images),
+            }
+        )
+        command = TextGeneration(task_params=task_params)
+
+        for global_idx, (img_idx, chunk_data) in enumerate(all_chunks):
+            await self._send(
+                SendInputChunk(
+                    chunk=InputImageChunk(
+                        model=task_params.model,
+                        command_id=command.command_id,
+                        data=chunk_data,
+                        chunk_index=global_idx,
+                        total_chunks=len(all_chunks),
+                        image_index=img_idx,
+                    )
+                )
+            )
+
+        await self._send(command)
+        return command
+
     async def chat_completions(
         self, payload: ChatCompletionRequest
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
-        task_params = chat_request_to_text_generation(payload)
+        task_params = await chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
-                generate_chat_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                with_sse_keepalive(
+                    generate_chat_stream(
+                        command.command_id,
+                        self._token_chunk_stream(command.command_id),
+                    ),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -735,7 +829,7 @@ class API:
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
     ) -> BenchChatCompletionResponse:
-        task_params = chat_request_to_text_generation(payload)
+        task_params = await chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )
@@ -743,8 +837,7 @@ class API:
 
         task_params = task_params.model_copy(update={"stream": False, "bench": True})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         return await self._collect_text_generation_with_stats(command.command_id)
 
@@ -1301,20 +1394,29 @@ class API:
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
         task_params = claude_request_to_text_generation(payload)
+        if task_params.images:
+            resolved_images: list[str] = []
+            for img in task_params.images:
+                if img.startswith(("http://", "https://")):
+                    resolved_images.append(await fetch_image_url(img))
+                else:
+                    resolved_images.append(img)
+            task_params = task_params.model_copy(update={"images": resolved_images})
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
-                generate_claude_stream(
-                    command.command_id,
-                    payload.model,
-                    self._token_chunk_stream(command.command_id),
+                with_sse_keepalive(
+                    generate_claude_stream(
+                        command.command_id,
+                        payload.model,
+                        self._token_chunk_stream(command.command_id),
+                    ),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1337,19 +1439,20 @@ class API:
         self, payload: ResponsesRequest
     ) -> ResponsesResponse | StreamingResponse:
         """OpenAI Responses API."""
-        task_params = responses_request_to_text_generation(payload)
+        task_params = await responses_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(task_params.model)
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
-                generate_responses_stream(
-                    command.command_id,
-                    payload.model,
-                    self._token_chunk_stream(command.command_id),
+                with_sse_keepalive(
+                    generate_responses_stream(
+                        command.command_id,
+                        payload.model,
+                        self._token_chunk_stream(command.command_id),
+                    ),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1385,8 +1488,7 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
@@ -1422,8 +1524,7 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
@@ -1558,24 +1659,36 @@ class API:
                     storage_size_megabytes=card.storage_size.in_mb,
                     supports_tensor=card.supports_tensor,
                     tasks=[task.value for task in card.tasks],
-                    is_custom=is_custom_card(card.model_id),
+                    is_custom=card.is_custom,
                     family=card.family,
                     quantization=card.quantization,
                     base_model=card.base_model,
                     capabilities=card.capabilities,
+                    context_length=card.context_length,
                 )
                 for card in cards
             ]
         )
 
     async def add_custom_model(self, payload: AddCustomModelParams) -> ModelListModel:
-        """Fetch a model from HuggingFace and save as a custom model card."""
+        """Fetch a model from HuggingFace and save as a custom model card, then sync across the cluster."""
         try:
             card = await ModelCard.fetch_from_hf(payload.model_id)
         except Exception as exc:
             raise HTTPException(
                 status_code=400, detail=f"Failed to fetch model: {exc}"
             ) from exc
+
+        await self.command_sender.send(
+            ForwarderCommand(
+                origin=self._system_id,
+                command=AddCustomModelCard(model_card=card),
+            )
+        )
+
+        # Immediately update the local cache so the subsequent GET /models
+        # returns the new model without waiting for the event round-trip.
+        add_to_card_cache(card)
 
         return ModelListModel(
             id=card.model_id,
@@ -1590,10 +1703,18 @@ class API:
         )
 
     async def delete_custom_model(self, model_id: ModelId) -> JSONResponse:
-        """Delete a user-added custom model card."""
-        deleted = await delete_custom_card(model_id)
-        if not deleted:
+        """Delete a user-added custom model card and sync deletion across the cluster."""
+        card = get_card(model_id)
+        if card is None or not card.is_custom:
             raise HTTPException(status_code=404, detail="Custom model card not found")
+
+        await self.command_sender.send(
+            ForwarderCommand(
+                origin=self._system_id,
+                command=DeleteCustomModelCard(model_id=model_id),
+            )
+        )
+
         return JSONResponse(
             {"message": "Model card deleted", "model_id": str(model_id)}
         )
@@ -1761,6 +1882,17 @@ class API:
         )
         await self._send_download(command)
         return DeleteDownloadResponse(command_id=command.command_id)
+
+    async def cancel_download(
+        self,
+        payload: CancelDownloadParams,
+    ) -> CancelDownloadResponse:
+        command = CancelDownload(
+            target_node_id=payload.target_node_id,
+            model_id=payload.model_id,
+        )
+        await self._send_download(command)
+        return CancelDownloadResponse(command_id=command.command_id)
 
     @staticmethod
     def _get_trace_path(task_id: str) -> Path:

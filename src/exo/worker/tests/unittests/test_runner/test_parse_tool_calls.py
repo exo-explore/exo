@@ -87,6 +87,7 @@ class TestParseToolCalls:
         assert len(results) == 1
         assert isinstance(results[0], GenerationResponse)
         assert results[0].text == "<tool_call>bad content</tool_call>"
+        assert results[0].finish_reason == "error"
 
     def test_tool_schema_coerces_string_arguments_to_expected_types(self):
         """Tool argument values should be coerced using provided JSON schema."""

@@ -1,4 +1,4 @@
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -6,8 +6,8 @@ import mlx.core as mx
 from mflux.models.common.config.config import Config
 from PIL import Image
 
+from exo.api.types import AdvancedImageParams
 from exo.download.download_utils import build_model_path
-from exo.shared.types.api import AdvancedImageParams
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.shards import CfgShardMetadata, PipelineShardMetadata
 from exo.worker.engines.image.config import ImageModelConfig
@@ -116,6 +116,7 @@ class DistributedImageModel:
         image_path: Path | None = None,
         partial_images: int = 0,
         advanced_params: AdvancedImageParams | None = None,
+        cancel_checker: Callable[[], bool] | None = None,
     ) -> Generator[Image.Image | tuple[Image.Image, int, int], None, None]:
         if (
             advanced_params is not None
@@ -163,6 +164,7 @@ class DistributedImageModel:
             guidance_override=guidance_override,
             negative_prompt=negative_prompt,
             num_sync_steps=num_sync_steps,
+            cancel_checker=cancel_checker,
         ):
             if isinstance(result, tuple):
                 # Partial image: (GeneratedImage, partial_index, total_partials)

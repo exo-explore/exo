@@ -12,6 +12,7 @@ struct SettingsView: View {
 
     @State private var pendingNamespace: String = ""
     @State private var pendingHFToken: String = ""
+    @State private var pendingHFEndpoint: String = ""
     @State private var pendingEnableImageModels = false
     @State private var pendingOfflineMode = false
     @State private var needsRestart = false
@@ -42,6 +43,7 @@ struct SettingsView: View {
         .onAppear {
             pendingNamespace = controller.customNamespace
             pendingHFToken = controller.hfToken
+            pendingHFEndpoint = controller.hfEndpoint
             pendingEnableImageModels = controller.enableImageModels
             pendingOfflineMode = controller.offlineMode
             needsRestart = false
@@ -70,6 +72,17 @@ struct SettingsView: View {
                         .frame(width: 200)
                 }
                 Text("Required for gated models. Get yours at huggingface.co/settings/tokens")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section {
+                LabeledContent("HuggingFace Endpoint") {
+                    TextField("default", text: $pendingHFEndpoint)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 200)
+                }
+                Text("Defaults to huggingface.co. Use a mirror (e.g. hf-mirror.com) for China.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -454,6 +467,7 @@ struct SettingsView: View {
 
     private var hasGeneralChanges: Bool {
         pendingNamespace != controller.customNamespace || pendingHFToken != controller.hfToken
+            || pendingHFEndpoint != controller.hfEndpoint
             || pendingOfflineMode != controller.offlineMode
     }
 
@@ -464,6 +478,7 @@ struct SettingsView: View {
     private func applyGeneralSettings() {
         controller.customNamespace = pendingNamespace
         controller.hfToken = pendingHFToken
+        controller.hfEndpoint = pendingHFEndpoint
         controller.offlineMode = pendingOfflineMode
         restartIfRunning()
     }

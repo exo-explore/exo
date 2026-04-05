@@ -257,11 +257,12 @@ interface RawStateResponse {
 }
 
 export interface MessageAttachment {
-  type: "image" | "text" | "file" | "generated-image";
+  type: "image" | "text" | "file" | "generated-image" | "pdf";
   name: string;
   content?: string;
   preview?: string;
   mimeType?: string;
+  pageImages?: string[];
 }
 
 export interface TopLogprob {
@@ -1577,6 +1578,7 @@ class AppStore {
     // Remove messages after user message (including the user message for image requests
     // since generateImage/editImage will re-add it)
     this.messages = this.messages.slice(0, lastUserIndex);
+    this.updateActiveConversation();
 
     switch (requestType) {
       case "image-generation":
@@ -1792,6 +1794,14 @@ class AppStore {
             this.persistConversation(targetConversationId);
           }
         },
+        {
+          generation_stats: (data) => {
+            const stats = data as { generation_tps: number };
+            if (stats.generation_tps > 0) {
+              this.tps = stats.generation_tps;
+            }
+          },
+        },
       );
 
       // Final update
@@ -1988,6 +1998,14 @@ class AppStore {
             this.syncActiveMessagesIfNeeded(targetConversationId);
             this.persistConversation(targetConversationId);
           }
+        },
+        {
+          generation_stats: (data) => {
+            const stats = data as { generation_tps: number };
+            if (stats.generation_tps > 0) {
+              this.tps = stats.generation_tps;
+            }
+          },
         },
       );
 
@@ -2225,6 +2243,7 @@ class AppStore {
       type: string;
       textContent?: string;
       preview?: string;
+      pageImages?: string[];
     }[],
     enableThinking?: boolean | null,
   ): Promise<void> {
@@ -2260,6 +2279,20 @@ class AppStore {
             preview: file.preview,
             mimeType: file.type,
           });
+        } else if (
+          file.pageImages ||
+          (file.textContent && file.type === "application/pdf")
+        ) {
+          attachments.push({
+            type: "pdf",
+            name: file.name,
+            content: file.textContent,
+            pageImages: file.pageImages,
+            mimeType: file.type,
+          });
+          if (file.textContent) {
+            fileContext += `\n\n[File: ${file.name}]\n\`\`\`\n${file.textContent}\n\`\`\``;
+          }
         } else if (file.textContent) {
           attachments.push({
             type: "text",
@@ -2327,13 +2360,70 @@ class AppStore {
       const apiMessages = [
         systemPrompt,
         ...targetConversation.messages.slice(0, -1).map((m) => {
-          // Build content including any text file attachments
+          // Check if this message has image or PDF attachments
+          const visualAttachments = m.attachments?.filter(
+            (a) =>
+              (a.type === "image" && a.preview) ||
+              (a.type === "pdf" && a.pageImages?.length),
+          );
+
+          if (visualAttachments && visualAttachments.length > 0) {
+            // Build multimodal content array (OpenAI vision format)
+            const contentParts: Array<
+              | { type: "text"; text: string }
+              | { type: "image_url"; image_url: { url: string } }
+            > = [];
+
+            // Add image parts first
+            for (const att of visualAttachments) {
+              if (att.type === "image" && att.preview) {
+                contentParts.push({
+                  type: "image_url",
+                  image_url: { url: att.preview },
+                });
+              } else if (att.type === "pdf" && att.pageImages) {
+                for (const pageImg of att.pageImages) {
+                  contentParts.push({
+                    type: "image_url",
+                    image_url: { url: pageImg },
+                  });
+                }
+              }
+            }
+
+            // Build text content including any text/pdf file attachments
+            let textContent = m.content;
+            if (m.attachments) {
+              for (const attachment of m.attachments) {
+                if (
+                  (attachment.type === "text" || attachment.type === "pdf") &&
+                  attachment.content
+                ) {
+                  textContent += `\n\n[File: ${attachment.name}]\n\`\`\`\n${attachment.content}\n\`\`\``;
+                }
+              }
+            }
+
+            if (textContent) {
+              contentParts.push({ type: "text", text: textContent });
+            }
+
+            return {
+              role: m.role,
+              content: contentParts,
+            };
+          }
+
+          // Text-only message (original path)
           let msgContent = m.content;
 
-          // Add text attachments as context
+          // Add text/pdf attachments as context
           if (m.attachments) {
             for (const attachment of m.attachments) {
-              if (attachment.type === "text" && attachment.content) {
+              if (
+                (attachment.type === "text" || attachment.type === "pdf") &&
+                attachment.content
+              ) {
                 msgContent += `\n\n[File: ${attachment.name}]\n\`\`\`\n${attachment.content}\n\`\`\``;
               }
             }
@@ -2396,7 +2486,7 @@ class AppStore {
 
       let streamedContent = "";
       let streamedThinking = "";
-
+      let serverTpsReceived = false;
       interface ChatCompletionChunk {
         choices?: Array<{
           delta?: { content?: string; reasoning_content?: string };
@@ -2461,7 +2551,6 @@ class AppStore {
             tokenCount += 1;
             this.totalTokens = tokenCount;
 
-            // Update real-time TPS during streaming
             if (firstTokenTime !== null && tokenCount > 1) {
               const elapsed = performance.now() - firstTokenTime;
               this.tps = (tokenCount / elapsed) * 1000;
@@ -2512,16 +2601,24 @@ class AppStore {
               startedAt: this.prefillProgress?.startedAt ?? performance.now(),
             };
           },
+          generation_stats: (data) => {
+            const stats = data as { generation_tps: number };
+
+            if (stats.generation_tps > 0) {
+              this.tps = stats.generation_tps;
+              serverTpsReceived = true;
+            }
+          },
         },
       );
 
       // Clear prefill progress after stream ends
       this.prefillProgress = null;
 
-      // Calculate final TPS
-      if (firstTokenTime !== null && tokenCount > 1) {
+      // Use server-side TPS if available, otherwise fall back to client-side
+      if (!serverTpsReceived && firstTokenTime !== null && tokenCount > 1) {
         const totalGenerationTime = performance.now() - firstTokenTime;
-        this.tps = (tokenCount / totalGenerationTime) * 1000; // tokens per second
+        this.tps = (tokenCount / totalGenerationTime) * 1000;
       }
 
       // Final cleanup of the message (if conversation still exists)
@@ -2626,6 +2723,9 @@ class AppStore {
     this.syncActiveMessagesIfNeeded(targetConversationId);
     this.saveConversationsToStorage();
 
+    const abortController = new AbortController();
+    this.currentAbortController = abortController;
+
     try {
       // Determine the model to use
       const model = this.getModelForRequest(modelId);
@@ -2680,6 +2780,7 @@ class AppStore {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(requestBody),
+        signal: abortController.signal,
       });
 
       if (!response.ok) {
@@ -2819,14 +2920,27 @@ class AppStore {
         );
       }
     } catch (error) {
-      console.error("Error generating image:", error);
-      this.handleStreamingError(
-        error,
-        targetConversationId,
-        assistantMessage.id,
-        "Failed to generate image",
-      );
+      if (abortController.signal.aborted) {
+        this.updateConversationMessage(
+          targetConversationId,
+          assistantMessage.id,
+          (msg) => {
+            msg.content = "Cancelled";
+            msg.attachments = [];
+          },
+        );
+        this.syncActiveMessagesIfNeeded(targetConversationId);
+      } else {
+        console.error("Error generating image:", error);
+        this.handleStreamingError(
+          error,
+          targetConversationId,
+          assistantMessage.id,
+          "Failed to generate image",
+        );
+      }
     } finally {
+      this.currentAbortController = null;
       this.isLoading = false;
       this.saveConversationsToStorage();
     }
@@ -2890,6 +3004,9 @@ class AppStore {
     // Clear editing state
     this.editingImage = null;
 
+    const abortController = new AbortController();
+    this.currentAbortController = abortController;
+
     try {
       // Determine the model to use
       const model = this.getModelForRequest(modelId);
@@ -2951,6 +3068,7 @@ class AppStore {
       const apiResponse = await fetch("/v1/images/edits", {
         method: "POST",
         body: formData,
+        signal: abortController.signal,
       });
 
       if (!apiResponse.ok) {
@@ -3051,14 +3169,27 @@ class AppStore {
         );
       }
     } catch (error) {
-      console.error("Error editing image:", error);
-      this.handleStreamingError(
-        error,
-        targetConversationId,
-        assistantMessage.id,
-        "Failed to edit image",
-      );
+      if (abortController.signal.aborted) {
+        this.updateConversationMessage(
+          targetConversationId,
+          assistantMessage.id,
+          (msg) => {
+            msg.content = "Cancelled";
+            msg.attachments = [];
+          },
+        );
+        this.syncActiveMessagesIfNeeded(targetConversationId);
+      } else {
+        console.error("Error editing image:", error);
+        this.handleStreamingError(
+          error,
+          targetConversationId,
+          assistantMessage.id,
+          "Failed to edit image",
+        );
+      }
     } finally {
+      this.currentAbortController = null;
       this.isLoading = false;
       this.saveConversationsToStorage();
     }
@@ -3121,6 +3252,31 @@ class AppStore {
       }
     } catch (error) {
       console.error("Error starting download:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Cancel/pause an active download on a specific node
+   */
+  async cancelDownload(nodeId: string, modelId: string): Promise<void> {
+    try {
+      const response = await fetch("/download/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetNodeId: nodeId,
+          modelId: modelId,
+        }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to cancel download: ${response.status} - ${errorText}`,
+        );
+      }
+    } catch (error) {
+      console.error("Error cancelling download:", error);
       throw error;
     }
   }
@@ -3247,6 +3403,7 @@ export const sendMessage = (
     type: string;
     textContent?: string;
     preview?: string;
+    pageImages?: string[];
   }[],
   enableThinking?: boolean | null,
 ) => appStore.sendMessage(content, files, enableThinking);
@@ -3345,6 +3502,8 @@ export const resetImageGenerationParams = () =>
 // Download actions
 export const startDownload = (nodeId: string, shardMetadata: object) =>
   appStore.startDownload(nodeId, shardMetadata);
+export const cancelDownload = (nodeId: string, modelId: string) =>
+  appStore.cancelDownload(nodeId, modelId);
 export const deleteDownload = (nodeId: string, modelId: string) =>
   appStore.deleteDownload(nodeId, modelId);
 

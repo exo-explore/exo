@@ -57,6 +57,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
 )
+from exo.worker.engines.mlx.vision import VisionProcessor
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.batch_generator import (
     BatchGenerator,
@@ -103,7 +104,9 @@ class Runner:
         self.setup_start_time = time.time()
 
         self.generator: Builder | InferenceGenerator = Builder(
-            self.model_id, self.event_sender, self.cancel_receiver
+            self.model_id,
+            self.event_sender,
+            self.cancel_receiver,
         )
 
         self.seen: set[TaskId] = set()
@@ -195,13 +198,15 @@ class Runner:
                 assert (
                     ModelTask.TextGeneration in self.shard_metadata.model_card.tasks
                 ), f"Incorrect model task(s): {self.shard_metadata.model_card.tasks}"
-                self.generator.inference_model, self.generator.tokenizer = (
-                    load_mlx_items(
-                        self.bound_instance,
-                        self.generator.group,
-                        on_timeout=on_model_load_timeout,
-                        on_layer_loaded=on_layer_loaded,
-                    )
+                (
+                    self.generator.inference_model,
+                    self.generator.tokenizer,
+                    self.generator.vision_processor,
+                ) = load_mlx_items(
+                    self.bound_instance,
+                    self.generator.group,
+                    on_timeout=on_model_load_timeout,
+                    on_layer_loaded=on_layer_loaded,
                 )
 
                 self.generator = self.generator.build()
@@ -319,7 +324,9 @@ class Runner:
         return ExitCode.AllTasksComplete
 
     def send_response(
-        self, response: GenerationResponse | ToolCallResponse, command_id: CommandId
+        self,
+        response: GenerationResponse | ToolCallResponse,
+        command_id: CommandId,
     ):
         match response:
             case GenerationResponse():
@@ -379,6 +386,7 @@ class Builder:
     inference_model: Model | None = None
     tokenizer: TokenizerWrapper | None = None
     group: mx.distributed.Group | None = None
+    vision_processor: VisionProcessor | None = None
 
     def build(
         self,
@@ -386,6 +394,8 @@ class Builder:
         assert self.model_id
         assert self.inference_model
         assert self.tokenizer
+
+        vision_processor = self.vision_processor
 
         tool_parser = None
         logger.info(
@@ -417,6 +427,7 @@ class Builder:
                 device_rank=device_rank,
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
+                vision_processor=vision_processor,
             )
         logger.info("using BatchGenerator")
         return BatchGenerator(
@@ -429,4 +440,5 @@ class Builder:
             device_rank=device_rank,
             cancel_receiver=self.cancel_receiver,
             event_sender=self.event_sender,
+            vision_processor=vision_processor,
         )

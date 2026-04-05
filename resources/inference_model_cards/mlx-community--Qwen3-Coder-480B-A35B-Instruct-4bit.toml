@@ -9,5 +9,7 @@ quantization = "4bit"
 base_model = "Qwen3 Coder 480B"
 capabilities = ["text", "code"]
 
+context_length = 262144
+
 [storage_size]
 in_bytes = 289910292480

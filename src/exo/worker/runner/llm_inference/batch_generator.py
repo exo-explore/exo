@@ -29,6 +29,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     mx_all_gather_tasks,
     mx_any,
 )
+from exo.worker.engines.mlx.vision import VisionProcessor
 from exo.worker.runner.bootstrap import logger
 
 from .model_output_parsers import apply_all_parsers
@@ -120,6 +121,7 @@ class SequentialGenerator(InferenceGenerator):
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
+    vision_processor: VisionProcessor | None = None
     check_for_cancel_every: int = 50
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
@@ -195,21 +197,29 @@ class SequentialGenerator(InferenceGenerator):
         assert self._active is not None
 
         task, mlx_gen, queue, output_generator = self._active
-        response = None
+        output: list[
+            tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
+        ] = []
         try:
-            queue.push(next(mlx_gen))
-            response = next(output_generator)
+            response = next(mlx_gen)
+            queue.push(response)
+            # drain potentially many responses every time
+            while (parsed := next(output_generator, None)) is not None:
+                output.append((task.task_id, parsed))
+
         except (StopIteration, PrefillCancelled):
-            response = Finished()
+            output.append((task.task_id, Finished()))
             self._active = None
             if self._queue:
                 self._start_next()
+
         except Exception as e:
             self._send_error(task, e)
             self._active = None
             raise
+
         return itertools.chain(
-            [] if response is None else [(task.task_id, response)],
+            output,
             map(lambda task: (task, Cancelled()), self._cancelled_tasks),
         )
 
@@ -296,6 +306,7 @@ class SequentialGenerator(InferenceGenerator):
             distributed_prompt_progress_callback=distributed_prompt_progress_callback,
             on_generation_token=on_generation_token,
             group=self.group,
+            vision_processor=self.vision_processor,
         )
 
     def close(self) -> None:
@@ -314,6 +325,7 @@ class BatchGenerator(InferenceGenerator):
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
     check_for_cancel_every: int = 50
+    vision_processor: VisionProcessor | None = None
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -336,6 +348,7 @@ class BatchGenerator(InferenceGenerator):
             tokenizer=self.tokenizer,
             group=self.group,
             kv_prefix_cache=self.kv_prefix_cache,
+            vision_processor=self.vision_processor,
         )
 
     def warmup(self):
@@ -427,11 +440,11 @@ class BatchGenerator(InferenceGenerator):
 
             task, queue, output_generator = self._active_tasks[uid]
             queue.push(response)
-            parsed = next(output_generator)
-
-            if parsed is not None:
+            # If a generator fails to parse for some reason and returns early, we should not crash
+            while (parsed := next(output_generator, None)) is not None:
                 output.append((task.task_id, parsed))
 
+            # check if original response was terminal and append a Finished()
             if response.finish_reason is not None:
                 output.append((task.task_id, Finished()))
                 del self._active_tasks[uid]

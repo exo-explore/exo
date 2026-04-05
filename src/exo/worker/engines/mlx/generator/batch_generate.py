@@ -1,3 +1,4 @@
+import contextlib
 import time
 from dataclasses import dataclass, field
 from typing import Callable, cast
@@ -6,11 +7,14 @@ import mlx.core as mx
 from mlx_lm.generate import (
     BatchGenerator as MlxBatchGenerator,
 )
+from mlx_lm.generate import (
+    generation_stream,
+)
 from mlx_lm.models.cache import RotatingKVCache
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import StreamingDetokenizer, TokenizerWrapper
 
-from exo.shared.types.api import (
+from exo.api.types import (
     CompletionTokensDetails,
     FinishReason,
     GenerationStats,
@@ -33,9 +37,20 @@ from exo.worker.engines.mlx.generator.generate import (
     ban_token_ids,
     eos_ids_from_tokenizer,
     extract_top_logprobs,
+    patch_embed_tokens,
     prefill,
 )
-from exo.worker.engines.mlx.utils_mlx import fix_unmatched_think_end_tokens
+from exo.worker.engines.mlx.utils_mlx import (
+    detect_thinking_prompt_suffix,
+    fix_unmatched_think_end_tokens,
+    system_prompt_token_count,
+)
+from exo.worker.engines.mlx.vision import (
+    MediaRegion,
+    VisionProcessor,
+    VisionResult,
+    prepare_vision,
+)
 from exo.worker.runner.bootstrap import logger
 
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
@@ -63,8 +78,13 @@ class _EngineTask:
     potential_stop_sequence_text: str = ""
     completion_tokens: int = 0
     generation_start_time: float = 0.0
+    generation_time_at_start: float = 0.0
     in_thinking: bool = False
     reasoning_tokens: int = 0
+    prefill_tps: float = 0.0
+    media_regions: list[MediaRegion] = field(default_factory=list)
+    first_gen_token_time: float | None = None
+    last_gen_token_time: float | None = None
 
 
 @dataclass(eq=False)
@@ -73,23 +93,25 @@ class ExoBatchGenerator:
     tokenizer: TokenizerWrapper
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
+    vision_processor: VisionProcessor | None = None
 
-    _exo_gen: MlxBatchGenerator = field(init=False)
+    _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
-        self._exo_gen = MlxBatchGenerator(
+        self._mlx_gen = MlxBatchGenerator(
             model=self.model,
             stop_tokens=set(eos_ids_from_tokenizer(self.tokenizer)),
             prefill_step_size=4096,
         )
+        self._mlx_gen._needs_topk = False  # pyright: ignore[reportAttributeAccessIssue]
 
     @property
     def has_work(self) -> bool:
         return (
             bool(self._active_tasks)
-            or bool(self._exo_gen.unprocessed_prompts)
-            or self._exo_gen.active_batch is not None
+            or bool(self._mlx_gen.unprocessed_prompts)
+            or self._mlx_gen.active_batch is not None
         )
 
     def submit(
@@ -105,6 +127,29 @@ class ExoBatchGenerator:
             all_prompt_tokens, self.tokenizer
         )
 
+        vision: VisionResult | None = None
+        media_regions: list[MediaRegion] = []
+
+        if self.vision_processor is not None:
+            try:
+                vision = prepare_vision(
+                    images=task_params.images,
+                    chat_template_messages=task_params.chat_template_messages,
+                    vision_processor=self.vision_processor,
+                    tokenizer=self.tokenizer,
+                    model=self.model,
+                    model_id=task_params.model,
+                    task_params=task_params,
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Vision processing failed, falling back to text-only"
+                )
+
+        if vision is not None:
+            all_prompt_tokens = vision.prompt_tokens
+            media_regions = vision.media_regions
+
         is_bench = task_params.bench
 
         prefix_hit_length = 0
@@ -113,7 +158,7 @@ class ExoBatchGenerator:
 
         if self.kv_prefix_cache is not None and not is_bench:
             cache, remaining_tokens, matched_index = self.kv_prefix_cache.get_kv_cache(
-                self.model, all_prompt_tokens
+                self.model, all_prompt_tokens, media_regions=media_regions
             )
             prefix_hit_length = len(all_prompt_tokens) - len(remaining_tokens)
             if prefix_hit_length > 0:
@@ -139,16 +184,24 @@ class ExoBatchGenerator:
             top_k=task_params.top_k if task_params.top_k is not None else 0,
         )
 
-        _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
-            self.model,
-            self.tokenizer,
-            sampler,
-            prompt_tokens[:-1],
-            cache,
-            self.group,
-            on_prefill_progress,
-            distributed_prompt_progress_callback,
+        vision_ctx = (
+            patch_embed_tokens(
+                self.model, vision.embeddings, prefix_hit_length, len(prompt_tokens) - 1
+            )
+            if vision is not None
+            else contextlib.nullcontext()
         )
+        with vision_ctx:
+            _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
+                self.model,
+                self.tokenizer,
+                sampler,
+                prompt_tokens[:-1],
+                cache,
+                self.group,
+                on_prefill_progress,
+                distributed_prompt_progress_callback,
+            )
 
         # We need to clamp rotating kv caches to max size so that mlx lm's _merge_caches behaves
         for c in cache:
@@ -164,12 +217,17 @@ class ExoBatchGenerator:
                 c._idx = c.max_size
 
         if not is_bench:
+            min_prefix_hit_length = max(
+                1000, system_prompt_token_count(task_params, self.tokenizer)
+            )
             self._save_prefix_cache(
                 all_prompt_tokens,
                 list(cache),
                 cache_snapshots,
                 prefix_hit_length,
                 matched_index,
+                min_prefix_hit_length,
+                media_regions,
             )
 
         last_tokens = prompt_tokens[-2:]
@@ -187,7 +245,7 @@ class ExoBatchGenerator:
 
         max_tokens = task_params.max_output_tokens or MAX_TOKENS
 
-        uids = self._exo_gen.insert(
+        uids = self._mlx_gen.insert(
             prompts=[last_tokens.tolist()],
             max_tokens=[max_tokens],
             caches=[list(cache)],
@@ -209,6 +267,10 @@ class ExoBatchGenerator:
             detokenizer=self.tokenizer.detokenizer,
             on_generation_token=on_generation_token,
             generation_start_time=time.perf_counter(),
+            prefill_tps=_prefill_tps,
+            generation_time_at_start=self._mlx_gen._stats.generation_time,
+            media_regions=media_regions,
+            in_thinking=detect_thinking_prompt_suffix(prompt, self.tokenizer),
         )
 
         return uid
@@ -217,7 +279,12 @@ class ExoBatchGenerator:
         if not self.has_work:
             return []
 
-        responses = self._exo_gen.next()
+        self._mlx_gen._needs_topk = any(  # pyright: ignore[reportAttributeAccessIssue]
+            t.task_params.logprobs for t in self._active_tasks.values()
+        )
+        _step_tic = time.perf_counter()
+        responses = self._mlx_gen.next()
+        _next_elapsed = time.perf_counter() - _step_tic
 
         results: list[tuple[int, GenerationResponse]] = []
 
@@ -229,6 +296,10 @@ class ExoBatchGenerator:
                 continue
 
             state = self._active_tasks[response.uid]
+            now = time.perf_counter()
+            if state.first_gen_token_time is None:
+                state.first_gen_token_time = now
+            state.last_gen_token_time = now
             if state.on_generation_token is not None:
                 state.on_generation_token()
             if response.finish_reason != "stop":
@@ -237,6 +308,11 @@ class ExoBatchGenerator:
                 state.detokenizer.finalize()
             text = state.detokenizer.last_segment
             state.completion_tokens += 1
+            if state.task_params.bench:
+                delta = now - state.first_gen_token_time
+                logger.debug(
+                    f"[bench] uid={response.uid} tok#{state.completion_tokens} {text!r} t={delta:.4f}s"
+                )
             state.generated_text_parts.append(text)
             state.potential_stop_sequence_text += text
 
@@ -275,31 +351,35 @@ class ExoBatchGenerator:
             logprob: float | None = None
             top_logprobs: list[TopLogprobItem] | None = None
             if task_params.logprobs:
-                logprob, top_logprobs = extract_top_logprobs(
-                    logprobs=response.logprobs,
-                    tokenizer=self.tokenizer,
-                    top_logprobs=task_params.top_logprobs or DEFAULT_TOP_LOGPROBS,
-                    selected_token=response.token,
-                )
+                with mx.stream(generation_stream):
+                    logprob, top_logprobs = extract_top_logprobs(
+                        logprobs=response.logprobs,
+                        tokenizer=self.tokenizer,
+                        top_logprobs=task_params.top_logprobs or DEFAULT_TOP_LOGPROBS,
+                        selected_token=response.token,
+                        precomputed_indices=getattr(response, "_topk_indices", None),
+                        precomputed_values=getattr(response, "_topk_values", None),
+                        precomputed_selected=getattr(
+                            response, "_selected_logprob", None
+                        ),
+                    )
 
             stats: GenerationStats | None = None
             usage: Usage | None = None
             if is_done:
-                generation_elapsed = time.perf_counter() - state.generation_start_time
-                generation_tps = (
-                    state.completion_tokens / generation_elapsed
-                    if generation_elapsed > 0
-                    else 0.0
-                )
-                try:
-                    mlx_stats = self._exo_gen.stats()
-                except ZeroDivisionError:
-                    mlx_stats = None
+                if state.completion_tokens > 1:
+                    gen_span = state.last_gen_token_time - state.first_gen_token_time
+                    generation_tps = (
+                        (state.completion_tokens - 1) / gen_span
+                        if gen_span > 0
+                        else 0.0
+                    )
+                else:
+                    generation_tps = 0.0
+
                 stats = GenerationStats(
-                    prompt_tps=float(mlx_stats.prompt_tps)
-                    if mlx_stats is not None and mlx_stats.prompt_time > 0
-                    else 0.0,
-                    generation_tps=float(generation_tps),
+                    prompt_tps=state.prefill_tps,
+                    generation_tps=generation_tps,
                     prompt_tokens=len(state.all_prompt_tokens),
                     generation_tokens=state.completion_tokens,
                     peak_memory_usage=Memory.from_gb(mx.get_peak_memory() / 1e9),
@@ -342,15 +422,22 @@ class ExoBatchGenerator:
                     -max_stop_len:
                 ]
 
+        _step_elapsed = time.perf_counter() - _step_tic
+        _overhead = _step_elapsed - _next_elapsed
+        if self._mlx_gen._next_count % 64 == 0 and responses:
+            logger.debug(
+                f"step overhead: {_overhead * 1000:.2f}ms (next={_next_elapsed * 1000:.2f}ms total={_step_elapsed * 1000:.2f}ms)"
+            )
+
         return results
 
     def cancel(self, uids: list[int]) -> None:
-        self._exo_gen.remove(uids)
+        self._mlx_gen.remove(uids)
         for uid in uids:
             self._active_tasks.pop(uid, None)
 
     def close(self) -> None:
-        self._exo_gen.close()
+        self._mlx_gen.close()
 
     def _save_prefix_cache(
         self,
@@ -359,6 +446,8 @@ class ExoBatchGenerator:
         cache_snapshots: list[CacheSnapshot] | None,
         prefix_hit_length: int,
         matched_index: int | None,
+        min_prefix_hit_length: int = 1000,
+        media_regions: list[MediaRegion] | None = None,
     ) -> None:
         if self.kv_prefix_cache is None:
             return
@@ -369,8 +458,8 @@ class ExoBatchGenerator:
                 if len(all_prompt_tokens) > 0
                 else 0.0
             )
-            if (
-                matched_index is not None
+            if matched_index is not None and (
+                prefix_hit_length >= min_prefix_hit_length
                 and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
             ):
                 self.kv_prefix_cache.update_kv_cache(
@@ -379,10 +468,14 @@ class ExoBatchGenerator:
                     cache,
                     cache_snapshots,
                     restore_pos=prefix_hit_length,
+                    media_regions=media_regions,
                 )
             else:
                 self.kv_prefix_cache.add_kv_cache(
-                    all_prompt_tokens, cache, cache_snapshots
+                    all_prompt_tokens,
+                    cache,
+                    cache_snapshots,
+                    media_regions=media_regions,
                 )
         except Exception:
             logger.warning("Failed to save prefix cache", exc_info=True)

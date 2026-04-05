@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from exo.shared.types.api import FinishReason
+from exo.api.types import FinishReason
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ToolCallResponse,

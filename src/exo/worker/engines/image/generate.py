@@ -3,13 +3,14 @@ import io
 import random
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Generator, Literal
 
 import mlx.core as mx
 from PIL import Image
 
-from exo.shared.types.api import (
+from exo.api.types import (
     AdvancedImageParams,
     ImageEditsTaskParams,
     ImageGenerationStats,
@@ -69,6 +70,7 @@ def warmup_image_generator(model: DistributedImageModel) -> Image.Image | None:
 def generate_image(
     model: DistributedImageModel,
     task: ImageGenerationTaskParams | ImageEditsTaskParams,
+    cancel_checker: Callable[[], bool] | None = None,
 ) -> Generator[ImageGenerationResponse | PartialImageResponse, None, None]:
     """Generate image(s), optionally yielding partial results.
 
@@ -127,6 +129,7 @@ def generate_image(
                 image_path=image_path,
                 partial_images=partial_images,
                 advanced_params=advanced_params,
+                cancel_checker=cancel_checker,
             ):
                 if isinstance(result, tuple):
                     # Partial image: (Image, partial_index, total_partials)

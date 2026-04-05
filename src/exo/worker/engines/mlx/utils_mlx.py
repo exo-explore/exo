@@ -5,7 +5,10 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from exo.worker.engines.mlx.vision import VisionProcessor
 
 # Monkey-patch for transformers 5.x compatibility
 # Kimi's tokenization_kimi.py imports bytes_to_unicode from the old location
@@ -168,7 +171,7 @@ def load_mlx_items(
     group: Group | None,
     on_timeout: TimeoutCallback | None,
     on_layer_loaded: LayerLoadedCallback | None,
-) -> tuple[Model, TokenizerWrapper]:
+) -> "tuple[Model, TokenizerWrapper, VisionProcessor | None]":
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
@@ -210,7 +213,18 @@ def load_mlx_items(
 
     mx.clear_cache()
 
-    return cast(Model, model), tokenizer
+    vision_config = bound_instance.bound_shard.model_card.vision
+
+    if vision_config is not None:
+        from exo.worker.engines.mlx.vision import VisionProcessor
+
+        vision_processor: VisionProcessor | None = VisionProcessor(
+            vision_config, bound_instance.bound_shard.model_card.model_id
+        )
+    else:
+        vision_processor = None
+
+    return cast(Model, model), tokenizer, vision_processor
 
 
 def shard_and_load(
@@ -486,23 +500,42 @@ def _patch_lossy_chat_template(template: str) -> str | None:
 
 
 def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
-    if "deepseek-v3.2" not in task_params.model.lower():
-        return False
-    # Use DSML encoding when tools are provided or tool results are in the conversation
-    if task_params.tools:
-        return True
-    if task_params.chat_template_messages:
-        return any(
-            msg.get("role") == "tool" for msg in task_params.chat_template_messages
+    return "deepseek-v3.2" in task_params.model.lower()
+
+
+def consolidate_system_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    System messages almost exclusively must go at the start of a message
+    and there must only be a single one.
+
+    Also, Codex sends "developer" messages which are just system prompts.
+    """
+    system_parts: list[str] = []
+    non_system: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.get("role") in ("system", "developer"):
+            content = cast(str, msg.get("content", ""))
+            if content:
+                system_parts.append(content)
+        else:
+            non_system.append(msg)
+    formatted_messages = non_system
+    if system_parts:
+        formatted_messages.insert(
+            0, {"role": "system", "content": "\n".join(system_parts)}
         )
-    return False
+    return formatted_messages
 
 
-def apply_chat_template(
+def render_chat_template(
     tokenizer: TokenizerWrapper,
+    messages: list[dict[str, Any]],
     task_params: TextGenerationTaskParams,
 ) -> str:
-    """Convert TextGenerationTaskParams to a chat template prompt.
+    """
+    Convert TextGenerationTaskParams to a chat template prompt.
 
     Converts the internal format (input + instructions) to a messages list
     that can be processed by the tokenizer's chat template.
@@ -510,25 +543,7 @@ def apply_chat_template(
     When chat_template_messages is available (from Chat Completions API),
     uses those directly to preserve tool_calls, thinking, and other fields.
     """
-    formatted_messages: list[dict[str, Any]] = []
-    if task_params.chat_template_messages is not None:
-        # Use pre-formatted messages that preserve tool_calls, thinking, etc.
-        formatted_messages = list(task_params.chat_template_messages)
-        for msg in formatted_messages:
-            _normalize_tool_calls(msg)
-    else:
-        # Add system message (instructions) if present
-        if task_params.instructions:
-            formatted_messages.append(
-                {"role": "system", "content": task_params.instructions}
-            )
-
-        # Convert input to messages
-        for msg in task_params.input:
-            if not msg.content:
-                logger.warning("Received message with empty content, skipping")
-                continue
-            formatted_messages.append({"role": msg.role, "content": msg.content})
+    formatted_messages = consolidate_system_messages(messages)
 
     # For assistant prefilling, append content after templating to avoid a closing turn token.
     partial_assistant_content: str | None = None
@@ -541,13 +556,19 @@ def apply_chat_template(
 
         prompt = encode_messages(
             messages=formatted_messages,
-            thinking_mode="thinking" if task_params.enable_thinking else "chat",
+            # Only use chat mode if enable thinking is explicitly Fakse.
+            thinking_mode="chat"
+            if task_params.enable_thinking is False
+            else "thinking",
             tools=task_params.tools,
         )
         if partial_assistant_content:
             prompt += partial_assistant_content
         logger.info(prompt)
         return prompt
+
+    for msg in formatted_messages:
+        _normalize_tool_calls(msg)
 
     extra_kwargs: dict[str, Any] = {}
     if task_params.enable_thinking is not None:
@@ -583,9 +604,56 @@ def apply_chat_template(
     if partial_assistant_content:
         prompt += partial_assistant_content
 
+    return prompt
+
+
+def apply_chat_template(
+    tokenizer: TokenizerWrapper,
+    task_params: TextGenerationTaskParams,
+) -> str:
+    messages: list[dict[str, Any]] = []
+    if task_params.chat_template_messages is not None:
+        # Use pre-formatted messages that preserve tool_calls, thinking, etc.
+        messages = list(task_params.chat_template_messages)
+    else:
+        # Add system message (instructions) if present
+        if task_params.instructions:
+            messages.append({"role": "system", "content": task_params.instructions})
+
+        # Convert input to messages
+        for msg in task_params.input:
+            if not msg.content:
+                logger.warning("Received message with empty content, skipping")
+                continue
+            messages.append({"role": msg.role, "content": msg.content})
+
+    prompt = render_chat_template(tokenizer, messages, task_params)
     logger.info(prompt)
 
     return prompt
+
+
+def system_prompt_token_count(
+    task_params: TextGenerationTaskParams,
+    tokenizer: TokenizerWrapper,
+) -> int:
+    """Approximate token count of the system prompt portion of the input."""
+    parts: list[str] = []
+    if task_params.chat_template_messages is not None:
+        for msg in task_params.chat_template_messages:
+            if msg.get("role") in ("system", "developer"):
+                content = msg.get("content", "")  # type: ignore
+                if isinstance(content, str):
+                    parts.append(content)
+    else:
+        if task_params.instructions:
+            parts.append(task_params.instructions)
+        for msg in task_params.input:
+            if msg.role in ("system", "developer"):
+                parts.append(msg.content)
+    if len(parts) == 0:
+        return 0
+    return len(tokenizer.encode(" ".join(parts), add_special_tokens=False))
 
 
 def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> bool:
@@ -638,6 +706,7 @@ class NullKVCache(KVCache):
     @property
     def state(self) -> tuple[mx.array, mx.array]:
         # matches what mx.save_safetensors / mx.eval expect
+        assert self.keys is not None and self.values is not None
         return self.keys, self.values
 
     @state.setter
@@ -739,12 +808,9 @@ def _parse_kimi_tool_calls(text: str):
         if func_args_match is None:
             raise ValueError("No tool call arguments found.")
         func_args = func_args_match.group(1)
-        try:
-            arg_dct = json.loads(func_args)  # pyright: ignore[reportAny]
-        except Exception:
-            arg_dct = None
+        arg_dct = json.loads(func_args)  # pyright: ignore[reportAny]
 
-        return dict(id=tool_call_id, name=func_name, arguments=arg_dct)
+        return dict(id=tool_call_id, name=func_name, arguments=arg_dct)  # pyright: ignore[reportAny]
 
     tool_matches = _tool_call_split_regex.findall(text)
     if tool_matches:

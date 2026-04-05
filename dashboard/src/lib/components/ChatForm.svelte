@@ -1,9 +1,6 @@
 <script lang="ts">
   import {
     isLoading,
-    sendMessage,
-    generateImage,
-    editImage,
     editingImage,
     clearEditingImage,
     selectedChatModel,
@@ -28,7 +25,7 @@
     modelTasks?: Record<string, string[]>;
     modelCapabilities?: Record<string, string[]>;
     onSend?: () => void;
-    onAutoSend?: (
+    onAutoSend: (
       content: string,
       files?: {
         id: string;
@@ -216,49 +213,10 @@
     uploadedFiles = [];
     resetTextareaHeight();
 
-    // When onAutoSend is provided, the parent controls all send logic
-    // (including launching non-running models before sending)
-    if (onAutoSend) {
-      onAutoSend(content, files);
-      onSend?.();
-      setTimeout(() => textareaRef?.focus(), 10);
-      return;
-    }
-
-    // Use image editing if in edit mode
-    if (isEditMode && currentEditingImage && content) {
-      editImage(content, currentEditingImage.imageDataUrl);
-    }
-    // If user attached an image with an ImageToImage model, use edit endpoint
-    else if (
-      currentModel &&
-      modelSupportsImageEditing(currentModel) &&
-      files.length > 0 &&
-      content
-    ) {
-      // Use the first attached image for editing
-      const imageFile = files[0];
-      if (imageFile.preview) {
-        editImage(content, imageFile.preview);
-      }
-    } else if (
-      currentModel &&
-      modelSupportsTextToImage(currentModel) &&
-      content
-    ) {
-      // Use image generation for text-to-image models
-      generateImage(content);
-    } else {
-      sendMessage(
-        content,
-        files,
-        modelSupportsThinking() ? thinkingEnabled : null,
-      );
-    }
-
+    // Parent controls all send logic (including image routing,
+    // launching non-running models before sending, etc.)
+    onAutoSend(content, files);
     onSend?.();
-
-    // Refocus the textarea after sending
     setTimeout(() => textareaRef?.focus(), 10);
   }
 

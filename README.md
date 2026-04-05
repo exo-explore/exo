@@ -95,17 +95,27 @@ Then restart the Nix daemon: `sudo launchctl kickstart -k system/org.nixos.nix-d
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   ```
 - [uv](https://github.com/astral-sh/uv) (for Python dependency management)
-- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
 - [node](https://github.com/nodejs/node) (for building the dashboard)
 
   ```bash
-  brew install uv macmon node
+  brew install uv node
   ```
 - [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
 
   ```bash
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   rustup toolchain install nightly
+  ```
+- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
+
+  Install the pinned fork revision used by this repo instead of Homebrew `macmon`.
+  Homebrew `macmon 0.6.1` still crashes on Apple M5.
+
+  ```bash
+  cargo install --git https://github.com/swiftraccoon/macmon \
+    --rev 9154d234f763fbeffdcb4135d0bbbaf80609699b \
+    macmon \
+    --force
   ```
 
 Clone the repo, build the dashboard, and run exo:
@@ -285,8 +295,9 @@ exo supports several environment variables for configuration:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `EXO_MODELS_PATH` | Colon-separated paths to search for pre-downloaded models (e.g., on NFS mounts or shared storage) | None |
-| `EXO_MODELS_DIR` | Directory where exo downloads and stores models | `~/.local/share/exo/models` (Linux) or `~/.exo/models` (macOS) |
+| `EXO_DEFAULT_MODELS_DIR` | Default directory for model downloads and caches. Always first in the writable dirs list. | `~/.local/share/exo/models` (Linux) or `~/.exo/models` (macOS) |
+| `EXO_MODELS_DIRS` | Colon-separated additional writable directories for model downloads. Checked in order after the default; first with enough free space is used. | None |
+| `EXO_MODELS_READ_ONLY_DIRS` | Colon-separated read-only directories to search for pre-downloaded models (e.g., NFS mounts, shared storage). Models here cannot be deleted. | None |
 | `EXO_OFFLINE` | Run without internet connection (uses only local models) | `false` |
 | `EXO_ENABLE_IMAGE_MODELS` | Enable image model support | `false` |
 | `EXO_LIBP2P_NAMESPACE` | Custom namespace for cluster isolation | None |
@@ -296,8 +307,11 @@ exo supports several environment variables for configuration:
 **Example usage:**
 
 ```bash
-# Use pre-downloaded models from NFS mount
-EXO_MODELS_PATH=/mnt/nfs/models:/opt/ai-models uv run exo
+# Use pre-downloaded models from NFS mount (read-only)
+EXO_MODELS_READ_ONLY_DIRS=/mnt/nfs/models:/opt/ai-models uv run exo
+
+# Download models to an external SSD (falls back to default dir if full)
+EXO_MODELS_DIRS=/Volumes/ExternalSSD/exo-models uv run exo
 
 # Run in offline mode
 EXO_OFFLINE=true uv run exo

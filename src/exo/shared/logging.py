@@ -66,7 +66,7 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
     else:
         logger.add(
             sys.__stderr__,  # type: ignore
-            format="[ {time:HH:mm:ss.SSS} | <level>{level: <8}</level> | {name}:{function}:{line} ] <level>{message}</level>",
+            format="[ {time:YYYY-MM-DD HH:mm:ss.SSS} | <level>{level: <8}</level> | {name}:{function}:{line} ] <level>{message}</level>",
             level="DEBUG",
             colorize=True,
             enqueue=True,
@@ -76,7 +76,7 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
         logger.add(
             log_file,
             format="[ {time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} ] {message}",
-            level="INFO",
+            level="DEBUG" if verbosity > 0 else "INFO",
             colorize=False,
             enqueue=True,
             rotation=lambda _, __: next(rotate_once),

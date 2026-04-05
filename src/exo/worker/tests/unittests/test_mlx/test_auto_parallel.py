@@ -43,8 +43,8 @@ def run_pipeline_device(
 
         def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
             for layer in self.layers:
-                x = layer(x, *args, **kwargs)  # pyright: ignore[reportUnknownVariableType]
-            return x  # pyright: ignore[reportUnknownVariableType]
+                x = layer(x, *args, **kwargs)
+            return x
 
     try:
         group = mx.distributed.init(backend="ring", strict=True)
