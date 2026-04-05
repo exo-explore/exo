@@ -620,7 +620,7 @@ def load_vllm_engine(
                 disable_log_stats=True,
                 kv_transfer_config=kv_transfer_config,  # type: ignore
                 disable_hybrid_kv_cache_manager=False,
-                limit_mm_per_prompt={"image": 0, "video": 0},
+                # limit_mm_per_prompt={"image": 0, "video": 0},  # re-enabled: ViT now uses FLASHINFER on Blackwell
             )
 
             set_weight_loading_callback(on_layer_loaded)
