@@ -809,12 +809,14 @@ class ExoBatchGenerator:
             return []
 
         _trace = os.environ.get("EXO_TRACING_ENABLED", "false").lower() in ("true", "1")
+        from exo.worker.engines.mlx.trace import request_trace
 
         # Use PP speculation decode if active
         if self._pp_spec_gen is not None:
             _step_tic = time.perf_counter()
             responses = self._step_pp_spec()
             _next_elapsed = time.perf_counter() - _step_tic
+            request_trace.record("decode.step.mlx_next", _step_tic)
         else:
             self._mlx_gen._needs_topk = any(  # pyright: ignore[reportAttributeAccessIssue]
                 t.task_params.logprobs for t in self._active_tasks.values()
@@ -822,6 +824,7 @@ class ExoBatchGenerator:
             _step_tic = time.perf_counter()
             responses = self._mlx_gen.next()
             _next_elapsed = time.perf_counter() - _step_tic
+            request_trace.record("decode.step.mlx_next", _step_tic)
 
         results: list[tuple[int, GenerationResponse]] = []
 
@@ -985,8 +988,12 @@ class ExoBatchGenerator:
                     -max_stop_len:
                 ]
 
-        _step_elapsed = time.perf_counter() - _step_tic
+        _step_end = time.perf_counter()
+        _step_elapsed = _step_end - _step_tic
         _overhead = _step_elapsed - _next_elapsed
+        _post_total = _t_callback_total + _t_detok_total + _t_stop_total + _t_logprobs_total + _t_response_build_total
+        request_trace.record("decode.step.post_process", _step_tic + _next_elapsed, _step_end)
+
         if self._mlx_gen._next_count % 64 == 0 and responses:
             logger.debug(
                 f"step overhead: {_overhead * 1000:.2f}ms (next={_next_elapsed * 1000:.2f}ms total={_step_elapsed * 1000:.2f}ms)"

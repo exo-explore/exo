@@ -325,6 +325,7 @@ class Runner:
                             result, self.active_tasks[task_id].command_id
                         )
             _send_dt = time.perf_counter() - _t0
+            request_trace.record("runner.loop.send", _t0)
 
             for task_id in finished:
                 self.active_tasks.pop(task_id, None)
@@ -353,6 +354,7 @@ class Runner:
             except WouldBlock:
                 pass
             _recv_dt = time.perf_counter() - _t0
+            request_trace.record("runner.loop.recv_poll", _t0)
 
             _loop_dt = time.perf_counter() - _loop_tic
 
