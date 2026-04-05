@@ -185,13 +185,13 @@ def pipeline_parallel_prefill(
     # Initial callback matching generate_step
     prompt_progress_callback(0, total)
 
+    from exo.worker.engines.mlx.trace import request_trace
+
     try:
         with mx.stream(generation_stream):
             for _ in range(n_leading):
                 if distributed_prompt_progress_callback is not None:
                     distributed_prompt_progress_callback()
-
-            _trace = os.environ.get("EXO_TRACING_ENABLED", "false").lower() in ("true", "1")
 
             for i in range(n_real):
                 chunk_size = real_chunk_sizes[i]
@@ -201,58 +201,35 @@ def pipeline_parallel_prefill(
                     cache=_prompt_cache,
                 )
                 quantize_cache_fn(_prompt_cache)
-                _fwd_dt = time.perf_counter() - _t_fwd
+                request_trace.record(f"prefill.chunk{i}.forward({chunk_size}tok)", _t_fwd)
                 processed += chunk_size
 
                 if distributed_prompt_progress_callback is not None:
+                    _t_cb = time.perf_counter()
                     distributed_prompt_progress_callback()
+                    request_trace.record(f"prefill.chunk{i}.distributed_cb", _t_cb)
 
                 _t_flush = time.perf_counter()
                 flush_prefill_sends()
-                _flush_dt = time.perf_counter() - _t_flush
+                request_trace.record(f"prefill.chunk{i}.flush_sends", _t_flush)
 
-                # Evaluate cache states after each chunk to free intermediate
-                # activations. Without this, all chunks' computation graphs
-                # accumulate in memory causing OOM on long prompts.
                 _t_eval = time.perf_counter()
                 mx.eval([c.state for c in _prompt_cache])  # type: ignore
-                _eval_dt = time.perf_counter() - _t_eval
+                request_trace.record(f"prefill.chunk{i}.eval_cache", _t_eval)
 
                 # Break shared-buffer references in DeltaNet (ArraysCache) entries.
-                #
-                # Even after mx.eval materializes the cache arrays, MLX slices
-                # share the parent tensor's Data buffer via shared_ptr. The model-
-                # level mx.contiguous (in GatedDeltaNet.__call__) handles new
-                # cache writes, but after eval the materialized arrays may still
-                # reference computation graph buffers. This second pass ensures
-                # all ArraysCache entries are fully independent copies.
-                #
-                # Without this: ~540 KB/tok leak, 24K token ceiling on 128GB.
-                # With this:    ~20 KB/tok,  100K+ tokens feasible.
-                # See prefill_memory_leak_fix.md in project memory for full analysis.
                 _t_contig = time.perf_counter()
                 for _c in _prompt_cache:
                     if isinstance(_c, ArraysCache):
                         _c.cache = [mx.contiguous(x) if x is not None else x for x in _c.cache]
                         mx.eval(*[x for x in _c.cache if x is not None])
-                _contig_dt = time.perf_counter() - _t_contig
+                request_trace.record(f"prefill.chunk{i}.contiguous", _t_contig)
 
                 # Log memory every 5 chunks for profiling
                 if i % 5 == 0 or i == n_real - 1:
                     active_gb = mx.metal.get_active_memory() / 1024**3
                     peak_gb = mx.metal.get_peak_memory() / 1024**3
                     logger.info(f"[MEM] prefill chunk {i+1}/{n_real} ({processed} tokens): active={active_gb:.2f} GB, peak={peak_gb:.2f} GB")
-
-                if _trace:
-                    logger.info(
-                        f"[PROF prefill chunk {i+1}/{n_real}] "
-                        f"forward={_fwd_dt*1000:.1f}ms "
-                        f"flush_sends={_flush_dt*1000:.1f}ms "
-                        f"eval_cache={_eval_dt*1000:.1f}ms "
-                        f"contiguous={_contig_dt*1000:.1f}ms "
-                        f"total={(_fwd_dt+_flush_dt+_eval_dt+_contig_dt)*1000:.1f}ms "
-                        f"({chunk_size} tokens)"
-                    )
 
                 prompt_progress_callback(processed, total)
 
@@ -264,11 +241,13 @@ def pipeline_parallel_prefill(
         clear_prefill_sends()
 
     # Post-loop: process remaining 1 token + add +1 entry to match stream_generate.
+    _t_post = time.perf_counter()
     for _ in range(2):
         with mx.stream(generation_stream):
             model(prompt[-1:][None], cache=_prompt_cache)
             quantize_cache_fn(_prompt_cache)
         flush_prefill_sends()
+    request_trace.record("prefill.post_loop_tokens", _t_post)
 
     assert _prompt_cache is not None
     with mx.stream(generation_stream):
@@ -328,18 +307,24 @@ def prefill(
             distributed_prompt_progress_callback()
         progress_callback(processed, total)
 
+    from exo.worker.engines.mlx.trace import request_trace, T
+
     set_pipeline_prefill(model, is_prefill=True)
 
     # Release any cached Metal buffers before prefill to maximize headroom
     # for the forward pass intermediates during long context prefills.
-    mx.clear_cache()
+    with T("prefill.clear_cache"):
+        mx.clear_cache()
 
-    mx_barrier(group)
+    with T("prefill.barrier"):
+        mx_barrier(group)
+
     # Memory checkpoint before prefill
-    mx.eval(mx.zeros(1))
-    active_gb = mx.metal.get_active_memory() / 1024**3
-    peak_gb = mx.metal.get_peak_memory() / 1024**3
-    cache_gb = mx.metal.get_cache_memory() / 1024**3
+    with T("prefill.mem_checkpoint"):
+        mx.eval(mx.zeros(1))
+        active_gb = mx.metal.get_active_memory() / 1024**3
+        peak_gb = mx.metal.get_peak_memory() / 1024**3
+        cache_gb = mx.metal.get_cache_memory() / 1024**3
     logger.info(f"[MEM] before prefill ({num_tokens} tokens): active={active_gb:.2f} GB, peak={peak_gb:.2f} GB, cache={cache_gb:.2f} GB")
     logger.info("Starting prefill")
 
@@ -351,33 +336,33 @@ def prefill(
         if is_pipeline and num_tokens >= prefill_step_size:
             set_pipeline_queue_sends(model, queue_sends=True)
             assert group is not None, "Pipeline prefill requires a distributed group"
-            pipeline_parallel_prefill(
-                model=model,
-                prompt=prompt_tokens,
-                prompt_cache=cache,
-                prefill_step_size=prefill_step_size,
-                kv_group_size=KV_GROUP_SIZE,
-                kv_bits=KV_BITS,
-                prompt_progress_callback=progress_callback,
-                distributed_prompt_progress_callback=distributed_prompt_progress_callback,
-                group=group,
-            )
+            with T("prefill.pipeline_parallel"):
+                pipeline_parallel_prefill(
+                    model=model,
+                    prompt=prompt_tokens,
+                    prompt_cache=cache,
+                    prefill_step_size=prefill_step_size,
+                    kv_group_size=KV_GROUP_SIZE,
+                    kv_bits=KV_BITS,
+                    prompt_progress_callback=progress_callback,
+                    distributed_prompt_progress_callback=distributed_prompt_progress_callback,
+                    group=group,
+                )
         else:
-            # Use max_tokens=1 because max_tokens=0 does not work.
-            # We just throw away the generated token - we only care about filling the cache
-            for _ in stream_generate(
-                model=model,
-                tokenizer=tokenizer,
-                prompt=prompt_tokens,
-                max_tokens=1,
-                sampler=sampler,
-                prompt_cache=cache,
-                prefill_step_size=prefill_step_size,
-                kv_group_size=KV_GROUP_SIZE,
-                kv_bits=KV_BITS,
-                prompt_progress_callback=combined_progress_callback,
-            ):
-                break  # Stop after first iteration - cache is now filled
+            with T("prefill.stream_generate"):
+                for _ in stream_generate(
+                    model=model,
+                    tokenizer=tokenizer,
+                    prompt=prompt_tokens,
+                    max_tokens=1,
+                    sampler=sampler,
+                    prompt_cache=cache,
+                    prefill_step_size=prefill_step_size,
+                    kv_group_size=KV_GROUP_SIZE,
+                    kv_bits=KV_BITS,
+                    prompt_progress_callback=combined_progress_callback,
+                ):
+                    break
     except PrefillCancelled:
         set_pipeline_queue_sends(model, queue_sends=False)
         set_pipeline_prefill(model, is_prefill=False)
@@ -388,15 +373,16 @@ def prefill(
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
-    pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
-    for i, c in enumerate(cache):
-        if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
-            assert pre_gen is not None
-            if pre_gen.states[i] is not None:
-                cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
-        else:
-            assert not isinstance(c, (ArraysCache, RotatingKVCache))
-            c.trim(2)
+    with T("prefill.cache_trim_and_rollback"):
+        pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
+        for i, c in enumerate(cache):
+            if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
+                assert pre_gen is not None
+                if pre_gen.states[i] is not None:
+                    cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
+            else:
+                assert not isinstance(c, (ArraysCache, RotatingKVCache))
+                c.trim(2)
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0

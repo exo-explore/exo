@@ -282,13 +282,19 @@ class Runner:
 
         _trace = os.environ.get("EXO_TRACING_ENABLED", "false").lower() in ("true", "1")
 
+        from exo.worker.engines.mlx.trace import request_trace, T
+        request_trace.reset()
+
         logger.info(f"received chat request: {starting_task}")
-        self.update_status(RunnerRunning())
+        with T("runner.update_status_running"):
+            self.update_status(RunnerRunning())
         logger.info("runner running")
-        self.acknowledge_task(starting_task)
+        with T("runner.acknowledge_task"):
+            self.acknowledge_task(starting_task)
         self.seen.add(starting_task.task_id)
 
-        self.submit_text_generation(starting_task)
+        with T("runner.submit_text_generation"):
+            self.submit_text_generation(starting_task)
 
         _loop_count = 0
         _prof_step_total = 0.0
@@ -376,6 +382,8 @@ class Runner:
 
         self.update_status(RunnerReady())
         logger.info("runner ready")
+
+        request_trace.dump()
 
         return ExitCode.AllTasksComplete
 

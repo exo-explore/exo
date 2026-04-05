@@ -476,25 +476,29 @@ class ExoBatchGenerator:
         distributed_prompt_progress_callback: Callable[[], None] | None = None,
         on_generation_token: Callable[[], None] | None = None,
     ) -> int:
-        all_prompt_tokens = encode_prompt(self.tokenizer, prompt)
-        all_prompt_tokens = fix_unmatched_think_end_tokens(
-            all_prompt_tokens, self.tokenizer
-        )
+        from exo.worker.engines.mlx.trace import request_trace, T
+
+        with T("submit.encode_prompt"):
+            all_prompt_tokens = encode_prompt(self.tokenizer, prompt)
+            all_prompt_tokens = fix_unmatched_think_end_tokens(
+                all_prompt_tokens, self.tokenizer
+            )
 
         vision: VisionResult | None = None
         media_regions: list[MediaRegion] = []
 
         if self.vision_processor is not None:
             try:
-                vision = prepare_vision(
-                    images=task_params.images,
-                    chat_template_messages=task_params.chat_template_messages,
-                    vision_processor=self.vision_processor,
-                    tokenizer=self.tokenizer,
-                    model=self.model,
-                    model_id=task_params.model,
-                    task_params=task_params,
-                )
+                with T("submit.vision"):
+                    vision = prepare_vision(
+                        images=task_params.images,
+                        chat_template_messages=task_params.chat_template_messages,
+                        vision_processor=self.vision_processor,
+                        tokenizer=self.tokenizer,
+                        model=self.model,
+                        model_id=task_params.model,
+                        task_params=task_params,
+                    )
             except Exception:
                 logger.opt(exception=True).warning(
                     "Vision processing failed, falling back to text-only"
@@ -510,33 +514,35 @@ class ExoBatchGenerator:
         matched_index: int | None = None
         prompt_tokens = all_prompt_tokens
 
-        if self.kv_prefix_cache is not None and not is_bench:
-            cache, remaining_tokens, matched_index = self.kv_prefix_cache.get_kv_cache(
-                self.model, all_prompt_tokens, media_regions=media_regions
-            )
-            prefix_hit_length = len(all_prompt_tokens) - len(remaining_tokens)
-            if prefix_hit_length > 0:
-                logger.info(
-                    f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens "
-                    f"cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
+        with T("submit.kv_prefix_cache_lookup"):
+            if self.kv_prefix_cache is not None and not is_bench:
+                cache, remaining_tokens, matched_index = self.kv_prefix_cache.get_kv_cache(
+                    self.model, all_prompt_tokens, media_regions=media_regions
                 )
-                prompt_tokens = remaining_tokens
+                prefix_hit_length = len(all_prompt_tokens) - len(remaining_tokens)
+                if prefix_hit_length > 0:
+                    logger.info(
+                        f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens "
+                        f"cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
+                    )
+                    prompt_tokens = remaining_tokens
+                else:
+                    cache = make_kv_cache(self.model)
             else:
                 cache = make_kv_cache(self.model)
-        else:
-            cache = make_kv_cache(self.model)
 
         seed = task_params.seed if task_params.seed is not None else 42
         mx.random.seed(seed)
 
-        sampler = make_sampler(
-            temp=task_params.temperature
-            if task_params.temperature is not None
-            else 0.7,
-            top_p=task_params.top_p if task_params.top_p is not None else 1.0,
-            min_p=task_params.min_p if task_params.min_p is not None else 0.05,
-            top_k=task_params.top_k if task_params.top_k is not None else 0,
-        )
+        with T("submit.make_sampler"):
+            sampler = make_sampler(
+                temp=task_params.temperature
+                if task_params.temperature is not None
+                else 0.7,
+                top_p=task_params.top_p if task_params.top_p is not None else 1.0,
+                min_p=task_params.min_p if task_params.min_p is not None else 0.05,
+                top_k=task_params.top_k if task_params.top_k is not None else 0,
+            )
 
         vision_ctx = (
             patch_embed_tokens(
@@ -546,64 +552,68 @@ class ExoBatchGenerator:
             else contextlib.nullcontext()
         )
         with vision_ctx:
-            _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
-                self.model,
-                self.tokenizer,
-                sampler,
-                prompt_tokens[:-1],
-                cache,
-                self.group,
-                on_prefill_progress,
-                distributed_prompt_progress_callback,
-            )
+            with T("submit.prefill"):
+                _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
+                    self.model,
+                    self.tokenizer,
+                    sampler,
+                    prompt_tokens[:-1],
+                    cache,
+                    self.group,
+                    on_prefill_progress,
+                    distributed_prompt_progress_callback,
+                )
 
         # We need to clamp rotating kv caches to max size so that mlx lm's _merge_caches behaves
-        for c in cache:
-            if (
-                isinstance(c, RotatingKVCache)
-                and c.keys is not None
-                and c.values is not None
-                and c.keys.shape[2] > c.max_size
-            ):
-                trim_size = c.keys.shape[2] - c.max_size
-                c.keys = c._trim(trim_size, c.keys)
-                c.values = c._trim(trim_size, c.values)
-                c._idx = c.max_size
+        with T("submit.clamp_rotating_caches"):
+            for c in cache:
+                if (
+                    isinstance(c, RotatingKVCache)
+                    and c.keys is not None
+                    and c.values is not None
+                    and c.keys.shape[2] > c.max_size
+                ):
+                    trim_size = c.keys.shape[2] - c.max_size
+                    c.keys = c._trim(trim_size, c.keys)
+                    c.values = c._trim(trim_size, c.values)
+                    c._idx = c.max_size
 
-        if not is_bench:
-            min_prefix_hit_length = max(
-                1000, system_prompt_token_count(task_params, self.tokenizer)
-            )
-            self._save_prefix_cache(
-                all_prompt_tokens,
-                list(cache),
-                cache_snapshots,
-                prefix_hit_length,
-                matched_index,
-                min_prefix_hit_length,
-                media_regions,
-            )
+        with T("submit.save_prefix_cache"):
+            if not is_bench:
+                min_prefix_hit_length = max(
+                    1000, system_prompt_token_count(task_params, self.tokenizer)
+                )
+                self._save_prefix_cache(
+                    all_prompt_tokens,
+                    list(cache),
+                    cache_snapshots,
+                    prefix_hit_length,
+                    matched_index,
+                    min_prefix_hit_length,
+                    media_regions,
+                )
 
         last_tokens = prompt_tokens[-2:]
 
-        logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
-            make_logits_processors(
-                repetition_penalty=task_params.repetition_penalty,
-                repetition_context_size=task_params.repetition_context_size,
+        with T("submit.make_logits_processors"):
+            logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
+                make_logits_processors(
+                    repetition_penalty=task_params.repetition_penalty,
+                    repetition_context_size=task_params.repetition_context_size,
+                )
             )
-        )
-        if is_bench:
-            # Only sample length eos tokens
-            eos_ids = eos_ids_from_tokenizer(self.tokenizer)
-            logits_processors = [ban_token_ids(eos_ids)] + logits_processors
+            if is_bench:
+                eos_ids = eos_ids_from_tokenizer(self.tokenizer)
+                logits_processors = [ban_token_ids(eos_ids)] + logits_processors
 
         max_tokens = task_params.max_output_tokens or MAX_TOKENS
 
         if self._pp_spec_active:
-            return self._submit_pp_spec(
-                task_params, all_prompt_tokens, prefix_hit_length, matched_index,
-                cache_snapshots, cache, last_tokens, sampler, logits_processors,
-                max_tokens, on_generation_token, _prefill_tps,
+            with T("submit.pp_spec_setup"):
+                return self._submit_pp_spec(
+                    task_params, all_prompt_tokens, prefix_hit_length, matched_index,
+                    cache_snapshots, cache, last_tokens, sampler, logits_processors,
+                    max_tokens, on_generation_token, _prefill_tps,
             )
 
         uids = self._mlx_gen.insert(
@@ -681,13 +691,16 @@ class ExoBatchGenerator:
             pp_speculative_decode_loop,
             _install_spec_layers,
         )
+        from exo.worker.engines.mlx.trace import request_trace, T
 
-        pp_info = get_pipeline_info(self.model)
-        assert pp_info is not None
-        pp_rank, pp_world_size, pp_group = pp_info
+        with T("pp_spec.get_pipeline_info"):
+            pp_info = get_pipeline_info(self.model)
+            assert pp_info is not None
+            pp_rank, pp_world_size, pp_group = pp_info
 
-        inner = getattr(self.model, "language_model", self.model)
-        _install_spec_layers(inner)
+        with T("pp_spec.install_spec_layers"):
+            inner = getattr(self.model, "language_model", self.model)
+            _install_spec_layers(inner)
 
         _pp_draft = getattr(self.model, "_pp_draft_model", None)
         _pp_draft_cache = getattr(self.model, "_pp_draft_cache", None)
@@ -695,25 +708,27 @@ class ExoBatchGenerator:
         # Prefill draft cache with tail of prompt (rank 0 only)
         # The draft model uses a RotatingKVCache, so only recent tokens matter.
         if pp_rank == 0 and _pp_draft is not None:
-            _draft_kv_window = int(os.environ.get("EXO_DRAFT_KV_WINDOW", "4096"))
-            _draft_tokens = all_prompt_tokens[-_draft_kv_window:]
-            _draft_chunk = 512
-            for i in range(0, len(_draft_tokens), _draft_chunk):
-                _pp_draft(_draft_tokens[i:i + _draft_chunk][None], cache=_pp_draft_cache)
-                mx.eval([c.state if hasattr(c, 'state') else c for c in _pp_draft_cache])
-            mx.clear_cache()
-            logger.info(f"Draft model prefilled with {len(_draft_tokens)} tokens (of {len(all_prompt_tokens)} total)")
+            with T("pp_spec.draft_prefill"):
+                _draft_kv_window = int(os.environ.get("EXO_DRAFT_KV_WINDOW", "4096"))
+                _draft_tokens = all_prompt_tokens[-_draft_kv_window:]
+                _draft_chunk = 512
+                for i in range(0, len(_draft_tokens), _draft_chunk):
+                    _pp_draft(_draft_tokens[i:i + _draft_chunk][None], cache=_pp_draft_cache)
+                    mx.eval([c.state if hasattr(c, 'state') else c for c in _pp_draft_cache])
+                mx.clear_cache()
+                logger.info(f"Draft model prefilled with {len(_draft_tokens)} tokens (of {len(all_prompt_tokens)} total)")
 
         # First token via standard PP
-        _first_gen = stream_generate(
-            model=self.model, tokenizer=self.tokenizer, prompt=last_tokens,
-            max_tokens=1, sampler=sampler, logits_processors=logits_processors,
-            prompt_cache=cache, prefill_step_size=1,
-            kv_group_size=KV_GROUP_SIZE, kv_bits=KV_BITS,
-        )
-        _first_out = next(_first_gen)
-        first_y = mx.array([_first_out.token])
-        mx.eval(first_y)
+        with T("pp_spec.first_token"):
+            _first_gen = stream_generate(
+                model=self.model, tokenizer=self.tokenizer, prompt=last_tokens,
+                max_tokens=1, sampler=sampler, logits_processors=logits_processors,
+                prompt_cache=cache, prefill_step_size=1,
+                kv_group_size=KV_GROUP_SIZE, kv_bits=KV_BITS,
+            )
+            _first_out = next(_first_gen)
+            first_y = mx.array([_first_out.token])
+            mx.eval(first_y)
 
         logger.info(f"PP speculation active: rank={pp_rank}")
 
@@ -723,6 +738,7 @@ class ExoBatchGenerator:
             logger.info("PP speculation using MTP for drafting")
 
         # Create the spec decode generator
+        request_trace.mark("pp_spec.decode_loop_start")
         self._pp_spec_gen = pp_speculative_decode_loop(
             model=self.model, draft_model=_pp_draft,
             prompt_cache=cache, draft_cache=_pp_draft_cache,

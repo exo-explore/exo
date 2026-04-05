@@ -405,14 +405,18 @@ class BatchGenerator(InferenceGenerator):
     ) -> Iterable[
         tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
     ]:
+        from exo.worker.engines.mlx.trace import request_trace, T
+
         if not self._queue:
-            self.agree_on_tasks()
+            with T("batch_gen.agree_on_tasks"):
+                self.agree_on_tasks()
 
         # Submit any queued tasks to the engine
         while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
             task = self._queue.popleft()
             try:
-                uid = self._start_task(task)
+                with T("batch_gen.start_task"):
+                    uid = self._start_task(task)
             except PrefillCancelled:
                 continue
             except Exception as e:
@@ -503,8 +507,11 @@ class BatchGenerator(InferenceGenerator):
             )
 
     def _start_task(self, task: TextGeneration) -> int:
+        from exo.worker.engines.mlx.trace import request_trace, T
+
         _check_for_debug_prompts(task.task_params)
-        prompt = apply_chat_template(self.tokenizer, task.task_params)
+        with T("start_task.apply_chat_template"):
+            prompt = apply_chat_template(self.tokenizer, task.task_params)
 
         def on_prefill_progress(processed: int, total: int) -> None:
             if self.device_rank == 0:
@@ -520,11 +527,12 @@ class BatchGenerator(InferenceGenerator):
                 )
 
         def distributed_prompt_progress_callback() -> None:
+            t0 = time.perf_counter()
             self.agree_on_cancellations()
             if self.should_cancel(task.task_id):
                 raise PrefillCancelled()
-
             self.agree_on_tasks()
+            request_trace.record("prefill.distributed_callback", t0)
 
         tokens_since_cancel_check = self.check_for_cancel_every
 
@@ -533,19 +541,22 @@ class BatchGenerator(InferenceGenerator):
             tokens_since_cancel_check += 1
             if tokens_since_cancel_check >= self.check_for_cancel_every:
                 tokens_since_cancel_check = 0
+                t0 = time.perf_counter()
                 self.agree_on_cancellations()
                 if self.should_cancel(task.task_id):
                     self._cancelled_tasks.add(task.task_id)
-
                 self.agree_on_tasks()
+                request_trace.record("decode.agree_on_cancel_and_tasks", t0)
 
-        return self._mlx_gen.submit(
-            task_params=task.task_params,
-            prompt=prompt,
-            on_prefill_progress=on_prefill_progress,
-            distributed_prompt_progress_callback=distributed_prompt_progress_callback,
-            on_generation_token=on_generation_token,
-        )
+        with T("start_task.mlx_gen_submit"):
+            result = self._mlx_gen.submit(
+                task_params=task.task_params,
+                prompt=prompt,
+                on_prefill_progress=on_prefill_progress,
+                distributed_prompt_progress_callback=distributed_prompt_progress_callback,
+                on_generation_token=on_generation_token,
+            )
+        return result
 
     def close(self) -> None:
         self._mlx_gen.close()
