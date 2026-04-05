@@ -182,6 +182,33 @@ class SequentialGenerator(InferenceGenerator):
         self._cancelled_tasks.update(task.task_id for task in agreed)
         self._maybe_cancel = list(different)
 
+    def agree_on_cancellations_fast(self) -> None:
+        """Lightweight cancellation check for use during prefill.
+
+        Uses a single mx_any to check if ANY rank has cancellations. Only runs
+        the expensive all_gather if someone actually has something to cancel.
+        Saves ~4 distributed ops per call in the common (no-cancel) case.
+        """
+        has_cancel_all = False
+        for task_id in self.cancel_receiver.collect():
+            if task_id == CANCEL_ALL_TASKS:
+                has_cancel_all = True
+                continue
+            if task_id in self._all_tasks:
+                self._maybe_cancel.append(self._all_tasks[task_id])
+
+        has_anything = has_cancel_all or len(self._maybe_cancel) > 0
+        if not mx_any(has_anything, self.group):
+            return  # Fast path: no rank has cancellations — 1 collective op total
+
+        # Slow path: at least one rank has cancels — full protocol
+        if mx_any(has_cancel_all, self.group):
+            self._cancelled_tasks.add(CANCEL_ALL_TASKS)
+
+        agreed, different = mx_all_gather_tasks(self._maybe_cancel, self.group)
+        self._cancelled_tasks.update(task.task_id for task in agreed)
+        self._maybe_cancel = list(different)
+
     def step(
         self,
     ) -> Iterable[
@@ -278,11 +305,9 @@ class SequentialGenerator(InferenceGenerator):
                 )
 
         def distributed_prompt_progress_callback() -> None:
-            self.agree_on_cancellations()
+            self.agree_on_cancellations_fast()
             if self.should_cancel(task.task_id):
                 raise PrefillCancelled()
-
-            self.agree_on_tasks()
 
         tokens_since_cancel_check = self.check_for_cancel_every
 
@@ -399,6 +424,33 @@ class BatchGenerator(InferenceGenerator):
         _dt = time.perf_counter() - _t0
         if _dt > 0.005 and os.environ.get("EXO_TRACING_ENABLED", "false").lower() in ("true", "1"):
             logger.info(f"[PROF] agree_on_cancellations={_dt*1000:.1f}ms (mx_any + 2x all_gather)")
+
+    def agree_on_cancellations_fast(self) -> None:
+        """Lightweight cancellation check for use during prefill.
+
+        Uses a single mx_any to check if ANY rank has cancellations. Only runs
+        the expensive all_gather if someone actually has something to cancel.
+        Saves ~4 distributed ops per call in the common (no-cancel) case.
+        """
+        has_cancel_all = False
+        for task_id in self.cancel_receiver.collect():
+            if task_id == CANCEL_ALL_TASKS:
+                has_cancel_all = True
+                continue
+            if task_id in self._all_tasks:
+                self._maybe_cancel.append(self._all_tasks[task_id])
+
+        has_anything = has_cancel_all or len(self._maybe_cancel) > 0
+        if not mx_any(has_anything, self.group):
+            return  # Fast path: no rank has cancellations — 1 collective op total
+
+        # Slow path: at least one rank has cancels — full protocol
+        if mx_any(has_cancel_all, self.group):
+            self._cancelled_tasks.add(CANCEL_ALL_TASKS)
+
+        agreed, different = mx_all_gather_tasks(self._maybe_cancel, self.group)
+        self._cancelled_tasks.update(task.task_id for task in agreed)
+        self._maybe_cancel = list(different)
 
     def step(
         self,
@@ -528,10 +580,9 @@ class BatchGenerator(InferenceGenerator):
 
         def distributed_prompt_progress_callback() -> None:
             t0 = time.perf_counter()
-            self.agree_on_cancellations()
+            self.agree_on_cancellations_fast()
             if self.should_cancel(task.task_id):
                 raise PrefillCancelled()
-            self.agree_on_tasks()
             request_trace.record("prefill.distributed_callback", t0)
 
         tokens_since_cancel_check = self.check_for_cancel_every
