@@ -346,10 +346,23 @@ def pp_speculative_decode_loop(
 
     _log(f"decode loop start: max_tokens={max_tokens}, mtp={'yes' if mtp_predictor else 'no'}")
 
+    # ── profiling accumulators ──
+    _prof_r0_compute = 0.0
+    _prof_r0_draft = 0.0
+    _prof_r1_compute = 0.0
+    _prof_token_exchange = 0.0
+    _prof_hidden_exchange = 0.0
+    _prof_verify = 0.0
+    _prof_clear_cache = 0.0
+    _prof_total = 0.0
+
     try:
         n = 0
         while n < max_tokens:
+            _loop_tic = time.perf_counter()
+
             # ==== RANK 0: compute + send hidden, then draft during idle time ====
+            _t0 = time.perf_counter()
             if is_rank0:
                 if _draft_token is None:
                     # Normal: compute layers 0-29, send hidden to rank 1
@@ -363,8 +376,11 @@ def pp_speculative_decode_loop(
                         (pp_rank + 1) % pp_world_size, group=pp_group
                     )
                     mx.eval(sent)
+            _prof_r0_compute += time.perf_counter() - _t0
 
-                # -- Draft DURING rank 1's compute (the ~14ms idle window) --
+            # -- Draft DURING rank 1's compute (the ~14ms idle window) --
+            _t0 = time.perf_counter()
+            if is_rank0:
                 _used_mtp = False
                 try:
                     if mtp_predictor is not None and _mtp_hidden is not None:
@@ -391,20 +407,26 @@ def pp_speculative_decode_loop(
                     _spec_snap = None
                     if spec_last is not None:
                         spec_last._speculative = False
+            _prof_r0_draft += time.perf_counter() - _t0
 
             # ==== RANK 1: recv hidden + compute + sample (parallel with rank 0's draft) ====
+            _t0 = time.perf_counter()
             if is_last_rank:
                 sampled, lp = _rank1_compute(y)
+            _prof_r1_compute += time.perf_counter() - _t0
 
             # ==== TOKEN EXCHANGE (both ranks sync here) ====
+            _t0 = time.perf_counter()
             gathered_token = mx.distributed.all_gather(
                 sampled.reshape(1) if is_last_rank else mx.zeros(1, dtype=mx.int32),
                 group=pp_group,
             )
             mx.eval(gathered_token)
             final_token = gathered_token[-1:]
+            _prof_token_exchange += time.perf_counter() - _t0
 
             # ==== HIDDEN STATE EXCHANGE (rank 1 → rank 0, for MTP drafting) ====
+            _t0 = time.perf_counter()
             if mtp_predictor is not None:
                 if is_last_rank and 'pre_norm' in _captured:
                     # Send last-position pre-norm hidden to rank 0
@@ -418,8 +440,10 @@ def pp_speculative_decode_loop(
                         pp_world_size - 1, group=pp_group,
                     )
                     mx.eval(_mtp_hidden)
+            _prof_hidden_exchange += time.perf_counter() - _t0
 
             # ==== VERIFY draft ====
+            _t0 = time.perf_counter()
             if is_rank0 and _draft_token is not None:
                 real_token = int(final_token.item())
                 if real_token == _draft_token:
@@ -447,6 +471,7 @@ def pp_speculative_decode_loop(
                 # First step or error: advance draft cache (only when using draft model)
                 if mtp_predictor is None and draft_model is not None:
                     draft_model(mx.array([[int(final_token.item())]]), cache=draft_cache)
+            _prof_verify += time.perf_counter() - _t0
 
             yield int(final_token.item()), lp if is_last_rank else mx.zeros(1)
 
@@ -454,7 +479,34 @@ def pp_speculative_decode_loop(
             n += 1
 
             if n % 256 == 0:
+                _t0 = time.perf_counter()
                 mx.clear_cache()
+                _prof_clear_cache += time.perf_counter() - _t0
+
+            _prof_total += time.perf_counter() - _loop_tic
+
+            # ── periodic profiling log ──
+            if _TRACE and n % 64 == 0:
+                _n = 64
+                logger.info(
+                    f"[PROF pp-spec R{pp_rank} x{_n}] "
+                    f"r0_compute={_prof_r0_compute/_n*1000:.2f}ms "
+                    f"r0_draft={_prof_r0_draft/_n*1000:.2f}ms "
+                    f"r1_compute={_prof_r1_compute/_n*1000:.2f}ms "
+                    f"tok_xchg={_prof_token_exchange/_n*1000:.2f}ms "
+                    f"hidden_xchg={_prof_hidden_exchange/_n*1000:.2f}ms "
+                    f"verify={_prof_verify/_n*1000:.2f}ms "
+                    f"clear_cache={_prof_clear_cache/_n*1000:.2f}ms "
+                    f"loop={_prof_total/_n*1000:.2f}ms"
+                )
+                _prof_r0_compute = 0.0
+                _prof_r0_draft = 0.0
+                _prof_r1_compute = 0.0
+                _prof_token_exchange = 0.0
+                _prof_hidden_exchange = 0.0
+                _prof_verify = 0.0
+                _prof_clear_cache = 0.0
+                _prof_total = 0.0
 
     finally:
         # Restore model state

@@ -191,24 +191,32 @@ def pipeline_parallel_prefill(
                 if distributed_prompt_progress_callback is not None:
                     distributed_prompt_progress_callback()
 
+            _trace = os.environ.get("EXO_TRACING_ENABLED", "false").lower() in ("true", "1")
+
             for i in range(n_real):
                 chunk_size = real_chunk_sizes[i]
+                _t_fwd = time.perf_counter()
                 model(
                     prompt[processed : processed + chunk_size][None],
                     cache=_prompt_cache,
                 )
                 quantize_cache_fn(_prompt_cache)
+                _fwd_dt = time.perf_counter() - _t_fwd
                 processed += chunk_size
 
                 if distributed_prompt_progress_callback is not None:
                     distributed_prompt_progress_callback()
 
+                _t_flush = time.perf_counter()
                 flush_prefill_sends()
+                _flush_dt = time.perf_counter() - _t_flush
 
                 # Evaluate cache states after each chunk to free intermediate
                 # activations. Without this, all chunks' computation graphs
                 # accumulate in memory causing OOM on long prompts.
+                _t_eval = time.perf_counter()
                 mx.eval([c.state for c in _prompt_cache])  # type: ignore
+                _eval_dt = time.perf_counter() - _t_eval
 
                 # Break shared-buffer references in DeltaNet (ArraysCache) entries.
                 #
@@ -222,16 +230,29 @@ def pipeline_parallel_prefill(
                 # Without this: ~540 KB/tok leak, 24K token ceiling on 128GB.
                 # With this:    ~20 KB/tok,  100K+ tokens feasible.
                 # See prefill_memory_leak_fix.md in project memory for full analysis.
+                _t_contig = time.perf_counter()
                 for _c in _prompt_cache:
                     if isinstance(_c, ArraysCache):
                         _c.cache = [mx.contiguous(x) if x is not None else x for x in _c.cache]
                         mx.eval(*[x for x in _c.cache if x is not None])
+                _contig_dt = time.perf_counter() - _t_contig
 
                 # Log memory every 5 chunks for profiling
                 if i % 5 == 0 or i == n_real - 1:
                     active_gb = mx.metal.get_active_memory() / 1024**3
                     peak_gb = mx.metal.get_peak_memory() / 1024**3
                     logger.info(f"[MEM] prefill chunk {i+1}/{n_real} ({processed} tokens): active={active_gb:.2f} GB, peak={peak_gb:.2f} GB")
+
+                if _trace:
+                    logger.info(
+                        f"[PROF prefill chunk {i+1}/{n_real}] "
+                        f"forward={_fwd_dt*1000:.1f}ms "
+                        f"flush_sends={_flush_dt*1000:.1f}ms "
+                        f"eval_cache={_eval_dt*1000:.1f}ms "
+                        f"contiguous={_contig_dt*1000:.1f}ms "
+                        f"total={(_fwd_dt+_flush_dt+_eval_dt+_contig_dt)*1000:.1f}ms "
+                        f"({chunk_size} tokens)"
+                    )
 
                 prompt_progress_callback(processed, total)
 

@@ -792,6 +792,8 @@ class ExoBatchGenerator:
         if not self.has_work:
             return []
 
+        _trace = os.environ.get("EXO_TRACING_ENABLED", "false").lower() in ("true", "1")
+
         # Use PP speculation decode if active
         if self._pp_spec_gen is not None:
             _step_tic = time.perf_counter()
@@ -807,6 +809,13 @@ class ExoBatchGenerator:
 
         results: list[tuple[int, GenerationResponse]] = []
 
+        # per-token profiling accumulators
+        _t_callback_total = 0.0
+        _t_detok_total = 0.0
+        _t_stop_total = 0.0
+        _t_logprobs_total = 0.0
+        _t_response_build_total = 0.0
+
         for response in responses:
             if response.uid not in self._active_tasks:
                 logger.warning(
@@ -815,8 +824,15 @@ class ExoBatchGenerator:
                 continue
 
             state = self._active_tasks[response.uid]
+
+            # ── on_generation_token callback (agree_on_cancellations + agree_on_tasks every N tokens) ──
+            _t0 = time.perf_counter()
             if state.on_generation_token is not None:
                 state.on_generation_token()
+            _t_callback_total += time.perf_counter() - _t0
+
+            # ── detokenization ──
+            _t0 = time.perf_counter()
             if response.finish_reason != "stop":
                 state.detokenizer.add_token(response.token)
             if response.finish_reason is not None:
@@ -834,7 +850,10 @@ class ExoBatchGenerator:
                 state.in_thinking = False
             if state.in_thinking:
                 state.reasoning_tokens += 1
+            _t_detok_total += time.perf_counter() - _t0
 
+            # ── stop sequence check ──
+            _t0 = time.perf_counter()
             finish_reason: FinishReason | None = cast(
                 FinishReason | None, response.finish_reason
             )
@@ -855,9 +874,12 @@ class ExoBatchGenerator:
                         text = text_before_stop[chunk_start:]
                         finish_reason = "stop"
                         break
+            _t_stop_total += time.perf_counter() - _t0
 
             is_done = finish_reason is not None
 
+            # ── logprobs extraction ──
+            _t0 = time.perf_counter()
             logprob: float | None = None
             top_logprobs: list[TopLogprobItem] | None = None
             if task_params.logprobs and os.environ.get("EXO_DISABLE_LOGPROBS") != "1":
@@ -873,7 +895,10 @@ class ExoBatchGenerator:
                             response, "_selected_logprob", None
                         ),
                     )
+            _t_logprobs_total += time.perf_counter() - _t0
 
+            # ── response building ──
+            _t0 = time.perf_counter()
             stats: GenerationStats | None = None
             usage: Usage | None = None
             if is_done:
@@ -932,6 +957,7 @@ class ExoBatchGenerator:
                     ),
                 )
             )
+            _t_response_build_total += time.perf_counter() - _t0
 
             if is_done:
                 del self._active_tasks[response.uid]
@@ -948,6 +974,16 @@ class ExoBatchGenerator:
         if self._mlx_gen._next_count % 64 == 0 and responses:
             logger.debug(
                 f"step overhead: {_overhead * 1000:.2f}ms (next={_next_elapsed * 1000:.2f}ms total={_step_elapsed * 1000:.2f}ms)"
+            )
+        if _trace and self._mlx_gen._next_count % 64 == 0 and responses:
+            logger.info(
+                f"[PROF step] mlx_next={_next_elapsed * 1000:.2f}ms "
+                f"callback={_t_callback_total * 1000:.2f}ms "
+                f"detok={_t_detok_total * 1000:.2f}ms "
+                f"stop_check={_t_stop_total * 1000:.2f}ms "
+                f"logprobs={_t_logprobs_total * 1000:.2f}ms "
+                f"response_build={_t_response_build_total * 1000:.2f}ms "
+                f"total={_step_elapsed * 1000:.2f}ms"
             )
 
         return results

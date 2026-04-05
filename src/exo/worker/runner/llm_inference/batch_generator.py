@@ -1,4 +1,5 @@
 import itertools
+import os
 import time
 from abc import ABC, abstractmethod
 from collections import deque
@@ -370,12 +371,17 @@ class BatchGenerator(InferenceGenerator):
 
     def agree_on_tasks(self) -> None:
         """Agree between all ranks about the task ordering (some may have received in different order or not at all)."""
+        _t0 = time.perf_counter()
         agreed, different = mx_all_gather_tasks(self._maybe_queue, self.group)
         self._queue.extend(task for task in self._maybe_queue if task in agreed)
         self._maybe_queue = [task for task in self._maybe_queue if task in different]
+        _dt = time.perf_counter() - _t0
+        if _dt > 0.005 and os.environ.get("EXO_TRACING_ENABLED", "false").lower() in ("true", "1"):
+            logger.info(f"[PROF] agree_on_tasks={_dt*1000:.1f}ms")
 
     def agree_on_cancellations(self) -> None:
         """Agree between all ranks about which tasks to cancel."""
+        _t0 = time.perf_counter()
         has_cancel_all = False
         for task_id in self.cancel_receiver.collect():
             if task_id == CANCEL_ALL_TASKS:
@@ -390,6 +396,9 @@ class BatchGenerator(InferenceGenerator):
         agreed, different = mx_all_gather_tasks(self._maybe_cancel, self.group)
         self._cancelled_tasks.update(task.task_id for task in agreed)
         self._maybe_cancel = list(different)
+        _dt = time.perf_counter() - _t0
+        if _dt > 0.005 and os.environ.get("EXO_TRACING_ENABLED", "false").lower() in ("true", "1"):
+            logger.info(f"[PROF] agree_on_cancellations={_dt*1000:.1f}ms (mx_any + 2x all_gather)")
 
     def step(
         self,

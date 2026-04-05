@@ -280,6 +280,8 @@ class Runner:
         assert isinstance(self.current_status, RunnerReady)
         assert isinstance(self.generator, InferenceGenerator)
 
+        _trace = os.environ.get("EXO_TRACING_ENABLED", "false").lower() in ("true", "1")
+
         logger.info(f"received chat request: {starting_task}")
         self.update_status(RunnerRunning())
         logger.info("runner running")
@@ -288,10 +290,23 @@ class Runner:
 
         self.submit_text_generation(starting_task)
 
+        _loop_count = 0
+        _prof_step_total = 0.0
+        _prof_send_total = 0.0
+        _prof_recv_total = 0.0
+        _prof_loop_total = 0.0
+        _prof_step_max = 0.0
+        _prof_send_max = 0.0
+
         while self.active_tasks:
+            _loop_tic = time.perf_counter()
+
+            _t0 = time.perf_counter()
             results = self.generator.step()
+            _step_dt = time.perf_counter() - _t0
 
             finished: list[TaskId] = []
+            _t0 = time.perf_counter()
             for task_id, result in results:
                 match result:
                     case Cancelled():
@@ -303,10 +318,12 @@ class Runner:
                         self.send_response(
                             result, self.active_tasks[task_id].command_id
                         )
+            _send_dt = time.perf_counter() - _t0
 
             for task_id in finished:
                 self.active_tasks.pop(task_id, None)
 
+            _t0 = time.perf_counter()
             try:
                 task = self.task_receiver.receive_nowait()
 
@@ -329,6 +346,33 @@ class Runner:
 
             except WouldBlock:
                 pass
+            _recv_dt = time.perf_counter() - _t0
+
+            _loop_dt = time.perf_counter() - _loop_tic
+
+            if _trace:
+                _loop_count += 1
+                _prof_step_total += _step_dt
+                _prof_send_total += _send_dt
+                _prof_recv_total += _recv_dt
+                _prof_loop_total += _loop_dt
+                _prof_step_max = max(_prof_step_max, _step_dt)
+                _prof_send_max = max(_prof_send_max, _send_dt)
+                if _loop_count % 64 == 0:
+                    n = 64
+                    logger.info(
+                        f"[PROF runner x{n}] "
+                        f"step={_prof_step_total/n*1000:.2f}ms(max={_prof_step_max*1000:.1f}) "
+                        f"send={_prof_send_total/n*1000:.2f}ms(max={_prof_send_max*1000:.1f}) "
+                        f"recv_poll={_prof_recv_total/n*1000:.2f}ms "
+                        f"loop={_prof_loop_total/n*1000:.2f}ms"
+                    )
+                    _prof_step_total = 0.0
+                    _prof_send_total = 0.0
+                    _prof_recv_total = 0.0
+                    _prof_loop_total = 0.0
+                    _prof_step_max = 0.0
+                    _prof_send_max = 0.0
 
         self.update_status(RunnerReady())
         logger.info("runner ready")
