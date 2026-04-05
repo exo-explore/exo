@@ -72,12 +72,6 @@ generation_stream = mx.new_stream(mx.default_device())
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 
 
-def _release_conv_state_buffers(cache: KVCacheType) -> None:
-    for c in cache:
-        if isinstance(c, ArraysCache) and c[0] is not None:
-            c[0] = mx.contiguous(c[0])  # pyright: ignore[reportUnknownArgumentType]
-
-
 @contextlib.contextmanager
 def patch_embed_tokens(
     model: Model, embeddings: mx.array, start_offset: int = 0, token_count: int = 0
@@ -343,8 +337,6 @@ def prefill(
         else:
             assert not isinstance(c, (ArraysCache, RotatingKVCache))
             c.trim(2)
-
-    _release_conv_state_buffers(cache)
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0

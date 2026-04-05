@@ -286,6 +286,16 @@ class ExoBatchGenerator:
         _, responses = self._mlx_gen.next()
         _next_elapsed = time.perf_counter() - _step_tic
 
+        ready_uids: list[int] = getattr(gb, "_ready_topk_uids", [])
+        ready_idx: mx.array | None = getattr(gb, "_ready_topk_idx", None)
+        ready_val: mx.array | None = getattr(gb, "_ready_topk_val", None)
+        ready_sel: mx.array | None = getattr(gb, "_ready_topk_sel", None)
+        uid_to_batch: dict[int, int] = (
+            {uid: i for i, uid in enumerate(ready_uids)}
+            if ready_idx is not None
+            else {}
+        )
+
         results: list[tuple[int, GenerationResponse]] = []
 
         for response in responses:
@@ -351,12 +361,30 @@ class ExoBatchGenerator:
             logprob: float | None = None
             top_logprobs: list[TopLogprobItem] | None = None
             if task_params.logprobs:
+                batch_idx = uid_to_batch.get(response.uid)
+                precomputed_indices: list[int] | None = None
+                precomputed_values: list[float] | None = None
+                precomputed_selected: float | None = None
+                if (
+                    batch_idx is not None
+                    and ready_idx is not None
+                    and ready_val is not None
+                    and ready_sel is not None
+                ):
+                    precomputed_indices = cast(list[int], ready_idx[batch_idx].tolist())
+                    precomputed_values = cast(
+                        list[float], ready_val[batch_idx].tolist()
+                    )
+                    precomputed_selected = float(ready_sel[batch_idx].item())
                 with mx.stream(generation_stream):
                     logprob, top_logprobs = extract_top_logprobs(
                         logprobs=response.logprobs,
                         tokenizer=self.tokenizer,
                         top_logprobs=task_params.top_logprobs or DEFAULT_TOP_LOGPROBS,
                         selected_token=response.token,
+                        precomputed_indices=precomputed_indices,
+                        precomputed_values=precomputed_values,
+                        precomputed_selected=precomputed_selected,
                     )
 
             stats: GenerationStats | None = None

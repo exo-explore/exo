@@ -5,17 +5,16 @@ from mlx_lm.generate import BatchGenerator, GenerationBatch, PromptProcessingBat
 
 _PRECOMPUTE_TOP_K = 20
 
-_original_step = GenerationBatch._step
-
-_pending_topk_idx: mx.array | None = None
-_pending_topk_val: mx.array | None = None
-_pending_selected_lps: mx.array | None = None
-
 
 def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     self._current_tokens = self._next_tokens
     self._current_logprobs = self._next_logprobs
     inputs = self._current_tokens
+
+    self._ready_topk_uids = getattr(self, "_pending_topk_uids", [])  # pyright: ignore[reportAttributeAccessIssue]
+    self._ready_topk_idx = getattr(self, "_pending_topk_idx", None)  # pyright: ignore[reportAttributeAccessIssue]
+    self._ready_topk_val = getattr(self, "_pending_topk_val", None)  # pyright: ignore[reportAttributeAccessIssue]
+    self._ready_topk_sel = getattr(self, "_pending_topk_sel", None)  # pyright: ignore[reportAttributeAccessIssue]
 
     for i, ti in enumerate(self._token_context):
         self._token_context[i] = mx.concatenate(
@@ -48,30 +47,33 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     self._next_tokens = sampled
     self._next_logprobs = list(logprobs)
 
-    global _pending_topk_idx, _pending_topk_val, _pending_selected_lps
-
     needs_topk: bool = getattr(self, "_needs_topk", False)
     if needs_topk:
         batch_size = len(self.uids)
         k = min(_PRECOMPUTE_TOP_K, logprobs.shape[1])
-        _pending_topk_idx = mx.argpartition(-logprobs, k, axis=1)[:, :k]
-        _pending_topk_val = mx.take_along_axis(logprobs, _pending_topk_idx, axis=1)
-        sort_order = mx.argsort(-_pending_topk_val, axis=1)
-        _pending_topk_idx = mx.take_along_axis(_pending_topk_idx, sort_order, axis=1)
-        _pending_topk_val = mx.take_along_axis(_pending_topk_val, sort_order, axis=1)
-        _pending_selected_lps = logprobs[mx.arange(batch_size), sampled]
+        pending_idx = mx.argpartition(-logprobs, k, axis=1)[:, :k]
+        pending_val = mx.take_along_axis(logprobs, pending_idx, axis=1)
+        sort_order = mx.argsort(-pending_val, axis=1)
+        pending_idx = mx.take_along_axis(pending_idx, sort_order, axis=1)
+        pending_val = mx.take_along_axis(pending_val, sort_order, axis=1)
+        pending_sel = logprobs[mx.arange(batch_size), sampled]
+        self._pending_topk_uids = list(self.uids)  # pyright: ignore[reportAttributeAccessIssue]
+        self._pending_topk_idx = pending_idx  # pyright: ignore[reportAttributeAccessIssue]
+        self._pending_topk_val = pending_val  # pyright: ignore[reportAttributeAccessIssue]
+        self._pending_topk_sel = pending_sel  # pyright: ignore[reportAttributeAccessIssue]
         mx.async_eval(
             self._next_tokens,
             *self._next_logprobs,
             *self._token_context,
-            _pending_topk_idx,
-            _pending_topk_val,
-            _pending_selected_lps,
+            pending_idx,
+            pending_val,
+            pending_sel,
         )
     else:
-        _pending_topk_idx = None
-        _pending_topk_val = None
-        _pending_selected_lps = None
+        self._pending_topk_uids = []  # pyright: ignore[reportAttributeAccessIssue]
+        self._pending_topk_idx = None  # pyright: ignore[reportAttributeAccessIssue]
+        self._pending_topk_val = None  # pyright: ignore[reportAttributeAccessIssue]
+        self._pending_topk_sel = None  # pyright: ignore[reportAttributeAccessIssue]
         mx.async_eval(self._next_tokens, *self._next_logprobs, *self._token_context)
 
     mx.eval(inputs, *self._current_logprobs)
