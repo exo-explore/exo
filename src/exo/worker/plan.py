@@ -57,6 +57,7 @@ def plan(
     input_chunk_buffer: Mapping[CommandId, Mapping[int, InputImageChunk]],
     instance_backoff: KeyedBackoff[InstanceId],
     download_backoff: KeyedBackoff[ModelId],
+    node_network: Mapping[NodeId, NodeNetworkInfo] | None = None,
 ) -> Task | None:
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
@@ -64,7 +65,7 @@ def plan(
         or _kill_runner(runners, all_runners, instances)
         or _create_runner(node_id, runners, instances, instance_backoff)
         or _model_needs_download(
-            node_id, runners, global_download_status, download_backoff
+            node_id, runners, global_download_status, download_backoff, node_network
         )
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
@@ -168,6 +169,7 @@ def _model_needs_download(
     runners: Mapping[RunnerId, RunnerSupervisor],
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
     download_backoff: KeyedBackoff[ModelId],
+    node_network: Mapping[NodeId, NodeNetworkInfo] | None = None,
 ) -> DownloadModel | None:
     local_downloads = global_download_status.get(node_id, [])
     download_status = {
@@ -188,7 +190,7 @@ def _model_needs_download(
             and download_backoff.should_proceed(model_id)
         ):
             repo_url = find_peer_repo_url(
-                node_id, model_id, global_download_status, node_network
+                node_id, model_id, global_download_status, node_network or {}
             )
             # We don't invalidate download_status randomly in case a file gets deleted on disk
             return DownloadModel(

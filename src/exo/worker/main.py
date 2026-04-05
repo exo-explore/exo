@@ -168,6 +168,7 @@ class Worker:
                 self.input_chunk_buffer,
                 self._instance_backoff,
                 self._download_backoff,
+                self.state.node_network,
             )
             if task is None:
                 continue
