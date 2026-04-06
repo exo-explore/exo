@@ -1,9 +1,57 @@
+from dataclasses import dataclass, field
 from typing import cast
 
 import mlx.core as mx
-from mlx_lm.generate import BatchGenerator, GenerationBatch, PromptProcessingBatch
+from mlx_lm.generate import GenerationBatch
 
 _PRECOMPUTE_TOP_K = 20
+
+
+@dataclass
+class BatchTopKLogprobs:
+    uids: list[int] = field(default_factory=list)
+    indices: mx.array | None = None
+    values: mx.array | None = None
+    selected: mx.array | None = None
+    _uid_to_row: dict[int, int] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._uid_to_row = {uid: i for i, uid in enumerate(self.uids)}
+
+    def for_uid(self, uid: int) -> tuple[list[int], list[float], float] | None:
+        if self.indices is None or self.values is None or self.selected is None:
+            return None
+        row = self._uid_to_row.get(uid)
+        if row is None:
+            return None
+        return (
+            cast(list[int], self.indices[row].tolist()),
+            cast(list[float], self.values[row].tolist()),
+            float(self.selected[row].item()),
+        )
+
+
+@dataclass
+class _TopKBuffer:
+    needs_topk: bool = False
+    pending: BatchTopKLogprobs = field(default_factory=BatchTopKLogprobs)
+    ready: BatchTopKLogprobs = field(default_factory=BatchTopKLogprobs)
+
+
+def _get_buffer(batch: GenerationBatch) -> _TopKBuffer:
+    buf = getattr(batch, "_topk_buffer", None)
+    if buf is None:
+        buf = _TopKBuffer()
+        batch._topk_buffer = buf  # pyright: ignore[reportAttributeAccessIssue]
+    return buf
+
+
+def set_needs_topk(batch: GenerationBatch, needed: bool) -> None:
+    _get_buffer(batch).needs_topk = needed
+
+
+def take_ready_topk(batch: GenerationBatch) -> BatchTopKLogprobs:
+    return _get_buffer(batch).ready
 
 
 def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
@@ -11,10 +59,9 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     self._current_logprobs = self._next_logprobs
     inputs = self._current_tokens
 
-    self._ready_topk_uids = getattr(self, "_pending_topk_uids", [])  # pyright: ignore[reportAttributeAccessIssue]
-    self._ready_topk_idx = getattr(self, "_pending_topk_idx", None)  # pyright: ignore[reportAttributeAccessIssue]
-    self._ready_topk_val = getattr(self, "_pending_topk_val", None)  # pyright: ignore[reportAttributeAccessIssue]
-    self._ready_topk_sel = getattr(self, "_pending_topk_sel", None)  # pyright: ignore[reportAttributeAccessIssue]
+    buf = _get_buffer(self)
+    buf.ready = buf.pending
+    buf.pending = BatchTopKLogprobs()
 
     for i, ti in enumerate(self._token_context):
         self._token_context[i] = mx.concatenate(
@@ -47,33 +94,30 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     self._next_tokens = sampled
     self._next_logprobs = list(logprobs)
 
-    needs_topk: bool = getattr(self, "_needs_topk", False)
-    if needs_topk:
+    if buf.needs_topk:
         batch_size = len(self.uids)
         k = min(_PRECOMPUTE_TOP_K, logprobs.shape[1])
-        pending_idx = mx.argpartition(-logprobs, k, axis=1)[:, :k]
-        pending_val = mx.take_along_axis(logprobs, pending_idx, axis=1)
-        sort_order = mx.argsort(-pending_val, axis=1)
-        pending_idx = mx.take_along_axis(pending_idx, sort_order, axis=1)
-        pending_val = mx.take_along_axis(pending_val, sort_order, axis=1)
-        pending_sel = logprobs[mx.arange(batch_size), sampled]
-        self._pending_topk_uids = list(self.uids)  # pyright: ignore[reportAttributeAccessIssue]
-        self._pending_topk_idx = pending_idx  # pyright: ignore[reportAttributeAccessIssue]
-        self._pending_topk_val = pending_val  # pyright: ignore[reportAttributeAccessIssue]
-        self._pending_topk_sel = pending_sel  # pyright: ignore[reportAttributeAccessIssue]
+        pending_indices = mx.argpartition(-logprobs, k, axis=1)[:, :k]
+        pending_values = mx.take_along_axis(logprobs, pending_indices, axis=1)
+        sort_order = mx.argsort(-pending_values, axis=1)
+        pending_indices = mx.take_along_axis(pending_indices, sort_order, axis=1)
+        pending_values = mx.take_along_axis(pending_values, sort_order, axis=1)
+        pending_selected = logprobs[mx.arange(batch_size), sampled]
+        buf.pending = BatchTopKLogprobs(
+            uids=list(self.uids),
+            indices=pending_indices,
+            values=pending_values,
+            selected=pending_selected,
+        )
         mx.async_eval(
             self._next_tokens,
             *self._next_logprobs,
             *self._token_context,
-            pending_idx,
-            pending_val,
-            pending_sel,
+            pending_indices,
+            pending_values,
+            pending_selected,
         )
     else:
-        self._pending_topk_uids = []  # pyright: ignore[reportAttributeAccessIssue]
-        self._pending_topk_idx = None  # pyright: ignore[reportAttributeAccessIssue]
-        self._pending_topk_val = None  # pyright: ignore[reportAttributeAccessIssue]
-        self._pending_topk_sel = None  # pyright: ignore[reportAttributeAccessIssue]
         mx.async_eval(self._next_tokens, *self._next_logprobs, *self._token_context)
 
     mx.eval(inputs, *self._current_logprobs)
@@ -83,27 +127,5 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     return token_list, self._current_logprobs
 
 
-_original_batch_next = BatchGenerator._next
-
-
-def _fast_batch_next(
-    self: BatchGenerator,
-) -> tuple[list[PromptProcessingBatch.Response], list[GenerationBatch.Response]]:
-    if (
-        len(self._generation_batch) > 0
-        and not self._unprocessed_sequences
-        and len(self._prompt_batch) == 0
-        and not self._currently_processing
-    ):
-        responses = self._generation_batch.next()
-        self._gen_tokens_counter += len(responses)
-        self._steps_counter += 1
-        if self._steps_counter % 512 == 0:
-            mx.clear_cache()
-        return [], responses
-    return _original_batch_next(self)
-
-
 def apply_batch_gen_patch() -> None:
     GenerationBatch._step = _patched_step
-    BatchGenerator._next = _fast_batch_next
