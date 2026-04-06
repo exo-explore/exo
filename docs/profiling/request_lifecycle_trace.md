@@ -325,14 +325,34 @@ MLX dispatch overhead for multiple matmuls per chunk dominates. The sequential k
 
 ### Investigated and resolved
 - **`distributed_prompt_progress_callback`**: Was **340ms per prefill chunk** (~2.7s total for 16K). Replaced with `agree_on_cancellations_fast()` (single `mx_any` fast-path, only falls through to expensive `all_gather` if any rank has cancellations) and removed `agree_on_tasks()` from prefill callback (tasks are agreed during decode instead). Result: **~80µs per chunk** — effectively eliminated. Commit `489efaaa`.
-- **Pre-warm `agree_on_tasks`**: First-request `agree_on_tasks` was ~1,031ms. Pre-warming both `agree_on_tasks` and `agree_on_cancellations` during inference warmup reduced this to ~801ms (~230ms saved — the cold-start component). The remaining ~800ms is network propagation latency: R0 receives the API request and calls `agree_on_tasks` before R1 has been notified of the task, then blocks in `all_gather` until R1 also calls it. Not fixable by pre-warming. Commit `b32b3dc5`.
+- **Pre-warm `agree_on_tasks`**: First-request `agree_on_tasks` was ~1,031ms. Pre-warming both `agree_on_tasks` and `agree_on_cancellations` during inference warmup reduced this to ~801ms (~230ms saved). Both ranks enter the collective within ~3ms of each other, so the remaining ~800ms is the actual `mx.distributed.all_gather` cost on the data path (the pre-warm only warmed the empty-queue count gather, not the data gather). Could be improved further by warming with a fake non-empty payload, but only ~2% of total prefill — diminishing returns. Commit `b32b3dc5`.
 
-### Worth investigating
-- **Attention scaling at long context**: Per-chunk forward grows from 3.0s (chunk 0) to 6.4s (chunk 36) for 77K context. The ~90ms/chunk growth is from 7-8 GQA full-attention layers doing SDPA against the growing KV cache. Sliding window or sparse attention for these layers would help long-context prefill.
-- **First-request rank propagation latency**: ~800ms wait while R1 learns about a task R0 already received. Could be addressed by API forwarding the task to all ranks in parallel, or by R0 broadcasting task arrival on a separate path before calling `agree_on_tasks`.
+### Investigated and ruled out (architectural blockers)
+- **Tensor parallel instead of PP**: Would halve per-device compute, but TP requires per-layer all-reduce. With MoE expert routing over RDMA/JACCL, the all-reduce pattern is incompatible. Confirmed dead.
+- **Attention scaling at long context**: Per-chunk forward grows from 3.0s (chunk 0) to 6.4s (chunk 36) for 77K context. Caused by the 7-8 GQA full-attention layers in Qwen3.5-397B doing SDPA against the growing KV cache. Sliding window or sparse attention would fix it but requires model changes (re-training or tuning). Out of scope.
+
+### Compute-bound: software optimization tapped out
+
+**16K prefill breakdown (~36s total):**
+| Component | Time | % | Notes |
+|-----------|------|---|-------|
+| Forward compute (8 chunks × ~4s) | ~32s | 89% | Dominates everything |
+| eval_cache (8 × 313ms) | ~2.5s | 7% | KV cache materialization |
+| Pipeline bubble | ~3s | 8% | Overlaps with forward; inherent to 2-rank PP |
+| `agree_on_tasks` first call | 800ms | 2% | First-request only |
+| `distributed_callback` | 640µs | <0.01% | Eliminated |
+| Everything else | <100ms | <0.3% | |
+
+**GPU at 32% utilization = 97% of achievable ceiling** for 8-bit gather_qmm at these MoE shapes. This is the M4 Max practical limit for quantized MoE workloads.
 
 ### Inherent (architecture-limited)
 - **PP pipeline bubble (12.6% of prefill)**: R0 waits for R1 at each chunk boundary. Inherent to 2-rank PP.
 - **Decode outlier steps (22.6% of decode)**: MTP draft rejection penalty (37,000µs vs 17,000µs normal). 88-90% acceptance rate with K=1 MTP.
 - **GPU efficiency ceiling**: MoE at 32% GPU eff (97% of achievable ceiling for 8-bit gather_qmm at these shapes). Projections at 42%. These are near the practical limit for M4 Max with quantized workloads.
 - **CPU overhead**: 120µs/token (<1% of decode step). Already negligible.
+
+### Remaining levers (require non-software changes)
+- **More nodes** (hardware scale)
+- **Concurrent batching** for throughput (already supported in `BatchGenerator`; no latency win, but ~N× throughput at concurrency N)
+- **Model changes**: sliding-window attention for long context, smaller experts, lower precision quantization
+- **Different hardware**: Apple's MoE/quantized-kernel ceiling on M4 Max is the wall
