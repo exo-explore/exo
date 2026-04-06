@@ -150,6 +150,10 @@ class SequentialGenerator(InferenceGenerator):
             group=self.group,
             model_id=self.model_id,
         )
+        # Pre-warm the distributed collective path so the first real
+        # agree_on_tasks doesn't pay a ~1s cold-start penalty.
+        self.agree_on_tasks()
+        self.agree_on_cancellations()
 
     def submit(
         self,
@@ -385,6 +389,10 @@ class BatchGenerator(InferenceGenerator):
             group=self.group,
             model_id=self.model_id,
         )
+        # Pre-warm the distributed collective path so the first real
+        # agree_on_tasks doesn't pay a ~1s cold-start penalty.
+        self.agree_on_tasks()
+        self.agree_on_cancellations()
 
     def submit(
         self,
