@@ -323,8 +323,10 @@ MLX dispatch overhead for multiple matmuls per chunk dominates. The sequential k
 - **Per-expert regular qmm (128 dispatches)**: 33% slower than gather_qmm.
 - **Layer rebalancing (33/27 split)**: Total compute unchanged.
 
+### Investigated and resolved
+- **`distributed_prompt_progress_callback`**: Was **340ms per prefill chunk** (~2.7s total for 16K). Replaced with `agree_on_cancellations_fast()` (single `mx_any` fast-path, only falls through to expensive `all_gather` if any rank has cancellations) and removed `agree_on_tasks()` from prefill callback (tasks are agreed during decode instead). Result: **~80µs per chunk** — effectively eliminated. Commit `489efaaa`.
+
 ### Worth investigating
-- **`distributed_prompt_progress_callback`**: Takes **340ms per prefill chunk** (~2.7s total for 16K). This is the largest non-compute overhead in the prefill loop. Reducing or deferring this callback could save 2-3s.
 - **Attention scaling at long context**: Per-chunk forward grows from 3.0s (chunk 0) to 6.4s (chunk 36) for 77K context. The ~90ms/chunk growth is from 7-8 GQA full-attention layers doing SDPA against the growing KV cache. Sliding window or sparse attention for these layers would help long-context prefill.
 - **Pre-warm `agree_on_tasks`**: First request pays ~1,063,000µs for distributed rank synchronization. Could be done during model warmup.
 
