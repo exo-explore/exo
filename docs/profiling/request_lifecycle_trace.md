@@ -325,10 +325,11 @@ MLX dispatch overhead for multiple matmuls per chunk dominates. The sequential k
 
 ### Investigated and resolved
 - **`distributed_prompt_progress_callback`**: Was **340ms per prefill chunk** (~2.7s total for 16K). Replaced with `agree_on_cancellations_fast()` (single `mx_any` fast-path, only falls through to expensive `all_gather` if any rank has cancellations) and removed `agree_on_tasks()` from prefill callback (tasks are agreed during decode instead). Result: **~80µs per chunk** — effectively eliminated. Commit `489efaaa`.
+- **Pre-warm `agree_on_tasks`**: First-request `agree_on_tasks` was ~1,031ms. Pre-warming both `agree_on_tasks` and `agree_on_cancellations` during inference warmup reduced this to ~801ms (~230ms saved — the cold-start component). The remaining ~800ms is network propagation latency: R0 receives the API request and calls `agree_on_tasks` before R1 has been notified of the task, then blocks in `all_gather` until R1 also calls it. Not fixable by pre-warming. Commit `b32b3dc5`.
 
 ### Worth investigating
 - **Attention scaling at long context**: Per-chunk forward grows from 3.0s (chunk 0) to 6.4s (chunk 36) for 77K context. The ~90ms/chunk growth is from 7-8 GQA full-attention layers doing SDPA against the growing KV cache. Sliding window or sparse attention for these layers would help long-context prefill.
-- **Pre-warm `agree_on_tasks`**: First request pays ~1,063,000µs for distributed rank synchronization. Could be done during model warmup.
+- **First-request rank propagation latency**: ~800ms wait while R1 learns about a task R0 already received. Could be addressed by API forwarding the task to all ranks in parallel, or by R0 broadcasting task arrival on a separate path before calling `agree_on_tasks`.
 
 ### Inherent (architecture-limited)
 - **PP pipeline bubble (12.6% of prefill)**: R0 waits for R1 at each chunk boundary. Inherent to 2-rank PP.
