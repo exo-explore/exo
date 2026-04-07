@@ -41,6 +41,7 @@ from exo.worker.engines.mlx.generator.generate import (
     prefill,
 )
 from exo.worker.engines.mlx.utils_mlx import (
+    detect_thinking_prompt_suffix,
     fix_unmatched_think_end_tokens,
     system_prompt_token_count,
 )
@@ -82,6 +83,8 @@ class _EngineTask:
     reasoning_tokens: int = 0
     prefill_tps: float = 0.0
     media_regions: list[MediaRegion] = field(default_factory=list)
+    first_gen_token_time: float | None = None
+    last_gen_token_time: float | None = None
 
 
 @dataclass(eq=False)
@@ -267,6 +270,7 @@ class ExoBatchGenerator:
             prefill_tps=_prefill_tps,
             generation_time_at_start=self._mlx_gen._stats.generation_time,
             media_regions=media_regions,
+            in_thinking=detect_thinking_prompt_suffix(prompt, self.tokenizer),
         )
 
         return uid
@@ -292,6 +296,10 @@ class ExoBatchGenerator:
                 continue
 
             state = self._active_tasks[response.uid]
+            now = time.perf_counter()
+            if state.first_gen_token_time is None:
+                state.first_gen_token_time = now
+            state.last_gen_token_time = now
             if state.on_generation_token is not None:
                 state.on_generation_token()
             if response.finish_reason != "stop":
@@ -300,6 +308,11 @@ class ExoBatchGenerator:
                 state.detokenizer.finalize()
             text = state.detokenizer.last_segment
             state.completion_tokens += 1
+            if state.task_params.bench:
+                delta = now - state.first_gen_token_time
+                logger.debug(
+                    f"[bench] uid={response.uid} tok#{state.completion_tokens} {text!r} t={delta:.4f}s"
+                )
             state.generated_text_parts.append(text)
             state.potential_stop_sequence_text += text
 
@@ -354,15 +367,15 @@ class ExoBatchGenerator:
             stats: GenerationStats | None = None
             usage: Usage | None = None
             if is_done:
-                gen_time_delta = (
-                    self._mlx_gen._stats.generation_time
-                    - state.generation_time_at_start
-                )
-                generation_tps = (
-                    state.completion_tokens / gen_time_delta
-                    if gen_time_delta > 0
-                    else 0.0
-                )
+                if state.completion_tokens > 1:
+                    gen_span = state.last_gen_token_time - state.first_gen_token_time
+                    generation_tps = (
+                        (state.completion_tokens - 1) / gen_span
+                        if gen_span > 0
+                        else 0.0
+                    )
+                else:
+                    generation_tps = 0.0
 
                 stats = GenerationStats(
                     prompt_tps=state.prefill_tps,
