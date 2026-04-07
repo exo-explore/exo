@@ -140,19 +140,9 @@ struct SettingsView: View {
     private var advancedTab: some View {
         Form {
             Section("Performance") {
-                HStack {
-                    Toggle("Fast Synch Enabled", isOn: $pendingFastSynchEnabled)
-                    Button(action: {}) {
-                        Image(systemName: "info.circle")
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help(
-                        "Fast Synch is an experimental feature that enables fast CPU to GPU synchronization. It can sometimes cause a \"GPU lock\" where inference hangs for ~10 seconds before starting. Necessary for low latency with RDMA and Tensor Parallelism."
-                    )
-                }
+                Toggle("Fast Synch Enabled", isOn: $pendingFastSynchEnabled)
                 Text(
-                    "Experimental: enables fast CPU to GPU synchronization for RDMA with Tensor Parallelism."
+                    "Experimental: enables fast CPU to GPU synchronization. Can sometimes cause a \"GPU lock\" where inference hangs for ~10 seconds before starting. Necessary for low latency with RDMA and Tensor Parallelism."
                 )
                 .font(.caption)
                 .foregroundColor(.secondary)
