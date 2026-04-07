@@ -30,6 +30,32 @@ def get_gpt_oss_encoding():
     return encoding
 
 
+def count_reasoning_tokens(
+    responses: Generator[GenerationResponse | ToolCallResponse | None],
+) -> Generator[GenerationResponse | ToolCallResponse | None]:
+    """Count tokens with is_thinking=True and patch the total into Usage on the final response."""
+    reasoning_tokens = 0
+    for response in responses:
+        if response is None:
+            yield None
+            continue
+        if isinstance(response, GenerationResponse) and response.is_thinking:
+            reasoning_tokens += 1
+        if response.usage is not None and reasoning_tokens > 0:
+            response = response.model_copy(
+                update={
+                    "usage": response.usage.model_copy(
+                        update={
+                            "completion_tokens_details": response.usage.completion_tokens_details.model_copy(
+                                update={"reasoning_tokens": reasoning_tokens}
+                            )
+                        }
+                    )
+                }
+            )
+        yield response
+
+
 def apply_all_parsers(
     receiver: Generator[GenerationResponse | None],
     prompt: str,
@@ -59,7 +85,7 @@ def apply_all_parsers(
     elif tool_parser:
         mlx_generator = parse_tool_calls(mlx_generator, tool_parser, tools)
 
-    return mlx_generator
+    return count_reasoning_tokens(mlx_generator)
 
 
 def parse_gpt_oss(

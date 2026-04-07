@@ -53,7 +53,6 @@ from exo.worker.engines.mlx.constants import (
 )
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
-    detect_thinking_prompt_suffix,
     fix_unmatched_think_end_tokens,
     mx_barrier,
     system_prompt_token_count,
@@ -597,11 +596,6 @@ def mlx_generate(
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
     usage: Usage | None = None
-    in_thinking = detect_thinking_prompt_suffix(prompt, tokenizer)
-    reasoning_tokens = 0
-    think_start = tokenizer.think_start
-    think_end = tokenizer.think_end
-
     logger.info("Starting decode")
     mx_barrier(group)
 
@@ -622,13 +616,6 @@ def mlx_generate(
     ):
         generated_text_parts.append(out.text)
         accumulated_text += out.text
-
-        if think_start is not None and out.text == think_start:
-            in_thinking = True
-        elif think_end is not None and out.text == think_end:
-            in_thinking = False
-        if in_thinking:
-            reasoning_tokens += 1
 
         # Check for stop sequences
         text = out.text
@@ -673,9 +660,7 @@ def mlx_generate(
                 prompt_tokens_details=PromptTokensDetails(
                     cached_tokens=prefix_hit_length
                 ),
-                completion_tokens_details=CompletionTokensDetails(
-                    reasoning_tokens=reasoning_tokens
-                ),
+                completion_tokens_details=CompletionTokensDetails(reasoning_tokens=0),
             )
 
         # Extract logprobs from the full vocabulary logprobs array
