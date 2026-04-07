@@ -91,7 +91,8 @@ class KVPrefixCache:
         self._group = group
         # Disk persistence state
         self._model_id = model_id
-        self._disk_dir = self._init_disk_dir() if model_id else None
+        self._disk_enabled = os.environ.get("EXO_KV_DISK_PERSISTENCE", "1") != "0"
+        self._disk_dir = self._init_disk_dir() if model_id and self._disk_enabled else None
         self._disk_dirty = False
         self._flush_requested_at: float = 0.0
         self._hot_slot_disk_id: int | None = None
@@ -272,7 +273,8 @@ class KVPrefixCache:
 
     def _init_disk_dir(self):
         h = hashlib.sha256(self._model_id.encode()).hexdigest()[:16]
-        d = _Path.home() / ".exo" / "kv-cache" / h
+        base = _Path(os.environ.get("EXO_KV_DISK_PATH", str(_Path.home() / ".exo" / "kv-cache")))
+        d = base / h
         d.mkdir(parents=True, exist_ok=True)
         logger.info(f"KV cache disk dir: {d}")
         return d
@@ -322,10 +324,12 @@ class KVPrefixCache:
         except Exception as e:
             logger.warning(f"KV cache disk flush failed: {e}")
 
-    def _evict_stale_disk_slots(self, max_age_hours=24, max_size_gb=500):
-        """Delete disk slots older than max_age_hours, then evict oldest if over max_size_gb."""
+    def _evict_stale_disk_slots(self):
+        """Delete stale disk slots (TTL) then evict oldest if over size limit."""
         if not self._disk_dir:
             return
+        max_age_hours = float(os.environ.get("EXO_KV_DISK_TTL_HOURS", "24"))
+        max_size_gb = float(os.environ.get("EXO_KV_DISK_MAX_SIZE_GB", "500"))
         # Phase 1: TTL eviction
         cutoff = _time.time() - (max_age_hours * 3600)
         for meta_file in self._disk_dir.glob("slot_*_meta.json"):
