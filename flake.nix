@@ -74,12 +74,6 @@
 
       perSystem = { config, self', pkgs, lib, system, ... }:
         let
-          pythonPkg = pkgs.python313;
-          nixFormatter = {
-            name = "nixpkgs-fmt";
-            pkg = pkgs.${nixFormatter.name};
-          };
-
           # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
           pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
         in
@@ -106,7 +100,7 @@
           treefmt = {
             projectRootFile = "flake.nix";
             programs = {
-              ${nixFormatter.name}.enable = true;
+              nixpkgs-fmt.enable = true;
               ruff-format = {
                 enable = true;
                 excludes = [ "rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi" ];
@@ -155,7 +149,7 @@
                 config.treefmt.build.wrapper
 
                 # PYTHON
-                pythonPkg
+                self'.packages.python
                 uv
                 ruff
                 basedpyright
@@ -166,7 +160,7 @@
 
                 # NIX
                 nixd
-                nixFormatter.pkg
+                nixpkgs-fmt
 
                 # SVELTE
                 nodejs
@@ -185,7 +179,7 @@
             OPENSSL_NO_VENDOR = "1";
 
             shellHook = ''
-              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pythonPkg}/lib"
+              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${self'.packages.python}/lib"
               ${lib.optionalString stdenv.isLinux ''
                 export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
               ''}

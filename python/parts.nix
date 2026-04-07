@@ -181,6 +181,9 @@
           # Test environment for running pytest outside of Nix sandbox (needs GPU access)
           exo-test-env = testVenv;
         } // {
+
+        inherit python;
+
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
         exo-eval = mkBenchScript "exo-eval" (inputs.self + /bench/exo_eval.py);
         exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);
