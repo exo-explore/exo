@@ -16,11 +16,13 @@ from mlx.nn.layers.distributed import (
 from mlx_lm.models.base import (
     scaled_dot_product_attention,  # pyright: ignore[reportUnknownVariableType]
 )
-from mlx_lm.models.cache import ArraysCache, KVCache
+from mlx_lm.models.cache import ArraysCache, KVCache, RotatingKVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
+from mlx_lm.models.gemma4 import Model as Gemma4Model
+from mlx_lm.models.gemma4_text import Gemma4TextModel
 from mlx_lm.models.glm4_moe import Model as Glm4MoeModel
 from mlx_lm.models.glm4_moe import MoE
 from mlx_lm.models.glm4_moe_lite import Glm4MoeLiteDecoderLayer, Glm4MoeLiteMLP
@@ -190,7 +192,16 @@ class PipelineLastLayer(CustomMlxLayer):
             x, *args, **kwargs
         ).arguments.get("cache", None)
 
-        output: mx.array = self.original_layer(x, *args, **kwargs)
+        layer_result = self.original_layer(x, *args, **kwargs)
+
+        # Some models (e.g. gemma4) return a tuple (hidden_states, *extras); the
+        # pipeline send/all_gather must operate on the hidden_states only.
+        if isinstance(layer_result, tuple):
+            output: mx.array = cast(mx.array, layer_result[0])
+            extras: tuple[object, ...] = layer_result[1:]
+        else:
+            output = cast(mx.array, layer_result)
+            extras = ()
 
         # Eval layer output to materialize it before send — this splits the graph
         # so the send is isolated and the receiving rank's recv can complete.
@@ -221,6 +232,8 @@ class PipelineLastLayer(CustomMlxLayer):
             ]
             mx.eval(output)
 
+        if extras:
+            return cast(mx.array, (output, *extras))
         return output
 
 
@@ -301,6 +314,51 @@ def _patch_hybrid_cache(
         return cache
 
     model.make_cache = patched
+
+
+def _patch_gemma4_pipeline(
+    model: Gemma4Model,
+    inner: Gemma4TextModel,
+    start_layer: int,
+    end_layer: int,
+) -> None:
+    args = inner.config
+    num_hidden_layers = int(args.num_hidden_layers)
+    num_kv_shared_layers = int(args.num_kv_shared_layers)
+    first_kv_shared = num_hidden_layers - num_kv_shared_layers
+    layer_types = list(args.layer_types or [])
+    sliding_window = int(args.sliding_window)
+
+    if num_kv_shared_layers > 0:
+        for orig_idx in range(start_layer, end_layer):
+            if orig_idx >= first_kv_shared:
+                src_idx = inner.previous_kvs[orig_idx]
+                if not (start_layer <= src_idx < end_layer):
+                    raise NotImplementedError(
+                        f"Pipeline parallel for gemma4 layer {orig_idx} (kv-shared) "
+                        f"requires its source layer {src_idx} to be in the same shard, "
+                        f"but the current shard is [{start_layer}, {end_layer}). "
+                        f"Adjust the placement so kv-shared layers stay with their source."
+                    )
+
+    inner.previous_kvs = [
+        inner.previous_kvs[orig_idx] - start_layer
+        for orig_idx in range(start_layer, end_layer)
+    ]
+
+    def patched_make_cache() -> list[KVCache | RotatingKVCache]:
+        local_first_kv_shared = max(0, first_kv_shared - start_layer)
+        local_count = min(end_layer - start_layer, local_first_kv_shared)
+        caches: list[KVCache | RotatingKVCache] = []
+        for local_idx in range(local_count):
+            orig_idx = start_layer + local_idx
+            if layer_types[orig_idx] == "full_attention":
+                caches.append(KVCache())
+            else:
+                caches.append(RotatingKVCache(max_size=sliding_window, keep=0))
+        return caches
+
+    model.make_cache = patched_make_cache
 
 
 def pipeline_auto_parallel(
@@ -390,6 +448,14 @@ def pipeline_auto_parallel(
                 ssm_idx=inner_model_instance.ssm_idx,
                 has_linear=bool(linear_layers),
             )
+
+    if isinstance(inner_model_instance, Gemma4TextModel):
+        _patch_gemma4_pipeline(
+            cast(Gemma4Model, model),
+            inner_model_instance,
+            start_layer,
+            end_layer,
+        )
 
     if isinstance(inner_model_instance, NemotronHInnerModel):
         # NemotronH uses block_type: "M" (Mamba/SSM), "*" (Attention), "E" (MoE), "-" (MLP)
@@ -603,6 +669,14 @@ def tensor_auto_parallel(
         )
     elif isinstance(model, NemotronHModel):
         tensor_parallel_sharding_strategy = NemotronHShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
+    elif isinstance(model, Gemma4Model):
+        tensor_parallel_sharding_strategy = Gemma4ShardingStrategy(
             group,
             all_to_sharded_linear,
             sharded_to_all_linear,
@@ -1395,3 +1469,56 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
         mixer.intermediate_size = is_per_rank
         mixer.conv_dim = new_conv_dim
         mixer.heads_per_group = heads_per_rank // groups_per_rank
+
+
+class WrappedGemma4Experts(CustomMlxLayer):
+    def __init__(self, layer: _LayerCallable, group: mx.distributed.Group):
+        super().__init__(layer)
+        self.sharding_group: mx.distributed.Group = group
+
+    def __call__(
+        self, x: mx.array, top_k_indices: mx.array, top_k_weights: mx.array
+    ) -> mx.array:
+        x = sum_gradients(self.sharding_group)(x)
+        y: mx.array = self.original_layer(x, top_k_indices, top_k_weights)
+        y = mx.distributed.all_sum(y, group=self.sharding_group)
+        return y
+
+
+class Gemma4ShardingStrategy(TensorParallelShardingStrategy):
+    def shard_model(
+        self,
+        model: nn.Module,
+        timeout_seconds: float,
+        on_timeout: TimeoutCallback | None,
+        on_layer_loaded: LayerLoadedCallback | None,
+    ) -> nn.Module:
+        model = cast(Gemma4Model, model)
+        layers = model.language_model.model.layers
+        total = len(layers)
+        for i, layer in enumerate(layers):
+            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+
+            attn = layer.self_attn
+            attn.q_proj = self.all_to_sharded_linear(attn.q_proj)
+            attn.k_proj = self.all_to_sharded_linear(attn.k_proj)
+            if not attn.use_k_eq_v:
+                attn.v_proj = self.all_to_sharded_linear(attn.v_proj)
+            attn.o_proj = self.sharded_to_all_linear(attn.o_proj)
+            attn.n_heads //= self.N
+            attn.n_kv_heads //= self.N
+
+            layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
+            layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
+            layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
+
+            if layer.enable_moe:
+                self.all_to_sharded_linear_in_place(layer.experts.switch_glu.gate_proj)
+                self.sharded_to_all_linear_in_place(layer.experts.switch_glu.down_proj)
+                self.all_to_sharded_linear_in_place(layer.experts.switch_glu.up_proj)
+                layer.experts = WrappedGemma4Experts(layer.experts, self.group)  # pyright: ignore[reportAttributeAccessIssue,reportArgumentType]
+
+            mx.eval(layer)
+            if on_layer_loaded is not None:
+                on_layer_loaded(i, total)
+        return model

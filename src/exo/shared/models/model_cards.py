@@ -261,6 +261,7 @@ class ConfigData(BaseModel):
             ["GptOssForCausalLM"],
             ["Step3p5ForCausalLM"],
             ["NemotronHForCausalLM"],
+            ["Gemma4ForConditionalGeneration"],
         ]
 
     @model_validator(mode="before")

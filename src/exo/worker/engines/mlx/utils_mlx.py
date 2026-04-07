@@ -671,21 +671,37 @@ def fix_unmatched_think_end_tokens(
 ) -> mx.array:
     if not tokenizer.has_thinking:
         return tokens
-    assert tokenizer.think_start_id
-    assert tokenizer.think_end_id
-    think_start_id: int = tokenizer.think_start_id
-    think_end_id: int = tokenizer.think_end_id
+    assert tokenizer.think_start_tokens
+    assert tokenizer.think_end_tokens
+    think_start_tokens: list[int] = tokenizer.think_start_tokens
+    think_end_tokens: list[int] = tokenizer.think_end_tokens
     token_list: list[int] = cast(list[int], tokens.tolist())
     result: list[int] = []
+
     depth = 0
+    accumulated_think_start_length = 0
+    accumulated_think_end_length = 0
+
     for token in token_list:
-        if token == think_start_id:
-            depth += 1
-        elif token == think_end_id:
-            if depth == 0:
-                result.append(think_start_id)
-            else:
-                depth -= 1
+        if token == think_start_tokens[accumulated_think_start_length]:
+            accumulated_think_start_length += 1
+            if accumulated_think_start_length == len(think_start_tokens):
+                depth += 1
+                accumulated_think_start_length = 0
+
+        elif token == think_end_tokens[accumulated_think_end_length]:
+            accumulated_think_end_length += 1
+            if accumulated_think_end_length == len(think_end_tokens):
+                if depth == 0:
+                    result.extend(think_start_tokens)
+                else:
+                    depth -= 1
+                accumulated_think_end_length = 0
+
+        else:
+            accumulated_think_start_length = 0
+            accumulated_think_end_length = 0
+
         result.append(token)
     return mx.array(result)
 
