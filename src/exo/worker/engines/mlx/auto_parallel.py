@@ -22,7 +22,6 @@ from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
 from mlx_lm.models.gemma4 import Model as Gemma4Model
-from mlx_lm.models.gemma4_text import Gemma4TextModel
 from mlx_lm.models.glm4_moe import Model as Glm4MoeModel
 from mlx_lm.models.glm4_moe import MoE
 from mlx_lm.models.glm4_moe_lite import Glm4MoeLiteDecoderLayer, Glm4MoeLiteMLP
@@ -60,6 +59,12 @@ from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.worker.engines.mlx.gemma4 import (
+    is_gemma4_inner_model,
+    patch_gemma4_pipeline,
+    try_set_gemma4_pipeline_prefill,
+    try_set_gemma4_pipeline_queue_sends,
+)
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
@@ -227,12 +232,18 @@ class PipelineLastLayer(CustomMlxLayer):
 
 
 def set_pipeline_prefill(model: nn.Module, is_prefill: bool) -> None:
+    inner = get_inner_model(model)
+    if try_set_gemma4_pipeline_prefill(inner, is_prefill):
+        return
     for layer in model.layers:  # type: ignore
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
             layer.is_prefill = is_prefill
 
 
 def set_pipeline_queue_sends(model: nn.Module, queue_sends: bool) -> None:
+    inner = get_inner_model(model)
+    if try_set_gemma4_pipeline_queue_sends(inner, queue_sends):
+        return
     for layer in model.layers:  # type: ignore
         if isinstance(layer, PipelineLastLayer):
             layer.queue_sends = queue_sends
@@ -333,9 +344,9 @@ def pipeline_auto_parallel(
         if on_layer_loaded is not None:
             on_layer_loaded(i, total)
 
-    # Gemma 4 is very weird in terms of handling
-    is_gemma4 = isinstance(inner_model_instance, Gemma4TextModel)
-    if not is_gemma4:
+    # Gemma 4 takes over the inner forward pass itself (see gemma4.py) so we
+    # skip the generic pipeline-layer wrapping for it.
+    if not is_gemma4_inner_model(inner_model_instance):
         layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
         layers[-1] = PipelineLastLayer(
             layers[-1],
@@ -396,35 +407,16 @@ def pipeline_auto_parallel(
                 has_linear=bool(linear_layers),
             )
 
-    if isinstance(inner_model_instance, Gemma4TextModel):
-        args = inner_model_instance.config
-        num_hidden_layers = int(args.num_hidden_layers)
-        num_kv_shared_layers = int(args.num_kv_shared_layers)
-        first_kv_shared = num_hidden_layers - num_kv_shared_layers
-        layer_types = list(args.layer_types or [])
-
-        if num_kv_shared_layers > 0:
-            for orig_idx in range(start_layer, end_layer):
-                if orig_idx >= first_kv_shared:
-                    src_idx = inner_model_instance.previous_kvs[orig_idx]
-                    if not (start_layer <= src_idx < end_layer):
-                        raise NotImplementedError(
-                            f"Pipeline parallel for gemma4 layer {orig_idx} (kv-shared) "
-                            f"requires its source layer {src_idx} to be in the same shard, "
-                            f"but the current shard is [{start_layer}, {end_layer}). "
-                            f"Adjust the placement so kv-shared layers stay with their source."
-                        )
-
-        inner_model_instance.previous_kvs = [
-            inner_model_instance.previous_kvs[orig_idx] - start_layer
-            for orig_idx in range(start_layer, end_layer)
-        ]
-
-        local_layer_types = layer_types[start_layer:end_layer]
-        local_source_count = max(0, min(end_layer, first_kv_shared) - start_layer)
-        args.layer_types = local_layer_types
-        args.num_hidden_layers = end_layer - start_layer
-        args.num_kv_shared_layers = (end_layer - start_layer) - local_source_count
+    if is_gemma4_inner_model(inner_model_instance):
+        patch_gemma4_pipeline(
+            inner_model_instance,
+            start_layer,
+            end_layer,
+            device_rank,
+            world_size,
+            group,
+            _pending_prefill_sends,
+        )
 
     if isinstance(inner_model_instance, NemotronHInnerModel):
         # NemotronH uses block_type: "M" (Mamba/SSM), "*" (Attention), "E" (MoE), "-" (MLP)
@@ -482,7 +474,7 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
         )
 
         # Add dependency to last cache entry to ensure distributed ops are evaluated
-        if cache is not None:
+        if cache is not None and len(cache) > 0:  # type: ignore
             last = cache[-1]  # type: ignore
             dep_cache = last[0] if hasattr(last, "caches") else last  # type: ignore
             if hasattr(dep_cache, "keys") and dep_cache.keys is not None:  # type: ignore

@@ -111,7 +111,15 @@ class DecoderLayer(nn.Module):
     layer_scalar: mx.array
 
     def __init__(self, config: ModelArgs, layer_idx: int) -> None: ...
-    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
+    def __call__(
+        self,
+        x: mx.array,
+        mask: Optional[mx.array] = ...,
+        cache: Optional[Any] = ...,
+        per_layer_input: Optional[mx.array] = ...,
+        shared_kv: Optional[tuple[mx.array, mx.array]] = ...,
+        offset: Optional[mx.array] = ...,
+    ) -> tuple[mx.array, tuple[mx.array, mx.array], mx.array]: ...
 
 class Gemma4TextModel(nn.Module):
     config: ModelArgs
@@ -130,7 +138,24 @@ class Gemma4TextModel(nn.Module):
     previous_kvs: list[int]
 
     def __init__(self, config: ModelArgs) -> None: ...
-    def __call__(self, *args: Any, **kwargs: Any) -> mx.array: ...
+    def __call__(
+        self,
+        inputs: Optional[mx.array] = ...,
+        cache: Optional[list[Any]] = ...,
+        input_embeddings: Optional[mx.array] = ...,
+        per_layer_inputs: Optional[mx.array] = ...,
+    ) -> mx.array: ...
+    def _get_per_layer_inputs(
+        self,
+        input_ids: Optional[mx.array],
+        input_embeddings: Optional[mx.array] = ...,
+    ) -> mx.array: ...
+    def _project_per_layer_inputs(
+        self,
+        input_embeddings: mx.array,
+        per_layer_inputs: Optional[mx.array] = ...,
+    ) -> mx.array: ...
+    def _make_masks(self, h: mx.array, cache: list[Any]) -> list[Any]: ...
 
 class Model(nn.Module):
     args: ModelArgs
