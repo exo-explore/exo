@@ -55,8 +55,7 @@
     extra-substituters = "https://exo.cachix.org";
   };
 
-  outputs =
-    inputs:
+  outputs = inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
@@ -71,9 +70,23 @@
         ./python/parts.nix
       ];
 
+      debug = true; # Enable options autocompletion
+
       perSystem =
-        { config, self', pkgs, lib, system, ... }:
+        { config
+        , self'
+        , pkgs
+        , lib
+        , system
+        , ...
+        }:
         let
+          pythonPkg = pkgs.python313;
+          nixFormatter = {
+            name = "nixpkgs-fmt";
+            pkg = pkgs.${nixFormatter.name};
+          };
+
           # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
           pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
         in
@@ -100,7 +113,7 @@
           treefmt = {
             projectRootFile = "flake.nix";
             programs = {
-              nixpkgs-fmt.enable = true;
+              ${nixFormatter.name}.enable = true;
               ruff-format = {
                 enable = true;
                 excludes = [ "rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi" ];
@@ -140,50 +153,52 @@
             }
           );
 
-          devShells.default = with pkgs; pkgs.mkShell {
-            inputsFrom = [ self'.checks.cargo-build ];
+          devShells.default = with pkgs;
+            pkgs.mkShell {
+              inputsFrom = [ self'.checks.cargo-build ];
 
-            packages =
-              [
-                # FORMATTING
-                config.treefmt.build.wrapper
+              packages =
+                [
+                  # FORMATTING
+                  config.treefmt.build.wrapper
 
-                # PYTHON
-                python313
-                uv
-                ruff
-                basedpyright
+                  # PYTHON
+                  pythonPkg
+                  uv
+                  ruff
+                  basedpyright
 
-                # RUST
-                config.rust.toolchain
-                maturin
+                  # RUST
+                  config.rust.toolchain
+                  maturin
 
-                # NIX
-                nixpkgs-fmt
+                  # NIX
+                  nixd
+                  nixFormatter.pkg
 
-                # SVELTE
-                nodejs
+                  # SVELTE
+                  nodejs
 
-                # MISC
-                just
-                jq
-              ]
-              ++ lib.optionals stdenv.isLinux [
-                unixtools.ifconfig
-              ]
-              ++ lib.optionals stdenv.isDarwin [
-                macmon
-              ];
+                  # MISC
+                  just
+                  jq
+                ]
+                ++ lib.optionals stdenv.isLinux [
+                  unixtools.ifconfig
+                ]
+                ++ lib.optionals stdenv.isDarwin [
+                  macmon
+                ];
 
-            OPENSSL_NO_VENDOR = "1";
+              OPENSSL_NO_VENDOR = "1";
 
-            shellHook = ''
-              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${python313}/lib"
-              ${lib.optionalString stdenv.isLinux ''
-                export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
-              ''}
-            '';
-          };
+              shellHook = ''
+                export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pythonPkg}/lib"
+                ${lib.optionalString stdenv.isLinux ''
+                  export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
+                ''}
+              '';
+            };
         };
     };
 }
