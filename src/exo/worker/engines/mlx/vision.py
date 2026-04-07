@@ -49,20 +49,22 @@ def _run_processor(
     processor: "ImageProcessor",
     pil_images: list[Image.Image],
 ) -> tuple[dict[str, np.ndarray], list[int] | None]:
-    # Image processors split into two families by how they report per-image
-    # token counts:
-    #
-    # 1. Variable-resolution patch models (Qwen3-VL, Llama 4 vision, ...):
-    #    return a `BatchFeature` dict containing `pixel_values` and
-    #    `image_grid_thw` — an (n_images, 3) array of (temporal, height, width)
-    #    patch counts. The caller multiplies the three to get the per-image
-    #    token count, so no override is needed.
-    #
-    # 2. Fixed-token-budget models (Gemma 4): every image collapses to a fixed
-    #    number of soft tokens, so there's no grid to report. These processors
-    #    return `(batch_feature_dict, [n_tokens_per_image])` instead.
-    #
-    # We normalize both into (dict, optional tokens override).
+    """
+    Image processors split into two families by how they report per-image
+    token counts:
+
+    1. Variable-resolution patch models (Qwen3-VL, Llama 4 vision, ...):
+       return a `BatchFeature` dict containing `pixel_values` and
+       `image_grid_thw` — an (n_images, 3) array of (temporal, height, width)
+       patch counts. The caller multiplies the three to get the per-image
+       token count, so no override is needed.
+
+    2. Fixed-token-budget models (Gemma 4): every image collapses to a fixed
+       number of soft tokens, so there's no grid to report. These processors
+       return `(batch_feature_dict, [n_tokens_per_image])` instead.
+
+    We normalize both into (dict, optional tokens override).
+    """
     raw = cast(_ProcessorOutput, processor(images=pil_images, return_tensors="np"))
     if isinstance(raw, tuple):
         batch, tokens = raw
@@ -507,13 +509,12 @@ class VisionEncoder:
 
             if isinstance(raw_pixel_values, list):
                 per_image_pixels = [
+                    # (C, H, W) -> (1, C, H, W)
                     mx.array(p)[None] if p.ndim == 3 else mx.array(p)
                     for p in raw_pixel_values
                 ]
             else:
                 stacked = mx.array(raw_pixel_values)
-                if stacked.ndim == 3:
-                    stacked = stacked[None]
                 per_image_pixels = [stacked[i : i + 1] for i in range(stacked.shape[0])]
 
         if self._needs_nhwc:
