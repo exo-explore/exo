@@ -196,11 +196,14 @@ class PipelineLastLayer(CustomMlxLayer):
 
         # Some models (e.g. gemma4) return a tuple (hidden_states, *extras); the
         # pipeline send/all_gather must operate on the hidden_states only.
+        output: mx.array
+        extras: tuple[object, ...]
         if isinstance(layer_result, tuple):
-            output: mx.array = cast(mx.array, layer_result[0])
-            extras: tuple[object, ...] = layer_result[1:]
+            _tuple_result = cast(tuple[mx.array, ...], layer_result)
+            output = _tuple_result[0]
+            extras = _tuple_result[1:]
         else:
-            output = cast(mx.array, layer_result)
+            output = layer_result
             extras = ()
 
         # Eval layer output to materialize it before send — this splits the graph
@@ -233,7 +236,7 @@ class PipelineLastLayer(CustomMlxLayer):
             mx.eval(output)
 
         if extras:
-            return cast(mx.array, (output, *extras))
+            return (output, *extras)  # type: ignore[return-value]
         return output
 
 
