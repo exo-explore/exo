@@ -76,7 +76,6 @@ class Master:
         session_id: SessionId,
         *,
         command_receiver: Receiver[ForwarderCommand],
-        event_sender: Sender[Event],
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
         download_command_sender: Sender[ForwarderDownloadCommand],
@@ -90,12 +89,16 @@ class Master:
         self.local_event_receiver = local_event_receiver
         self.global_event_sender = global_event_sender
         self.download_command_sender = download_command_sender
-        self.event_sender = event_sender
         self._system_id = SystemId()
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
+        # Serializes event indexing/state mutation between command_processor
+        # and event_processor. Without this, the command processor's routing
+        # decisions would race against state updates and concurrent requests
+        # would all see stale task counts and pile onto a single instance.
+        self._state_lock = anyio.Lock()
 
     async def run(self):
         logger.info("Starting Master")
@@ -367,7 +370,7 @@ class Master:
                             ):
                                 await self._send_event(IndexedEvent(idx=i, event=event))
                     for event in generated_events:
-                        await self.event_sender.send(event)
+                        await self._index_apply_broadcast(event)
                 except ValueError as e:
                     logger.opt(exception=e).warning("Error in command processor")
 
@@ -379,7 +382,7 @@ class Master:
             for instance_id, instance in self.state.instances.items():
                 for node_id in instance.shard_assignments.node_to_runner:
                     if node_id not in connected_node_ids:
-                        await self.event_sender.send(
+                        await self._index_apply_broadcast(
                             InstanceDeleted(instance_id=instance_id)
                         )
                         break
@@ -389,7 +392,7 @@ class Master:
                 now = datetime.now(tz=timezone.utc)
                 if now - time > timedelta(seconds=30):
                     logger.info(f"Manually removing node {node_id} due to inactivity")
-                    await self.event_sender.send(NodeTimedOut(node_id=node_id))
+                    await self._index_apply_broadcast(NodeTimedOut(node_id=node_id))
 
             await anyio.sleep(10)
 
@@ -409,16 +412,7 @@ class Master:
                         await self._handle_traces_collected(event)
                         continue
 
-                    logger.debug(f"Master indexing event: {str(event)[:100]}")
-                    indexed = IndexedEvent(event=event, idx=len(self._event_log))
-                    self.state = apply(self.state, indexed)
-
-                    event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
-                    if isinstance(event, NodeGatheredInfo):
-                        event.when = str(datetime.now(tz=timezone.utc))
-
-                    self._event_log.append(event)
-                    await self._send_event(indexed)
+                    await self._index_apply_broadcast(event)
 
     # This function is re-entrant, take care!
     async def _send_event(self, event: IndexedEvent):
@@ -431,6 +425,29 @@ class Master:
                 event=event.event,
             )
         )
+
+    async def _index_apply_broadcast(self, event: Event) -> IndexedEvent:
+        """Index, apply, persist, and broadcast a single event atomically.
+
+        This is the master's only path for committing events into state. It
+        is called from both command_processor (for events the master itself
+        generates) and event_processor (for events received from workers).
+        The lock serializes the read-modify-write of `_event_log` length and
+        `state`, which is what allows the command processor to make routing
+        decisions based on its own just-emitted events without waiting for a
+        network round-trip.
+        """
+        async with self._state_lock:
+            event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
+            if isinstance(event, NodeGatheredInfo):
+                event.when = str(datetime.now(tz=timezone.utc))
+
+            indexed = IndexedEvent(event=event, idx=len(self._event_log))
+            logger.debug(f"Master indexing event: {str(event)[:100]}")
+            self.state = apply(self.state, indexed)
+            self._event_log.append(event)
+            await self._send_event(indexed)
+            return indexed
 
     async def _handle_traces_collected(self, event: TracesCollected) -> None:
         task_id = event.task_id
@@ -450,7 +467,7 @@ class Master:
         for trace_data in self._pending_traces[task_id].values():
             all_trace_data.extend(trace_data)
 
-        await self.event_sender.send(
+        await self._index_apply_broadcast(
             TracesMerged(task_id=task_id, traces=all_trace_data)
         )
 
