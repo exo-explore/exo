@@ -63,11 +63,6 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     buf.ready = buf.pending
     buf.pending = BatchTopKLogprobs()
 
-    for i, ti in enumerate(self._token_context):
-        self._token_context[i] = mx.concatenate(
-            [ti[1:] if len(ti) == 256 else ti, inputs[i : i + 1]]
-        )
-
     logits = self.model(inputs[:, None], cache=self.prompt_cache)
     logits = logits[:, -1, :]
 
@@ -112,13 +107,12 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
         mx.async_eval(
             self._next_tokens,
             *self._next_logprobs,
-            *self._token_context,
             pending_indices,
             pending_values,
             pending_selected,
         )
     else:
-        mx.async_eval(self._next_tokens, *self._next_logprobs, *self._token_context)
+        mx.async_eval(self._next_tokens, *self._next_logprobs)
 
     mx.eval(inputs, *self._current_logprobs)
     token_list = cast(list[int], inputs.tolist())
