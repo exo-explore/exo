@@ -176,7 +176,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
-from exo.shared.types.text_generation import TextGenerationTaskParams
+from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
@@ -750,9 +750,11 @@ class API:
                 self._sent_image_hashes.add(h)
                 new_images.append((idx, img))
 
+        wrapped_hashes = {idx: Base64Image(h) for idx, h in cached_hashes.items()}
+
         if not new_images:
             task_params = task_params.model_copy(
-                update={"images": [], "image_hashes": cached_hashes}
+                update={"images": [], "image_hashes": wrapped_hashes}
             )
             command = TextGeneration(task_params=task_params)
             await self._send(command)
@@ -766,7 +768,7 @@ class API:
         task_params = task_params.model_copy(
             update={
                 "images": [],
-                "image_hashes": cached_hashes,
+                "image_hashes": wrapped_hashes,
                 "total_input_chunks": len(all_chunks),
                 "image_count": len(new_images),
             }
@@ -1401,7 +1403,9 @@ class API:
                     resolved_images.append(await fetch_image_url(img))
                 else:
                     resolved_images.append(img)
-            task_params = task_params.model_copy(update={"images": resolved_images})
+            task_params = task_params.model_copy(
+                update={"images": [Base64Image(x) for x in resolved_images]}
+            )
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )

@@ -4,7 +4,7 @@ All external API formats (Chat Completions, Claude Messages, OpenAI Responses)
 are converted to TextGenerationTaskParams at the API boundary via adapters.
 """
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -38,7 +38,7 @@ def resolve_reasoning_params(
 
 class InputMessageContent(str):
     def __repr__(self):
-        return f"<InputMessageContent {self[:10]}...>"
+        return f"<InputMessageContent {self[:100]}...>"
 
 
 class InputMessage(BaseModel, frozen=True):
@@ -99,3 +99,31 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     @classmethod
     def _wrap_image_hashes(cls, v: dict[int, str]) -> dict[int, str]:
         return {k: Base64Image(x) for k, x in v.items()}
+
+    @field_validator("instructions", mode="after")
+    @classmethod
+    def _wrap_instructions(cls, v: str | None) -> str | None:
+        return InputMessageContent(v) if v is not None else None
+
+    @field_validator("chat_template_messages", mode="after")
+    @classmethod
+    def _wrap_chat_template_messages(
+        cls, v: list[dict[str, Any]] | None
+    ) -> list[dict[str, Any]] | None:
+        if v is None:
+            return None
+
+        def wrap(x: object) -> object:
+            if isinstance(x, (InputMessageContent, Base64Image)):
+                return x
+            if isinstance(x, str):
+                return InputMessageContent(x)
+            if isinstance(x, dict):
+                return {
+                    k: wrap(val) for k, val in cast(dict[object, object], x).items()
+                }
+            if isinstance(x, list):
+                return [wrap(i) for i in cast(list[object], x)]
+            return x
+
+        return cast(list[dict[str, Any]], wrap(v))

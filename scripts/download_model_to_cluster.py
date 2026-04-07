@@ -182,8 +182,7 @@ async def run(args: argparse.Namespace) -> int:
             r = await client.post(f"{base}/download/start", json=payload)
             if r.status_code >= 400:
                 raise RuntimeError(
-                    f"/download/start for {node_id} failed "
-                    f"({r.status_code}): {r.text}"
+                    f"/download/start for {node_id} failed ({r.status_code}): {r.text}"
                 )
 
         logger.info("Polling for completion...")

@@ -457,12 +457,21 @@ class VisionEncoder:
         for idx, img in enumerate(pil_images):
             logger.info(f"Image {idx}: {img.width}x{img.height} mode={img.mode}")
 
+        per_image_pixels: list[mx.array]
+        grid_thw: mx.array | None
+        n_tokens_per_image: list[int]
+
         if self._config.processor_repo:
             processed = self._processor.preprocess(
                 [{"type": "image", "image": img} for img in pil_images],
                 return_tensors="np",
             )
-            pixel_values = mx.array(processed["pixel_values"])  # type: ignore
+            stacked_pixels = mx.array(processed["pixel_values"])  # type: ignore
+            if stacked_pixels.ndim == 3:
+                stacked_pixels = stacked_pixels[None]
+            per_image_pixels = [
+                stacked_pixels[i : i + 1] for i in range(stacked_pixels.shape[0])
+            ]
             grid_thw = mx.array(processed["grid_thws"])  # type: ignore
             assert self._merge_kernel_size is not None
             merge_length = int(np.prod(self._merge_kernel_size))
@@ -472,7 +481,13 @@ class VisionEncoder:
             ]
         else:
             batch, tokens_override = _run_processor(self._processor, pil_images)
-            pixel_values = mx.array(batch["pixel_values"])
+            # `Gemma4ImageProcessor` returns pixel_values as a plain ndarray
+            # when all images resize to the same shape, or as a Python list of
+            # per-image (C, H, W) ndarrays when they differ. Treat it as the
+            # union here.
+            raw_pixel_values: np.ndarray | list[np.ndarray] = cast(
+                "np.ndarray | list[np.ndarray]", batch["pixel_values"]
+            )
             raw_grid = batch.get("image_grid_thw")
             grid_thw = mx.array(raw_grid) if raw_grid is not None else None
             if tokens_override is not None:
@@ -490,8 +505,20 @@ class VisionEncoder:
                     for i in range(grid_thw.shape[0])
                 ]
 
+            if isinstance(raw_pixel_values, list):
+                per_image_pixels = [
+                    mx.array(p)[None] if p.ndim == 3 else mx.array(p)
+                    for p in raw_pixel_values
+                ]
+            else:
+                stacked = mx.array(raw_pixel_values)
+                if stacked.ndim == 3:
+                    stacked = stacked[None]
+                per_image_pixels = [stacked[i : i + 1] for i in range(stacked.shape[0])]
+
         if self._needs_nhwc:
             assert grid_thw is not None
+            pixel_values = mx.concatenate(per_image_pixels, axis=0)
             grid_hw = grid_thw[:, 1:] if grid_thw.shape[-1] == 3 else grid_thw
             hidden_states = self._vision_tower(
                 pixel_values.transpose(0, 2, 3, 1),
@@ -499,10 +526,20 @@ class VisionEncoder:
                 grid_thw=grid_hw,
             )
         elif grid_thw is None:
-            # Models like gemma4 have no grid_thw and take only pixel_values.
-            result = self._vision_tower(pixel_values)
-            hidden_states = result[0] if isinstance(result, tuple) else result
+            # Fixed-token-budget models (gemma4): run each image separately
+            # since they can have different spatial shapes *and* different
+            # soft-token counts, then flatten each to (n_tokens_i, hidden)
+            # and concatenate along the token axis.
+            per_image_hidden: list[mx.array] = []
+            for pv in per_image_pixels:
+                result = self._vision_tower(pv)
+                h = result[0] if isinstance(result, tuple) else result
+                if h.ndim == 3:
+                    h = h.reshape(-1, h.shape[-1])
+                per_image_hidden.append(h)
+            hidden_states = mx.concatenate(per_image_hidden, axis=0)
         else:
+            pixel_values = mx.concatenate(per_image_pixels, axis=0)
             result = self._vision_tower(pixel_values, grid_thw)
             hidden_states = result[0] if isinstance(result, tuple) else result
 
@@ -555,6 +592,16 @@ def create_vision_embeddings(
             )
             n = min(n_placeholders, image_features.shape[0])
             image_features = image_features[:n]
+
+        # Gemma-family models apply `h = input_embeddings * embed_scale` inside
+        # the inner model's forward pass. That scale is appropriate for text
+        # tokens (which come out of a raw `embed_tokens(id)` lookup) but not
+        # for our pre-projected image features. Pre-divide by `embed_scale`
+        # so that after the model multiplies, image features are unchanged
+        # while text positions remain correctly scaled.
+        if hasattr(inner, "embed_scale"):  # type: ignore
+            embed_scale = float(inner.embed_scale)  # type: ignore
+            image_features = image_features / embed_scale
 
         image_indices = mx.cumsum(is_image.astype(mx.int32)) - 1
         image_indices = mx.clip(image_indices, 0, image_features.shape[0] - 1)

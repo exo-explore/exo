@@ -45,6 +45,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
+from exo.shared.types.text_generation import Base64Image
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import InstanceId
@@ -335,7 +336,9 @@ class Worker:
                             f"from {len(chunk_buffer)} chunks"
                         )
 
-                    resolved_images = [by_index[i] for i in sorted(by_index)]
+                    resolved_images = [
+                        Base64Image(by_index[i]) for i in sorted(by_index)
+                    ]
                     modified_task = task.model_copy(
                         update={
                             "task_params": task.task_params.model_copy(

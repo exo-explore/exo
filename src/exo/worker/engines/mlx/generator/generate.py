@@ -85,25 +85,31 @@ def patch_embed_tokens(
     end_offset = start_offset + token_count
     offset = [start_offset]
 
-    # Gemma-family models scale the embedding lookup by `hidden_size**0.5`
-    # *inside* the inner model (`h = embed_tokens(inputs) * embed_scale`). Our
-    # pre-computed vision features are already in the projected text-embedding
-    # space, so to survive that multiplication unchanged we divide by
-    # embed_scale up front.
-    if hasattr(inner, "embed_scale"):  # type: ignore
-        embed_scale = float(inner.embed_scale)  # type: ignore
-        embeddings = embeddings / embed_scale
-
     def _inject(input_ids: mx.array) -> mx.array:
-        start = offset[0]
-        if start >= end_offset:
-            return original_embed(input_ids)  # type: ignore
+        chunk_start = offset[0]
         chunk_len = input_ids.shape[-1]
-        end = min(start + chunk_len, end_offset)
-        offset[0] = end
-        if end - start < chunk_len:
+        chunk_end = chunk_start + chunk_len
+        offset[0] = chunk_end
+
+        # The injection window is [start_offset, end_offset).
+        if chunk_end <= start_offset or chunk_start >= end_offset:
             return original_embed(input_ids)  # type: ignore
-        return embeddings[:, start:end, :]
+
+        # Mixed chunk: splice the pre-computed embeddings for the overlap
+        # into `original_embed(input_ids)` for any text-only fringes.
+        overlap_start = max(chunk_start, start_offset)
+        overlap_end = min(chunk_end, end_offset)
+        dst_start = overlap_start - chunk_start
+        dst_end = overlap_end - chunk_start
+        text_embeds: mx.array = original_embed(input_ids)  # type: ignore
+        return mx.concatenate(
+            [
+                text_embeds[:, :dst_start, :],
+                embeddings[:, overlap_start:overlap_end, :],
+                text_embeds[:, dst_end:, :],
+            ],
+            axis=1,
+        )
 
     for attr in dir(original_embed):  # type: ignore
         if not attr.startswith("_") and not hasattr(_inject, attr):
