@@ -409,6 +409,7 @@ def pipeline_auto_parallel(
 
     if is_gemma4_inner_model(inner_model_instance):
         patch_gemma4_pipeline(
+            model,
             inner_model_instance,
             start_layer,
             end_layer,
