@@ -517,9 +517,14 @@ class VisionEncoder:
                 stacked = mx.array(raw_pixel_values)
                 per_image_pixels = [stacked[i : i + 1] for i in range(stacked.shape[0])]
 
+        tower_dtype = cast(
+            mx.Dtype,
+            self._vision_tower.patch_embed.proj.weight.dtype,  # pyright: ignore[reportUnknownMemberType]
+        )
+
         if self._needs_nhwc:
             assert grid_thw is not None
-            pixel_values = mx.concatenate(per_image_pixels, axis=0)
+            pixel_values = mx.concatenate(per_image_pixels, axis=0).astype(tower_dtype)
             grid_hw = grid_thw[:, 1:] if grid_thw.shape[-1] == 3 else grid_thw
             hidden_states = self._vision_tower(
                 pixel_values.transpose(0, 2, 3, 1),
@@ -533,14 +538,14 @@ class VisionEncoder:
             # and concatenate along the token axis.
             per_image_hidden: list[mx.array] = []
             for pv in per_image_pixels:
-                result = self._vision_tower(pv)
+                result = self._vision_tower(pv.astype(tower_dtype))
                 h = result[0] if isinstance(result, tuple) else result
                 if h.ndim == 3:
                     h = h.reshape(-1, h.shape[-1])
                 per_image_hidden.append(h)
             hidden_states = mx.concatenate(per_image_hidden, axis=0)
         else:
-            pixel_values = mx.concatenate(per_image_pixels, axis=0)
+            pixel_values = mx.concatenate(per_image_pixels, axis=0).astype(tower_dtype)
             result = self._vision_tower(pixel_values, grid_thw)
             hidden_states = result[0] if isinstance(result, tuple) else result
 
