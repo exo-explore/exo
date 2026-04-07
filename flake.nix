@@ -72,14 +72,7 @@
 
       debug = true; # Enable options autocompletion
 
-      perSystem =
-        { config
-        , self'
-        , pkgs
-        , lib
-        , system
-        , ...
-        }:
+      perSystem = { config, self', pkgs, lib, system, ... }:
         let
           pythonPkg = pkgs.python313;
           nixFormatter = {
@@ -153,52 +146,51 @@
             }
           );
 
-          devShells.default = with pkgs;
-            pkgs.mkShell {
-              inputsFrom = [ self'.checks.cargo-build ];
+          devShells.default = with pkgs; pkgs.mkShell {
+            inputsFrom = [ self'.checks.cargo-build ];
 
-              packages =
-                [
-                  # FORMATTING
-                  config.treefmt.build.wrapper
+            packages =
+              [
+                # FORMATTING
+                config.treefmt.build.wrapper
 
-                  # PYTHON
-                  pythonPkg
-                  uv
-                  ruff
-                  basedpyright
+                # PYTHON
+                pythonPkg
+                uv
+                ruff
+                basedpyright
 
-                  # RUST
-                  config.rust.toolchain
-                  maturin
+                # RUST
+                config.rust.toolchain
+                maturin
 
-                  # NIX
-                  nixd
-                  nixFormatter.pkg
+                # NIX
+                nixd
+                nixFormatter.pkg
 
-                  # SVELTE
-                  nodejs
+                # SVELTE
+                nodejs
 
-                  # MISC
-                  just
-                  jq
-                ]
-                ++ lib.optionals stdenv.isLinux [
-                  unixtools.ifconfig
-                ]
-                ++ lib.optionals stdenv.isDarwin [
-                  macmon
-                ];
+                # MISC
+                just
+                jq
+              ]
+              ++ lib.optionals stdenv.isLinux [
+                unixtools.ifconfig
+              ]
+              ++ lib.optionals stdenv.isDarwin [
+                macmon
+              ];
 
-              OPENSSL_NO_VENDOR = "1";
+            OPENSSL_NO_VENDOR = "1";
 
-              shellHook = ''
-                export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pythonPkg}/lib"
-                ${lib.optionalString stdenv.isLinux ''
-                  export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
-                ''}
-              '';
-            };
+            shellHook = ''
+              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pythonPkg}/lib"
+              ${lib.optionalString stdenv.isLinux ''
+                export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
+              ''}
+            '';
+          };
         };
     };
 }
