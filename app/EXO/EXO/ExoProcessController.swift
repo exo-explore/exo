@@ -303,7 +303,7 @@ final class ExoProcessController: ObservableObject {
         if offlineMode {
             environment["EXO_OFFLINE"] = "true"
         }
-        environment["EXO_FAST_SYNCH"] = fastSynchEnabled ? "on" : "off"
+        environment["EXO_FAST_SYNCH"] = fastSynchEnabled ? "true" : "false"
 
         var paths: [String] = []
         if let existing = environment["PATH"], !existing.isEmpty {
