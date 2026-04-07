@@ -397,6 +397,37 @@ def get_memory_used_percentage() -> float:
     return float(mem.percent / 100)
 
 
+def _model_is_pipeline_parallel(model: Model) -> bool:
+    """True iff the model has pipeline-parallel layer wrappers installed.
+
+    Only the PP path is safe to combine with QuantizedKVCache right now:
+    the single-node BatchGenerator code path in mlx-lm calls
+    ``_merge_caches`` on every step (even for a single in-flight request),
+    and QuantizedKVCache does not implement ``merge``. Attempting to use
+    a quantized cache in that path crashes with::
+
+        <class 'mlx_lm.models.cache.QuantizedKVCache'> does not yet
+        support batching with history
+
+    Detecting PP mode by layer type is cheap and avoids threading the
+    distributed group through every cache call site.
+    """
+    try:
+        from exo.worker.engines.mlx.auto_parallel import (
+            PipelineFirstLayer,
+            PipelineLastLayer,
+        )
+    except Exception:
+        return False
+    layers = getattr(model, "layers", None)
+    if layers is None:
+        return False
+    for layer in layers:  # type: ignore[reportUnknownVariableType]
+        if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
+            return True
+    return False
+
+
 def make_kv_cache(
     model: Model, max_kv_size: int | None = None, keep: int = 0
 ) -> KVCacheType:
@@ -426,9 +457,12 @@ def make_kv_cache(
                 f"Using TurboQuant KV cache (bits={TURBOQUANT_BITS}, sketch_dim={TURBOQUANT_SKETCH_DIM}) "
                 f"for {replaced}/{len(caches)} layers"
             )
-        elif KV_CACHE_BITS is not None:
+        elif KV_CACHE_BITS is not None and _model_is_pipeline_parallel(model):
             # Replace KVCache entries with QuantizedKVCache, but keep
             # ArraysCache (DeltaNet/SSM) and other cache types unchanged.
+            # Restricted to PP mode: the single-node BatchGenerator path
+            # calls _merge_caches which requires cache.merge(), and
+            # QuantizedKVCache does not implement it.
             quantized = 0
             for i, c in enumerate(caches):
                 if isinstance(c, KVCache):
@@ -438,7 +472,13 @@ def make_kv_cache(
                     quantized += 1
             logger.info(f"Using quantized KV cache (bits={KV_CACHE_BITS}, group_size={CACHE_GROUP_SIZE}) for {quantized}/{len(caches)} layers")
         else:
-            logger.info("Using MLX LM's make cache")
+            if KV_CACHE_BITS is not None:
+                logger.info(
+                    f"EXO_KV_CACHE_BITS={KV_CACHE_BITS} ignored in single-node mode "
+                    f"(QuantizedKVCache has no merge() support, required by BatchGenerator)"
+                )
+            else:
+                logger.info("Using MLX LM's make cache")
             # Increase KVCache step size to reduce Metal allocator fragmentation.
             # Default step=256 causes a mx.concatenate expansion every prefill chunk,
             # fragmenting memory (~11 GB overhead at 24k tokens). A larger step lets
