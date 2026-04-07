@@ -91,6 +91,7 @@ reportUnnecessaryCast = "error"
 reportUnnecessaryTypeIgnoreComment = "error"
 
 pythonVersion = "3.13"
+pythonPlatform = "Darwin"
 
 exclude = [
   "**/.venv",
