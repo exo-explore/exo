@@ -531,29 +531,12 @@ create_instance_with_retry() {
 
 EXPECTED_RUNNERS=0
 
-# ── Instance 1: Primary model (2-node Pipeline Parallel over RDMA) ──
-echo "Creating Qwen3.5-397B instance (Studios PP / RDMA)..."
-if create_instance_with_retry "Qwen3.5-397B" "mlx-community/Qwen3.5-397B-A17B-4bit" "Pipeline" "MlxJaccl" 2; then
-    EXPECTED_RUNNERS=$((EXPECTED_RUNNERS + 2))
-fi
-
-echo -n "Waiting for $EXPECTED_RUNNERS runner(s) to load..."
-INSTANCES_READY=false
-for i in {1..120}; do
-    READY_COUNT=$(curl -s "$API/state" | jq '[.runners | to_entries[] | .value | to_entries[] | .key | select(. == "RunnerReady" or . == "RunnerRunning")] | length' 2>/dev/null || echo 0)
-    if [ "$READY_COUNT" -ge "$EXPECTED_RUNNERS" ]; then
-        echo " All instances ready! ($READY_COUNT runners)"
-        INSTANCES_READY=true
-        break
-    fi
-    echo -n "."
-    sleep 3
-done
-
-if [ "$INSTANCES_READY" = false ]; then
-    echo ""
-    echo "WARNING: Only $READY_COUNT/$EXPECTED_RUNNERS runners loaded within timeout. Check the dashboard."
-fi
+# ── Instance creation is intentionally left to operators ──
+# Previously this block auto-created a 2-node Qwen3.5-397B PP/RDMA instance.
+# Cluster is now used for parallel scout fan-out with multiple single-node
+# instances of a smaller MoE model — create those from the dashboard or via
+# the placement API directly. Re-enable a block here if you want a default
+# instance auto-placed on every cluster bring-up.
 
 # Final environment export
 export IBV_FORK_SAFE=${IBV_FORK_SAFE:-1}
