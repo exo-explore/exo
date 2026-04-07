@@ -40,6 +40,10 @@ from exo.worker.engines.mlx.generator.generate import (
     patch_embed_tokens,
     prefill,
 )
+from exo.worker.engines.mlx.patches.opt_batch_gen import (
+    set_needs_topk,
+    take_ready_topk,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     detect_thinking_prompt_suffix,
     fix_unmatched_think_end_tokens,
@@ -78,7 +82,6 @@ class _EngineTask:
     potential_stop_sequence_text: str = ""
     completion_tokens: int = 0
     generation_start_time: float = 0.0
-    generation_time_at_start: float = 0.0
     in_thinking: bool = False
     reasoning_tokens: int = 0
     prefill_tps: float = 0.0
@@ -101,17 +104,18 @@ class ExoBatchGenerator:
     def __post_init__(self) -> None:
         self._mlx_gen = MlxBatchGenerator(
             model=self.model,
-            stop_tokens=set(eos_ids_from_tokenizer(self.tokenizer)),
+            stop_tokens=[[t] for t in eos_ids_from_tokenizer(self.tokenizer)],
             prefill_step_size=4096,
         )
-        self._mlx_gen._needs_topk = False  # pyright: ignore[reportAttributeAccessIssue]
+        self._step_count = 0
 
     @property
     def has_work(self) -> bool:
         return (
             bool(self._active_tasks)
-            or bool(self._mlx_gen.unprocessed_prompts)
-            or self._mlx_gen.active_batch is not None
+            or bool(self._mlx_gen._unprocessed_sequences)
+            or len(self._mlx_gen._prompt_batch) > 0
+            or len(self._mlx_gen._generation_batch) > 0
         )
 
     def submit(
@@ -246,7 +250,7 @@ class ExoBatchGenerator:
         max_tokens = task_params.max_output_tokens or MAX_TOKENS
 
         uids = self._mlx_gen.insert(
-            prompts=[last_tokens.tolist()],
+            prompts=[cast(list[int], last_tokens.tolist())],
             max_tokens=[max_tokens],
             caches=[list(cache)],
             samplers=[sampler],
@@ -268,7 +272,6 @@ class ExoBatchGenerator:
             on_generation_token=on_generation_token,
             generation_start_time=time.perf_counter(),
             prefill_tps=_prefill_tps,
-            generation_time_at_start=self._mlx_gen._stats.generation_time,
             media_regions=media_regions,
             in_thinking=detect_thinking_prompt_suffix(prompt, self.tokenizer),
         )
@@ -279,12 +282,16 @@ class ExoBatchGenerator:
         if not self.has_work:
             return []
 
-        self._mlx_gen._needs_topk = any(  # pyright: ignore[reportAttributeAccessIssue]
-            t.task_params.logprobs for t in self._active_tasks.values()
+        gb = self._mlx_gen._generation_batch
+        set_needs_topk(
+            gb,
+            any(t.task_params.logprobs for t in self._active_tasks.values()),
         )
         _step_tic = time.perf_counter()
-        responses = self._mlx_gen.next()
+        _, responses = self._mlx_gen.next()
         _next_elapsed = time.perf_counter() - _step_tic
+
+        topk = take_ready_topk(gb)
 
         results: list[tuple[int, GenerationResponse]] = []
 
@@ -351,17 +358,19 @@ class ExoBatchGenerator:
             logprob: float | None = None
             top_logprobs: list[TopLogprobItem] | None = None
             if task_params.logprobs:
+                precomputed = topk.for_uid(response.uid)
+                precomputed_indices, precomputed_values, precomputed_selected = (
+                    precomputed if precomputed is not None else (None, None, None)
+                )
                 with mx.stream(generation_stream):
                     logprob, top_logprobs = extract_top_logprobs(
                         logprobs=response.logprobs,
                         tokenizer=self.tokenizer,
                         top_logprobs=task_params.top_logprobs or DEFAULT_TOP_LOGPROBS,
                         selected_token=response.token,
-                        precomputed_indices=getattr(response, "_topk_indices", None),
-                        precomputed_values=getattr(response, "_topk_values", None),
-                        precomputed_selected=getattr(
-                            response, "_selected_logprob", None
-                        ),
+                        precomputed_indices=precomputed_indices,
+                        precomputed_values=precomputed_values,
+                        precomputed_selected=precomputed_selected,
                     )
 
             stats: GenerationStats | None = None
@@ -424,7 +433,8 @@ class ExoBatchGenerator:
 
         _step_elapsed = time.perf_counter() - _step_tic
         _overhead = _step_elapsed - _next_elapsed
-        if self._mlx_gen._next_count % 64 == 0 and responses:
+        self._step_count += 1
+        if self._step_count % 64 == 0 and responses:
             logger.debug(
                 f"step overhead: {_overhead * 1000:.2f}ms (next={_next_elapsed * 1000:.2f}ms total={_step_elapsed * 1000:.2f}ms)"
             )
