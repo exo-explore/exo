@@ -1528,7 +1528,7 @@ wheels = [
 [[package]]
 name = "mlx-lm"
 version = "0.31.2"
-source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Ffix-arrayscache-leak#22bf8c903c78fbfd8bbb2780d9ebe357a650f539" }
+source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Ffix-arrayscache-leak#b3540361c2fac915dc0f61ae0ce0de1583bfaa90" }
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.31.2.dev20260406+90dd61a5", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#90dd61a5f0837f9bbbab4fd3fbfedba1ca5d33e7" }, marker = "sys_platform == 'darwin'" },
