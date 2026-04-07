@@ -7,7 +7,10 @@ from mlx_lm.models.gemma4_text import Gemma4TextModel
 from mlx_lm.models.gemma4_text import ModelArgs as Gemma4TextModelArgs
 
 type _IntermediateEntry = tuple[tuple[mx.array, mx.array] | None, mx.array | None]
-type _BundleEntry = tuple[mx.array, mx.array, mx.array]
+type _SourceKvs = tuple[mx.array, mx.array, mx.array]
+
+
+# TODO: Really really ugly code that needs refactoring ASAP (but it works)
 
 
 def is_gemma4_inner_model(inner: nn.Module) -> bool:
@@ -35,7 +38,6 @@ def try_set_gemma4_pipeline_queue_sends(inner: nn.Module, queue_sends: bool) -> 
 
 
 def _offset_template() -> mx.array:
-    # Mirrors `mx.array(cache.offset)` from gemma4 attention — a 0-d int32.
     return mx.array(0, dtype=mx.int32)
 
 
@@ -62,15 +64,13 @@ def _kv_template(
         and args.num_global_key_value_heads is not None
     ):
         n_kv_heads = int(args.num_global_key_value_heads)
-    # Sliding-attention sources go through RotatingKVCache, whose
-    # update_and_fetch clips the returned sequence length to sliding_window
-    # once the cache is full.
     if not is_full and args.sliding_window:
         seq_len = min(seq_len, int(args.sliding_window))
     return mx.zeros((int(h.shape[0]), n_kv_heads, seq_len, head_dim), dtype=h.dtype)
 
 
 def patch_gemma4_pipeline(
+    model: nn.Module,
     inner: nn.Module,
     start_layer: int,
     end_layer: int,
@@ -88,30 +88,21 @@ def patch_gemma4_pipeline(
 
     previous_kvs_global = list(inner.previous_kvs)
 
-    # Sources consumed by any shared layer anywhere in the whole model.
-    # For e2b: [13, 14]; for e4b: [22, 23]. Constant across ranks.
     consumed_global_sources: list[int] = sorted(
         set(previous_kvs_global[first_kv_shared_global:])
     )
-    # Source layers we own locally → local layer index.
+    # Source layers we own locally to local layer index.
     local_owned_sources: dict[int, int] = {
         g_idx: g_idx - start_layer
         for g_idx in consumed_global_sources
         if start_layer <= g_idx < end_layer
     }
-    # Local shared-layer slot → the source's GLOBAL index.  Used to seed
-    # `intermediates` from the bundle we receive from upstream.
+    # Local shared-layer slot → the source's global index.
     local_shared_to_global_source: dict[int, int] = {
         g_idx - start_layer: previous_kvs_global[g_idx]
         for g_idx in range(max(start_layer, first_kv_shared_global), end_layer)
     }
 
-    # Mutate `args` so the unpatched paths (`make_cache`, `_make_masks`, ...)
-    # all see the local-shard view. Shared layers whose source isn't in this
-    # rank's slice are made self-pointing — their slot will be seeded with the
-    # cross-rank received bundle below, and prev_idx == local_idx makes the
-    # forward loop read from that exact slot instead of wrapping around to
-    # a negative index.
     new_previous_kvs: list[int] = []
     for g_idx in range(start_layer, end_layer):
         local_idx = g_idx - start_layer
@@ -121,17 +112,27 @@ def patch_gemma4_pipeline(
         else:
             new_previous_kvs.append(local_idx)
     inner.previous_kvs = new_previous_kvs
-    args.layer_types = layer_types_global[start_layer:end_layer]
-    args.num_hidden_layers = end_layer - start_layer
-    local_source_count = max(0, min(end_layer, first_kv_shared_global) - start_layer)
-    args.num_kv_shared_layers = (end_layer - start_layer) - local_source_count
+
+    sliding_window = int(args.sliding_window)
+
+    def _make_cache() -> list[KVCache | RotatingKVCache]:
+        local_source_end = min(first_kv_shared_global, end_layer)
+        caches: list[KVCache | RotatingKVCache] = []
+        for g_idx in range(start_layer, local_source_end):
+            if layer_types_global[g_idx] == "full_attention":
+                caches.append(KVCache())
+            else:
+                caches.append(RotatingKVCache(max_size=sliding_window, keep=0))
+        return caches
+
+    model.make_cache = _make_cache  # type: ignore[attr-defined]
 
     inner._gemma4_pipeline_group = group
     inner._gemma4_device_rank = device_rank
     inner._gemma4_world_size = world_size
     inner._gemma4_is_prefill = False
     inner._gemma4_queue_sends = False
-    # Fallback counter for tracking the bundle sequence length on ranks
+    # Fallback counter for tracking the source-kv sequence length on ranks
     # whose local cache list is empty (e.g. a rank that only owns shared
     # layers). Normal ranks read the offset from their local KVCache.
     inner._gemma4_prefix_counter = 0
@@ -155,6 +156,10 @@ def patch_gemma4_pipeline(
             if per_layer_inputs is None:
                 per_layer_inputs = self._get_per_layer_inputs(inputs, input_embeddings)
             per_layer_inputs = self._project_per_layer_inputs(h, per_layer_inputs)
+            # Both helpers above return tensors shaped for the GLOBAL layer
+            # count (see patch_gemma4_pipeline). Slice to this shard's layers
+            # so the local loop indexes into the right slots.
+            per_layer_inputs = per_layer_inputs[:, :, start_layer:end_layer, :]
         per_layer_inputs_list: list[mx.array | None] = (
             [per_layer_inputs[:, :, i, :] for i in range(len(self.layers))]
             if per_layer_inputs is not None
@@ -168,18 +173,7 @@ def patch_gemma4_pipeline(
         )
         masks: list[mx.array] = self._make_masks(h, local_cache)
 
-        # Determine the source layers' pre-update cache offset. All ranks run
-        # the same number of tokens per forward pass, so this value is
-        # consistent across ranks at the moment of the send/recv exchange. If
-        # any local cache entry exists, use its offset (canonical). Otherwise
-        # fall back to a manual counter maintained on `inner`.
-        prior_offset: int = 0
-        for entry in local_cache:
-            if entry is not None and hasattr(entry, "offset"):
-                prior_offset = int(entry.offset)
-                break
-        else:
-            prior_offset = int(getattr(self, "_gemma4_prefix_counter", 0))
+        prior_offset: int = int(getattr(self, "_gemma4_prefix_counter", 0))
 
         current_seq_len = prior_offset + int(h.shape[1])
 
@@ -188,28 +182,34 @@ def patch_gemma4_pipeline(
             h = mx.distributed.recv_like(h, prev_rank, group=group)
             mx.eval(h)
 
-        # Receive the kv bundle from upstream. We always recv ALL consumed
+        # Receive the source kvs. We always recv ALL consumed
         # sources (even ones we own locally) so the byte counts on each side
         # of the wire match — entries we own locally are simply ignored when
         # seeding intermediates below.
-        received_bundle: dict[int, _BundleEntry] = {}
+        received_source_kvs: dict[int, _SourceKvs] = {}
         if device_rank != 0:
             offset_template = _offset_template()
+            len_template = mx.array(0, dtype=mx.int32)
             for g_idx in consumed_global_sources:
+                rlen = mx.distributed.recv_like(len_template, prev_rank, group=group)
+                mx.eval(rlen)
+                actual_seq_len = int(rlen.item())
                 kv_template = _kv_template(
-                    args, layer_types_global, h, g_idx, current_seq_len
+                    args, layer_types_global, h, g_idx, actual_seq_len
                 )
                 rk = mx.distributed.recv_like(kv_template, prev_rank, group=group)
+                mx.eval(rk)
                 rv = mx.distributed.recv_like(kv_template, prev_rank, group=group)
+                mx.eval(rv)
                 ro = mx.distributed.recv_like(offset_template, prev_rank, group=group)
-                mx.eval(rk, rv, ro)
-                received_bundle[g_idx] = (rk, rv, ro)
+                mx.eval(ro)
+                received_source_kvs[g_idx] = (rk, rv, ro)
 
         intermediates: list[_IntermediateEntry] = [(None, None)] * len(self.layers)
         for local_idx, source_g_idx in local_shared_to_global_source.items():
             if source_g_idx in local_owned_sources:
                 continue
-            entry = received_bundle.get(source_g_idx)
+            entry = received_source_kvs.get(source_g_idx)
             if entry is not None:
                 rk, rv, ro = entry
                 intermediates[local_idx] = ((rk, rv), ro)
@@ -227,15 +227,16 @@ def patch_gemma4_pipeline(
                 offset=offset,
             )
             intermediates[idx] = (new_kvs, new_offset)
+            mx.eval(h)
 
-        # Build the outgoing bundle. Start from whatever we received (so any
-        # source we don't own locally gets forwarded along), then overwrite
-        # with our own freshly-computed entries.
-        outgoing_bundle: dict[int, _BundleEntry] = dict(received_bundle)
+        # Build the outgoing source kvs. Start from whatever we received (so
+        # any source we don't own locally gets forwarded along), then
+        # overwrite with our own freshly-computed entries.
+        outgoing_source_kvs: dict[int, _SourceKvs] = dict(received_source_kvs)
         for g_idx, local_idx in local_owned_sources.items():
             local_kvs, local_offset = intermediates[local_idx]
             if local_kvs is not None and local_offset is not None:
-                outgoing_bundle[g_idx] = (local_kvs[0], local_kvs[1], local_offset)
+                outgoing_source_kvs[g_idx] = (local_kvs[0], local_kvs[1], local_offset)
 
         is_prefill: bool = bool(getattr(self, "_gemma4_is_prefill", False))
         queue_sends: bool = bool(getattr(self, "_gemma4_queue_sends", False))
@@ -246,10 +247,10 @@ def patch_gemma4_pipeline(
                 pending_prefill_sends.append((h, next_rank, group))
             else:
                 h = mx.distributed.send(h, next_rank, group=group)
-            mx.eval(h)
+                mx.eval(h)
             offset_template = _offset_template()
             for g_idx in consumed_global_sources:
-                entry = outgoing_bundle.get(g_idx)
+                entry = outgoing_source_kvs.get(g_idx)
                 if entry is None:
                     kv_template = _kv_template(
                         args, layer_types_global, h, g_idx, current_seq_len
@@ -262,14 +263,20 @@ def patch_gemma4_pipeline(
                     pending_prefill_sends.append((vv, next_rank, group))
                     pending_prefill_sends.append((oo, next_rank, group))
                 else:
+                    actual_len = mx.array(int(kk.shape[2]), dtype=mx.int32)
+                    sent_len = mx.distributed.send(actual_len, next_rank, group=group)
+                    mx.eval(sent_len)
                     kk = mx.distributed.send(kk, next_rank, group=group)
+                    mx.eval(kk)
                     vv = mx.distributed.send(vv, next_rank, group=group)
+                    mx.eval(vv)
                     oo = mx.distributed.send(oo, next_rank, group=group)
-                mx.eval(kk, vv, oo)
+                    mx.eval(oo)
 
         self._gemma4_prefix_counter = prior_offset + int(h.shape[1])
 
         if not is_prefill:
+            mx.eval(h)
             h = mx.distributed.all_gather(h, group=group)[-h.shape[0] :]
             mx.eval(h)
 

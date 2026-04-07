@@ -517,10 +517,20 @@ class VisionEncoder:
                 stacked = mx.array(raw_pixel_values)
                 per_image_pixels = [stacked[i : i + 1] for i in range(stacked.shape[0])]
 
-        tower_dtype = cast(
-            mx.Dtype,
-            self._vision_tower.patch_embed.proj.weight.dtype,  # pyright: ignore[reportUnknownMemberType]
+        patch_embed_weight = None
+        for head_attr, linear_attr in (
+            ("patch_embed", "proj"),
+            ("patch_embedder", "input_proj"),
+        ):
+            head = getattr(self._vision_tower, head_attr, None)
+            linear = getattr(head, linear_attr, None) if head is not None else None
+            if linear is not None and hasattr(linear, "weight"):
+                patch_embed_weight = linear.weight
+                break
+        assert patch_embed_weight is not None, (
+            "vision tower has no recognised patch-embedding linear"
         )
+        tower_dtype = cast(mx.Dtype, patch_embed_weight.dtype)  # pyright: ignore[reportUnknownMemberType]
 
         if self._needs_nhwc:
             assert grid_thw is not None
