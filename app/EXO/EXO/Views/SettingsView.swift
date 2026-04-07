@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var pendingHFEndpoint: String = ""
     @State private var pendingEnableImageModels = false
     @State private var pendingOfflineMode = false
+    @State private var pendingFastSynchEnabled = false
     @State private var needsRestart = false
     @State private var bugReportInFlight = false
     @State private var bugReportMessage: String?
@@ -46,6 +47,7 @@ struct SettingsView: View {
             pendingHFEndpoint = controller.hfEndpoint
             pendingEnableImageModels = controller.enableImageModels
             pendingOfflineMode = controller.offlineMode
+            pendingFastSynchEnabled = controller.fastSynchEnabled
             needsRestart = false
         }
     }
@@ -137,6 +139,33 @@ struct SettingsView: View {
 
     private var advancedTab: some View {
         Form {
+            Section("Performance") {
+                HStack {
+                    Toggle("Fast Synch Enabled", isOn: $pendingFastSynchEnabled)
+                    Button(action: {}) {
+                        Image(systemName: "info.circle")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(
+                        "Fast Synch is an experimental feature that enables fast CPU to GPU synchronization. It can sometimes cause a \"GPU lock\" where inference hangs for ~10 seconds before starting. Necessary for low latency with RDMA and Tensor Parallelism."
+                    )
+                }
+                Text(
+                    "Experimental: enables fast CPU to GPU synchronization for RDMA with Tensor Parallelism."
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+                HStack {
+                    Spacer()
+                    Button("Save & Restart") {
+                        applyAdvancedSettings()
+                    }
+                    .disabled(!hasAdvancedChanges)
+                }
+            }
+
             Section("Onboarding") {
                 HStack {
                     VStack(alignment: .leading) {
@@ -475,6 +504,10 @@ struct SettingsView: View {
         pendingEnableImageModels != controller.enableImageModels
     }
 
+    private var hasAdvancedChanges: Bool {
+        pendingFastSynchEnabled != controller.fastSynchEnabled
+    }
+
     private func applyGeneralSettings() {
         controller.customNamespace = pendingNamespace
         controller.hfToken = pendingHFToken
@@ -485,6 +518,11 @@ struct SettingsView: View {
 
     private func applyModelSettings() {
         controller.enableImageModels = pendingEnableImageModels
+        restartIfRunning()
+    }
+
+    private func applyAdvancedSettings() {
+        controller.fastSynchEnabled = pendingFastSynchEnabled
         restartIfRunning()
     }
 
