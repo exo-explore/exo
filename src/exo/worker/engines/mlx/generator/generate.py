@@ -88,6 +88,15 @@ def patch_embed_tokens(
     end_offset = start_offset + token_count
     offset = [start_offset]
 
+    # Gemma-family models scale the embedding lookup by `hidden_size**0.5`
+    # *inside* the inner model (`h = embed_tokens(inputs) * embed_scale`). Our
+    # pre-computed vision features are already in the projected text-embedding
+    # space, so to survive that multiplication unchanged we divide by
+    # embed_scale up front.
+    if hasattr(inner, "embed_scale"):  # type: ignore
+        embed_scale = float(inner.embed_scale)  # type: ignore
+        embeddings = embeddings / embed_scale
+
     def _inject(input_ids: mx.array) -> mx.array:
         chunk_start = offset[0]
         chunk_len = input_ids.shape[-1]
