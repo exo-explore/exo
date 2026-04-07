@@ -80,6 +80,9 @@ final class ExoProcessController: ObservableObject {
         }
     }
     @Published var fastSynchEnabled: Bool = {
+        if UserDefaults.standard.object(forKey: fastSynchEnabledKey) == nil {
+            return true
+        }
         return UserDefaults.standard.bool(forKey: fastSynchEnabledKey)
     }()
     {
@@ -300,9 +303,7 @@ final class ExoProcessController: ObservableObject {
         if offlineMode {
             environment["EXO_OFFLINE"] = "true"
         }
-        if fastSynchEnabled {
-            environment["EXO_FAST_SYNCH"] = "on"
-        }
+        environment["EXO_FAST_SYNCH"] = fastSynchEnabled ? "on" : "off"
 
         var paths: [String] = []
         if let existing = environment["PATH"], !existing.isEmpty {
