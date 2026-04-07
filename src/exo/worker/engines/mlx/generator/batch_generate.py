@@ -171,6 +171,91 @@ class ExoBatchGenerator:
             except Exception:
                 pass
 
+    def _model_hidden_size(self) -> int | None:
+        """Return the hidden_size of the loaded model, or None if undetectable.
+
+        Used to validate MTP weight compatibility — MTP weights from a
+        different model architecture (e.g. 397B's MTP loaded for 35B-A3B)
+        will have a mismatched pre_fc_norm_hidden weight and crash at the
+        first inference call.
+        """
+        try:
+            args: Any = getattr(self.model, "args", None)
+            if args is not None:
+                tc: Any = getattr(args, "text_config", None)
+                if isinstance(tc, dict) and "hidden_size" in tc:
+                    return int(tc["hidden_size"])  # pyright: ignore[reportUnknownArgumentType]
+                hs: Any = getattr(args, "hidden_size", None)
+                if hs is not None:
+                    return int(hs)
+            inner: Any = getattr(self.model, "language_model", None) or self.model
+            inner_args: Any = getattr(inner, "args", None)
+            if inner_args is not None:
+                hs2: Any = getattr(inner_args, "hidden_size", None)
+                if hs2 is not None:
+                    return int(hs2)
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _peek_mtp_hidden_size(weights_path: str) -> int | None:
+        """Peek at an MTP safetensors file and return the hidden_size it
+        was trained for, without loading the full file.
+
+        Reads only the safetensors JSON header (a few KB), not the
+        weight data. The MTP module's `pre_fc_norm_hidden` weight is a
+        1-D tensor whose length equals the hidden_size of the model the
+        MTP was distilled from. If that doesn't match the loaded model's
+        hidden_size, the weights are incompatible.
+        """
+        import json
+        import struct
+        try:
+            with open(weights_path, "rb") as f:
+                header_size_bytes = f.read(8)
+                if len(header_size_bytes) < 8:
+                    return None
+                header_size: int = struct.unpack("<Q", header_size_bytes)[0]
+                header_bytes = f.read(header_size)
+            header = cast(dict[str, Any], json.loads(header_bytes))
+            for key in (
+                "mtp.pre_fc_norm_hidden.weight",
+                "mtp.norm.weight",
+                "mtp.pre_fc_norm_embedding.weight",
+            ):
+                entry = header.get(key)
+                if isinstance(entry, dict):
+                    shape = cast(dict[str, Any], entry).get("shape")
+                    if isinstance(shape, list) and shape:
+                        first = cast(list[Any], shape)[0]
+                        return int(first)
+        except Exception:
+            return None
+        return None
+
+    def _mtp_compatible_with_model(self, weights_path: str) -> bool:
+        """Verify a candidate MTP weights file matches the loaded model.
+
+        Logs a warning and returns False on mismatch so the caller can
+        skip to the next candidate (or fall back to vanilla decoding).
+        Returns True when shapes match OR when either side cannot be
+        determined (best-effort — preserves prior behavior for unusual
+        models where the check would otherwise be a false negative).
+        """
+        model_hidden = self._model_hidden_size()
+        mtp_hidden = self._peek_mtp_hidden_size(weights_path)
+        if model_hidden is None or mtp_hidden is None:
+            return True
+        if model_hidden != mtp_hidden:
+            logger.warning(
+                f"Skipping MTP weights at {weights_path}: "
+                f"hidden_size {mtp_hidden} != model hidden_size {model_hidden}. "
+                f"These weights are for a different model architecture."
+            )
+            return False
+        return True
+
     def _resolve_mtp_weights(self) -> str | None:
         """Find MTP weights: explicit path, local model dir, or HF repo extraction.
 
@@ -180,6 +265,10 @@ class ExoBatchGenerator:
         3. Bf16 cache (~/.cache/exo/mtp_weights/mtp_*.safetensors)
         4. Local model directory (check weight index for mtp.* keys)
         5. HF repo download (selective shard download)
+
+        Every candidate is validated against the loaded model's hidden_size
+        before being returned, so a stale cache from a previous run with a
+        different model is rejected automatically.
         """
         import hashlib
         from pathlib import Path
@@ -187,7 +276,9 @@ class ExoBatchGenerator:
         # 1. Explicit path
         explicit_path = os.environ.get("EXO_MTP_WEIGHTS", "")
         if explicit_path and os.path.exists(explicit_path):
-            return explicit_path
+            if self._mtp_compatible_with_model(explicit_path):
+                return explicit_path
+            return None
 
         # Determine source HF repo for MTP weights
         mtp_repo = os.environ.get("EXO_MTP_MODEL", "")
@@ -202,12 +293,12 @@ class ExoBatchGenerator:
         cache_key = hashlib.md5(mtp_repo.encode()).hexdigest()[:12]
 
         q4_path = cache_dir / f"mtp_{cache_key}_q4.safetensors"
-        if q4_path.exists():
+        if q4_path.exists() and self._mtp_compatible_with_model(str(q4_path)):
             logger.info(f"Using pre-quantized MTP weights: {q4_path}")
             return str(q4_path)
 
         bf16_path = cache_dir / f"mtp_{cache_key}.safetensors"
-        if bf16_path.exists():
+        if bf16_path.exists() and self._mtp_compatible_with_model(str(bf16_path)):
             logger.info(f"Using cached MTP weights: {bf16_path}")
             return str(bf16_path)
 
@@ -218,13 +309,13 @@ class ExoBatchGenerator:
             local_path = self._extract_mtp_from_local(
                 build_model_path(ModelId(self.model_id)), cache_dir, cache_key
             )
-            if local_path:
+            if local_path and self._mtp_compatible_with_model(local_path):
                 return local_path
 
         # 5. Download from HF repo
         try:
             dl_path = self._extract_mtp_from_hf(mtp_repo)
-            if dl_path:
+            if dl_path and self._mtp_compatible_with_model(dl_path):
                 return dl_path
         except Exception as e:
             logger.warning(f"Failed to extract MTP weights from {mtp_repo}: {e}")
@@ -235,6 +326,13 @@ class ExoBatchGenerator:
 
         Checks model args for mtp_num_hidden_layers and model_type to determine
         which HF repo has the MTP weights. Returns '' if MTP not supported.
+
+        Note: there is intentionally NO fallback to a hardcoded "default"
+        repo per model_type. The qwen3_5_moe family contains multiple
+        architectures with different hidden_sizes (e.g. 397B uses 4096,
+        35B-A3B uses 2048), and silently picking one would load
+        architecturally incompatible weights — see the rms_norm crash
+        when 397B's MTP file was loaded into a 35B-A3B model.
         """
         try:
             inner = getattr(self.model, 'model', None) or self.model.language_model.model
@@ -254,12 +352,10 @@ class ExoBatchGenerator:
                 if repo:
                     logger.info(f"Auto-detected MTP repo: {repo} (model_type={model_type})")
                     return repo
-
-                # Fallback: known model type mappings
-                if model_type == 'qwen3_5_moe':
-                    return "Qwen/Qwen3.5-397B-A17B"
-                elif 'qwen3_5' in model_type:
-                    return "Qwen/Qwen3.5-27B"
+                logger.info(
+                    f"No MTP repo derivable for model_id={self.model_id!r} "
+                    f"(model_type={model_type}); falling back to vanilla decoding."
+                )
         except Exception as e:
             logger.warning(f"MTP detection failed: {e}")
         return ''
