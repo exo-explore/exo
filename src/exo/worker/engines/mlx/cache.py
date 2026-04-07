@@ -322,10 +322,11 @@ class KVPrefixCache:
         except Exception as e:
             logger.warning(f"KV cache disk flush failed: {e}")
 
-    def _evict_stale_disk_slots(self, max_age_hours=24):
-        """Delete disk slots older than max_age_hours."""
+    def _evict_stale_disk_slots(self, max_age_hours=24, max_size_gb=500):
+        """Delete disk slots older than max_age_hours, then evict oldest if over max_size_gb."""
         if not self._disk_dir:
             return
+        # Phase 1: TTL eviction
         cutoff = _time.time() - (max_age_hours * 3600)
         for meta_file in self._disk_dir.glob("slot_*_meta.json"):
             try:
@@ -344,6 +345,38 @@ class KVPrefixCache:
                     logger.info(f"KV cache evicted stale disk slot_{slot_id}")
             except Exception:
                 continue
+        # Phase 2: Size-based eviction (oldest first)
+        max_bytes = max_size_gb * 1024 * 1024 * 1024
+        while True:
+            slots = []
+            total_size = 0
+            for meta_file in self._disk_dir.glob("slot_*_meta.json"):
+                try:
+                    with open(meta_file) as f:
+                        meta = json.load(f)
+                    slot_id = int(meta_file.stem.split("_")[1])
+                    if slot_id == self._hot_slot_disk_id:
+                        continue
+                    base = self._disk_dir / f"slot_{slot_id}"
+                    slot_size = sum(
+                        f.stat().st_size for ext in ["_cache.safetensors", "_tokens.safetensors", "_meta.json"]
+                        if (f := _Path(str(base) + ext)).exists()
+                    )
+                    total_size += slot_size
+                    slots.append((meta.get("timestamp", 0), slot_id, slot_size))
+                except Exception:
+                    continue
+            if total_size <= max_bytes or not slots:
+                break
+            slots.sort()
+            oldest_ts, oldest_id, oldest_size = slots[0]
+            base = self._disk_dir / f"slot_{oldest_id}"
+            for ext in ["_cache.safetensors", "_tokens.safetensors", "_meta.json"]:
+                try:
+                    os.remove(str(base) + ext)
+                except FileNotFoundError:
+                    pass
+            logger.info(f"KV cache evicted disk slot_{oldest_id} ({oldest_size / 1024 / 1024 / 1024:.1f} GB) — directory over {max_size_gb} GB limit")
 
     def flush_to_disk(self, force=False):
         """Flush hot slot to disk if dirty and idle for 15s (or force)."""
