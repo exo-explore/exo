@@ -74,12 +74,25 @@ _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 
 @contextlib.contextmanager
 def patch_embed_tokens(
-    model: Model, embeddings: mx.array, start_offset: int = 0, token_count: int = 0
+    model: Model,
+    embeddings: mx.array,
+    start_offset: int = 0,
+    token_count: int = 0,
+    image_token_id: int | None = None,
 ) -> Generator[None]:
     inner = get_inner_model(model)  # type: ignore
     original_embed = inner.embed_tokens  # type: ignore
     end_offset = start_offset + token_count
     offset = [start_offset]
+
+    # Gemma-family models scale the embedding lookup by `hidden_size**0.5`
+    # *inside* the inner model (`h = embed_tokens(inputs) * embed_scale`). Our
+    # pre-computed vision features are already in the projected text-embedding
+    # space, so to survive that multiplication unchanged we divide by
+    # embed_scale up front.
+    if hasattr(inner, "embed_scale"):  # type: ignore
+        embed_scale = float(inner.embed_scale)  # type: ignore
+        embeddings = embeddings / embed_scale
 
     def _inject(input_ids: mx.array) -> mx.array:
         start = offset[0]
@@ -98,10 +111,30 @@ def patch_embed_tokens(
                 setattr(_inject, attr, getattr(original_embed, attr))  # type: ignore
 
     inner.embed_tokens = _inject
+
+    # Gemma 4 (e2b/e4b) has a second, independent embedding table that produces
+    # per-layer conditioning signals via self.embed_tokens_per_layer(input_ids).
+    # The injected vision embeddings live in the main residual stream only, so
+    # if image_token_id positions are passed through as-is the per-layer table
+    # produces garbage signals at those positions (the `<image>` token was never
+    # trained to have meaningful per-layer inputs).
+    original_per_layer = getattr(inner, "embed_tokens_per_layer", None)  # type: ignore
+    if original_per_layer is not None and image_token_id is not None:
+
+        def _clean_per_layer(input_ids: mx.array) -> mx.array:
+            clean_ids = mx.where(
+                input_ids == image_token_id, mx.zeros_like(input_ids), input_ids
+            )
+            return original_per_layer(clean_ids)  # type: ignore
+
+        inner.embed_tokens_per_layer = _clean_per_layer
+
     try:
         yield
     finally:
         inner.embed_tokens = original_embed
+        if original_per_layer is not None and image_token_id is not None:
+            inner.embed_tokens_per_layer = original_per_layer
 
 
 class PrefillCancelled(BaseException):
@@ -571,7 +604,11 @@ def mlx_generate(
 
     maybe_vision_ctx = (
         patch_embed_tokens(
-            model, vision.embeddings, prefix_hit_length, len(prompt_tokens) - 1
+            model,
+            vision.embeddings,
+            prefix_hit_length,
+            len(prompt_tokens) - 1,
+            image_token_id=vision.image_token_id,
         )
         if vision is not None
         else contextlib.nullcontext()

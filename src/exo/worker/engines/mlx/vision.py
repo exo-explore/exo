@@ -6,8 +6,9 @@ import inspect
 import io
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from mlx_vlm.utils import ImageProcessor
@@ -33,13 +34,62 @@ from exo.worker.engines.mlx.utils_mlx import (
 )
 from exo.worker.runner.bootstrap import logger
 
+_video_processor_patched = False
+
 
 def _filter_config(cls: type, d: dict[str, Any]) -> dict[str, Any]:
     valid = set(inspect.signature(cls.__init__).parameters.keys()) - {"self"}
     return {k: v for k, v in d.items() if k in valid}  # type: ignore
 
 
-_video_processor_patched = False
+_ProcessorOutput = dict[str, np.ndarray] | tuple[dict[str, np.ndarray], list[int]]
+
+
+def _run_processor(
+    processor: "ImageProcessor",
+    pil_images: list[Image.Image],
+) -> tuple[dict[str, np.ndarray], list[int] | None]:
+    # Image processors split into two families by how they report per-image
+    # token counts:
+    #
+    # 1. Variable-resolution patch models (Qwen3-VL, Llama 4 vision, ...):
+    #    return a `BatchFeature` dict containing `pixel_values` and
+    #    `image_grid_thw` — an (n_images, 3) array of (temporal, height, width)
+    #    patch counts. The caller multiplies the three to get the per-image
+    #    token count, so no override is needed.
+    #
+    # 2. Fixed-token-budget models (Gemma 4): every image collapses to a fixed
+    #    number of soft tokens, so there's no grid to report. These processors
+    #    return `(batch_feature_dict, [n_tokens_per_image])` instead.
+    #
+    # We normalize both into (dict, optional tokens override).
+    raw = cast(_ProcessorOutput, processor(images=pil_images, return_tensors="np"))
+    if isinstance(raw, tuple):
+        batch, tokens = raw
+        return batch, [int(n) for n in tokens]
+    return raw, None
+
+
+def _instantiate_projector(
+    cls: type,
+    model_config: Any,  # pyright: ignore[reportAny]
+    vision_config: Any,  # pyright: ignore[reportAny]
+    text_config: Any,  # pyright: ignore[reportAny]
+) -> nn.Module:
+    """
+    Instantiate projector/embedding classes with any missing values
+    """
+    init_sig = inspect.signature(cls.__init__)
+    params = {n: p for n, p in init_sig.parameters.items() if n != "self"}
+    kwargs: dict[str, Any] = {}
+
+    if "embedding_dim" in params:
+        kwargs["embedding_dim"] = vision_config.hidden_size  # pyright: ignore[reportAny]
+    if "text_hidden_size" in params:
+        kwargs["text_hidden_size"] = text_config.hidden_size  # pyright: ignore[reportAny]
+    if "eps" in params:
+        kwargs["eps"] = getattr(vision_config, "rms_norm_eps", 1e-6)  # pyright: ignore[reportAny]
+    return cls(**kwargs)  # type: ignore
 
 
 def _patch_video_processor() -> None:
@@ -128,6 +178,7 @@ class VisionResult:
     prompt_tokens: mx.array
     embeddings: mx.array
     media_regions: list[MediaRegion]
+    image_token_id: int
 
 
 class VisionEncoder:
@@ -158,6 +209,45 @@ class VisionEncoder:
             name = f"mlx_vlm.models.{mt}.{sub}"
             results.append(importlib.import_module(name))
         return results[0] if len(results) == 1 else tuple(results)
+
+    def _apply_projector_quantization_if_needed(
+        self, projector_weights: dict[str, mx.array]
+    ) -> None:
+        # Quantized models ship the projector's Linear layers as packed uint32
+        # weights plus `.scales`/`.biases`. Our now instantiated projector
+        # uses plain nn.Linear, so we must mirror the packing via nn.quantize
+        # before load_weights, otherwise MLX rejects the extra parameters.
+        if self._projector is None:
+            return
+        has_quantized_tensors = any(
+            key.endswith((".scales", ".biases")) or val.dtype == mx.uint32
+            for key, val in projector_weights.items()
+        )
+        if not has_quantized_tensors:
+            return
+        config = self._load_config_json()
+        quant_cfg = cast(dict[str, Any], config.get("quantization") or {})
+        if not quant_cfg:
+            return
+        group_size = int(cast(int, quant_cfg.get("group_size", 64)))
+        bits = int(cast(int, quant_cfg.get("bits", 4)))
+        nn.quantize(self._projector, group_size=group_size, bits=bits)
+
+    def _load_image_processor_from_module(self, repo: str) -> "ImageProcessor | None":
+        # mlx_vlm.utils.load_image_processor only works for models that set
+        # `Model.ImageProcessor = <cls>`, but Gemma4 just uses
+        # `Gemma4ImageProcessor` from the package `__init__.py`
+        try:
+            pkg: Any = importlib.import_module(
+                f"mlx_vlm.models.{self._config.model_type}"
+            )
+        except ImportError:
+            return None
+        for attr in dir(pkg):  # pyright: ignore[reportAny]
+            cls = getattr(pkg, attr)  # pyright: ignore[reportAny]
+            if isinstance(cls, type) and attr.endswith("ImageProcessor"):
+                return cls.from_pretrained(repo)  # type: ignore
+        return None
 
     def ensure_loaded(self) -> None:
         if self._loaded:
@@ -194,7 +284,7 @@ class VisionEncoder:
                 if (
                     isinstance(obj, type)
                     and issubclass(obj, nn.Module)
-                    and "Projector" in attr_name
+                    and ("Projector" in attr_name or "Embedder" in attr_name)
                 ):
                     projector_cls = obj
                     break
@@ -214,7 +304,12 @@ class VisionEncoder:
                 vision_config=vision_config,
                 **_filter_config(config_mod.ModelConfig, extra),  # type: ignore
             )
-            self._projector = projector_cls(model_config)  # type: ignore
+            self._projector = _instantiate_projector(
+                projector_cls,
+                model_config,
+                vision_config,
+                text_config,
+            )
 
         processor_repo = self._config.processor_repo
         if processor_repo:
@@ -223,7 +318,9 @@ class VisionEncoder:
             self._load_weights_from_model_repo()
 
         repo = processor_repo or str(self._model_path)
-        image_proc = load_image_processor(repo)
+        image_proc = load_image_processor(
+            repo
+        ) or self._load_image_processor_from_module(repo)
         if image_proc is not None:
             self._processor = image_proc
         else:
@@ -295,18 +392,32 @@ class VisionEncoder:
             raise FileNotFoundError(f"No safetensors files found in {self._model_path}")
 
         vision_prefixes = ["vision_tower.", "model.visual."]
+        projector_prefixes = [
+            "embed_vision.",
+            "multi_modal_projector.",
+            "mm_projector.",
+        ]
         vision_weights: dict[str, mx.array] = {}
-        found_raw_prefix = False
+        projector_weights: dict[str, mx.array] = {}
+
+        # If weights under `model.visual.`, we need to call mlx_vlm's VisionModel.sanitize()
+        # to remap into its own keys.
+        needs_sanitize = False
+
         for sf_path in safetensors_files:
             file_weights: dict[str, mx.array] = mx.load(str(sf_path))  # type: ignore
             for key, val in file_weights.items():
                 for prefix in vision_prefixes:
                     if key.startswith(prefix):
-                        short_key = key[len(prefix) :]
-                        vision_weights[short_key] = val
+                        vision_weights[key[len(prefix) :]] = val
                         if prefix == "model.visual.":
-                            found_raw_prefix = True
+                            needs_sanitize = True
                         break
+                else:
+                    for prefix in projector_prefixes:
+                        if key.startswith(prefix):
+                            projector_weights[key[len(prefix) :]] = val
+                            break
 
         if not vision_weights:
             raise ValueError(
@@ -315,14 +426,27 @@ class VisionEncoder:
             )
 
         assert self._vision_tower is not None
-        if found_raw_prefix and hasattr(self._vision_tower, "sanitize"):
-            vision_weights = self._vision_tower.sanitize(vision_weights)  # type: ignore
+        if needs_sanitize:
+            sanitize: Callable[[dict[str, mx.array]], dict[str, mx.array]] | None = (
+                getattr(self._vision_tower, "sanitize", None)
+            )
+            if sanitize is not None:
+                vision_weights = sanitize(vision_weights)
 
-        self._vision_tower.load_weights(list(vision_weights.items()))  # type: ignore
+        self._vision_tower.load_weights(list(vision_weights.items()))
         mx.eval(self._vision_tower.parameters())
 
-        n_vision = sum(v.size for _, v in vision_weights.items())  # type: ignore
-        logger.info(f"Vision encoder loaded: {n_vision / 1e6:.1f}M params")
+        if self._projector is not None and projector_weights:
+            self._apply_projector_quantization_if_needed(projector_weights)
+            self._projector.load_weights(list(projector_weights.items()))
+            mx.eval(self._projector.parameters())
+
+        n_vision = sum(v.size for v in vision_weights.values())
+        n_proj = sum(v.size for v in projector_weights.values())
+        logger.info(
+            f"Vision encoder loaded: {n_vision / 1e6:.1f}M params"
+            + (f" (+ projector {n_proj / 1e6:.1f}M)" if n_proj else "")
+        )
 
     def encode_images(self, images: list[str]) -> tuple[mx.array, list[int]]:
         self.ensure_loaded()
@@ -347,30 +471,37 @@ class VisionEncoder:
                 for i in range(grid_thw.shape[0])
             ]
         else:
-            processed = self._processor(
-                images=pil_images,
-                return_tensors="np",
-            )
-            pixel_values = mx.array(processed["pixel_values"])  # type: ignore
-            grid_thw = mx.array(processed["image_grid_thw"])  # type: ignore
-            merge_unit = self._spatial_merge_size**2
-            n_tokens_per_image = [
-                int(
-                    grid_thw[i, 0].item()
-                    * grid_thw[i, 1].item()
-                    * grid_thw[i, 2].item()
-                )
-                // merge_unit
-                for i in range(grid_thw.shape[0])
-            ]
+            batch, tokens_override = _run_processor(self._processor, pil_images)
+            pixel_values = mx.array(batch["pixel_values"])
+            raw_grid = batch.get("image_grid_thw")
+            grid_thw = mx.array(raw_grid) if raw_grid is not None else None
+            if tokens_override is not None:
+                n_tokens_per_image = tokens_override
+            else:
+                assert grid_thw is not None
+                merge_unit = self._spatial_merge_size**2
+                n_tokens_per_image = [
+                    int(
+                        grid_thw[i, 0].item()
+                        * grid_thw[i, 1].item()
+                        * grid_thw[i, 2].item()
+                    )
+                    // merge_unit
+                    for i in range(grid_thw.shape[0])
+                ]
 
         if self._needs_nhwc:
+            assert grid_thw is not None
             grid_hw = grid_thw[:, 1:] if grid_thw.shape[-1] == 3 else grid_thw
             hidden_states = self._vision_tower(
                 pixel_values.transpose(0, 2, 3, 1),
                 output_hidden_states=True,
                 grid_thw=grid_hw,
             )
+        elif grid_thw is None:
+            # Models like gemma4 have no grid_thw and take only pixel_values.
+            result = self._vision_tower(pixel_values)
+            hidden_states = result[0] if isinstance(result, tuple) else result
         else:
             result = self._vision_tower(pixel_values, grid_thw)
             hidden_states = result[0] if isinstance(result, tuple) else result
@@ -379,6 +510,11 @@ class VisionEncoder:
             image_features: mx.array = self._projector(hidden_states)
         else:
             image_features = hidden_states
+
+        # `create_vision_embeddings` expects a 2D (total_tokens, hidden) view,
+        # but fixed-token-budget models (gemma4) return (n_images, tokens, hidden).
+        if image_features.ndim == 3:
+            image_features = image_features.reshape(-1, image_features.shape[-1])
 
         return image_features, n_tokens_per_image
 
@@ -563,6 +699,7 @@ class VisionProcessor:
             prompt_tokens=prompt_tokens,
             embeddings=embeddings,
             media_regions=media_regions,
+            image_token_id=self.vision_config.image_token_id,
         )
 
 

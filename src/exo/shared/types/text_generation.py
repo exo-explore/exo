@@ -6,7 +6,7 @@ are converted to TextGenerationTaskParams at the API boundary via adapters.
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from exo.shared.types.common import ModelId
 
@@ -36,11 +36,26 @@ def resolve_reasoning_params(
     return resolved_effort, resolved_thinking
 
 
+class InputMessageContent(str):
+    def __repr__(self):
+        return f"<InputMessageContent {self[:10]}...>"
+
+
 class InputMessage(BaseModel, frozen=True):
     """Internal message for text generation pipelines."""
 
     role: MessageRole
     content: str
+
+    @field_validator("content", mode="after")
+    @classmethod
+    def _wrap_content(cls, v: str) -> str:
+        return InputMessageContent(v)
+
+
+class Base64Image(str):
+    def __repr__(self):
+        return f"<Base64Image: {self[:10]}...>"
 
 
 class TextGenerationTaskParams(BaseModel, frozen=True):
@@ -74,3 +89,13 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     image_hashes: dict[int, str] = Field(default_factory=dict)
     total_input_chunks: int = 0
     image_count: int = 0
+
+    @field_validator("images", mode="after")
+    @classmethod
+    def _wrap_images(cls, v: list[str]) -> list[str]:
+        return [Base64Image(x) for x in v]
+
+    @field_validator("image_hashes", mode="after")
+    @classmethod
+    def _wrap_image_hashes(cls, v: dict[int, str]) -> dict[int, str]:
+        return {k: Base64Image(x) for k, x in v.items()}

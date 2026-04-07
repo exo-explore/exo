@@ -288,7 +288,7 @@ class ConfigData(BaseModel):
         image_token_id = data.get("image_token_id")
         if vision_config is not None and image_token_id is not None:
             model_type = str(
-                vision_config.get("model_type", data.get("model_type", ""))  # pyright: ignore[reportAny]
+                data.get("model_type", vision_config.get("model_type", ""))  # pyright: ignore[reportAny]
             )
             assert info.context is not None
 

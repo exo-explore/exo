@@ -190,7 +190,11 @@ class ExoBatchGenerator:
 
         vision_ctx = (
             patch_embed_tokens(
-                self.model, vision.embeddings, prefix_hit_length, len(prompt_tokens) - 1
+                self.model,
+                vision.embeddings,
+                prefix_hit_length,
+                len(prompt_tokens) - 1,
+                image_token_id=vision.image_token_id,
             )
             if vision is not None
             else contextlib.nullcontext()
