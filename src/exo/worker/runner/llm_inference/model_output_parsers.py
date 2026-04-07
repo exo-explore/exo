@@ -329,7 +329,9 @@ def parse_thinking_models(
             accumulated = ""
             continue
 
-        if accumulated == think_start[:len(accumulated)] or accumulated == think_end[:len(accumulated)]:
+        if (think_start and accumulated == think_start[: len(accumulated)]) or (
+            think_end and accumulated == think_end[: len(accumulated)]
+        ):
             continue
 
         accumulated = ""

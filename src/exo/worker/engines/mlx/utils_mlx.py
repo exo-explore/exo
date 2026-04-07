@@ -336,6 +336,8 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     elif "qwen3.5" in model_id_lower or "qwen-3.5" in model_id_lower:
         # For Qwen3.5: 248046 (<|im_end|>), 248044 (<|endoftext|>)
         return [248046, 248044]
+    elif "gemma-4" in model_id_lower or "gemma-3" in model_id_lower:
+        return [1, 106, 50]
     return None
 
 
@@ -407,22 +409,12 @@ def load_tokenizer_for_model_id(
             tool_parser=_parse_kimi_tool_calls,
         )
 
+    # We should really consider going back to mlx lm load to get tokenizer
     tokenizer = load_tokenizer(
         model_path,
         tokenizer_config_extra={"trust_remote_code": trust_remote_code},
         eos_token_ids=eos_token_ids,
     )
-
-    if "gemma-3" in model_id_lower:
-        gemma_3_eos_id = 1
-        gemma_3_end_of_turn_id = 106
-        if tokenizer.eos_token_ids is not None:
-            if gemma_3_end_of_turn_id not in tokenizer.eos_token_ids:
-                tokenizer.eos_token_ids = list(tokenizer.eos_token_ids) + [
-                    gemma_3_end_of_turn_id
-                ]
-        else:
-            tokenizer.eos_token_ids = [gemma_3_eos_id, gemma_3_end_of_turn_id]
 
     return tokenizer
 
