@@ -16,7 +16,7 @@ from mlx.nn.layers.distributed import (
 from mlx_lm.models.base import (
     scaled_dot_product_attention,  # pyright: ignore[reportUnknownVariableType]
 )
-from mlx_lm.models.cache import ArraysCache, KVCache, RotatingKVCache
+from mlx_lm.models.cache import ArraysCache, KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
@@ -192,19 +192,7 @@ class PipelineLastLayer(CustomMlxLayer):
             x, *args, **kwargs
         ).arguments.get("cache", None)
 
-        layer_result = self.original_layer(x, *args, **kwargs)
-
-        # Some models (e.g. gemma4) return a tuple (hidden_states, *extras); the
-        # pipeline send/all_gather must operate on the hidden_states only.
-        output: mx.array
-        extras: tuple[object, ...]
-        if isinstance(layer_result, tuple):
-            _tuple_result = cast(tuple[mx.array, ...], layer_result)
-            output = _tuple_result[0]
-            extras = _tuple_result[1:]
-        else:
-            output = layer_result
-            extras = ()
+        output: mx.array = self.original_layer(x, *args, **kwargs)
 
         # Eval layer output to materialize it before send — this splits the graph
         # so the send is isolated and the receiving rank's recv can complete.
@@ -235,8 +223,6 @@ class PipelineLastLayer(CustomMlxLayer):
             ]
             mx.eval(output)
 
-        if extras:
-            return (output, *extras)  # type: ignore[return-value]
         return output
 
 
@@ -319,51 +305,6 @@ def _patch_hybrid_cache(
     model.make_cache = patched
 
 
-def _patch_gemma4_pipeline(
-    model: Gemma4Model,
-    inner: Gemma4TextModel,
-    start_layer: int,
-    end_layer: int,
-) -> None:
-    args = inner.config
-    num_hidden_layers = int(args.num_hidden_layers)
-    num_kv_shared_layers = int(args.num_kv_shared_layers)
-    first_kv_shared = num_hidden_layers - num_kv_shared_layers
-    layer_types = list(args.layer_types or [])
-    sliding_window = int(args.sliding_window)
-
-    if num_kv_shared_layers > 0:
-        for orig_idx in range(start_layer, end_layer):
-            if orig_idx >= first_kv_shared:
-                src_idx = inner.previous_kvs[orig_idx]
-                if not (start_layer <= src_idx < end_layer):
-                    raise NotImplementedError(
-                        f"Pipeline parallel for gemma4 layer {orig_idx} (kv-shared) "
-                        f"requires its source layer {src_idx} to be in the same shard, "
-                        f"but the current shard is [{start_layer}, {end_layer}). "
-                        f"Adjust the placement so kv-shared layers stay with their source."
-                    )
-
-    inner.previous_kvs = [
-        inner.previous_kvs[orig_idx] - start_layer
-        for orig_idx in range(start_layer, end_layer)
-    ]
-
-    def patched_make_cache() -> list[KVCache | RotatingKVCache]:
-        local_first_kv_shared = max(0, first_kv_shared - start_layer)
-        local_count = min(end_layer - start_layer, local_first_kv_shared)
-        caches: list[KVCache | RotatingKVCache] = []
-        for local_idx in range(local_count):
-            orig_idx = start_layer + local_idx
-            if layer_types[orig_idx] == "full_attention":
-                caches.append(KVCache())
-            else:
-                caches.append(RotatingKVCache(max_size=sliding_window, keep=0))
-        return caches
-
-    model.make_cache = patched_make_cache
-
-
 def pipeline_auto_parallel(
     model: nn.Module,
     group: mx.distributed.Group,
@@ -392,13 +333,16 @@ def pipeline_auto_parallel(
         if on_layer_loaded is not None:
             on_layer_loaded(i, total)
 
-    layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
-    layers[-1] = PipelineLastLayer(
-        layers[-1],
-        device_rank,
-        world_size,
-        group=group,
-    )
+    # Gemma 4 is very weird in terms of handling
+    is_gemma4 = isinstance(inner_model_instance, Gemma4TextModel)
+    if not is_gemma4:
+        layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
+        layers[-1] = PipelineLastLayer(
+            layers[-1],
+            device_rank,
+            world_size,
+            group=group,
+        )
 
     if isinstance(inner_model_instance, GptOssMoeModel):
         inner_model_instance.layer_types = inner_model_instance.layer_types[  # type: ignore
@@ -453,12 +397,34 @@ def pipeline_auto_parallel(
             )
 
     if isinstance(inner_model_instance, Gemma4TextModel):
-        _patch_gemma4_pipeline(
-            cast(Gemma4Model, model),
-            inner_model_instance,
-            start_layer,
-            end_layer,
-        )
+        args = inner_model_instance.config
+        num_hidden_layers = int(args.num_hidden_layers)
+        num_kv_shared_layers = int(args.num_kv_shared_layers)
+        first_kv_shared = num_hidden_layers - num_kv_shared_layers
+        layer_types = list(args.layer_types or [])
+
+        if num_kv_shared_layers > 0:
+            for orig_idx in range(start_layer, end_layer):
+                if orig_idx >= first_kv_shared:
+                    src_idx = inner_model_instance.previous_kvs[orig_idx]
+                    if not (start_layer <= src_idx < end_layer):
+                        raise NotImplementedError(
+                            f"Pipeline parallel for gemma4 layer {orig_idx} (kv-shared) "
+                            f"requires its source layer {src_idx} to be in the same shard, "
+                            f"but the current shard is [{start_layer}, {end_layer}). "
+                            f"Adjust the placement so kv-shared layers stay with their source."
+                        )
+
+        inner_model_instance.previous_kvs = [
+            inner_model_instance.previous_kvs[orig_idx] - start_layer
+            for orig_idx in range(start_layer, end_layer)
+        ]
+
+        local_layer_types = layer_types[start_layer:end_layer]
+        local_source_count = max(0, min(end_layer, first_kv_shared) - start_layer)
+        args.layer_types = local_layer_types
+        args.num_hidden_layers = end_layer - start_layer
+        args.num_kv_shared_layers = (end_layer - start_layer) - local_source_count
 
     if isinstance(inner_model_instance, NemotronHInnerModel):
         # NemotronH uses block_type: "M" (Mamba/SSM), "*" (Attention), "E" (MoE), "-" (MLP)
@@ -1475,16 +1441,18 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
 
 
 class WrappedGemma4Experts(CustomMlxLayer):
-    def __init__(self, layer: _LayerCallable, group: mx.distributed.Group):
+    def __init__(self, layer: _LayerCallable):
         super().__init__(layer)
-        self.sharding_group: mx.distributed.Group = group
+        self.sharding_group: mx.distributed.Group | None = None
 
     def __call__(
         self, x: mx.array, top_k_indices: mx.array, top_k_weights: mx.array
     ) -> mx.array:
-        x = sum_gradients(self.sharding_group)(x)
+        if self.sharding_group is not None:
+            x = sum_gradients(self.sharding_group)(x)
         y: mx.array = self.original_layer(x, top_k_indices, top_k_weights)
-        y = mx.distributed.all_sum(y, group=self.sharding_group)
+        if self.sharding_group is not None:
+            y = mx.distributed.all_sum(y, group=self.sharding_group)
         return y
 
 
@@ -1519,7 +1487,8 @@ class Gemma4ShardingStrategy(TensorParallelShardingStrategy):
                 self.all_to_sharded_linear_in_place(layer.experts.switch_glu.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.experts.switch_glu.down_proj)
                 self.all_to_sharded_linear_in_place(layer.experts.switch_glu.up_proj)
-                layer.experts = WrappedGemma4Experts(layer.experts, self.group)  # pyright: ignore[reportAttributeAccessIssue,reportArgumentType]
+                layer.experts = WrappedGemma4Experts(layer.experts)  # pyright: ignore[reportAttributeAccessIssue,reportArgumentType]
+                layer.experts.sharding_group = self.group
 
             mx.eval(layer)
             if on_layer_loaded is not None:
