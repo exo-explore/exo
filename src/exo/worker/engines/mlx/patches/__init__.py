@@ -10,5 +10,4 @@ def apply_mlx_patches() -> None:
         return
     _applied = True
     patch_yarn_rope()
-    # patch_gdn_softplus()
     apply_batch_gen_patch()
