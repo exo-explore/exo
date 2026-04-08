@@ -47,8 +47,10 @@ from exo.worker.engines.mlx.cache import (
 )
 from exo.worker.engines.mlx.constants import (
     DEFAULT_TOP_LOGPROBS,
+    KEEP_KV_SIZE,
     KV_BITS,
     KV_GROUP_SIZE,
+    MAX_KV_SIZE,
     MAX_TOKENS,
 )
 from exo.worker.engines.mlx.utils_mlx import (
@@ -531,7 +533,7 @@ def mlx_generate(
     prefix_hit_length = 0
     matched_index: int | None = None
     if kv_prefix_cache is None:
-        caches = make_kv_cache(model=model)
+        caches = make_kv_cache(model=model, max_kv_size=MAX_KV_SIZE, keep=KEEP_KV_SIZE or 0)
         prompt_tokens = all_prompt_tokens
     else:
         caches, prompt_tokens, matched_index = kv_prefix_cache.get_kv_cache(
