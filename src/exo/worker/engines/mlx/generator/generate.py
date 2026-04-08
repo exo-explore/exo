@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
+import mlx.nn as nn
 from mlx_lm.generate import (
     maybe_quantize_kv_cache,
     stream_generate,
@@ -51,6 +52,7 @@ from exo.worker.engines.mlx.constants import (
     KV_GROUP_SIZE,
     MAX_TOKENS,
 )
+from exo.worker.engines.mlx.gemma4 import is_gemma4_pipeline_model
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     detect_thinking_prompt_suffix,
@@ -148,6 +150,9 @@ class PrefillCancelled(BaseException):
 
 
 def _has_pipeline_communication_layer(model: Model):
+    inner: nn.Module = get_inner_model(model)  # type: ignore
+    if is_gemma4_pipeline_model(inner):
+        return True
     for layer in model.layers:
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
             return True
