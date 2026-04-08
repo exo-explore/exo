@@ -30,6 +30,7 @@ dependencies = [
   "zstandard>=0.23.0",
   "mlx-vlm>=0.3.11",
   "transformers>=5.0.0,<5.4.0",
+  "pydantic-settings>=2.13.1",
 ]
 
 [project.scripts]
