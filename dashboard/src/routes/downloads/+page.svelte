@@ -245,6 +245,24 @@
     configApplyAll = false;
   }
 
+  async function freeSpaceAndRetry(
+    nodeId: string,
+    shardMetadata: Record<string, unknown>,
+  ) {
+    try {
+      const col = nodeColumns.find((c) => c.nodeId === nodeId);
+      const limitGb = col?.storageLimit ? col.storageLimit / 1024 ** 3 : null;
+      await setStorageConfig([nodeId], limitGb, "auto-evict");
+      await startDownload(nodeId, shardMetadata);
+      refreshState();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }
+
   async function saveStorageConfig() {
     if (!storageConfigNode) return;
     configSaving = true;
@@ -386,12 +404,13 @@
       }
 
       function rowSortKey(row: ModelRow): number {
-        // in progress (4) -> completed (3) -> paused (2) -> not started (1) -> not present (0)
+        // in progress (4) -> completed (3) -> rejected/paused (2) -> not started (1) -> not present (0)
         let best = 0;
         for (const cell of Object.values(row.cells)) {
           let score = 0;
           if (cell.kind === "downloading") score = 4;
           else if (cell.kind === "completed") score = 3;
+          else if (cell.kind === "rejected") score = 2;
           else if (cell.kind === "pending" && cell.downloaded > 0)
             score = 2; // paused
           else if (cell.kind === "pending" || cell.kind === "failed") score = 1; // not started
@@ -797,27 +816,29 @@
                           >{formatBytes(cell.availableBytes)} avail</span
                         >
                         {#if row.shardMetadata}
-                          <button
-                            type="button"
-                            class="text-white/50 hover:text-exo-yellow transition-colors cursor-pointer"
-                            onclick={() =>
-                              startDownload(col.nodeId, row.shardMetadata!)}
-                            title="Retry download on this node"
-                          >
-                            <svg
-                              class="w-5 h-5"
-                              viewBox="0 0 20 20"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="2"
+                          <div class="flex items-center gap-2 mt-0.5">
+                            <button
+                              type="button"
+                              class="text-[9px] text-white/50 hover:text-orange-300 transition-colors cursor-pointer border border-white/10 hover:border-orange-400/40 rounded px-1.5 py-0.5"
+                              onclick={() =>
+                                freeSpaceAndRetry(
+                                  col.nodeId,
+                                  row.shardMetadata!,
+                                )}
+                              title="Switch to auto-evict, remove least-recently-used models, and retry download"
                             >
-                              <path
-                                d="M10 3v10m0 0l-3-3m3 3l3-3M3 17h14"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                              ></path>
-                            </svg>
-                          </button>
+                              Free space & retry
+                            </button>
+                            <button
+                              type="button"
+                              class="text-white/50 hover:text-exo-yellow transition-colors cursor-pointer"
+                              onclick={() =>
+                                startDownload(col.nodeId, row.shardMetadata!)}
+                              title="Retry download (without freeing space)"
+                            >
+                              {@render downloadIcon()}
+                            </button>
+                          </div>
                         {/if}
                       </div>
                     {:else if cell.kind === "failed"}

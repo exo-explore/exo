@@ -1649,14 +1649,14 @@
         if (
           downloadKind !== "ModelDownloading" &&
           downloadKind !== "ModelNotDownloading" &&
-          downloadKind !== "DownloadCompleted"
+          downloadKind !== "ModelReady"
         )
           continue;
 
         const nodeName =
           data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
 
-        if (downloadKind === "DownloadCompleted") {
+        if (downloadKind === "ModelReady") {
           perNodeMap.set(nodeId, {
             nodeId,
             nodeName,
@@ -2559,6 +2559,46 @@
     }
 
     previousInstanceStatuses = currentStatuses;
+  });
+
+  // ── Download rejection toasts (independent of instances) ──
+  // Instances are deleted immediately after rejection, so the instance-based
+  // toast logic above never sees them. Watch downloads directly instead.
+  let previousRejectedModels = new Set<string>();
+
+  $effect(() => {
+    const currentRejected = new Set<string>();
+    if (downloadsData && typeof downloadsData === "object") {
+      for (const nodeDownloads of Object.values(downloadsData)) {
+        if (!Array.isArray(nodeDownloads)) continue;
+        for (const entry of nodeDownloads) {
+          if (!entry || typeof entry !== "object") continue;
+          const keys = Object.keys(entry as Record<string, unknown>);
+          if (keys.length !== 1) continue;
+          if (keys[0] === "ModelRejected") {
+            const payload = (entry as Record<string, unknown>)[
+              keys[0]
+            ] as Record<string, unknown>;
+            const modelId = extractModelIdFromDownload(payload);
+            if (modelId) currentRejected.add(modelId);
+          }
+        }
+      }
+    }
+
+    if (previousRejectedModels.size > 0 || currentRejected.size > 0) {
+      for (const modelId of currentRejected) {
+        if (!previousRejectedModels.has(modelId)) {
+          const shortName = modelId.split("/").pop() ?? modelId;
+          addToast({
+            type: "warning",
+            message: `Storage limit exceeded: ${shortName}`,
+            duration: 8000,
+          });
+        }
+      }
+    }
+    previousRejectedModels = currentRejected;
   });
 
   // ── Connection status toasts ──
