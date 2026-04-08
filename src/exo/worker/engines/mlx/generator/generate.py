@@ -25,7 +25,11 @@ from exo.api.types import (
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType, Model
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
@@ -356,7 +360,9 @@ def warmup_inference(
 ) -> int:
     logger.info(f"warming up inference for instance: {model_id}")
 
-    content = "Prompt to warm up the inference engine. Repeat this."
+    content = InputMessageContent(
+        "Prompt to warm up the inference engine. Repeat this."
+    )
 
     warmup_task_params = TextGenerationTaskParams(
         model=model_id,
