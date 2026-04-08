@@ -1,8 +1,7 @@
 use crate::ext::MultiaddrExt;
 use delegate::delegate;
 use either::Either;
-use futures_lite::FutureExt;
-use futures_timer::Delay;
+use std::time::Instant;
 use libp2p::core::transport::PortUse;
 use libp2p::core::{ConnectedPoint, Endpoint};
 use libp2p::swarm::behaviour::ConnectionEstablished;
@@ -106,7 +105,7 @@ pub struct Behaviour {
     mdns_discovered: HashMap<PeerId, BTreeSet<Multiaddr>>,
     bootstrap_peers: Vec<Multiaddr>,
 
-    retry_delay: Delay, // retry interval
+    retry_at: Instant, // next time to retry bootstrap/mDNS dials
 
     // pending events to emmit => waker-backed Deque to control polling
     pending_events: WakerDeque<ToSwarm<Event, Infallible>>,
@@ -118,7 +117,7 @@ impl Behaviour {
             managed: managed::Behaviour::new(keypair)?,
             mdns_discovered: HashMap::new(),
             bootstrap_peers,
-            retry_delay: Delay::new(RETRY_CONNECT_INTERVAL),
+            retry_at: Instant::now(), // dial bootstrap peers immediately on first poll
             pending_events: WakerDeque::new(),
         })
     }
@@ -363,8 +362,12 @@ impl NetworkBehaviour for Behaviour {
             Poll::Pending => {}
         }
 
-        // retry connecting to all mDNS peers periodically (fails safely if already connected)
-        if self.retry_delay.poll(cx).is_ready() {
+        // Retry connecting to all mDNS peers and bootstrap peers periodically.
+        // Uses Instant-based polling instead of futures_timer::Delay because the
+        // Delay waker does not integrate correctly with pyo3-async-runtimes,
+        // causing the timer to never fire when the swarm is driven from Python's
+        // asyncio event loop.
+        if Instant::now() >= self.retry_at {
             for (p, mas) in self.mdns_discovered.clone() {
                 for ma in mas {
                     self.dial(p, ma)
@@ -376,7 +379,7 @@ impl NetworkBehaviour for Behaviour {
                     opts: DialOpts::unknown_peer_id().address(addr.clone()).build(),
                 })
             }
-            self.retry_delay.reset(RETRY_CONNECT_INTERVAL) // reset timeout
+            self.retry_at = Instant::now() + RETRY_CONNECT_INTERVAL;
         }
 
         // send out any pending events from our own service
