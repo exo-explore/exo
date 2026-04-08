@@ -1,4 +1,3 @@
-use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::r#const::MPSC_CHANNEL_SIZE;
@@ -9,7 +8,7 @@ use crate::networking::exception::{
     PyAllQueuesFullError, PyMessageTooLargeError, PyNoPeersSubscribedToTopicError,
 };
 use crate::pyclass;
-use futures_lite::{Stream, StreamExt as _};
+use futures_lite::StreamExt as _;
 use libp2p::gossipsub::PublishError;
 use networking::swarm::{FromSwarm, ToSwarm, create_swarm};
 use pyo3::exceptions::PyRuntimeError;
@@ -134,7 +133,7 @@ mod exception {
 struct PyNetworkingHandle {
     // channels
     pub to_swarm: mpsc::Sender<ToSwarm>,
-    pub swarm: Arc<Mutex<Pin<Box<dyn Stream<Item = FromSwarm> + Send>>>>,
+    pub from_swarm: Arc<Mutex<mpsc::Receiver<FromSwarm>>>,
 }
 
 #[gen_stub_pyclass_complex_enum]
@@ -188,30 +187,59 @@ impl PyNetworkingHandle {
     ) -> PyResult<Self> {
         // create communication channels
         let (to_swarm, from_client) = mpsc::channel(MPSC_CHANNEL_SIZE);
+        let (event_tx, event_rx) = mpsc::channel(MPSC_CHANNEL_SIZE);
+        let (init_tx, init_rx) = std::sync::mpsc::channel();
 
         // get identity
         let identity = identity.borrow().0.clone();
 
-        // create networking swarm (within tokio context!! or it crashes)
-        let _guard = pyo3_async_runtimes::tokio::get_runtime().enter();
-        let swarm = create_swarm(identity, from_client, bootstrap_peers, listen_port)
-            .pyerr()?
-            .into_stream();
+        // Spawn the entire swarm lifecycle on a tokio worker thread.
+        // Both swarm creation AND its event loop must run inside tokio::spawn
+        // so that all internal timers (mDNS query interval, ping keepalive,
+        // bootstrap retry) fire correctly via tokio's timer driver.
+        // Creating the swarm outside (with just runtime.enter()) caused mDNS
+        // multicast sockets to malfunction — the UDP sockets must be created
+        // on an actual tokio worker thread, not Python's main thread.
+        pyo3_async_runtimes::tokio::get_runtime().spawn(async move {
+            let swarm = match create_swarm(identity, from_client, bootstrap_peers, listen_port) {
+                Ok(s) => {
+                    let _ = init_tx.send(Ok(()));
+                    s
+                }
+                Err(e) => {
+                    let _ = init_tx.send(Err(e.to_string()));
+                    return;
+                }
+            };
+
+            let mut stream = swarm.into_stream();
+            while let Some(event) = stream.next().await {
+                if event_tx.send(event).await.is_err() {
+                    break; // receiver dropped, clean shutdown
+                }
+            }
+        });
+
+        // Block until swarm creation completes on the tokio worker thread
+        init_rx
+            .recv()
+            .map_err(|_| PyRuntimeError::new_err("swarm task panicked during initialization"))?
+            .map_err(|e| PyRuntimeError::new_err(format!("failed to create swarm: {e}")))?;
 
         Ok(Self {
-            swarm: Arc::new(Mutex::new(swarm)),
+            from_swarm: Arc::new(Mutex::new(event_rx)),
             to_swarm,
         })
     }
 
     #[gen_stub(skip)]
     fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let swarm = Arc::clone(&self.swarm);
+        let from_swarm = Arc::clone(&self.from_swarm);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            swarm
+            from_swarm
                 .try_lock()
                 .map_err(|_| PyRuntimeError::new_err("called recv twice concurrently"))?
-                .next()
+                .recv()
                 .await
                 .ok_or(PyErr::receiver_channel_closed())
                 .map(PyFromSwarm::from)

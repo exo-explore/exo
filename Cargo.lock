@@ -2786,7 +2786,6 @@ dependencies = [
  "either",
  "extend",
  "futures-lite",
- "futures-timer",
  "keccak-const",
  "libp2p",
  "log",
