@@ -523,14 +523,14 @@ class VisionEncoder:
             ("patch_embedder", "input_proj"),
         ):
             head = getattr(self._vision_tower, head_attr, None)
-            linear = getattr(head, linear_attr, None) if head is not None else None
-            if linear is not None and hasattr(linear, "weight"):
-                patch_embed_weight = linear.weight
+            linear = getattr(head, linear_attr, None) if head is not None else None  # type: ignore
+            if linear is not None and hasattr(linear, "weight"):  # type: ignore
+                patch_embed_weight = linear.weight  # type: ignore
                 break
         assert patch_embed_weight is not None, (
             "vision tower has no recognised patch-embedding linear"
         )
-        tower_dtype = cast(mx.Dtype, patch_embed_weight.dtype)  # pyright: ignore[reportUnknownMemberType]
+        tower_dtype = cast(mx.Dtype, patch_embed_weight.dtype)
 
         if self._needs_nhwc:
             assert grid_thw is not None

@@ -125,7 +125,7 @@ def patch_gemma4_pipeline(
                 caches.append(RotatingKVCache(max_size=sliding_window, keep=0))
         return caches
 
-    model.make_cache = _make_cache  # type: ignore[attr-defined]
+    model.make_cache = _make_cache
 
     inner._gemma4_pipeline_group = group
     inner._gemma4_device_rank = device_rank
