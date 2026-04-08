@@ -1,3 +1,4 @@
+use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::r#const::MPSC_CHANNEL_SIZE;
@@ -8,7 +9,7 @@ use crate::networking::exception::{
     PyAllQueuesFullError, PyMessageTooLargeError, PyNoPeersSubscribedToTopicError,
 };
 use crate::pyclass;
-use futures_lite::StreamExt as _;
+use futures_lite::{Stream, StreamExt as _};
 use libp2p::gossipsub::PublishError;
 use networking::swarm::{FromSwarm, ToSwarm, create_swarm};
 use pyo3::exceptions::PyRuntimeError;
@@ -133,7 +134,7 @@ mod exception {
 struct PyNetworkingHandle {
     // channels
     pub to_swarm: mpsc::Sender<ToSwarm>,
-    pub from_swarm: Arc<Mutex<mpsc::Receiver<FromSwarm>>>,
+    pub swarm: Arc<Mutex<Pin<Box<dyn Stream<Item = FromSwarm> + Send>>>>,
 }
 
 #[gen_stub_pyclass_complex_enum]
@@ -191,40 +192,26 @@ impl PyNetworkingHandle {
         // get identity
         let identity = identity.borrow().0.clone();
 
-        // Create networking swarm and spawn it as a tokio task.
-        // The swarm MUST run inside tokio because its internal timers (mDNS
-        // query interval, ping keepalive, bootstrap retry) rely on the tokio
-        // timer driver. Driving the swarm from Python's asyncio event loop
-        // (via pyo3-async-runtimes) leaves those timers frozen.
-        let runtime = pyo3_async_runtimes::tokio::get_runtime();
-        let _guard = runtime.enter();
-        let mut swarm_stream = create_swarm(identity, from_client, bootstrap_peers, listen_port)
+        // create networking swarm (within tokio context!! or it crashes)
+        let _guard = pyo3_async_runtimes::tokio::get_runtime().enter();
+        let swarm = create_swarm(identity, from_client, bootstrap_peers, listen_port)
             .pyerr()?
             .into_stream();
 
-        let (event_tx, event_rx) = mpsc::channel(MPSC_CHANNEL_SIZE);
-        runtime.spawn(async move {
-            while let Some(event) = swarm_stream.next().await {
-                if event_tx.send(event).await.is_err() {
-                    break; // receiver dropped
-                }
-            }
-        });
-
         Ok(Self {
-            from_swarm: Arc::new(Mutex::new(event_rx)),
+            swarm: Arc::new(Mutex::new(swarm)),
             to_swarm,
         })
     }
 
     #[gen_stub(skip)]
     fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let from_swarm = Arc::clone(&self.from_swarm);
+        let swarm = Arc::clone(&self.swarm);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            from_swarm
+            swarm
                 .try_lock()
                 .map_err(|_| PyRuntimeError::new_err("called recv twice concurrently"))?
-                .recv()
+                .next()
                 .await
                 .ok_or(PyErr::receiver_channel_closed())
                 .map(PyFromSwarm::from)
