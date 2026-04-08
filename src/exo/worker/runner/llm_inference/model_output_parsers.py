@@ -67,14 +67,6 @@ def apply_all_parsers(
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     mlx_generator = receiver
 
-    if tokenizer.has_thinking:
-        mlx_generator = parse_thinking_models(
-            mlx_generator,
-            tokenizer.think_start,
-            tokenizer.think_end,
-            starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
-        )
-
     if issubclass(model_type, GptOssModel):
         mlx_generator = parse_gpt_oss(mlx_generator)
     elif (
@@ -82,8 +74,17 @@ def apply_all_parsers(
         and "deepseek" in model_id.normalize().lower()
     ):
         mlx_generator = parse_deepseek_v32(mlx_generator)
-    elif tool_parser:
-        mlx_generator = parse_tool_calls(mlx_generator, tool_parser, tools)
+    else:
+        if tokenizer.has_thinking:
+            mlx_generator = parse_thinking_models(
+                mlx_generator,
+                tokenizer.think_start,
+                tokenizer.think_end,
+                starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
+            )
+
+        if tool_parser:
+            mlx_generator = parse_tool_calls(mlx_generator, tool_parser, tools)
 
     return count_reasoning_tokens(mlx_generator)
 
@@ -93,7 +94,6 @@ def parse_gpt_oss(
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     encoding = get_gpt_oss_encoding()
     stream = StreamableParser(encoding, role=Role.ASSISTANT)
-    thinking = False
     current_tool_name: str | None = None
     tool_arg_parts: list[str] = []
 
@@ -147,14 +147,10 @@ def parse_gpt_oss(
                 tool_arg_parts = []
             continue
 
-        if ch == "analysis" and not thinking:
-            thinking = True
-
-        if ch != "analysis" and thinking:
-            thinking = False
-
         if delta:
-            yield response.model_copy(update={"text": delta, "is_thinking": thinking})
+            yield response.model_copy(
+                update={"text": delta, "is_thinking": ch == "analysis"}
+            )
 
         if response.finish_reason is not None:
             yield response
