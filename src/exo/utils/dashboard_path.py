@@ -1,8 +1,10 @@
 import sys
 from pathlib import Path
 from typing import cast
+from functools import cache
 
 
+@cache
 def find_resources() -> Path:
     resources = _find_resources_in_repo() or _find_resources_in_bundle()
     if resources is None:
@@ -31,6 +33,7 @@ def _find_resources_in_bundle() -> Path | None:
     return None
 
 
+@cache
 def find_dashboard() -> Path:
     dashboard = _find_dashboard_in_repo() or _find_dashboard_in_bundle()
     if not dashboard:
