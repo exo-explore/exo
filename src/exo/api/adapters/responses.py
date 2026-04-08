@@ -74,7 +74,9 @@ from exo.shared.types.chunks import (
 )
 from exo.shared.types.common import CommandId
 from exo.shared.types.text_generation import (
+    Base64Image,
     InputMessage,
+    InputMessageContent,
     TextGenerationTaskParams,
     resolve_reasoning_params,
 )
@@ -99,9 +101,11 @@ async def responses_request_to_text_generation(
 ) -> TextGenerationTaskParams:
     input_value: list[InputMessage]
     built_chat_template: list[dict[str, Any]] | None = None
-    images: list[str] = []
+    images: list[Base64Image] = []
     if isinstance(request.input, str):
-        input_value = [InputMessage(role="user", content=request.input)]
+        input_value = [
+            InputMessage(role="user", content=InputMessageContent(request.input))
+        ]
     else:
         input_messages: list[InputMessage] = []
         chat_template_messages: list[dict[str, Any]] = []
@@ -130,7 +134,9 @@ async def responses_request_to_text_generation(
                                 has_images = True
                     if item.role in ("user", "assistant", "developer"):
                         input_messages.append(
-                            InputMessage(role=item.role, content=content)
+                            InputMessage(
+                                role=item.role, content=InputMessageContent(content)
+                            )
                         )
                     if item.role == "system":
                         chat_template_messages.append(
@@ -327,7 +333,7 @@ async def responses_request_to_text_generation(
         input_value = (
             input_messages
             if input_messages
-            else [InputMessage(role="user", content="")]
+            else [InputMessage(role="user", content=InputMessageContent(""))]
         )
         built_chat_template = chat_template_messages if chat_template_messages else None
 
@@ -361,7 +367,9 @@ async def responses_request_to_text_generation(
     return TextGenerationTaskParams(
         model=request.model,
         input=input_value,
-        instructions=request.instructions,
+        instructions=InputMessageContent(request.instructions)
+        if request.instructions
+        else None,
         max_output_tokens=request.max_output_tokens,
         temperature=request.temperature,
         top_p=request.top_p,

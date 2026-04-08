@@ -12,7 +12,7 @@ from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import anyio
-from anyio import BrokenResourceError
+from anyio import BrokenResourceError, ClosedResourceError
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -1812,7 +1812,7 @@ class API:
                         assert isinstance(event.chunk, ImageChunk)
                         try:
                             await queue.send(event.chunk)
-                        except BrokenResourceError:
+                        except (BrokenResourceError, ClosedResourceError):
                             self._image_generation_queues.pop(event.command_id, None)
                     if queue := self._text_generation_queues.get(
                         event.command_id, None
@@ -1820,7 +1820,7 @@ class API:
                         assert not isinstance(event.chunk, ImageChunk)
                         try:
                             await queue.send(event.chunk)
-                        except BrokenResourceError:
+                        except (BrokenResourceError, ClosedResourceError):
                             self._text_generation_queues.pop(event.command_id, None)
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)

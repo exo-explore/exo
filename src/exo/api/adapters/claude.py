@@ -37,7 +37,13 @@ from exo.shared.types.chunks import (
     ToolCallChunk,
 )
 from exo.shared.types.common import CommandId
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    Base64Image,
+    ChatTemplateValue,
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 
 
 def finish_reason_to_claude_stop_reason(
@@ -88,8 +94,8 @@ def claude_request_to_text_generation(
 ) -> TextGenerationTaskParams:
     # Handle system message
     instructions: str | None = None
-    chat_template_messages: list[dict[str, Any]] = []
-    images: list[str] = []
+    chat_template_messages: list[dict[str, ChatTemplateValue]] = []
+    images: list[Base64Image] = []
 
     if request.system:
         if isinstance(request.system, str):
@@ -98,14 +104,20 @@ def claude_request_to_text_generation(
             instructions = "".join(block.text for block in request.system)
 
         instructions = _strip_volatile_headers(instructions)
-        chat_template_messages.append({"role": "system", "content": instructions})
+        chat_template_messages.append(
+            {"role": "system", "content": InputMessageContent(instructions)}
+        )
 
     # Convert messages to input
     input_messages: list[InputMessage] = []
     for msg in request.messages:
         if isinstance(msg.content, str):
-            input_messages.append(InputMessage(role=msg.role, content=msg.content))
-            chat_template_messages.append({"role": msg.role, "content": msg.content})
+            input_messages.append(
+                InputMessage(role=msg.role, content=InputMessageContent(msg.content))
+            )
+            chat_template_messages.append(
+                {"role": msg.role, "content": InputMessageContent(msg.content)}
+            )
             continue
 
         # Process structured content blocks
@@ -120,10 +132,11 @@ def claude_request_to_text_generation(
                 text_parts.append(block.text)
             elif isinstance(block, ClaudeImageBlock):
                 if block.source.type == "base64" and block.source.data:
-                    images.append(block.source.data)
+                    images.append(Base64Image(block.source.data))
                     has_images = True
                 elif block.source.type == "url" and block.source.url:
-                    images.append(block.source.url)
+                    # This is obviously wrong. Im not fixing it in this pr
+                    images.append(Base64Image(block.source.url))
                     has_images = True
             elif isinstance(block, ClaudeThinkingBlock):
                 thinking_parts.append(block.thinking)
@@ -144,10 +157,11 @@ def claude_request_to_text_generation(
                     for sub in block.content:
                         if isinstance(sub, ClaudeImageBlock):
                             if sub.source.type == "base64" and sub.source.data:
-                                images.append(sub.source.data)
+                                images.append(Base64Image(sub.source.data))
                                 has_images = True
                             elif sub.source.type == "url" and sub.source.url:
-                                images.append(sub.source.url)
+                                # This is obviously wrong. Im not fixing it in this pr
+                                images.append(Base64Image(sub.source.url))
                                 has_images = True
 
         content = "".join(text_parts)
@@ -155,7 +169,9 @@ def claude_request_to_text_generation(
 
         # Build InputMessage from text content
         if msg.role in ("user", "assistant"):
-            input_messages.append(InputMessage(role=msg.role, content=content))
+            input_messages.append(
+                InputMessage(role=msg.role, content=InputMessageContent(content))
+            )
 
         # Build chat_template_messages preserving tool structure
         if tool_calls:
@@ -216,8 +232,8 @@ def claude_request_to_text_generation(
         model=request.model,
         input=input_messages
         if input_messages
-        else [InputMessage(role="user", content="")],
-        instructions=instructions,
+        else [InputMessage(role="user", content=InputMessageContent(""))],
+        instructions=InputMessageContent(instructions) if instructions else None,
         max_output_tokens=request.max_tokens,
         temperature=request.temperature,
         top_p=request.top_p,

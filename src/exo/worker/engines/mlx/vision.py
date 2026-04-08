@@ -26,7 +26,7 @@ from exo.download.download_utils import build_model_path
 from exo.shared.models.model_cards import VisionCardConfig
 from exo.shared.types.common import ModelId
 from exo.shared.types.mlx import Model
-from exo.shared.types.text_generation import TextGenerationTaskParams
+from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
 from exo.worker.engines.mlx.cache import encode_prompt
 from exo.worker.engines.mlx.utils_mlx import (
     fix_unmatched_think_end_tokens,
@@ -450,7 +450,7 @@ class VisionEncoder:
             + (f" (+ projector {n_proj / 1e6:.1f}M)" if n_proj else "")
         )
 
-    def encode_images(self, images: list[str]) -> tuple[mx.array, list[int]]:
+    def encode_images(self, images: list[Base64Image]) -> tuple[mx.array, list[int]]:
         self.ensure_loaded()
         assert self._vision_tower is not None
         assert self._processor is not None
@@ -631,7 +631,7 @@ def create_vision_embeddings(
 
 def _find_media_regions(
     prompt_tokens: mx.array,
-    images: list[str],
+    images: list[Base64Image],
     image_token_id: int,
 ) -> list[MediaRegion]:
     tokens_np = np.array(prompt_tokens)
@@ -682,7 +682,7 @@ class VisionProcessor:
     def load(self) -> None:
         self._encoder.ensure_loaded()
 
-    def _image_cache_key(self, images: list[str]) -> str:
+    def _image_cache_key(self, images: list[Base64Image]) -> str:
         h = hashlib.sha256()
         for img in images:
             pil = decode_base64_image(img)
@@ -691,7 +691,7 @@ class VisionProcessor:
 
     def process(
         self,
-        images: list[str],
+        images: list[Base64Image],
         chat_template_messages: list[dict[str, Any]],
         tokenizer: TokenizerWrapper,
         model: Model,
@@ -767,7 +767,7 @@ class VisionProcessor:
 
 
 def prepare_vision(
-    images: list[str] | None,
+    images: list[Base64Image] | None,
     chat_template_messages: list[dict[str, Any]] | None,
     vision_processor: VisionProcessor,
     tokenizer: TokenizerWrapper,
