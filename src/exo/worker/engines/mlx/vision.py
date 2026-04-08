@@ -349,10 +349,10 @@ class VisionEncoder:
         else:
             processed = self._processor(
                 images=pil_images,
-                return_tensors="np",
+                return_tensors="pt",
             )
-            pixel_values = mx.array(processed["pixel_values"])  # type: ignore
-            grid_thw = mx.array(processed["image_grid_thw"])  # type: ignore
+            pixel_values = mx.array(processed["pixel_values"].numpy())  # type: ignore
+            grid_thw = mx.array(processed["image_grid_thw"].numpy())  # type: ignore
             merge_unit = self._spatial_merge_size**2
             n_tokens_per_image = [
                 int(
