@@ -21,6 +21,7 @@ from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
+from mlx_lm.models.gemma4 import Model as Gemma4Model
 from mlx_lm.models.glm4_moe import Model as Glm4MoeModel
 from mlx_lm.models.glm4_moe import MoE
 from mlx_lm.models.glm4_moe_lite import Glm4MoeLiteDecoderLayer, Glm4MoeLiteMLP
@@ -58,6 +59,12 @@ from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.worker.engines.mlx.gemma4 import (
+    is_gemma4_inner_model,
+    patch_gemma4_pipeline,
+    try_set_gemma4_pipeline_prefill,
+    try_set_gemma4_pipeline_queue_sends,
+)
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
@@ -225,12 +232,18 @@ class PipelineLastLayer(CustomMlxLayer):
 
 
 def set_pipeline_prefill(model: nn.Module, is_prefill: bool) -> None:
+    inner = get_inner_model(model)
+    if try_set_gemma4_pipeline_prefill(inner, is_prefill):
+        return
     for layer in model.layers:  # type: ignore
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
             layer.is_prefill = is_prefill
 
 
 def set_pipeline_queue_sends(model: nn.Module, queue_sends: bool) -> None:
+    inner = get_inner_model(model)
+    if try_set_gemma4_pipeline_queue_sends(inner, queue_sends):
+        return
     for layer in model.layers:  # type: ignore
         if isinstance(layer, PipelineLastLayer):
             layer.queue_sends = queue_sends
@@ -331,13 +344,16 @@ def pipeline_auto_parallel(
         if on_layer_loaded is not None:
             on_layer_loaded(i, total)
 
-    layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
-    layers[-1] = PipelineLastLayer(
-        layers[-1],
-        device_rank,
-        world_size,
-        group=group,
-    )
+    # Gemma 4 takes over the inner forward pass itself (see gemma4.py) so we
+    # skip the generic pipeline-layer wrapping for it.
+    if not is_gemma4_inner_model(inner_model_instance):
+        layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
+        layers[-1] = PipelineLastLayer(
+            layers[-1],
+            device_rank,
+            world_size,
+            group=group,
+        )
 
     if isinstance(inner_model_instance, GptOssMoeModel):
         inner_model_instance.layer_types = inner_model_instance.layer_types[  # type: ignore
@@ -390,6 +406,18 @@ def pipeline_auto_parallel(
                 ssm_idx=inner_model_instance.ssm_idx,
                 has_linear=bool(linear_layers),
             )
+
+    if is_gemma4_inner_model(inner_model_instance):
+        patch_gemma4_pipeline(
+            model,
+            inner_model_instance,
+            start_layer,
+            end_layer,
+            device_rank,
+            world_size,
+            group,
+            _pending_prefill_sends,
+        )
 
     if isinstance(inner_model_instance, NemotronHInnerModel):
         # NemotronH uses block_type: "M" (Mamba/SSM), "*" (Attention), "E" (MoE), "-" (MLP)
@@ -603,6 +631,14 @@ def tensor_auto_parallel(
         )
     elif isinstance(model, NemotronHModel):
         tensor_parallel_sharding_strategy = NemotronHShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
+    elif isinstance(model, Gemma4Model):
+        tensor_parallel_sharding_strategy = Gemma4ShardingStrategy(
             group,
             all_to_sharded_linear,
             sharded_to_all_linear,
@@ -1395,3 +1431,59 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
         mixer.intermediate_size = is_per_rank
         mixer.conv_dim = new_conv_dim
         mixer.heads_per_group = heads_per_rank // groups_per_rank
+
+
+class WrappedGemma4Experts(CustomMlxLayer):
+    def __init__(self, layer: _LayerCallable):
+        super().__init__(layer)
+        self.sharding_group: mx.distributed.Group | None = None
+
+    def __call__(
+        self, x: mx.array, top_k_indices: mx.array, top_k_weights: mx.array
+    ) -> mx.array:
+        if self.sharding_group is not None:
+            x = sum_gradients(self.sharding_group)(x)
+        y: mx.array = self.original_layer(x, top_k_indices, top_k_weights)
+        if self.sharding_group is not None:
+            y = mx.distributed.all_sum(y, group=self.sharding_group)
+        return y
+
+
+class Gemma4ShardingStrategy(TensorParallelShardingStrategy):
+    def shard_model(
+        self,
+        model: nn.Module,
+        timeout_seconds: float,
+        on_timeout: TimeoutCallback | None,
+        on_layer_loaded: LayerLoadedCallback | None,
+    ) -> nn.Module:
+        model = cast(Gemma4Model, model)
+        layers = model.language_model.model.layers
+        total = len(layers)
+        for i, layer in enumerate(layers):
+            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+
+            attn = layer.self_attn
+            attn.q_proj = self.all_to_sharded_linear(attn.q_proj)
+            attn.k_proj = self.all_to_sharded_linear(attn.k_proj)
+            if not attn.use_k_eq_v:
+                attn.v_proj = self.all_to_sharded_linear(attn.v_proj)
+            attn.o_proj = self.sharded_to_all_linear(attn.o_proj)
+            attn.n_heads //= self.N
+            attn.n_kv_heads //= self.N
+
+            layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
+            layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
+            layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
+
+            if layer.enable_moe:
+                self.all_to_sharded_linear_in_place(layer.experts.switch_glu.gate_proj)
+                self.sharded_to_all_linear_in_place(layer.experts.switch_glu.down_proj)
+                self.all_to_sharded_linear_in_place(layer.experts.switch_glu.up_proj)
+                layer.experts = WrappedGemma4Experts(layer.experts)  # pyright: ignore[reportAttributeAccessIssue,reportArgumentType]
+                layer.experts.sharding_group = self.group
+
+            mx.eval(layer)
+            if on_layer_loaded is not None:
+                on_layer_loaded(i, total)
+        return model
