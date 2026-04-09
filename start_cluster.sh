@@ -23,7 +23,18 @@ fi
 : "${EXO_COMPUTE_DTYPE:=bf16}"
 : "${EXO_SPECULATIVE:=1}"
 : "${EXO_SPECULATIVE_GAMMA:=3}"
+# Number of sibling runners that may share a single Mac Studio. Used by
+# set_wired_limit_for_model() to divide the device working set evenly so
+# coexisting runners don't fight over the same wired pages.
+: "${EXO_MAX_RUNNERS_PER_NODE:=3}"
+# Pin runner QoS class on Darwin so siblings don't drift apart under
+# contention. Set to "off" to disable.
+: "${EXO_RUNNER_QOS:=user_initiated}"
 : "${LOG_LEVEL:=DEBUG}"
+
+# Model placed automatically at startup; 3 instances per Studio.
+: "${HUIHUI_MODEL_ID:=mlx-community/Huihui-Qwen3.5-35B-A3B-abliterated-mxfp4}"
+: "${HUIHUI_INSTANCES_PER_STUDIO:=3}"
 
 export IBV_FORK_SAFE=1
 export PYTHONUNBUFFERED=1
@@ -364,6 +375,8 @@ for NODE in "${NODES[@]}"; do
     EXO_ENV="$EXO_ENV EXO_SPECULATIVE=$EXO_SPECULATIVE"
     EXO_ENV="$EXO_ENV EXO_SPECULATIVE_GAMMA=$EXO_SPECULATIVE_GAMMA"
     EXO_ENV="$EXO_ENV EXO_COMPUTE_DTYPE=$EXO_COMPUTE_DTYPE"
+    EXO_ENV="$EXO_ENV EXO_MAX_RUNNERS_PER_NODE=$EXO_MAX_RUNNERS_PER_NODE"
+    EXO_ENV="$EXO_ENV EXO_RUNNER_QOS=$EXO_RUNNER_QOS"
     EXO_ENV="$EXO_ENV LOG_LEVEL=$LOG_LEVEL"
 
     # Metal GPU timeout mitigations
@@ -531,12 +544,131 @@ create_instance_with_retry() {
 
 EXPECTED_RUNNERS=0
 
-# ── Instance creation is intentionally left to operators ──
-# Previously this block auto-created a 2-node Qwen3.5-397B PP/RDMA instance.
-# Cluster is now used for parallel scout fan-out with multiple single-node
-# instances of a smaller MoE model — create those from the dashboard or via
-# the placement API directly. Re-enable a block here if you want a default
-# instance auto-placed on every cluster bring-up.
+# ── Auto-place Huihui instances ──
+# 3 single-node Pipeline instances per Mac Studio (6 total) of the Huihui
+# MoE model. Used for prediction-bot scout fan-out. Override with
+# HUIHUI_MODEL_ID / HUIHUI_INSTANCES_PER_STUDIO=0 to skip.
+create_single_node_instance() {
+    # Create one single-node Pipeline / MlxRing instance pinned to a
+    # specific node by passing node_ids to /instance/previews, then
+    # POSTing the matching preview to /instance.
+    local node_id="$1"
+    local model_id="$2"
+    local node_label="$3"
+    local instance_index="$4"
+    local max_attempts=20
+
+    for attempt in $(seq 1 $max_attempts); do
+        # Step 1: previews filtered to the target node.
+        local previews_response previews_code
+        previews_response=$(curl -s -w '\n%{http_code}' -G "$API/instance/previews" \
+            --data-urlencode "model_id=$model_id" \
+            --data-urlencode "node_ids=$node_id")
+        previews_code=$(echo "$previews_response" | tail -1)
+        previews_response=$(echo "$previews_response" | sed '$d')
+
+        if [ -z "$previews_code" ] || [ "$previews_code" -lt 200 ] 2>/dev/null || [ "$previews_code" -ge 300 ] 2>/dev/null; then
+            echo "  ${node_label} #${instance_index}: previews HTTP $previews_code, retrying in 5s..."
+            sleep 5
+            continue
+        fi
+
+        # Step 2: pick a Pipeline + MlxRing single-node preview that has
+        # an instance attached and isn't an error.
+        local instance_payload
+        instance_payload=$(echo "$previews_response" | jq -c '
+            .previews
+            | map(select(.sharding == "Pipeline"
+                         and .instance_meta == "MlxRing"
+                         and .instance != null
+                         and .error == null))
+            | .[0]
+            | {instance: .instance}
+        ')
+
+        if [ "$instance_payload" = "null" ] || [ -z "$instance_payload" ]; then
+            local err
+            err=$(echo "$previews_response" | jq -r '.previews[0].error // "no matching preview"')
+            if [ "$attempt" -lt "$max_attempts" ]; then
+                echo "  ${node_label} #${instance_index}: $err, retrying in 5s..."
+                sleep 5
+                continue
+            else
+                echo "  ${node_label} #${instance_index}: ERROR: $err"
+                return 1
+            fi
+        fi
+
+        # Step 3: POST /instance to actually create it.
+        local create_response create_code
+        create_response=$(curl -s -w '\n%{http_code}' -X POST "$API/instance" \
+            -H "Content-Type: application/json" \
+            -d "$instance_payload")
+        create_code=$(echo "$create_response" | tail -1)
+        create_response=$(echo "$create_response" | sed '$d')
+
+        if [ -n "$create_code" ] && [ "$create_code" -ge 200 ] 2>/dev/null && [ "$create_code" -lt 300 ] 2>/dev/null; then
+            echo "  ${node_label} #${instance_index}: created ✓"
+            return 0
+        else
+            local err_msg
+            err_msg=$(echo "$create_response" | jq -r '.detail // .error.message // empty' 2>/dev/null)
+            echo "  ${node_label} #${instance_index}: create HTTP $create_code: $err_msg"
+            return 1
+        fi
+    done
+    return 1
+}
+
+if [ "${HUIHUI_INSTANCES_PER_STUDIO:-0}" -gt 0 ]; then
+    echo ""
+    echo "Auto-placing $HUIHUI_INSTANCES_PER_STUDIO instance(s) of $HUIHUI_MODEL_ID per Studio..."
+
+    EXPECTED_HUIHUI_TOTAL=$((HUIHUI_INSTANCES_PER_STUDIO * 2))
+
+    # Skip if the requested number is already running.
+    EXISTING_HUIHUI=$(curl -s "$API/state" | jq -r --arg m "$HUIHUI_MODEL_ID" \
+        '[.. | objects | select(has("shardAssignments")) | select(.shardAssignments.modelId == $m)] | length' 2>/dev/null)
+    if [ -z "$EXISTING_HUIHUI" ] || [ "$EXISTING_HUIHUI" = "null" ]; then
+        EXISTING_HUIHUI=0
+    fi
+
+    if [ "$EXISTING_HUIHUI" -ge "$EXPECTED_HUIHUI_TOTAL" ]; then
+        echo "  $EXISTING_HUIHUI Huihui instance(s) already running (target $EXPECTED_HUIHUI_TOTAL). Skipping."
+    else
+        for i in $(seq 1 $HUIHUI_INSTANCES_PER_STUDIO); do
+            create_single_node_instance "$M4_1_NODE_ID" "$HUIHUI_MODEL_ID" "M4-1" "$i" || true
+            create_single_node_instance "$M4_2_NODE_ID" "$HUIHUI_MODEL_ID" "M4-2" "$i" || true
+        done
+
+        # Wait until all expected instances have a Ready runner.
+        echo -n "Waiting for $EXPECTED_HUIHUI_TOTAL Huihui runner(s) to become Ready..."
+        READY=false
+        READY_COUNT=0
+        for i in {1..180}; do
+            READY_COUNT=$(curl -s "$API/state" | jq -r --arg m "$HUIHUI_MODEL_ID" '
+                . as $root
+                | [ $root.instances | to_entries[]
+                    | select(.value.MlxRingInstance.shardAssignments.modelId == $m)
+                    | .value.MlxRingInstance.shardAssignments.runnerToShard | keys[] ] as $rids
+                | [ $rids[] | $root.runners[.] | select(.RunnerReady? != null) ] | length
+            ' 2>/dev/null)
+            if [ -z "$READY_COUNT" ] || [ "$READY_COUNT" = "null" ]; then READY_COUNT=0; fi
+            if [ "$READY_COUNT" -ge "$EXPECTED_HUIHUI_TOTAL" ]; then
+                echo " READY ($READY_COUNT/$EXPECTED_HUIHUI_TOTAL)"
+                READY=true
+                break
+            fi
+            echo -n "."
+            sleep 2
+        done
+        if [ "$READY" = false ]; then
+            echo ""
+            echo "  WARNING: only $READY_COUNT/$EXPECTED_HUIHUI_TOTAL runners reached Ready."
+            echo "  Check ~/exo.log on the Studios."
+        fi
+    fi
+fi
 
 # Final environment export
 export IBV_FORK_SAFE=${IBV_FORK_SAFE:-1}
