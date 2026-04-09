@@ -1,5 +1,7 @@
+import ctypes
 import os
 import resource
+import sys
 
 import loguru
 
@@ -11,6 +13,58 @@ from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.engines.mlx.patches import apply_mlx_patches
 
 logger: "loguru.Logger" = loguru.logger
+
+
+# QoS classes from <sys/qos.h>. Apple's documented values for
+# pthread_set_qos_class_self_np().
+_QOS_CLASSES = {
+    "user_interactive": 0x21,
+    "user_initiated": 0x19,
+    "default": 0x15,
+    "utility": 0x11,
+    "background": 0x09,
+}
+
+
+def _set_self_qos_class_darwin(qos_class_name: str) -> None:
+    """Pin the calling thread's QoS class on macOS via pthread_set_qos_class_self_np.
+
+    On a multi-runner Mac Studio, sibling Python processes can drift to
+    different QoS classes under contention; macOS may then deprioritize
+    one of them, producing a stratified throughput pattern. Pinning each
+    runner to user_initiated at startup keeps them on equal footing.
+
+    No-op on non-Darwin platforms or if the API is unavailable.
+    """
+    if sys.platform != "darwin":
+        return
+    qos_value = _QOS_CLASSES.get(qos_class_name.lower())
+    if qos_value is None:
+        logger.warning(
+            f"Unknown EXO_RUNNER_QOS={qos_class_name!r}; "
+            f"valid values: {sorted(_QOS_CLASSES.keys())}. Skipping QoS pin."
+        )
+        return
+    try:
+        libsystem = ctypes.CDLL("/usr/lib/libSystem.dylib", use_errno=True)
+        # int pthread_set_qos_class_self_np(qos_class_t qos_class, int relative_priority)
+        fn = libsystem.pthread_set_qos_class_self_np
+        fn.argtypes = [ctypes.c_uint, ctypes.c_int]
+        fn.restype = ctypes.c_int
+        rc = int(fn(qos_value, 0))  # pyright: ignore[reportAny]
+        if rc != 0:
+            err = ctypes.get_errno()
+            logger.warning(
+                f"pthread_set_qos_class_self_np({qos_class_name}) failed: rc={rc} errno={err}"
+            )
+            return
+        logger.info(f"Runner QoS class pinned to {qos_class_name}")
+    except OSError as e:
+        logger.warning(f"Could not load libSystem to set QoS class: {e}")
+    except AttributeError:
+        logger.warning(
+            "pthread_set_qos_class_self_np unavailable on this libSystem; skipping QoS pin"
+        )
 
 
 def entrypoint(
@@ -25,6 +79,12 @@ def entrypoint(
 
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
+
+    # Pin QoS so siblings on the same machine don't drift apart under contention.
+    # Defaults to user_initiated on Darwin; set EXO_RUNNER_QOS=off to disable.
+    qos_choice = os.environ.get("EXO_RUNNER_QOS", "user_initiated")
+    if qos_choice.lower() != "off":
+        _set_self_qos_class_darwin(qos_choice)
 
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
     if fast_synch_override != "off":

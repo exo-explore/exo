@@ -194,6 +194,7 @@ def load_mlx_items(
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
         from exo.worker.engines.mlx.patches import maybe_apply_patches
+
         maybe_apply_patches(model, model_path)
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
 
@@ -213,7 +214,10 @@ def load_mlx_items(
 
         # --- Non-rank-0 nodes: pull MTP q4 from rank 0 after barrier ---
         shard_meta = bound_instance.bound_shard
-        _is_pp_r0 = isinstance(shard_meta, PipelineShardMetadata) and shard_meta.device_rank == 0
+        _is_pp_r0 = (
+            isinstance(shard_meta, PipelineShardMetadata)
+            and shard_meta.device_rank == 0
+        )
         if not _is_pp_r0 and os.environ.get("EXO_SPECULATIVE", "0") == "1":
             try:
                 import hashlib
@@ -232,19 +236,23 @@ def load_mlx_items(
                     if not _q4_path.exists():
                         _q4_filename = _q4_path.name
                         from exo.shared.constants import EXO_FILE_SERVER_PORT
+
                         _peer_ips = _find_peer_ips()
                         _downloaded = False
                         for _ip in _peer_ips:
                             _url = f"http://{_ip}:{EXO_FILE_SERVER_PORT}/mtp_cache/{_q4_filename}"
                             try:
                                 import urllib.request
+
                                 logger.info(f"Downloading MTP q4 from peer: {_url}")
                                 urllib.request.urlretrieve(_url, str(_q4_path))
                                 logger.info(f"MTP q4 downloaded via P2P: {_q4_path}")
                                 _downloaded = True
                                 break
                             except Exception as e:
-                                logger.warning(f"P2P MTP download from {_ip} failed: {e}")
+                                logger.warning(
+                                    f"P2P MTP download from {_ip} failed: {e}"
+                                )
 
                         if not _downloaded:
                             _resolver._resolve_mtp_weights()
@@ -280,7 +288,10 @@ def shard_and_load(
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
     # --- Prepare MTP weights BEFORE model load (rank 0 only, no OOM risk) ---
-    _is_pp_for_mtp = isinstance(shard_metadata, PipelineShardMetadata) and shard_metadata.device_rank == 0
+    _is_pp_for_mtp = (
+        isinstance(shard_metadata, PipelineShardMetadata)
+        and shard_metadata.device_rank == 0
+    )
     if _is_pp_for_mtp and os.environ.get("EXO_SPECULATIVE", "0") == "1":
         try:
             _prepare_mtp_weights(shard_metadata.model_card.model_id, model_path)
@@ -346,12 +357,14 @@ def shard_and_load(
     config_path = model_path / "config.json"
     if config_path.exists():
         import json
+
         with open(config_path) as f:
             _cfg = json.load(f)
         if _cfg.get("model_type") == "qwen3_5_moe":
             from exo.worker.engines.mlx.patches.qwen3_5_moe.common import (
                 convert_model_to_compute_dtype,
             )
+
             convert_model_to_compute_dtype(model)
 
     logger.debug("SHARDED")
@@ -361,13 +374,24 @@ def shard_and_load(
     # Use device_rank (stable, assigned by master) not group.rank() (JACCL, non-deterministic)
     # Skip draft model when MTP is available — MTP replaces it and saves ~1-2 GB.
     _draft_path = os.environ.get("EXO_PP_DRAFT_MODEL", "")
-    _is_pp_rank0 = isinstance(shard_metadata, PipelineShardMetadata) and shard_metadata.device_rank == 0
-    _has_mtp = os.environ.get("EXO_SPECULATIVE", "0") == "1" and any(
-        (Path.home() / ".cache" / "exo" / "mtp_weights").glob("mtp_*_q4.safetensors")
-    ) if (Path.home() / ".cache" / "exo" / "mtp_weights").exists() else False
+    _is_pp_rank0 = (
+        isinstance(shard_metadata, PipelineShardMetadata)
+        and shard_metadata.device_rank == 0
+    )
+    _has_mtp = (
+        os.environ.get("EXO_SPECULATIVE", "0") == "1"
+        and any(
+            (Path.home() / ".cache" / "exo" / "mtp_weights").glob(
+                "mtp_*_q4.safetensors"
+            )
+        )
+        if (Path.home() / ".cache" / "exo" / "mtp_weights").exists()
+        else False
+    )
     if not _has_mtp and _draft_path and _is_pp_rank0:
         try:
             from .pp_speculation import load_draft_model
+
             _draft_result = load_draft_model(_draft_path)
             if _draft_result is not None:
                 model._pp_draft_model, model._pp_draft_cache = _draft_result  # type: ignore
@@ -398,7 +422,9 @@ def _prepare_mtp_weights(model_id: str, model_path: Path) -> None:
     if not config_path.exists():
         return
     config = json.loads(config_path.read_text())
-    model_type = config.get("model_type", "") or config.get("text_config", {}).get("model_type", "")
+    model_type = config.get("model_type", "") or config.get("text_config", {}).get(
+        "model_type", ""
+    )
     if "qwen3_5" not in model_type:
         return  # Only Qwen3.5 models have MTP
 
@@ -448,9 +474,10 @@ def _prepare_mtp_weights(model_id: str, model_path: Path) -> None:
 def _find_peer_ips() -> list[str]:
     """Find peer IPs from EXO_DISCOVERY_PEERS for P2P file transfer."""
     import re
+
     peers = os.environ.get("EXO_DISCOVERY_PEERS", "")
     # Format: /ip4/192.168.x.x/tcp/52415/p2p/...
-    return re.findall(r'/ip4/([\d.]+)/', peers)
+    return re.findall(r"/ip4/([\d.]+)/", peers)
 
 
 def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:
@@ -883,13 +910,43 @@ def mlx_force_oom(size: int = 200000) -> None:
     mx.eval(f)
 
 
-def set_wired_limit_for_model(model_size: Memory):
-    """
-    A context manager to temporarily change the wired limit.
+def compute_wired_limit(
+    model_size: Memory,
+    max_recommended_size: Memory,
+    max_runners_per_node: int,
+) -> Memory:
+    """Pure function: how many bytes this runner should ask Metal to wire.
 
-    Note, the wired limit should not be changed during an async eval.  If an
-    async eval could be running pass in the streams to synchronize with prior
-    to exiting the context manager.
+    The previous implementation set wired_limit to the full device working
+    set unconditionally. With multiple sibling runners on the same machine
+    that's wrong: every runner tells Metal "I want to wire the full
+    device", they all share the same physical pages, and contention can
+    silently evict pages that the model needs.
+
+    Instead, divide the device working set by the number of sibling
+    runners we expect on this node, with a floor of `model_size * 1.1`
+    so the model itself can always be wired. If `max_runners_per_node`
+    is 1 (the default) the behavior is identical to the old code.
+    """
+    if max_runners_per_node < 1:
+        max_runners_per_node = 1
+    per_runner = max_recommended_size / max_runners_per_node
+    floor = model_size * 1.1
+    if per_runner < floor:
+        return floor if floor <= max_recommended_size else max_recommended_size
+    return per_runner
+
+
+def set_wired_limit_for_model(model_size: Memory):
+    """Configure Metal's wired-page limit for this runner process.
+
+    When ``EXO_MAX_RUNNERS_PER_NODE`` is set to N>1, the wired limit is
+    sized so that N sibling runners can coexist on the same machine
+    without each one nominally claiming the full device working set.
+
+    Note: the wired limit should not be changed during an async eval. If
+    an async eval could be running, synchronize with the relevant
+    streams before changing it.
     """
     if not mx.metal.is_available():
         return
@@ -897,6 +954,17 @@ def set_wired_limit_for_model(model_size: Memory):
     max_rec_size = Memory.from_bytes(
         int(mx.device_info()["max_recommended_working_set_size"])
     )
+
+    try:
+        max_runners_per_node = int(os.environ.get("EXO_MAX_RUNNERS_PER_NODE", "1"))
+    except ValueError:
+        logger.warning(
+            "EXO_MAX_RUNNERS_PER_NODE is set but not an integer; defaulting to 1"
+        )
+        max_runners_per_node = 1
+
+    wired = compute_wired_limit(model_size, max_rec_size, max_runners_per_node)
+
     if model_size > 0.9 * max_rec_size:
         logger.warning(
             f"Generating with a model that requires {model_size.in_float_mb:.1f} MB "
@@ -904,8 +972,19 @@ def set_wired_limit_for_model(model_size: Memory):
             "MB. This can be slow. See the documentation for possible work-arounds: "
             "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
         )
-    mx.set_wired_limit(max_rec_size.in_bytes)
-    logger.info(f"Wired limit set to {max_rec_size}.")
+    if max_runners_per_node > 1 and wired > 0.9 * (max_rec_size / max_runners_per_node):
+        logger.info(
+            f"Wired limit shared across {max_runners_per_node} sibling runners "
+            f"on this node (per-runner budget {wired.in_float_mb:.1f} MB of "
+            f"{max_rec_size.in_float_mb:.1f} MB device working set)."
+        )
+    mx.set_wired_limit(wired.in_bytes)
+    logger.info(
+        f"Wired limit set to {wired} "
+        f"(model {model_size.in_float_mb:.1f} MB, "
+        f"device {max_rec_size.in_float_mb:.1f} MB, "
+        f"max_runners_per_node={max_runners_per_node})."
+    )
 
 
 def mlx_cleanup(
