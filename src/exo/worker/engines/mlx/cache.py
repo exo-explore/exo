@@ -301,13 +301,20 @@ class KVPrefixCache:
         if len(self.caches) == 0:
             return
         try:
-            from mlx_lm.models.cache import save_prompt_cache
+            from mlx.nn.utils import tree_flatten
             self._disk_dir.mkdir(parents=True, exist_ok=True)
             slot_id = self._hot_slot_disk_id if self._hot_slot_disk_id is not None else self._next_disk_slot_id()
             base = self._disk_dir / f"slot_{slot_id}"
             # Save cache (atomic: write tmp then rename)
+            # Inline save_prompt_cache with empty-array filter for GLM/other models
+            cache = list(self.caches[0])
+            cache_data = dict(tree_flatten([c.state for c in cache]))
+            cache_data = {k: v for k, v in cache_data.items() if v.size > 0}
+            cache_info = [c.meta_state for c in cache]
+            cache_classes = [type(c).__name__ for c in cache]
+            cache_metadata = dict(tree_flatten([cache_info, {}, cache_classes]))
             tmp_cache = str(base) + "_tmp_cache.safetensors"
-            save_prompt_cache(tmp_cache, list(self.caches[0]))
+            mx.save_safetensors(tmp_cache, cache_data, cache_metadata)
             os.rename(tmp_cache, str(base) + "_cache.safetensors")
             # Save tokens
             tmp_tokens = str(base) + "_tmp_tokens.safetensors"
