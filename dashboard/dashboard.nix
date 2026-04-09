@@ -50,6 +50,15 @@ in
 
   deps = { nixpkgs, ... }: {
     inherit (nixpkgs) stdenv;
+
+    # nixpkgs' `nodejs` is now a symlinkJoin wrapper around `nodejs-slim` + `npm`,
+    # so it no longer exposes `src`. dream2nix still expects `nodejs.src` so we add it back
+    nodejs = nixpkgs.nodejs.overrideAttrs (old: {
+      passthru = (old.passthru or { }) // {
+        inherit (nixpkgs.nodejs-slim) src;
+      };
+    });
+
     dashboardSrc = null; # Injected by parts.nix
   };
 
