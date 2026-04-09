@@ -40,6 +40,7 @@ from exo.shared.types.tasks import (
     CreateRunner,
     DownloadModel,
     ImageEdits,
+    LoadModel,
     Shutdown,
     Task,
     TaskStatus,
@@ -351,6 +352,12 @@ class Worker:
                     if cmd_id in self.input_chunk_counts:
                         del self.input_chunk_counts[cmd_id]
                     await self._start_runner_task(modified_task)
+                case LoadModel(instance_id=instance_id):
+                    if (instance := self.state.instances.get(instance_id)) is not None:
+                        model_id = instance.shard_assignments.model_id
+                        self._download_backoff.reset(model_id)
+
+                    await self._start_runner_task(task)
                 case task:
                     await self._start_runner_task(task)
 

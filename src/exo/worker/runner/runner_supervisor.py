@@ -276,9 +276,7 @@ class RunnerSupervisor:
                 await self._event_sender.send(
                     RunnerStatusUpdated(
                         runner_id=self.bound_instance.bound_runner_id,
-                        runner_status=RunnerFailed(
-                            error_message=f"Terminated ({cause})"
-                        ),
+                        runner_status=self.status,
                     )
                 )
         except (ClosedResourceError, BrokenResourceError):
