@@ -2,7 +2,17 @@
   description = "The development environment for Exo";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # --- NIXPKGS VERSIONS ---
+
+    # latest stable and unstable nixpkgs
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+    # add specific versions of nixpkgs if needed (and initialize
+    # in pkgs.nix module to make work with flake parts)
+    #nixpkgs-23_11 = "github:NixOS/nixpkgs/nixos-23.11";
+
+    # --- NIXPKGS VERSIONS END ---
 
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
@@ -45,9 +55,6 @@
       inputs.uv2nix.follows = "uv2nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-
-    # Pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
-    nixpkgs-swift.url = "github:NixOS/nixpkgs/08dacfca559e1d7da38f3cf05f1f45ee9bfd213c";
   };
 
   nixConfig = {
@@ -65,6 +72,10 @@
 
       imports = [
         inputs.treefmt-nix.flakeModule
+
+        # configures `pkgs*` used by flake-parts
+        ./nix/modules/pkgs.nix
+
         ./dashboard/parts.nix
         ./rust/parts.nix
         ./python/parts.nix
@@ -73,30 +84,7 @@
       debug = true; # Enable options autocompletion
 
       perSystem = { config, self', pkgs, lib, system, ... }:
-        let
-          # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
-          pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
-        in
         {
-          # Allow unfree for metal-toolchain (needed for Darwin Metal packages)
-          _module.args.pkgs = import inputs.nixpkgs {
-            inherit system;
-            config.allowUnfreePredicate = pkg: (pkg.pname or "") == "metal-toolchain";
-            overlays = [
-              (import ./nix/apple-sdk-overlay.nix)
-              (final: prev: {
-                macmon = prev.macmon.overrideAttrs (_: {
-                  version = "git";
-                  src = final.fetchFromGitHub {
-                    owner = "swiftraccoon";
-                    repo = "macmon";
-                    rev = "9154d234f763fbeffdcb4135d0bbbaf80609699b";
-                    hash = "sha256-CwhilKNbs5XL9/tF5DMwyPBlE/hpmjGNTuxQ36sM50M=";
-                  };
-                });
-              })
-            ];
-          };
           treefmt = {
             projectRootFile = "flake.nix";
             programs = {
@@ -114,10 +102,7 @@
                 package = self'.packages.prettier-svelte;
                 includes = [ "*.ts" "*.svelte" ];
               };
-              swift-format = {
-                enable = true;
-                package = pkgsSwift.swiftPackages.swift-format;
-              };
+              swift-format.enable = true;
               shfmt.enable = true;
               taplo.enable = true;
             };
@@ -140,48 +125,46 @@
             }
           );
 
-          devShells.default = with pkgs; pkgs.mkShell {
+          devShells.default = pkgs.mkShell {
             inputsFrom = [ self'.checks.cargo-build ];
+            packages = with pkgs; [
+              # FORMATTING
+              config.treefmt.build.wrapper
 
-            packages =
-              [
-                # FORMATTING
-                config.treefmt.build.wrapper
+              # PYTHON
+              self'.packages.python
+              unstable.uv
+              ruff
+              basedpyright
 
-                # PYTHON
-                self'.packages.python
-                uv
-                ruff
-                basedpyright
+              # RUST
+              config.rust.toolchain
+              maturin
 
-                # RUST
-                config.rust.toolchain
-                maturin
+              # NIX
+              nixd
+              nixpkgs-fmt
 
-                # NIX
-                nixd
-                nixpkgs-fmt
+              # SVELTE
+              nodejs
 
-                # SVELTE
-                nodejs
-
-                # MISC
-                just
-                jq
-              ]
-              ++ lib.optionals stdenv.isLinux [
-                unixtools.ifconfig
-              ]
-              ++ lib.optionals stdenv.isDarwin [
-                macmon
-              ];
+              # MISC
+              just
+              jq
+            ]
+            ++ lib.optionals stdenv.isLinux [
+              unixtools.ifconfig
+            ]
+            ++ lib.optionals stdenv.isDarwin [
+              macmon
+            ];
 
             OPENSSL_NO_VENDOR = "1";
 
             shellHook = ''
               export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${self'.packages.python}/lib"
-              ${lib.optionalString stdenv.isLinux ''
-                export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
+              ${lib.optionalString pkgs.stdenv.isLinux ''
+                export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:$LD_LIBRARY_PATH"
               ''}
             '';
           };
