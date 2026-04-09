@@ -1,6 +1,7 @@
 from collections.abc import Generator
 from typing import Any
 
+from exo.api.types import CompletionTokensDetails, PromptTokensDetails, Usage
 from exo.shared.types.worker.runner_response import (
     FinishReason,
     GenerationResponse,
@@ -14,6 +15,7 @@ from exo.worker.engines.mlx.dsml_encoding import (
     TOOL_CALLS_START,
 )
 from exo.worker.runner.llm_inference.model_output_parsers import (
+    count_reasoning_tokens,
     parse_deepseek_v32,
     parse_thinking_models,
     parse_tool_calls,
@@ -242,6 +244,77 @@ class TestThinkingModelsFinishReason:
             )
         )
         assert _got_finish(results)
+
+    def test_reasoning_tokens_counted(self):
+        """reasoning_tokens in Usage reflects the number of thinking tokens."""
+        usage = Usage(
+            prompt_tokens=10,
+            completion_tokens=4,
+            total_tokens=14,
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=0),
+            completion_tokens_details=CompletionTokensDetails(reasoning_tokens=0),
+        )
+        tokens = [
+            _make_response("<think>", 0),
+            _make_response("let me", 1),
+            _make_response(" think", 2),
+            _make_response("</think>", 3),
+            GenerationResponse(text="42", token=4, finish_reason="stop", usage=usage),
+        ]
+        results = _step_until_finish(
+            count_reasoning_tokens(
+                parse_thinking_models(
+                    _queue_source(tokens),
+                    think_start="<think>",
+                    think_end="</think>",
+                    starts_in_thinking=False,
+                )
+            )
+        )
+        final = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse) and r.finish_reason is not None
+        ]
+        assert len(final) == 1
+        assert final[0].usage is not None
+        assert final[0].usage.completion_tokens_details.reasoning_tokens == 2
+
+    def test_reasoning_tokens_starts_in_thinking(self):
+        """reasoning_tokens counts correctly when starts_in_thinking=True."""
+        usage = Usage(
+            prompt_tokens=10,
+            completion_tokens=3,
+            total_tokens=13,
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=0),
+            completion_tokens_details=CompletionTokensDetails(reasoning_tokens=0),
+        )
+        tokens = [
+            _make_response("hmm", 0),
+            _make_response("ok", 1),
+            _make_response("</think>", 2),
+            GenerationResponse(
+                text="answer", token=3, finish_reason="stop", usage=usage
+            ),
+        ]
+        results = _step_until_finish(
+            count_reasoning_tokens(
+                parse_thinking_models(
+                    _queue_source(tokens),
+                    think_start="<think>",
+                    think_end="</think>",
+                    starts_in_thinking=True,
+                )
+            )
+        )
+        final = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse) and r.finish_reason is not None
+        ]
+        assert len(final) == 1
+        assert final[0].usage is not None
+        assert final[0].usage.completion_tokens_details.reasoning_tokens == 2
 
 
 # ── parse_tool_calls (generic) ──────────────────────────────────
