@@ -118,6 +118,34 @@ class Master:
         logger.info("Stopping Master")
         self._tg.cancel_tasks()
 
+    def _sort_by_load_then_node(
+        self, instance_task_counts: dict[InstanceId, int]
+    ) -> list[InstanceId]:
+        """Sort candidate instances by (task_count, node_task_count).
+
+        Primary key: fewest in-flight tasks on the instance (greedy LB).
+        Secondary key: fewest in-flight tasks on the instance's physical
+        node.  This breaks ties so that concurrent requests spread across
+        nodes rather than piling onto whichever node has the
+        lexicographically-first instance IDs.
+        """
+        node_task_counts: dict[NodeId, int] = {}
+        for task in self.state.tasks.values():
+            inst = self.state.instances.get(task.instance_id)
+            if inst is not None:
+                for nid in inst.shard_assignments.node_to_runner:
+                    node_task_counts[nid] = node_task_counts.get(nid, 0) + 1
+
+        def _key(instance_id: InstanceId) -> tuple[int, int]:
+            inst = self.state.instances.get(instance_id)
+            node_load = 0
+            if inst is not None:
+                for nid in inst.shard_assignments.node_to_runner:
+                    node_load += node_task_counts.get(nid, 0)
+            return (instance_task_counts[instance_id], node_load)
+
+        return sorted(instance_task_counts.keys(), key=_key)
+
     async def _command_processor(self) -> None:
         with self.command_receiver as commands:
             async for forwarder_command in commands:
@@ -150,11 +178,8 @@ class Master:
                                     f"No instance found for model {command.task_params.model}"
                                 )
 
-                            available_instance_ids = sorted(
-                                instance_task_counts.keys(),
-                                key=lambda instance_id: instance_task_counts[
-                                    instance_id
-                                ],
+                            available_instance_ids = self._sort_by_load_then_node(
+                                instance_task_counts
                             )
 
                             task_id = TaskId()
@@ -192,11 +217,8 @@ class Master:
                                     f"No instance found for model {command.task_params.model}"
                                 )
 
-                            available_instance_ids = sorted(
-                                instance_task_counts.keys(),
-                                key=lambda instance_id: instance_task_counts[
-                                    instance_id
-                                ],
+                            available_instance_ids = self._sort_by_load_then_node(
+                                instance_task_counts
                             )
 
                             task_id = TaskId()
@@ -246,11 +268,8 @@ class Master:
                                     f"No instance found for model {command.task_params.model}"
                                 )
 
-                            available_instance_ids = sorted(
-                                instance_task_counts.keys(),
-                                key=lambda instance_id: instance_task_counts[
-                                    instance_id
-                                ],
+                            available_instance_ids = self._sort_by_load_then_node(
+                                instance_task_counts
                             )
 
                             task_id = TaskId()

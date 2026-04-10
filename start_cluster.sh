@@ -23,9 +23,11 @@ fi
 : "${EXO_COMPUTE_DTYPE:=bf16}"
 : "${EXO_SPECULATIVE:=1}"
 : "${EXO_SPECULATIVE_GAMMA:=3}"
-# Pin runner QoS class on Darwin so siblings don't drift apart under
-# contention. Set to "off" to disable.
-: "${EXO_RUNNER_QOS:=user_initiated}"
+# Runner QoS pin — disabled by default. Benchmarking showed that pinning
+# all runners to user_initiated causes Metal command-queue contention at
+# c>=6, producing a 16% per-request regression and 25% bad-run rate.
+# macOS dynamically adjusts priorities better than a static pin.
+: "${EXO_RUNNER_QOS:=off}"
 : "${LOG_LEVEL:=DEBUG}"
 
 # Model placed automatically at startup; 3 instances per Studio.
