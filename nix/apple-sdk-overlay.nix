@@ -11,8 +11,8 @@ let
     cp ${./apple-sdk/metadata/versions.json} $out/metadata/versions.json
   '';
 in
-if prev.stdenv.hostPlatform.isDarwin then {
+{
   apple-sdk_26 = final.callPackage (patchedSrc + "/package.nix") {
     darwinSdkMajorVersion = "26";
   };
-} else { }
+}
