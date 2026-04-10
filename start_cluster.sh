@@ -23,10 +23,6 @@ fi
 : "${EXO_COMPUTE_DTYPE:=bf16}"
 : "${EXO_SPECULATIVE:=1}"
 : "${EXO_SPECULATIVE_GAMMA:=3}"
-# Number of sibling runners that may share a single Mac Studio. Used by
-# set_wired_limit_for_model() to divide the device working set evenly so
-# coexisting runners don't fight over the same wired pages.
-: "${EXO_MAX_RUNNERS_PER_NODE:=3}"
 # Pin runner QoS class on Darwin so siblings don't drift apart under
 # contention. Set to "off" to disable.
 : "${EXO_RUNNER_QOS:=user_initiated}"
@@ -375,7 +371,6 @@ for NODE in "${NODES[@]}"; do
     EXO_ENV="$EXO_ENV EXO_SPECULATIVE=$EXO_SPECULATIVE"
     EXO_ENV="$EXO_ENV EXO_SPECULATIVE_GAMMA=$EXO_SPECULATIVE_GAMMA"
     EXO_ENV="$EXO_ENV EXO_COMPUTE_DTYPE=$EXO_COMPUTE_DTYPE"
-    EXO_ENV="$EXO_ENV EXO_MAX_RUNNERS_PER_NODE=$EXO_MAX_RUNNERS_PER_NODE"
     EXO_ENV="$EXO_ENV EXO_RUNNER_QOS=$EXO_RUNNER_QOS"
     EXO_ENV="$EXO_ENV LOG_LEVEL=$LOG_LEVEL"
 

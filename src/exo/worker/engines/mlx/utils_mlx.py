@@ -910,43 +910,13 @@ def mlx_force_oom(size: int = 200000) -> None:
     mx.eval(f)
 
 
-def compute_wired_limit(
-    model_size: Memory,
-    max_recommended_size: Memory,
-    max_runners_per_node: int,
-) -> Memory:
-    """Pure function: how many bytes this runner should ask Metal to wire.
-
-    The previous implementation set wired_limit to the full device working
-    set unconditionally. With multiple sibling runners on the same machine
-    that's wrong: every runner tells Metal "I want to wire the full
-    device", they all share the same physical pages, and contention can
-    silently evict pages that the model needs.
-
-    Instead, divide the device working set by the number of sibling
-    runners we expect on this node, with a floor of `model_size * 1.1`
-    so the model itself can always be wired. If `max_runners_per_node`
-    is 1 (the default) the behavior is identical to the old code.
-    """
-    if max_runners_per_node < 1:
-        max_runners_per_node = 1
-    per_runner = max_recommended_size / max_runners_per_node
-    floor = model_size * 1.1
-    if per_runner < floor:
-        return floor if floor <= max_recommended_size else max_recommended_size
-    return per_runner
-
-
 def set_wired_limit_for_model(model_size: Memory):
-    """Configure Metal's wired-page limit for this runner process.
+    """
+    A context manager to temporarily change the wired limit.
 
-    When ``EXO_MAX_RUNNERS_PER_NODE`` is set to N>1, the wired limit is
-    sized so that N sibling runners can coexist on the same machine
-    without each one nominally claiming the full device working set.
-
-    Note: the wired limit should not be changed during an async eval. If
-    an async eval could be running, synchronize with the relevant
-    streams before changing it.
+    Note, the wired limit should not be changed during an async eval.  If an
+    async eval could be running pass in the streams to synchronize with prior
+    to exiting the context manager.
     """
     if not mx.metal.is_available():
         return
@@ -954,17 +924,6 @@ def set_wired_limit_for_model(model_size: Memory):
     max_rec_size = Memory.from_bytes(
         int(mx.device_info()["max_recommended_working_set_size"])
     )
-
-    try:
-        max_runners_per_node = int(os.environ.get("EXO_MAX_RUNNERS_PER_NODE", "1"))
-    except ValueError:
-        logger.warning(
-            "EXO_MAX_RUNNERS_PER_NODE is set but not an integer; defaulting to 1"
-        )
-        max_runners_per_node = 1
-
-    wired = compute_wired_limit(model_size, max_rec_size, max_runners_per_node)
-
     if model_size > 0.9 * max_rec_size:
         logger.warning(
             f"Generating with a model that requires {model_size.in_float_mb:.1f} MB "
@@ -972,19 +931,8 @@ def set_wired_limit_for_model(model_size: Memory):
             "MB. This can be slow. See the documentation for possible work-arounds: "
             "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
         )
-    if max_runners_per_node > 1 and wired > 0.9 * (max_rec_size / max_runners_per_node):
-        logger.info(
-            f"Wired limit shared across {max_runners_per_node} sibling runners "
-            f"on this node (per-runner budget {wired.in_float_mb:.1f} MB of "
-            f"{max_rec_size.in_float_mb:.1f} MB device working set)."
-        )
-    mx.set_wired_limit(wired.in_bytes)
-    logger.info(
-        f"Wired limit set to {wired} "
-        f"(model {model_size.in_float_mb:.1f} MB, "
-        f"device {max_rec_size.in_float_mb:.1f} MB, "
-        f"max_runners_per_node={max_runners_per_node})."
-    )
+    mx.set_wired_limit(max_rec_size.in_bytes)
+    logger.info(f"Wired limit set to {max_rec_size}.")
 
 
 def mlx_cleanup(
