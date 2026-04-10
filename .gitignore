@@ -38,3 +38,4 @@ bench/**/*.json
 
 # tmp
 tmp/models
+/build/exo
