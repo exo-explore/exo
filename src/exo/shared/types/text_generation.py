@@ -6,10 +6,9 @@ are converted to TextGenerationTaskParams at the API boundary via adapters.
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, GetCoreSchemaHandler, WrapValidator
-from pydantic_core import CoreSchema, core_schema
+from pydantic import BaseModel, Field, WrapValidator
 
-from exo.shared.types.common import ModelId
+from exo.shared.types.common import ModelId, TruncatingString
 
 MessageRole = Literal["user", "assistant", "system", "developer", "tool"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
@@ -37,19 +36,8 @@ def resolve_reasoning_params(
     return resolved_effort, resolved_thinking
 
 
-class InputMessageContent(str):
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls,
-        source_type: Any,  # pyright: ignore[reportAny]
-        handler: GetCoreSchemaHandler,
-    ) -> CoreSchema:
-        return core_schema.no_info_after_validator_function(cls, handler(str))
-
-    def __repr__(self):
-        return (
-            f"<InputMessageContent: {self[:100] + '...' if len(self) > 100 else self}>"
-        )
+class InputMessageContent(TruncatingString):
+    truncate_length = 100
 
 
 class InputMessage(BaseModel, frozen=True):
@@ -59,30 +47,12 @@ class InputMessage(BaseModel, frozen=True):
     content: InputMessageContent
 
 
-class Base64Image(str):
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls,
-        source_type: Any,  # pyright: ignore[reportAny]
-        handler: GetCoreSchemaHandler,
-    ) -> CoreSchema:
-        return core_schema.no_info_after_validator_function(cls, handler(str))
-
-    def __repr__(self):
-        return f"<Base64Image: {self[:10]}...>"
+class Base64Image(TruncatingString):
+    truncate_length = 10
 
 
-class Base64ImageHash(str):
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls,
-        source_type: Any,  # pyright: ignore[reportAny]
-        handler: GetCoreSchemaHandler,
-    ) -> CoreSchema:
-        return core_schema.no_info_after_validator_function(cls, handler(str))
-
-    def __repr__(self):
-        return f"<Base64ImageHash: {self[:10]}...>"
+class Base64ImageHash(TruncatingString):
+    truncate_length = 10
 
 
 def _wrap_chat_value(x: Any) -> Any:  # pyright: ignore[reportAny]
