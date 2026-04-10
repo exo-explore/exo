@@ -16,7 +16,11 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.common import ModelId
 from exo.shared.types.mlx import Model
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import mlx_generate
 from exo.worker.engines.mlx.utils_mlx import (
@@ -203,7 +207,9 @@ def _make_task() -> TextGenerationTaskParams:
         input=[
             InputMessage(
                 role="user",
-                content="Use the calculator to compute 1847 * 263 + 5921",
+                content=InputMessageContent(
+                    "Use the calculator to compute 1847 * 263 + 5921"
+                ),
             )
         ],
         max_output_tokens=20,

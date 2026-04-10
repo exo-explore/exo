@@ -25,7 +25,6 @@ from loguru import logger
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
-    fetch_image_url,
     generate_chat_stream,
 )
 from exo.api.adapters.claude import (
@@ -186,7 +185,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
-from exo.shared.types.text_generation import TextGenerationTaskParams
+from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
@@ -760,9 +759,11 @@ class API:
                 self._sent_image_hashes.add(h)
                 new_images.append((idx, img))
 
+        wrapped_hashes = {idx: Base64Image(h) for idx, h in cached_hashes.items()}
+
         if not new_images:
             task_params = task_params.model_copy(
-                update={"images": [], "image_hashes": cached_hashes}
+                update={"images": [], "image_hashes": wrapped_hashes}
             )
             command = TextGeneration(task_params=task_params)
             await self._send(command)
@@ -776,7 +777,7 @@ class API:
         task_params = task_params.model_copy(
             update={
                 "images": [],
-                "image_hashes": cached_hashes,
+                "image_hashes": wrapped_hashes,
                 "total_input_chunks": len(all_chunks),
                 "image_count": len(new_images),
             }
@@ -1403,15 +1404,7 @@ class API:
         self, payload: ClaudeMessagesRequest
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
-        task_params = claude_request_to_text_generation(payload)
-        if task_params.images:
-            resolved_images: list[str] = []
-            for img in task_params.images:
-                if img.startswith(("http://", "https://")):
-                    resolved_images.append(await fetch_image_url(img))
-                else:
-                    resolved_images.append(img)
-            task_params = task_params.model_copy(update={"images": resolved_images})
+        task_params = await claude_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )

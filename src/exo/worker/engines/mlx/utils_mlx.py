@@ -45,7 +45,7 @@ from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import TaskId, TextGeneration
-from exo.shared.types.text_generation import TextGenerationTaskParams
+from exo.shared.types.text_generation import ChatTemplateValue, TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
     MlxJacclInstance,
@@ -611,10 +611,10 @@ def apply_chat_template(
     tokenizer: TokenizerWrapper,
     task_params: TextGenerationTaskParams,
 ) -> str:
-    messages: list[dict[str, Any]] = []
+    messages: list[dict[str, ChatTemplateValue]] = []
     if task_params.chat_template_messages is not None:
         # Use pre-formatted messages that preserve tool_calls, thinking, etc.
-        messages = list(task_params.chat_template_messages)
+        messages = task_params.chat_template_messages
     else:
         # Add system message (instructions) if present
         if task_params.instructions:
@@ -642,7 +642,7 @@ def system_prompt_token_count(
     if task_params.chat_template_messages is not None:
         for msg in task_params.chat_template_messages:
             if msg.get("role") in ("system", "developer"):
-                content = msg.get("content", "")  # type: ignore
+                content = msg.get("content", "")
                 if isinstance(content, str):
                     parts.append(content)
     else:

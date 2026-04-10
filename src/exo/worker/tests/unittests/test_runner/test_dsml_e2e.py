@@ -988,6 +988,7 @@ class TestApplyChatTemplateWithToolCalls:
     def test_dsml_encoding_with_tool_calls_in_history(self):
         from exo.shared.types.text_generation import (
             InputMessage,
+            InputMessageContent,
             TextGenerationTaskParams,
         )
         from exo.worker.engines.mlx.utils_mlx import apply_chat_template
@@ -1022,8 +1023,8 @@ class TestApplyChatTemplateWithToolCalls:
 
         params = TextGenerationTaskParams(
             model=ModelId("mlx-community/DeepSeek-V3.2-8bit"),
-            input=[InputMessage(role="user", content="Thanks!")],
-            instructions="You are a helpful assistant.",
+            input=[InputMessage(role="user", content=InputMessageContent("Thanks!"))],
+            instructions=InputMessageContent("You are a helpful assistant."),
             enable_thinking=True,
             chat_template_messages=chat_template_messages,
             tools=_WEATHER_TOOLS,

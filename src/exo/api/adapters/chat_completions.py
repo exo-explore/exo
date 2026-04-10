@@ -31,20 +31,22 @@ from exo.shared.types.chunks import (
 )
 from exo.shared.types.common import CommandId
 from exo.shared.types.text_generation import (
+    Base64Image,
     InputMessage,
+    InputMessageContent,
     TextGenerationTaskParams,
     resolve_reasoning_params,
 )
 
 
-def extract_base64_from_data_url(data_url: str) -> str:
+def extract_base64_from_data_url(data_url: str) -> Base64Image:
     match = re.match(r"data:[^;]+;base64,(.+)", data_url)
     if match:
-        return match.group(1)
-    return data_url
+        return Base64Image(match.group(1))
+    return Base64Image(data_url)
 
 
-async def fetch_image_url(url: str) -> str:
+async def fetch_image_url(url: str) -> Base64Image:
     headers = {"User-Agent": "exo/1.0"}
     async with (
         create_http_session(timeout_profile="short") as session,
@@ -52,7 +54,7 @@ async def fetch_image_url(url: str) -> str:
     ):
         resp.raise_for_status()
         data = await resp.read()
-        return base64.b64encode(data).decode("ascii")
+        return Base64Image(base64.b64encode(data).decode("ascii"))
 
 
 async def chat_request_to_text_generation(
@@ -61,7 +63,7 @@ async def chat_request_to_text_generation(
     instructions: str | None = None
     input_messages: list[InputMessage] = []
     chat_template_messages: list[dict[str, Any]] = []
-    images: list[str] = []
+    images: list[Base64Image] = []
 
     for msg in request.messages:
         # Normalize content to string
@@ -115,7 +117,9 @@ async def chat_request_to_text_generation(
                 continue
 
             if msg.role in ("user", "assistant", "developer"):
-                input_messages.append(InputMessage(role=msg.role, content=content))
+                input_messages.append(
+                    InputMessage(role=msg.role, content=InputMessageContent(content))
+                )
 
             # Build full message dict for chat template (preserves tool_calls etc.)
             # Normalize content for model_dump
@@ -144,8 +148,8 @@ async def chat_request_to_text_generation(
         model=request.model,
         input=input_messages
         if input_messages
-        else [InputMessage(role="user", content="")],
-        instructions=instructions,
+        else [InputMessage(role="user", content=InputMessageContent(""))],
+        instructions=InputMessageContent(instructions) if instructions else None,
         max_output_tokens=request.max_tokens,
         temperature=request.temperature,
         top_p=request.top_p,
