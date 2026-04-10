@@ -47,7 +47,9 @@ class InputMessageContent(str):
         return core_schema.no_info_after_validator_function(cls, handler(str))
 
     def __repr__(self):
-        return f"<InputMessageContent: {self[:100]}...>"
+        return (
+            f"<InputMessageContent: {self[:100] + '...' if len(self) > 100 else self}>"
+        )
 
 
 class InputMessage(BaseModel, frozen=True):
@@ -68,6 +70,19 @@ class Base64Image(str):
 
     def __repr__(self):
         return f"<Base64Image: {self[:10]}...>"
+
+
+class Base64ImageHash(str):
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        source_type: Any,  # pyright: ignore[reportAny]
+        handler: GetCoreSchemaHandler,
+    ) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(cls, handler(str))
+
+    def __repr__(self):
+        return f"<Base64ImageHash: {self[:10]}...>"
 
 
 def _wrap_chat_value(x: Any) -> Any:  # pyright: ignore[reportAny]
@@ -124,6 +139,6 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     repetition_penalty: float | None = None
     repetition_context_size: int | None = None
     images: list[Base64Image] = Field(default_factory=list)
-    image_hashes: dict[int, Base64Image] = Field(default_factory=dict)
+    image_hashes: dict[int, Base64ImageHash] = Field(default_factory=dict)
     total_input_chunks: int = 0
     image_count: int = 0
