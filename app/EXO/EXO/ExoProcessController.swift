@@ -7,6 +7,7 @@ private let hfTokenKey = "EXOHFToken"
 private let hfEndpointKey = "EXOHFEndpoint"
 private let enableImageModelsKey = "EXOEnableImageModels"
 private let offlineModeKey = "EXOOfflineMode"
+private let fastSynchEnabledKey = "EXOFastSynchEnabled"
 private let onboardingCompletedKey = "EXOOnboardingCompleted"
 
 @MainActor
@@ -76,6 +77,17 @@ final class ExoProcessController: ObservableObject {
     {
         didSet {
             UserDefaults.standard.set(offlineMode, forKey: offlineModeKey)
+        }
+    }
+    @Published var fastSynchEnabled: Bool = {
+        if UserDefaults.standard.object(forKey: fastSynchEnabledKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: fastSynchEnabledKey)
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(fastSynchEnabled, forKey: fastSynchEnabledKey)
         }
     }
 
@@ -291,6 +303,7 @@ final class ExoProcessController: ObservableObject {
         if offlineMode {
             environment["EXO_OFFLINE"] = "true"
         }
+        environment["EXO_FAST_SYNCH"] = fastSynchEnabled ? "true" : "false"
 
         var paths: [String] = []
         if let existing = environment["PATH"], !existing.isEmpty {

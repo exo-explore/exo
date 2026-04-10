@@ -45,7 +45,6 @@ from exo.worker.engines.mlx.patches.opt_batch_gen import (
     take_ready_topk,
 )
 from exo.worker.engines.mlx.utils_mlx import (
-    detect_thinking_prompt_suffix,
     fix_unmatched_think_end_tokens,
     system_prompt_token_count,
 )
@@ -82,8 +81,6 @@ class _EngineTask:
     potential_stop_sequence_text: str = ""
     completion_tokens: int = 0
     generation_start_time: float = 0.0
-    in_thinking: bool = False
-    reasoning_tokens: int = 0
     prefill_tps: float = 0.0
     media_regions: list[MediaRegion] = field(default_factory=list)
     first_gen_token_time: float | None = None
@@ -277,7 +274,6 @@ class ExoBatchGenerator:
             generation_start_time=time.perf_counter(),
             prefill_tps=_prefill_tps,
             media_regions=media_regions,
-            in_thinking=detect_thinking_prompt_suffix(prompt, self.tokenizer),
         )
 
         return uid
@@ -326,15 +322,6 @@ class ExoBatchGenerator:
                 )
             state.generated_text_parts.append(text)
             state.potential_stop_sequence_text += text
-
-            think_start = self.tokenizer.think_start
-            think_end = self.tokenizer.think_end
-            if think_start is not None and text == think_start:
-                state.in_thinking = True
-            elif think_end is not None and text == think_end:
-                state.in_thinking = False
-            if state.in_thinking:
-                state.reasoning_tokens += 1
 
             finish_reason: FinishReason | None = cast(
                 FinishReason | None, response.finish_reason
@@ -406,7 +393,7 @@ class ExoBatchGenerator:
                         cached_tokens=state.prefix_hit_length
                     ),
                     completion_tokens_details=CompletionTokensDetails(
-                        reasoning_tokens=state.reasoning_tokens
+                        reasoning_tokens=0
                     ),
                 )
 

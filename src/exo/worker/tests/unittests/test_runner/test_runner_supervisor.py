@@ -9,7 +9,11 @@ from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId, TextGeneration
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerFailed, RunnerId
 from exo.utils.channels import channel, mp_channel
@@ -68,7 +72,7 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
         command_id=command_id,
         task_params=TextGenerationTaskParams(
             model=bound_instance.bound_shard.model_card.model_id,
-            input=[InputMessage(role="user", content="hi")],
+            input=[InputMessage(role="user", content=InputMessageContent("hi"))],
             stream=True,
         ),
     )

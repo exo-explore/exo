@@ -40,12 +40,13 @@ from exo.shared.types.tasks import (
     CreateRunner,
     DownloadModel,
     ImageEdits,
+    LoadModel,
     Shutdown,
     Task,
     TaskStatus,
     TextGeneration,
 )
-from exo.shared.types.text_generation import Base64Image
+from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import InstanceId
@@ -86,7 +87,7 @@ class Worker:
         # Buffer for input image chunks (for image editing)
         self.input_chunk_buffer: dict[CommandId, dict[int, InputImageChunk]] = {}
         self.input_chunk_counts: dict[CommandId, int] = {}
-        self.image_cache: dict[str, str] = {}
+        self.image_cache: dict[Base64ImageHash, Base64Image] = {}
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
         self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
@@ -309,7 +310,7 @@ class Worker:
                     or task.task_params.total_input_chunks > 0
                 ):
                     cmd_id = task.command_id
-                    by_index: dict[int, str] = {}
+                    by_index: dict[int, Base64Image] = {}
 
                     for idx, h in task.task_params.image_hashes.items():
                         assert h in self.image_cache
@@ -326,9 +327,11 @@ class Worker:
                             sorted_chunks = sorted(
                                 per_image[img_idx], key=lambda c: c.chunk_index
                             )
-                            img = "".join(c.data for c in sorted_chunks)
+                            img = Base64Image("".join(c.data for c in sorted_chunks))
                             self.image_cache[
-                                hashlib.sha256(img.encode("ascii")).hexdigest()
+                                Base64ImageHash(
+                                    hashlib.sha256(img.encode("ascii")).hexdigest()
+                                )
                             ] = img
                             by_index[img_idx] = img
                         logger.info(
@@ -351,6 +354,12 @@ class Worker:
                     if cmd_id in self.input_chunk_counts:
                         del self.input_chunk_counts[cmd_id]
                     await self._start_runner_task(modified_task)
+                case LoadModel(instance_id=instance_id):
+                    if (instance := self.state.instances.get(instance_id)) is not None:
+                        model_id = instance.shard_assignments.model_id
+                        self._download_backoff.reset(model_id)
+
+                    await self._start_runner_task(task)
                 case task:
                     await self._start_runner_task(task)
 
