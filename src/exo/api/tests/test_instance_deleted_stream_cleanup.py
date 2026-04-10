@@ -8,7 +8,11 @@ from exo.api.types import ImageGenerationTaskParams
 from exo.shared.types.common import CommandId, ModelId
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ImageGeneration, TextGeneration
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.worker.instances import InstanceId
 
 
@@ -29,7 +33,7 @@ def _make_text_gen_task(
         command_id=command_id,
         task_params=TextGenerationTaskParams(
             model=ModelId("test-model"),
-            input=[InputMessage(role="user", content="hello")],
+            input=[InputMessage(role="user", content=InputMessageContent("hello"))],
         ),
     )
 

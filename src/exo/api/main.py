@@ -177,7 +177,6 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
-from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
 )
@@ -187,6 +186,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
+from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
