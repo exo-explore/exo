@@ -129,8 +129,11 @@ class Master:
         nodes rather than piling onto whichever node has the
         lexicographically-first instance IDs.
         """
+        in_flight = {TaskStatus.Pending, TaskStatus.Running}
         node_task_counts: dict[NodeId, int] = {}
         for task in self.state.tasks.values():
+            if task.task_status not in in_flight:
+                continue
             inst = self.state.instances.get(task.instance_id)
             if inst is not None:
                 for nid in inst.shard_assignments.node_to_runner:
@@ -159,6 +162,7 @@ class Master:
                         case TestCommand():
                             pass
                         case TextGeneration():
+                            in_flight = {TaskStatus.Pending, TaskStatus.Running}
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
@@ -168,6 +172,7 @@ class Master:
                                         1
                                         for task in self.state.tasks.values()
                                         if task.instance_id == instance.instance_id
+                                        and task.task_status in in_flight
                                     )
                                     instance_task_counts[instance.instance_id] = (
                                         task_count
@@ -198,6 +203,7 @@ class Master:
 
                             self.command_task_mapping[command.command_id] = task_id
                         case ImageGeneration():
+                            in_flight = {TaskStatus.Pending, TaskStatus.Running}
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
@@ -207,6 +213,7 @@ class Master:
                                         1
                                         for task in self.state.tasks.values()
                                         if task.instance_id == instance.instance_id
+                                        and task.task_status in in_flight
                                     )
                                     instance_task_counts[instance.instance_id] = (
                                         task_count
@@ -249,6 +256,7 @@ class Master:
                                     )
                                     self._expected_ranks[task_id] = ranks
                         case ImageEdits():
+                            in_flight = {TaskStatus.Pending, TaskStatus.Running}
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
@@ -258,6 +266,7 @@ class Master:
                                         1
                                         for task in self.state.tasks.values()
                                         if task.instance_id == instance.instance_id
+                                        and task.task_status in in_flight
                                     )
                                     instance_task_counts[instance.instance_id] = (
                                         task_count
