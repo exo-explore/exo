@@ -10,12 +10,13 @@ from exo.shared.types.common import ModelId
 ClaudeToolInputSchema = dict[str, Any]
 
 
-class ClaudeToolDefinition(BaseModel, frozen=True):
+class ClaudeToolDefinition(BaseModel, frozen=True, extra="allow"):
     """Tool definition in Claude Messages API request."""
 
     name: str
+    type: str | None = None
     description: str | None = None
-    input_schema: ClaudeToolInputSchema
+    input_schema: ClaudeToolInputSchema | None = None
 
 
 # Type aliases
