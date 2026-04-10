@@ -518,15 +518,10 @@ class VisionEncoder:
                 per_image_pixels = [stacked[i : i + 1] for i in range(stacked.shape[0])]
 
         patch_embed_weight = None
-        for head_attr, linear_attr in (
-            ("patch_embed", "proj"),
-            ("patch_embedder", "input_proj"),
-        ):
-            head = getattr(self._vision_tower, head_attr, None)
-            linear = getattr(head, linear_attr, None) if head is not None else None  # type: ignore
-            if linear is not None and hasattr(linear, "weight"):  # type: ignore
-                patch_embed_weight = linear.weight  # type: ignore
-                break
+        with contextlib.suppress(AttributeError):
+            patch_embed_weight = self._vision_tower.patch_embed.proj.weight  # type: ignore
+        with contextlib.suppress(AttributeError):
+            patch_embed_weight = self._vision_tower.patch_embedder.input_proj.weight  # type: ignore
         assert patch_embed_weight is not None, (
             "vision tower has no recognised patch-embedding linear"
         )
