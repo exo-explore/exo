@@ -55,8 +55,7 @@
     extra-substituters = "https://exo.cachix.org";
   };
 
-  outputs =
-    inputs:
+  outputs = inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
@@ -71,8 +70,9 @@
         ./python/parts.nix
       ];
 
-      perSystem =
-        { config, self', pkgs, lib, system, ... }:
+      debug = true; # Enable options autocompletion
+
+      perSystem = { config, self', pkgs, lib, system, ... }:
         let
           # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
           pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
@@ -149,7 +149,7 @@
                 config.treefmt.build.wrapper
 
                 # PYTHON
-                python313
+                self'.packages.python
                 uv
                 ruff
                 basedpyright
@@ -159,6 +159,7 @@
                 maturin
 
                 # NIX
+                nixd
                 nixpkgs-fmt
 
                 # SVELTE
@@ -178,7 +179,7 @@
             OPENSSL_NO_VENDOR = "1";
 
             shellHook = ''
-              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${python313}/lib"
+              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${self'.packages.python}/lib"
               ${lib.optionalString stdenv.isLinux ''
                 export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
               ''}

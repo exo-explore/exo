@@ -238,6 +238,7 @@ def run_one_completion(
         "messages": [{"role": "user", "content": content}],
         "stream": False,
         "max_tokens": tg,
+        "logprobs": False,
     }
 
     t0 = time.perf_counter()
@@ -564,6 +565,7 @@ def main() -> int:
                                 "messages": [{"role": "user", "content": content}],
                                 "stream": False,
                                 "max_tokens": tg,
+                                "logprobs": False,
                             }
                             barrier = threading.Barrier(concurrency)
                             batch_start = threading.Event()
@@ -602,6 +604,7 @@ def main() -> int:
                                     "stats": stats,
                                 }, _actual_pp
 
+                            inf_t0 = time.monotonic()
                             with ThreadPoolExecutor(max_workers=concurrency) as pool:
                                 futures = {
                                     pool.submit(_run_concurrent, i): i
