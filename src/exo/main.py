@@ -283,6 +283,10 @@ def main():
         os.environ["EXO_NO_BATCH"] = "1"
         logger.info("Continuous batching disabled (--no-batch)")
 
+    if args.enable_serverside_toolcalls:
+        os.environ["EXO_ENABLE_SERVERSIDE_TOOLCALLS"] = "1"
+        logger.info("Server-side tool calls enabled (--enable-serverside-toolcalls)")
+
     # Set FAST_SYNCH override env var for runner subprocesses
     if args.fast_synch is True:
         os.environ["EXO_FAST_SYNCH"] = "true"
@@ -314,6 +318,7 @@ class Args(CamelCaseModel):
     no_downloads: bool = False
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
+    enable_serverside_toolcalls: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
     bootstrap_peers: list[str] = []
     libp2p_port: int
@@ -373,6 +378,12 @@ class Args(CamelCaseModel):
             "--no-batch",
             action="store_true",
             help="Disable continuous batching, use sequential generation",
+        )
+        parser.add_argument(
+            "--enable-serverside-toolcalls",
+            action="store_true",
+            dest="enable_serverside_toolcalls",
+            help="Pass server-side tool definitions (e.g. web_search) to the model instead of stripping them",
         )
         parser.add_argument(
             "--bootstrap-peers",

@@ -1,6 +1,7 @@
 """Claude Messages API adapter for converting requests/responses."""
 
 import json
+import os
 import re
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -222,17 +223,20 @@ async def claude_request_to_text_generation(
     # Convert Claude tool definitions to OpenAI-style function tools
     tools: list[dict[str, Any]] | None = None
     if request.tools:
+        tool_definitions = request.tools
+        if not os.environ.get("EXO_ENABLE_SERVERSIDE_TOOLCALLS"):
+            tool_definitions = [t for t in tool_definitions if t.input_schema is not None]
         tools = [
             {
                 "type": "function",
                 "function": {
                     "name": tool.name,
                     "description": tool.description or "",
-                    "parameters": tool.input_schema,
+                    "parameters": tool.input_schema or {},
                 },
             }
-            for tool in request.tools
-        ]
+            for tool in tool_definitions
+        ] or None
 
     enable_thinking: bool | None = None
     if request.thinking is not None:
