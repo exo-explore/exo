@@ -5,6 +5,7 @@ import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from exo.api.adapters.chat_completions import fetch_image_url
 from exo.api.types import FinishReason, Usage
 from exo.api.types.claude_api import (
     ClaudeContentBlock,
@@ -30,6 +31,7 @@ from exo.api.types.claude_api import (
     ClaudeToolUseBlock,
     ClaudeUsage,
 )
+from exo.shared.logging import logger
 from exo.shared.types.chunks import (
     ErrorChunk,
     PrefillProgressChunk,
@@ -89,7 +91,21 @@ def _strip_volatile_headers(text: str) -> str:
     return _VOLATILE_HEADER_RE.sub("", text)
 
 
-def claude_request_to_text_generation(
+async def handle_image_block(block: ClaudeImageBlock) -> Base64Image | None:
+    if block.source.type == "base64" and block.source.data:
+        return Base64Image(block.source.data)
+    elif block.source.type == "url" and block.source.url:
+        try:
+            return await fetch_image_url(block.source.url)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to fetch image at {block.source.url}"
+            )
+
+    return None
+
+
+async def claude_request_to_text_generation(
     request: ClaudeMessagesRequest,
 ) -> TextGenerationTaskParams:
     # Handle system message
@@ -131,13 +147,9 @@ def claude_request_to_text_generation(
             if isinstance(block, ClaudeTextBlock):
                 text_parts.append(block.text)
             elif isinstance(block, ClaudeImageBlock):
-                if block.source.type == "base64" and block.source.data:
-                    images.append(Base64Image(block.source.data))
+                if (img := await handle_image_block(block)) is not None:
                     has_images = True
-                elif block.source.type == "url" and block.source.url:
-                    # This is obviously wrong. Im not fixing it in this pr
-                    images.append(Base64Image(block.source.url))
-                    has_images = True
+                    images.append(img)
             elif isinstance(block, ClaudeThinkingBlock):
                 thinking_parts.append(block.thinking)
             elif isinstance(block, ClaudeToolUseBlock):
@@ -155,14 +167,12 @@ def claude_request_to_text_generation(
                 tool_results.append(block)
                 if isinstance(block.content, list):
                     for sub in block.content:
-                        if isinstance(sub, ClaudeImageBlock):
-                            if sub.source.type == "base64" and sub.source.data:
-                                images.append(Base64Image(sub.source.data))
-                                has_images = True
-                            elif sub.source.type == "url" and sub.source.url:
-                                # This is obviously wrong. Im not fixing it in this pr
-                                images.append(Base64Image(sub.source.url))
-                                has_images = True
+                        if (
+                            isinstance(sub, ClaudeImageBlock)
+                            and (img := await handle_image_block(sub)) is not None
+                        ):
+                            has_images = True
+                            images.append(img)
 
         content = "".join(text_parts)
         reasoning_content = "".join(thinking_parts) if thinking_parts else None

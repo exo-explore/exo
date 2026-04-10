@@ -25,7 +25,6 @@ from loguru import logger
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
-    fetch_image_url,
     generate_chat_stream,
 )
 from exo.api.adapters.claude import (
@@ -1405,17 +1404,7 @@ class API:
         self, payload: ClaudeMessagesRequest
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
-        task_params = claude_request_to_text_generation(payload)
-        if task_params.images:
-            resolved_images: list[str] = []
-            for img in task_params.images:
-                if img.startswith(("http://", "https://")):
-                    resolved_images.append(await fetch_image_url(img))
-                else:
-                    resolved_images.append(img)
-            task_params = task_params.model_copy(
-                update={"images": [Base64Image(x) for x in resolved_images]}
-            )
+        task_params = await claude_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )
