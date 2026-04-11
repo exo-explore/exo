@@ -329,20 +329,34 @@ def parse_thinking_models(
     Always yields tokens with finish_reason to avoid hanging the chunk stream.
     """
     is_thinking = starts_in_thinking
+    accumulated = ""
+
     for response in responses:
         if response is None:
             yield None
             continue
+
+        accumulated += response.text
+
         if response.finish_reason is not None:
             yield response.model_copy(update={"is_thinking": False})
             continue
 
-        if response.text == think_start:
+        if accumulated == think_start and not is_thinking:
             is_thinking = True
+            accumulated = ""
             continue
-        if response.text == think_end:
+        if accumulated == think_end and is_thinking:
             is_thinking = False
+            accumulated = ""
             continue
+
+        if (think_start and accumulated == think_start[: len(accumulated)]) or (
+            think_end and accumulated == think_end[: len(accumulated)]
+        ):
+            continue
+
+        accumulated = ""
 
         yield response.model_copy(update={"is_thinking": is_thinking})
 

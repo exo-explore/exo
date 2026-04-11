@@ -336,6 +336,8 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     elif "qwen3.5" in model_id_lower or "qwen-3.5" in model_id_lower:
         # For Qwen3.5: 248046 (<|im_end|>), 248044 (<|endoftext|>)
         return [248046, 248044]
+    elif "gemma-4" in model_id_lower or "gemma-3" in model_id_lower:
+        return [1, 106, 50]
     return None
 
 
@@ -407,22 +409,12 @@ def load_tokenizer_for_model_id(
             tool_parser=_parse_kimi_tool_calls,
         )
 
+    # We should really consider going back to mlx lm load to get tokenizer
     tokenizer = load_tokenizer(
         model_path,
         tokenizer_config_extra={"trust_remote_code": trust_remote_code},
         eos_token_ids=eos_token_ids,
     )
-
-    if "gemma-3" in model_id_lower:
-        gemma_3_eos_id = 1
-        gemma_3_end_of_turn_id = 106
-        if tokenizer.eos_token_ids is not None:
-            if gemma_3_end_of_turn_id not in tokenizer.eos_token_ids:
-                tokenizer.eos_token_ids = list(tokenizer.eos_token_ids) + [
-                    gemma_3_end_of_turn_id
-                ]
-        else:
-            tokenizer.eos_token_ids = [gemma_3_eos_id, gemma_3_end_of_turn_id]
 
     return tokenizer
 
@@ -671,21 +663,37 @@ def fix_unmatched_think_end_tokens(
 ) -> mx.array:
     if not tokenizer.has_thinking:
         return tokens
-    assert tokenizer.think_start_id
-    assert tokenizer.think_end_id
-    think_start_id: int = tokenizer.think_start_id
-    think_end_id: int = tokenizer.think_end_id
+    assert tokenizer.think_start_tokens
+    assert tokenizer.think_end_tokens
+    think_start_tokens: list[int] = tokenizer.think_start_tokens
+    think_end_tokens: list[int] = tokenizer.think_end_tokens
     token_list: list[int] = cast(list[int], tokens.tolist())
     result: list[int] = []
+
     depth = 0
+    accumulated_think_start_length = 0
+    accumulated_think_end_length = 0
+
     for token in token_list:
-        if token == think_start_id:
-            depth += 1
-        elif token == think_end_id:
-            if depth == 0:
-                result.append(think_start_id)
-            else:
-                depth -= 1
+        if token == think_start_tokens[accumulated_think_start_length]:
+            accumulated_think_start_length += 1
+            if accumulated_think_start_length == len(think_start_tokens):
+                depth += 1
+                accumulated_think_start_length = 0
+
+        elif token == think_end_tokens[accumulated_think_end_length]:
+            accumulated_think_end_length += 1
+            if accumulated_think_end_length == len(think_end_tokens):
+                if depth == 0:
+                    result.extend(think_start_tokens)
+                else:
+                    depth -= 1
+                accumulated_think_end_length = 0
+
+        else:
+            accumulated_think_start_length = 0
+            accumulated_think_end_length = 0
+
         result.append(token)
     return mx.array(result)
 

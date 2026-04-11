@@ -338,7 +338,7 @@ def _entry_length(
 
 def cache_length(cache: KVCacheType) -> int:
     """Get the number of tokens in a KV cache."""
-    return max(_entry_length(c) for c in cache)
+    return max((_entry_length(c) for c in cache), default=0)
 
 
 def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
