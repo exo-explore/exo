@@ -3,6 +3,8 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Sequence
 
+from loguru import logger
+
 from exo.master.placement_utils import (
     Cycle,
     filter_cycles_by_memory,
@@ -127,26 +129,68 @@ def place_instance(
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError("No cycles found with sufficient memory")
 
-    if command.sharding == Sharding.Tensor:
+    # Asymmetric TP currently only supports Qwen3.5 at the worker level.
+    asymmetric_tp_families = {"qwen3_5"}
+
+    if (
+        command.sharding == Sharding.AsymmetricTensor
+        and command.model_card.family not in asymmetric_tp_families
+    ):
+        raise ValueError(
+            f"Asymmetric tensor parallelism is not yet supported for "
+            f"family '{command.model_card.family}'. "
+            f"Supported: {asymmetric_tp_families}"
+        )
+
+    if command.sharding in (Sharding.Tensor, Sharding.AsymmetricTensor):
         if not command.model_card.supports_tensor:
             raise ValueError(
                 f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_card.model_id}"
             )
-        # TODO: the condition here for tensor parallel is not correct, but it works good enough for now.
-        kv_heads = command.model_card.num_key_value_heads
-        cycles_with_sufficient_memory = [
-            cycle
-            for cycle in cycles_with_sufficient_memory
-            if command.model_card.hidden_size % len(cycle) == 0
-            and (kv_heads is None or kv_heads % len(cycle) == 0)
-        ]
-        if not cycles_with_sufficient_memory:
-            raise ValueError(
-                f"No tensor sharding found for model with "
-                f"hidden_size={command.model_card.hidden_size}"
-                f"{f', num_key_value_heads={kv_heads}' if kv_heads is not None else ''}"
-                f" across candidate cycles"
-            )
+        if command.sharding == Sharding.Tensor:
+            # TODO: the condition here for tensor parallel is not correct, but it works good enough for now.
+            kv_heads = command.model_card.num_key_value_heads
+            cycles_with_sufficient_memory = [
+                cycle
+                for cycle in cycles_with_sufficient_memory
+                if command.model_card.hidden_size % len(cycle) == 0
+                and (kv_heads is None or kv_heads % len(cycle) == 0)
+            ]
+            if not cycles_with_sufficient_memory:
+                raise ValueError(
+                    f"No tensor sharding found for model with "
+                    f"hidden_size={command.model_card.hidden_size}"
+                    f"{f', num_key_value_heads={kv_heads}' if kv_heads is not None else ''}"
+                    f" across candidate cycles"
+                )
+
+            # Auto-upgrade to AsymmetricTensor when equal TP won't fit on
+            # the smallest node but asymmetric split would.
+            # Only for model families with tested asymmetric TP support.
+            if command.model_card.family in asymmetric_tp_families:
+                for cycle in cycles_with_sufficient_memory:
+                    equal_share = command.model_card.storage_size.in_bytes / len(cycle)
+                    min_node_mem = min(
+                        node_memory[nid].ram_available.in_bytes for nid in cycle
+                    )
+                    if equal_share > min_node_mem * 0.9:
+                        # Equal split too tight — try asymmetric
+                        total_mem = sum(
+                            node_memory[nid].ram_available.in_bytes
+                            for nid in cycle
+                        )
+                        if (
+                            command.model_card.storage_size.in_bytes
+                            < total_mem * 0.85
+                        ):
+                            logger.info(
+                                "Equal tensor split won't fit on smallest node "
+                                f"({min_node_mem / 1e9:.0f}GB available, "
+                                f"needs {equal_share / 1e9:.0f}GB). "
+                                "Auto-upgrading to AsymmetricTensor."
+                            )
+                            command.sharding = Sharding.AsymmetricTensor
+                        break
     if command.sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
         "mlx-community/DeepSeek-V3.1-8bit"
     ):
