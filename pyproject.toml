@@ -15,17 +15,16 @@ dependencies = [
   "huggingface-hub>=1.8.0",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
-  "exo_pyo3_bindings",                         # rust bindings
+  "exo_pyo3_bindings",                       # rust bindings
   "anyio==4.11.0",
-  "mlx; sys_platform == 'darwin'",
-  "mlx[cpu]==0.30.6; sys_platform == 'linux'",
+  "mlx",                                     # as we provide mlx from upstream, the different build configurations are handled in the parts.nix
   "mlx-lm",
-  "tiktoken>=0.12.0",                          # required for kimi k2 tokenizer
+  "tiktoken>=0.12.0",                        # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",
   "tomlkit>=0.14.0",
-  "mflux==0.17.2",
+  "mflux==0.17.2; sys_platform == 'darwin'",
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
@@ -47,11 +46,10 @@ dev = [
   "ruff>=0.11.13",
 ]
 
-# mlx[cuda] requires a newer version of mlx. the ideal on linux is: default to mlx[cpu] unless[cuda] specified.
 [project.optional-dependencies]
-# cuda = [
-#     "mlx[cuda]==0.26.3",
-# ]
+build = ["nanobind"]
+cuda = ["torch>=2.10.0; sys_platform == 'linux'"]
+cuda13 = ["torch>=2.10.0; sys_platform == 'linux'"]
 
 ###
 # workspace configuration
@@ -62,11 +60,15 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
-mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
+mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/fix-arrayscache-leak" }
-# Uncomment to use local mlx/mlx-lm development versions:
-# mlx = { path = "/Users/Shared/mlx", editable=true }
-# mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
+vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [build-system]
 requires = ["uv_build>=0.8.9,<0.9.0"]
@@ -77,7 +79,7 @@ build-backend = "uv_build"
 ###
 
 [tool.basedpyright]
-include = [".venv/lib/mlx", ".venv/lib/mlx_lm", "src", "bench"]
+include = ["src", "bench"]
 typeCheckingMode = "strict"
 failOnWarnings = true
 
@@ -105,7 +107,12 @@ exclude = [
 stubPath = ".mlx_typings"
 
 [[tool.basedpyright.executionEnvironments]]
+root = "src/exo/worker/engines/image"
+reportMissingModuleSource = false
+
+[[tool.basedpyright.executionEnvironments]]
 root = "src"
+
 
 ###
 # uv configuration
@@ -116,7 +123,47 @@ root = "src"
 required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
-extra-build-dependencies = { "miniaudio" = ["setuptools", "cffi", "pycparser"] }
+conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
+override-dependencies = ["compressed-tensors==0.13.0", "torch==2.10.0"]
+constraint-dependencies = ["transformers>=5.0.0,<5.4.0"]
+
+[tool.uv.extra-build-dependencies]
+miniaudio = ["setuptools", "cffi", "pycparser"]
+mlx = [
+  "setuptools",
+  "typing-extensions",
+  "nanobind",
+  "pybind11",
+  "wheel",
+  "cmake",
+  "ninja",
+]
+mlx-lm = ["setuptools"]
+xgrammar = [
+  "nanobind",
+  "setuptools",
+  "scikit-build-core",
+  "packaging",
+  "pathspec",
+]
+rouge-score = ["setuptools"]
+sacrebleu = ["setuptools"]
+sqlitedict = ["setuptools"]
+word2number = ["setuptools"]
+vllm = [
+  "setuptools",
+  "setuptools-scm",
+  "scikit-build-core",
+  "jinja2",
+  "wheel",
+  "markupsafe",
+  "typing-extensions",
+  "torch",
+]
+fastsafetensors = ["setuptools", "pybind11"]
+torch = ["typing-extensions"]
+torchvision = ["torch"]
+torchaudio = ["torch"]
 
 ###
 # ruff configuration
@@ -124,7 +171,6 @@ extra-build-dependencies = { "miniaudio" = ["setuptools", "cffi", "pycparser"] }
 
 [tool.ruff]
 extend-exclude = [
-  "shared/protobufs/**",
   "*mlx_typings/**",
   "rust/exo_pyo3_bindings/**",
   "bench/vendor/**",
