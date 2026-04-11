@@ -5,6 +5,7 @@ from enum import Enum
 
 import mlx.core as mx
 from anyio import WouldBlock
+from mlx_lm.models.cache import ChunkedKVCache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelTask
@@ -67,6 +68,16 @@ from exo.worker.runner.llm_inference.batch_generator import (
 
 from .batch_generator import Cancelled, Finished
 from .tool_parsers import make_mlx_parser
+
+
+def _has_chunked_kv_cache(model: Model) -> bool:
+    """mlx_lm's BatchGenerator does not support ChunkedKVCache (no merge/batching)."""
+    if not hasattr(model, "make_cache"):
+        return False
+    cache: list[object] = model.make_cache()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    has_chunked = any(isinstance(c, ChunkedKVCache) for c in cache)  # pyright: ignore[reportUnknownVariableType]
+    del cache
+    return has_chunked
 
 
 class ExitCode(str, Enum):
@@ -413,7 +424,11 @@ class Builder:
         kv_prefix_cache = KVPrefixCache(self.group)
 
         device_rank = 0 if self.group is None else self.group.rank()
-        if os.environ.get("EXO_NO_BATCH"):
+
+        needs_sequential = bool(
+            os.environ.get("EXO_NO_BATCH")
+        ) or _has_chunked_kv_cache(self.inference_model)
+        if needs_sequential:
             logger.info("using SequentialGenerator (batching disabled)")
             return SequentialGenerator(
                 model=self.inference_model,

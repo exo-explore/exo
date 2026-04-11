@@ -252,6 +252,8 @@ class ConfigData(BaseModel):
             ["GlmMoeDsaForCausalLM"],
             ["DeepseekV32ForCausalLM"],
             ["DeepseekV3ForCausalLM"],
+            ["Llama4ForCausalLM"],
+            ["Llama4ForConditionalGeneration"],
             ["Qwen3NextForCausalLM"],
             ["Qwen3MoeForCausalLM"],
             ["Qwen3_5MoeForConditionalGeneration"],
