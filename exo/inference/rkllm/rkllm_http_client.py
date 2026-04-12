@@ -20,6 +20,7 @@ class RKLLMServerConfig:
   host: str = "localhost"
   port: int = 8080
   timeout: float = 300.0  # 5 minute timeout for generation
+  ollama_compat: bool = True  # Use Ollama-compatible API (/api/generate)
 
   @property
   def base_url(self) -> str:
@@ -71,6 +72,12 @@ class RKLLMHTTPClient:
     """Get list of available models on the server."""
     try:
       session = await self._get_session()
+      if self.config.ollama_compat:
+        async with session.get(f"{self.config.base_url}/api/tags") as resp:
+          if resp.status == 200:
+            data = await resp.json()
+            return [m.get("name", m.get("model", "")) for m in data.get("models", [])]
+          return []
       async with session.get(f"{self.config.base_url}/models") as resp:
         if resp.status == 200:
           data = await resp.json()
@@ -83,6 +90,8 @@ class RKLLMHTTPClient:
 
   async def get_current_model(self) -> Optional[str]:
     """Get the currently loaded model name."""
+    if self.config.ollama_compat:
+      return self._current_model
     try:
       session = await self._get_session()
       async with session.get(f"{self.config.base_url}/current_model") as resp:
@@ -120,6 +129,19 @@ class RKLLMHTTPClient:
       if DEBUG >= 2:
         print(f"Model {model_name} already loaded")
       return True
+
+    if self.config.ollama_compat:
+      # Ollama-compat rkllama loads models on first use via /api/generate.
+      # Just verify the model exists in the list, then mark it as current.
+      available = await self.list_models()
+      if model_name in available:
+        self._current_model = model_name
+        if DEBUG >= 1:
+          print(f"RKLLM model {model_name} available (Ollama compat, lazy load)")
+        return True
+      if DEBUG >= 1:
+        print(f"RKLLM model {model_name} not in available list: {available}")
+      return False
 
     # Unload current model if one is loaded
     if current:
@@ -270,7 +292,39 @@ class RKLLMHTTPClient:
       # Use prompt as-is
       messages = [{"role": "user", "content": prompt}]
 
+    if self.config.ollama_compat:
+      return await self._generate_ollama(prompt if not extracted_content else extracted_content)
     return await self.generate(messages, stream=False)
+
+  async def _generate_ollama(self, prompt: str) -> str:
+    """Generate via the Ollama-compatible /api/generate endpoint."""
+    try:
+      session = await self._get_session()
+      payload = {
+        "model": self._current_model or "",
+        "prompt": prompt,
+        "stream": False,
+      }
+      async with session.post(
+        f"{self.config.base_url}/api/generate",
+        json=payload
+      ) as resp:
+        if resp.status == 200:
+          data = await resp.json()
+          return data.get("response", "")
+        else:
+          error = await resp.text()
+          if DEBUG >= 1:
+            print(f"Ollama generate failed ({resp.status}): {error[:200]}")
+          return ""
+    except asyncio.TimeoutError:
+      if DEBUG >= 1:
+        print("Ollama generate timed out")
+      return ""
+    except Exception as e:
+      if DEBUG >= 1:
+        print(f"Ollama generate failed: {e}")
+      return ""
 
   async def generate_stream(
     self,
