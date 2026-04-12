@@ -77,9 +77,15 @@ class RKLLMInferenceEngine(InferenceEngine):
     0x7 = all cores (~6 TOPS, default)
 
   Set RKNN_CORE_MASK to pin this engine instance to specific NPU cores.
-  This enables running multiple exo nodes on the same board, each on
-  a different core, for distributed inference testing and multi-tenant
-  workloads.
+  Useful for multi-tenant workloads where multiple models share the
+  same board.
+
+  Note: RKLLM loads complete models (the .rkllm format is compiled as
+  a monolith). Pipeline-parallel layer sharding across multiple NPU
+  nodes is not possible until Rockchip adds partial layer loading to
+  the RKLLM SDK. Tracked at airockchip/rknn-llm#489. For distributed
+  inference of large models, use GPU/Apple Silicon nodes via exo's
+  MLX or tinygrad backends.
   """
 
   def __init__(
