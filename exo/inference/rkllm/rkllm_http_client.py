@@ -99,7 +99,8 @@ class RKLLMHTTPClient:
     self,
     model_name: str,
     huggingface_path: Optional[str] = None,
-    from_file: Optional[str] = None
+    from_file: Optional[str] = None,
+    core_mask: int = 0
   ) -> bool:
     """
     Load a model on the rkllama server.
@@ -107,6 +108,7 @@ class RKLLMHTTPClient:
     Args:
       model_name: Name of the model directory in ~/RKLLAMA/models/
       huggingface_path: Optional HuggingFace repo for tokenizer
+      core_mask: NPU core mask (0 = all cores, 0x1/0x2/0x4 = single core)
       from_file: Optional .rkllm filename
 
     Returns:
@@ -131,6 +133,8 @@ class RKLLMHTTPClient:
         payload["huggingface_path"] = huggingface_path
       if from_file:
         payload["from"] = from_file
+      if core_mask:
+        payload["core_mask"] = core_mask
 
       async with session.post(
         f"{self.config.base_url}/load_model",

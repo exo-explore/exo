@@ -67,6 +67,19 @@ class RKLLMInferenceEngine(InferenceEngine):
   - Loads complete .rkllm models (no partial layer loading)
   - Uses HTTP client to connect to rkllama server (recommended)
   - Thread-safe with dedicated executor for blocking operations
+  - Supports per-core NPU pinning via RKNN_CORE_MASK env var
+
+  Core mask values for RK3588 (3 NPU cores, 6 TOPS total):
+    0x1 = core 0 only (~2 TOPS)
+    0x2 = core 1 only (~2 TOPS)
+    0x4 = core 2 only (~2 TOPS)
+    0x3 = cores 0+1 (~4 TOPS)
+    0x7 = all cores (~6 TOPS, default)
+
+  Set RKNN_CORE_MASK to pin this engine instance to specific NPU cores.
+  This enables running multiple exo nodes on the same board, each on
+  a different core, for distributed inference testing and multi-tenant
+  workloads.
   """
 
   def __init__(
@@ -82,6 +95,13 @@ class RKLLMInferenceEngine(InferenceEngine):
     self._shard_lock = asyncio.Lock()
     self.session = {}
 
+    # NPU core pinning: RKNN_CORE_MASK selects which NPU cores this
+    # engine instance is allowed to use. When running multiple exo
+    # nodes on the same RK3588 (e.g. in separate LXC containers),
+    # each node should get its own core to avoid contention.
+    self.core_mask = int(os.environ.get("RKNN_CORE_MASK", "0"), 0)
+    self.npu_cores = self._count_cores(self.core_mask) if self.core_mask else 3
+
     # HTTP client configuration
     self._server_config = RKLLMServerConfig(
       host=os.environ.get("RKLLM_SERVER_HOST", server_host),
@@ -93,14 +113,40 @@ class RKLLMInferenceEngine(InferenceEngine):
     self._stream_tasks = {}  # Active streaming tasks per request
 
     if DEBUG >= 1:
-      print(f"RKLLM engine initialized (HTTP mode: {self._server_config.base_url})")
+      core_desc = f"cores=all" if not self.core_mask else f"core_mask=0x{self.core_mask:x} ({self.npu_cores} core(s))"
+      print(f"RKLLM engine initialized (HTTP mode: {self._server_config.base_url}, {core_desc})")
 
     # Set inference engine info metric
     INFERENCE_ENGINE_INFO.info({
       'engine': 'RKLLMInferenceEngine',
       'mode': 'http',
-      'server': self._server_config.base_url
+      'server': self._server_config.base_url,
+      'core_mask': hex(self.core_mask) if self.core_mask else 'all',
+      'npu_cores': str(self.npu_cores),
     })
+
+  @staticmethod
+  def _count_cores(mask: int) -> int:
+    """Count set bits in the core mask."""
+    count = 0
+    while mask:
+      count += mask & 1
+      mask >>= 1
+    return count
+
+  def get_capability_descriptor(self) -> dict:
+    """Return a descriptor of this engine's NPU capabilities.
+
+    Used by the topology manager to weigh this node's capacity
+    relative to other nodes in the cluster. A single-core node
+    gets roughly 1/3 the weight of a full 3-core node.
+    """
+    return {
+      "accelerator": "rk3588-npu",
+      "core_mask": self.core_mask,
+      "npu_cores": self.npu_cores,
+      "tops_estimate": self.npu_cores * 2,  # ~2 TOPS per core
+    }
 
   @property
   def tokenizer(self):
@@ -526,9 +572,9 @@ class RKLLMInferenceEngine(InferenceEngine):
       if DEBUG >= 1:
         print(f"Loading RKLLM model: {model_name}")
 
-      # Load model via HTTP API with timing
+      # Load model via HTTP API with timing, passing core_mask if set
       load_start = time.time()
-      success = await self._http_client.load_model(model_name)
+      success = await self._http_client.load_model(model_name, core_mask=self.core_mask)
       load_duration = time.time() - load_start
       RKLLM_MODEL_LOAD_SECONDS.observe(load_duration)
       RKLLM_HTTP_REQUESTS.labels(endpoint='/load_model', status='success' if success else 'error').inc()
