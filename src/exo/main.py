@@ -1,4 +1,5 @@
 import argparse
+import ipaddress
 import multiprocessing as mp
 import os
 import resource
@@ -7,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Self
 
 import anyio
+import httpx
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -26,6 +28,49 @@ from exo.utils.pydantic_ext import CamelCaseModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
 
+
+
+
+def _format_http_host(host: str) -> str:
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
+def _multiaddr_for_host(host: str, port: int, node_id: NodeId) -> str:
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        proto = "dns"
+    else:
+        proto = "ip6" if ip.version == 6 else "ip4"
+    return f"/{proto}/{host}/tcp/{port}/p2p/{node_id}"
+
+
+async def _resolve_master_bootstrap_peer(args: "Args") -> str:
+    assert args.master_host is not None
+    host = args.master_host
+    url = f"http://{_format_http_host(host)}:{args.master_api_port}/node_id"
+    timeout = httpx.Timeout(timeout=2.0)
+    last_error: Exception | None = None
+
+    async with httpx.AsyncClient(timeout=timeout, verify=False) as client:
+        for attempt in range(10):
+            try:
+                response = await client.get(url)
+                response.raise_for_status()
+                body = response.text.strip().strip('"')
+                if body:
+                    node_id = NodeId(body)
+                    bootstrap = _multiaddr_for_host(host, args.master_libp2p_port, node_id)
+                    logger.info(f"Resolved master bootstrap peer via {url}: {bootstrap}")
+                    return bootstrap
+                last_error = RuntimeError(f"Empty node_id response from {url}")
+            except (httpx.HTTPError, ValueError, RuntimeError) as exc:
+                last_error = exc
+            await anyio.sleep(1)
+
+    raise RuntimeError(f"Failed to resolve master bootstrap peer from {url}: {last_error}")
 
 @dataclass
 class Node:
@@ -47,9 +92,12 @@ class Node:
         keypair = get_node_id_keypair()
         node_id = NodeId(keypair.to_node_id())
         session_id = SessionId(master_node_id=node_id, election_clock=0)
+        bootstrap_peers = list(args.bootstrap_peers)
+        if args.master_host is not None:
+            bootstrap_peers.append(await _resolve_master_bootstrap_peer(args))
         router = Router.create(
             keypair,
-            bootstrap_peers=args.bootstrap_peers,
+            bootstrap_peers=bootstrap_peers,
             listen_port=args.libp2p_port,
         )
         await router.register_topic(topics.GLOBAL_EVENTS)
@@ -278,6 +326,10 @@ def main():
 
     if args.bootstrap_peers:
         logger.info(f"Bootstrap peers: {args.bootstrap_peers}")
+    if args.master_host:
+        logger.info(
+            f"Direct master bootstrap configured: host={args.master_host} api_port={args.master_api_port} libp2p_port={args.master_libp2p_port}"
+        )
 
     if args.no_batch:
         os.environ["EXO_NO_BATCH"] = "1"
@@ -316,6 +368,9 @@ class Args(CamelCaseModel):
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
     bootstrap_peers: list[str] = []
+    master_host: str | None = os.getenv("EXO_MASTER_HOST") or None
+    master_api_port: PositiveInt = int(os.getenv("EXO_MASTER_API_PORT", "52415"))
+    master_libp2p_port: int = int(os.getenv("EXO_MASTER_LIBP2P_PORT", "0"))
     libp2p_port: int
 
     @classmethod
@@ -384,6 +439,23 @@ class Args(CamelCaseModel):
             help="Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)",
         )
         parser.add_argument(
+            "--master-host",
+            default=os.getenv("EXO_MASTER_HOST"),
+            help="Resolve the master's node ID over HTTP and bootstrap directly to its libp2p listener.",
+        )
+        parser.add_argument(
+            "--master-api-port",
+            type=int,
+            default=int(os.getenv("EXO_MASTER_API_PORT", "52415")),
+            help="HTTP API port used to resolve the master's /node_id endpoint.",
+        )
+        parser.add_argument(
+            "--master-libp2p-port",
+            type=int,
+            default=int(os.getenv("EXO_MASTER_LIBP2P_PORT", "0")),
+            help="Master libp2p TCP port used after resolving the master's node ID.",
+        )
+        parser.add_argument(
             "--libp2p-port",
             type=int,
             default=0,
@@ -406,4 +478,8 @@ class Args(CamelCaseModel):
         )
 
         args = parser.parse_args()
+        if args.master_host and args.bootstrap_peers:
+            parser.error("--master-host cannot be combined with --bootstrap-peers")
+        if args.master_host and not args.master_libp2p_port:
+            parser.error("--master-libp2p-port is required when --master-host is set")
         return cls(**vars(args))  # pyright: ignore[reportAny] - We are intentionally validating here, we can't do it statically
