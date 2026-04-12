@@ -98,6 +98,7 @@ class Node:
                 event_sender=event_router.sender(),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
+                api_port=args.api_port,
             )
         else:
             worker = None
