@@ -846,7 +846,13 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        task_params = task_params.model_copy(update={"stream": False, "bench": True})
+        task_params = task_params.model_copy(
+            update={
+                "stream": False,
+                "bench": True,
+                "use_prefix_cache": payload.use_prefix_cache,
+            }
+        )
 
         command = await self._send_text_generation_with_images(task_params)
 
