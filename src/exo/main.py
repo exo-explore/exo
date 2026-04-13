@@ -40,6 +40,7 @@ class Node:
 
     node_id: NodeId
     offline: bool
+    _api_port: int
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
@@ -98,6 +99,7 @@ class Node:
                 event_sender=event_router.sender(),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
+                api_port=args.api_port,
             )
         else:
             worker = None
@@ -138,6 +140,7 @@ class Node:
             api,
             node_id,
             args.offline,
+            args.api_port,
         )
 
     async def run(self):
@@ -250,6 +253,7 @@ class Node:
                             download_command_sender=self.router.sender(
                                 topics.DOWNLOAD_COMMANDS
                             ),
+                            api_port=self._api_port,
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:
