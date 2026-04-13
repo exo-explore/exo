@@ -19,7 +19,7 @@ async def check_reachability(
     expected_node_id: NodeId,
     out: dict[NodeId, set[str]],
     client: httpx.AsyncClient,
-    api_port: int = 52415,
+    api_port: int,
 ) -> None:
     """Check if a node is reachable at the given IP and verify its identity."""
     if ":" in target_ip:
@@ -83,7 +83,7 @@ async def check_reachable(
     topology: Topology,
     self_node_id: NodeId,
     node_network: Mapping[NodeId, NodeNetworkInfo],
-    api_port: int = 52415,
+    api_port: int,
 ) -> AsyncGenerator[tuple[str, NodeId], None]:
     """Yield (ip, node_id) pairs as reachability probes complete."""
 

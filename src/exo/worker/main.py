@@ -71,7 +71,7 @@ class Worker:
         # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
-        api_port: int = 52415,
+        api_port: int,
     ):
         self.node_id: NodeId = node_id
         self.event_receiver = event_receiver
