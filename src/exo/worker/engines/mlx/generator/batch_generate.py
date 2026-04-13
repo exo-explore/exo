@@ -74,7 +74,6 @@ class _EngineTask:
     all_prompt_tokens: mx.array
     prefix_hit_length: int
     matched_index: int | None
-    cache_snapshots: list[CacheSnapshot] | None
     detokenizer: StreamingDetokenizer
     on_generation_token: Callable[[], None] | None = None
     generated_text_parts: list[str] = field(default_factory=list)
@@ -162,8 +161,10 @@ class ExoBatchGenerator:
         if self.kv_prefix_cache is not None and (
             not is_bench or task_params.use_prefix_cache
         ):
-            cache, remaining_tokens, matched_index, is_exact_hit = self.kv_prefix_cache.get_kv_cache(
-                self.model, all_prompt_tokens, media_regions=media_regions
+            cache, remaining_tokens, matched_index, is_exact_hit = (
+                self.kv_prefix_cache.get_kv_cache(
+                    self.model, all_prompt_tokens, media_regions=media_regions
+                )
             )
             prefix_hit_length = len(all_prompt_tokens) - len(remaining_tokens)
             if prefix_hit_length > 0:
@@ -280,7 +281,6 @@ class ExoBatchGenerator:
             all_prompt_tokens=all_prompt_tokens,
             prefix_hit_length=prefix_hit_length,
             matched_index=matched_index,
-            cache_snapshots=cache_snapshots or None,
             detokenizer=self.tokenizer.detokenizer,
             on_generation_token=on_generation_token,
             generation_start_time=time.perf_counter(),

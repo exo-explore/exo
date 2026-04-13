@@ -407,7 +407,13 @@ def main() -> int:
         return 2
 
     if args.use_prefix_cache:
-        logger.warning("--use-prefix-cache: prompt TPS will be approximate. See METHODOLOGY.md for details.")
+        logger.warning(
+            "--use-prefix-cache: prompt TPS will be approximate. See METHODOLOGY.md for details."
+        )
+        if pp_list != sorted(pp_list):
+            logger.warning(
+                "--pp values are not in ascending order: prompt TPS will be less accurate. Use ascending --pp for best results."
+            )
 
     # Log pairing mode
     use_combinations = args.all_combinations or len(pp_list) != len(tg_list)

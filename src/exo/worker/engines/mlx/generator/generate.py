@@ -579,8 +579,10 @@ def mlx_generate(
         caches = make_kv_cache(model=model)
         prompt_tokens = all_prompt_tokens
     else:
-        caches, prompt_tokens, matched_index, is_exact_hit = kv_prefix_cache.get_kv_cache(
-            model, all_prompt_tokens, media_regions=media_regions
+        caches, prompt_tokens, matched_index, is_exact_hit = (
+            kv_prefix_cache.get_kv_cache(
+                model, all_prompt_tokens, media_regions=media_regions
+            )
         )
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
         if prefix_hit_length > 0:
