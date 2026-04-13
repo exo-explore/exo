@@ -16,7 +16,7 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType, Model
-from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
+from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KEEP_KV_SIZE, KV_CACHE_BITS, MAX_KV_SIZE
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
@@ -235,7 +235,7 @@ class KVPrefixCache:
                 best_index, best_length = i, length
 
         if best_index is None:
-            return make_kv_cache(model), prompt_tokens, None
+            return make_kv_cache(model, max_kv_size=MAX_KV_SIZE, keep=KEEP_KV_SIZE or 0), prompt_tokens, None
 
         # For exact match: trim to max_length-1 so remaining has the last token
         # For partial match: trim to best_length, remaining has suffix to prefill
@@ -246,7 +246,7 @@ class KVPrefixCache:
 
         # No usable snapshot — need fresh cache
         if restore_snap is None and has_ssm:
-            return make_kv_cache(model), prompt_tokens, None
+            return make_kv_cache(model, max_kv_size=MAX_KV_SIZE, keep=KEEP_KV_SIZE or 0), prompt_tokens, None
 
         prompt_cache = deepcopy(self.caches[best_index])
         cached_length = cache_length(self.caches[best_index])
