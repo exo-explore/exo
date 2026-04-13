@@ -23,6 +23,7 @@ from exo.api.types.openai_responses import (
     FunctionCallInputItem,
     FunctionCallOutputInputItem,
     ImageGenerationCallInputItem,
+    InputTokensDetails,
     ItemReferenceInputItem,
     LocalShellCallInputItem,
     LocalShellCallOutputInputItem,
@@ -30,6 +31,7 @@ from exo.api.types.openai_responses import (
     McpApprovalResponseInputItem,
     McpCallInputItem,
     McpListToolsInputItem,
+    OutputTokensDetails,
     ReasoningInputItem,
     ResponseCompletedEvent,
     ResponseContentPart,
@@ -80,6 +82,21 @@ from exo.shared.types.text_generation import (
     TextGenerationTaskParams,
     resolve_reasoning_params,
 )
+
+
+def _build_response_usage(usage: Usage) -> ResponseUsage:
+    """Build a ResponseUsage from the internal Usage type."""
+    return ResponseUsage(
+        input_tokens=usage.prompt_tokens,
+        input_tokens_details=InputTokensDetails(
+            cached_tokens=usage.prompt_tokens_details.cached_tokens,
+        ),
+        output_tokens=usage.completion_tokens,
+        output_tokens_details=OutputTokensDetails(
+            reasoning_tokens=usage.completion_tokens_details.reasoning_tokens,
+        ),
+        total_tokens=usage.total_tokens,
+    )
 
 
 def _format_sse(event: ResponsesStreamEvent) -> str:
@@ -436,13 +453,7 @@ async def collect_responses_response(
         raise ValueError(error_message)
 
     # Create usage from usage data if available
-    usage = None
-    if last_usage is not None:
-        usage = ResponseUsage(
-            input_tokens=last_usage.prompt_tokens,
-            output_tokens=last_usage.completion_tokens,
-            total_tokens=last_usage.total_tokens,
-        )
+    usage = _build_response_usage(last_usage) if last_usage is not None else None
 
     output: list[ResponseItem] = []
     if thinking_parts:
@@ -791,13 +802,7 @@ async def generate_responses_stream(
     yield _format_sse(item_done)
 
     # Create usage from usage data if available
-    usage = None
-    if last_usage is not None:
-        usage = ResponseUsage(
-            input_tokens=last_usage.prompt_tokens,
-            output_tokens=last_usage.completion_tokens,
-            total_tokens=last_usage.total_tokens,
-        )
+    usage = _build_response_usage(last_usage) if last_usage is not None else None
 
     # response.completed
     output: list[ResponseItem] = []
