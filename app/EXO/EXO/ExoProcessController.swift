@@ -7,7 +7,24 @@ private let hfTokenKey = "EXOHFToken"
 private let hfEndpointKey = "EXOHFEndpoint"
 private let enableImageModelsKey = "EXOEnableImageModels"
 private let offlineModeKey = "EXOOfflineMode"
+private let fastSynchEnabledKey = "EXOFastSynchEnabled"
 private let onboardingCompletedKey = "EXOOnboardingCompleted"
+private let customEnvironmentVariablesKey = "EXOCustomEnvironmentVariables"
+
+/// A user-defined environment variable that is injected into the exo child
+/// process at launch. Used to pass arbitrary key/value settings to exo
+/// without having to add first-class UI for each one.
+struct CustomEnvironmentVariable: Codable, Identifiable, Equatable {
+    var id: UUID
+    var key: String
+    var value: String
+
+    init(id: UUID = UUID(), key: String = "", value: String = "") {
+        self.id = id
+        self.key = key
+        self.value = value
+    }
+}
 
 @MainActor
 final class ExoProcessController: ObservableObject {
@@ -76,6 +93,36 @@ final class ExoProcessController: ObservableObject {
     {
         didSet {
             UserDefaults.standard.set(offlineMode, forKey: offlineModeKey)
+        }
+    }
+    @Published var fastSynchEnabled: Bool = {
+        if UserDefaults.standard.object(forKey: fastSynchEnabledKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: fastSynchEnabledKey)
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(fastSynchEnabled, forKey: fastSynchEnabledKey)
+        }
+    }
+    @Published var customEnvironmentVariables: [CustomEnvironmentVariable] = {
+        guard
+            let data = UserDefaults.standard.data(forKey: customEnvironmentVariablesKey),
+            let decoded = try? JSONDecoder().decode(
+                [CustomEnvironmentVariable].self, from: data
+            )
+        else {
+            return []
+        }
+        return decoded
+    }()
+    {
+        didSet {
+            guard let data = try? JSONEncoder().encode(customEnvironmentVariables) else {
+                return
+            }
+            UserDefaults.standard.set(data, forKey: customEnvironmentVariablesKey)
         }
     }
 
@@ -291,6 +338,7 @@ final class ExoProcessController: ObservableObject {
         if offlineMode {
             environment["EXO_OFFLINE"] = "true"
         }
+        environment["EXO_FAST_SYNCH"] = fastSynchEnabled ? "true" : "false"
 
         var paths: [String] = []
         if let existing = environment["PATH"], !existing.isEmpty {
@@ -315,6 +363,16 @@ final class ExoProcessController: ObservableObject {
         }
 
         environment["PATH"] = paths.joined(separator: ":")
+
+        // Apply user-defined arbitrary environment variables last so that
+        // power users can override any of the built-in keys above when
+        // necessary. Empty keys are ignored.
+        for variable in customEnvironmentVariables {
+            let trimmedKey = variable.key.trimmingCharacters(in: .whitespaces)
+            guard !trimmedKey.isEmpty else { continue }
+            environment[trimmedKey] = variable.value
+        }
+
         return environment
     }
 

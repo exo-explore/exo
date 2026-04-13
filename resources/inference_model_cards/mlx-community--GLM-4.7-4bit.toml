@@ -9,5 +9,7 @@ quantization = "4bit"
 base_model = "GLM 4.7"
 capabilities = ["text", "thinking", "thinking_toggle"]
 
+context_length = 202752
+
 [storage_size]
 in_bytes = 198556925568

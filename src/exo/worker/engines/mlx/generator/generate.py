@@ -1,3 +1,4 @@
+import contextlib
 import functools
 import math
 import time
@@ -24,7 +25,11 @@ from exo.api.types import (
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType, Model
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
@@ -54,12 +59,91 @@ from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
     mx_barrier,
+    system_prompt_token_count,
+)
+from exo.worker.engines.mlx.vision import (
+    MediaRegion,
+    VisionProcessor,
+    VisionResult,
+    get_inner_model,
+    prepare_vision,
 )
 from exo.worker.runner.bootstrap import logger
 
 generation_stream = mx.new_stream(mx.default_device())
 
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
+
+
+@contextlib.contextmanager
+def patch_embed_tokens(
+    model: Model,
+    embeddings: mx.array,
+    start_offset: int = 0,
+    token_count: int = 0,
+    image_token_id: int | None = None,
+) -> Generator[None]:
+    inner = get_inner_model(model)  # type: ignore
+    original_embed = inner.embed_tokens  # type: ignore
+    end_offset = start_offset + token_count
+    offset = [start_offset]
+
+    def _inject(input_ids: mx.array) -> mx.array:
+        chunk_start = offset[0]
+        chunk_len = input_ids.shape[-1]
+        chunk_end = chunk_start + chunk_len
+        offset[0] = chunk_end
+
+        # The injection window is [start_offset, end_offset).
+        if chunk_end <= start_offset or chunk_start >= end_offset:
+            return original_embed(input_ids)  # type: ignore
+
+        # Mixed chunk: splice the pre-computed embeddings for the overlap
+        # into `original_embed(input_ids)` for any text-only fringes.
+        overlap_start = max(chunk_start, start_offset)
+        overlap_end = min(chunk_end, end_offset)
+        dst_start = overlap_start - chunk_start
+        dst_end = overlap_end - chunk_start
+        text_embeds: mx.array = original_embed(input_ids)  # type: ignore
+        return mx.concatenate(
+            [
+                text_embeds[:, :dst_start, :],
+                embeddings[:, overlap_start:overlap_end, :],
+                text_embeds[:, dst_end:, :],
+            ],
+            axis=1,
+        )
+
+    for attr in dir(original_embed):  # type: ignore
+        if not attr.startswith("_") and not hasattr(_inject, attr):
+            with contextlib.suppress(AttributeError, TypeError):
+                setattr(_inject, attr, getattr(original_embed, attr))  # type: ignore
+
+    inner.embed_tokens = _inject
+
+    # Gemma 4 (e2b/e4b) has a second, independent embedding table that produces
+    # per-layer conditioning signals via self.embed_tokens_per_layer(input_ids).
+    # The injected vision embeddings live in the main residual stream only, so
+    # if image_token_id positions are passed through as-is the per-layer table
+    # produces garbage signals at those positions (the `<image>` token was never
+    # trained to have meaningful per-layer inputs).
+    original_per_layer = getattr(inner, "embed_tokens_per_layer", None)  # type: ignore
+    if original_per_layer is not None and image_token_id is not None:
+
+        def _clean_per_layer(input_ids: mx.array) -> mx.array:
+            clean_ids = mx.where(
+                input_ids == image_token_id, mx.zeros_like(input_ids), input_ids
+            )
+            return original_per_layer(clean_ids)  # type: ignore
+
+        inner.embed_tokens_per_layer = _clean_per_layer
+
+    try:
+        yield
+    finally:
+        inner.embed_tokens = original_embed
+        if original_per_layer is not None and image_token_id is not None:
+            inner.embed_tokens_per_layer = original_per_layer
 
 
 class PrefillCancelled(BaseException):
@@ -314,7 +398,9 @@ def warmup_inference(
 ) -> int:
     logger.info(f"warming up inference for instance: {model_id}")
 
-    content = "Prompt to warm up the inference engine. Repeat this."
+    content = InputMessageContent(
+        "Prompt to warm up the inference engine. Repeat this."
+    )
 
     warmup_task_params = TextGenerationTaskParams(
         model=model_id,
@@ -447,6 +533,7 @@ def mlx_generate(
     on_prefill_progress: Callable[[int, int], None] | None = None,
     distributed_prompt_progress_callback: Callable[[], None] | None = None,
     on_generation_token: Callable[[], None] | None = None,
+    vision_processor: VisionProcessor | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -457,6 +544,27 @@ def mlx_generate(
     # Encode prompt once at the top and fix unmatched think tags
     all_prompt_tokens = encode_prompt(tokenizer, prompt)
     all_prompt_tokens = fix_unmatched_think_end_tokens(all_prompt_tokens, tokenizer)
+    min_prefix_hit_length = max(1000, system_prompt_token_count(task, tokenizer))
+
+    vision: VisionResult | None = None
+    if vision_processor is not None:
+        try:
+            vision = prepare_vision(
+                images=task.images,
+                chat_template_messages=task.chat_template_messages,
+                vision_processor=vision_processor,
+                tokenizer=tokenizer,
+                model=model,
+                model_id=task.model,
+                task_params=task,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Vision processing failed, falling back to text-only"
+            )
+    if vision is not None:
+        all_prompt_tokens = vision.prompt_tokens
+    media_regions: list[MediaRegion] = vision.media_regions if vision else []
 
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench
@@ -471,7 +579,7 @@ def mlx_generate(
         prompt_tokens = all_prompt_tokens
     else:
         caches, prompt_tokens, matched_index = kv_prefix_cache.get_kv_cache(
-            model, all_prompt_tokens
+            model, all_prompt_tokens, media_regions=media_regions
         )
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
         if prefix_hit_length > 0:
@@ -505,17 +613,28 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
-    # Prefill cache with all tokens except the last one
-    prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
-        model,
-        tokenizer,
-        sampler,
-        prompt_tokens[:-1],
-        caches,
-        group,
-        on_prefill_progress,
-        distributed_prompt_progress_callback,
+    maybe_vision_ctx = (
+        patch_embed_tokens(
+            model,
+            vision.embeddings,
+            prefix_hit_length,
+            len(prompt_tokens) - 1,
+            image_token_id=vision.image_token_id,
+        )
+        if vision is not None
+        else contextlib.nullcontext()
     )
+    with maybe_vision_ctx:
+        prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
+            model,
+            tokenizer,
+            sampler,
+            prompt_tokens[:-1],
+            caches,
+            group,
+            on_prefill_progress,
+            distributed_prompt_progress_callback,
+        )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
     # stream_generate starts from the last token
@@ -526,11 +645,6 @@ def mlx_generate(
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
     usage: Usage | None = None
-    in_thinking = False
-    reasoning_tokens = 0
-    think_start = tokenizer.think_start
-    think_end = tokenizer.think_end
-
     logger.info("Starting decode")
     mx_barrier(group)
 
@@ -551,13 +665,6 @@ def mlx_generate(
     ):
         generated_text_parts.append(out.text)
         accumulated_text += out.text
-
-        if think_start is not None and out.text == think_start:
-            in_thinking = True
-        elif think_end is not None and out.text == think_end:
-            in_thinking = False
-        if in_thinking:
-            reasoning_tokens += 1
 
         # Check for stop sequences
         text = out.text
@@ -602,9 +709,7 @@ def mlx_generate(
                 prompt_tokens_details=PromptTokensDetails(
                     cached_tokens=prefix_hit_length
                 ),
-                completion_tokens_details=CompletionTokensDetails(
-                    reasoning_tokens=reasoning_tokens
-                ),
+                completion_tokens_details=CompletionTokensDetails(reasoning_tokens=0),
             )
 
         # Extract logprobs from the full vocabulary logprobs array
@@ -646,8 +751,8 @@ def mlx_generate(
                     else 0.0
                 )
                 if matched_index is not None and (
-                    prefix_hit_length > 1000
-                    or hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
+                    prefix_hit_length >= min_prefix_hit_length
+                    and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
                 ):
                     kv_prefix_cache.update_kv_cache(
                         matched_index,
@@ -655,10 +760,14 @@ def mlx_generate(
                         caches,
                         cache_snapshots,
                         restore_pos=prefix_hit_length,
+                        media_regions=media_regions,
                     )
                 else:
                     kv_prefix_cache.add_kv_cache(
-                        full_prompt_tokens, caches, cache_snapshots
+                        full_prompt_tokens,
+                        caches,
+                        cache_snapshots,
+                        media_regions=media_regions,
                     )
 
         if on_generation_token is not None:

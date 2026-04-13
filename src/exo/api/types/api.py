@@ -60,6 +60,14 @@ class ChatCompletionMessageText(BaseModel):
     text: str
 
 
+class ChatCompletionMessageImageUrl(BaseModel):
+    type: Literal["image_url"] = "image_url"
+    image_url: dict[str, str]  # {"url": "data:image/png;base64,..."}
+
+
+ChatCompletionContentPart = ChatCompletionMessageText | ChatCompletionMessageImageUrl
+
+
 class ToolCallItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str
@@ -76,7 +84,7 @@ class ToolCall(BaseModel):
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]
     content: (
-        str | ChatCompletionMessageText | list[ChatCompletionMessageText] | None
+        str | ChatCompletionContentPart | list[ChatCompletionContentPart] | None
     ) = None
     reasoning_content: str | None = None
     name: str | None = None
@@ -419,6 +427,15 @@ class StartDownloadResponse(CamelCaseModel):
 
 
 class DeleteDownloadResponse(CamelCaseModel):
+    command_id: CommandId
+
+
+class CancelDownloadParams(CamelCaseModel):
+    target_node_id: NodeId
+    model_id: ModelId
+
+
+class CancelDownloadResponse(CamelCaseModel):
     command_id: CommandId
 
 

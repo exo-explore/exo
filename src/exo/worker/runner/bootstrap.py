@@ -27,10 +27,10 @@ def entrypoint(
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
-    if fast_synch_override != "off":
-        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
-    else:
+    if fast_synch_override == "false":
         os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+    else:
+        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 

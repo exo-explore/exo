@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import hashlib
 import json
 import random
 import time
@@ -7,11 +8,11 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import anyio
-from anyio import BrokenResourceError
+from anyio import BrokenResourceError, ClosedResourceError
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -44,6 +45,7 @@ from exo.api.adapters.responses import (
     generate_responses_stream,
     responses_request_to_text_generation,
 )
+from exo.api.keepalive import with_sse_keepalive
 from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
@@ -52,6 +54,8 @@ from exo.api.types import (
     BenchImageGenerationResponse,
     BenchImageGenerationTaskParams,
     CancelCommandResponse,
+    CancelDownloadParams,
+    CancelDownloadResponse,
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionRequest,
@@ -144,6 +148,7 @@ from exo.shared.types.chunks import (
 )
 from exo.shared.types.commands import (
     AddCustomModelCard,
+    CancelDownload,
     Command,
     CreateInstance,
     DeleteCustomModelCard,
@@ -166,10 +171,21 @@ from exo.shared.types.events import (
     ChunkGenerated,
     Event,
     IndexedEvent,
+    InstanceDeleted,
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
+from exo.shared.types.tasks import (
+    ImageEdits as ImageEditsTask,
+)
+from exo.shared.types.tasks import (
+    ImageGeneration as ImageGenerationTask,
+)
+from exo.shared.types.tasks import (
+    TextGeneration as TextGenerationTask,
+)
+from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
@@ -342,10 +358,12 @@ class API:
         self.app.get("/ollama/api/ps")(self.ollama_ps)
         self.app.get("/ollama/api/version")(self.ollama_version)
 
-        self.app.get("/state")(lambda: self.state)
+        self.app.get("/state")(self.get_state)
+        self.app.get("/state/{path:path}")(self.get_state)
         self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
+        self.app.post("/download/cancel")(self.cancel_download)
         self.app.get("/v1/traces")(self.list_traces)
         self.app.post("/v1/traces/delete")(self.delete_traces)
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
@@ -353,6 +371,24 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
+
+    def get_state(self, path: str = ""):
+        if path == "":
+            return self.state
+        try:
+            x = self.state.model_dump(by_alias=True)
+            for attr in path.split("/"):
+                if attr != "":
+                    if isinstance(x, dict):
+                        x = x[attr]  # pyright: ignore[reportUnknownVariableType]
+                    elif isinstance(x, list):
+                        x = x[int(attr)]  # pyright: ignore[reportUnknownVariableType]
+            return cast(Any, x)  # pyright: ignore[reportAny]
+        except Exception as e:
+            raise HTTPException(
+                status_code=404,
+                detail=f"unable to find path '{path.replace('/', '.')}' in state json",
+            ) from e
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -701,24 +737,89 @@ class API:
             "TODO: we should send a notification to the user to download the model"
         )
 
+    _sent_image_hashes: set[str] = set()
+
+    async def _send_text_generation_with_images(
+        self, task_params: TextGenerationTaskParams
+    ) -> TextGeneration:
+        images = task_params.images
+        if not images:
+            command = TextGeneration(task_params=task_params)
+            await self._send(command)
+            return command
+
+        hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
+
+        cached_hashes: dict[int, str] = {}
+        new_images: list[tuple[int, str]] = []
+        for idx, (img, h) in enumerate(zip(images, hashes, strict=True)):
+            if h in self._sent_image_hashes:
+                cached_hashes[idx] = h
+            else:
+                self._sent_image_hashes.add(h)
+                new_images.append((idx, img))
+
+        wrapped_hashes = {idx: Base64Image(h) for idx, h in cached_hashes.items()}
+
+        if not new_images:
+            task_params = task_params.model_copy(
+                update={"images": [], "image_hashes": wrapped_hashes}
+            )
+            command = TextGeneration(task_params=task_params)
+            await self._send(command)
+            return command
+
+        all_chunks: list[tuple[int, str]] = []
+        for img_idx, img_data in new_images:
+            for i in range(0, len(img_data), EXO_MAX_CHUNK_SIZE):
+                all_chunks.append((img_idx, img_data[i : i + EXO_MAX_CHUNK_SIZE]))
+
+        task_params = task_params.model_copy(
+            update={
+                "images": [],
+                "image_hashes": wrapped_hashes,
+                "total_input_chunks": len(all_chunks),
+                "image_count": len(new_images),
+            }
+        )
+        command = TextGeneration(task_params=task_params)
+
+        for global_idx, (img_idx, chunk_data) in enumerate(all_chunks):
+            await self._send(
+                SendInputChunk(
+                    chunk=InputImageChunk(
+                        model=task_params.model,
+                        command_id=command.command_id,
+                        data=chunk_data,
+                        chunk_index=global_idx,
+                        total_chunks=len(all_chunks),
+                        image_index=img_idx,
+                    )
+                )
+            )
+
+        await self._send(command)
+        return command
+
     async def chat_completions(
         self, payload: ChatCompletionRequest
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
-        task_params = chat_request_to_text_generation(payload)
+        task_params = await chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
-                generate_chat_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                with_sse_keepalive(
+                    generate_chat_stream(
+                        command.command_id,
+                        self._token_chunk_stream(command.command_id),
+                    ),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -739,7 +840,7 @@ class API:
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
     ) -> BenchChatCompletionResponse:
-        task_params = chat_request_to_text_generation(payload)
+        task_params = await chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )
@@ -747,8 +848,7 @@ class API:
 
         task_params = task_params.model_copy(update={"stream": False, "bench": True})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         return await self._collect_text_generation_with_stats(command.command_id)
 
@@ -1304,21 +1404,22 @@ class API:
         self, payload: ClaudeMessagesRequest
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
-        task_params = claude_request_to_text_generation(payload)
+        task_params = await claude_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
-                generate_claude_stream(
-                    command.command_id,
-                    payload.model,
-                    self._token_chunk_stream(command.command_id),
+                with_sse_keepalive(
+                    generate_claude_stream(
+                        command.command_id,
+                        payload.model,
+                        self._token_chunk_stream(command.command_id),
+                    ),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1341,19 +1442,20 @@ class API:
         self, payload: ResponsesRequest
     ) -> ResponsesResponse | StreamingResponse:
         """OpenAI Responses API."""
-        task_params = responses_request_to_text_generation(payload)
+        task_params = await responses_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(task_params.model)
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
-                generate_responses_stream(
-                    command.command_id,
-                    payload.model,
-                    self._token_chunk_stream(command.command_id),
+                with_sse_keepalive(
+                    generate_responses_stream(
+                        command.command_id,
+                        payload.model,
+                        self._token_chunk_stream(command.command_id),
+                    ),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1389,8 +1491,7 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
@@ -1426,8 +1527,7 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = TextGeneration(task_params=task_params)
-        await self._send(command)
+        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
@@ -1567,6 +1667,7 @@ class API:
                     quantization=card.quantization,
                     base_model=card.base_model,
                     capabilities=card.capabilities,
+                    context_length=card.context_length,
                 )
                 for card in cards
             ]
@@ -1710,7 +1811,7 @@ class API:
                         assert isinstance(event.chunk, ImageChunk)
                         try:
                             await queue.send(event.chunk)
-                        except BrokenResourceError:
+                        except (BrokenResourceError, ClosedResourceError):
                             self._image_generation_queues.pop(event.command_id, None)
                     if queue := self._text_generation_queues.get(
                         event.command_id, None
@@ -1718,10 +1819,26 @@ class API:
                         assert not isinstance(event.chunk, ImageChunk)
                         try:
                             await queue.send(event.chunk)
-                        except BrokenResourceError:
+                        except (BrokenResourceError, ClosedResourceError):
                             self._text_generation_queues.pop(event.command_id, None)
+                if isinstance(event, InstanceDeleted):
+                    self._close_streams_for_instance(event.instance_id)
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
+
+    def _close_streams_for_instance(self, instance_id: InstanceId) -> None:
+        """Close any active generation streams for commands running on the given instance."""
+        for task in self.state.tasks.values():
+            if task.instance_id != instance_id:
+                continue
+            if not isinstance(
+                task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
+            ):
+                continue
+            if sender := self._text_generation_queues.pop(task.command_id, None):
+                sender.close()
+            if sender := self._image_generation_queues.pop(task.command_id, None):
+                sender.close()
 
     def _save_merged_trace(self, event: TracesMerged) -> None:
         traces = [
@@ -1784,6 +1901,17 @@ class API:
         )
         await self._send_download(command)
         return DeleteDownloadResponse(command_id=command.command_id)
+
+    async def cancel_download(
+        self,
+        payload: CancelDownloadParams,
+    ) -> CancelDownloadResponse:
+        command = CancelDownload(
+            target_node_id=payload.target_node_id,
+            model_id=payload.model_id,
+        )
+        await self._send_download(command)
+        return CancelDownloadResponse(command_id=command.command_id)
 
     @staticmethod
     def _get_trace_path(task_id: str) -> Path:

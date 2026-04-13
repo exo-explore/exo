@@ -27,6 +27,12 @@ class ResponseInputTextPart(BaseModel, frozen=True):
     text: str
 
 
+class ResponseInputImagePart(BaseModel, frozen=True):
+    type: Literal["input_image"] = "input_image"
+    image_url: str | None = None
+    detail: str | None = None
+
+
 class ResponseOutputTextPart(BaseModel, frozen=True):
     """Output text content part (used when replaying assistant messages in input)."""
 
@@ -34,7 +40,9 @@ class ResponseOutputTextPart(BaseModel, frozen=True):
     text: str
 
 
-ResponseContentPart = ResponseInputTextPart | ResponseOutputTextPart
+ResponseContentPart = (
+    ResponseInputTextPart | ResponseInputImagePart | ResponseOutputTextPart
+)
 
 
 # Request input item types
@@ -67,8 +75,228 @@ class FunctionCallOutputInputItem(BaseModel, frozen=True):
     status: ResponseStatus | None = None
 
 
+class ReasoningInputItem(BaseModel, frozen=True):
+    type: Literal["reasoning"] = "reasoning"
+    id: str | None = None
+    summary: list[dict[str, Any]] | None = None
+    encrypted_content: str | None = None
+    content: list[dict[str, Any]] | None = None
+    status: ResponseStatus | None = None
+
+
+class ComputerCallInputItem(BaseModel, frozen=True):
+    type: Literal["computer_call"] = "computer_call"
+    id: str | None = None
+    call_id: str = ""
+    action: dict[str, Any] = {}
+    status: ResponseStatus | None = None
+
+
+class ComputerCallOutputInputItem(BaseModel, frozen=True):
+    type: Literal["computer_call_output"] = "computer_call_output"
+    id: str | None = None
+    call_id: str = ""
+    output: dict[str, Any] | str = ""
+    status: ResponseStatus | None = None
+
+
+class WebSearchCallInputItem(BaseModel, frozen=True):
+    type: Literal["web_search_call"] = "web_search_call"
+    id: str | None = None
+    call_id: str = ""
+    query: str = ""
+    status: ResponseStatus | None = None
+
+
+class FileSearchCallInputItem(BaseModel, frozen=True):
+    type: Literal["file_search_call"] = "file_search_call"
+    id: str | None = None
+    call_id: str = ""
+    queries: list[str] = []
+    results: list[dict[str, Any]] | None = None
+    status: ResponseStatus | None = None
+
+
+class CodeInterpreterCallInputItem(BaseModel, frozen=True):
+    type: Literal["code_interpreter_call"] = "code_interpreter_call"
+    id: str | None = None
+    call_id: str = ""
+    code: str = ""
+    results: list[dict[str, Any]] | None = None
+    status: ResponseStatus | None = None
+
+
+class ImageGenerationCallInputItem(BaseModel, frozen=True):
+    type: Literal["image_generation_call"] = "image_generation_call"
+    id: str | None = None
+    call_id: str = ""
+    prompt: str = ""
+    result: dict[str, Any] | None = None
+    status: ResponseStatus | None = None
+
+
+class LocalShellCallInputItem(BaseModel, frozen=True):
+    type: Literal["local_shell_call"] = "local_shell_call"
+    id: str | None = None
+    call_id: str = ""
+    action: dict[str, Any] = {}
+    status: ResponseStatus | None = None
+
+
+class LocalShellCallOutputInputItem(BaseModel, frozen=True):
+    type: Literal["local_shell_call_output"] = "local_shell_call_output"
+    id: str | None = None
+    call_id: str = ""
+    output: str = ""
+    status: ResponseStatus | None = None
+
+
+class ShellCallInputItem(BaseModel, frozen=True):
+    type: Literal["shell_call"] = "shell_call"
+    id: str | None = None
+    call_id: str = ""
+    action: dict[str, Any] = {}
+    status: ResponseStatus | None = None
+
+
+class ShellCallOutputInputItem(BaseModel, frozen=True):
+    type: Literal["shell_call_output"] = "shell_call_output"
+    id: str | None = None
+    call_id: str = ""
+    output: str = ""
+    status: ResponseStatus | None = None
+
+
+class ApplyPatchCallInputItem(BaseModel, frozen=True):
+    type: Literal["apply_patch_call"] = "apply_patch_call"
+    id: str | None = None
+    call_id: str = ""
+    patch: str = ""
+    status: ResponseStatus | None = None
+
+
+class ApplyPatchCallOutputInputItem(BaseModel, frozen=True):
+    type: Literal["apply_patch_call_output"] = "apply_patch_call_output"
+    id: str | None = None
+    call_id: str = ""
+    output: str = ""
+    status: ResponseStatus | None = None
+
+
+class ToolSearchCallInputItem(BaseModel, frozen=True):
+    type: Literal["tool_search_call"] = "tool_search_call"
+    id: str | None = None
+    call_id: str = ""
+    query: str = ""
+    status: ResponseStatus | None = None
+
+
+class ToolSearchOutputInputItem(BaseModel, frozen=True):
+    type: Literal["tool_search_output"] = "tool_search_output"
+    id: str | None = None
+    call_id: str = ""
+    output: str = ""
+    status: ResponseStatus | None = None
+
+
+class McpCallInputItem(BaseModel, frozen=True):
+    type: Literal["mcp_call"] = "mcp_call"
+    id: str | None = None
+    call_id: str = ""
+    name: str = ""
+    arguments: str = ""
+    server_label: str = ""
+    approval_request_id: str | None = None
+    error: str | None = None
+    output: str | None = None
+    status: ResponseStatus | None = None
+
+
+class McpListToolsInputItem(BaseModel, frozen=True):
+    type: Literal["mcp_list_tools"] = "mcp_list_tools"
+    id: str | None = None
+    server_label: str = ""
+    tools: list[dict[str, Any]] = []
+    error: str | None = None
+    status: ResponseStatus | None = None
+
+
+class McpApprovalRequestInputItem(BaseModel, frozen=True):
+    type: Literal["mcp_approval_request"] = "mcp_approval_request"
+    id: str | None = None
+    call_id: str = ""
+    name: str = ""
+    arguments: str = ""
+    server_label: str = ""
+    status: ResponseStatus | None = None
+
+
+class McpApprovalResponseInputItem(BaseModel, frozen=True):
+    type: Literal["mcp_approval_response"] = "mcp_approval_response"
+    id: str | None = None
+    approval_request_id: str = ""
+    approve: bool = True
+    reason: str = ""
+    status: ResponseStatus | None = None
+
+
+class CustomToolCallInputItem(BaseModel, frozen=True):
+    type: Literal["custom_tool_call"] = "custom_tool_call"
+    id: str | None = None
+    call_id: str = ""
+    name: str = ""
+    arguments: str = ""
+    status: ResponseStatus | None = None
+
+
+class CustomToolCallOutputInputItem(BaseModel, frozen=True):
+    type: Literal["custom_tool_call_output"] = "custom_tool_call_output"
+    id: str | None = None
+    call_id: str = ""
+    output: str = ""
+    status: ResponseStatus | None = None
+
+
+class CompactionInputItem(BaseModel, frozen=True):
+    type: Literal["compaction"] = "compaction"
+    id: str | None = None
+    summary: str = ""
+    encrypted_content: str | None = None
+    status: ResponseStatus | None = None
+
+
+class ItemReferenceInputItem(BaseModel, frozen=True):
+    type: Literal["item_reference"] = "item_reference"
+    id: str | None = None
+
+
 ResponseInputItem = (
-    ResponseInputMessage | FunctionCallInputItem | FunctionCallOutputInputItem
+    ResponseInputMessage
+    | FunctionCallInputItem
+    | FunctionCallOutputInputItem
+    | ReasoningInputItem
+    | ComputerCallInputItem
+    | ComputerCallOutputInputItem
+    | WebSearchCallInputItem
+    | FileSearchCallInputItem
+    | CodeInterpreterCallInputItem
+    | ImageGenerationCallInputItem
+    | LocalShellCallInputItem
+    | LocalShellCallOutputInputItem
+    | ShellCallInputItem
+    | ShellCallOutputInputItem
+    | ApplyPatchCallInputItem
+    | ApplyPatchCallOutputInputItem
+    | ToolSearchCallInputItem
+    | ToolSearchOutputInputItem
+    | McpCallInputItem
+    | McpListToolsInputItem
+    | McpApprovalRequestInputItem
+    | McpApprovalResponseInputItem
+    | CustomToolCallInputItem
+    | CustomToolCallOutputInputItem
+    | CompactionInputItem
+    | ItemReferenceInputItem
 )
 
 

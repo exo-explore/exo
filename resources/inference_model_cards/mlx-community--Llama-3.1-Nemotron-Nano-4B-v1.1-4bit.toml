@@ -8,5 +8,7 @@ quantization = "4bit"
 base_model = "NVIDIA Llama-3.1-Nemotron-Nano-4B-v1.1"
 capabilities = ["text"]
 
+context_length = 131072
+
 [storage_size]
 in_bytes = 2538706944

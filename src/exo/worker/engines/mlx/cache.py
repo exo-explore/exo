@@ -1,5 +1,6 @@
 import os
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 import mlx.core as mx
 import psutil
@@ -16,6 +17,9 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType, Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
+
+if TYPE_CHECKING:
+    from exo.worker.engines.mlx.vision import MediaRegion
 
 
 # Fraction of device memory above which LRU eviction kicks in.
@@ -80,6 +84,7 @@ class KVPrefixCache:
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[KVCacheType] = []
         self._snapshots: list[list[CacheSnapshot] | None] = []
+        self._media_regions: list[list["MediaRegion"]] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._access_counter: int = 0
         self._group = group
@@ -89,6 +94,7 @@ class KVPrefixCache:
         self.prompts.clear()
         self.caches.clear()
         self._snapshots.clear()
+        self._media_regions.clear()
         self._last_used.clear()
 
     def add_kv_cache(
@@ -96,12 +102,14 @@ class KVPrefixCache:
         prompt_tokens: mx.array,
         cache: KVCacheType,
         ssm_snapshots: list[CacheSnapshot] | None = None,
+        media_regions: list["MediaRegion"] | None = None,
     ):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         self._evict_if_needed()
         self.prompts.append(prompt_tokens)
         self.caches.append(deepcopy(cache))
         self._snapshots.append(ssm_snapshots)
+        self._media_regions.append(media_regions or [])
         self._access_counter += 1
         self._last_used.append(self._access_counter)
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
@@ -113,6 +121,7 @@ class KVPrefixCache:
         cache: KVCacheType,
         snapshots: list[CacheSnapshot] | None,
         restore_pos: int,
+        media_regions: list["MediaRegion"] | None = None,
     ):
         """Update an existing cache entry in-place."""
         old_snapshots = self._snapshots[index]
@@ -125,6 +134,7 @@ class KVPrefixCache:
         self.prompts[index] = prompt_tokens
         self.caches[index] = deepcopy(cache)
         self._snapshots[index] = merged or None
+        self._media_regions[index] = media_regions or []
         self._access_counter += 1
         self._last_used[index] = self._access_counter
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
@@ -149,6 +159,7 @@ class KVPrefixCache:
         self,
         model: Model,
         prompt_tokens: mx.array,
+        media_regions: list["MediaRegion"] | None = None,
     ) -> tuple[KVCacheType, mx.array, int | None]:
         """Get KV cache for prompt, returning remaining tokens to prefill.
 
@@ -161,8 +172,13 @@ class KVPrefixCache:
         For models with SSM layers (which are ArraysCache in mlx), the cache is trimmed to the
         nearest SSM snapshot position at or before the match point for correctness.
         Same for rotating KV Cache.
+
+        Media region validation: if the token-level prefix match extends into
+        a cached media region whose content_hash differs from the query's, the
+        match is truncated to the start of that region.
         """
         max_length = len(prompt_tokens)
+        query_regions = media_regions or []
 
         best_index: int | None = None
         best_length = 0
@@ -171,6 +187,12 @@ class KVPrefixCache:
         # Find best cache match
         for i, cached_prompt in enumerate(self.prompts):
             length = get_prefix_length(prompt_tokens, cached_prompt)
+            if length > 0:
+                length = self._validate_media_match(
+                    length,
+                    self._media_regions[i],
+                    query_regions,
+                )
             if length >= max_length - 1:
                 best_index, best_length = i, length
                 is_exact = True
@@ -208,6 +230,37 @@ class KVPrefixCache:
 
         return prompt_cache, remaining, best_index
 
+    @staticmethod
+    def _validate_media_match(
+        match_length: int,
+        cached_regions: list["MediaRegion"],
+        query_regions: list["MediaRegion"],
+    ) -> int:
+        if not cached_regions:
+            return match_length
+
+        query_by_start: dict[int, "MediaRegion"] = {
+            r.start_pos: r for r in query_regions
+        }
+
+        for cached_r in cached_regions:
+            if cached_r.start_pos >= match_length:
+                break
+            query_r = query_by_start.get(cached_r.start_pos)
+            if query_r is None:
+                continue
+            if query_r.content_hash != cached_r.content_hash:
+                logger.info(
+                    f"Media region mismatch at pos {cached_r.start_pos}: "
+                    f"cached={cached_r.content_hash[:12]}... "
+                    f"query={query_r.content_hash[:12]}... — "
+                    f"truncating match from {match_length} to {cached_r.start_pos}"
+                )
+                match_length = cached_r.start_pos
+                break
+
+        return match_length
+
     def _evict_if_needed(self):
         """Evict least recently used entries while memory usage is high."""
         if len(self.caches) == 0:
@@ -223,6 +276,7 @@ class KVPrefixCache:
             self.prompts.pop(lru_index)
             self.caches.pop(lru_index)
             self._snapshots.pop(lru_index)
+            self._media_regions.pop(lru_index)
             self._last_used.pop(lru_index)
             logger.info(
                 f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
@@ -284,7 +338,7 @@ def _entry_length(
 
 def cache_length(cache: KVCacheType) -> int:
     """Get the number of tokens in a KV cache."""
-    return max(_entry_length(c) for c in cache)
+    return max((_entry_length(c) for c in cache), default=0)
 
 
 def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:

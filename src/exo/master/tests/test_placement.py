@@ -23,7 +23,11 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import NetworkInterfaceInfo, NodeNetworkInfo
 from exo.shared.types.tasks import TaskId, TaskStatus, TextGeneration
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -481,7 +485,7 @@ def _make_task(
         command_id=CommandId(),
         task_params=TextGenerationTaskParams(
             model=ModelId("test-model"),
-            input=[InputMessage(role="user", content="hello")],
+            input=[InputMessage(role="user", content=InputMessageContent("hello"))],
         ),
     )
 

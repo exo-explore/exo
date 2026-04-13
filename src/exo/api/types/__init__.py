@@ -5,8 +5,12 @@ from .api import BenchChatCompletionResponse as BenchChatCompletionResponse
 from .api import BenchImageGenerationResponse as BenchImageGenerationResponse
 from .api import BenchImageGenerationTaskParams as BenchImageGenerationTaskParams
 from .api import CancelCommandResponse as CancelCommandResponse
+from .api import CancelDownloadParams as CancelDownloadParams
+from .api import CancelDownloadResponse as CancelDownloadResponse
 from .api import ChatCompletionChoice as ChatCompletionChoice
+from .api import ChatCompletionContentPart as ChatCompletionContentPart
 from .api import ChatCompletionMessage as ChatCompletionMessage
+from .api import ChatCompletionMessageImageUrl as ChatCompletionMessageImageUrl
 from .api import ChatCompletionMessageText as ChatCompletionMessageText
 from .api import ChatCompletionRequest as ChatCompletionRequest
 from .api import ChatCompletionResponse as ChatCompletionResponse

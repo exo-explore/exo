@@ -1,3 +1,32 @@
 {
-    "basedpyright.importStrategy": "fromEnvironment"
+    "files.associations": {
+        "*.nix": "nix",
+    },
+    "nix.enableLanguageServer": true,
+    "nix.serverPath": "nixd",
+    "nix.serverSettings": {
+        "nixd": {
+        "formatting": {
+            "command": ["nixpkgs-fmt"]
+        },
+        "nixpkgs": {
+            "expr": "(builtins.getFlake \"path:${workspaceFolder}\").currentSystem.config._module.args.pkgs"
+        },
+        "options": {
+            "flake-parts": {
+                "expr": "(builtins.getFlake \"path:${workspaceFolder}\").debug.options"
+            },
+            "flake-parts-perSystem": {
+                "expr": "(builtins.getFlake \"path:${workspaceFolder}\").currentSystem.options"
+            }
+        }
+      }
+    },
+    "[nix]": {
+        "editor.defaultFormatter": "jnoortheen.nix-ide"
+    },
+    
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "basedpyright.analysis.configFilePath": "${workspaceFolder}/pyproject.toml",
+    "basedpyright.importStrategy": "fromEnvironment",
 }

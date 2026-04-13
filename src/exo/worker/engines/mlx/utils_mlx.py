@@ -5,7 +5,10 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from exo.worker.engines.mlx.vision import VisionProcessor
 
 # Monkey-patch for transformers 5.x compatibility
 # Kimi's tokenization_kimi.py imports bytes_to_unicode from the old location
@@ -42,7 +45,7 @@ from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import TaskId, TextGeneration
-from exo.shared.types.text_generation import TextGenerationTaskParams
+from exo.shared.types.text_generation import ChatTemplateValue, TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
     MlxJacclInstance,
@@ -168,7 +171,7 @@ def load_mlx_items(
     group: Group | None,
     on_timeout: TimeoutCallback | None,
     on_layer_loaded: LayerLoadedCallback | None,
-) -> tuple[Model, TokenizerWrapper]:
+) -> "tuple[Model, TokenizerWrapper, VisionProcessor | None]":
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
@@ -210,7 +213,18 @@ def load_mlx_items(
 
     mx.clear_cache()
 
-    return cast(Model, model), tokenizer
+    vision_config = bound_instance.bound_shard.model_card.vision
+
+    if vision_config is not None:
+        from exo.worker.engines.mlx.vision import VisionProcessor
+
+        vision_processor: VisionProcessor | None = VisionProcessor(
+            vision_config, bound_instance.bound_shard.model_card.model_id
+        )
+    else:
+        vision_processor = None
+
+    return cast(Model, model), tokenizer, vision_processor
 
 
 def shard_and_load(
@@ -322,6 +336,8 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     elif "qwen3.5" in model_id_lower or "qwen-3.5" in model_id_lower:
         # For Qwen3.5: 248046 (<|im_end|>), 248044 (<|endoftext|>)
         return [248046, 248044]
+    elif "gemma-4" in model_id_lower or "gemma-3" in model_id_lower:
+        return [1, 106, 50]
     return None
 
 
@@ -393,22 +409,12 @@ def load_tokenizer_for_model_id(
             tool_parser=_parse_kimi_tool_calls,
         )
 
+    # We should really consider going back to mlx lm load to get tokenizer
     tokenizer = load_tokenizer(
         model_path,
         tokenizer_config_extra={"trust_remote_code": trust_remote_code},
         eos_token_ids=eos_token_ids,
     )
-
-    if "gemma-3" in model_id_lower:
-        gemma_3_eos_id = 1
-        gemma_3_end_of_turn_id = 106
-        if tokenizer.eos_token_ids is not None:
-            if gemma_3_end_of_turn_id not in tokenizer.eos_token_ids:
-                tokenizer.eos_token_ids = list(tokenizer.eos_token_ids) + [
-                    gemma_3_end_of_turn_id
-                ]
-        else:
-            tokenizer.eos_token_ids = [gemma_3_eos_id, gemma_3_end_of_turn_id]
 
     return tokenizer
 
@@ -489,11 +495,39 @@ def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
     return "deepseek-v3.2" in task_params.model.lower()
 
 
-def apply_chat_template(
+def consolidate_system_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    System messages almost exclusively must go at the start of a message
+    and there must only be a single one.
+
+    Also, Codex sends "developer" messages which are just system prompts.
+    """
+    system_parts: list[str] = []
+    non_system: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.get("role") in ("system", "developer"):
+            content = cast(str, msg.get("content", ""))
+            if content:
+                system_parts.append(content)
+        else:
+            non_system.append(msg)
+    formatted_messages = non_system
+    if system_parts:
+        formatted_messages.insert(
+            0, {"role": "system", "content": "\n".join(system_parts)}
+        )
+    return formatted_messages
+
+
+def render_chat_template(
     tokenizer: TokenizerWrapper,
+    messages: list[dict[str, Any]],
     task_params: TextGenerationTaskParams,
 ) -> str:
-    """Convert TextGenerationTaskParams to a chat template prompt.
+    """
+    Convert TextGenerationTaskParams to a chat template prompt.
 
     Converts the internal format (input + instructions) to a messages list
     that can be processed by the tokenizer's chat template.
@@ -501,23 +535,7 @@ def apply_chat_template(
     When chat_template_messages is available (from Chat Completions API),
     uses those directly to preserve tool_calls, thinking, and other fields.
     """
-    formatted_messages: list[dict[str, Any]] = []
-    if task_params.chat_template_messages is not None:
-        # Use pre-formatted messages that preserve tool_calls, thinking, etc.
-        formatted_messages = list(task_params.chat_template_messages)
-    else:
-        # Add system message (instructions) if present
-        if task_params.instructions:
-            formatted_messages.append(
-                {"role": "system", "content": task_params.instructions}
-            )
-
-        # Convert input to messages
-        for msg in task_params.input:
-            if not msg.content:
-                logger.warning("Received message with empty content, skipping")
-                continue
-            formatted_messages.append({"role": msg.role, "content": msg.content})
+    formatted_messages = consolidate_system_messages(messages)
 
     # For assistant prefilling, append content after templating to avoid a closing turn token.
     partial_assistant_content: str | None = None
@@ -578,9 +596,56 @@ def apply_chat_template(
     if partial_assistant_content:
         prompt += partial_assistant_content
 
+    return prompt
+
+
+def apply_chat_template(
+    tokenizer: TokenizerWrapper,
+    task_params: TextGenerationTaskParams,
+) -> str:
+    messages: list[dict[str, ChatTemplateValue]] = []
+    if task_params.chat_template_messages is not None:
+        # Use pre-formatted messages that preserve tool_calls, thinking, etc.
+        messages = task_params.chat_template_messages
+    else:
+        # Add system message (instructions) if present
+        if task_params.instructions:
+            messages.append({"role": "system", "content": task_params.instructions})
+
+        # Convert input to messages
+        for msg in task_params.input:
+            if not msg.content:
+                logger.warning("Received message with empty content, skipping")
+                continue
+            messages.append({"role": msg.role, "content": msg.content})
+
+    prompt = render_chat_template(tokenizer, messages, task_params)
     logger.info(prompt)
 
     return prompt
+
+
+def system_prompt_token_count(
+    task_params: TextGenerationTaskParams,
+    tokenizer: TokenizerWrapper,
+) -> int:
+    """Approximate token count of the system prompt portion of the input."""
+    parts: list[str] = []
+    if task_params.chat_template_messages is not None:
+        for msg in task_params.chat_template_messages:
+            if msg.get("role") in ("system", "developer"):
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    parts.append(content)
+    else:
+        if task_params.instructions:
+            parts.append(task_params.instructions)
+        for msg in task_params.input:
+            if msg.role in ("system", "developer"):
+                parts.append(msg.content)
+    if len(parts) == 0:
+        return 0
+    return len(tokenizer.encode(" ".join(parts), add_special_tokens=False))
 
 
 def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> bool:
@@ -598,21 +663,37 @@ def fix_unmatched_think_end_tokens(
 ) -> mx.array:
     if not tokenizer.has_thinking:
         return tokens
-    assert tokenizer.think_start_id
-    assert tokenizer.think_end_id
-    think_start_id: int = tokenizer.think_start_id
-    think_end_id: int = tokenizer.think_end_id
+    assert tokenizer.think_start_tokens
+    assert tokenizer.think_end_tokens
+    think_start_tokens: list[int] = tokenizer.think_start_tokens
+    think_end_tokens: list[int] = tokenizer.think_end_tokens
     token_list: list[int] = cast(list[int], tokens.tolist())
     result: list[int] = []
+
     depth = 0
+    accumulated_think_start_length = 0
+    accumulated_think_end_length = 0
+
     for token in token_list:
-        if token == think_start_id:
-            depth += 1
-        elif token == think_end_id:
-            if depth == 0:
-                result.append(think_start_id)
-            else:
-                depth -= 1
+        if token == think_start_tokens[accumulated_think_start_length]:
+            accumulated_think_start_length += 1
+            if accumulated_think_start_length == len(think_start_tokens):
+                depth += 1
+                accumulated_think_start_length = 0
+
+        elif token == think_end_tokens[accumulated_think_end_length]:
+            accumulated_think_end_length += 1
+            if accumulated_think_end_length == len(think_end_tokens):
+                if depth == 0:
+                    result.extend(think_start_tokens)
+                else:
+                    depth -= 1
+                accumulated_think_end_length = 0
+
+        else:
+            accumulated_think_start_length = 0
+            accumulated_think_end_length = 0
+
         result.append(token)
     return mx.array(result)
 

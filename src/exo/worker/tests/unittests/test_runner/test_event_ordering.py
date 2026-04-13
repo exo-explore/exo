@@ -27,7 +27,11 @@ from exo.shared.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -91,7 +95,7 @@ SHUTDOWN_TASK = Shutdown(
 
 CHAT_PARAMS = TextGenerationTaskParams(
     model=MODEL_A_ID,
-    input=[InputMessage(role="user", content="hello")],
+    input=[InputMessage(role="user", content=InputMessageContent("hello"))],
     stream=True,
     max_output_tokens=4,
     temperature=0.0,
@@ -115,7 +119,9 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
 def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     # initialize_mlx returns a mock group
     monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
-    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer)))
+    monkeypatch.setattr(
+        mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer, None))
+    )
     monkeypatch.setattr(mlx_batch_generator, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_batch_generator, "_check_for_debug_prompts", nothin)
     monkeypatch.setattr(mlx_batch_generator, "mx_any", make_nothin(False))

@@ -270,6 +270,7 @@
 
   let mounted = $state(false);
   let localNodeId = $state<string | null>(null);
+  let pendingFirefoxQuery = $state<string | null>(null); // ?q= param deferred until state loads
 
   // ── Onboarding wizard state ──
   const ONBOARDING_COMPLETE_KEY = "exo-onboarding-complete";
@@ -1314,6 +1315,20 @@
       return;
     }
 
+    // Firefox AI sidebar integration: handle ?q= query parameter
+    // Firefox's built-in AI sidebar (about:config: browser.ml.chat.enabled) sends
+    // the user's prompt as ?q=<URL-encoded prompt> to the configured provider URL.
+    // See: https://support.mozilla.org/en-US/kb/ai-chatbot
+    const queryParam = params.get("q");
+    if (queryParam) {
+      // Clean up the URL to prevent re-submission on page refresh
+      window.history.replaceState({}, "", window.location.pathname);
+      // Defer the auto-send until cluster state is loaded (topologyData,
+      // instances, availableMemory) so that model auto-selection works
+      // correctly. The $effect below will pick this up once data is ready.
+      pendingFirefoxQuery = queryParam;
+    }
+
     // Check server-side onboarding state (persisted in ~/.exo)
     try {
       const res = await fetch("/onboarding");
@@ -1331,6 +1346,18 @@
     // Fallback: check localStorage
     if (!localStorage.getItem(ONBOARDING_COMPLETE_KEY)) {
       onboardingStep = 1;
+    }
+  });
+
+  // Deferred Firefox AI sidebar auto-send: wait for cluster state and model
+  // list before submitting. Both data (from /state polling) and models (from
+  // the async /models fetch in onMount) must be loaded for handleAutoSend to
+  // correctly auto-select a model.
+  $effect(() => {
+    if (pendingFirefoxQuery && data && models.length > 0) {
+      const query = pendingFirefoxQuery;
+      pendingFirefoxQuery = null;
+      handleChatSend(query);
     }
   });
 

@@ -139,6 +139,8 @@
         return "🖼";
       case "text":
         return "📄";
+      case "pdf":
+        return "📑";
       default:
         return "📎";
     }
