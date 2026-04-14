@@ -192,7 +192,6 @@ class Node:
                         self.router.receiver(topics.GLOBAL_EVENTS),
                         self.router.sender(topics.LOCAL_EVENTS),
                     )
-                    self._tg.start_soon(self.event_router.run)
 
                 if (
                     result.session_id.master_node_id == self.node_id
@@ -258,6 +257,7 @@ class Node:
                         self._tg.start_soon(self.worker.run)
                     if self.api:
                         self.api.reset(result.won_clock, self.event_router.receiver())
+                    self._tg.start_soon(self.event_router.run)
                 else:
                     if self.api:
                         self.api.unpause(result.won_clock)
