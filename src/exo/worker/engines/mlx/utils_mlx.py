@@ -59,8 +59,6 @@ from exo.shared.types.worker.shards import (
 )
 from exo.worker.engines.mlx.auto_parallel import (
     LayerLoadedCallback,
-    TimeoutCallback,
-    eval_with_timeout,
     get_inner_model,
     get_layers,
     pipeline_auto_parallel,
@@ -82,10 +80,6 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
             else model_shard_meta.world_size
         )
     )
-
-
-class ModelLoadingTimeoutError(Exception):
-    pass
 
 
 class HostList(RootModel[list[str]]):
@@ -169,7 +163,6 @@ def initialize_mlx(
 def load_mlx_items(
     bound_instance: BoundInstance,
     group: Group | None,
-    on_timeout: TimeoutCallback | None,
     on_layer_loaded: LayerLoadedCallback | None,
 ) -> "tuple[Model, TokenizerWrapper, VisionProcessor | None]":
     if group is None:
@@ -201,7 +194,6 @@ def load_mlx_items(
         model, tokenizer = shard_and_load(
             bound_instance.bound_shard,
             group=group,
-            on_timeout=on_timeout,
             on_layer_loaded=on_layer_loaded,
         )
         end_time = time.perf_counter()
@@ -230,7 +222,6 @@ def load_mlx_items(
 def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
-    on_timeout: TimeoutCallback | None,
     on_layer_loaded: LayerLoadedCallback | None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
@@ -260,27 +251,16 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
-    # Estimate timeout based on model size (5x default for large queued workloads)
-    base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "300"))
-    model_size = get_weights_size(shard_metadata)
-    timeout_seconds = base_timeout + model_size.in_gb
-    logger.info(
-        f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
-        f"(model size: {model_size.in_gb:.1f}GB)"
-    )
-
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(
-                model, group, timeout_seconds, on_timeout, on_layer_loaded
-            )
+            model = tensor_auto_parallel(model, group, on_layer_loaded)
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = pipeline_auto_parallel(
                 model, group, shard_metadata, on_layer_loaded=on_layer_loaded
             )
-            eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
+            mx.eval(model.parameters())
         case CfgShardMetadata():
             raise ValueError(
                 "CfgShardMetadata is not supported for text model loading - "
