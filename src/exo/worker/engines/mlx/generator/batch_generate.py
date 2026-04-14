@@ -457,6 +457,7 @@ class ExoBatchGenerator:
 
     def close(self) -> None:
         self._mlx_gen.close()
+        mx.clear_cache()
 
     def _save_prefix_cache(
         self,
