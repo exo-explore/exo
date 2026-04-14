@@ -41,7 +41,7 @@ _BUILTIN_CARD_DIRS = [
 _card_cache: dict[ModelId, "ModelCard"] = {}
 
 
-def _detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
+def detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
     normalized = model_id.normalize()
     for model_dir in [d / normalized for d in EXO_MODELS_DIRS]:
         config_path = model_dir / "config.json"
@@ -66,7 +66,7 @@ async def _load_cards_from_dir(directory: Path, *, is_custom: bool) -> None:
             if is_custom:
                 card = card.model_copy(update={"is_custom": True})
             if card.vision is None:
-                vision = _detect_vision_from_config(card.model_id)
+                vision = detect_vision_from_config(card.model_id)
                 if vision is not None:
                     card = card.model_copy(update={"vision": vision})
             if card.model_id not in _card_cache:
