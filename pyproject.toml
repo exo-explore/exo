@@ -65,13 +65,21 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
-torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
+torch = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux' and platform_machine!='x86_64'" },
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux' and platform_machine=='x86_64'" }
+]
 vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/fix-arrayscache-leak" }
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [build-system]
@@ -129,7 +137,11 @@ root = "src"
 [tool.uv]
 required-version = ">=0.8.6"
 prerelease = "allow"
-environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
+environments = [
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "sys_platform == 'linux' and platform_machine == 'aarch64'",
+  "sys_platform == 'darwin'",
+]
 
 [tool.uv.extra-build-dependencies]
 miniaudio = ["setuptools", "cffi", "pycparser"]
