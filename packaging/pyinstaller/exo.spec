@@ -71,7 +71,9 @@ MACMON_PATH = shutil.which("macmon")
 if MACMON_PATH is None:
     raise SystemExit(
         "macmon binary not found in PATH. "
-        "Install it via: brew install macmon"
+        "Install the pinned fork used by exo via: "
+        "cargo install --git https://github.com/vladkens/macmon "
+        "--rev a1cd06b6cc0d5e61db24fd8832e74cd992097a7d macmon --force"
     )
 
 BINARIES: list[tuple[str, str]] = [
@@ -120,4 +122,3 @@ coll = COLLECT(
     upx_exclude=[],
     name="exo",
 )
-

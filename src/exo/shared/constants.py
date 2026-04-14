@@ -26,21 +26,35 @@ EXO_CONFIG_HOME = _get_xdg_dir("XDG_CONFIG_HOME", ".config")
 EXO_DATA_HOME = _get_xdg_dir("XDG_DATA_HOME", ".local/share")
 EXO_CACHE_HOME = _get_xdg_dir("XDG_CACHE_HOME", ".cache")
 
-# Models directory (data)
-_EXO_MODELS_DIR_ENV = os.environ.get("EXO_MODELS_DIR", None)
-EXO_MODELS_DIR = (
-    EXO_DATA_HOME / "models"
-    if _EXO_MODELS_DIR_ENV is None
-    else Path.home() / _EXO_MODELS_DIR_ENV
+# Default models directory (always included as first entry in writable dirs)
+_EXO_DEFAULT_MODELS_DIR_ENV = os.environ.get("EXO_DEFAULT_MODELS_DIR", None)
+EXO_DEFAULT_MODELS_DIR = (
+    Path(_EXO_DEFAULT_MODELS_DIR_ENV).expanduser()
+    if _EXO_DEFAULT_MODELS_DIR_ENV is not None
+    else EXO_DATA_HOME / "models"
 )
 
-# Read-only search path for pre-downloaded models (colon-separated directories)
-_EXO_MODELS_PATH_ENV = os.environ.get("EXO_MODELS_PATH", None)
-EXO_MODELS_PATH: tuple[Path, ...] | None = (
-    tuple(Path(p).expanduser() for p in _EXO_MODELS_PATH_ENV.split(":") if p)
-    if _EXO_MODELS_PATH_ENV is not None
-    else None
+
+def _parse_colon_dirs(env_var: str) -> tuple[Path, ...]:
+    raw = os.environ.get(env_var, None)
+    if raw is None:
+        return ()
+    return tuple(Path(p).expanduser() for p in raw.split(":") if p)
+
+
+# Read-only model directories (colon-separated). Never written to or deleted from.
+_EXO_MODELS_READ_ONLY_DIRS_ENV = _parse_colon_dirs("EXO_MODELS_READ_ONLY_DIRS")
+# Writable model directories (colon-separated). Default dir is always prepended.
+_EXO_MODELS_DIRS_ENV = _parse_colon_dirs("EXO_MODELS_DIRS")
+
+# If a directory appears in both lists, treat it as read-only.
+_read_only_set = frozenset(_EXO_MODELS_READ_ONLY_DIRS_ENV)
+EXO_MODELS_DIRS: tuple[Path, ...] = tuple(
+    d
+    for d in (EXO_DEFAULT_MODELS_DIR, *_EXO_MODELS_DIRS_ENV)
+    if d not in _read_only_set
 )
+EXO_MODELS_READ_ONLY_DIRS: tuple[Path, ...] = _EXO_MODELS_READ_ONLY_DIRS_ENV
 
 _RESOURCES_DIR_ENV = os.environ.get("EXO_RESOURCES_DIR", None)
 RESOURCES_DIR = (
@@ -83,3 +97,5 @@ EXO_OFFLINE = os.getenv("EXO_OFFLINE", "false").lower() == "true"
 EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true"
 
 EXO_MAX_CONCURRENT_REQUESTS = int(os.getenv("EXO_MAX_CONCURRENT_REQUESTS", "8"))
+
+EXO_MAX_INSTANCE_RETRIES = 5

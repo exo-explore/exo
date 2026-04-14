@@ -30,7 +30,11 @@ from exo.download.huggingface_utils import (
     get_hf_endpoint,
     get_hf_token,
 )
-from exo.shared.constants import EXO_MODELS_DIR, EXO_MODELS_PATH
+from exo.shared.constants import (
+    EXO_DEFAULT_MODELS_DIR,
+    EXO_MODELS_DIRS,
+    EXO_MODELS_READ_ONLY_DIRS,
+)
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -110,50 +114,87 @@ def map_repo_download_progress_to_download_progress_data(
     )
 
 
-def resolve_model_in_path(model_id: ModelId) -> Path | None:
-    """Search EXO_MODELS_PATH directories for a pre-existing model.
+class InsufficientDiskSpaceError(Exception):
+    """Raised when no writable model directory has enough free space."""
 
-    Checks each directory for the normalized name (org--model).  A candidate
-    is only returned if ``is_model_directory_complete`` confirms all weight
-    files are present.
+
+def resolve_existing_model(model_id: ModelId) -> Path | None:
+    """Search all model directories for a complete, pre-existing model.
+
+    Checks read-only directories first, then writable directories.
+    A candidate is only returned if ``is_model_directory_complete`` confirms
+    all weight files are present.
     """
-    if EXO_MODELS_PATH is None:
-        return None
     normalized = model_id.normalize()
-    for search_dir in EXO_MODELS_PATH:
+    for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
         candidate = search_dir / normalized
         if candidate.is_dir() and is_model_directory_complete(candidate):
             return candidate
     return None
 
 
+def is_read_only_model_dir(model_dir: Path) -> bool:
+    """Check if a model directory lives under a read-only models root."""
+    return any(model_dir.is_relative_to(d) for d in EXO_MODELS_READ_ONLY_DIRS)
+
+
 def build_model_path(model_id: ModelId) -> Path:
-    found = resolve_model_in_path(model_id)
+    found = resolve_existing_model(model_id)
     if found is not None:
         return found
-    return EXO_MODELS_DIR / model_id.normalize()
+    return EXO_DEFAULT_MODELS_DIR / model_id.normalize()
 
 
-async def resolve_model_path_for_repo(model_id: ModelId) -> Path:
-    return (await ensure_models_dir()) / model_id.normalize()
+def select_download_dir(required_bytes: int) -> Path:
+    """Pick the first writable model directory with enough free space.
+
+    Raises ``InsufficientDiskSpaceError`` if none have enough space.
+    """
+    for candidate_dir in EXO_MODELS_DIRS:
+        if not candidate_dir.exists():
+            continue
+        try:
+            usage = shutil.disk_usage(candidate_dir)
+            if usage.free >= required_bytes:
+                return candidate_dir
+        except OSError:
+            continue
+    raise InsufficientDiskSpaceError(
+        f"No writable model directory has {required_bytes / (1024**3):.1f} GiB free. "
+        f"Checked: {[str(d) for d in EXO_MODELS_DIRS]}"
+    )
 
 
-async def ensure_models_dir() -> Path:
-    await aios.makedirs(EXO_MODELS_DIR, exist_ok=True)
-    return EXO_MODELS_DIR
+async def resolve_model_dir(model_id: ModelId) -> Path:
+    """Return the directory for a model's files, creating it if needed.
+
+    Checks all model directories for an existing complete model first,
+    then falls back to the default models directory.
+    """
+    target = await asyncio.to_thread(build_model_path, model_id)
+    await aios.makedirs(target, exist_ok=True)
+    return target
+
+
+async def ensure_cache_dir(model_id: ModelId) -> Path:
+    """Return the cache directory for a model's metadata, creating it if needed."""
+    target = EXO_DEFAULT_MODELS_DIR / "caches" / model_id.normalize()
+    await aios.makedirs(target, exist_ok=True)
+    return target
 
 
 async def delete_model(model_id: ModelId) -> bool:
-    models_dir = await ensure_models_dir()
-    model_dir = models_dir / model_id.normalize()
-    cache_dir = models_dir / "caches" / model_id.normalize()
-
+    """Delete a model from writable directories. Skips read-only dirs."""
+    normalized = model_id.normalize()
     deleted = False
-    if await aios.path.exists(model_dir):
-        await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
-        deleted = True
+    for models_dir in EXO_MODELS_DIRS:
+        model_dir = models_dir / normalized
+        if await aios.path.exists(model_dir):
+            await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
+            deleted = True
 
-    # Also clear cache
+    # Clear cache from default dir
+    cache_dir = EXO_DEFAULT_MODELS_DIR / "caches" / normalized
     if await aios.path.exists(cache_dir):
         await asyncio.to_thread(shutil.rmtree, cache_dir, ignore_errors=False)
 
@@ -161,9 +202,10 @@ async def delete_model(model_id: ModelId) -> bool:
 
 
 async def seed_models(seed_dir: str | Path):
-    """Move models from resources folder to EXO_MODELS_DIR."""
+    """Move models from resources folder to the default models directory."""
     source_dir = Path(seed_dir)
-    dest_dir = await ensure_models_dir()
+    await aios.makedirs(EXO_DEFAULT_MODELS_DIR, exist_ok=True)
+    dest_dir = EXO_DEFAULT_MODELS_DIR
     for path in source_dir.iterdir():
         if path.is_dir() and path.name.startswith("models--"):
             dest_path = dest_dir / path.name
@@ -253,14 +295,16 @@ async def _build_file_list_from_local_directory(
     a local directory must contain a *.safetensors.index.json and
     safetensors listed there.
     """
-    model_dir = (await ensure_models_dir()) / model_id.normalize()
-    if not await aios.path.exists(model_dir):
-        return None
-
-    file_list = await asyncio.to_thread(_scan_model_directory, model_dir, recursive)
-    if not file_list:
-        return None
-    return file_list
+    normalized = model_id.normalize()
+    for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
+        model_dir = search_dir / normalized
+        if await aios.path.exists(model_dir):
+            file_list = await asyncio.to_thread(
+                _scan_model_directory, model_dir, recursive
+            )
+            if file_list:
+                return file_list
+    return None
 
 
 _fetched_file_lists_this_session: set[str] = set()
@@ -273,8 +317,7 @@ async def fetch_file_list_with_cache(
     skip_internet: bool = False,
     on_connection_lost: Callable[[], None] = lambda: None,
 ) -> list[FileListEntry]:
-    target_dir = (await ensure_models_dir()) / "caches" / model_id.normalize()
-    await aios.makedirs(target_dir, exist_ok=True)
+    target_dir = await ensure_cache_dir(model_id)
     cache_file = target_dir / f"{model_id.normalize()}--{revision}--file_list.json"
     cache_key = f"{model_id.normalize()}--{revision}"
 
@@ -329,7 +372,7 @@ async def fetch_file_list_with_cache(
         )
         if local_file_list is not None:
             logger.warning(
-                f"Failed to fetch file list for {model_id} and no cache exists, "
+                f"Failed to fetch file list for {model_id} and no cache exists, using local file list"
             )
             return local_file_list
         raise FileNotFoundError(f"Failed to fetch file list for {model_id}: {e}") from e
@@ -658,8 +701,7 @@ def calculate_repo_progress(
 
 
 async def get_weight_map(model_id: ModelId, revision: str = "main") -> dict[str, str]:
-    target_dir = (await ensure_models_dir()) / model_id.normalize()
-    await aios.makedirs(target_dir, exist_ok=True)
+    target_dir = await resolve_model_dir(model_id)
 
     index_files_dir = snapshot_download(
         repo_id=model_id,
@@ -730,27 +772,40 @@ async def download_shard(
     if not skip_download:
         logger.debug(f"Downloading {shard.model_card.model_id=}")
 
+    model_id = shard.model_card.model_id
     revision = "main"
-    target_dir = await ensure_models_dir() / str(shard.model_card.model_id).replace(
-        "/", "--"
-    )
-    if not skip_download:
-        await aios.makedirs(target_dir, exist_ok=True)
 
     if not allow_patterns:
         allow_patterns = await resolve_allow_patterns(shard)
 
     if not skip_download:
-        logger.debug(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
+        logger.debug(f"Downloading {model_id=} with {allow_patterns=}")
 
     all_start_time = time.time()
-    file_list = await fetch_file_list_with_cache(
-        shard.model_card.model_id,
-        revision,
-        recursive=True,
-        skip_internet=skip_internet,
-        on_connection_lost=on_connection_lost,
-    )
+    try:
+        file_list = await fetch_file_list_with_cache(
+            model_id,
+            revision,
+            recursive=True,
+            skip_internet=skip_internet,
+            on_connection_lost=on_connection_lost,
+        )
+    except FileNotFoundError:
+        not_started_progress = RepoDownloadProgress(
+            repo_id=str(model_id),
+            repo_revision=revision,
+            shard=shard,
+            completed_files=0,
+            total_files=0,
+            downloaded=Memory.from_bytes(0),
+            downloaded_this_session=Memory.from_bytes(0),
+            total=Memory.from_bytes(0),
+            overall_speed=0.0,
+            overall_eta=timedelta(0),
+            status="not_started",
+            file_progress={},
+        )
+        return EXO_DEFAULT_MODELS_DIR / model_id.normalize(), not_started_progress
     filtered_file_list = list(
         filter_repo_objects(
             file_list,
@@ -768,6 +823,15 @@ async def download_shard(
             for f in filtered_file_list
             if "/" in f.path or not f.path.endswith(".safetensors")
         ]
+
+    # Pick a writable directory with enough free space
+    total_size = sum(f.size or 0 for f in filtered_file_list)
+    models_dir = (
+        select_download_dir(total_size) if not skip_download else EXO_DEFAULT_MODELS_DIR
+    )
+    target_dir = models_dir / model_id.normalize()
+    if not skip_download:
+        await aios.makedirs(target_dir, exist_ok=True)
     file_progress: dict[str, RepoFileDownloadProgress] = {}
 
     async def on_progress_wrapper(
@@ -804,7 +868,7 @@ async def download_shard(
             else timedelta(seconds=0)
         )
         file_progress[file.path] = RepoFileDownloadProgress(
-            repo_id=shard.model_card.model_id,
+            repo_id=model_id,
             repo_revision=revision,
             file_path=file.path,
             downloaded=Memory.from_bytes(curr_bytes),
@@ -832,7 +896,7 @@ async def download_shard(
         downloaded_bytes = await get_downloaded_size(target_dir / file.path)
         final_file_exists = await aios.path.exists(target_dir / file.path)
         file_progress[file.path] = RepoFileDownloadProgress(
-            repo_id=shard.model_card.model_id,
+            repo_id=model_id,
             repo_revision=revision,
             file_path=file.path,
             downloaded=Memory.from_bytes(downloaded_bytes),
@@ -858,7 +922,7 @@ async def download_shard(
     async def download_with_semaphore(file: FileListEntry) -> None:
         async with semaphore:
             await download_file_with_retry(
-                shard.model_card.model_id,
+                model_id,
                 revision,
                 file.path,
                 target_dir,
@@ -874,7 +938,7 @@ async def download_shard(
             *[download_with_semaphore(file) for file in filtered_file_list]
         )
     final_repo_progress = calculate_repo_progress(
-        shard, shard.model_card.model_id, revision, file_progress, all_start_time
+        shard, model_id, revision, file_progress, all_start_time
     )
     await on_progress(shard, final_repo_progress)
     if gguf := next((f for f in filtered_file_list if f.path.endswith(".gguf")), None):

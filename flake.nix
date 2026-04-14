@@ -2,7 +2,7 @@
   description = "The development environment for Exo";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
 
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
@@ -45,9 +45,6 @@
       inputs.uv2nix.follows = "uv2nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-
-    # Pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
-    nixpkgs-swift.url = "github:NixOS/nixpkgs/08dacfca559e1d7da38f3cf05f1f45ee9bfd213c";
   };
 
   nixConfig = {
@@ -55,8 +52,7 @@
     extra-substituters = "https://exo.cachix.org https://cache.nixos-cuda.org";
   };
 
-  outputs =
-    inputs:
+  outputs = inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
@@ -71,13 +67,11 @@
         ./python/parts.nix
       ];
 
-      perSystem =
-        { config, self', inputs', pkgs, lib, system, ... }:
-        let
-          # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
-          pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
+      debug = true; # Enable options autocompletion
 
-          pkgsCuda = import ./nix/cuda-pkgs.nix { nixpkgs = inputs.nixpkgs; inherit system; };
+      perSystem = { config, self', pkgs, lib, system, ... }:
+        let
+          pkgsCuda = import ./nix/cuda-pkgs.nix { inherit (inputs) nixpkgs; inherit system; };
         in
         {
           # Allow unfree for metal-toolchain (needed for Darwin Metal packages)
@@ -86,6 +80,19 @@
             config.allowUnfreePredicate = pkg: (pkg.pname or "") == "metal-toolchain";
             overlays = [
               (import ./nix/apple-sdk-overlay.nix)
+              (final: _: {
+                macmon = final.rustPlatform.buildRustPackage {
+                  pname = "macmon";
+                  version = "git";
+                  src = final.fetchFromGitHub {
+                    owner = "vladkens";
+                    repo = "macmon";
+                    rev = "a1cd06b6cc0d5e61db24fd8832e74cd992097a7d";
+                    hash = "sha256-wcq4PUXK44XfUKOZKl32u8LpOxXpSbUUfItQGwS2Zso=";
+                  };
+                  cargoHash = "sha256-Epj3L+db1flGNK5y6yfSig8piEiXTz15lPo/FNkqlkA=";
+                };
+              })
             ];
           };
           treefmt = {
@@ -107,7 +114,7 @@
               };
               swift-format = {
                 enable = true;
-                package = pkgsSwift.swiftPackages.swift-format;
+                package = pkgs.swiftPackages.swift-format;
               };
               shfmt.enable = true;
               taplo.enable = true;
@@ -133,33 +140,6 @@
             ) // lib.optionalAttrs (pkgsCuda != null) {
             torch-cuda = pkgsCuda.python313Packages.torch;
             vllm-cuda = pkgsCuda.python313Packages.vllm;
-
-            # Smoke test script for verifying vLLM + CUDA GPU setup
-            vllm-check = pkgs.writeShellApplication {
-              name = "vllm-check";
-              runtimeInputs = [
-                (pkgsCuda.python313.withPackages (ps: [ ps.torch ps.vllm ]))
-              ];
-              # On non-NixOS hosts, NVIDIA driver libraries live in /usr/lib and must be
-              # LD_PRELOAD'd individually (adding the whole dir causes SIGILL from conflicts).
-              # These are: CUDA driver, NVML, and the PTX JIT compiler (for flash attention).
-              # libnvJitLink comes from the nix CUDA toolkit via LD_LIBRARY_PATH.
-              text = ''
-                for dir in /usr/lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu /usr/lib; do
-                  if [ -e "$dir/libcuda.so.1" ]; then
-                    NVIDIA_LIBS="$dir/libcuda.so.1"
-                    for lib in libnvidia-ml.so.1 libnvidia-ptxjitcompiler.so.1; do
-                      [ -e "$dir/$lib" ] && NVIDIA_LIBS="$NVIDIA_LIBS:$dir/$lib"
-                    done
-                    export LD_PRELOAD="$NVIDIA_LIBS''${LD_PRELOAD:+:$LD_PRELOAD}"
-                    break
-                  fi
-                done
-                export LD_LIBRARY_PATH="${pkgsCuda.cudaPackages.libnvjitlink}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-                exec python ${inputs.self + /tests/test_vllm_smoke.py}
-              '';
-            };
-
             # exo with CUDA torch + vLLM — wraps the uv2nix-built package with host driver libs
             exo-cuda = pkgs.writeShellApplication {
               name = "exo-cuda";
@@ -181,70 +161,49 @@
             };
           };
 
-          # CUDA development shell with torch + vLLM (aarch64-linux only)
-          devShells = lib.optionalAttrs (pkgsCuda != null)
-            {
-              cuda = pkgs.mkShell {
-                packages = [
-                  (pkgsCuda.python313.withPackages (ps: [
-                    ps.torch
-                    ps.vllm
-                  ]))
-                  pkgs.uv
-                  pkgs.just
-                ];
+          devShells.default = pkgs.mkShell {
+            inputsFrom = [ self'.checks.cargo-build ];
 
-                shellHook = ''
-                  echo "CUDA dev shell with torch + vLLM"
-                  python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}')" 2>/dev/null || true
-                '';
-              };
-            } // {
+            packages =
+              with pkgs; [
+                # FORMATTING
+                config.treefmt.build.wrapper
 
-            default = with pkgs; pkgs.mkShell {
-              inputsFrom = [ self'.checks.cargo-build ];
+                # PYTHON
+                self'.packages.python
+                uv
+                ruff
+                basedpyright
 
-              packages =
-                [
-                  # FORMATTING
-                  config.treefmt.build.wrapper
+                # RUST
+                config.rust.toolchain
+                maturin
 
-                  # PYTHON
-                  python313
-                  uv
-                  ruff
-                  basedpyright
+                # NIX
+                nixd
+                nixpkgs-fmt
 
-                  # RUST
-                  config.rust.toolchain
-                  maturin
+                # SVELTE
+                nodejs
 
-                  # NIX
-                  nixpkgs-fmt
+                # MISC
+                just
+                jq
+              ]
+              ++ lib.optionals stdenv.isLinux [
+                unixtools.ifconfig
+              ]
+              ++ lib.optionals stdenv.isDarwin [
+                macmon
+              ];
 
-                  # SVELTE
-                  nodejs
 
-                  # MISC
-                  just
-                  jq
-                ]
-                ++ lib.optionals stdenv.isLinux [
-                  unixtools.ifconfig
-                ]
-                ++ lib.optionals stdenv.isDarwin [
-                  macmon
-                ];
-
-              OPENSSL_NO_VENDOR = "1";
-
-              shellHook = ''
-                export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${python313}/lib"
-                ${lib.optionalString stdenv.isLinux ''
-                  export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
-                ''}
-              '';
-            };
+            shellHook = ''
+              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${self'.packages.python}/lib"
+              ${lib.optionalString pkgs.stdenv.isLinux ''
+                export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:$LD_LIBRARY_PATH"
+              ''}
+            '';
           };
         };
     };

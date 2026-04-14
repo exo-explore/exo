@@ -1,10 +1,10 @@
 from pydantic import Field
 
-from exo.shared.models.model_cards import ModelCard, ModelId
-from exo.shared.types.api import (
+from exo.api.types import (
     ImageEditsTaskParams,
     ImageGenerationTaskParams,
 )
+from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, NodeId, SystemId
 from exo.shared.types.text_generation import TextGenerationTaskParams
@@ -81,6 +81,14 @@ class CancelDownload(BaseCommand):
     model_id: ModelId
 
 
+class AddCustomModelCard(BaseCommand):
+    model_card: ModelCard
+
+
+class DeleteCustomModelCard(BaseCommand):
+    model_id: ModelId
+
+
 DownloadCommand = StartDownload | DeleteDownload | CancelDownload
 
 
@@ -96,6 +104,8 @@ Command = (
     | TaskCancelled
     | TaskFinished
     | SendInputChunk
+    | AddCustomModelCard
+    | DeleteCustomModelCard
 )
 
 

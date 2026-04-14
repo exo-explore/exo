@@ -11,7 +11,7 @@ from openai_harmony import (
     load_harmony_encoding,
 )
 
-from exo.shared.types.api import ToolCallItem
+from exo.api.types import ToolCallItem
 from exo.shared.types.common import ModelId
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.engines.mlx.utils_mlx import (
@@ -27,6 +27,32 @@ def get_gpt_oss_encoding():
     return encoding
 
 
+def count_reasoning_tokens(
+    responses: Generator[GenerationResponse | ToolCallResponse | None],
+) -> Generator[GenerationResponse | ToolCallResponse | None]:
+    """Count tokens with is_thinking=True and patch the total into Usage on the final response."""
+    reasoning_tokens = 0
+    for response in responses:
+        if response is None:
+            yield None
+            continue
+        if isinstance(response, GenerationResponse) and response.is_thinking:
+            reasoning_tokens += 1
+        if response.usage is not None and reasoning_tokens > 0:
+            response = response.model_copy(
+                update={
+                    "usage": response.usage.model_copy(
+                        update={
+                            "completion_tokens_details": response.usage.completion_tokens_details.model_copy(
+                                update={"reasoning_tokens": reasoning_tokens}
+                            )
+                        }
+                    )
+                }
+            )
+        yield response
+
+
 def apply_all_parsers(
     receiver: Generator[GenerationResponse | None],
     prompt: str,
@@ -34,27 +60,30 @@ def apply_all_parsers(
     tokenizer: TokenizerWrapper,
     model_id: ModelId,
     tools: list[dict[str, Any]] | None,
+    model_type: type[Model]
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
-    gen = receiver
+    mlx_generator = receiver
 
-    if tokenizer.has_thinking:
-        gen = parse_thinking_models(
-            gen,
-            tokenizer.think_start,
-            tokenizer.think_end,
-            starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
-        )
+    if issubclass(model_type, GptOssModel):
+        mlx_generator = parse_gpt_oss(mlx_generator)
+    elif (
+        issubclass(model_type, DeepseekV32Model)
+        and "deepseek" in model_id.normalize().lower()
+    ):
+        mlx_generator = parse_deepseek_v32(mlx_generator)
+    else:
+        if tokenizer.has_thinking:
+            mlx_generator = parse_thinking_models(
+                mlx_generator,
+                tokenizer.think_start,
+                tokenizer.think_end,
+                starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
+            )
 
-    lower = model_id.normalize().lower()
-    if "gpt-oss" in lower or "gpt_oss" in lower:
-        gen = parse_gpt_oss(gen)
-    elif "deepseek" in lower:
-        gen = parse_deepseek_v32(gen)
-    elif tool_parser:
-        gen = parse_tool_calls(gen, tool_parser, tools)
+        if tool_parser:
+            mlx_generator = parse_tool_calls(mlx_generator, tool_parser, tools)
 
-    return gen
-
+    return count_reasoning_tokens(mlx_generator)
 
 _GPT_OSS_CHANNEL_TOKEN = 200005
 _GPT_OSS_MESSAGE_TOKEN = 200008
@@ -65,7 +94,6 @@ def parse_gpt_oss(
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     encoding = get_gpt_oss_encoding()
     stream = StreamableParser(encoding, role=Role.ASSISTANT)
-    thinking = False
     current_tool_name: str | None = None
     tool_arg_parts: list[str] = []
 
@@ -121,14 +149,10 @@ def parse_gpt_oss(
             recipient is not None and recipient.startswith("!")
         )
 
-        if is_suppressed and not thinking:
-            thinking = True
-
-        if not is_suppressed and thinking:
-            thinking = False
-
         if delta:
-            yield response.model_copy(update={"text": delta, "is_thinking": thinking})
+            yield response.model_copy(
+                update={"text": delta, "is_thinking": is_suppressed}
+            )
 
         if response.finish_reason is not None:
             yield response.model_copy(update={"text": ""})
@@ -159,10 +183,41 @@ def parse_deepseek_v32(
     # Text accumulated during a tool call block
     tool_call_text = ""
 
+    def _try_parse_tool_call(
+        text: str, response: GenerationResponse
+    ) -> ToolCallResponse | GenerationResponse:
+        parsed = parse_dsml_output(text)
+        if parsed is not None:
+            return ToolCallResponse(
+                tool_calls=parsed, usage=response.usage, stats=response.stats
+            )
+        logger.warning(f"DSML tool call parsing failed for: {text}")
+        return response.model_copy(update={"text": text})
+
     for response in responses:
         if response is None:
             yield None
             continue
+
+        if response.finish_reason is not None:
+            yield from pending_buffer
+            pending_buffer.clear()
+            if in_tool_call:
+                tool_call_text += response.text
+                yield (
+                    _try_parse_tool_call(tool_call_text, response)
+                    if TOOL_CALLS_END in tool_call_text
+                    else response.model_copy(update={"text": tool_call_text})
+                )
+            elif TOOL_CALLS_START in response.text and TOOL_CALLS_END in response.text:
+                dsml_start = response.text.index(TOOL_CALLS_START)
+                before = response.text[:dsml_start]
+                if before:
+                    yield response.model_copy(update={"text": before})
+                yield _try_parse_tool_call(response.text[dsml_start:], response)
+            else:
+                yield response
+            break
 
         # ── Handle thinking tags ──
         if not thinking and THINKING_START in response.text:
@@ -191,28 +246,7 @@ def parse_deepseek_v32(
         if in_tool_call:
             tool_call_text += response.text
             if TOOL_CALLS_END in tool_call_text:
-                # Parse the accumulated DSML block
-                parsed = parse_dsml_output(tool_call_text)
-                if parsed is not None:
-                    logger.info(f"parsed DSML tool calls: {parsed}")
-                    yield ToolCallResponse(
-                        tool_calls=parsed,
-                        usage=response.usage,
-                        stats=response.stats,
-                    )
-                else:
-                    logger.warning(
-                        f"DSML tool call parsing failed for: {tool_call_text}"
-                    )
-                    yield response.model_copy(update={"text": tool_call_text})
-                in_tool_call = False
-                tool_call_text = ""
-                continue
-
-            # EOS reached before end marker — yield buffered text as-is
-            if response.finish_reason is not None:
-                logger.info("DSML tool call parsing interrupted by EOS")
-                yield response.model_copy(update={"text": tool_call_text})
+                yield _try_parse_tool_call(tool_call_text, response)
                 in_tool_call = False
                 tool_call_text = ""
             continue
@@ -228,33 +262,22 @@ def parse_deepseek_v32(
             if pre_text:
                 # Flush pending buffer tokens that contributed text before the marker
                 for buf_resp in pending_buffer:
-                    if pre_text:
-                        chunk = buf_resp.text
-                        if len(chunk) <= len(pre_text):
-                            yield buf_resp
-                            pre_text = pre_text[len(chunk) :]
-                        else:
-                            yield buf_resp.model_copy(update={"text": pre_text})
-                            pre_text = ""
+                    if not pre_text:
+                        break
+                    chunk = buf_resp.text
+                    if len(chunk) <= len(pre_text):
+                        yield buf_resp
+                        pre_text = pre_text[len(chunk) :]
+                    else:
+                        yield buf_resp.model_copy(update={"text": pre_text})
+                        pre_text = ""
             pending_buffer = []
             tool_call_text = accumulated[start_idx:]
             accumulated = ""
 
             # Check if the end marker is already present (entire tool call in one token)
             if TOOL_CALLS_END in tool_call_text:
-                parsed = parse_dsml_output(tool_call_text)
-                if parsed is not None:
-                    logger.info(f"parsed DSML tool calls: {parsed}")
-                    yield ToolCallResponse(
-                        tool_calls=parsed,
-                        usage=response.usage,
-                        stats=response.stats,
-                    )
-                else:
-                    logger.warning(
-                        f"DSML tool call parsing failed for: {tool_call_text}"
-                    )
-                    yield response.model_copy(update={"text": tool_call_text})
+                yield _try_parse_tool_call(tool_call_text, response)
                 tool_call_text = ""
             else:
                 in_tool_call = True
@@ -267,15 +290,13 @@ def parse_deepseek_v32(
             continue
 
         # No partial match — flush all pending tokens and the current one
-        for buf_resp in pending_buffer:
-            yield buf_resp
-        pending_buffer = []
+        yield from pending_buffer
+        pending_buffer.clear()
         accumulated = ""
         yield response
 
     # Flush any remaining pending buffer at generator end
-    for buf_resp in pending_buffer:
-        yield buf_resp
+    yield from pending_buffer
 
 
 def _could_be_dsml_prefix(text: str) -> bool:
@@ -310,20 +331,34 @@ def parse_thinking_models(
     Always yields tokens with finish_reason to avoid hanging the chunk stream.
     """
     is_thinking = starts_in_thinking
+    accumulated = ""
+
     for response in responses:
         if response is None:
             yield None
             continue
+
+        accumulated += response.text
+
         if response.finish_reason is not None:
             yield response.model_copy(update={"is_thinking": False})
             continue
 
-        if response.text == think_start:
+        if accumulated == think_start and not is_thinking:
             is_thinking = True
+            accumulated = ""
             continue
-        if response.text == think_end:
+        if accumulated == think_end and is_thinking:
             is_thinking = False
+            accumulated = ""
             continue
+
+        if (think_start and accumulated == think_start[: len(accumulated)]) or (
+            think_end and accumulated == think_end[: len(accumulated)]
+        ):
+            continue
+
+        accumulated = ""
 
         yield response.model_copy(update={"is_thinking": is_thinking})
 
@@ -358,8 +393,10 @@ def parse_tool_calls(
 
             if parsed is None:
                 logger.warning(f"tool call parsing failed for text {combined}")
-                yield response.model_copy(update={"text": combined})
-                continue
+                yield response.model_copy(
+                    update={"text": combined, "token": 0, "finish_reason": "error"}
+                )
+                break
 
             yield ToolCallResponse(
                 tool_calls=parsed, usage=response.usage, stats=response.stats
@@ -374,6 +411,7 @@ def parse_tool_calls(
                 update={
                     "text": "".join(tool_call_text_parts),
                     "token": 0,
+                    "finish_reason": "error",
                 }
             )
             yield response

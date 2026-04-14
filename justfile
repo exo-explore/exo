@@ -1,5 +1,8 @@
 export NIX_CONFIG := "extra-experimental-features = nix-command flakes"
 
+default: lint fmt
+all: lint fmt check
+
 fmt:
     treefmt || nix fmt
 
@@ -36,12 +39,18 @@ rust-rebuild:
 
 build-dashboard:
     #!/usr/bin/env bash
-    cd dashboard
+    pushd dashboard
     npm install
     npm run build
+    popd
 
-package:
+package: build-dashboard
     uv run pyinstaller packaging/pyinstaller/exo.spec
+    rm -rf build
+
+build-app: package
+    xcodebuild build -project app/EXO/EXO.xcodeproj -scheme EXO -configuration Debug -derivedDataPath app/EXO/build
+    @echo "\nBuild complete. Run with:\n  open {{justfile_directory()}}/app/EXO/build/Build/Products/Debug/EXO.app"
 
 clean:
     rm -rf **/__pycache__

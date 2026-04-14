@@ -9,5 +9,7 @@ quantization = "8bit"
 base_model = "Qwen3 30B"
 capabilities = ["text", "thinking", "thinking_toggle"]
 
+context_length = 32768
+
 [storage_size]
 in_bytes = 33279705088

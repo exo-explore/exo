@@ -12,6 +12,7 @@ from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance, VllmInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.worker.engines.mlx.patches import apply_mlx_patches
 
 logger: "loguru.Logger" = loguru.logger
 
@@ -84,10 +85,10 @@ def entrypoint(
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
-    if fast_synch_override != "off":
-        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
-    else:
+    if fast_synch_override == "false":
         os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+    else:
+        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 
@@ -131,12 +132,14 @@ def entrypoint(
             runner.main()
         else:
             from exo.worker.runner.llm_inference.runner import MlxBuilder, Runner
+            apply_mlx_patches()
 
             builder = MlxBuilder(
                 model_id=bound_instance.bound_shard.model_card.model_id,
                 event_sender=event_sender,
                 cancel_receiver=cancel_receiver,
             )
+
             runner = Runner(
                 bound_instance, event_sender, task_receiver, cancel_receiver, builder
             )

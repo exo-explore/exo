@@ -130,39 +130,45 @@ class RunnerSupervisor:
 
     async def run(self):
         self.runner_process.start()
-        async with self._tg as tg:
-            tg.start_soon(self._watch_runner)
-            tg.start_soon(self._forward_events)
+        try:
+            async with self._tg as tg:
+                tg.start_soon(self._watch_runner)
+                tg.start_soon(self._forward_events)
+        finally:
+            logger.info("Runner supervisor shutting down")
+            if not self._cancel_watch_runner.cancel_called:
+                self._cancel_watch_runner.cancel()
+            with contextlib.suppress(ClosedResourceError):
+                self._ev_recv.close()
+            with contextlib.suppress(ClosedResourceError):
+                self._task_sender.close()
+            with contextlib.suppress(ClosedResourceError):
+                self._event_sender.close()
+            with contextlib.suppress(ClosedResourceError):
+                self._cancel_sender.send(CANCEL_ALL_TASKS)
+            with contextlib.suppress(ClosedResourceError):
+                self._cancel_sender.close()
+
+            await to_thread.run_sync(self.runner_process.join, 5)
+
+            if self.runner_process.is_alive():
+                logger.warning(
+                    "Runner process didn't shutdown succesfully, terminating"
+                )
+                self.runner_process.terminate()
+                self.runner_process.join(timeout=5)
+                # This is overkill but it's not technically bad, just unnecessary.
+                if self.runner_process.is_alive():
+                    logger.critical("Runner process didn't respond to SIGTERM, killing")
+                    self.runner_process.kill()
+                    self.runner_process.join(timeout=5)
+            else:
+                logger.info("Runner process succesfully terminated")
+
+            self.runner_process.close()
 
     def shutdown(self):
-        logger.info("Runner supervisor shutting down")
         self._tg.cancel_tasks()
-        if not self._cancel_watch_runner.cancel_called:
-            self._cancel_watch_runner.cancel()
-        with contextlib.suppress(ClosedResourceError):
-            self._ev_recv.close()
-        with contextlib.suppress(ClosedResourceError):
-            self._task_sender.close()
-        with contextlib.suppress(ClosedResourceError):
-            self._event_sender.close()
-        with contextlib.suppress(ClosedResourceError):
-            self._cancel_sender.send(CANCEL_ALL_TASKS)
-        with contextlib.suppress(ClosedResourceError):
-            self._cancel_sender.close()
-        self.runner_process.join(5)
-        if not self.runner_process.is_alive():
-            logger.info("Runner process succesfully terminated")
-            return
-
-        # This is overkill but it's not technically bad, just unnecessary.
-        logger.warning("Runner process didn't shutdown succesfully, terminating")
-        self.runner_process.terminate()
-        self.runner_process.join(1)
-        if not self.runner_process.is_alive():
-            return
-
-        logger.critical("Runner process didn't respond to SIGTERM, killing")
-        self.runner_process.kill()
 
     async def start_task(self, task: Task):
         if task.task_id in self.pending:
@@ -238,12 +244,6 @@ class RunnerSupervisor:
             for tid in self.pending:
                 self.pending[tid].set()
 
-    def __del__(self) -> None:
-        if self.runner_process.is_alive():
-            logger.critical("RunnerSupervisor was not stopped cleanly.")
-            with contextlib.suppress(ValueError):
-                self.runner_process.kill()
-
     async def _watch_runner(self) -> None:
         with self._cancel_watch_runner:
             while True:
@@ -296,9 +296,7 @@ class RunnerSupervisor:
                 await self._event_sender.send(
                     RunnerStatusUpdated(
                         runner_id=self.bound_instance.bound_runner_id,
-                        runner_status=RunnerFailed(
-                            error_message=f"Terminated ({cause})"
-                        ),
+                        runner_status=self.status,
                     )
                 )
         except (ClosedResourceError, BrokenResourceError):

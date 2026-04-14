@@ -56,10 +56,10 @@ class QwenJointBlockWrapper(JointBlockWrapper[QwenTransformerBlock]):
         attn = self.block.attn
 
         img_mod_params = self.block.img_mod_linear(
-            self.block.img_mod_silu(text_embeddings)  # pyright: ignore[reportUnknownArgumentType]
+            self.block.img_mod_silu(text_embeddings)
         )
         txt_mod_params = self.block.txt_mod_linear(
-            self.block.txt_mod_silu(text_embeddings)  # pyright: ignore[reportUnknownArgumentType]
+            self.block.txt_mod_silu(text_embeddings)
         )
 
         img_mod1, img_mod2 = mx.split(img_mod_params, 2, axis=-1)

@@ -12,8 +12,11 @@ struct SettingsView: View {
 
     @State private var pendingNamespace: String = ""
     @State private var pendingHFToken: String = ""
+    @State private var pendingHFEndpoint: String = ""
     @State private var pendingEnableImageModels = false
     @State private var pendingOfflineMode = false
+    @State private var pendingFastSynchEnabled = false
+    @State private var pendingCustomEnvironmentVariables: [CustomEnvironmentVariable] = []
     @State private var needsRestart = false
     @State private var bugReportInFlight = false
     @State private var bugReportMessage: String?
@@ -33,6 +36,10 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Advanced", systemImage: "wrench.and.screwdriver")
                 }
+            environmentTab
+                .tabItem {
+                    Label("Environment", systemImage: "terminal")
+                }
             aboutTab
                 .tabItem {
                     Label("About", systemImage: "info.circle")
@@ -42,8 +49,11 @@ struct SettingsView: View {
         .onAppear {
             pendingNamespace = controller.customNamespace
             pendingHFToken = controller.hfToken
+            pendingHFEndpoint = controller.hfEndpoint
             pendingEnableImageModels = controller.enableImageModels
             pendingOfflineMode = controller.offlineMode
+            pendingFastSynchEnabled = controller.fastSynchEnabled
+            pendingCustomEnvironmentVariables = controller.customEnvironmentVariables
             needsRestart = false
         }
     }
@@ -70,6 +80,17 @@ struct SettingsView: View {
                         .frame(width: 200)
                 }
                 Text("Required for gated models. Get yours at huggingface.co/settings/tokens")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section {
+                LabeledContent("HuggingFace Endpoint") {
+                    TextField("default", text: $pendingHFEndpoint)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 200)
+                }
+                Text("Defaults to huggingface.co. Use a mirror (e.g. hf-mirror.com) for China.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -124,6 +145,23 @@ struct SettingsView: View {
 
     private var advancedTab: some View {
         Form {
+            Section("Performance") {
+                Toggle("Fast Synch Enabled", isOn: $pendingFastSynchEnabled)
+                Text(
+                    "Experimental: enables fast CPU to GPU synchronization. Can sometimes cause a \"GPU lock\" where inference hangs for ~10 seconds before starting. Necessary for low latency with RDMA and Tensor Parallelism."
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+                HStack {
+                    Spacer()
+                    Button("Save & Restart") {
+                        applyAdvancedSettings()
+                    }
+                    .disabled(!hasAdvancedChanges)
+                }
+            }
+
             Section("Onboarding") {
                 HStack {
                     VStack(alignment: .leading) {
@@ -174,6 +212,81 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(uninstallInProgress)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - Environment Tab
+
+    private var environmentTab: some View {
+        Form {
+            Section("Custom Environment Variables") {
+                Text("Passed to the exo process at launch. Override built-in defaults here.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                if pendingCustomEnvironmentVariables.isEmpty {
+                    Text("No custom variables.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach($pendingCustomEnvironmentVariables) { $variable in
+                        HStack(alignment: .center, spacing: 8) {
+                            VStack(spacing: 4) {
+                                TextField("key", text: $variable.key)
+                                    .labelsHidden()
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(.body, design: .monospaced))
+                                TextField("value", text: $variable.value)
+                                    .labelsHidden()
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(.body, design: .monospaced))
+                            }
+                            VStack(spacing: 4) {
+                                Button {
+                                    pendingCustomEnvironmentVariables.removeAll {
+                                        $0.id == variable.id
+                                    }
+                                } label: {
+                                    Image(systemName: "minus.circle")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Remove variable")
+                                if !isValidEnvironmentVariableName(variable.key) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundColor(.orange)
+                                        .help(
+                                            "Invalid environment variable name. "
+                                                + "Must match [A-Za-z_][A-Za-z0-9_]*."
+                                        )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HStack {
+                    Button {
+                        pendingCustomEnvironmentVariables.append(
+                            CustomEnvironmentVariable()
+                        )
+                    } label: {
+                        Label("Add Variable", systemImage: "plus")
+                    }
+                    Spacer()
+                }
+            }
+
+            Section {
+                HStack {
+                    Spacer()
+                    Button("Save & Restart") {
+                        applyEnvironmentSettings()
+                    }
+                    .disabled(!hasEnvironmentChanges)
+                }
             }
         }
         .formStyle(.grouped)
@@ -454,6 +567,7 @@ struct SettingsView: View {
 
     private var hasGeneralChanges: Bool {
         pendingNamespace != controller.customNamespace || pendingHFToken != controller.hfToken
+            || pendingHFEndpoint != controller.hfEndpoint
             || pendingOfflineMode != controller.offlineMode
     }
 
@@ -461,9 +575,18 @@ struct SettingsView: View {
         pendingEnableImageModels != controller.enableImageModels
     }
 
+    private var hasAdvancedChanges: Bool {
+        pendingFastSynchEnabled != controller.fastSynchEnabled
+    }
+
+    private var hasEnvironmentChanges: Bool {
+        pendingCustomEnvironmentVariables != controller.customEnvironmentVariables
+    }
+
     private func applyGeneralSettings() {
         controller.customNamespace = pendingNamespace
         controller.hfToken = pendingHFToken
+        controller.hfEndpoint = pendingHFEndpoint
         controller.offlineMode = pendingOfflineMode
         restartIfRunning()
     }
@@ -471,6 +594,63 @@ struct SettingsView: View {
     private func applyModelSettings() {
         controller.enableImageModels = pendingEnableImageModels
         restartIfRunning()
+    }
+
+    private func applyAdvancedSettings() {
+        controller.fastSynchEnabled = pendingFastSynchEnabled
+        restartIfRunning()
+    }
+
+    private func applyEnvironmentSettings() {
+        // Trim whitespace from keys and drop empty ones so that the stored
+        // form matches what is actually injected into the child process and
+        // hasEnvironmentChanges doesn't show a stale diff after save.
+        let trimmed: [CustomEnvironmentVariable] =
+            pendingCustomEnvironmentVariables.compactMap { variable in
+                let key = variable.key.trimmingCharacters(in: .whitespaces)
+                guard !key.isEmpty else { return nil }
+                return CustomEnvironmentVariable(
+                    id: variable.id, key: key, value: variable.value
+                )
+            }
+
+        // De-duplicate keys, keeping the last occurrence. This matches the
+        // effective semantics of the dictionary assignment in
+        // ExoProcessController.makeEnvironment and avoids silently losing
+        // visible rows after save.
+        var seenKeys = Set<String>()
+        var deduplicatedReversed: [CustomEnvironmentVariable] = []
+        for variable in trimmed.reversed() {
+            if seenKeys.insert(variable.key).inserted {
+                deduplicatedReversed.append(variable)
+            }
+        }
+        let sanitized = Array(deduplicatedReversed.reversed())
+
+        pendingCustomEnvironmentVariables = sanitized
+        controller.customEnvironmentVariables = sanitized
+        restartIfRunning()
+    }
+
+    /// Validates a POSIX-style environment variable name:
+    /// `[A-Za-z_][A-Za-z0-9_]*`. Uses an ASCII-only charset so that
+    /// Unicode letters (e.g. `ñ`, Cyrillic) are rejected in line with what
+    /// the help tooltip advertises. Empty strings are treated as valid
+    /// here so that a freshly added blank row does not immediately look
+    /// broken; the save step filters empty keys out instead.
+    private func isValidEnvironmentVariableName(_ key: String) -> Bool {
+        if key.isEmpty { return true }
+        let headAllowed = CharacterSet(
+            charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_"
+        )
+        let tailAllowed = headAllowed.union(CharacterSet(charactersIn: "0123456789"))
+        guard let first = key.unicodeScalars.first, headAllowed.contains(first) else {
+            return false
+        }
+        for scalar in key.unicodeScalars.dropFirst() {
+            if !tailAllowed.contains(scalar) { return false }
+        }
+        return true
     }
 
     private func restartIfRunning() {

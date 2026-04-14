@@ -1,21 +1,38 @@
 <script lang="ts">
   import { browser } from "$app/environment";
 
-  export let showHome = true;
-  export let onHome: (() => void) | null = null;
-  export let showSidebarToggle = false;
-  export let sidebarVisible = true;
-  export let onToggleSidebar: (() => void) | null = null;
-  export let showMobileMenuToggle = false;
-  export let mobileMenuOpen = false;
-  export let onToggleMobileMenu: (() => void) | null = null;
-  export let showMobileRightToggle = false;
-  export let mobileRightOpen = false;
-  export let onToggleMobileRight: (() => void) | null = null;
-  export let downloadProgress: {
-    count: number;
-    percentage: number;
-  } | null = null;
+  interface Props {
+    showHome?: boolean;
+    onHome?: (() => void) | null;
+    showSidebarToggle?: boolean;
+    sidebarVisible?: boolean;
+    onToggleSidebar?: (() => void) | null;
+    showMobileMenuToggle?: boolean;
+    mobileMenuOpen?: boolean;
+    onToggleMobileMenu?: (() => void) | null;
+    showMobileRightToggle?: boolean;
+    mobileRightOpen?: boolean;
+    onToggleMobileRight?: (() => void) | null;
+    downloadProgress?: {
+      count: number;
+      percentage: number;
+    } | null;
+  }
+
+  let {
+    showHome = true,
+    onHome = null,
+    showSidebarToggle = false,
+    sidebarVisible = true,
+    onToggleSidebar = null,
+    showMobileMenuToggle = false,
+    mobileMenuOpen = false,
+    onToggleMobileMenu = null,
+    showMobileRightToggle = false,
+    mobileRightOpen = false,
+    onToggleMobileRight = null,
+    downloadProgress = null,
+  }: Props = $props();
 
   function handleHome(): void {
     if (onHome) {
@@ -258,6 +275,27 @@
         </svg>
       {/if}
       <span class="hidden sm:inline">Downloads</span>
+    </a>
+    <a
+      href="/#/integrations"
+      class="text-xs md:text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-1.5 md:gap-2 cursor-pointer"
+      title="Integration configs for external tools"
+    >
+      <svg
+        class="w-4 h-4"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+        <path
+          d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+        />
+      </svg>
+      <span class="hidden sm:inline">Integrations</span>
     </a>
   </nav>
 </header>

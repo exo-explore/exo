@@ -117,6 +117,8 @@ class TokenizerWrapper:
     think_end: str | None
     think_start_id: int | None
     think_end_id: int | None
+    think_start_tokens: list[int] | None
+    think_end_tokens: list[int] | None
 
     def __init__(
         self,

@@ -62,6 +62,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
 )
+from exo.worker.engines.mlx.vision import VisionProcessor
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.batch_generator import (
     BatchGenerator,
@@ -130,7 +131,11 @@ class Runner:
 
         self.setup_start_time = time.time()
 
-        self.generator: Builder | InferenceGenerator = builder
+        self.generator: Builder | InferenceGenerator = Builder(
+            self.model_id,
+            self.event_sender,
+            self.cancel_receiver,
+        )
 
         self.seen: set[TaskId] = set()
         self.active_tasks: dict[
@@ -177,9 +182,7 @@ class Runner:
         self.send_task_status(task.task_id, TaskStatus.Running)
 
         match task:
-            case ConnectToGroup() if isinstance(
-                self.current_status, (RunnerIdle, RunnerFailed)
-            ):
+            case ConnectToGroup() if isinstance(self.current_status, RunnerIdle):
                 assert isinstance(self.generator, Builder)
                 logger.info("runner connecting")
                 self.update_status(RunnerConnecting())
@@ -351,7 +354,9 @@ class Runner:
         return ExitCode.AllTasksComplete
 
     def send_response(
-        self, response: GenerationResponse | ToolCallResponse, command_id: CommandId
+        self,
+        response: GenerationResponse | ToolCallResponse,
+        command_id: CommandId,
     ):
         match response:
             case GenerationResponse():
@@ -411,6 +416,7 @@ class MlxBuilder(Builder):
     inference_model: Model | None = None
     tokenizer: TokenizerWrapper | None = None
     group: mx.distributed.Group | None = None
+    vision_processor: VisionProcessor | None = None
 
     def connect(self, bound_instance: BoundInstance) -> None:
         self.group = initialize_mlx(bound_instance)
@@ -432,6 +438,8 @@ class MlxBuilder(Builder):
         assert self.model_id
         assert self.inference_model
         assert self.tokenizer
+
+        vision_processor = self.vision_processor
 
         tool_parser = None
         logger.info(
@@ -480,8 +488,7 @@ class MlxBuilder(Builder):
                 device_rank=device_rank,
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
-                _generate_fn=generate_fn,
-                _warmup_fn=warmup_fn,
+                vision_processor=vision_processor,
             )
         from exo.worker.runner.llm_inference.batch_generator import ExoBatchGenerator
 
@@ -503,6 +510,7 @@ class MlxBuilder(Builder):
             cancel_receiver=self.cancel_receiver,
             event_sender=self.event_sender,
             _gen=gen,
+            vision_processor=vision_processor,
         )
 
     def close(self):

@@ -1,3 +1,4 @@
+import contextlib
 import functools
 import math
 import time
@@ -13,7 +14,7 @@ from mlx_lm.models.cache import ArraysCache, RotatingKVCache
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.types.api import (
+from exo.api.types import (
     CompletionTokensDetails,
     FinishReason,
     GenerationStats,
@@ -24,7 +25,11 @@ from exo.shared.types.api import (
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import MLXCacheType, Model
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
@@ -54,12 +59,91 @@ from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
     mx_barrier,
+    system_prompt_token_count,
+)
+from exo.worker.engines.mlx.vision import (
+    MediaRegion,
+    VisionProcessor,
+    VisionResult,
+    get_inner_model,
+    prepare_vision,
 )
 from exo.worker.runner.bootstrap import logger
 
 generation_stream = mx.new_stream(mx.default_device())
 
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
+
+
+@contextlib.contextmanager
+def patch_embed_tokens(
+    model: Model,
+    embeddings: mx.array,
+    start_offset: int = 0,
+    token_count: int = 0,
+    image_token_id: int | None = None,
+) -> Generator[None]:
+    inner = get_inner_model(model)  # type: ignore
+    original_embed = inner.embed_tokens  # type: ignore
+    end_offset = start_offset + token_count
+    offset = [start_offset]
+
+    def _inject(input_ids: mx.array) -> mx.array:
+        chunk_start = offset[0]
+        chunk_len = input_ids.shape[-1]
+        chunk_end = chunk_start + chunk_len
+        offset[0] = chunk_end
+
+        # The injection window is [start_offset, end_offset).
+        if chunk_end <= start_offset or chunk_start >= end_offset:
+            return original_embed(input_ids)  # type: ignore
+
+        # Mixed chunk: splice the pre-computed embeddings for the overlap
+        # into `original_embed(input_ids)` for any text-only fringes.
+        overlap_start = max(chunk_start, start_offset)
+        overlap_end = min(chunk_end, end_offset)
+        dst_start = overlap_start - chunk_start
+        dst_end = overlap_end - chunk_start
+        text_embeds: mx.array = original_embed(input_ids)  # type: ignore
+        return mx.concatenate(
+            [
+                text_embeds[:, :dst_start, :],
+                embeddings[:, overlap_start:overlap_end, :],
+                text_embeds[:, dst_end:, :],
+            ],
+            axis=1,
+        )
+
+    for attr in dir(original_embed):  # type: ignore
+        if not attr.startswith("_") and not hasattr(_inject, attr):
+            with contextlib.suppress(AttributeError, TypeError):
+                setattr(_inject, attr, getattr(original_embed, attr))  # type: ignore
+
+    inner.embed_tokens = _inject
+
+    # Gemma 4 (e2b/e4b) has a second, independent embedding table that produces
+    # per-layer conditioning signals via self.embed_tokens_per_layer(input_ids).
+    # The injected vision embeddings live in the main residual stream only, so
+    # if image_token_id positions are passed through as-is the per-layer table
+    # produces garbage signals at those positions (the `<image>` token was never
+    # trained to have meaningful per-layer inputs).
+    original_per_layer = getattr(inner, "embed_tokens_per_layer", None)  # type: ignore
+    if original_per_layer is not None and image_token_id is not None:
+
+        def _clean_per_layer(input_ids: mx.array) -> mx.array:
+            clean_ids = mx.where(
+                input_ids == image_token_id, mx.zeros_like(input_ids), input_ids
+            )
+            return original_per_layer(clean_ids)  # type: ignore
+
+        inner.embed_tokens_per_layer = _clean_per_layer
+
+    try:
+        yield
+    finally:
+        inner.embed_tokens = original_embed
+        if original_per_layer is not None and image_token_id is not None:
+            inner.embed_tokens_per_layer = original_per_layer
 
 
 class PrefillCancelled(BaseException):
@@ -179,7 +263,8 @@ def pipeline_parallel_prefill(
         flush_prefill_sends()
 
     assert _prompt_cache is not None
-    mx.eval([c.state for c in _prompt_cache])  # type: ignore
+    with mx.stream(generation_stream):
+        mx.eval([c.state for c in _prompt_cache])  # type: ignore
 
     # Final callback matching generate_step
     prompt_progress_callback(total, total)
@@ -312,52 +397,48 @@ def warmup_inference(
     model_id: ModelId,
 ) -> int:
     logger.info(f"warming up inference for instance: {model_id}")
-    t = time.monotonic()
 
-    content = "Prompt to warm up the inference engine. Repeat this."
+    content = InputMessageContent(
+        "Prompt to warm up the inference engine. Repeat this."
+    )
+
+    warmup_task_params = TextGenerationTaskParams(
+        model=model_id,
+        input=[InputMessage(role="user", content=content)],
+        max_output_tokens=50,
+        temperature=0.0,
+    )
 
     warmup_prompt = apply_chat_template(
         tokenizer=tokenizer,
-        task_params=TextGenerationTaskParams(
-            model=ModelId(""),
-            input=[InputMessage(role="user", content=content)],
-        ),
+        task_params=warmup_task_params,
     )
 
     tokens_generated = 0
 
-    cache = make_kv_cache(
-        model=model,
-    )
-
-    # Use a default sampler for warmup
-    sampler = make_sampler(temp=0.0)
-
     mx_barrier(group)
 
     logger.info("Generating warmup tokens")
-    for _r in stream_generate(
+
+    t = time.monotonic()
+
+    for _r in mlx_generate(
         model=model,
         tokenizer=tokenizer,
+        task=warmup_task_params,
         prompt=warmup_prompt,
-        max_tokens=50,
-        sampler=sampler,
-        prompt_cache=cache,
-        prefill_step_size=2048,
-        kv_group_size=KV_GROUP_SIZE,
-        kv_bits=KV_BITS,
+        kv_prefix_cache=None,
+        group=group,
     ):
-        logger.info("Generated warmup token: " + str(_r.text))
         tokens_generated += 1
 
-    logger.info("Generated ALL warmup tokens")
+    check_for_cancel_every = min(
+        math.ceil(tokens_generated / min(time.monotonic() - t, 0.001)), 100
+    )
 
     mx_barrier(group)
 
     logger.info(f"warmed up by generating {tokens_generated} tokens")
-    check_for_cancel_every = min(
-        math.ceil(tokens_generated / min(time.monotonic() - t, 0.001)), 100
-    )
     if group is not None:
         check_for_cancel_every = int(
             mx.max(
@@ -398,52 +479,44 @@ def extract_top_logprobs(
     tokenizer: TokenizerWrapper,
     top_logprobs: int,
     selected_token: int,
+    precomputed_indices: list[int] | None = None,
+    precomputed_values: list[float] | None = None,
+    precomputed_selected: float | None = None,
 ) -> tuple[float, list[TopLogprobItem]]:
-    """Extract the selected token's logprob and top alternative tokens.
-
-    Args:
-        logprobs: Full vocabulary logprobs array from MLX
-        tokenizer: Tokenizer for decoding token IDs to strings
-        top_logprobs: Number of top alternatives to return
-        selected_token: The token ID that was actually sampled
-
-    Returns:
-        Tuple of (selected_token_logprob, list of TopLogprobItem for top alternatives)
-    """
-    # Get the logprob of the selected token
-    selected_logprob = float(logprobs[selected_token].item())
-
-    # Get top indices (most probable tokens)
-    # mx.argpartition gives indices that would partition the array
-    # We negate logprobs since argpartition finds smallest, and we want largest
-    top_logprobs = min(top_logprobs, logprobs.shape[0])  # Don't exceed vocab size
-    top_indices = mx.argpartition(-logprobs, top_logprobs)[:top_logprobs]
-
-    # Get the actual logprob values for these indices
-    top_values = logprobs[top_indices]
-
-    # Sort by logprob (descending) for consistent ordering
-    sort_order = mx.argsort(-top_values)
-    top_indices = top_indices[sort_order]
-    top_values = top_values[sort_order]
+    if (
+        precomputed_indices is not None
+        and precomputed_values is not None
+        and precomputed_selected is not None
+    ):
+        top_indices_list: list[int] = precomputed_indices[:top_logprobs]
+        top_values_list: list[float] = precomputed_values[:top_logprobs]
+        selected_logprob = precomputed_selected
+    else:
+        selected_logprob_arr = logprobs[selected_token]
+        top_logprobs = min(top_logprobs, logprobs.shape[0] - 1)
+        top_indices = mx.argpartition(-logprobs, top_logprobs)[:top_logprobs]
+        top_values = logprobs[top_indices]
+        sort_order = mx.argsort(-top_values)
+        top_indices = top_indices[sort_order]
+        top_values = top_values[sort_order]
+        mx.eval(selected_logprob_arr, top_indices, top_values)
+        selected_logprob = float(selected_logprob_arr.item())
+        top_indices_list = top_indices.tolist()  # type: ignore
+        top_values_list = top_values.tolist()  # type: ignore
 
     # Convert to list of TopLogprobItem
     top_logprob_items: list[TopLogprobItem] = []
-    for i in range(top_logprobs):
-        token_id = int(top_indices[i].item())
-        token_logprob = float(top_values[i].item())
+    for token_id, token_logprob in zip(top_indices_list, top_values_list, strict=True):
         if math.isnan(token_logprob):
             continue
 
         # Decode token ID to string
         token_str = tokenizer.decode([token_id])
-        # Get byte representation
-        token_bytes = list(token_str.encode("utf-8"))
         top_logprob_items.append(
             TopLogprobItem(
                 token=token_str,
                 logprob=token_logprob,
-                bytes=token_bytes,
+                bytes=list(token_str.encode("utf-8")),
             )
         )
 
@@ -460,6 +533,7 @@ def mlx_generate(
     on_prefill_progress: Callable[[int, int], None] | None = None,
     distributed_prompt_progress_callback: Callable[[], None] | None = None,
     on_generation_token: Callable[[], None] | None = None,
+    vision_processor: VisionProcessor | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -470,6 +544,27 @@ def mlx_generate(
     # Encode prompt once at the top and fix unmatched think tags
     all_prompt_tokens = encode_prompt(tokenizer, prompt)
     all_prompt_tokens = fix_unmatched_think_end_tokens(all_prompt_tokens, tokenizer)
+    min_prefix_hit_length = max(1000, system_prompt_token_count(task, tokenizer))
+
+    vision: VisionResult | None = None
+    if vision_processor is not None:
+        try:
+            vision = prepare_vision(
+                images=task.images,
+                chat_template_messages=task.chat_template_messages,
+                vision_processor=vision_processor,
+                tokenizer=tokenizer,
+                model=model,
+                model_id=task.model,
+                task_params=task,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Vision processing failed, falling back to text-only"
+            )
+    if vision is not None:
+        all_prompt_tokens = vision.prompt_tokens
+    media_regions: list[MediaRegion] = vision.media_regions if vision else []
 
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench
@@ -484,7 +579,7 @@ def mlx_generate(
         prompt_tokens = all_prompt_tokens
     else:
         caches, prompt_tokens, matched_index = kv_prefix_cache.get_kv_cache(
-            model, all_prompt_tokens
+            model, all_prompt_tokens, media_regions=media_regions
         )
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
         if prefix_hit_length > 0:
@@ -518,17 +613,28 @@ def mlx_generate(
     )
     max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
-    # Prefill cache with all tokens except the last one
-    prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
-        model,
-        tokenizer,
-        sampler,
-        prompt_tokens[:-1],
-        caches,
-        group,
-        on_prefill_progress,
-        distributed_prompt_progress_callback,
+    maybe_vision_ctx = (
+        patch_embed_tokens(
+            model,
+            vision.embeddings,
+            prefix_hit_length,
+            len(prompt_tokens) - 1,
+            image_token_id=vision.image_token_id,
+        )
+        if vision is not None
+        else contextlib.nullcontext()
     )
+    with maybe_vision_ctx:
+        prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
+            model,
+            tokenizer,
+            sampler,
+            prompt_tokens[:-1],
+            caches,
+            group,
+            on_prefill_progress,
+            distributed_prompt_progress_callback,
+        )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
     # stream_generate starts from the last token
@@ -539,11 +645,6 @@ def mlx_generate(
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
     usage: Usage | None = None
-    in_thinking = False
-    reasoning_tokens = 0
-    think_start = tokenizer.think_start
-    think_end = tokenizer.think_end
-
     logger.info("Starting decode")
     mx_barrier(group)
 
@@ -564,13 +665,6 @@ def mlx_generate(
     ):
         generated_text_parts.append(out.text)
         accumulated_text += out.text
-
-        if think_start is not None and out.text == think_start:
-            in_thinking = True
-        elif think_end is not None and out.text == think_end:
-            in_thinking = False
-        if in_thinking:
-            reasoning_tokens += 1
 
         # Check for stop sequences
         text = out.text
@@ -615,21 +709,20 @@ def mlx_generate(
                 prompt_tokens_details=PromptTokensDetails(
                     cached_tokens=prefix_hit_length
                 ),
-                completion_tokens_details=CompletionTokensDetails(
-                    reasoning_tokens=reasoning_tokens
-                ),
+                completion_tokens_details=CompletionTokensDetails(reasoning_tokens=0),
             )
 
         # Extract logprobs from the full vocabulary logprobs array
         logprob: float | None = None
         top_logprobs: list[TopLogprobItem] | None = None
         if task.logprobs:
-            logprob, top_logprobs = extract_top_logprobs(
-                logprobs=out.logprobs,
-                tokenizer=tokenizer,
-                top_logprobs=task.top_logprobs or DEFAULT_TOP_LOGPROBS,
-                selected_token=out.token,
-            )
+            with mx.stream(generation_stream):
+                logprob, top_logprobs = extract_top_logprobs(
+                    logprobs=out.logprobs,
+                    tokenizer=tokenizer,
+                    top_logprobs=task.top_logprobs or DEFAULT_TOP_LOGPROBS,
+                    selected_token=out.token,
+                )
 
         if is_done:
             # Log generation stats
@@ -657,8 +750,8 @@ def mlx_generate(
                     if len(all_prompt_tokens) > 0
                     else 0.0
                 )
-                if (
-                    matched_index is not None
+                if matched_index is not None and (
+                    prefix_hit_length >= min_prefix_hit_length
                     and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
                 ):
                     kv_prefix_cache.update_kv_cache(
@@ -667,10 +760,14 @@ def mlx_generate(
                         caches,
                         cache_snapshots,
                         restore_pos=prefix_hit_length,
+                        media_regions=media_regions,
                     )
                 else:
                     kv_prefix_cache.add_kv_cache(
-                        full_prompt_tokens, caches, cache_snapshots
+                        full_prompt_tokens,
+                        caches,
+                        cache_snapshots,
+                        media_regions=media_regions,
                     )
 
         if on_generation_token is not None:

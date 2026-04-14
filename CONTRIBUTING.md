@@ -11,9 +11,18 @@ To run EXO from source:
   ```bash
   brew install uv
   ```
-- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
+- [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
   ```bash
-  brew install macmon
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  rustup toolchain install nightly
+  ```
+- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
+  Use the pinned fork revision used by this repo instead of Homebrew `macmon`.
+  ```bash
+  cargo install --git https://github.com/vladkens/macmon \
+    --rev a1cd06b6cc0d5e61db24fd8832e74cd992097a7d \
+    macmon \
+    --force
   ```
 
 ```bash

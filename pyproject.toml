@@ -1,6 +1,6 @@
 [project]
 name = "exo"
-version = "0.3.68"
+version = "0.3.69"
 description = "Exo"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -12,7 +12,7 @@ dependencies = [
   "fastapi>=0.116.1",
   "filelock>=3.18.0",
   "rustworkx>=0.17.1",
-  "huggingface-hub>=0.33.4",
+  "huggingface-hub>=1.8.0",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
   "exo_pyo3_bindings",                       # rust bindings
@@ -25,10 +25,12 @@ dependencies = [
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",
   "tomlkit>=0.14.0",
-  "mflux==0.16.9; sys_platform == 'darwin'",
+  "mflux==0.17.2; sys_platform == 'darwin'",
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
+  "mlx-vlm>=0.3.11",
+  "transformers>=5.0.0,<5.4.0",
 ]
 
 [project.scripts]
@@ -63,12 +65,9 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
-mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/eval-left-padding-in-batched-rotation" }
 torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
 vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
-# Uncomment to use local mlx/mlx-lm development versions:
-# mlx = { path = "/Users/Shared/mlx", editable=true }
-# mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
+mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/fix-arrayscache-leak" }
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
@@ -130,22 +129,10 @@ root = "src"
 [tool.uv]
 required-version = ">=0.8.6"
 prerelease = "allow"
-environments = [
-  "sys_platform == 'darwin'",
-  "sys_platform == 'linux' and platform_machine == 'aarch64'",
-]
-no-binary-package = ["vllm"]
-no-build-isolation-package = ["vllm"]
-extra-build-dependencies = { vllm = [
-  "cmake>=3.26.1",
-  "ninja",
-  "packaging>=24.2",
-  "setuptools>=77.0.3,<81.0.0",
-  "setuptools-scm>=8.0",
-  "wheel",
-  "jinja2",
-] }
-conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
+environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
+
+[tool.uv.extra-build-dependencies]
+miniaudio = ["setuptools", "cffi", "pycparser"]
 
 ###
 # ruff configuration

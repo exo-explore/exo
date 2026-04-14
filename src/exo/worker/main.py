@@ -1,25 +1,32 @@
 import json
+import hashlib
 from collections import defaultdict
 from datetime import datetime, timezone
 
 import anyio
-from anyio import fail_after
+from anyio import fail_after, to_thread
 from loguru import logger
 
-from exo.download.download_utils import resolve_model_in_path
+from exo.api.types import ImageEditsTaskParams
+from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
 from exo.shared.apply import apply
-from exo.shared.models.model_cards import ModelId, derive_base_model
-from exo.shared.types.api import ImageEditsTaskParams
+from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
+from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card, derive_base_model
+from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
+    DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
     StartDownload,
 )
 from exo.shared.types.common import CommandId, NodeId, SystemId
 from exo.shared.types.events import (
+    CustomModelCardAdded,
+    CustomModelCardDeleted,
     Event,
     IndexedEvent,
     InputChunkReceived,
+    InstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
     TaskCreated,
@@ -34,12 +41,16 @@ from exo.shared.types.tasks import (
     CreateRunner,
     DownloadModel,
     ImageEdits,
+    LoadModel,
     Shutdown,
     Task,
     TaskStatus,
+    TextGeneration,
 )
+from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
+from exo.shared.types.worker.instances import InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
@@ -61,12 +72,14 @@ class Worker:
         # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
+        api_port: int,
     ):
         self.node_id: NodeId = node_id
         self.event_receiver = event_receiver
         self.event_sender = event_sender
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
+        self.api_port = api_port
 
         self.state: State = State()
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
@@ -75,10 +88,15 @@ class Worker:
         self._system_id = SystemId()
 
         # Buffer for input image chunks (for image editing)
-        self.input_chunk_buffer: dict[CommandId, dict[int, str]] = {}
+        self.input_chunk_buffer: dict[CommandId, dict[int, InputImageChunk]] = {}
         self.input_chunk_counts: dict[CommandId, int] = {}
+        self.image_cache: dict[Base64ImageHash, Base64Image] = {}
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
+        self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
+            base=0.5, cap=10.0
+        )
+        self._stopped: anyio.Event = anyio.Event()
 
     async def run(self):
         logger.info("Starting Worker")
@@ -102,6 +120,7 @@ class Worker:
             self.download_command_sender.close()
             for runner in self.runners.values():
                 runner.shutdown()
+            self._stopped.set()
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -121,6 +140,9 @@ class Worker:
                 self.state = apply(self.state, event=event)
                 event = event.event
 
+                if isinstance(event, InstanceDeleted):
+                    self._instance_backoff.reset(event.instance_id)
+
                 # Buffer input image chunks for image editing
                 if isinstance(event, InputChunkReceived):
                     cmd_id = event.command_id
@@ -129,8 +151,15 @@ class Worker:
                         self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
 
                     self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
-                        event.chunk.data
+                        event.chunk
                     )
+
+                if isinstance(event, CustomModelCardAdded):
+                    await event.model_card.save_to_custom_dir()
+                    add_to_card_cache(event.model_card)
+
+                if isinstance(event, CustomModelCardDeleted):
+                    await delete_custom_card(event.model_id)
 
     _IFACE_PRIORITY = {"ethernet": 0, "maybe_ethernet": 1, "wifi": 2, "unknown": 3, "thunderbolt": 4}
 
@@ -194,16 +223,24 @@ class Worker:
                 self.state.runners,
                 self.state.tasks,
                 self.input_chunk_buffer,
-                self.input_chunk_counts,
+                self._instance_backoff,
+                self._download_backoff,
             )
             if task is None:
                 continue
 
-            # Gate DownloadModel on backoff BEFORE emitting TaskCreated
-            # to prevent flooding the event log with useless events
-            if isinstance(task, DownloadModel):
-                model_id = task.shard_metadata.model_card.model_id
-                if not self._download_backoff.should_proceed(model_id):
+            if isinstance(task, CreateRunner):
+                iid = task.instance_id
+                if self._instance_backoff.attempts(iid) >= EXO_MAX_INSTANCE_RETRIES:
+                    logger.warning(
+                        f"Instance {iid} exceeded {EXO_MAX_INSTANCE_RETRIES} retries, requesting deletion"
+                    )
+                    await self.command_sender.send(
+                        ForwarderCommand(
+                            origin=self._system_id,
+                            command=DeleteInstance(instance_id=iid),
+                        )
+                    )
                     continue
 
             logger.info(f"Worker plan: {task.__class__.__name__}")
@@ -214,6 +251,7 @@ class Worker:
             match task:
                 case CreateRunner():
                     self._create_supervisor(task)
+                    self._instance_backoff.record_attempt(task.instance_id)
                     await self.event_sender.send(
                         TaskStatusUpdated(
                             task_id=task.task_id, task_status=TaskStatus.Complete
@@ -223,11 +261,11 @@ class Worker:
                     model_id = shard.model_card.model_id
                     self._download_backoff.record_attempt(model_id)
 
-                    found_path = resolve_model_in_path(model_id)
+                    found_path = await to_thread.run_sync(
+                        resolve_existing_model, model_id
+                    )
                     if found_path is not None:
-                        logger.info(
-                            f"Model {model_id} found in EXO_MODELS_PATH at {found_path}"
-                        )
+                        logger.info(f"Model {model_id} found at {found_path}")
                         await self.event_sender.send(
                             NodeDownloadProgress(
                                 download_progress=DownloadCompleted(
@@ -235,7 +273,7 @@ class Worker:
                                     shard_metadata=shard,
                                     model_directory=str(found_path),
                                     total=shard.model_card.storage_size,
-                                    read_only=True,
+                                    read_only=is_read_only_model_dir(found_path),
                                 )
                             )
                         )
@@ -287,7 +325,7 @@ class Worker:
                     # Assemble image from chunks and inject into task
                     cmd_id = task.command_id
                     chunks = self.input_chunk_buffer.get(cmd_id, {})
-                    assembled = "".join(chunks[i] for i in range(len(chunks)))
+                    assembled = "".join(chunks[i].data for i in range(len(chunks)))
                     logger.info(
                         f"Assembled input image from {len(chunks)} chunks, "
                         f"total size: {len(assembled)} bytes"
@@ -321,11 +359,68 @@ class Worker:
                     if cmd_id in self.input_chunk_counts:
                         del self.input_chunk_counts[cmd_id]
                     await self._start_runner_task(modified_task)
+
+                case TextGeneration() if (
+                    task.task_params.image_hashes
+                    or task.task_params.total_input_chunks > 0
+                ):
+                    cmd_id = task.command_id
+                    by_index: dict[int, Base64Image] = {}
+
+                    for idx, h in task.task_params.image_hashes.items():
+                        assert h in self.image_cache
+                        by_index[idx] = self.image_cache[h]
+
+                    if task.task_params.total_input_chunks > 0:
+                        chunk_buffer = self.input_chunk_buffer.get(cmd_id, {})
+                        per_image: defaultdict[int, list[InputImageChunk]] = (
+                            defaultdict(list)
+                        )
+                        for chunk in chunk_buffer.values():
+                            per_image[chunk.image_index].append(chunk)
+                        for img_idx in sorted(per_image):
+                            sorted_chunks = sorted(
+                                per_image[img_idx], key=lambda c: c.chunk_index
+                            )
+                            img = Base64Image("".join(c.data for c in sorted_chunks))
+                            self.image_cache[
+                                Base64ImageHash(
+                                    hashlib.sha256(img.encode("ascii")).hexdigest()
+                                )
+                            ] = img
+                            by_index[img_idx] = img
+                        logger.info(
+                            f"Assembled {len(per_image)} VLM image(s) "
+                            f"from {len(chunk_buffer)} chunks"
+                        )
+
+                    resolved_images = [
+                        Base64Image(by_index[i]) for i in sorted(by_index)
+                    ]
+                    modified_task = task.model_copy(
+                        update={
+                            "task_params": task.task_params.model_copy(
+                                update={"images": resolved_images}
+                            )
+                        }
+                    )
+                    if cmd_id in self.input_chunk_buffer:
+                        del self.input_chunk_buffer[cmd_id]
+                    if cmd_id in self.input_chunk_counts:
+                        del self.input_chunk_counts[cmd_id]
+                    await self._start_runner_task(modified_task)
+                case LoadModel(instance_id=instance_id):
+                    if (instance := self.state.instances.get(instance_id)) is not None:
+                        model_id = instance.shard_assignments.model_id
+                        self._download_backoff.reset(model_id)
+
+                    await self._start_runner_task(task)
                 case task:
                     await self._start_runner_task(task)
 
-    def shutdown(self):
+    async def shutdown(self):
         self._tg.cancel_tasks()
+        await self._stopped.wait()
 
     async def _start_runner_task(self, task: Task):
         if (instance := self.state.instances.get(task.instance_id)) is not None:
@@ -353,16 +448,17 @@ class Worker:
                 self.state.topology,
                 self.node_id,
                 self.state.node_network,
+                api_port=self.api_port,
             ):
                 if ip in conns[nid]:
                     continue
                 conns[nid].add(ip)
                 edge = SocketConnection(
                     # nonsense multiaddr
-                    sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/52415")
+                    sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/{self.api_port}")
                     if "." in ip
                     # nonsense multiaddr
-                    else Multiaddr(address=f"/ip6/{ip}/tcp/52415"),
+                    else Multiaddr(address=f"/ip6/{ip}/tcp/{self.api_port}"),
                 )
                 if edge not in edges:
                     logger.debug(f"ping discovered {edge=}")
@@ -376,7 +472,7 @@ class Worker:
                 if not isinstance(conn.edge, SocketConnection):
                     continue
                 # ignore mDNS discovered connections
-                if conn.edge.sink_multiaddr.port != 52415:
+                if conn.edge.sink_multiaddr.port != self.api_port:
                     continue
                 if (
                     conn.sink not in conns

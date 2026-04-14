@@ -219,6 +219,8 @@
         } // lib.optionalAttrs (pkgsCuda != null) {
         exo-cuda-unwrapped = exoCudaPackage;
       } // {
+
+        inherit python;
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
         exo-eval = mkBenchScript "exo-eval" (inputs.self + /bench/exo_eval.py);
         exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);

@@ -186,7 +186,7 @@ async def test_re_download_after_delete_completes() -> None:
                 "Re-download after deletion should complete"
             )
         finally:
-            coordinator.shutdown()
+            await coordinator.shutdown()
             coordinator_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await coordinator_task

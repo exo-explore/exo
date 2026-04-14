@@ -47,6 +47,7 @@ from harness import (
     ExoHttpError,
     add_common_instance_args,
     ensure_cuda_available,
+    capture_cluster_snapshot,
     instance_id_from_instance,
     nodes_used_in_instance,
     resolve_model_short_id,
@@ -1029,16 +1030,18 @@ def save_results(
     concurrency: int,
     results: list[QuestionResult],
     scores: dict[str, Any],
+    cluster: dict[str, Any] | None = None,
 ) -> Path:
     out_dir = Path(results_dir) / model.replace("/", "_") / benchmark_name
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
     path = out_dir / f"c{concurrency}_{ts}.json"
 
-    data = {
+    data: dict[str, Any] = {
         "benchmark": benchmark_name,
         "model": model,
         "concurrency": concurrency,
+        **({"cluster": cluster} if cluster else {}),
         "scores": scores,
         "results": [
             {
@@ -1236,8 +1239,10 @@ def main() -> int:
                 client.request_json("DELETE", f"/instance/{instance_id}")
             return 1
         time.sleep(1)
+        cluster_snapshot = capture_cluster_snapshot(client)
     else:
         full_model_id = args.model
+        cluster_snapshot = None
 
     # Auto-detect reasoning from model config
     model_config = load_model_config(full_model_id)
@@ -1333,6 +1338,7 @@ def main() -> int:
                             c,
                             results,
                             scores,
+                            cluster=cluster_snapshot,
                         )
                         results_by_c[c] = results
                 if len(results_by_c) >= 2:
@@ -1363,6 +1369,7 @@ def main() -> int:
                         args.num_concurrent,
                         results,
                         scores,
+                        cluster=cluster_snapshot,
                     )
     finally:
         if instance_id is not None:
