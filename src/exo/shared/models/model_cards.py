@@ -65,10 +65,6 @@ async def _load_cards_from_dir(directory: Path, *, is_custom: bool) -> None:
             card = await ModelCard.load_from_path(toml_file)
             if is_custom:
                 card = card.model_copy(update={"is_custom": True})
-            if card.vision is None:
-                vision = detect_vision_from_config(card.model_id)
-                if vision is not None:
-                    card = card.model_copy(update={"vision": vision})
             if card.model_id not in _card_cache:
                 _card_cache[card.model_id] = card
         except (ValidationError, TOMLKitError):
@@ -139,6 +135,14 @@ class ModelCard(CamelCaseModel):
     trust_remote_code: bool = True
     is_custom: bool = False
     vision: VisionCardConfig | None = None
+
+    @model_validator(mode="after")
+    def _autodetect_vision(self) -> "ModelCard":
+        if self.vision is None:
+            detected = detect_vision_from_config(self.model_id)
+            if detected is not None:
+                object.__setattr__(self, "vision", detected)
+        return self
 
     @model_validator(mode="after")
     def _fill_vision_weights_repo(self) -> "ModelCard":

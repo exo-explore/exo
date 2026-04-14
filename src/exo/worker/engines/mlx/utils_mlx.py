@@ -26,7 +26,7 @@ from mlx_lm.models.cache import KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.models.model_cards import ModelId, detect_vision_from_config
+from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 
 try:
@@ -206,10 +206,6 @@ def load_mlx_items(
     mx.clear_cache()
 
     vision_config = bound_instance.bound_shard.model_card.vision
-    if vision_config is None:
-        vision_config = detect_vision_from_config(
-            bound_instance.bound_shard.model_card.model_id
-        )
 
     if vision_config is not None:
         from exo.worker.engines.mlx.vision import VisionProcessor
