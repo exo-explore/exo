@@ -109,6 +109,7 @@ class RunnerSupervisor:
         return self
 
     async def run(self):
+        assert not self._tg.is_running(), "Tried to run a supervisor twice"
         self.runner_process.start()
         try:
             async with self._tg as tg:
