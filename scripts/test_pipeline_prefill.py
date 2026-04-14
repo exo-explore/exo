@@ -18,6 +18,7 @@ from typing import Any
 
 sys.path.insert(0, "bench")
 
+from exo_bench import PromptSizer, load_tokenizer_for_bench
 from harness import (
     ExoClient,
     ExoHttpError,
@@ -28,8 +29,6 @@ from harness import (
     wait_for_instance_gone,
     wait_for_instance_ready,
 )
-
-from exo_bench import PromptSizer, load_tokenizer_for_bench
 
 
 def run_one(client: ExoClient, model_id: str, pp: int, tg: int, sizer: PromptSizer) -> dict[str, Any]:

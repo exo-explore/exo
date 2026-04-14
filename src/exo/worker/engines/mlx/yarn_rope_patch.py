@@ -11,7 +11,6 @@ import math
 import mlx.core as mx
 from mlx_lm.models import rope_utils
 
-
 _original_YarnRoPE_init = rope_utils.YarnRoPE.__init__
 
 

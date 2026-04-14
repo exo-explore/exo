@@ -372,7 +372,6 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
     """Gets model size from safetensors index or falls back to HF API."""
     from exo.download.download_utils import (
         download_file_with_retry,
-        resolve_model_dir,
     )
     from exo.shared.types.worker.downloads import ModelSafetensorsIndex
 

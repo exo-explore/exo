@@ -477,7 +477,6 @@ def _build_torch_cache(kv_chunks: list[tuple[int, torch.Tensor, torch.Tensor]], 
 
 def _extract_vllm_cache(engine: LLMEngine, request_id: str, num_tokens: int) -> TorchKVCache | None:
     try:
-        from exo.worker.engines.vllm.vllm_generator import _save_prefix_cache
         from exo.worker.engines.vllm.growable_cache import get_model_runner
         from exo.worker.engines.vllm.vllm_generator import _build_layer_groups
         model_runner = get_model_runner()

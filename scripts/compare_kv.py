@@ -1,19 +1,29 @@
 import sys
+
 sys.path.insert(0, "src")
 from exo.worker.engines.mlx.gdn_softplus_patch import patch_gdn_softplus
 from exo.worker.engines.mlx.yarn_rope_patch import patch_yarn_rope
+
 patch_gdn_softplus()
 patch_yarn_rope()
+import json
+import socket
+from collections import defaultdict
+from pathlib import Path
+
 import mlx.core as mx
 import torch
-import socket
-from pathlib import Path
-import json
-from collections import defaultdict
 from mlx_lm import load
-from mlx_lm.models.cache import ArraysCache, RotatingKVCache, KVCache
-from exo.disaggregated.protocol import read_header, read_message, ArraysState, KVChunk, Done
-from exo.disaggregated.prefill_client import _nhd_to_bhsd, _torch_to_mx
+from mlx_lm.models.cache import ArraysCache, RotatingKVCache
+
+from exo.disaggregated.prefill_client import _torch_to_mx
+from exo.disaggregated.protocol import (
+    ArraysState,
+    Done,
+    KVChunk,
+    read_header,
+    read_message,
+)
 
 ENDPOINT = sys.argv[1] if len(sys.argv) > 1 else "10.43.0.1:62988"
 MODEL = sys.argv[2] if len(sys.argv) > 2 else "mlx-community/Llama-3.2-1B-Instruct-bf16"

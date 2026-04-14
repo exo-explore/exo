@@ -1,8 +1,9 @@
 import sys
+
 sys.path.insert(0, "src")
 import mlx.core as mx
 from mlx_lm import load
-from mlx_lm.models.cache import RotatingKVCache, KVCache
+from mlx_lm.models.cache import KVCache, RotatingKVCache
 
 model, tok = load("mlx-community/gpt-oss-20b-MXFP4-Q8")
 

@@ -1,5 +1,5 @@
-import json
 import hashlib
+import json
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -11,7 +11,12 @@ from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
-from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card, derive_base_model
+from exo.shared.models.model_cards import (
+    ModelId,
+    add_to_card_cache,
+    delete_custom_card,
+    derive_base_model,
+)
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     DeleteInstance,

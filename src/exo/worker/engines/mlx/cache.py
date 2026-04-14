@@ -19,8 +19,8 @@ from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
-    from exo.worker.engines.vllm.kv_cache import TorchKVCache
     from exo.worker.engines.mlx.vision import MediaRegion
+    from exo.worker.engines.vllm.kv_cache import TorchKVCache
 
 
 # Fraction of device memory above which LRU eviction kicks in.

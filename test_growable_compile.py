@@ -1,10 +1,14 @@
 """Test hybrid prefix cache: _extract_vllm_cache for attn + captured SSM for mamba."""
-import os, time
+import os
+import time
+
 os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
 os.environ["VLLM_KV_CACHE_LAYOUT"] = "NHD"
-from exo.worker.engines.vllm.growable_cache import patch_vllm, set_prefix_cache, get_model_runner
+from exo.worker.engines.vllm.growable_cache import patch_vllm, set_prefix_cache
+
 patch_vllm()
 from vllm.distributed.kv_transfer.kv_connector.factory import KVConnectorFactory
+
 KVConnectorFactory.register_connector("StreamingConnector", "exo.disaggregated.streaming_connector", "StreamingConnector")
 from vllm.engine.arg_utils import EngineArgs
 from vllm.sampling_params import SamplingParams
@@ -20,17 +24,23 @@ ea = EngineArgs(model=MODEL, served_model_name="test", gpu_memory_utilization=0.
 engine = LLMEngine.from_engine_args(ea)
 tok = engine.get_tokenizer()
 from exo.worker.engines.mlx.cache import KVPrefixCache
+
 pc = KVPrefixCache(group=None)
 set_prefix_cache(pc)
 
 from exo.disaggregated.prefill_server import (
-    _patch_gdn_capture, _init_gdn_layer_order, _gdn_states, _gdn_call_idx, _ssm_call_idx,
     _extract_vllm_cache,
+    _gdn_call_idx,
+    _gdn_states,
+    _init_gdn_layer_order,
+    _patch_gdn_capture,
+    _ssm_call_idx,
 )
 from exo.disaggregated.streaming_connector import reset_shared_queue
+
 _patch_gdn_capture()
 _init_gdn_layer_order()
-print(f"Engine loaded")
+print("Engine loaded")
 
 article = ("The European Union announced sweeping new regulations on artificial intelligence. " * 500)
 tids = tok.encode(article)[:22000]
@@ -72,6 +82,7 @@ if tc and _gdn_states:
     print(f"Final cache: {kv_c} KV layers, {arr_c} Arrays layers")
 
 import mlx.core as mx
+
 pc.add_kv_cache(mx.array(ptids), tc, None)
 print("Stored hybrid cache")
 

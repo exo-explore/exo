@@ -123,7 +123,6 @@ class Master:
                 )
                 continue
 
-            pass
 
             for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
                 runner_status = self.state.runners.get(runner_id)

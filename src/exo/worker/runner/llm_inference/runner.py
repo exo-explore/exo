@@ -576,7 +576,6 @@ class VllmBuilder(Builder):
         overlapping = not os.environ.get("EXO_NO_OVERLAPPING_PREFILL_SENDS")
         try:
             from exo.disaggregated.prefill_server import start_prefill_server
-
             from exo.shared.types.events import RunnerStatusUpdated
             from exo.shared.types.worker.runners import RunnerReady, RunnerRunning
 
