@@ -1,10 +1,8 @@
-import os
-import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from functools import partial
 from inspect import signature
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -63,7 +61,6 @@ from exo.worker.runner.bootstrap import logger
 if TYPE_CHECKING:
     from mlx_lm.models.cache import Cache
 
-TimeoutCallback = Callable[[], None]
 LayerLoadedCallback = Callable[[int, int], None]  # (layers_loaded, total_layers)
 
 
@@ -80,38 +77,6 @@ def flush_prefill_sends() -> None:
 def clear_prefill_sends() -> None:
     # Discard pending sends (e.g. on cancellation).
     _pending_prefill_sends.clear()
-
-
-def eval_with_timeout(
-    mlx_item: Any,  # pyright: ignore[reportAny]
-    timeout_seconds: float = 60.0,
-    on_timeout: TimeoutCallback | None = None,
-) -> None:
-    """Evaluate MLX item with a hard timeout.
-
-    If on_timeout callback is provided, it will be called before terminating
-    the process. This allows the runner to send a failure event before exit.
-    """
-    completed = threading.Event()
-
-    def watchdog() -> None:
-        if not completed.wait(timeout=timeout_seconds):
-            logger.error(
-                f"mlx_item evaluation timed out after {timeout_seconds:.0f}s. "
-                "This may indicate an issue with FAST_SYNCH and tensor parallel sharding. "
-                "Terminating process."
-            )
-            if on_timeout is not None:
-                on_timeout()
-            os._exit(1)
-
-    watchdog_thread = threading.Thread(target=watchdog, daemon=True)
-    watchdog_thread.start()
-
-    try:
-        mx.eval(mlx_item)  # pyright: ignore[reportAny]
-    finally:
-        completed.set()
 
 
 class _LayerCallable(Protocol):
@@ -491,8 +456,6 @@ def patch_tensor_model[T](model: T) -> T:
 def tensor_auto_parallel(
     model: nn.Module,
     group: mx.distributed.Group,
-    timeout_seconds: float,
-    on_timeout: TimeoutCallback | None,
     on_layer_loaded: LayerLoadedCallback | None,
 ) -> nn.Module:
     all_to_sharded_linear = partial(
@@ -612,9 +575,7 @@ def tensor_auto_parallel(
     else:
         raise ValueError(f"Unsupported model type: {type(model)}")
 
-    model = tensor_parallel_sharding_strategy.shard_model(
-        model, timeout_seconds, on_timeout, on_layer_loaded
-    )
+    model = tensor_parallel_sharding_strategy.shard_model(model, on_layer_loaded)
     return patch_tensor_model(model)
 
 
@@ -638,8 +599,6 @@ class TensorParallelShardingStrategy(ABC):
     def shard_model(
         self,
         model: nn.Module,
-        timeout_seconds: float,
-        on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module: ...
 
@@ -648,15 +607,13 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
         model: nn.Module,
-        timeout_seconds: float,
-        on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(LlamaModel, model)
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
             # Force load weights before sharding to avoid FAST_SYNCH deadlock
-            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+            mx.eval(layer.parameters())
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
@@ -704,15 +661,13 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
         model: nn.Module,
-        timeout_seconds: float,
-        on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(DeepseekV3Model, model)
         total = len(model.layers)
 
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+            mx.eval(layer.parameters())
 
             # Shard the self attention
             if layer.self_attn.q_lora_rank is None:
@@ -789,19 +744,13 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
         model: nn.Module,
-        timeout_seconds: float,
-        on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(GLM4MoeLiteModel, model)
         total = len(model.layers)  # type: ignore
         for i, layer in enumerate(model.layers):  # type: ignore
             layer = cast(Glm4MoeLiteDecoderLayer, layer)
-            eval_with_timeout(
-                layer.parameters(),
-                timeout_seconds / total,
-                on_timeout,
-            )
+            mx.eval(layer.parameters())
             if layer.self_attn.q_lora_rank is None:  # type: ignore
                 layer.self_attn.q_proj = self.all_to_sharded_linear(
                     layer.self_attn.q_proj
@@ -935,14 +884,12 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
         model: nn.Module,
-        timeout_seconds: float,
-        on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(MiniMaxModel, model)
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+            mx.eval(layer.parameters())
             # Shard the self attention
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
@@ -976,8 +923,6 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
         model: nn.Module,
-        timeout_seconds: float,
-        on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(
@@ -985,7 +930,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         )
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+            mx.eval(layer.parameters())
             # Shard the self attention
             if isinstance(layer, Qwen3MoeDecoderLayer):
                 layer.self_attn.q_proj = self.all_to_sharded_linear(
@@ -1137,14 +1082,12 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
         model: nn.Module,
-        timeout_seconds: float,
-        on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(Glm4MoeModel, model)
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+            mx.eval(layer.parameters())
 
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
@@ -1185,15 +1128,13 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
         model: nn.Module,
-        timeout_seconds: float,
-        on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(GptOssMoeModel, model)
         total = len(model.layers)
 
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+            mx.eval(layer.parameters())
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
@@ -1228,15 +1169,13 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
         model: nn.Module,
-        timeout_seconds: float,
-        on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(Step35Model, model)
         total = len(model.layers)
 
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+            mx.eval(layer.parameters())
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
@@ -1273,15 +1212,13 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
         model: nn.Module,
-        timeout_seconds: float,
-        on_timeout: TimeoutCallback | None,
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(NemotronHModel, model)
         rank = self.group.rank()
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
-            eval_with_timeout(layer.parameters(), timeout_seconds / total, on_timeout)
+            mx.eval(layer.parameters())
 
             mixer = layer.mixer
 
