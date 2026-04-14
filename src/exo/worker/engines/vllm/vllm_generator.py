@@ -6,6 +6,7 @@ import sys
 import time
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import torch
 from vllm.engine.arg_utils import EngineArgs
@@ -13,7 +14,7 @@ from vllm.sampling_params import SamplingParams
 from vllm.v1.engine.llm_engine import LLMEngine
 from vllm.v1.kv_cache_interface import KVCacheConfig
 
-from exo.shared.types.api import (
+from exo.api.types import (
     CompletionTokensDetails,
     GenerationStats,
     PromptTokensDetails,
@@ -550,7 +551,7 @@ def _patch_weight_loading_progress() -> None:
 
 
 def load_vllm_engine(
-    model_path: str,
+    model_path: Path,
     model_id: ModelId,
     trust_remote_code: bool,
     n_layers: int = 1,

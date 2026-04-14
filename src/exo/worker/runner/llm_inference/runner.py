@@ -12,6 +12,7 @@ import mlx.core as mx
 from anyio import WouldBlock
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.download.download_utils import build_model_path
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -521,7 +522,6 @@ class MlxBuilder(Builder):
 @dataclass
 class VllmBuilder(Builder):
     model_id: ModelId
-    model_path: str
     trust_remote_code: bool
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
@@ -551,7 +551,7 @@ class VllmBuilder(Builder):
 
         self._bound_runner_id = bound_instance.bound_runner_id
         self._engine, self._tool_parser, self._prefix_cache = load_vllm_engine(
-            model_path=self.model_path,
+            model_path=build_model_path(self.model_id),
             model_id=self.model_id,
             trust_remote_code=self.trust_remote_code,
             n_layers=bound_instance.bound_shard.model_card.n_layers,

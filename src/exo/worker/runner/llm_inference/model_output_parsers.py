@@ -60,16 +60,12 @@ def apply_all_parsers(
     tokenizer: TokenizerWrapper,
     model_id: ModelId,
     tools: list[dict[str, Any]] | None,
-    model_type: type[Model]
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     mlx_generator = receiver
 
-    if issubclass(model_type, GptOssModel):
+    if "gpt-oss" in model_id.short().lower():
         mlx_generator = parse_gpt_oss(mlx_generator)
-    elif (
-        issubclass(model_type, DeepseekV32Model)
-        and "deepseek" in model_id.normalize().lower()
-    ):
+    elif "deepseek-v3.2" in model_id.short().lower():
         mlx_generator = parse_deepseek_v32(mlx_generator)
     else:
         if tokenizer.has_thinking:

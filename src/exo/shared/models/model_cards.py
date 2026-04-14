@@ -1,4 +1,5 @@
 import json
+import re
 from enum import Enum
 from typing import Annotated, Any
 
@@ -40,13 +41,10 @@ _BUILTIN_CARD_DIRS = [
 
 _card_cache: dict[ModelId, "ModelCard"] = {}
 
-import re
-
 _QUANT_SUFFIXES = re.compile(
     r"[-_ ](?:MLX|MXFP[0-9]+|NVFP[0-9]+|GPTQ|AWQ|GGUF|fp16|bf16|fp8|int[0-9]+|[0-9]+(?:\.[0-9]+)?bit|Q[0-9]+(?:_[A-Z0-9]+)?|gs[0-9]+)(?:[-_ ](?:MLX|Q[0-9]+|Int[0-9]+|[A-Z0-9]+|gs[0-9]+))*$",
     re.IGNORECASE,
 )
-
 
 def _normalize_base_model(s: str) -> str:
     return s.replace("-", " ").replace("_", " ").replace("  ", " ").strip()
@@ -372,11 +370,11 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
     """Gets model size from safetensors index or falls back to HF API."""
     from exo.download.download_utils import (
         download_file_with_retry,
+        resolve_model_dir,
     )
     from exo.shared.types.worker.downloads import ModelSafetensorsIndex
 
-    target_dir = (await ensure_models_dir()) / model_id.normalize()
-    await aios.makedirs(target_dir, exist_ok=True)
+    target_dir = await resolve_model_dir(model_id)
     try:
         index_path = await download_file_with_retry(
             model_id,

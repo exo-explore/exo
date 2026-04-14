@@ -108,13 +108,11 @@ def entrypoint(
             if "/usr/local/cuda-13.2/compat" not in os.environ.get("LD_LIBRARY_PATH", ""):
                 _ensure_cuda_libs()
             _ensure_tiktoken_encodings()
-            from exo.shared.constants import EXO_MODELS_DIR
             from exo.worker.runner.llm_inference.runner import Runner, VllmBuilder
 
             model_id = bound_instance.bound_shard.model_card.model_id
             builder = VllmBuilder(
                 model_id=model_id,
-                model_path=str(EXO_MODELS_DIR / model_id.normalize()),
                 trust_remote_code=bound_instance.bound_shard.model_card.trust_remote_code,
                 cancel_receiver=cancel_receiver,
                 event_sender=event_sender,

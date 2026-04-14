@@ -129,8 +129,8 @@ def place_instance(
         ]
 
     # QMM/quantized ops are not available on MLX CUDA — exclude CUDA nodes for quantized MLX models.
-    if command.instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
-        if command.model_card.quantization not in ("", "bf16"):
+    if command.instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl) \
+        and command.model_card.quantization not in ("", "bf16"):
             candidate_cycles = [
                 cycle
                 for cycle in candidate_cycles
@@ -138,8 +138,8 @@ def place_instance(
             ]
 
     # mlx-community models should prefer Apple Silicon nodes over CUDA nodes.
-    if command.instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
-        if str(command.model_card.model_id).startswith("mlx-community/"):
+    if command.instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl) \
+        and str(command.model_card.model_id).startswith("mlx-community/"):
             apple_silicon_cycles = [
                 cycle
                 for cycle in candidate_cycles
