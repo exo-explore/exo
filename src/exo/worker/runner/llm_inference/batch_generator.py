@@ -1,6 +1,5 @@
 import itertools
 import time
-from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
@@ -13,10 +12,22 @@ from exo.shared.types.chunks import ErrorChunk, PrefillProgressChunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import ChunkGenerated, Event
 from exo.shared.types.mlx import Model
-from exo.shared.types.tasks import CANCEL_ALL_TASKS, TaskId, TextGeneration
+from exo.shared.types.tasks import (
+    CANCEL_ALL_TASKS,
+    GenerationTask,
+    TaskId,
+    TextGeneration,
+)
 from exo.shared.types.text_generation import TextGenerationTaskParams
-from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
+from exo.shared.types.worker.runner_response import (
+    CancelledResponse,
+    FinishedResponse,
+    GenerationResponse,
+    TextResponse,
+    ToolCallResponse,
+)
 from exo.utils.channels import MpReceiver, MpSender
+from exo.worker.engines.base import Engine
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
 from exo.worker.engines.mlx.generator.generate import (
@@ -36,14 +47,6 @@ from .model_output_parsers import apply_all_parsers
 from .tool_parsers import ToolParser
 
 
-class Cancelled:
-    pass
-
-
-class Finished:
-    pass
-
-
 class GeneratorQueue[T]:
     def __init__(self):
         self._q = deque[T]()
@@ -57,35 +60,6 @@ class GeneratorQueue[T]:
                 yield None
             else:
                 yield self._q.popleft()
-
-
-class InferenceGenerator(ABC):
-    _cancelled_tasks: set[TaskId]
-
-    def should_cancel(self, task_id: TaskId) -> bool:
-        return (
-            task_id in self._cancelled_tasks
-            or CANCEL_ALL_TASKS in self._cancelled_tasks
-        )
-
-    @abstractmethod
-    def warmup(self) -> None: ...
-
-    @abstractmethod
-    def submit(
-        self,
-        task: TextGeneration,
-    ) -> None: ...
-
-    @abstractmethod
-    def step(
-        self,
-    ) -> Iterable[
-        tuple[TaskId, ToolCallResponse | GenerationResponse | Cancelled | Finished]
-    ]: ...
-
-    @abstractmethod
-    def close(self) -> None: ...
 
 
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"
@@ -111,7 +85,7 @@ def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
 
 
 @dataclass(eq=False)
-class SequentialGenerator(InferenceGenerator):
+class SequentialGenerator(Engine):
     model: Model
     tokenizer: TokenizerWrapper
     group: mx.distributed.Group | None
@@ -152,8 +126,9 @@ class SequentialGenerator(InferenceGenerator):
 
     def submit(
         self,
-        task: TextGeneration,
+        task: GenerationTask,
     ) -> None:
+        assert isinstance(task, TextGeneration)
         self._cancelled_tasks.discard(CANCEL_ALL_TASKS)
         self._all_tasks[task.task_id] = task
         self._maybe_queue.append(task)
@@ -183,32 +158,30 @@ class SequentialGenerator(InferenceGenerator):
 
     def step(
         self,
-    ) -> Iterable[
-        tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
-    ]:
+    ) -> Iterable[tuple[TaskId, TextResponse]]:
         if self._active is None:
             self.agree_on_tasks()
 
             if self._queue:
                 self._start_next()
             else:
-                return map(lambda task: (task, Cancelled()), self._cancelled_tasks)
+                return map(
+                    lambda task: (task, CancelledResponse()), self._cancelled_tasks
+                )
 
         assert self._active is not None
 
-        task, mlx_gen, queue, output_generator = self._active
-        output: list[
-            tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
-        ] = []
+        task, gen, queue, output_generator = self._active
+        output: list[tuple[TaskId, TextResponse]] = []
         try:
-            response = next(mlx_gen)
+            response = next(gen)
             queue.push(response)
             # drain potentially many responses every time
             while (parsed := next(output_generator, None)) is not None:
                 output.append((task.task_id, parsed))
 
         except (StopIteration, PrefillCancelled):
-            output.append((task.task_id, Finished()))
+            output.append((task.task_id, FinishedResponse()))
             self._active = None
             if self._queue:
                 self._start_next()
@@ -220,13 +193,13 @@ class SequentialGenerator(InferenceGenerator):
 
         return itertools.chain(
             output,
-            map(lambda task: (task, Cancelled()), self._cancelled_tasks),
+            map(lambda task: (task, CancelledResponse()), self._cancelled_tasks),
         )
 
     def _start_next(self) -> None:
         task = self._queue.popleft()
         try:
-            mlx_gen = self._build_generator(task)
+            gen = self._build_generator(task)
         except Exception as e:
             self._send_error(task, e)
             raise
@@ -244,7 +217,7 @@ class SequentialGenerator(InferenceGenerator):
                 self.model_id,
                 task.task_params.tools,
             )
-        self._active = (task, mlx_gen, queue, output_generator)
+        self._active = (task, gen, queue, output_generator)
 
     def _send_error(self, task: TextGeneration, e: Exception) -> None:
         if self.device_rank == 0:
@@ -314,7 +287,7 @@ class SequentialGenerator(InferenceGenerator):
 
 
 @dataclass(eq=False)
-class BatchGenerator(InferenceGenerator):
+class BatchGenerator(Engine):
     model: Model
     tokenizer: TokenizerWrapper
     group: mx.distributed.Group | None
@@ -332,7 +305,7 @@ class BatchGenerator(InferenceGenerator):
     _maybe_cancel: list[TextGeneration] = field(default_factory=list, init=False)
     _all_tasks: dict[TaskId, TextGeneration] = field(default_factory=dict, init=False)
     _queue: deque[TextGeneration] = field(default_factory=deque, init=False)
-    _mlx_gen: ExoBatchGenerator = field(init=False)
+    _gen: ExoBatchGenerator = field(init=False)
     _active_tasks: dict[
         int,
         tuple[
@@ -343,7 +316,7 @@ class BatchGenerator(InferenceGenerator):
     ] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
-        self._mlx_gen = ExoBatchGenerator(
+        self._gen = ExoBatchGenerator(
             model=self.model,
             tokenizer=self.tokenizer,
             group=self.group,
@@ -361,8 +334,9 @@ class BatchGenerator(InferenceGenerator):
 
     def submit(
         self,
-        task: TextGeneration,
+        task: GenerationTask,
     ) -> None:
+        assert isinstance(task, TextGeneration)
         self._cancelled_tasks.discard(CANCEL_ALL_TASKS)
         self._all_tasks[task.task_id] = task
         self._maybe_queue.append(task)
@@ -392,9 +366,7 @@ class BatchGenerator(InferenceGenerator):
 
     def step(
         self,
-    ) -> Iterable[
-        tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
-    ]:
+    ) -> Iterable[tuple[TaskId, TextResponse]]:
         if not self._queue:
             self.agree_on_tasks()
 
@@ -424,14 +396,12 @@ class BatchGenerator(InferenceGenerator):
                 )
             self._active_tasks[uid] = (task, queue, output_generator)
 
-        if not self._mlx_gen.has_work:
+        if not self._gen.has_work:
             return self._apply_cancellations()
 
-        results = self._mlx_gen.step()
+        results = self._gen.step()
 
-        output: list[
-            tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
-        ] = []
+        output: list[tuple[TaskId, TextResponse]] = []
         for uid, response in results:
             if uid not in self._active_tasks:
                 # should we error here?
@@ -446,35 +416,35 @@ class BatchGenerator(InferenceGenerator):
 
             # check if original response was terminal and append a Finished()
             if response.finish_reason is not None:
-                output.append((task.task_id, Finished()))
+                output.append((task.task_id, FinishedResponse()))
                 del self._active_tasks[uid]
 
         return itertools.chain(output, self._apply_cancellations())
 
     def _apply_cancellations(
         self,
-    ) -> list[tuple[TaskId, Cancelled]]:
+    ) -> list[tuple[TaskId, CancelledResponse]]:
         if not self._cancelled_tasks:
             return []
 
         cancel_all = CANCEL_ALL_TASKS in self._cancelled_tasks
 
         uids_to_cancel: list[int] = []
-        results: list[tuple[TaskId, Cancelled]] = []
+        results: list[tuple[TaskId, CancelledResponse]] = []
 
         for uid, (task, _, _) in list(self._active_tasks.items()):
             if task.task_id in self._cancelled_tasks or cancel_all:
                 uids_to_cancel.append(uid)
-                results.append((task.task_id, Cancelled()))
+                results.append((task.task_id, CancelledResponse()))
                 del self._active_tasks[uid]
 
         if uids_to_cancel:
-            self._mlx_gen.cancel(uids_to_cancel)
+            self._gen.cancel(uids_to_cancel)
 
         already_cancelled = {tid for tid, _ in results}
         for tid in self._cancelled_tasks:
             if tid != CANCEL_ALL_TASKS and tid not in already_cancelled:
-                results.append((tid, Cancelled()))
+                results.append((tid, CancelledResponse()))
 
         self._cancelled_tasks.clear()
         return results
@@ -529,7 +499,7 @@ class BatchGenerator(InferenceGenerator):
 
                 self.agree_on_tasks()
 
-        return self._mlx_gen.submit(
+        return self._gen.submit(
             task_params=task.task_params,
             prompt=prompt,
             on_prefill_progress=on_prefill_progress,
@@ -538,5 +508,5 @@ class BatchGenerator(InferenceGenerator):
         )
 
     def close(self) -> None:
-        self._mlx_gen.close()
+        self._gen.close()
         del self.model, self.tokenizer, self.group

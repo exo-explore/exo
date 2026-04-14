@@ -44,13 +44,18 @@ def entrypoint(
             )
             runner.main()
         else:
-            from exo.worker.runner.llm_inference.runner import Runner
-
             apply_mlx_patches()
+            from exo.worker.engines.mlx.builder import MlxBuilder
+            from exo.worker.runner.runner import Runner
 
-            runner = Runner(
-                bound_instance, event_sender, task_receiver, cancel_receiver
+            # evil sharing of the event sender
+            builder = MlxBuilder(
+                model_id=bound_instance.bound_shard.model_card.model_id,
+                event_sender=event_sender,
+                cancel_receiver=cancel_receiver,
             )
+
+            runner = Runner(bound_instance, builder, event_sender, task_receiver)
             runner.main()
 
     except ClosedResourceError:
