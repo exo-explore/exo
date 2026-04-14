@@ -70,6 +70,11 @@ class FinishedResponse(BaseRunnerResponse):
     pass
 
 
+class ModelLoadingResponse(BaseRunnerResponse):
+    layers_loaded: int
+    total: int
+
+
 class PrefillProgressResponse(BaseRunnerResponse):
     processed_tokens: int
     total_tokens: int

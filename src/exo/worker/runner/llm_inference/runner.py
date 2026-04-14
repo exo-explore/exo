@@ -1,5 +1,6 @@
 import os
 import time
+from collections.abc import Generator
 from dataclasses import dataclass
 from enum import Enum
 
@@ -35,6 +36,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
+    ModelLoadingResponse,
     ToolCallResponse,
 )
 from exo.shared.types.worker.runners import (
@@ -181,23 +183,28 @@ class Runner:
                 )
                 self.acknowledge_task(task)
 
-                def on_layer_loaded(layers_loaded: int, total: int) -> None:
-                    self.update_status(
-                        RunnerLoading(layers_loaded=layers_loaded, total_layers=total)
-                    )
-
                 assert (
                     ModelTask.TextGeneration in self.shard_metadata.model_card.tasks
                 ), f"Incorrect model task(s): {self.shard_metadata.model_card.tasks}"
-                (
-                    self.generator.inference_model,
-                    self.generator.tokenizer,
-                    self.generator.vision_processor,
-                ) = load_mlx_items(
-                    self.bound_instance,
-                    self.generator.group,
-                    on_layer_loaded=on_layer_loaded,
-                )
+
+                def load_model() -> Generator[ModelLoadingResponse]:
+                    assert isinstance(self.generator, Builder)
+                    (
+                        self.generator.inference_model,
+                        self.generator.tokenizer,
+                        self.generator.vision_processor,
+                    ) = yield from load_mlx_items(
+                        self.bound_instance,
+                        self.generator.group,
+                    )
+
+                for load_resp in load_model():
+                    self.update_status(
+                        RunnerLoading(
+                            layers_loaded=load_resp.layers_loaded,
+                            total_layers=load_resp.total,
+                        )
+                    )
 
                 self.generator = self.generator.build()
 
