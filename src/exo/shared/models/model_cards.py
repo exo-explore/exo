@@ -256,6 +256,7 @@ class ConfigData(BaseModel):
             ["Qwen3MoeForCausalLM"],
             ["Qwen3_5MoeForConditionalGeneration"],
             ["Qwen3_5ForConditionalGeneration"],
+            ["Qwen3VLForConditionalGeneration"],
             ["MiniMaxM2ForCausalLM"],
             ["LlamaForCausalLM"],
             ["GptOssForCausalLM"],
