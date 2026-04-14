@@ -270,47 +270,67 @@ class ExoBatchGenerator:
         logger.info("Speculative warmup complete")
 
     def warmup_dflash(self, model, tokenizer, drafter) -> None:
-        """Warm up the DFlash speculative decoding path."""
+        """Warm up the DFlash speculative decoding path.
+
+        With the dynamic kernel picker, each patched projection memoizes
+        kernels keyed by the actual M seen in the forward pass. Running
+        three full draft+verify cycles at the real (block_size, verify_len)
+        exercises every M that will come up at runtime:
+          - target verify projections: M = V + 1
+          - target lm_head: M = V + 1
+          - drafter q/o/mlp: M = block_size (fixed)
+          - drafter k/v: M = S_ctx + block_size (S_ctx grows 1 → V+1)
+          - drafter fc: M = S_ctx ∈ [1, V+1]
+          - drafter lm_head: M = block_size - 1
+        Three cycles are enough for S_ctx to traverse [1, V+1].
+        """
         from mlx_lm.models import cache as cache_mod
         from exo.worker.engines.mlx.speculative.dflash_speculative import dflash_speculative_forward
 
         logger.info("Warming up DFlash speculative decoding kernels...")
 
-        warmup_prompt = tokenizer.encode("Warm up speculative decoding.")
+        # Synthetic prompt — length just has to exercise the graph.
+        ctx_len = 64
+        prompt_tokens = [1] * ctx_len
         cache = cache_mod.make_prompt_cache(model)
         drafter.reset_draft_cache()
 
-        # Prefill: capture target hidden states
         target_hidden, _, logits = dflash_speculative_forward(
-            model, mx.array([warmup_prompt]), cache, drafter.target_layer_ids)
+            model, mx.array([prompt_tokens]), cache, drafter.target_layer_ids)
         mx.eval(target_hidden, logits)
+        last_target_hidden = target_hidden[:, -1:, :]
         next_token = mx.argmax(logits[0, -1], axis=-1).item()
 
-        # Run a few draft + verify cycles to compile all kernels
         bs = drafter.block_size
-        start = len(warmup_prompt)
+        verify_len = self._mlx_gen.verify_len  # pyright: ignore[reportAttributeAccessIssue]
+        start = ctx_len
+
         for _ in range(3):
             block_ids = mx.full((1, bs), drafter.mask_token_id, dtype=mx.int32)
             block_ids[:, 0] = next_token
-            draft_logits = drafter.draft(target_hidden, block_ids, start)
+            draft_logits = drafter.draft(last_target_hidden, block_ids, start)
             mx.eval(draft_logits)
             drafter.crop_draft_cache(start)
 
-            drafts = mx.argmax(draft_logits, axis=-1).squeeze(0).tolist()[:5]
+            drafts = mx.argmax(draft_logits, axis=-1).squeeze(0).tolist()[:verify_len]
             verify_input = mx.array([[next_token] + drafts])
             target_hidden, _, vl = dflash_speculative_forward(
                 model, verify_input, cache, drafter.target_layer_ids, speculative=True)
             mx.eval(target_hidden, vl)
+            next_token = mx.argmax(vl[0, -1], axis=-1).item()
+            last_target_hidden = target_hidden[:, :verify_len + 1, :]
 
-            # Rollback for next iteration
-            for i, c in enumerate(cache):
+            # Rollback to simulate 1 accepted bonus token per cycle, so
+            # drafter S_ctx advances 1 → 2 → 3 over the three cycles.
+            for c in cache:
                 if hasattr(c, 'offset'):
-                    c.offset -= len(drafts)
+                    c.offset -= verify_len
                 elif hasattr(c, 'rollback'):
                     c.rollback(0)
             for i, c in enumerate(cache):
                 if hasattr(c, 'base'):
                     cache[i] = c.base
+            start += 1
 
         drafter.reset_draft_cache()
         logger.info("DFlash warmup complete")

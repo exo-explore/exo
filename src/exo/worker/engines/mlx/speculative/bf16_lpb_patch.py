@@ -1,120 +1,144 @@
 #!/usr/bin/env python3
-"""Loop-over-B patches for DFlash draft model (bf16 weights).
+"""Dynamic per-call loop-over-B patches for the DFlash draft model.
 
-Replaces mlp_gate and mlp_up nn.Linear calls with custom bf16 LpB GEMV
-for M <= 8, falling back to custom bm=8 GEMM for M > 8.
+For each patched projection, the kernel is picked at CALL time based on
+the actual M seen in the forward pass (via matmul/patches/kernel_picker).
+Each projection memoizes its kernel cache, so after warmup the pick is
+O(1) dict lookup.
 
-Same pattern as model_patches/qwen27b/lpb_patch.py but for bf16 nn.Linear
-(no quantization scales/biases).
-
-Usage:
-    from bf16_lpb_patch import apply_bf16_lpb_patches
-    apply_bf16_lpb_patches(drafter)
+This is correct for any (block_size, verify_len) combo because each
+projection sees a different M (e.g. k_proj sees M = S_ctx + block_size,
+mlp_gate sees M = block_size, fc sees M = S_ctx, lm_head sees M = block_size - 1).
 """
 
-import mlx.core as mx
+import os
+
 import mlx.nn as nn
 
-from exo.worker.engines.mlx.patches.qwen3_5.custom_bf16_qmv_loop_over_b import custom_bf16_qmv_loop_over_b
-from exo.worker.engines.mlx.patches.qwen3_5.custom_bf16_gemm_bm8 import custom_bf16_gemm
-from exo.worker.engines.mlx.patches.qwen3_5.custom_qmv_loop_over_b import custom_qmv_loop_over_b
+from exo.worker.engines.mlx.matmul.patches.kernel_picker import (
+    pick_bf16_kernel,
+    pick_int8_kernel,
+)
 
 
-class _QuantizedLpBLinear:
-    """Drop-in replacement for QuantizedLinear using quantized LpB kernel."""
-
-    def __init__(self, weight, scales, biases, N, K, GS):
-        self.weight = weight
-        self.scales = scales
-        self.biases = biases
-        self._N = N
-        self._K = K
-        self._GS = GS
-
-    def __call__(self, x):
-        orig_shape = x.shape
-        x_2d = x.reshape(-1, self._K)
-        M = x_2d.shape[0]
-        y = custom_qmv_loop_over_b(
-            x_2d, self.weight, self.scales, self.biases,
-            M, self._N, self._K, self._GS)
-        return y.reshape(*orig_shape[:-1], self._N)
+MAX_M = 16  # Above this (prefill), fall back to the original projection
 
 
 class _BF16LpBLinear:
-    """Drop-in replacement for nn.Linear using bf16 LpB / bm8 kernels."""
+    """nn.Linear drop-in with dynamic per-call kernel selection."""
 
-    def __init__(self, weight, N, K):
-        self.weight = weight
+    def __init__(self, original, N, K):
+        self._orig = original  # kept for prefill fallback and weight access
+        self.weight = original.weight
         self._N = N
         self._K = K
+        self._cache = {}       # M → fn
+        self._name_log = {}    # M → kernel name (debug)
 
     def __call__(self, x):
+        M = 1
+        for d in x.shape[:-1]:
+            M *= d
+        if M > MAX_M:
+            return self._orig(x)
+        fn = self._cache.get(M)
+        if fn is None:
+            name, fn = pick_bf16_kernel(self._N, self._K, M)
+            self._cache[M] = fn
+            self._name_log[M] = name
         orig_shape = x.shape
         x_2d = x.reshape(-1, self._K)
-        M = x_2d.shape[0]
-        if M <= 8:
-            y = custom_bf16_qmv_loop_over_b(x_2d, self.weight, M, self._N, self._K)
-        else:
-            y = custom_bf16_gemm(x_2d, self.weight, M, self._N, self._K, BM=8)
+        y = fn(x_2d, self.weight, M, self._N, self._K)
         return y.reshape(*orig_shape[:-1], self._N)
 
 
+class _QuantizedLpBLinear:
+    """nn.QuantizedLinear drop-in with dynamic per-call kernel selection."""
+
+    def __init__(self, original, N, K, GS):
+        self._orig = original
+        self.weight = original.weight
+        self.scales = original.scales
+        self.biases = original.biases
+        self._N = N
+        self._K = K
+        self._GS = GS
+        self._cache = {}
+        self._name_log = {}
+
+    def __call__(self, x):
+        M = 1
+        for d in x.shape[:-1]:
+            M *= d
+        if M > MAX_M:
+            return self._orig(x)
+        fn = self._cache.get(M)
+        if fn is None:
+            name, fn = pick_int8_kernel(self._N, self._K, M)
+            self._cache[M] = fn
+            self._name_log[M] = name
+        orig_shape = x.shape
+        x_2d = x.reshape(-1, self._K)
+        y = fn(x_2d, self.weight, self.scales, self.biases, M, self._N, self._K, self._GS)
+        return y.reshape(*orig_shape[:-1], self._N)
+
+
+def _wrap(proj):
+    if isinstance(proj, nn.QuantizedLinear):
+        N = proj.weight.shape[0]
+        K = proj.weight.shape[1] * (32 // proj.bits)
+        GS = proj.group_size
+        return _QuantizedLpBLinear(proj, N, K, GS)
+    elif isinstance(proj, nn.Linear):
+        N = proj.weight.shape[0]
+        K = proj.weight.shape[1]
+        return _BF16LpBLinear(proj, N, K)
+    return proj
+
+
 def apply_bf16_lpb_patches(drafter):
-    """Patch DFlash drafter's mlp_gate and mlp_up with bf16 LpB."""
+    """Patch DFlash drafter's projections with dynamic LpB kernels.
+
+    Set env DFLASH_LPB_ONLY to a comma-separated list of projection names
+    to patch only those (for bisecting which patch breaks things).
+    Names: mlp_gate, mlp_up, mlp_down, q_proj, k_proj, v_proj, o_proj, fc, lm_head
+    """
+    only_str = os.environ.get("DFLASH_LPB_ONLY", "")
+    only = set(only_str.split(",")) if only_str else None
+    if only:
+        print(f"  DFLASH_LPB_ONLY={only_str}")
+
+    def should_patch(name):
+        return only is None or name in only
+
     patched = 0
 
     for layer in drafter.layers:
-        # MLP gate + up (5120 -> 17408 bf16)
-        for attr in ('mlp_gate', 'mlp_up'):
-            proj = getattr(layer, attr)
-            if isinstance(proj, nn.Linear):
-                w = proj.weight
-                N, K = w.shape
-                setattr(layer, attr, _BF16LpBLinear(w, N, K))
+        for attr in ('mlp_gate', 'mlp_up', 'mlp_down'):
+            if not should_patch(attr):
+                continue
+            proj = getattr(layer, attr, None)
+            if proj is not None and isinstance(proj, nn.Linear):
+                setattr(layer, attr, _wrap(proj))
                 patched += 1
 
-        # Attention o_proj (4096 -> 5120 bf16)
-        o_proj = layer.self_attn.o_proj
-        if isinstance(o_proj, nn.Linear):
-            w = o_proj.weight
-            N, K = w.shape
-            layer.self_attn.o_proj = _BF16LpBLinear(w, N, K)
-            patched += 1
+        for attr in ('q_proj', 'k_proj', 'v_proj', 'o_proj'):
+            if not should_patch(attr):
+                continue
+            proj = getattr(layer.self_attn, attr, None)
+            if proj is not None and isinstance(proj, nn.Linear):
+                setattr(layer.self_attn, attr, _wrap(proj))
+                patched += 1
 
-        # MLP down_proj (17408 -> 5120 bf16)
-        down = layer.mlp_down
-        if isinstance(down, nn.Linear):
-            w = down.weight
-            N, K = w.shape
-            layer.mlp_down = _BF16LpBLinear(w, N, K)
-            patched += 1
-
-        # Attention q_proj (5120 -> 4096 bf16)
-        q_proj = layer.self_attn.q_proj
-        if isinstance(q_proj, nn.Linear):
-            w = q_proj.weight
-            N, K = w.shape
-            layer.self_attn.q_proj = _BF16LpBLinear(w, N, K)
-            patched += 1
-
-    # Patch fc (context projection, 25600 -> 5120 bf16)
-    if isinstance(drafter.fc, nn.Linear):
-        w = drafter.fc.weight
-        N, K = w.shape
-        drafter.fc = _BF16LpBLinear(w, N, K)
+    if should_patch('fc') and hasattr(drafter, 'fc') and isinstance(drafter.fc, nn.Linear):
+        drafter.fc = _wrap(drafter.fc)
         patched += 1
 
-    # Patch lm_head (quantized 8-bit, shared from target model)
-    if drafter.lm_head is not None and isinstance(drafter.lm_head, nn.QuantizedLinear):
-        lh = drafter.lm_head
-        w, s, b = lh.weight, lh.scales, lh.biases
-        N = w.shape[0]
-        K = w.shape[1] * (32 // lh.bits)
-        GS = lh.group_size
-
-        drafter.lm_head = _QuantizedLpBLinear(w, s, b, N, K, GS)
+    if should_patch('lm_head') and drafter.lm_head is not None and isinstance(
+        drafter.lm_head, (nn.Linear, nn.QuantizedLinear)
+    ):
+        drafter.lm_head = _wrap(drafter.lm_head)
         patched += 1
 
-    print(f"  Patched {patched} DFlash projections with LpB")
+    print(f"  Patched {patched} DFlash drafter projections with dynamic LpB")
     return patched
