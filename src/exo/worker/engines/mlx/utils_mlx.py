@@ -4,6 +4,7 @@ import re
 import sys
 import tempfile
 import time
+from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -51,6 +52,7 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
+from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import (
     CfgShardMetadata,
     PipelineShardMetadata,
@@ -58,15 +60,12 @@ from exo.shared.types.worker.shards import (
     TensorShardMetadata,
 )
 from exo.worker.engines.mlx.auto_parallel import (
-    LayerLoadedCallback,
     get_inner_model,
     get_layers,
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
 from exo.worker.runner.bootstrap import logger
-
-Group = mx.distributed.Group
 
 
 def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
@@ -90,7 +89,7 @@ class HostList(RootModel[list[str]]):
 
 def mlx_distributed_init(
     bound_instance: BoundInstance,
-) -> Group:
+) -> mx.distributed.Group:
     """
     Initialize MLX distributed.
     """
@@ -149,7 +148,7 @@ def mlx_distributed_init(
 
 def initialize_mlx(
     bound_instance: BoundInstance,
-) -> Group:
+) -> mx.distributed.Group:
     # should we unseed it?
     # TODO: pass in seed from params
     mx.random.seed(42)
@@ -162,9 +161,10 @@ def initialize_mlx(
 
 def load_mlx_items(
     bound_instance: BoundInstance,
-    group: Group | None,
-    on_layer_loaded: LayerLoadedCallback | None,
-) -> "tuple[Model, TokenizerWrapper, VisionProcessor | None]":
+    group: mx.distributed.Group | None,
+) -> Generator[
+    ModelLoadingResponse, None, tuple[Model, TokenizerWrapper, "VisionProcessor | None"]
+]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
@@ -177,8 +177,7 @@ def load_mlx_items(
             total = len(layers)
             for i, layer in enumerate(layers):
                 mx.eval(layer)  # type: ignore
-                if on_layer_loaded is not None:
-                    on_layer_loaded(i, total)
+                yield ModelLoadingResponse(layers_loaded=i, total=total)
         except ValueError as e:
             logger.opt(exception=e).debug(
                 "Model architecture doesn't support layer-by-layer progress tracking",
@@ -191,10 +190,9 @@ def load_mlx_items(
     else:
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
-        model, tokenizer = shard_and_load(
+        model, tokenizer = yield from shard_and_load(
             bound_instance.bound_shard,
             group=group,
-            on_layer_loaded=on_layer_loaded,
         )
         end_time = time.perf_counter()
         logger.info(
@@ -221,9 +219,8 @@ def load_mlx_items(
 
 def shard_and_load(
     shard_metadata: ShardMetadata,
-    group: Group,
-    on_layer_loaded: LayerLoadedCallback | None,
-) -> tuple[nn.Module, TokenizerWrapper]:
+    group: mx.distributed.Group,
+) -> Generator[ModelLoadingResponse, None, tuple[nn.Module, TokenizerWrapper]]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
     model, _ = load_model(model_path, lazy=True, strict=False)
@@ -254,12 +251,10 @@ def shard_and_load(
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(model, group, on_layer_loaded)
+            model = yield from tensor_auto_parallel(model, group)
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
-            model = pipeline_auto_parallel(
-                model, group, shard_metadata, on_layer_loaded=on_layer_loaded
-            )
+            model = yield from pipeline_auto_parallel(model, group, shard_metadata)
             mx.eval(model.parameters())
         case CfgShardMetadata():
             raise ValueError(
@@ -748,7 +743,9 @@ def set_wired_limit_for_model(model_size: Memory):
 
 
 def mlx_cleanup(
-    model: Model | None, tokenizer: TokenizerWrapper | None, group: Group | None
+    model: Model | None,
+    tokenizer: TokenizerWrapper | None,
+    group: mx.distributed.Group | None,
 ) -> None:
     del model, tokenizer, group
     mx.clear_cache()
@@ -757,7 +754,7 @@ def mlx_cleanup(
     gc.collect()
 
 
-def mx_any(bool_: bool, group: Group | None) -> bool:
+def mx_any(bool_: bool, group: mx.distributed.Group | None) -> bool:
     if group is None:
         return bool_
     num_true = mx.distributed.all_sum(
@@ -767,7 +764,7 @@ def mx_any(bool_: bool, group: Group | None) -> bool:
     return num_true.item() > 0
 
 
-def mx_barrier(group: Group | None):
+def mx_barrier(group: mx.distributed.Group | None):
     if group is None:
         return
     mx.eval(
