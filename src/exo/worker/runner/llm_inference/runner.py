@@ -1,4 +1,5 @@
 import contextlib
+import socketserver
 import gc
 import os
 import time
@@ -132,11 +133,7 @@ class Runner:
 
         self.setup_start_time = time.time()
 
-        self.generator: Builder | InferenceGenerator = Builder(
-            self.model_id,
-            self.event_sender,
-            self.cancel_receiver,
-        )
+        self.generator: Builder | InferenceGenerator = builder
 
         self.seen: set[TaskId] = set()
         self.active_tasks: dict[
@@ -428,7 +425,7 @@ class MlxBuilder(Builder):
         on_timeout: Callable[[], None],
         on_layer_loaded: Callable[[int, int], None],
     ) -> None:
-        self.inference_model, self.tokenizer = load_mlx_items(
+        self.inference_model, self.tokenizer, self.vision_processor = load_mlx_items(
             bound_instance,
             self.group,
             on_timeout=on_timeout,
@@ -490,6 +487,8 @@ class MlxBuilder(Builder):
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
                 vision_processor=vision_processor,
+                _generate_fn=generate_fn,
+                _warmup_fn=warmup_fn,
             )
         from exo.worker.runner.llm_inference.batch_generator import ExoBatchGenerator
 
@@ -526,6 +525,8 @@ class VllmBuilder(Builder):
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
     group: mx.distributed.Group | None = None
+    _prefill_server: socketserver.ThreadingTCPServer | None = None
+    _prefill_server_port: int | None = None
 
     def connect(self, bound_instance: BoundInstance) -> None:
         raise NotImplementedError(
@@ -597,10 +598,8 @@ class VllmBuilder(Builder):
                 on_status_change=_on_prefill_status,
             )
             self._prefill_server_port = prefill_port
-        except Exception:
-            logger.opt(exception=True).warning("Failed to start prefill server")
-            self._prefill_server = None
-            self._prefill_server_port = None
+        except Exception as e:
+            logger.opt(exception=e).warning("Failed to start prefill server")
 
         logger.info(f"using BatchGenerator (vLLM, max_concurrent={max_concurrent})")
         return BatchGenerator(

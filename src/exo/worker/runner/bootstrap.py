@@ -92,14 +92,6 @@ def entrypoint(
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 
-    from exo.worker.engines.mlx.yarn_rope_patch import patch_yarn_rope
-
-    patch_yarn_rope()
-
-    from exo.worker.engines.mlx.gdn_softplus_patch import patch_gdn_softplus
-
-    patch_gdn_softplus()
-
     # Import main after setting global logger - this lets us just import logger from this module
     try:
         if isinstance(bound_instance.instance, VllmInstance):

@@ -339,14 +339,6 @@ class BatchGenerator(InferenceGenerator):
         ],
     ] = field(default_factory=dict, init=False)
 
-    def warmup(self):
-        self.check_for_cancel_every = warmup_inference(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            group=self.group,
-            model_id=self.model_id,
-        )
-
     def submit(
         self,
         task: TextGeneration,
