@@ -272,67 +272,88 @@ class ExoBatchGenerator:
     def warmup_dflash(self, model, tokenizer, drafter) -> None:
         """Warm up the DFlash speculative decoding path.
 
-        With the dynamic kernel picker, each patched projection memoizes
-        kernels keyed by the actual M seen in the forward pass. Running
-        three full draft+verify cycles at the real (block_size, verify_len)
-        exercises every M that will come up at runtime:
-          - target verify projections: M = V + 1
-          - target lm_head: M = V + 1
-          - drafter q/o/mlp: M = block_size (fixed)
-          - drafter k/v: M = S_ctx + block_size (S_ctx grows 1 → V+1)
-          - drafter fc: M = S_ctx ∈ [1, V+1]
-          - drafter lm_head: M = block_size - 1
-        Three cycles are enough for S_ctx to traverse [1, V+1].
+        With the dynamic kernel picker every projection memoizes kernels
+        keyed by the actual M seen in its forward. At runtime the M set
+        each call-site can hit is:
+
+            target q/k/v/o, gate/up/down, in_proj_*, lm_head:  M = V+1
+            drafter q/o/mlp_*:                                  M = BS
+            drafter fc:                                         M = S_ctx ∈ [1, V+1]
+            drafter k_proj/v_proj:                              M = BS + S_ctx ∈ [BS+1, BS+V+1]
+            drafter lm_head:                                    M = BS - 1
+
+        To compile every one of those kernels up front we sweep
+        S_ctx = 1..V+1 against the drafter (calling draft() with
+        fresh caches and different target-hidden slice lengths),
+        then run a single target verify at M=V+1.
+
+        `modes` is a list of (block_size, verify_len) pairs; warmup is
+        run once per mode so dynamic-switching configurations can jump
+        between modes at runtime without triggering Metal compilation
+        stalls.
         """
         from mlx_lm.models import cache as cache_mod
         from exo.worker.engines.mlx.speculative.dflash_speculative import dflash_speculative_forward
 
         logger.info("Warming up DFlash speculative decoding kernels...")
 
-        # Synthetic prompt — length just has to exercise the graph.
-        ctx_len = 64
+        original_bs = drafter.block_size
+        verify_len = self._mlx_gen.verify_len  # pyright: ignore[reportAttributeAccessIssue]
+        modes = [(original_bs, verify_len)]
+
+        max_v = max(v for _, v in modes)
+        ctx_len = max(64, max_v + 2)
         prompt_tokens = [1] * ctx_len
+
         cache = cache_mod.make_prompt_cache(model)
         drafter.reset_draft_cache()
 
-        target_hidden, _, logits = dflash_speculative_forward(
+        target_hidden_full, _, logits = dflash_speculative_forward(
             model, mx.array([prompt_tokens]), cache, drafter.target_layer_ids)
-        mx.eval(target_hidden, logits)
-        last_target_hidden = target_hidden[:, -1:, :]
+        mx.eval(target_hidden_full, logits)
         next_token = mx.argmax(logits[0, -1], axis=-1).item()
 
-        bs = drafter.block_size
-        verify_len = self._mlx_gen.verify_len  # pyright: ignore[reportAttributeAccessIssue]
-        start = ctx_len
+        try:
+            for m_bs, m_v in modes:
+                drafter.block_size = m_bs
 
-        for _ in range(3):
-            block_ids = mx.full((1, bs), drafter.mask_token_id, dtype=mx.int32)
-            block_ids[:, 0] = next_token
-            draft_logits = drafter.draft(last_target_hidden, block_ids, start)
-            mx.eval(draft_logits)
-            drafter.crop_draft_cache(start)
+                # 1. Sweep S_ctx ∈ [1, V+1] so the drafter's fc, k_proj,
+                #    v_proj compile every kernel the picker may return.
+                #    Each iteration rebuilds the draft KV cache, so the
+                #    fc/k/v projections see exactly s_ctx / s_ctx+m_bs.
+                for s_ctx in range(1, m_v + 2):
+                    drafter.reset_draft_cache()
+                    last_th = target_hidden_full[:, -s_ctx:, :]
+                    block_ids = mx.full(
+                        (1, m_bs), drafter.mask_token_id, dtype=mx.int32
+                    )
+                    block_ids[:, 0] = next_token
+                    dl = drafter.draft(last_th, block_ids, ctx_len)
+                    mx.eval(dl)
 
-            drafts = mx.argmax(draft_logits, axis=-1).squeeze(0).tolist()[:verify_len]
-            verify_input = mx.array([[next_token] + drafts])
-            target_hidden, _, vl = dflash_speculative_forward(
-                model, verify_input, cache, drafter.target_layer_ids, speculative=True)
-            mx.eval(target_hidden, vl)
-            next_token = mx.argmax(vl[0, -1], axis=-1).item()
-            last_target_hidden = target_hidden[:, :verify_len + 1, :]
+                # 2. One target verify at M = V+1 to compile every target
+                #    projection (q/k/v/o, gate/up/down, in_proj_*, lm_head).
+                verify_input = mx.array([[next_token] * (m_v + 1)])
+                target_hidden, _, vl = dflash_speculative_forward(
+                    model, verify_input, cache, drafter.target_layer_ids,
+                    speculative=True,
+                )
+                mx.eval(target_hidden, vl)
 
-            # Rollback to simulate 1 accepted bonus token per cycle, so
-            # drafter S_ctx advances 1 → 2 → 3 over the three cycles.
-            for c in cache:
-                if hasattr(c, 'offset'):
-                    c.offset -= verify_len
-                elif hasattr(c, 'rollback'):
-                    c.rollback(0)
-            for i, c in enumerate(cache):
-                if hasattr(c, 'base'):
-                    cache[i] = c.base
-            start += 1
+                # 3. Fully undo the verify so the next mode (or the real
+                #    generation) starts from the same cache offset.
+                for c in cache:
+                    if hasattr(c, 'offset'):
+                        c.offset -= (m_v + 1)
+                    elif hasattr(c, 'rollback'):
+                        c.rollback(0)
+                for i, c in enumerate(cache):
+                    if hasattr(c, 'base'):
+                        cache[i] = c.base
+        finally:
+            drafter.block_size = original_bs
+            drafter.reset_draft_cache()
 
-        drafter.reset_draft_cache()
         logger.info("DFlash warmup complete")
 
     @property
