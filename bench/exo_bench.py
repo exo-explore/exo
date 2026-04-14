@@ -230,7 +230,13 @@ def parse_int_list(values: list[str]) -> list[int]:
 
 
 def run_one_completion(
-    client: ExoClient, model_id: str, pp_hint: int, tg: int, prompt_sizer: PromptSizer
+    client: ExoClient,
+    model_id: str,
+    pp_hint: int,
+    tg: int,
+    prompt_sizer: PromptSizer,
+    *,
+    use_prefix_cache: bool = False,
 ) -> tuple[dict[str, Any], int]:
     content, pp_tokens = prompt_sizer.build(pp_hint)
     payload: dict[str, Any] = {
@@ -239,6 +245,7 @@ def run_one_completion(
         "stream": False,
         "max_tokens": tg,
         "logprobs": False,
+        "use_prefix_cache": use_prefix_cache,
     }
 
     t0 = time.perf_counter()
@@ -379,6 +386,11 @@ def main() -> int:
         default=1.0,
         help="System metrics polling interval in seconds (default: 1.0).",
     )
+    ap.add_argument(
+        "--use-prefix-cache",
+        action="store_true",
+        help="Enable KV prefix cache during bench (default: disabled for cold-cache measurements).",
+    )
     args = ap.parse_args()
 
     pp_list = parse_int_list(args.pp)
@@ -393,6 +405,15 @@ def main() -> int:
     if not concurrency_list or any(c <= 0 for c in concurrency_list):
         logger.error("--concurrency values must be >= 1")
         return 2
+
+    if args.use_prefix_cache:
+        logger.warning(
+            "--use-prefix-cache: prompt TPS will be approximate. See METHODOLOGY.md for details."
+        )
+        if pp_list != sorted(pp_list):
+            logger.warning(
+                "--pp values are not in ascending order: prompt TPS will be less accurate. Use ascending --pp for best results."
+            )
 
     # Log pairing mode
     use_combinations = args.all_combinations or len(pp_list) != len(tg_list)
@@ -505,7 +526,12 @@ def main() -> int:
         try:
             for i in range(args.warmup):
                 run_one_completion(
-                    client, full_model_id, pp_list[0], tg_list[0], prompt_sizer
+                    client,
+                    full_model_id,
+                    pp_list[0],
+                    tg_list[0],
+                    prompt_sizer,
+                    use_prefix_cache=args.use_prefix_cache,
                 )
                 logger.debug(f"  warmup {i + 1}/{args.warmup} done")
 
@@ -529,7 +555,12 @@ def main() -> int:
                             try:
                                 inf_t0 = time.monotonic()
                                 row, actual_pp_tokens = run_one_completion(
-                                    client, full_model_id, pp, tg, prompt_sizer
+                                    client,
+                                    full_model_id,
+                                    pp,
+                                    tg,
+                                    prompt_sizer,
+                                    use_prefix_cache=args.use_prefix_cache,
                                 )
                                 inference_windows.append((inf_t0, time.monotonic()))
                             except Exception as e:
@@ -566,6 +597,7 @@ def main() -> int:
                                 "stream": False,
                                 "max_tokens": tg,
                                 "logprobs": False,
+                                "use_prefix_cache": args.use_prefix_cache,
                             }
                             barrier = threading.Barrier(concurrency)
                             batch_start = threading.Event()

@@ -120,6 +120,7 @@ class KVPrefixCache:
         self._snapshots: list[list[CacheSnapshot] | None] = []
         self._media_regions: list[list["MediaRegion"]] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
+        self.prefill_tps: list[float] = []
         self._access_counter: int = 0
         self._group = group
 
@@ -130,6 +131,7 @@ class KVPrefixCache:
         self._snapshots.clear()
         self._media_regions.clear()
         self._last_used.clear()
+        self.prefill_tps.clear()
 
     def add_kv_cache(
         self,
@@ -137,6 +139,7 @@ class KVPrefixCache:
         cache: KVCacheType,
         ssm_snapshots: list[CacheSnapshot] | None = None,
         media_regions: list["MediaRegion"] | None = None,
+        prefill_tps: float = 0.0,
     ):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         self._evict_if_needed()
@@ -144,6 +147,7 @@ class KVPrefixCache:
         self.caches.append(deepcopy(cache))
         self._snapshots.append(ssm_snapshots)
         self._media_regions.append(media_regions or [])
+        self.prefill_tps.append(prefill_tps)
         self._access_counter += 1
         self._last_used.append(self._access_counter)
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
@@ -156,6 +160,7 @@ class KVPrefixCache:
         snapshots: list[CacheSnapshot] | None,
         restore_pos: int,
         media_regions: list["MediaRegion"] | None = None,
+        prefill_tps: float = 0.0,
     ):
         """Update an existing cache entry in-place."""
         old_snapshots = self._snapshots[index]
@@ -169,6 +174,7 @@ class KVPrefixCache:
         self.caches[index] = deepcopy(cache)
         self._snapshots[index] = merged or None
         self._media_regions[index] = media_regions or []
+        self.prefill_tps[index] = prefill_tps
         self._access_counter += 1
         self._last_used[index] = self._access_counter
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
@@ -194,14 +200,15 @@ class KVPrefixCache:
         model: Model,
         prompt_tokens: mx.array,
         media_regions: list["MediaRegion"] | None = None,
-    ) -> tuple[KVCacheType, mx.array, int | None]:
+    ) -> tuple[KVCacheType, mx.array, int | None, bool]:
         """Get KV cache for prompt, returning remaining tokens to prefill.
 
         Returns:
-            Tuple of (cache, remaining_tokens, matched_index) where:
+            Tuple of (cache, remaining_tokens, matched_index, is_exact) where:
             - cache: KV cache to use for generation
             - remaining_tokens: tokens that still need prefilling
             - matched_index: index of the matched entry (None if no match)
+            - is_exact: True if the full prompt matched the cached entry
 
         For models with SSM layers (which are ArraysCache in mlx), the cache is trimmed to the
         nearest SSM snapshot position at or before the match point for correctness.
@@ -235,7 +242,7 @@ class KVPrefixCache:
                 best_index, best_length = i, length
 
         if best_index is None:
-            return make_kv_cache(model), prompt_tokens, None
+            return make_kv_cache(model), prompt_tokens, None, False
 
         # For exact match: trim to max_length-1 so remaining has the last token
         # For partial match: trim to best_length, remaining has suffix to prefill
@@ -246,7 +253,7 @@ class KVPrefixCache:
 
         # No usable snapshot — need fresh cache
         if restore_snap is None and has_ssm:
-            return make_kv_cache(model), prompt_tokens, None
+            return make_kv_cache(model), prompt_tokens, None, False
 
         prompt_cache = deepcopy(self.caches[best_index])
         cached_length = cache_length(self.caches[best_index])
@@ -262,7 +269,7 @@ class KVPrefixCache:
         self._last_used[best_index] = self._access_counter
         remaining = prompt_tokens[restore_pos:]
 
-        return prompt_cache, remaining, best_index
+        return prompt_cache, remaining, best_index, is_exact
 
     @staticmethod
     def _validate_media_match(
@@ -312,6 +319,7 @@ class KVPrefixCache:
             self._snapshots.pop(lru_index)
             self._media_regions.pop(lru_index)
             self._last_used.pop(lru_index)
+            self.prefill_tps.pop(lru_index)
             logger.info(
                 f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
             )

@@ -97,6 +97,7 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     stream: bool = False
     tools: list[dict[str, Any]] | None = None
     bench: bool = False
+    use_prefix_cache: bool = False
     top_k: int | None = None
     stop: str | list[str] | None = None
     seed: int | None = None
