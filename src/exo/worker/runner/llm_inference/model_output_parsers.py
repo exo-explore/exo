@@ -371,6 +371,8 @@ def parse_thinking_models(
         yield from drain_pending(is_thinking)
         yield response.model_copy(update={"is_thinking": is_thinking})
 
+    yield from drain_pending(is_thinking)
+
 
 def parse_tool_calls(
     responses: Generator[GenerationResponse | None],
