@@ -885,14 +885,16 @@
     sendMessage(content, files, thinkingEnabled());
   }
 
-  let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
+  let selectedSharding = $state<"Pipeline" | "Tensor" | "AttnMoeSplit">(
+    "Pipeline",
+  );
   type InstanceMeta = "MlxRing" | "MlxJaccl";
 
   // Launch defaults persistence
   const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults-v2";
   interface LaunchDefaults {
     modelId: string | null;
-    sharding: "Pipeline" | "Tensor";
+    sharding: "Pipeline" | "Tensor" | "AttnMoeSplit";
     instanceType: InstanceMeta;
     minNodes: number;
   }
@@ -5758,6 +5760,30 @@
                           {/if}
                         </span>
                         Tensor
+                      </button>
+                      <button
+                        onclick={() => {
+                          selectedSharding = "AttnMoeSplit";
+                          saveLaunchDefaults();
+                        }}
+                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
+                        'AttnMoeSplit'
+                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                        title="Qwen3.5 MoE only, 2 nodes: rank 0 runs attention, rank 1 runs MoE"
+                      >
+                        <span
+                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedSharding ===
+                          'AttnMoeSplit'
+                            ? 'border-exo-yellow'
+                            : 'border-exo-medium-gray'}"
+                        >
+                          {#if selectedSharding === "AttnMoeSplit"}
+                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                            ></span>
+                          {/if}
+                        </span>
+                        Attn/MoE Split
                       </button>
                     </div>
                   </div>

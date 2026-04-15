@@ -153,6 +153,20 @@ def place_instance(
         raise ValueError(
             "Pipeline parallelism is not supported for DeepSeek V3.1 (8-bit)"
         )
+    if command.sharding == Sharding.AttnMoeSplit:
+        model_id_lower = str(command.model_card.model_id).lower()
+        if "qwen3.5" not in model_id_lower and "qwen-3.5" not in model_id_lower:
+            raise ValueError(
+                "AttnMoeSplit sharding is only supported for Qwen3.5 MoE models, "
+                f"got {command.model_card.model_id}"
+            )
+        cycles_with_sufficient_memory = [
+            cycle for cycle in cycles_with_sufficient_memory if len(cycle) == 2
+        ]
+        if not cycles_with_sufficient_memory:
+            raise ValueError(
+                "AttnMoeSplit sharding requires exactly 2 nodes in the cycle"
+            )
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
 
@@ -191,8 +205,16 @@ def place_instance(
         ),
     )
 
-    # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
+    # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node).
+    # AttnMoeSplit was already filtered to exactly-2-node cycles above, so
+    # this branch can never fire for AttnMoeSplit — if it somehow did we'd
+    # silently rewrite the sharding mode, which is the wrong behavior.
     if len(selected_cycle) == 1:
+        if command.sharding == Sharding.AttnMoeSplit:
+            raise ValueError(
+                "AttnMoeSplit sharding requires 2 nodes but a single-node cycle "
+                "was selected"
+            )
         command.instance_meta = InstanceMeta.MlxRing
         command.sharding = Sharding.Pipeline
 

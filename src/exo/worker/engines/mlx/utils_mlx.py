@@ -52,6 +52,7 @@ from exo.shared.types.worker.instances import (
     MlxRingInstance,
 )
 from exo.shared.types.worker.shards import (
+    AttnMoeSplitShardMetadata,
     CfgShardMetadata,
     PipelineShardMetadata,
     ShardMetadata,
@@ -60,6 +61,7 @@ from exo.shared.types.worker.shards import (
 from exo.worker.engines.mlx.auto_parallel import (
     LayerLoadedCallback,
     TimeoutCallback,
+    attn_moe_split_auto_parallel,
     eval_with_timeout,
     get_inner_model,
     get_layers,
@@ -72,15 +74,18 @@ Group = mx.distributed.Group
 
 
 def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
+    # PipelineShardMetadata and AttnMoeSplitShardMetadata store disjoint or
+    # full-range layer slices per rank, so each rank's weights are already
+    # scoped by [start_layer, end_layer). TensorShardMetadata shards every
+    # weight across `world_size` so we divide by it.
+    full_layer_shard = isinstance(
+        model_shard_meta, (PipelineShardMetadata, AttnMoeSplitShardMetadata)
+    )
     return Memory.from_float_kb(
         (model_shard_meta.end_layer - model_shard_meta.start_layer)
         / model_shard_meta.n_layers
         * model_shard_meta.model_card.storage_size.in_kb
-        / (
-            1
-            if isinstance(model_shard_meta, PipelineShardMetadata)
-            else model_shard_meta.world_size
-        )
+        / (1 if full_layer_shard else model_shard_meta.world_size)
     )
 
 
@@ -280,6 +285,12 @@ def shard_and_load(
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = pipeline_auto_parallel(
+                model, group, shard_metadata, on_layer_loaded=on_layer_loaded
+            )
+            eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
+        case AttnMoeSplitShardMetadata():
+            logger.info(f"loading model from {model_path} with attn/moe split")
+            model = attn_moe_split_auto_parallel(
                 model, group, shard_metadata, on_layer_loaded=on_layer_loaded
             )
             eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)

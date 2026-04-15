@@ -10,6 +10,7 @@ from exo.utils.pydantic_ext import TaggedModel
 class Sharding(str, Enum):
     Tensor = "Tensor"
     Pipeline = "Pipeline"
+    AttnMoeSplit = "AttnMoeSplit"
 
 
 class BaseShardMetadata(TaggedModel):
@@ -79,6 +80,20 @@ class TensorShardMetadata(BaseShardMetadata):
     pass
 
 
+@final
+class AttnMoeSplitShardMetadata(BaseShardMetadata):
+    """Attention/MoE split shard meta.
+
+    Both ranks own the full layer range [0, n_layers). device_rank=0 runs
+    per-layer attention + first residual; device_rank=1 runs
+    post_attention_layernorm + MoE + second residual. One cross-rank send/recv
+    pair per layer ferries the hidden state. world_size must be 2.
+    """
+
+
 ShardMetadata: TypeAlias = (
-    PipelineShardMetadata | CfgShardMetadata | TensorShardMetadata
+    PipelineShardMetadata
+    | CfgShardMetadata
+    | TensorShardMetadata
+    | AttnMoeSplitShardMetadata
 )

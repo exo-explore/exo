@@ -10,6 +10,7 @@ from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
+    AttnMoeSplitShardMetadata,
     CfgShardMetadata,
     PipelineShardMetadata,
     Sharding,
@@ -273,6 +274,44 @@ def get_shard_assignments_for_tensor_parallel(
     return shard_assignments
 
 
+def get_shard_assignments_for_attn_moe_split(
+    model_card: ModelCard,
+    cycle: Cycle,
+) -> ShardAssignments:
+    """Create shard assignments for attention/MoE split execution.
+
+    Both ranks own the full layer range [0, n_layers). device_rank=0 runs
+    attention, device_rank=1 runs MoE. Requires exactly 2 nodes.
+    """
+    if len(cycle) != 2:
+        raise ValueError(
+            f"AttnMoeSplit sharding requires exactly 2 nodes, got {len(cycle)}"
+        )
+    total_layers = model_card.n_layers
+    world_size = 2
+    runner_to_shard: dict[RunnerId, ShardMetadata] = {}
+    node_to_runner: dict[NodeId, RunnerId] = {}
+
+    for i, node_id in enumerate(cycle):
+        shard = AttnMoeSplitShardMetadata(
+            model_card=model_card,
+            device_rank=i,
+            world_size=world_size,
+            start_layer=0,
+            end_layer=total_layers,
+            n_layers=total_layers,
+        )
+        runner_id = RunnerId()
+        runner_to_shard[runner_id] = shard
+        node_to_runner[node_id] = runner_id
+
+    return ShardAssignments(
+        model_id=model_card.model_id,
+        runner_to_shard=runner_to_shard,
+        node_to_runner=node_to_runner,
+    )
+
+
 def get_shard_assignments(
     model_card: ModelCard,
     cycle: Cycle,
@@ -288,6 +327,11 @@ def get_shard_assignments(
             )
         case Sharding.Tensor:
             return get_shard_assignments_for_tensor_parallel(
+                model_card=model_card,
+                cycle=cycle,
+            )
+        case Sharding.AttnMoeSplit:
+            return get_shard_assignments_for_attn_moe_split(
                 model_card=model_card,
                 cycle=cycle,
             )

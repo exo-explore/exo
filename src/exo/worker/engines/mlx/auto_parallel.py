@@ -57,7 +57,10 @@ from mlx_lm.models.step3p5 import Model as Step35Model
 from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
 
-from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.shared.types.worker.shards import (
+    AttnMoeSplitShardMetadata,
+    PipelineShardMetadata,
+)
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
@@ -428,6 +431,48 @@ def pipeline_auto_parallel(
     )
 
     return patch_pipeline_model(model, group)
+
+
+def attn_moe_split_auto_parallel(
+    model: nn.Module,
+    group: mx.distributed.Group,
+    model_shard_meta: AttnMoeSplitShardMetadata,
+    on_layer_loaded: LayerLoadedCallback | None,
+) -> nn.Module:
+    """Install the attention/MoE split on a Qwen3.5 MoE model.
+
+    Both ranks own the full layer range (start_layer=0, end_layer=n_layers).
+    No layer wrapping: the split is installed via class-level
+    DecoderLayer.__call__ replacement in
+    patches/qwen3_5_moe_split/apply.py.
+    """
+    if group.size() != 2:
+        raise ValueError(
+            f"AttnMoeSplit requires world_size==2, got {group.size()}"
+        )
+
+    # Qwen3.5 MoE uses Qwen3_5TextModelInner. Any other model type landing
+    # here is a placement bug.
+    inner_model_instance: nn.Module = get_inner_model(model)
+    if not isinstance(inner_model_instance, Qwen3_5TextModelInner):
+        raise ValueError(
+            "AttnMoeSplit sharding is only implemented for Qwen3.5 MoE models, "
+            f"got inner model of type {type(inner_model_instance).__name__}"
+        )
+
+    layers = get_layers(inner_model_instance)
+    total = len(layers)
+    for i, layer in enumerate(layers):
+        mx.eval(layer)  # type: ignore
+        if on_layer_loaded is not None:
+            on_layer_loaded(i, total)
+
+    from exo.worker.engines.mlx.patches.qwen3_5_moe_split.apply import (
+        apply_qwen35_attn_moe_split_patches,
+    )
+
+    apply_qwen35_attn_moe_split_patches(model, group)
+    return model
 
 
 def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
