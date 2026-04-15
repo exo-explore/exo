@@ -70,9 +70,9 @@ struct SettingsView: View {
         Form {
             Section {
                 LabeledContent("Cluster Namespace") {
-                    TextField("default", text: $pendingNamespace)
+                    TextField("", text: $pendingNamespace, prompt: Text("default"))
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
+                        .frame(width: 260)
                 }
                 Text("Nodes with the same namespace form a cluster. Leave empty for default.")
                     .font(.caption)
@@ -81,9 +81,9 @@ struct SettingsView: View {
 
             Section {
                 LabeledContent("HuggingFace Token") {
-                    SecureField("optional", text: $pendingHFToken)
+                    SecureField("", text: $pendingHFToken, prompt: Text("optional"))
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
+                        .frame(width: 260)
                 }
                 Text("Required for gated models. Get yours at huggingface.co/settings/tokens")
                     .font(.caption)
@@ -92,9 +92,9 @@ struct SettingsView: View {
 
             Section {
                 LabeledContent("HuggingFace Endpoint") {
-                    TextField("default", text: $pendingHFEndpoint)
+                    TextField("", text: $pendingHFEndpoint, prompt: Text("default"))
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
+                        .frame(width: 260)
                 }
                 Text("Defaults to huggingface.co. Use a mirror (e.g. hf-mirror.com) for China.")
                     .font(.caption)
@@ -229,42 +229,43 @@ struct SettingsView: View {
     private var environmentTab: some View {
         Form {
             Section("Models Directories") {
-                LabeledContent("Default Models Dir") {
-                    HStack(spacing: 4) {
-                        TextField("~/.exo/models", text: $pendingDefaultModelsDir)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(width: 240)
-                        Button("Browse…") {
-                            chooseDirectory { url in
-                                pendingDefaultModelsDir = url.path
-                            }
-                        }
-                    }
+                LabeledContent("Default Models Directory") {
+                    TextField(
+                        "",
+                        text: $pendingDefaultModelsDir,
+                        prompt: Text("~/.exo/models")
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: 260)
                 }
                 Text("Sets EXO_DEFAULT_MODELS_DIR. Where models are downloaded.")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                LabeledContent("Additional Dirs") {
+                LabeledContent("Additional Directories") {
                     TextField(
-                        "optional (colon-separated)", text: $pendingAdditionalModelsDirs
+                        "",
+                        text: $pendingAdditionalModelsDirs,
+                        prompt: Text("optional, colon-separated")
                     )
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
-                    .frame(width: 300)
+                    .frame(width: 260)
                 }
-                Text("Sets EXO_MODELS_DIRS. Extra writable model dirs, colon-separated.")
+                Text("Sets EXO_MODELS_DIRS. Extra writable model directories.")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                LabeledContent("Read-Only Dirs") {
+                LabeledContent("Read-Only Directories") {
                     TextField(
-                        "optional (colon-separated)", text: $pendingReadOnlyModelsDirs
+                        "",
+                        text: $pendingReadOnlyModelsDirs,
+                        prompt: Text("optional, colon-separated")
                     )
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
-                    .frame(width: 300)
+                    .frame(width: 260)
                 }
                 Text("Sets EXO_MODELS_READ_ONLY_DIRS. Never written to.")
                     .font(.caption)
@@ -345,16 +346,6 @@ struct SettingsView: View {
         .padding()
     }
 
-    private func chooseDirectory(_ onPick: (URL) -> Void) {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        if panel.runModal() == .OK, let url = panel.url {
-            onPick(url)
-        }
-    }
 
     // MARK: - About Tab
 
