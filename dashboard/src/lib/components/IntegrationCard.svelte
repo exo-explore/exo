@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { copyText } from "$lib/utils/clipboard";
+
   interface Props {
     title: string;
     subtitle: string;
@@ -16,11 +18,17 @@
   }: Props = $props();
 
   let copied = $state(false);
+  let failed = $state(false);
 
   async function copyToClipboard() {
-    await navigator.clipboard.writeText(config);
-    copied = true;
-    setTimeout(() => (copied = false), 2000);
+    const ok = await copyText(config);
+    if (ok) {
+      copied = true;
+      setTimeout(() => (copied = false), 2000);
+    } else {
+      failed = true;
+      setTimeout(() => (failed = false), 2000);
+    }
   }
 </script>
 
@@ -37,9 +45,11 @@
       class="px-3 py-1.5 text-xs rounded border transition-all duration-200 cursor-pointer
         {copied
         ? 'border-green-500/50 text-green-400 bg-green-500/10'
-        : 'border-exo-light-gray/30 text-exo-light-gray hover:border-exo-yellow/50 hover:text-exo-yellow'}"
+        : failed
+          ? 'border-red-500/50 text-red-400 bg-red-500/10'
+          : 'border-exo-light-gray/30 text-exo-light-gray hover:border-exo-yellow/50 hover:text-exo-yellow'}"
     >
-      {copied ? "Copied!" : "Copy"}
+      {copied ? "Copied!" : failed ? "Copy failed" : "Copy"}
     </button>
   </div>
   {#if description}
