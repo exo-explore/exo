@@ -287,6 +287,10 @@ def main():
         os.environ["EXO_NO_BATCH"] = "1"
         logger.info("Continuous batching disabled (--no-batch)")
 
+    if args.trajectories:
+        os.environ["EXO_TRAJECTORIES"] = "true"
+        logger.info("Trajectory recording enabled (--trajectories)")
+
     # Set FAST_SYNCH override env var for runner subprocesses
     if args.fast_synch is True:
         os.environ["EXO_FAST_SYNCH"] = "true"
@@ -321,6 +325,7 @@ class Args(CamelCaseModel):
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
     bootstrap_peers: list[str] = []
     libp2p_port: int
+    trajectories: bool = os.getenv("EXO_TRAJECTORIES", "false").lower() == "true"
 
     @classmethod
     def parse(cls) -> Self:
@@ -393,6 +398,13 @@ class Args(CamelCaseModel):
             default=0,
             dest="libp2p_port",
             help="Fixed TCP port for libp2p to listen on (0 = OS-assigned).",
+        )
+        parser.add_argument(
+            "--trajectories",
+            action="store_true",
+            default=os.getenv("EXO_TRAJECTORIES", "false").lower() == "true",
+            dest="trajectories",
+            help="Record ATIF-v1.4 trajectory JSON for each /v1/chat/completions request (env: EXO_TRAJECTORIES)",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
         fast_synch_group.add_argument(

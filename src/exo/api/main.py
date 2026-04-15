@@ -46,6 +46,14 @@ from exo.api.adapters.responses import (
     responses_request_to_text_generation,
 )
 from exo.api.keepalive import with_sse_keepalive
+from exo.api.trajectories import (
+    DeleteTrajectoriesRequest,
+    DeleteTrajectoriesResponse,
+    TrajectoryListItem,
+    TrajectoryListResponse,
+    get_collector,
+    tap_chunk_stream,
+)
 from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
@@ -87,6 +95,7 @@ from exo.api.types import (
     StartDownloadParams,
     StartDownloadResponse,
     ToolCall,
+    ToolCallItem,
     TraceCategoryStats,
     TraceEventResponse,
     TraceListItem,
@@ -127,6 +136,7 @@ from exo.shared.constants import (
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
     EXO_TRACING_CACHE_DIR,
+    EXO_TRAJECTORIES_DIR,
 )
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
@@ -210,6 +220,140 @@ def _ensure_seed(params: AdvancedImageParams | None) -> AdvancedImageParams:
     if params.seed is None:
         return params.model_copy(update={"seed": random.randint(0, 2**32 - 1)})
     return params
+
+
+def _claude_messages_to_chat(
+    payload: ClaudeMessagesRequest,
+) -> list[ChatCompletionMessage]:
+    msgs: list[ChatCompletionMessage] = []
+    if payload.system is not None:
+        if isinstance(payload.system, str):
+            sys_text = payload.system
+        else:
+            sys_text = "\n".join(b.text for b in payload.system)
+        if sys_text:
+            msgs.append(ChatCompletionMessage(role="system", content=sys_text))
+    for m in payload.messages:
+        if isinstance(m.content, str):
+            text = m.content
+        else:
+            parts: list[str] = []
+            for block in m.content:
+                block_type = getattr(block, "type", "")
+                if block_type == "text":
+                    parts.append(getattr(block, "text", ""))
+                elif block_type == "tool_result":
+                    tr_content = getattr(block, "content", None)
+                    if isinstance(tr_content, str):
+                        parts.append(tr_content)
+                    elif isinstance(tr_content, list):
+                        for sub in cast(list[object], tr_content):
+                            if hasattr(sub, "text"):
+                                parts.append(cast(str, getattr(sub, "text", "")))
+            text = "\n".join(parts)
+        role = "user" if m.role == "user" else "assistant"
+        msgs.append(ChatCompletionMessage(role=role, content=text))
+    return msgs
+
+
+def _responses_to_chat(payload: ResponsesRequest) -> list[ChatCompletionMessage]:
+    msgs: list[ChatCompletionMessage] = []
+    if payload.instructions:
+        msgs.append(
+            ChatCompletionMessage(role="system", content=payload.instructions)
+        )
+    if isinstance(payload.input, str):
+        msgs.append(ChatCompletionMessage(role="user", content=payload.input))
+        return msgs
+    for item in payload.input:
+        item_type = getattr(item, "type", "")
+        if item_type == "message":
+            role = cast(str, getattr(item, "role", "user"))
+            content = getattr(item, "content", "")
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                parts: list[str] = []
+                for part in cast(list[object], content):
+                    if hasattr(part, "text"):
+                        parts.append(cast(str, getattr(part, "text", "")))
+                text = "\n".join(parts)
+            else:
+                text = ""
+            chat_role: Literal[
+                "system", "user", "assistant", "developer", "tool", "function"
+            ]
+            if role == "assistant":
+                chat_role = "assistant"
+            elif role == "system":
+                chat_role = "system"
+            elif role == "developer":
+                chat_role = "developer"
+            else:
+                chat_role = "user"
+            msgs.append(ChatCompletionMessage(role=chat_role, content=text))
+        elif item_type == "function_call_output":
+            output = cast(str, getattr(item, "output", ""))
+            call_id = cast(str, getattr(item, "call_id", ""))
+            msgs.append(
+                ChatCompletionMessage(
+                    role="tool", content=output, tool_call_id=call_id
+                )
+            )
+    return msgs
+
+
+def _ollama_chat_to_chat(
+    payload: OllamaChatRequest,
+) -> list[ChatCompletionMessage]:
+    msgs: list[ChatCompletionMessage] = []
+    for m in payload.messages:
+        role_out: Literal[
+            "system", "user", "assistant", "developer", "tool", "function"
+        ]
+        if m.role == "system":
+            role_out = "system"
+        elif m.role == "assistant":
+            role_out = "assistant"
+        elif m.role == "tool":
+            role_out = "tool"
+        else:
+            role_out = "user"
+        msgs.append(
+            ChatCompletionMessage(
+                role=role_out,
+                content=m.content or "",
+                reasoning_content=m.thinking,
+            )
+        )
+    return msgs
+
+
+def _ollama_generate_to_chat(
+    payload: OllamaGenerateRequest,
+) -> list[ChatCompletionMessage]:
+    msgs: list[ChatCompletionMessage] = []
+    if payload.system:
+        msgs.append(ChatCompletionMessage(role="system", content=payload.system))
+    msgs.append(ChatCompletionMessage(role="user", content=payload.prompt))
+    return msgs
+
+
+def _client_key_from_request(request: Request) -> str:
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+        if token:
+            return "auth:" + hashlib.sha256(token.encode()).hexdigest()[:12]
+    session_header = request.headers.get("x-exo-session-id")
+    if session_header:
+        return "session:" + session_header
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return "ip:" + forwarded.split(",", 1)[0].strip()
+    if request.client is not None:
+        return "ip:" + request.client.host
+    return "ip:local"
 
 
 class API:
@@ -369,6 +513,10 @@ class API:
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
         self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
+        self.app.get("/v1/trajectories")(self.list_trajectories)
+        self.app.post("/v1/trajectories/delete")(self.delete_trajectories)
+        self.app.get("/v1/trajectories/{session_id}")(self.get_trajectory)
+        self.app.get("/v1/trajectories/{session_id}/raw")(self.get_trajectory_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
 
@@ -801,8 +949,52 @@ class API:
         await self._send(command)
         return command
 
+    def _tap_for_trajectory(
+        self,
+        request: Request,
+        messages: list[ChatCompletionMessage],
+        resolved_model: ModelId,
+        chunk_stream: AsyncGenerator[
+            PrefillProgressChunk | ErrorChunk | ToolCallChunk | TokenChunk, None
+        ],
+    ) -> AsyncGenerator[
+        PrefillProgressChunk | ErrorChunk | ToolCallChunk | TokenChunk, None
+    ]:
+        collector = get_collector()
+        client_key = _client_key_from_request(request)
+        session_id = collector.record_request(
+            messages=messages,
+            client_key=client_key,
+            model=str(resolved_model),
+            cluster_info={
+                "node_ids": sorted(self.state.node_identities.keys()),
+                "instance_count": len(self.state.instances),
+            },
+        )
+
+        def _on_complete(
+            text: str,
+            reasoning: str | None,
+            tool_calls: list[ToolCallItem],
+            stats: GenerationStats | None,
+        ) -> None:
+            if session_id is None:
+                return
+            collector.record_response(
+                session_id=session_id,
+                client_key=client_key,
+                request_messages=messages,
+                assistant_text=text,
+                reasoning_content=reasoning,
+                tool_calls=tool_calls,
+                stats=stats,
+                model=str(resolved_model),
+            )
+
+        return tap_chunk_stream(chunk_stream, _on_complete)
+
     async def chat_completions(
-        self, payload: ChatCompletionRequest
+        self, request: Request, payload: ChatCompletionRequest
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
         task_params = await chat_request_to_text_generation(payload)
@@ -813,13 +1005,17 @@ class API:
 
         command = await self._send_text_generation_with_images(task_params)
 
+        tapped = self._tap_for_trajectory(
+            request,
+            payload.messages,
+            resolved_model,
+            self._token_chunk_stream(command.command_id),
+        )
+
         if payload.stream:
             return StreamingResponse(
                 with_sse_keepalive(
-                    generate_chat_stream(
-                        command.command_id,
-                        self._token_chunk_stream(command.command_id),
-                    ),
+                    generate_chat_stream(command.command_id, tapped),
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -830,10 +1026,7 @@ class API:
             )
         else:
             return StreamingResponse(
-                collect_chat_response(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
-                ),
+                collect_chat_response(command.command_id, tapped),
                 media_type="application/json",
             )
 
@@ -1407,7 +1600,7 @@ class API:
         )
 
     async def claude_messages(
-        self, payload: ClaudeMessagesRequest
+        self, request: Request, payload: ClaudeMessagesRequest
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
         task_params = await claude_request_to_text_generation(payload)
@@ -1418,13 +1611,20 @@ class API:
 
         command = await self._send_text_generation_with_images(task_params)
 
+        tapped = self._tap_for_trajectory(
+            request,
+            _claude_messages_to_chat(payload),
+            resolved_model,
+            self._token_chunk_stream(command.command_id),
+        )
+
         if payload.stream:
             return StreamingResponse(
                 with_sse_keepalive(
                     generate_claude_stream(
                         command.command_id,
                         payload.model,
-                        self._token_chunk_stream(command.command_id),
+                        tapped,
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1439,13 +1639,13 @@ class API:
                 collect_claude_response(
                     command.command_id,
                     payload.model,
-                    self._token_chunk_stream(command.command_id),
+                    tapped,
                 ),
                 media_type="application/json",
             )
 
     async def openai_responses(
-        self, payload: ResponsesRequest
+        self, request: Request, payload: ResponsesRequest
     ) -> ResponsesResponse | StreamingResponse:
         """OpenAI Responses API."""
         task_params = await responses_request_to_text_generation(payload)
@@ -1454,13 +1654,20 @@ class API:
 
         command = await self._send_text_generation_with_images(task_params)
 
+        tapped = self._tap_for_trajectory(
+            request,
+            _responses_to_chat(payload),
+            resolved_model,
+            self._token_chunk_stream(command.command_id),
+        )
+
         if payload.stream:
             return StreamingResponse(
                 with_sse_keepalive(
                     generate_responses_stream(
                         command.command_id,
                         payload.model,
-                        self._token_chunk_stream(command.command_id),
+                        tapped,
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1476,7 +1683,7 @@ class API:
                 collect_responses_response(
                     command.command_id,
                     payload.model,
-                    self._token_chunk_stream(command.command_id),
+                    tapped,
                 ),
                 media_type="application/json",
             )
@@ -1499,12 +1706,16 @@ class API:
 
         command = await self._send_text_generation_with_images(task_params)
 
+        tapped = self._tap_for_trajectory(
+            request,
+            _ollama_chat_to_chat(payload),
+            resolved_model,
+            self._token_chunk_stream(command.command_id),
+        )
+
         if payload.stream:
             return StreamingResponse(
-                generate_ollama_chat_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
-                ),
+                generate_ollama_chat_stream(command.command_id, tapped),
                 media_type="application/x-ndjson",
                 headers={
                     "Cache-Control": "no-cache",
@@ -1514,10 +1725,7 @@ class API:
             )
         else:
             return StreamingResponse(
-                collect_ollama_chat_response(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
-                ),
+                collect_ollama_chat_response(command.command_id, tapped),
                 media_type="application/json",
             )
 
@@ -1535,12 +1743,16 @@ class API:
 
         command = await self._send_text_generation_with_images(task_params)
 
+        tapped = self._tap_for_trajectory(
+            request,
+            _ollama_generate_to_chat(payload),
+            resolved_model,
+            self._token_chunk_stream(command.command_id),
+        )
+
         if payload.stream:
             return StreamingResponse(
-                generate_ollama_generate_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
-                ),
+                generate_ollama_generate_stream(command.command_id, tapped),
                 media_type="application/x-ndjson",
                 headers={
                     "Cache-Control": "no-cache",
@@ -1550,10 +1762,7 @@ class API:
             )
         else:
             return StreamingResponse(
-                collect_ollama_generate_response(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
-                ),
+                collect_ollama_generate_response(command.command_id, tapped),
                 media_type="application/json",
             )
 
@@ -2034,6 +2243,94 @@ class API:
             else:
                 not_found.append(task_id)
         return DeleteTracesResponse(deleted=deleted, not_found=not_found)
+
+    @staticmethod
+    def _get_trajectory_path(session_id: str) -> Path:
+        path = EXO_TRAJECTORIES_DIR / f"{session_id}.json"
+        if not path.resolve().is_relative_to(EXO_TRAJECTORIES_DIR.resolve()):
+            raise HTTPException(
+                status_code=400, detail=f"Invalid session ID: {session_id}"
+            )
+        return path
+
+    async def list_trajectories(self) -> TrajectoryListResponse:
+        items: list[TrajectoryListItem] = []
+        if not EXO_TRAJECTORIES_DIR.exists():
+            return TrajectoryListResponse(trajectories=items)
+        for file in sorted(
+            EXO_TRAJECTORIES_DIR.glob("*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        ):
+            if file.name.endswith(".tmp"):
+                continue
+            session_id = file.stem
+            stat = file.stat()
+            try:
+                data = cast(dict[str, object], json.loads(file.read_text()))
+            except (OSError, json.JSONDecodeError):
+                continue
+            steps_raw = data.get("steps", [])
+            agent_raw = data.get("agent", {})
+            total_steps = (
+                len(cast(list[object], steps_raw))
+                if isinstance(steps_raw, list)
+                else 0
+            )
+            model_name = ""
+            if isinstance(agent_raw, dict):
+                model_value: object = cast(dict[str, object], agent_raw).get(
+                    "model", ""
+                )
+                model_name = str(model_value) if model_value is not None else ""
+            items.append(
+                TrajectoryListItem(
+                    session_id=session_id,
+                    created_at=datetime.fromtimestamp(
+                        stat.st_ctime, tz=timezone.utc
+                    ).isoformat(),
+                    updated_at=datetime.fromtimestamp(
+                        stat.st_mtime, tz=timezone.utc
+                    ).isoformat(),
+                    total_steps=total_steps,
+                    model=model_name,
+                )
+            )
+        return TrajectoryListResponse(trajectories=items)
+
+    async def get_trajectory(self, session_id: str) -> JSONResponse:
+        path = self._get_trajectory_path(session_id)
+        if not path.exists():
+            raise HTTPException(
+                status_code=404, detail=f"Trajectory not found: {session_id}"
+            )
+        return JSONResponse(json.loads(path.read_text()))
+
+    async def get_trajectory_raw(self, session_id: str) -> FileResponse:
+        path = self._get_trajectory_path(session_id)
+        if not path.exists():
+            raise HTTPException(
+                status_code=404, detail=f"Trajectory not found: {session_id}"
+            )
+        return FileResponse(
+            path=path,
+            media_type="application/json",
+            filename=f"{session_id}.json",
+        )
+
+    async def delete_trajectories(
+        self, request: DeleteTrajectoriesRequest
+    ) -> DeleteTrajectoriesResponse:
+        deleted: list[str] = []
+        not_found: list[str] = []
+        for session_id in request.session_ids:
+            path = self._get_trajectory_path(session_id)
+            if path.exists():
+                path.unlink()
+                deleted.append(session_id)
+            else:
+                not_found.append(session_id)
+        return DeleteTrajectoriesResponse(deleted=deleted, not_found=not_found)
 
     async def get_onboarding(self) -> JSONResponse:
         return JSONResponse({"completed": ONBOARDING_COMPLETE_FILE.exists()})

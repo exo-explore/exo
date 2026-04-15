@@ -88,6 +88,13 @@ EXO_EVENT_LOG_DIR = EXO_DATA_HOME / "event_log"
 EXO_IMAGE_CACHE_DIR = EXO_CACHE_HOME / "images"
 EXO_TRACING_CACHE_DIR = EXO_CACHE_HOME / "traces"
 
+_EXO_TRAJECTORIES_DIR_ENV = os.environ.get("EXO_TRAJECTORIES_DIR", None)
+EXO_TRAJECTORIES_DIR = (
+    Path(_EXO_TRAJECTORIES_DIR_ENV).expanduser()
+    if _EXO_TRAJECTORIES_DIR_ENV is not None
+    else EXO_DATA_HOME / "trajectories"
+)
+
 EXO_ENABLE_IMAGE_MODELS = (
     os.getenv("EXO_ENABLE_IMAGE_MODELS", "false").lower() == "true"
 )
@@ -95,6 +102,10 @@ EXO_ENABLE_IMAGE_MODELS = (
 EXO_OFFLINE = os.getenv("EXO_OFFLINE", "false").lower() == "true"
 
 EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true"
+
+EXO_TRAJECTORIES_ENABLED = (
+    os.getenv("EXO_TRAJECTORIES", "false").lower() == "true"
+)
 
 EXO_MAX_CONCURRENT_REQUESTS = int(os.getenv("EXO_MAX_CONCURRENT_REQUESTS", "8"))
 

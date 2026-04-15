@@ -213,6 +213,72 @@ export interface TraceListResponse {
   traces: TraceListItem[];
 }
 
+export interface TrajectoryListItem {
+  sessionId: string;
+  createdAt: string;
+  updatedAt: string;
+  totalSteps: number;
+  model: string;
+}
+
+export interface TrajectoryListResponse {
+  trajectories: TrajectoryListItem[];
+}
+
+export interface AtifToolCall {
+  tool_call_id: string;
+  function_name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface AtifObservationResult {
+  source_call_id: string;
+  content: string;
+}
+
+export interface AtifObservation {
+  results: AtifObservationResult[];
+}
+
+export interface AtifStepMetrics {
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_tokens: number;
+  cost: number;
+  _exo_extensions?: {
+    prompt_tps?: number;
+    generation_tps?: number;
+    peak_memory_bytes?: number;
+    prefix_cache_hit?: "none" | "partial" | "exact";
+    reasoning_content?: string;
+  };
+}
+
+export interface AtifStep {
+  step_id: number;
+  timestamp: string;
+  source: "user" | "agent" | "system";
+  message: string;
+  reasoning_content?: string;
+  tool_calls?: AtifToolCall[];
+  observation?: AtifObservation;
+  metrics?: AtifStepMetrics;
+  model_name?: string;
+}
+
+export interface AtifTrajectory {
+  schema_version: string;
+  session_id: string;
+  agent: { name: string; model: string; provider: string };
+  steps: AtifStep[];
+  final_metrics: {
+    total_steps: number;
+    total_prompt_tokens: number;
+    total_completion_tokens: number;
+    total_cost: number;
+  };
+}
+
 interface RawStateResponse {
   topology?: RawTopology;
   instances?: Record<
@@ -3363,6 +3429,42 @@ class AppStore {
   getTraceRawUrl(taskId: string): string {
     return `/v1/traces/${encodeURIComponent(taskId)}/raw`;
   }
+
+  async listTrajectories(): Promise<TrajectoryListResponse> {
+    const response = await fetch("/v1/trajectories");
+    if (!response.ok) {
+      throw new Error(`Failed to list trajectories: ${response.status}`);
+    }
+    return (await response.json()) as TrajectoryListResponse;
+  }
+
+  async getTrajectory(sessionId: string): Promise<AtifTrajectory> {
+    const response = await fetch(
+      `/v1/trajectories/${encodeURIComponent(sessionId)}`,
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to load trajectory: ${response.status}`);
+    }
+    return (await response.json()) as AtifTrajectory;
+  }
+
+  async deleteTrajectories(
+    sessionIds: string[],
+  ): Promise<{ deleted: string[]; notFound: string[] }> {
+    const response = await fetch("/v1/trajectories/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionIds }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to delete trajectories: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  getTrajectoryRawUrl(sessionId: string): string {
+    return `/v1/trajectories/${encodeURIComponent(sessionId)}/raw`;
+  }
 }
 
 export const appStore = new AppStore();
@@ -3517,3 +3619,10 @@ export const getTraceRawUrl = (taskId: string) =>
   appStore.getTraceRawUrl(taskId);
 export const deleteTraces = (taskIds: string[]) =>
   appStore.deleteTraces(taskIds);
+export const listTrajectories = () => appStore.listTrajectories();
+export const getTrajectory = (sessionId: string) =>
+  appStore.getTrajectory(sessionId);
+export const deleteTrajectories = (sessionIds: string[]) =>
+  appStore.deleteTrajectories(sessionIds);
+export const getTrajectoryRawUrl = (sessionId: string) =>
+  appStore.getTrajectoryRawUrl(sessionId);
