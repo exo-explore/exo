@@ -24,15 +24,20 @@ _EMPTY_KV_PLACEHOLDER = mx.zeros((1, 1, 0, 1))
 
 
 def _patch_caches_for_moe_rank() -> None:
-    """Return zero-length placeholder arrays when KVCache/ArraysCache are empty.
+    """Return zero-length placeholder arrays when caches are empty.
 
-    Rank 1 (MoE) never runs attention, so its per-layer KVCache.keys and
-    ArraysCache entries stay as their initial None sentinels. mlx_lm.generate
-    calls ``mx.eval([c.state for c in prompt_cache])`` once per step, which
-    invokes ``KVCache.state`` and crashes on ``self.keys.shape[2]``. We patch
-    the property to return empty zero-sized arrays whose eval is a no-op.
+    Rank 1 (MoE) never runs attention, so its per-layer KVCache /
+    BatchKVCache / BatchRotatingKVCache / ArraysCache never have their keys
+    populated. mlx_lm.generate and BatchGenerator both call
+    ``mx.eval([c.state for c in prompt_cache])`` once per step, which
+    invokes the cache's state property and crashes on
+    ``self.keys.shape[2]`` (AttributeError: 'NoneType' object has no
+    attribute 'shape'). Patch each used cache class's state property on
+    rank 1 only, so that an unpopulated cache reports empty placeholder
+    arrays whose eval is a no-op.
     """
 
+    # KVCache.state → (k, v)
     def _kv_state(self):  # type: ignore[no-untyped-def]
         if self.keys is None:
             return (_EMPTY_KV_PLACEHOLDER, _EMPTY_KV_PLACEHOLDER)
@@ -49,13 +54,56 @@ def _patch_caches_for_moe_rank() -> None:
 
     cache_module.KVCache.state = property(_kv_state, _kv_state_setter)  # type: ignore[method-assign]
 
+    # BatchKVCache.state → (k, v, offset, left_padding)
+    def _batch_kv_state(self):  # type: ignore[no-untyped-def]
+        if self.keys is None:
+            return (
+                _EMPTY_KV_PLACEHOLDER,
+                _EMPTY_KV_PLACEHOLDER,
+                self.offset,
+                self.left_padding,
+            )
+        k, v = self.keys, self.values
+        if self._idx < k.shape[2]:
+            k = k[..., : self._idx, :]
+            v = v[..., : self._idx, :]
+        return k, v, self.offset, self.left_padding
+
+    def _batch_kv_state_setter(self, v):  # type: ignore[no-untyped-def]
+        self.keys, self.values, self.offset, self.left_padding = v
+        self._idx = self.keys.shape[2]
+
+    cache_module.BatchKVCache.state = property(  # type: ignore[method-assign]
+        _batch_kv_state, _batch_kv_state_setter
+    )
+
+    # BatchRotatingKVCache.state → (k, v, offset, left_padding)
+    def _batch_rot_state(self):  # type: ignore[no-untyped-def]
+        if self.keys is None:
+            return (
+                _EMPTY_KV_PLACEHOLDER,
+                _EMPTY_KV_PLACEHOLDER,
+                self.offset,
+                self.left_padding,
+            )
+        k, v = self.keys, self.values
+        if self._offset < k.shape[2]:
+            k, v = k[..., : self._offset, :], v[..., : self._offset, :]
+        return k, v, self.offset, self.left_padding
+
+    def _batch_rot_state_setter(self, v):  # type: ignore[no-untyped-def]
+        self.keys, self.values, self.offset, self.left_padding = v
+
+    cache_module.BatchRotatingKVCache.state = property(  # type: ignore[method-assign]
+        _batch_rot_state, _batch_rot_state_setter
+    )
+
+    # ArraysCache.state → list that may contain None entries
     original_arrays_state_getter = cache_module.ArraysCache.state.fget  # type: ignore[attr-defined]
     original_arrays_state_setter = cache_module.ArraysCache.state.fset  # type: ignore[attr-defined]
 
     def _arrays_state(self):  # type: ignore[no-untyped-def]
         raw = original_arrays_state_getter(self)
-        # Replace any None entries (rank 1's unpopulated GDN caches) with a
-        # zero-sized placeholder so mx.eval never dereferences None.
         return [_EMPTY_KV_PLACEHOLDER if c is None else c for c in raw]
 
     cache_module.ArraysCache.state = property(  # type: ignore[method-assign]
