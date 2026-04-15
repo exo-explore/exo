@@ -20,7 +20,10 @@
     loading = true;
     error = null;
     try {
-      const [a, b] = await Promise.all([getTrajectory(idA), getTrajectory(idB)]);
+      const [a, b] = await Promise.all([
+        getTrajectory(idA),
+        getTrajectory(idB),
+      ]);
       trajectoryA = a;
       trajectoryB = b;
     } catch (e) {
@@ -106,8 +109,10 @@
           </div>
           <div class="text-exo-light-gray">
             steps: {trajectoryA.final_metrics.total_steps}
-            &bull; prompt_tokens: {trajectoryA.final_metrics.total_prompt_tokens}
-            &bull; completion_tokens: {trajectoryA.final_metrics.total_completion_tokens}
+            &bull; prompt_tokens: {trajectoryA.final_metrics
+              .total_prompt_tokens}
+            &bull; completion_tokens: {trajectoryA.final_metrics
+              .total_completion_tokens}
           </div>
         </div>
         <div
@@ -120,8 +125,10 @@
           </div>
           <div class="text-exo-light-gray">
             steps: {trajectoryB.final_metrics.total_steps}
-            &bull; prompt_tokens: {trajectoryB.final_metrics.total_prompt_tokens}
-            &bull; completion_tokens: {trajectoryB.final_metrics.total_completion_tokens}
+            &bull; prompt_tokens: {trajectoryB.final_metrics
+              .total_prompt_tokens}
+            &bull; completion_tokens: {trajectoryB.final_metrics
+              .total_completion_tokens}
           </div>
         </div>
       </div>
@@ -141,9 +148,13 @@
       <div
         class="rounded border border-exo-medium-gray/30 bg-exo-black/20 p-4 text-xs font-mono flex flex-wrap gap-4"
       >
-        <span>steps Δ <span class={stepsDelta.cls}>{stepsDelta.value}</span></span>
         <span
-          >prompt_tokens Δ <span class={promptDelta.cls}>{promptDelta.value}</span></span
+          >steps Δ <span class={stepsDelta.cls}>{stepsDelta.value}</span></span
+        >
+        <span
+          >prompt_tokens Δ <span class={promptDelta.cls}
+            >{promptDelta.value}</span
+          ></span
         >
         <span
           >completion_tokens Δ <span class={completionDelta.cls}
@@ -160,7 +171,9 @@
                 class="rounded border border-exo-medium-gray/30 bg-exo-black/20 p-3 text-xs font-mono space-y-1"
               >
                 <div class="flex items-center gap-2 uppercase">
-                  <span class="text-exo-yellow">{sideIdx === 0 ? "A" : "B"}</span>
+                  <span class="text-exo-yellow"
+                    >{sideIdx === 0 ? "A" : "B"}</span
+                  >
                   <span class="text-exo-light-gray">#{i + 1}</span>
                   {#if step}
                     <span class="text-exo-light-gray">{step.source}</span>
@@ -169,7 +182,8 @@
                   {/if}
                 </div>
                 {#if step}
-                  <pre class="whitespace-pre-wrap text-white/90 text-sm">{step.message}</pre>
+                  <pre
+                    class="whitespace-pre-wrap text-white/90 text-sm">{step.message}</pre>
                   {#if step.metrics}
                     <div class="flex flex-wrap gap-1 text-[10px]">
                       <span

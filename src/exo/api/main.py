@@ -260,9 +260,7 @@ def _claude_messages_to_chat(
 def _responses_to_chat(payload: ResponsesRequest) -> list[ChatCompletionMessage]:
     msgs: list[ChatCompletionMessage] = []
     if payload.instructions:
-        msgs.append(
-            ChatCompletionMessage(role="system", content=payload.instructions)
-        )
+        msgs.append(ChatCompletionMessage(role="system", content=payload.instructions))
     if isinstance(payload.input, str):
         msgs.append(ChatCompletionMessage(role="user", content=payload.input))
         return msgs
@@ -297,9 +295,7 @@ def _responses_to_chat(payload: ResponsesRequest) -> list[ChatCompletionMessage]
             output = cast(str, getattr(item, "output", ""))
             call_id = cast(str, getattr(item, "call_id", ""))
             msgs.append(
-                ChatCompletionMessage(
-                    role="tool", content=output, tool_call_id=call_id
-                )
+                ChatCompletionMessage(role="tool", content=output, tool_call_id=call_id)
             )
     return msgs
 
@@ -2278,9 +2274,7 @@ class API:
             steps_raw = data.get("steps", [])
             agent_raw = data.get("agent", {})
             total_steps = (
-                len(cast(list[object], steps_raw))
-                if isinstance(steps_raw, list)
-                else 0
+                len(cast(list[object], steps_raw)) if isinstance(steps_raw, list) else 0
             )
             model_name = ""
             if isinstance(agent_raw, dict):

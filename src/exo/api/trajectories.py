@@ -191,9 +191,7 @@ def _hash_messages(messages: list[ChatCompletionMessage]) -> str:
     h = hashlib.sha256()
     for m in messages:
         h.update(
-            json.dumps(
-                _canonicalize(m), sort_keys=True, separators=(",", ":")
-            ).encode()
+            json.dumps(_canonicalize(m), sort_keys=True, separators=(",", ":")).encode()
         )
         h.update(b"\x1f")
     return h.hexdigest()
@@ -203,13 +201,13 @@ def _iso_now() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
 
-def _canonical_agent_step_key(step: AtifStep) -> tuple[str, tuple[tuple[str, str], ...]]:
+def _canonical_agent_step_key(
+    step: AtifStep,
+) -> tuple[str, tuple[tuple[str, str], ...]]:
     tc_key: tuple[tuple[str, str], ...] = ()
     if step.tool_calls:
         tc_key = tuple(
-            sorted(
-                (tc.tool_call_id, tc.function_name) for tc in step.tool_calls
-            )
+            sorted((tc.tool_call_id, tc.function_name) for tc in step.tool_calls)
         )
     return (step.message or "", tc_key)
 
@@ -409,9 +407,7 @@ class TrajectoryCollector:
                     if prev_agent.observation is None:
                         prev_agent.observation = AtifObservation(results=[])
                     prev_agent.observation.results.append(
-                        AtifObservationResult(
-                            source_call_id=call_id, content=content
-                        )
+                        AtifObservationResult(source_call_id=call_id, content=content)
                     )
         state.last_prefix_len = len(messages)
         self._reindex_state(state, client_key, messages)
@@ -694,9 +690,7 @@ def get_collector() -> TrajectoryCollector:
             _global_collector.enabled = _env_enabled()
             if _global_collector.enabled:
                 try:
-                    _global_collector.directory.mkdir(
-                        parents=True, exist_ok=True
-                    )
+                    _global_collector.directory.mkdir(parents=True, exist_ok=True)
                 except OSError as e:
                     logger.warning(
                         "could not create trajectories dir {}: {}",

@@ -1,10 +1,7 @@
 <script lang="ts">
   import { page } from "$app/stores";
   import { onMount } from "svelte";
-  import {
-    getTrajectory,
-    type AtifTrajectory,
-  } from "$lib/stores/app.svelte";
+  import { getTrajectory, type AtifTrajectory } from "$lib/stores/app.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
 
   const sessionId = $derived($page.params.sessionId);
@@ -70,7 +67,8 @@
         <div>
           totals: steps={trajectory.final_metrics.total_steps}
           &bull; prompt_tokens={trajectory.final_metrics.total_prompt_tokens}
-          &bull; completion_tokens={trajectory.final_metrics.total_completion_tokens}
+          &bull; completion_tokens={trajectory.final_metrics
+            .total_completion_tokens}
           &bull; cost=${trajectory.final_metrics.total_cost.toFixed(4)}
         </div>
       </div>
@@ -101,7 +99,8 @@
                 <summary class="cursor-pointer uppercase"
                   >reasoning_content</summary
                 >
-                <pre class="whitespace-pre-wrap mt-2">{step.reasoning_content}</pre>
+                <pre
+                  class="whitespace-pre-wrap mt-2">{step.reasoning_content}</pre>
               </details>
             {/if}
             {#if step.tool_calls && step.tool_calls.length > 0}
@@ -113,8 +112,11 @@
                     <div class="text-exo-yellow uppercase">
                       tool_call: {tc.function_name}
                     </div>
-                    <pre
-                      class="whitespace-pre-wrap mt-1">{JSON.stringify(tc.arguments, null, 2)}</pre>
+                    <pre class="whitespace-pre-wrap mt-1">{JSON.stringify(
+                        tc.arguments,
+                        null,
+                        2,
+                      )}</pre>
                   </div>
                 {/each}
               </div>

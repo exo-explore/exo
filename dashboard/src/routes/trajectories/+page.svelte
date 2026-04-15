@@ -112,15 +112,15 @@
   <HeaderNav showHome={true} />
   <div class="max-w-7xl mx-auto px-4 lg:px-8 py-6 space-y-6">
     <div class="flex items-center justify-between gap-4 flex-wrap">
-      <h1
-        class="text-2xl font-mono tracking-[0.2em] uppercase text-exo-yellow"
-      >
+      <h1 class="text-2xl font-mono tracking-[0.2em] uppercase text-exo-yellow">
         Trajectories
       </h1>
       <div class="flex items-center gap-3">
         {#if compareA && compareB}
           <a
-            href="#/trajectories/compare?a={encodeURIComponent(compareA)}&b={encodeURIComponent(compareB)}"
+            href="#/trajectories/compare?a={encodeURIComponent(
+              compareA,
+            )}&b={encodeURIComponent(compareB)}"
             class="text-xs font-mono text-exo-dark-gray bg-exo-yellow hover:bg-exo-yellow/90 transition-colors uppercase px-2 py-1 rounded font-semibold"
           >
             Compare
@@ -235,7 +235,8 @@
                 {/if}
               </a>
               <div class="text-xs text-exo-light-gray font-mono mt-1">
-                {formatDate(trajectory.updatedAt)} &bull; {trajectory.totalSteps} steps &bull; {trajectory.model}
+                {formatDate(trajectory.updatedAt)} &bull; {trajectory.totalSteps}
+                steps &bull; {trajectory.model}
               </div>
             </div>
             <!-- svelte-ignore a11y_click_events_have_key_events -->

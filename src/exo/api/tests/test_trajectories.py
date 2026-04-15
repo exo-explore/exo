@@ -213,12 +213,8 @@ def test_tool_call_and_observation_folding(tmp_path: Path) -> None:
 def test_different_clients_get_separate_trajectories(tmp_path: Path) -> None:
     collector = TrajectoryCollector(enabled=True, directory=tmp_path)
     messages = [ChatCompletionMessage(role="user", content="identical")]
-    sid_a = collector.record_request(
-        messages=messages, client_key="ip:A", model="m"
-    )
-    sid_b = collector.record_request(
-        messages=messages, client_key="ip:B", model="m"
-    )
+    sid_a = collector.record_request(messages=messages, client_key="ip:A", model="m")
+    sid_b = collector.record_request(messages=messages, client_key="ip:B", model="m")
     assert sid_a is not None and sid_b is not None
     assert sid_a != sid_b
     collector.record_response(
@@ -248,9 +244,7 @@ def test_lru_eviction_drops_oldest(tmp_path: Path) -> None:
     collector = TrajectoryCollector(enabled=True, directory=tmp_path, capacity=2)
     for i in range(3):
         msgs = [ChatCompletionMessage(role="user", content=f"msg-{i}")]
-        sid = collector.record_request(
-            messages=msgs, client_key=f"ip:{i}", model="m"
-        )
+        sid = collector.record_request(messages=msgs, client_key=f"ip:{i}", model="m")
         assert sid is not None
         collector.record_response(
             session_id=sid,
@@ -268,9 +262,7 @@ def test_lru_eviction_drops_oldest(tmp_path: Path) -> None:
 def test_disabled_writes_nothing(tmp_path: Path) -> None:
     collector = TrajectoryCollector(enabled=False, directory=tmp_path)
     messages = [ChatCompletionMessage(role="user", content="hi")]
-    sid = collector.record_request(
-        messages=messages, client_key="ip:x", model="m"
-    )
+    sid = collector.record_request(messages=messages, client_key="ip:x", model="m")
     assert sid is None
     collector.record_response(
         session_id="nonexistent",
@@ -369,9 +361,7 @@ async def test_tap_chunk_stream_captures_tool_calls() -> None:
 def test_cached_tokens_and_ttft_recorded(tmp_path: Path) -> None:
     collector = TrajectoryCollector(enabled=True, directory=tmp_path)
     messages = [ChatCompletionMessage(role="user", content="hello")]
-    sid = collector.record_request(
-        messages=messages, client_key="ip:1", model="m"
-    )
+    sid = collector.record_request(messages=messages, client_key="ip:1", model="m")
     assert sid is not None
     collector.record_response(
         session_id=sid,
