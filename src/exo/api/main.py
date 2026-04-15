@@ -103,6 +103,7 @@ from exo.api.types import (
     TraceRankStats,
     TraceResponse,
     TraceStatsResponse,
+    Usage,
     normalize_image_size,
 )
 from exo.api.types.claude_api import (
@@ -977,6 +978,8 @@ class API:
             reasoning: str | None,
             tool_calls: list[ToolCallItem],
             stats: GenerationStats | None,
+            usage: Usage | None,
+            ttft_ms: float | None,
         ) -> None:
             if session_id is None:
                 return
@@ -989,6 +992,8 @@ class API:
                 tool_calls=tool_calls,
                 stats=stats,
                 model=str(resolved_model),
+                usage=usage,
+                ttft_ms=ttft_ms,
             )
 
         return tap_chunk_stream(chunk_stream, _on_complete)
