@@ -380,6 +380,17 @@ def parse_tool_calls(
     in_tool_call = False
     tool_call_text_parts: list[str] = []
     accumulated_tool_calls: list[ToolCallItem] = []
+
+    def yield_tool_calls(
+        tool_calls: list[ToolCallItem], response: GenerationResponse | None
+    ):
+        yield ToolCallResponse(
+            tool_calls=tool_calls,
+            usage=None if response is None else response.usage,
+            stats=None if response is None else response.stats,
+        )
+        tool_calls.clear()
+
     for response in responses:
         if response is None:
             yield None
@@ -388,12 +399,7 @@ def parse_tool_calls(
         if accumulated_tool_calls and (
             response.stats is not None or response.finish_reason is not None
         ):
-            yield ToolCallResponse(
-                tool_calls=accumulated_tool_calls,
-                usage=response.usage,
-                stats=response.stats,
-            )
-            accumulated_tool_calls = []
+            yield_tool_calls(accumulated_tool_calls, response)
             continue
 
         if not in_tool_call and response.text.startswith(tool_parser.start_parsing):
@@ -421,12 +427,7 @@ def parse_tool_calls(
 
             accumulated_tool_calls.extend(parsed)
             if response.finish_reason is not None or response.stats is not None:
-                yield ToolCallResponse(
-                    tool_calls=accumulated_tool_calls,
-                    usage=response.usage,
-                    stats=response.stats,
-                )
-                accumulated_tool_calls = []
+                yield_tool_calls(accumulated_tool_calls, response)
             continue
 
         if response.finish_reason is not None:
@@ -443,6 +444,7 @@ def parse_tool_calls(
             yield response
 
     if accumulated_tool_calls:
-        yield ToolCallResponse(
-            tool_calls=accumulated_tool_calls, usage=None, stats=None
+        logger.critical(
+            "No finish reason on the tool call response - please report this case to us!"
         )
+        yield_tool_calls(accumulated_tool_calls, None)
