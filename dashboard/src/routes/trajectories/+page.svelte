@@ -7,6 +7,7 @@
     type TrajectoryListItem,
   } from "$lib/stores/app.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
+  import TrajectoryTrendChart from "$lib/components/TrajectoryTrendChart.svelte";
 
   let trajectories = $state<TrajectoryListItem[]>([]);
   let loading = $state(true);
@@ -19,6 +20,38 @@
   let allSelected = $derived(
     trajectories.length > 0 && selectedIds.size === trajectories.length,
   );
+
+  const trendSeries = $derived.by(() => {
+    const sorted = [...trajectories].sort(
+      (a, b) =>
+        new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime(),
+    );
+    const toPoints = <T extends keyof TrajectoryListItem>(key: T) =>
+      sorted.map((t) => ({
+        t: new Date(t.updatedAt).getTime(),
+        v: (t[key] as number | null) ?? null,
+      }));
+    const cacheHitRatePoints = sorted.map((t) => {
+      const total = t.cacheHitNone + t.cacheHitPartial + t.cacheHitExact;
+      return {
+        t: new Date(t.updatedAt).getTime(),
+        v:
+          total > 0
+            ? ((t.cacheHitPartial + t.cacheHitExact) / total) * 100
+            : null,
+      };
+    });
+    const totalTokensPoints = sorted.map((t) => ({
+      t: new Date(t.updatedAt).getTime(),
+      v: t.totalPromptTokens + t.totalCompletionTokens,
+    }));
+    return {
+      ttft: toPoints("avgTtftMs"),
+      genTps: toPoints("avgGenerationTps"),
+      tokens: totalTokensPoints,
+      cacheHitRate: cacheHitRatePoints,
+    };
+  });
 
   const summary = $derived.by(() => {
     if (trajectories.length === 0) {
@@ -338,6 +371,43 @@
           Models: {summary.models.join(", ")}
         </div>
       {/if}
+
+      <!-- Trends over time -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <TrajectoryTrendChart
+          title="TTFT per trajectory"
+          unit="ms"
+          points={trendSeries.ttft}
+          color="#facc15"
+          formatY={(v) => (v < 1000 ? `${v.toFixed(0)}` : `${(v / 1000).toFixed(1)}s`)}
+        />
+        <TrajectoryTrendChart
+          title="Generation tok/s per trajectory"
+          unit="tok/s"
+          points={trendSeries.genTps}
+          color="#60a5fa"
+          formatY={(v) => v.toFixed(1)}
+        />
+        <TrajectoryTrendChart
+          title="Total tokens per trajectory"
+          unit="tokens"
+          points={trendSeries.tokens}
+          color="#4ade80"
+          formatY={(v) =>
+            v < 1000
+              ? `${v.toFixed(0)}`
+              : v < 1_000_000
+                ? `${(v / 1000).toFixed(1)}k`
+                : `${(v / 1_000_000).toFixed(2)}M`}
+        />
+        <TrajectoryTrendChart
+          title="Prefix cache hit rate per trajectory"
+          unit="%"
+          points={trendSeries.cacheHitRate}
+          color="#c084fc"
+          formatY={(v) => `${v.toFixed(0)}`}
+        />
+      </div>
 
       <!-- Table -->
       <div class="space-y-2">
