@@ -110,6 +110,99 @@ def _patch_caches_for_moe_rank() -> None:
         _arrays_state, original_arrays_state_setter
     )
 
+    # Batching methods (extract / filter / extend) short-circuit when the
+    # cache is still in its uninitialised state on rank 1. Every method
+    # defers to the stock implementation once keys/values are populated,
+    # which would only happen if future code actually ran attention on
+    # rank 1 — for now that never occurs, but the guards keep the patches
+    # safe under that change.
+
+    def _arrays_is_empty(self) -> bool:  # type: ignore[no-untyped-def]
+        return all(c is None for c in self.cache)
+
+    _arrays_extract_orig = cache_module.ArraysCache.extract
+
+    def _arrays_extract(self, idx):  # type: ignore[no-untyped-def]
+        if _arrays_is_empty(self):
+            return cache_module.ArraysCache(len(self.cache))
+        return _arrays_extract_orig(self, idx)
+
+    cache_module.ArraysCache.extract = _arrays_extract  # type: ignore[method-assign]
+
+    _arrays_filter_orig = cache_module.ArraysCache.filter
+
+    def _arrays_filter(self, batch_indices):  # type: ignore[no-untyped-def]
+        if _arrays_is_empty(self):
+            return
+        _arrays_filter_orig(self, batch_indices)
+
+    cache_module.ArraysCache.filter = _arrays_filter  # type: ignore[method-assign]
+
+    _arrays_extend_orig = cache_module.ArraysCache.extend
+
+    def _arrays_extend(self, other):  # type: ignore[no-untyped-def]
+        if _arrays_is_empty(self) and _arrays_is_empty(other):
+            return
+        _arrays_extend_orig(self, other)
+
+    cache_module.ArraysCache.extend = _arrays_extend  # type: ignore[method-assign]
+
+    # BatchKVCache: keys/values stay None until attention runs.
+    _bkv_extract_orig = cache_module.BatchKVCache.extract
+
+    def _bkv_extract(self, idx):  # type: ignore[no-untyped-def]
+        if self.keys is None:
+            return cache_module.KVCache()
+        return _bkv_extract_orig(self, idx)
+
+    cache_module.BatchKVCache.extract = _bkv_extract  # type: ignore[method-assign]
+
+    _bkv_filter_orig = cache_module.BatchKVCache.filter
+
+    def _bkv_filter(self, batch_indices):  # type: ignore[no-untyped-def]
+        if self.keys is None:
+            return
+        _bkv_filter_orig(self, batch_indices)
+
+    cache_module.BatchKVCache.filter = _bkv_filter  # type: ignore[method-assign]
+
+    _bkv_extend_orig = cache_module.BatchKVCache.extend
+
+    def _bkv_extend(self, other):  # type: ignore[no-untyped-def]
+        if self.keys is None and other.keys is None:
+            return
+        _bkv_extend_orig(self, other)
+
+    cache_module.BatchKVCache.extend = _bkv_extend  # type: ignore[method-assign]
+
+    # BatchRotatingKVCache: same story.
+    _brkv_extract_orig = cache_module.BatchRotatingKVCache.extract
+
+    def _brkv_extract(self, idx):  # type: ignore[no-untyped-def]
+        if self.keys is None:
+            return cache_module.RotatingKVCache(self.max_size)
+        return _brkv_extract_orig(self, idx)
+
+    cache_module.BatchRotatingKVCache.extract = _brkv_extract  # type: ignore[method-assign]
+
+    _brkv_filter_orig = cache_module.BatchRotatingKVCache.filter
+
+    def _brkv_filter(self, batch_indices):  # type: ignore[no-untyped-def]
+        if self.keys is None:
+            return
+        _brkv_filter_orig(self, batch_indices)
+
+    cache_module.BatchRotatingKVCache.filter = _brkv_filter  # type: ignore[method-assign]
+
+    _brkv_extend_orig = cache_module.BatchRotatingKVCache.extend
+
+    def _brkv_extend(self, other):  # type: ignore[no-untyped-def]
+        if self.keys is None and other.keys is None:
+            return
+        _brkv_extend_orig(self, other)
+
+    cache_module.BatchRotatingKVCache.extend = _brkv_extend  # type: ignore[method-assign]
+
 
 def apply_qwen35_attn_moe_split_patches(
     model: nn.Module, group: mx.distributed.Group
