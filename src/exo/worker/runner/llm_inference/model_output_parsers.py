@@ -379,6 +379,8 @@ def parse_tool_calls(
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     in_tool_call = False
     tool_call_text_parts: list[str] = []
+    accumulated_tool_calls: list[ToolCallItem] = []
+
     for response in responses:
         if response is None:
             yield None
@@ -386,6 +388,19 @@ def parse_tool_calls(
 
         if not in_tool_call and response.text.startswith(tool_parser.start_parsing):
             in_tool_call = True
+
+        if (
+            not in_tool_call
+            and accumulated_tool_calls
+            and (response.stats is not None or response.finish_reason is not None)
+        ):
+            yield ToolCallResponse(
+                tool_calls=accumulated_tool_calls,
+                usage=response.usage,
+                stats=response.stats,
+            )
+            accumulated_tool_calls.clear()
+            continue
 
         if not in_tool_call:
             yield response
@@ -407,9 +422,16 @@ def parse_tool_calls(
                 )
                 break
 
-            yield ToolCallResponse(
-                tool_calls=parsed, usage=response.usage, stats=response.stats
-            )
+            accumulated_tool_calls.extend(parsed)
+            if accumulated_tool_calls and (
+                response.finish_reason is not None or response.stats is not None
+            ):
+                yield ToolCallResponse(
+                    tool_calls=accumulated_tool_calls,
+                    usage=response.usage,
+                    stats=response.stats,
+                )
+                accumulated_tool_calls.clear()
             continue
 
         if response.finish_reason is not None:
@@ -424,3 +446,6 @@ def parse_tool_calls(
                 }
             )
             yield response
+
+    if not accumulated_tool_calls:
+        logger.warning("Tool calls should have all been emitted but were not")
