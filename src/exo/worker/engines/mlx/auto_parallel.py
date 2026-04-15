@@ -38,6 +38,8 @@ from mlx_lm.models.nemotron_h import (
     NemotronHMoE,
 )
 from mlx_lm.models.nemotron_h import NemotronHModel as NemotronHInnerModel
+from mlx_lm.models.qwen3 import Model as Qwen3Model
+from mlx_lm.models.qwen3 import TransformerBlock as Qwen3TransformerBlock
 from mlx_lm.models.qwen3_5 import DecoderLayer as Qwen3_5DecoderLayer
 from mlx_lm.models.qwen3_5 import Model as Qwen3_5TextModel
 from mlx_lm.models.qwen3_5 import Qwen3_5TextModel as Qwen3_5TextModelInner
@@ -52,6 +54,7 @@ from mlx_lm.models.qwen3_next import (
     Qwen3NextSparseMoeBlock,
 )
 from mlx_lm.models.qwen3_next import Qwen3NextModel as Qwen3NextInnerModel
+from mlx_lm.models.qwen3_vl import Model as Qwen3VLModel
 from mlx_lm.models.step3p5 import Model as Step35Model
 from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
@@ -540,7 +543,15 @@ def tensor_auto_parallel(
             sharded_to_all_linear_in_place,
         )
     elif isinstance(
-        model, (Qwen3MoeModel, Qwen3NextModel, Qwen3_5TextModel, Qwen3_5MoeModel)
+        model,
+        (
+            Qwen3Model,
+            Qwen3MoeModel,
+            Qwen3NextModel,
+            Qwen3_5TextModel,
+            Qwen3_5MoeModel,
+            Qwen3VLModel,
+        ),
     ):
         tensor_parallel_sharding_strategy = QwenShardingStrategy(
             group,
@@ -935,13 +946,19 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
         on_layer_loaded: LayerLoadedCallback | None,
     ) -> nn.Module:
         model = cast(
-            Qwen3MoeModel | Qwen3NextModel | Qwen3_5TextModel | Qwen3_5MoeModel, model
+            Qwen3Model
+            | Qwen3MoeModel
+            | Qwen3NextModel
+            | Qwen3_5TextModel
+            | Qwen3_5MoeModel
+            | Qwen3VLModel,
+            model,
         )
         total = len(model.layers)
         for i, layer in enumerate(model.layers):
             mx.eval(layer.parameters())
             # Shard the self attention
-            if isinstance(layer, Qwen3MoeDecoderLayer):
+            if isinstance(layer, (Qwen3MoeDecoderLayer, Qwen3TransformerBlock)):
                 layer.self_attn.q_proj = self.all_to_sharded_linear(
                     layer.self_attn.q_proj
                 )
