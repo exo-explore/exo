@@ -150,7 +150,7 @@ pub mod if_watcher {
 
         while let Some(s) = mon_stream.next().await {
             for iface in s.interfaces.values() {
-                if !iface.is_real_interface() || !iface.is_loopback_interface() {
+                if !iface.is_real_interface() && !iface.is_loopback_interface() {
                     continue;
                 }
                 for addr in iface.addrs() {
