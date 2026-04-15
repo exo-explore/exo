@@ -346,7 +346,6 @@ struct SettingsView: View {
         .padding()
     }
 
-
     // MARK: - About Tab
 
     private var aboutTab: some View {
