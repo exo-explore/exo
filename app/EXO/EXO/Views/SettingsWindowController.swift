@@ -30,7 +30,7 @@ final class SettingsWindowController: ObservableObject {
         let hostingView = NSHostingView(rootView: settingsView)
 
         let newWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 450, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 560),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false

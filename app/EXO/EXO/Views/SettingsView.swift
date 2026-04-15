@@ -16,6 +16,9 @@ struct SettingsView: View {
     @State private var pendingEnableImageModels = false
     @State private var pendingOfflineMode = false
     @State private var pendingFastSynchEnabled = false
+    @State private var pendingDefaultModelsDir: String = ""
+    @State private var pendingAdditionalModelsDirs: String = ""
+    @State private var pendingReadOnlyModelsDirs: String = ""
     @State private var pendingCustomEnvironmentVariables: [CustomEnvironmentVariable] = []
     @State private var needsRestart = false
     @State private var bugReportInFlight = false
@@ -45,7 +48,7 @@ struct SettingsView: View {
                     Label("About", systemImage: "info.circle")
                 }
         }
-        .frame(width: 450, height: 400)
+        .frame(width: 640, height: 560)
         .onAppear {
             pendingNamespace = controller.customNamespace
             pendingHFToken = controller.hfToken
@@ -53,6 +56,9 @@ struct SettingsView: View {
             pendingEnableImageModels = controller.enableImageModels
             pendingOfflineMode = controller.offlineMode
             pendingFastSynchEnabled = controller.fastSynchEnabled
+            pendingDefaultModelsDir = controller.defaultModelsDir
+            pendingAdditionalModelsDirs = controller.additionalModelsDirs
+            pendingReadOnlyModelsDirs = controller.readOnlyModelsDirs
             pendingCustomEnvironmentVariables = controller.customEnvironmentVariables
             needsRestart = false
         }
@@ -222,10 +228,56 @@ struct SettingsView: View {
 
     private var environmentTab: some View {
         Form {
-            Section("Custom Environment Variables") {
-                Text("Passed to the exo process at launch. Override built-in defaults here.")
+            Section("Models Directories") {
+                LabeledContent("Default Models Dir") {
+                    HStack(spacing: 4) {
+                        TextField("~/.exo/models", text: $pendingDefaultModelsDir)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(width: 240)
+                        Button("Browse…") {
+                            chooseDirectory { url in
+                                pendingDefaultModelsDir = url.path
+                            }
+                        }
+                    }
+                }
+                Text("Sets EXO_DEFAULT_MODELS_DIR. Where models are downloaded.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+
+                LabeledContent("Additional Dirs") {
+                    TextField(
+                        "optional (colon-separated)", text: $pendingAdditionalModelsDirs
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: 300)
+                }
+                Text("Sets EXO_MODELS_DIRS. Extra writable model dirs, colon-separated.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                LabeledContent("Read-Only Dirs") {
+                    TextField(
+                        "optional (colon-separated)", text: $pendingReadOnlyModelsDirs
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: 300)
+                }
+                Text("Sets EXO_MODELS_READ_ONLY_DIRS. Never written to.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section("Custom Environment Variables") {
+                Text(
+                    "Escape hatch for env vars that don't have typed fields above. "
+                        + "Values here override the typed fields on conflict."
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
 
                 if pendingCustomEnvironmentVariables.isEmpty {
                     Text("No custom variables.")
@@ -291,6 +343,17 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    private func chooseDirectory(_ onPick: (URL) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        if panel.runModal() == .OK, let url = panel.url {
+            onPick(url)
+        }
     }
 
     // MARK: - About Tab
@@ -580,7 +643,10 @@ struct SettingsView: View {
     }
 
     private var hasEnvironmentChanges: Bool {
-        pendingCustomEnvironmentVariables != controller.customEnvironmentVariables
+        pendingDefaultModelsDir != controller.defaultModelsDir
+            || pendingAdditionalModelsDirs != controller.additionalModelsDirs
+            || pendingReadOnlyModelsDirs != controller.readOnlyModelsDirs
+            || pendingCustomEnvironmentVariables != controller.customEnvironmentVariables
     }
 
     private func applyGeneralSettings() {
@@ -602,6 +668,17 @@ struct SettingsView: View {
     }
 
     private func applyEnvironmentSettings() {
+        controller.defaultModelsDir = pendingDefaultModelsDir.trimmingCharacters(
+            in: .whitespaces)
+        controller.additionalModelsDirs = pendingAdditionalModelsDirs.trimmingCharacters(
+            in: .whitespaces)
+        controller.readOnlyModelsDirs = pendingReadOnlyModelsDirs.trimmingCharacters(
+            in: .whitespaces)
+
+        pendingDefaultModelsDir = controller.defaultModelsDir
+        pendingAdditionalModelsDirs = controller.additionalModelsDirs
+        pendingReadOnlyModelsDirs = controller.readOnlyModelsDirs
+
         // Trim whitespace from keys and drop empty ones so that the stored
         // form matches what is actually injected into the child process and
         // hasEnvironmentChanges doesn't show a stale diff after save.
@@ -629,6 +706,7 @@ struct SettingsView: View {
 
         pendingCustomEnvironmentVariables = sanitized
         controller.customEnvironmentVariables = sanitized
+
         restartIfRunning()
     }
 
