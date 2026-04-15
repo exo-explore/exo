@@ -28,6 +28,7 @@ from exo.download.huggingface_utils import (
     get_allow_patterns,
     get_auth_headers,
     get_hf_endpoint,
+    get_hf_endpoints,
     get_hf_token,
 )
 from exo.shared.constants import (
@@ -385,16 +386,23 @@ async def fetch_file_list_with_retry(
     recursive: bool = False,
     on_connection_lost: Callable[[], None] = lambda: None,
 ) -> list[FileListEntry]:
-    n_attempts = 3
+    endpoints = get_hf_endpoints()
+    n_attempts = max(3, len(endpoints))
     for attempt in range(n_attempts):
+        endpoint = endpoints[attempt % len(endpoints)]
         try:
-            return await _fetch_file_list(model_id, revision, path, recursive)
+            return await _fetch_file_list(
+                model_id, revision, path, recursive, endpoint=endpoint
+            )
         except HuggingFaceAuthenticationError:
             raise
         except Exception as e:
             on_connection_lost()
             if attempt == n_attempts - 1:
                 raise e
+            logger.warning(
+                f"fetch_file_list failed against {endpoint} (attempt {attempt + 1}/{n_attempts}): {e}"
+            )
             await asyncio.sleep(2.0**attempt)
     raise Exception(
         f"Failed to fetch file list for {model_id=} {revision=} {path=} {recursive=}"
@@ -402,9 +410,14 @@ async def fetch_file_list_with_retry(
 
 
 async def _fetch_file_list(
-    model_id: ModelId, revision: str = "main", path: str = "", recursive: bool = False
+    model_id: ModelId,
+    revision: str = "main",
+    path: str = "",
+    recursive: bool = False,
+    endpoint: str | None = None,
 ) -> list[FileListEntry]:
-    api_url = f"{get_hf_endpoint()}/api/models/{model_id}/tree/{revision}"
+    endpoint = endpoint if endpoint is not None else get_hf_endpoint()
+    api_url = f"{endpoint}/api/models/{model_id}/tree/{revision}"
     url = f"{api_url}/{path}" if path else api_url
 
     headers = await get_download_headers()
@@ -428,7 +441,7 @@ async def _fetch_file_list(
                     files.append(FileListEntry.model_validate(item))
                 elif item.type == "directory" and recursive:
                     subfiles = await _fetch_file_list(
-                        model_id, revision, item.path, recursive
+                        model_id, revision, item.path, recursive, endpoint=endpoint
                     )
                     files.extend(subfiles)
             return files
@@ -485,12 +498,17 @@ async def calc_hash(path: Path, hash_type: Literal["sha1", "sha256"] = "sha1") -
 
 
 async def file_meta(
-    model_id: ModelId, revision: str, path: str, redirected_location: str | None = None
+    model_id: ModelId,
+    revision: str,
+    path: str,
+    redirected_location: str | None = None,
+    endpoint: str | None = None,
 ) -> tuple[int, str]:
+    endpoint = endpoint if endpoint is not None else get_hf_endpoint()
     url = (
-        urljoin(f"{get_hf_endpoint()}/{model_id}/resolve/{revision}/", path)
+        urljoin(f"{endpoint}/{model_id}/resolve/{revision}/", path)
         if redirected_location is None
-        else f"{get_hf_endpoint()}{redirected_location}"
+        else f"{endpoint}{redirected_location}"
     )
     headers = await get_download_headers()
     async with (
@@ -507,7 +525,9 @@ async def file_meta(
                 return content_length, etag
             # Otherwise, follow the redirect to get authoritative size/hash
             redirected_location = r.headers.get("location")
-            return await file_meta(model_id, revision, path, redirected_location)
+            return await file_meta(
+                model_id, revision, path, redirected_location, endpoint=endpoint
+            )
         if r.status in [401, 403]:
             msg = await _build_auth_error_message(r.status, model_id)
             raise HuggingFaceAuthenticationError(msg)
@@ -530,11 +550,19 @@ async def download_file_with_retry(
     on_connection_lost: Callable[[], None] = lambda: None,
     skip_internet: bool = False,
 ) -> Path:
-    n_attempts = 3
+    endpoints = get_hf_endpoints()
+    n_attempts = max(3, len(endpoints))
     for attempt in range(n_attempts):
+        endpoint = endpoints[attempt % len(endpoints)]
         try:
             return await _download_file(
-                model_id, revision, path, target_dir, on_progress, skip_internet
+                model_id,
+                revision,
+                path,
+                target_dir,
+                on_progress,
+                skip_internet,
+                endpoint=endpoint,
             )
         except HuggingFaceAuthenticationError:
             raise
@@ -544,7 +572,7 @@ async def download_file_with_retry(
             if attempt == n_attempts - 1:
                 raise e
             logger.error(
-                f"Download error on attempt {attempt}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
+                f"Download error on attempt {attempt}/{n_attempts} via {endpoint} for {model_id=} {revision=} {path=} {target_dir=}"
             )
             logger.error(traceback.format_exc())
             await asyncio.sleep(2.0**attempt)
@@ -553,7 +581,7 @@ async def download_file_with_retry(
                 on_connection_lost()
                 raise e
             logger.error(
-                f"Download error on attempt {attempt + 1}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
+                f"Download error on attempt {attempt + 1}/{n_attempts} via {endpoint} for {model_id=} {revision=} {path=} {target_dir=}"
             )
             logger.error(traceback.format_exc())
             await asyncio.sleep(2.0**attempt)
@@ -569,7 +597,9 @@ async def _download_file(
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
     skip_internet: bool = False,
+    endpoint: str | None = None,
 ) -> Path:
+    endpoint = endpoint if endpoint is not None else get_hf_endpoint()
     target_path = target_dir / path
 
     if await aios.path.exists(target_path):
@@ -580,7 +610,9 @@ async def _download_file(
 
         # Try to verify against remote, but allow offline operation
         try:
-            remote_size, _ = await file_meta(model_id, revision, path)
+            remote_size, _ = await file_meta(
+                model_id, revision, path, endpoint=endpoint
+            )
             if local_size != remote_size:
                 logger.info(
                     f"File {path} size mismatch (local={local_size}, remote={remote_size}), re-downloading"
@@ -601,7 +633,7 @@ async def _download_file(
         )
 
     await aios.makedirs((target_dir / path).parent, exist_ok=True)
-    length, etag = await file_meta(model_id, revision, path)
+    length, etag = await file_meta(model_id, revision, path, endpoint=endpoint)
     remote_hash = etag[:-5] if etag.endswith("-gzip") else etag
     partial_path = target_dir / f"{path}.partial"
     resume_byte_pos = (
@@ -610,7 +642,7 @@ async def _download_file(
         else None
     )
     if resume_byte_pos != length:
-        url = urljoin(f"{get_hf_endpoint()}/{model_id}/resolve/{revision}/", path)
+        url = urljoin(f"{endpoint}/{model_id}/resolve/{revision}/", path)
         headers = await get_download_headers()
         if resume_byte_pos:
             headers["Range"] = f"bytes={resume_byte_pos}-"
@@ -703,11 +735,26 @@ def calculate_repo_progress(
 async def get_weight_map(model_id: ModelId, revision: str = "main") -> dict[str, str]:
     target_dir = await resolve_model_dir(model_id)
 
-    index_files_dir = snapshot_download(
-        repo_id=model_id,
-        local_dir=target_dir,
-        allow_patterns="*.safetensors.index.json",
-    )
+    endpoints = get_hf_endpoints()
+    last_exc: Exception | None = None
+    index_files_dir: str | None = None
+    for endpoint in endpoints:
+        try:
+            index_files_dir = snapshot_download(
+                repo_id=model_id,
+                local_dir=target_dir,
+                allow_patterns="*.safetensors.index.json",
+                endpoint=endpoint,
+            )
+            break
+        except Exception as e:
+            last_exc = e
+            logger.warning(
+                f"snapshot_download failed against {endpoint} for {model_id}: {e}"
+            )
+    if index_files_dir is None:
+        assert last_exc is not None
+        raise last_exc
 
     index_files = list(Path(index_files_dir).glob("**/*.safetensors.index.json"))
 
