@@ -15,9 +15,9 @@ dependencies = [
   "huggingface-hub>=1.8.0",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
-  "exo_pyo3_bindings",                       # rust bindings
+  "exo-pyo3-bindings",                       # rust bindings
   "anyio==4.11.0",
-  "mlx",                                     # as we provide mlx from upstream, the different build configurations are handled in the parts.nix
+  "mlx==0.31.1; sys_platform == 'darwin'",
   "mlx-lm",
   "tiktoken>=0.12.0",                        # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
@@ -48,8 +48,9 @@ dev = [
 
 [project.optional-dependencies]
 build = ["nanobind"]
-cuda = ["torch>=2.10.0; sys_platform == 'linux'"]
-cuda13 = ["torch>=2.10.0; sys_platform == 'linux'"]
+cpu = ["mlx-cpu==0.31.1; sys_platform == 'linux'", "torch>=2.10.0; sys_platform == 'linux'"]
+cuda12 = ["mlx-cuda-12==0.31.1; sys_platform == 'linux'", "torch>=2.10.0; sys_platform == 'linux'"]
+cuda13 = ["mlx-cuda-13==0.31.1; sys_platform == 'linux'", "torch>=2.10.0; sys_platform == 'linux'"]
 
 ###
 # workspace configuration
@@ -59,15 +60,29 @@ cuda13 = ["torch>=2.10.0; sys_platform == 'linux'"]
 members = ["rust/exo_pyo3_bindings", "bench"]
 
 [tool.uv.sources]
-exo_pyo3_bindings = { workspace = true }
-mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks" }
+exo-pyo3-bindings = { workspace = true }
+mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/fix-arrayscache-leak" }
-torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
+torch = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'cuda13' and extra != 'cpu' and extra != 'cuda12'" },
+  { index = "pytorch-cu120", marker = "sys_platform == 'linux' and extra == 'cuda12' and extra != 'cpu' and extra != 'cuda13'" },
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'cpu' and extra != 'cuda12' and extra != 'cuda13'" },
+]
 vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu120"
+url = "https://download.pytorch.org/whl/cu120"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [build-system]
@@ -123,8 +138,7 @@ root = "src"
 required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
-conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
-override-dependencies = ["compressed-tensors==0.13.0", "torch==2.10.0"]
+conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }, { extra = "cpu" }]]
 constraint-dependencies = ["transformers>=5.0.0,<5.4.0"]
 
 [tool.uv.extra-build-dependencies]

@@ -45,11 +45,16 @@
       inputs.uv2nix.follows = "uv2nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    nixglhost = {
+      url = "github:numtide/nix-gl-host";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   nixConfig = {
-    extra-trusted-public-keys = "exo.cachix.org-1:okq7hl624TBeAR3kV+g39dUFSiaZgLRkLsFBCuJ2NZI=";
-    extra-substituters = "https://exo.cachix.org";
+    extra-trusted-public-keys = "exo.cachix.org-1:okq7hl624TBeAR3kV+g39dUFSiaZgLRkLsFBCuJ2NZI= cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M=";
+    extra-substituters = "https://exo.cachix.org https://cache.nixos-cuda.org";
   };
 
   outputs = inputs:
@@ -70,12 +75,12 @@
       debug = true; # Enable options autocompletion
 
       perSystem = { config, self', pkgs, lib, system, ... }:
-        {
-          # Allow unfree for metal-toolchain (needed for Darwin Metal packages)
-          _module.args.pkgs = import inputs.nixpkgs {
+        let
+          pkgsArgs = {
             inherit system;
             config.allowUnfreePredicate = pkg: (pkg.pname or "") == "metal-toolchain";
             overlays = [
+              inputs.nixglhost.overlays.default
               (import ./nix/apple-sdk-overlay.nix)
               (final: _: {
                 macmon = final.rustPlatform.buildRustPackage {
@@ -91,6 +96,13 @@
                 };
               })
             ];
+          };
+        in
+        {
+          # Allow unfree for metal-toolchain (needed for Darwin Metal packages)
+          _module.args = {
+            pkgs = import inputs.nixpkgs pkgsArgs;
+            unfreePkgs = import inputs.nixpkgs (pkgsArgs // { config.allowUnfree = true; });
           };
           treefmt = {
             projectRootFile = "flake.nix";
@@ -120,7 +132,8 @@
 
           packages = {
             default = self'.packages.exo;
-          } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          } //
+          lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
             metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
           };
 
@@ -133,7 +146,7 @@
                 config.treefmt.build.wrapper
 
                 # PYTHON
-                self'.packages.python
+                self'.packages.editableVenv
                 uv
                 ruff
                 basedpyright
@@ -163,7 +176,7 @@
             OPENSSL_NO_VENDOR = "1";
 
             shellHook = ''
-              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${self'.packages.python}/lib"
+              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${python313}/lib"
               ${lib.optionalString stdenv.isLinux ''
                 export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
               ''}
