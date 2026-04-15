@@ -1,4 +1,6 @@
+import cProfile
 import os
+import pstats
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -17,10 +19,13 @@ from exo.shared.types.common import CommandId, ModelId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
+    RawTokenChunksGenerated,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
 )
+
+_CHUNK_BATCH_SIZE = 8
 from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import (
     ConnectToGroup,
@@ -113,6 +118,7 @@ class Runner:
             TaskId,
             TextGeneration,
         ] = {}
+        self._pending_raw_items: list[dict[str, object]] = []
 
         logger.info("runner created")
         self.update_status(RunnerIdle())
@@ -266,6 +272,8 @@ class Runner:
 
         self.submit_text_generation(starting_task)
 
+        _prof = cProfile.Profile()
+        _prof.enable()
         while self.active_tasks:
             results = self.generator.step()
 
@@ -298,6 +306,7 @@ class Runner:
                         self.acknowledge_task(task)
                         self.submit_text_generation(task)
                     case Shutdown():
+                        self.flush_pending_chunks()
                         self.shutdown(task)
                         return ExitCode.Shutdown
                     case _:
@@ -307,6 +316,18 @@ class Runner:
 
             except WouldBlock:
                 pass
+
+        self.flush_pending_chunks()
+        _prof.disable()
+        import io
+        _buf = io.StringIO()
+        _stats = pstats.Stats(_prof, stream=_buf).sort_stats("cumulative")
+        _stats.print_stats(40)
+        logger.info(f"=== exo runner cProfile (top 40 cumulative) ===\n{_buf.getvalue()}")
+        _buf = io.StringIO()
+        _stats = pstats.Stats(_prof, stream=_buf).sort_stats("tottime")
+        _stats.print_stats(40)
+        logger.info(f"=== exo runner cProfile (top 40 tottime) ===\n{_buf.getvalue()}")
 
         self.update_status(RunnerReady())
         logger.info("runner ready")
@@ -321,6 +342,7 @@ class Runner:
         match response:
             case GenerationResponse():
                 if self.device_rank == 0 and response.finish_reason == "error":
+                    self.flush_pending_chunks()
                     self.event_sender.send(
                         ChunkGenerated(
                             command_id=command_id,
@@ -337,24 +359,27 @@ class Runner:
                         "tool_calls",
                         "function_call",
                     )
-                    self.event_sender.send(
-                        ChunkGenerated(
-                            command_id=command_id,
-                            chunk=TokenChunk(
-                                model=self.model_id,
-                                text=response.text,
-                                token_id=response.token,
-                                usage=response.usage,
-                                finish_reason=response.finish_reason,
-                                stats=response.stats,
-                                logprob=response.logprob,
-                                top_logprobs=response.top_logprobs,
-                                is_thinking=response.is_thinking,
-                            ),
-                        )
+                    self._pending_raw_items.append(
+                        {
+                            "command_id": command_id,
+                            "text": response.text,
+                            "token_id": response.token,
+                            "usage": response.usage,
+                            "finish_reason": response.finish_reason,
+                            "stats": response.stats,
+                            "logprob": response.logprob,
+                            "top_logprobs": response.top_logprobs,
+                            "is_thinking": response.is_thinking,
+                        }
                     )
+                    if (
+                        response.finish_reason is not None
+                        or len(self._pending_raw_items) >= _CHUNK_BATCH_SIZE
+                    ):
+                        self.flush_pending_chunks()
             case ToolCallResponse():
                 if self.device_rank == 0:
+                    self.flush_pending_chunks()
                     self.event_sender.send(
                         ChunkGenerated(
                             command_id=command_id,
@@ -366,6 +391,17 @@ class Runner:
                             ),
                         )
                     )
+
+    def flush_pending_chunks(self):
+        if not self._pending_raw_items:
+            return
+        self.event_sender.send(
+            RawTokenChunksGenerated(
+                model_id=self.model_id,
+                items=self._pending_raw_items,
+            )
+        )
+        self._pending_raw_items = []
 
 
 @dataclass

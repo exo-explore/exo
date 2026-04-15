@@ -94,6 +94,17 @@ class ChunkGenerated(BaseEvent):
     chunk: GenerationChunk
 
 
+@final
+class BatchedChunksGenerated(BaseEvent):
+    chunks: list[ChunkGenerated]
+
+
+@final
+class RawTokenChunksGenerated(BaseEvent):
+    model_id: ModelId
+    items: list[dict[str, object]]
+
+
 class InputChunkReceived(BaseEvent):
     command_id: CommandId
     chunk: InputImageChunk
@@ -151,6 +162,8 @@ Event = (
     | NodeGatheredInfo
     | NodeDownloadProgress
     | ChunkGenerated
+    | BatchedChunksGenerated
+    | RawTokenChunksGenerated
     | InputChunkReceived
     | TopologyEdgeCreated
     | TopologyEdgeDeleted

@@ -6,7 +6,9 @@ from loguru import logger
 
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
+    BatchedChunksGenerated,
     ChunkGenerated,
+    RawTokenChunksGenerated,
     CustomModelCardAdded,
     CustomModelCardDeleted,
     Event,
@@ -63,6 +65,8 @@ def event_apply(event: Event, state: State) -> State:
         case (
             TestEvent()
             | ChunkGenerated()
+            | BatchedChunksGenerated()
+            | RawTokenChunksGenerated()
             | TaskAcknowledged()
             | InputChunkReceived()
             | TracesCollected()

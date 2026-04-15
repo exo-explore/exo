@@ -12,10 +12,12 @@ from anyio import (
 )
 from loguru import logger
 
-from exo.shared.types.chunks import ErrorChunk
+from exo.shared.types.chunks import ErrorChunk, TokenChunk
 from exo.shared.types.events import (
+    BatchedChunksGenerated,
     ChunkGenerated,
     Event,
+    RawTokenChunksGenerated,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -213,6 +215,29 @@ class RunnerSupervisor:
         try:
             with self._ev_recv as events:
                 async for event in events:
+                    if isinstance(event, BatchedChunksGenerated):
+                        for chunk_event in event.chunks:
+                            await self._event_sender.send(chunk_event)
+                        continue
+                    if isinstance(event, RawTokenChunksGenerated):
+                        for item in event.items:
+                            await self._event_sender.send(
+                                ChunkGenerated(
+                                    command_id=item["command_id"],  # type: ignore[arg-type]
+                                    chunk=TokenChunk(
+                                        model=event.model_id,
+                                        text=item["text"],  # type: ignore[arg-type]
+                                        token_id=item["token_id"],  # type: ignore[arg-type]
+                                        usage=item["usage"],  # type: ignore[arg-type]
+                                        finish_reason=item["finish_reason"],  # type: ignore[arg-type]
+                                        stats=item["stats"],  # type: ignore[arg-type]
+                                        logprob=item["logprob"],  # type: ignore[arg-type]
+                                        top_logprobs=item["top_logprobs"],  # type: ignore[arg-type]
+                                        is_thinking=item["is_thinking"],  # type: ignore[arg-type]
+                                    ),
+                                )
+                            )
+                        continue
                     if isinstance(event, RunnerStatusUpdated):
                         self.status = event.runner_status
                     if isinstance(event, TaskAcknowledged):
