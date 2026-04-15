@@ -330,6 +330,12 @@ def parse_thinking_models(
     """
     is_thinking = starts_in_thinking
     accumulated = ""
+    pending_buffer: list[GenerationResponse] = []
+
+    def drain_pending(_is_thinking: bool):
+        for buffered in pending_buffer:
+            yield buffered.model_copy(update={"is_thinking": _is_thinking})
+        pending_buffer.clear()
 
     for response in responses:
         if response is None:
@@ -339,25 +345,30 @@ def parse_thinking_models(
         accumulated += response.text
 
         if response.finish_reason is not None:
+            yield from drain_pending(is_thinking)
             yield response.model_copy(update={"is_thinking": False})
             continue
 
         if accumulated == think_start and not is_thinking:
             is_thinking = True
             accumulated = ""
+            pending_buffer.clear()
             continue
         if accumulated == think_end and is_thinking:
             is_thinking = False
             accumulated = ""
+            pending_buffer.clear()
             continue
 
         if (think_start and accumulated == think_start[: len(accumulated)]) or (
             think_end and accumulated == think_end[: len(accumulated)]
         ):
+            pending_buffer.append(response)
             continue
 
         accumulated = ""
 
+        yield from drain_pending(is_thinking)
         yield response.model_copy(update={"is_thinking": is_thinking})
 
 
