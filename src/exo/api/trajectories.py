@@ -655,10 +655,104 @@ class TrajectoryListItem(CamelCaseModel):
     updated_at: str
     total_steps: int
     model: str
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_cached_tokens: int = 0
+    agent_step_count: int = 0
+    tool_call_count: int = 0
+    avg_ttft_ms: float | None = None
+    avg_prompt_tps: float | None = None
+    avg_generation_tps: float | None = None
+    cache_hit_none: int = 0
+    cache_hit_partial: int = 0
+    cache_hit_exact: int = 0
 
 
 class TrajectoryListResponse(CamelCaseModel):
     trajectories: list[TrajectoryListItem]
+
+
+def summarize_trajectory_for_list(
+    path: Path, data: dict[str, object]
+) -> TrajectoryListItem:
+    """Compute aggregate metrics for a single trajectory JSON for list display."""
+    stat = path.stat()
+    steps_raw = data.get("steps", [])
+    steps: list[dict[str, Any]] = (
+        cast(list[dict[str, Any]], steps_raw) if isinstance(steps_raw, list) else []
+    )
+    agent = data.get("agent", {})
+    model_name = ""
+    if isinstance(agent, dict):
+        model_value = cast(dict[str, object], agent).get("model", "")
+        model_name = str(model_value) if model_value is not None else ""
+
+    final = data.get("final_metrics", {})
+    if isinstance(final, dict):
+        fm = cast(dict[str, Any], final)
+        total_prompt = int(fm.get("total_prompt_tokens", 0) or 0)
+        total_completion = int(fm.get("total_completion_tokens", 0) or 0)
+    else:
+        total_prompt = 0
+        total_completion = 0
+
+    total_cached = 0
+    agent_step_count = 0
+    tool_call_count = 0
+    ttft_values: list[float] = []
+    prompt_tps_values: list[float] = []
+    generation_tps_values: list[float] = []
+    cache_counts: dict[str, int] = {"none": 0, "partial": 0, "exact": 0}
+    for step in steps:
+        if step.get("source") != "agent":
+            continue
+        agent_step_count += 1
+        tool_calls: object = step.get("tool_calls") or []
+        if isinstance(tool_calls, list):
+            tool_call_count += len(cast(list[object], tool_calls))
+        metrics: object = step.get("metrics") or {}
+        if not isinstance(metrics, dict):
+            continue
+        metrics_dict = cast(dict[str, object], metrics)
+        total_cached += int(cast(int | str | None, metrics_dict.get("cached_tokens")) or 0)
+        ext: object = metrics_dict.get("_exo_extensions") or {}
+        if not isinstance(ext, dict):
+            continue
+        ext_dict = cast(dict[str, object], ext)
+        ttft = ext_dict.get("ttft_ms")
+        if isinstance(ttft, (int, float)):
+            ttft_values.append(float(ttft))
+        ptps = ext_dict.get("prompt_tps")
+        if isinstance(ptps, (int, float)):
+            prompt_tps_values.append(float(ptps))
+        gtps = ext_dict.get("generation_tps")
+        if isinstance(gtps, (int, float)):
+            generation_tps_values.append(float(gtps))
+        cache_hit = ext_dict.get("prefix_cache_hit")
+        if isinstance(cache_hit, str) and cache_hit in cache_counts:
+            cache_counts[cache_hit] += 1
+
+    def _avg(vs: list[float]) -> float | None:
+        return sum(vs) / len(vs) if vs else None
+
+    return TrajectoryListItem(
+        session_id=path.stem,
+        created_at=datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat(),
+        updated_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+        total_steps=len(steps),
+        model=model_name,
+        total_prompt_tokens=total_prompt,
+        total_completion_tokens=total_completion,
+        total_cached_tokens=total_cached,
+        agent_step_count=agent_step_count,
+        tool_call_count=tool_call_count,
+        avg_ttft_ms=_avg(ttft_values),
+        avg_prompt_tps=_avg(prompt_tps_values),
+        avg_generation_tps=_avg(generation_tps_values),
+        cache_hit_none=cache_counts["none"],
+        cache_hit_partial=cache_counts["partial"],
+        cache_hit_exact=cache_counts["exact"],
+    )
 
 
 class DeleteTrajectoriesRequest(CamelCaseModel):

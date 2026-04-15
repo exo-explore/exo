@@ -52,6 +52,7 @@ from exo.api.trajectories import (
     TrajectoryListItem,
     TrajectoryListResponse,
     get_collector,
+    summarize_trajectory_for_list,
     tap_chunk_stream,
 )
 from exo.api.types import (
@@ -2265,36 +2266,11 @@ class API:
         ):
             if file.name.endswith(".tmp"):
                 continue
-            session_id = file.stem
-            stat = file.stat()
             try:
                 data = cast(dict[str, object], json.loads(file.read_text()))
             except (OSError, json.JSONDecodeError):
                 continue
-            steps_raw = data.get("steps", [])
-            agent_raw = data.get("agent", {})
-            total_steps = (
-                len(cast(list[object], steps_raw)) if isinstance(steps_raw, list) else 0
-            )
-            model_name = ""
-            if isinstance(agent_raw, dict):
-                model_value: object = cast(dict[str, object], agent_raw).get(
-                    "model", ""
-                )
-                model_name = str(model_value) if model_value is not None else ""
-            items.append(
-                TrajectoryListItem(
-                    session_id=session_id,
-                    created_at=datetime.fromtimestamp(
-                        stat.st_ctime, tz=timezone.utc
-                    ).isoformat(),
-                    updated_at=datetime.fromtimestamp(
-                        stat.st_mtime, tz=timezone.utc
-                    ).isoformat(),
-                    total_steps=total_steps,
-                    model=model_name,
-                )
-            )
+            items.append(summarize_trajectory_for_list(file, data))
         return TrajectoryListResponse(trajectories=items)
 
     async def get_trajectory(self, session_id: str) -> JSONResponse:

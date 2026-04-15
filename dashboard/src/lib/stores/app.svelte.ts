@@ -219,6 +219,17 @@ export interface TrajectoryListItem {
   updatedAt: string;
   totalSteps: number;
   model: string;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalCachedTokens: number;
+  agentStepCount: number;
+  toolCallCount: number;
+  avgTtftMs: number | null;
+  avgPromptTps: number | null;
+  avgGenerationTps: number | null;
+  cacheHitNone: number;
+  cacheHitPartial: number;
+  cacheHitExact: number;
 }
 
 export interface TrajectoryListResponse {
