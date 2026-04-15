@@ -16,6 +16,9 @@ struct SettingsView: View {
     @State private var pendingEnableImageModels = false
     @State private var pendingOfflineMode = false
     @State private var pendingFastSynchEnabled = false
+    @State private var pendingDefaultModelsDir: String = ""
+    @State private var pendingAdditionalModelsDirs: String = ""
+    @State private var pendingReadOnlyModelsDirs: String = ""
     @State private var pendingCustomEnvironmentVariables: [CustomEnvironmentVariable] = []
     @State private var needsRestart = false
     @State private var bugReportInFlight = false
@@ -45,7 +48,7 @@ struct SettingsView: View {
                     Label("About", systemImage: "info.circle")
                 }
         }
-        .frame(width: 450, height: 400)
+        .frame(width: 640, height: 560)
         .onAppear {
             pendingNamespace = controller.customNamespace
             pendingHFToken = controller.hfToken
@@ -53,6 +56,9 @@ struct SettingsView: View {
             pendingEnableImageModels = controller.enableImageModels
             pendingOfflineMode = controller.offlineMode
             pendingFastSynchEnabled = controller.fastSynchEnabled
+            pendingDefaultModelsDir = controller.defaultModelsDir
+            pendingAdditionalModelsDirs = controller.additionalModelsDirs
+            pendingReadOnlyModelsDirs = controller.readOnlyModelsDirs
             pendingCustomEnvironmentVariables = controller.customEnvironmentVariables
             needsRestart = false
         }
@@ -64,9 +70,9 @@ struct SettingsView: View {
         Form {
             Section {
                 LabeledContent("Cluster Namespace") {
-                    TextField("default", text: $pendingNamespace)
+                    TextField("", text: $pendingNamespace, prompt: Text("default"))
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
+                        .frame(width: 260)
                 }
                 Text("Nodes with the same namespace form a cluster. Leave empty for default.")
                     .font(.caption)
@@ -75,9 +81,9 @@ struct SettingsView: View {
 
             Section {
                 LabeledContent("HuggingFace Token") {
-                    SecureField("optional", text: $pendingHFToken)
+                    SecureField("", text: $pendingHFToken, prompt: Text("optional"))
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
+                        .frame(width: 260)
                 }
                 Text("Required for gated models. Get yours at huggingface.co/settings/tokens")
                     .font(.caption)
@@ -86,9 +92,9 @@ struct SettingsView: View {
 
             Section {
                 LabeledContent("HuggingFace Endpoint") {
-                    TextField("default", text: $pendingHFEndpoint)
+                    TextField("", text: $pendingHFEndpoint, prompt: Text("default"))
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
+                        .frame(width: 260)
                 }
                 Text("Defaults to huggingface.co. Use a mirror (e.g. hf-mirror.com) for China.")
                     .font(.caption)
@@ -222,10 +228,57 @@ struct SettingsView: View {
 
     private var environmentTab: some View {
         Form {
-            Section("Custom Environment Variables") {
-                Text("Passed to the exo process at launch. Override built-in defaults here.")
+            Section("Models Directories") {
+                LabeledContent("Default Models Directory") {
+                    TextField(
+                        "",
+                        text: $pendingDefaultModelsDir,
+                        prompt: Text("~/.exo/models")
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: 260)
+                }
+                Text("Sets EXO_DEFAULT_MODELS_DIR. Where models are downloaded.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+
+                LabeledContent("Additional Directories") {
+                    TextField(
+                        "",
+                        text: $pendingAdditionalModelsDirs,
+                        prompt: Text("optional, colon-separated")
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: 260)
+                }
+                Text("Sets EXO_MODELS_DIRS. Extra writable model directories.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                LabeledContent("Read-Only Directories") {
+                    TextField(
+                        "",
+                        text: $pendingReadOnlyModelsDirs,
+                        prompt: Text("optional, colon-separated")
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: 260)
+                }
+                Text("Sets EXO_MODELS_READ_ONLY_DIRS. Never written to.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section("Custom Environment Variables") {
+                Text(
+                    "Escape hatch for env vars that don't have typed fields above. "
+                        + "Values here override the typed fields on conflict."
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
 
                 if pendingCustomEnvironmentVariables.isEmpty {
                     Text("No custom variables.")
@@ -580,7 +633,10 @@ struct SettingsView: View {
     }
 
     private var hasEnvironmentChanges: Bool {
-        pendingCustomEnvironmentVariables != controller.customEnvironmentVariables
+        pendingDefaultModelsDir != controller.defaultModelsDir
+            || pendingAdditionalModelsDirs != controller.additionalModelsDirs
+            || pendingReadOnlyModelsDirs != controller.readOnlyModelsDirs
+            || pendingCustomEnvironmentVariables != controller.customEnvironmentVariables
     }
 
     private func applyGeneralSettings() {
@@ -602,6 +658,17 @@ struct SettingsView: View {
     }
 
     private func applyEnvironmentSettings() {
+        controller.defaultModelsDir = pendingDefaultModelsDir.trimmingCharacters(
+            in: .whitespaces)
+        controller.additionalModelsDirs = pendingAdditionalModelsDirs.trimmingCharacters(
+            in: .whitespaces)
+        controller.readOnlyModelsDirs = pendingReadOnlyModelsDirs.trimmingCharacters(
+            in: .whitespaces)
+
+        pendingDefaultModelsDir = controller.defaultModelsDir
+        pendingAdditionalModelsDirs = controller.additionalModelsDirs
+        pendingReadOnlyModelsDirs = controller.readOnlyModelsDirs
+
         // Trim whitespace from keys and drop empty ones so that the stored
         // form matches what is actually injected into the child process and
         // hasEnvironmentChanges doesn't show a stale diff after save.
@@ -629,6 +696,7 @@ struct SettingsView: View {
 
         pendingCustomEnvironmentVariables = sanitized
         controller.customEnvironmentVariables = sanitized
+
         restartIfRunning()
     }
 
