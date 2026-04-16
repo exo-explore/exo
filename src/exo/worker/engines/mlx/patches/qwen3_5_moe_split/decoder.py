@@ -45,7 +45,7 @@ def make_split_decoder_call(
         else:
             h = mx.zeros_like(x)
         h = mx.distributed.all_sum(h, group=group)
-        mx.eval(h)
+        mx.async_eval(h)
 
         # Step 2: ship out from MOE_RANK to ATTN_RANK via all_sum
         if rank == MOE_RANK:
@@ -53,7 +53,7 @@ def make_split_decoder_call(
         else:
             out = mx.zeros_like(h)
         out = mx.distributed.all_sum(out, group=group)
-        mx.eval(out)
+        mx.async_eval(out)
 
         return out
 
