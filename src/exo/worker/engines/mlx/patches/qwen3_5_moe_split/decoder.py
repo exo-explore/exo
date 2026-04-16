@@ -35,23 +35,26 @@ def make_split_decoder_call(
     rank = group.rank()
 
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
-        # Step 1: both ranks run attention, all_gather picks ATTN_RANK's result
-        if self.is_linear:
-            r = self.linear_attn(self.input_layernorm(x), mask, cache)
-        else:
-            r = self.self_attn(self.input_layernorm(x), mask, cache)
+        # Step 1: ATTN_RANK does attention, MOE_RANK does MoE on x (dummy)
         if rank == ATTN_RANK:
+            if self.is_linear:
+                r = self.linear_attn(self.input_layernorm(x), mask, cache)
+            else:
+                r = self.self_attn(self.input_layernorm(x), mask, cache)
             h = x + r
         else:
-            h = r
+            h = self.mlp(self.post_attention_layernorm(x))  # dummy MoE on x
         h = mx.distributed.all_gather(h, group=group)[ATTN_RANK : ATTN_RANK + 1]
 
-        # Step 2: both ranks run MoE, all_gather picks MOE_RANK's result
-        moe_out = self.mlp(self.post_attention_layernorm(h))
+        # Step 2: MOE_RANK does MoE, ATTN_RANK does attention on h (dummy)
         if rank == MOE_RANK:
-            out = h + moe_out
+            out = h + self.mlp(self.post_attention_layernorm(h))
         else:
-            out = moe_out
+            if self.is_linear:
+                _ = self.linear_attn(self.input_layernorm(h), mask, cache)
+            else:
+                _ = self.self_attn(self.input_layernorm(h), mask, cache)
+            out = h  # dummy result, discarded by all_gather
         out = mx.distributed.all_gather(out, group=group)[MOE_RANK : MOE_RANK + 1]
 
         return out
