@@ -56,6 +56,7 @@ HIDDEN_IMPORTS = sorted(
     set(
         collect_submodules("mlx")
         + _safe_collect("mlx_lm")
+        + _safe_collect("mlx_vlm")
         + _safe_collect("transformers")
     )
 )
