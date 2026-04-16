@@ -41,7 +41,6 @@ def make_split_decoder_call(
             else:
                 r = self.self_attn(self.input_layernorm(x), mask, cache)
             h = x + r
-            mx.eval(h)
             h = mx.distributed.send(h, MOE_RANK, group=group)
             mx.eval(h)
             out = mx.distributed.recv_like(h, MOE_RANK, group=group)
@@ -52,7 +51,6 @@ def make_split_decoder_call(
         h = mx.distributed.recv_like(x, ATTN_RANK, group=group)
         mx.eval(h)
         out = h + self.mlp(self.post_attention_layernorm(h))
-        mx.eval(out)
         sent = mx.distributed.send(out, ATTN_RANK, group=group)
         mx.eval(sent)
         return out
