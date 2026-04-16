@@ -35,7 +35,7 @@ def make_split_decoder_call(
     rank = group.rank()
 
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
-        # Step 1: ship h from ATTN_RANK to MOE_RANK via all_sum
+        # Step 1: ship h from ATTN_RANK to MOE_RANK via all_gather
         if rank == ATTN_RANK:
             if self.is_linear:
                 r = self.linear_attn(self.input_layernorm(x), mask, cache)
@@ -44,15 +44,14 @@ def make_split_decoder_call(
             h = x + r
         else:
             h = x - x
-        h = mx.distributed.all_sum(h, group=group)
+        h = mx.distributed.all_gather(h, group=group)[ATTN_RANK : ATTN_RANK + 1]
 
-        # Step 2: ship out from MOE_RANK to ATTN_RANK via all_sum
+        # Step 2: ship out from MOE_RANK to ATTN_RANK via all_gather
         if rank == MOE_RANK:
             out = h + self.mlp(self.post_attention_layernorm(h))
         else:
             out = h - h
-        out = mx.distributed.all_sum(out, group=group)
-        mx.async_eval(out)
+        out = mx.distributed.all_gather(out, group=group)[MOE_RANK : MOE_RANK + 1]
 
         return out
 
