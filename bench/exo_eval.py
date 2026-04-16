@@ -47,6 +47,7 @@ from harness import (
     ExoHttpError,
     add_common_instance_args,
     capture_cluster_snapshot,
+    find_existing_instance,
     instance_id_from_instance,
     nodes_used_in_instance,
     resolve_model_short_id,
@@ -1318,23 +1319,6 @@ def save_results(
 # ---------------------------------------------------------------------------
 
 
-def _find_existing_instance(client: ExoClient, model_id: str) -> str | None:
-    """Find an existing instance for the given model."""
-    try:
-        state = client.request_json("GET", "/state")
-    except Exception:
-        return None
-    for inst_id, inst in state.get("instances", {}).items():
-        # Instance structure is nested: {"MlxJacclInstance": {"shardAssignments": {"modelId": ...}}}
-        for _inst_type, inner in inst.items():
-            if not isinstance(inner, dict):
-                continue
-            sa = inner.get("shardAssignments", {})
-            if sa.get("modelId") == model_id:
-                return inst_id
-    return None
-
-
 def _checkpoint_path(
     results_dir: str, benchmark: str, model: str, concurrency: int
 ) -> Path:
@@ -1448,11 +1432,6 @@ def main() -> int:
         help="Enable thinking mode for models that support it.",
     )
     ap.add_argument(
-        "--skip-instance-setup",
-        action="store_true",
-        help="Skip exo instance management (assumes model is already running).",
-    )
-    ap.add_argument(
         "--force",
         action="store_true",
         help="Discard any existing checkpoint and run from scratch.",
@@ -1461,11 +1440,6 @@ def main() -> int:
         "--keep-instance",
         action="store_true",
         help="Skip deleting the instance after eval (for chaining runs).",
-    )
-    ap.add_argument(
-        "--reuse-instance",
-        action="store_true",
-        help="Reuse an existing ready instance instead of creating a new one.",
     )
 
     args, _ = ap.parse_known_args()
@@ -1486,90 +1460,87 @@ def main() -> int:
     # Instance management
     client = ExoClient(args.host, args.port, timeout_s=args.timeout)
     instance_id: str | None = None
+    created_instance = False
 
-    if not args.skip_instance_setup:
-        _short_id, full_model_id = resolve_model_short_id(
+    _short_id, full_model_id = resolve_model_short_id(
+        client,
+        args.model,
+        force_download=args.force_download,
+    )
+
+    # Auto-detect a running instance for this model
+    if not args.fresh_instance:
+        existing = find_existing_instance(client, full_model_id)
+        if existing:
+            instance_id = existing
+            logger.info(f"Reusing existing instance {instance_id}")
+
+    if instance_id is None:
+        selected = settle_and_fetch_placements(
             client,
-            args.model,
-            force_download=args.force_download,
+            full_model_id,
+            args,
+            settle_timeout=args.settle_timeout,
+        )
+        if not selected:
+            logger.error("No valid placements matched your filters.")
+            return 1
+
+        selected.sort(
+            key=lambda p: (
+                str(p.get("instance_meta", "")),
+                str(p.get("sharding", "")),
+                nodes_used_in_instance(p["instance"]),
+            ),
+            reverse=True,
+        )
+        preview = selected[0]
+        instance = preview["instance"]
+        instance_id = instance_id_from_instance(instance)
+
+        logger.info(
+            f"PLACEMENT: {preview['sharding']} / {preview['instance_meta']} / "
+            f"nodes={nodes_used_in_instance(instance)}"
         )
 
-        # Try to reuse an existing instance if --reuse-instance is set
-        if args.reuse_instance:
-            existing = _find_existing_instance(client, full_model_id)
-            if existing:
-                instance_id = existing
-                logger.info(f"Reusing existing instance {instance_id}")
+        settle_deadline = (
+            time.monotonic() + args.settle_timeout if args.settle_timeout > 0 else None
+        )
+        download_duration = run_planning_phase(
+            client,
+            full_model_id,
+            preview,
+            args.danger_delete_downloads,
+            args.timeout,
+            settle_deadline,
+        )
+        if download_duration is not None:
+            logger.info(f"Download: {download_duration:.1f}s")
 
-        if instance_id is None:
-            selected = settle_and_fetch_placements(
-                client,
-                full_model_id,
-                args,
-                settle_timeout=args.settle_timeout,
-            )
-            if not selected:
-                logger.error("No valid placements matched your filters.")
-                return 1
-
-            selected.sort(
-                key=lambda p: (
-                    str(p.get("instance_meta", "")),
-                    str(p.get("sharding", "")),
-                    nodes_used_in_instance(p["instance"]),
-                ),
-                reverse=True,
-            )
-            preview = selected[0]
-            instance = preview["instance"]
-            instance_id = instance_id_from_instance(instance)
-
-            logger.info(
-                f"PLACEMENT: {preview['sharding']} / {preview['instance_meta']} / "
-                f"nodes={nodes_used_in_instance(instance)}"
-            )
-
-            settle_deadline = (
-                time.monotonic() + args.settle_timeout
-                if args.settle_timeout > 0
-                else None
-            )
-            download_duration = run_planning_phase(
-                client,
-                full_model_id,
-                preview,
-                args.danger_delete_downloads,
-                args.timeout,
-                settle_deadline,
-            )
-            if download_duration is not None:
-                logger.info(f"Download: {download_duration:.1f}s")
-
-            # Delete any existing instances to free resources before placing
-            try:
-                state = client.request_json("GET", "/state")
-                for old_id in list(state.get("instances", {}).keys()):
-                    logger.info(f"Deleting stale instance {old_id}")
-                    with contextlib.suppress(ExoHttpError):
-                        client.request_json("DELETE", f"/instance/{old_id}")
-                if state.get("instances"):
-                    time.sleep(2)
-            except Exception as e:
-                logger.warning(f"Failed to clean up stale instances: {e}")
-
-            client.request_json("POST", "/instance", body={"instance": instance})
-            try:
-                wait_for_instance_ready(client, instance_id)
-            except (RuntimeError, TimeoutError) as e:
-                logger.error(f"Failed to initialize: {e}")
+        # Delete any existing instances to free resources before placing
+        try:
+            state = client.request_json("GET", "/state")
+            for old_id in list(state.get("instances", {}).keys()):
+                logger.info(f"Deleting stale instance {old_id}")
                 with contextlib.suppress(ExoHttpError):
-                    client.request_json("DELETE", f"/instance/{instance_id}")
-                return 1
-            time.sleep(1)
-        cluster_snapshot = capture_cluster_snapshot(client)
-    else:
-        full_model_id = args.model
-        cluster_snapshot = None
+                    client.request_json("DELETE", f"/instance/{old_id}")
+            if state.get("instances"):
+                time.sleep(2)
+        except Exception as e:
+            logger.warning(f"Failed to clean up stale instances: {e}")
+
+        client.request_json("POST", "/instance", body={"instance": instance})
+        try:
+            wait_for_instance_ready(client, instance_id)
+        except (RuntimeError, TimeoutError) as e:
+            logger.error(f"Failed to initialize: {e}")
+            with contextlib.suppress(ExoHttpError):
+                client.request_json("DELETE", f"/instance/{instance_id}")
+            return 1
+        time.sleep(1)
+        created_instance = True
+
+    cluster_snapshot = capture_cluster_snapshot(client)
 
     # Auto-detect reasoning from model config
     model_config = load_model_config(full_model_id)
@@ -1754,7 +1725,7 @@ def main() -> int:
                 if checkpoint_path.exists():
                     checkpoint_path.unlink()
     finally:
-        if instance_id is not None:
+        if created_instance and instance_id is not None:
             if args.keep_instance:
                 logger.info(f"Keeping instance {instance_id} (--keep-instance)")
             else:

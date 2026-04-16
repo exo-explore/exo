@@ -35,6 +35,7 @@ from harness import (
     ExoHttpError,
     add_common_instance_args,
     capture_cluster_snapshot,
+    find_existing_instance,
     instance_id_from_instance,
     node_ids_from_instance,
     nodes_used_in_instance,
@@ -465,11 +466,6 @@ def main() -> int:
         "--dry-run", action="store_true", help="List selected placements and exit."
     )
     ap.add_argument(
-        "--skip-instance-setup",
-        action="store_true",
-        help="Skip planning/download/placement (assumes model instance is already running).",
-    )
-    ap.add_argument(
         "--all-combinations",
         action="store_true",
         help="Force all pp×tg combinations (cartesian product) even when lists have equal length.",
@@ -544,10 +540,18 @@ def main() -> int:
         logger.error("[exo-bench] tokenizer usable but prompt sizing failed")
         raise
 
-    if args.skip_instance_setup:
+    # Auto-detect a running instance for this model
+    reused_instance_id: str | None = None
+    if not args.fresh_instance:
+        existing = find_existing_instance(client, full_model_id)
+        if existing:
+            reused_instance_id = existing
+            logger.info(f"Reusing existing instance {reused_instance_id}")
+
+    if reused_instance_id is not None:
+        # Use the existing instance directly — skip placement iteration
         selected = []
         download_duration_s = None
-        logger.info("Skipping instance setup — assuming model is already running")
     else:
         selected = settle_and_fetch_placements(
             client, full_model_id, args, settle_timeout=args.settle_timeout
@@ -594,17 +598,16 @@ def main() -> int:
         else:
             logger.info("Download: model already cached")
 
-    cluster_snapshot = (
-        capture_cluster_snapshot(client) if not args.skip_instance_setup else {}
-    )
+    cluster_snapshot = capture_cluster_snapshot(client)
     all_rows: list[dict[str, Any]] = []
     all_system_metrics: dict[str, dict[str, dict[str, float]]] = {}
 
-    if args.skip_instance_setup:
-        # Run benchmark directly without instance management
-        selected = [None]  # Single iteration, no placement info
+    # If reusing an existing instance, run a single benchmark pass against it
+    if reused_instance_id is not None:
+        selected = [None]
 
     for preview in selected:
+        created_instance = False
         if preview is not None:
             instance = preview["instance"]
             instance_id = instance_id_from_instance(instance)
@@ -640,13 +643,14 @@ def main() -> int:
                 continue
 
             time.sleep(1)
+            created_instance = True
         else:
-            instance_id = None
-            sharding = "unknown"
-            instance_meta = "unknown"
+            instance_id = reused_instance_id
+            sharding = "reused"
+            instance_meta = "reused"
             n_nodes = 0
             logger.info("=" * 80)
-            logger.info("SKIP-INSTANCE-SETUP: using existing running instance")
+            logger.info(f"Using existing instance {instance_id}")
 
         sampler: SystemMetricsSampler | None = None
         if not args.no_system_metrics and preview is not None:
@@ -872,7 +876,7 @@ def main() -> int:
                 if placement_metrics:
                     all_system_metrics.update(placement_metrics)
 
-            if instance_id is not None:
+            if created_instance and instance_id is not None:
                 try:
                     client.request_json("DELETE", f"/instance/{instance_id}")
                 except ExoHttpError as e:
