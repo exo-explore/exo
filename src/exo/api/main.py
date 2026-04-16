@@ -331,7 +331,9 @@ class API:
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
         )
-        self.app.post("/bench/chat/completions", response_model=None)(self.bench_chat_completions)
+        self.app.post("/bench/chat/completions", response_model=None)(
+            self.bench_chat_completions
+        )
         self.app.post("/v1/images/generations", response_model=None)(
             self.image_generations
         )
