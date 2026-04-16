@@ -47,11 +47,11 @@ def make_split_decoder_call(
         h = mx.distributed.all_gather(h, group=group)[ATTN_RANK : ATTN_RANK + 1]
 
         # Step 2: both ranks run MoE, all_gather picks MOE_RANK's result
-        _moe_out = self.mlp(self.post_attention_layernorm(h))
+        moe_out = self.mlp(self.post_attention_layernorm(h))
         if rank == MOE_RANK:
-            out = h + _moe_out
+            out = h + moe_out
         else:
-            out = _moe_out
+            out = moe_out
         out = mx.distributed.all_gather(out, group=group)[MOE_RANK : MOE_RANK + 1]
 
         return out
