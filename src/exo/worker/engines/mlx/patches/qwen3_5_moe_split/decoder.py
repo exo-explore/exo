@@ -43,14 +43,14 @@ def make_split_decoder_call(
                 r = self.self_attn(self.input_layernorm(x), mask, cache)
             h = x + r
         else:
-            h = mx.zeros_like(x)
+            h = x - x
         h = mx.distributed.all_sum(h, group=group)
 
         # Step 2: ship out from MOE_RANK to ATTN_RANK via all_sum
         if rank == MOE_RANK:
             out = h + self.mlp(self.post_attention_layernorm(h))
         else:
-            out = mx.zeros_like(h)
+            out = h - h
         out = mx.distributed.all_sum(out, group=group)
         mx.async_eval(out)
 
