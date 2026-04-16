@@ -34,6 +34,10 @@ fi
 : "${HUIHUI_MODEL_ID:=mlx-community/Huihui-Qwen3.5-35B-A3B-abliterated-mxfp4}"
 : "${HUIHUI_INSTANCES_PER_STUDIO:=1}"
 
+# MiniMax: single 2-node Pipeline + MlxJaccl (RDMA) instance spanning both Studios.
+: "${MINIMAX_MODEL_ID:=mlx-community/MiniMax-M2.7-nvfp4}"
+: "${MINIMAX_ENABLED:=1}"
+
 export IBV_FORK_SAFE=1
 export PYTHONUNBUFFERED=1
 
@@ -665,6 +669,53 @@ if [ "${HUIHUI_INSTANCES_PER_STUDIO:-0}" -gt 0 ]; then
         if [ "$READY" = false ]; then
             echo ""
             echo "  WARNING: only $READY_COUNT/$EXPECTED_HUIHUI_TOTAL runners reached Ready."
+            echo "  Check ~/exo.log on the Studios."
+        fi
+    fi
+fi
+
+# ── Auto-place MiniMax M2.7 with RDMA ──
+# Single 2-node Pipeline + MlxJaccl instance spanning both Studios. Set
+# MINIMAX_ENABLED=0 to skip, or override MINIMAX_MODEL_ID for a different build.
+if [ "${MINIMAX_ENABLED:-0}" = "1" ]; then
+    echo ""
+    echo "Auto-placing MiniMax ($MINIMAX_MODEL_ID) across both Studios via RDMA..."
+
+    EXISTING_MINIMAX=$(curl -s "$API/state" | jq -r --arg m "$MINIMAX_MODEL_ID" \
+        '[.. | objects | select(has("shardAssignments")) | select(.shardAssignments.modelId == $m)] | length' 2>/dev/null)
+    if [ -z "$EXISTING_MINIMAX" ] || [ "$EXISTING_MINIMAX" = "null" ]; then
+        EXISTING_MINIMAX=0
+    fi
+
+    if [ "$EXISTING_MINIMAX" -ge 1 ]; then
+        echo "  MiniMax instance already running. Skipping."
+    else
+        create_instance_with_retry "MiniMax M2.7" "$MINIMAX_MODEL_ID" "Pipeline" "MlxJaccl" 2 || true
+
+        # Wait for both shard runners to reach Ready.
+        echo -n "Waiting for 2 MiniMax runner(s) to become Ready..."
+        READY=false
+        READY_COUNT=0
+        for i in {1..180}; do
+            READY_COUNT=$(curl -s "$API/state" | jq -r --arg m "$MINIMAX_MODEL_ID" '
+                . as $root
+                | [ $root.instances | to_entries[]
+                    | select(.value.MlxJacclInstance.shardAssignments.modelId == $m)
+                    | .value.MlxJacclInstance.shardAssignments.runnerToShard | keys[] ] as $rids
+                | [ $rids[] | $root.runners[.] | select(.RunnerReady? != null) ] | length
+            ' 2>/dev/null)
+            if [ -z "$READY_COUNT" ] || [ "$READY_COUNT" = "null" ]; then READY_COUNT=0; fi
+            if [ "$READY_COUNT" -ge 2 ]; then
+                echo " READY ($READY_COUNT/2)"
+                READY=true
+                break
+            fi
+            echo -n "."
+            sleep 2
+        done
+        if [ "$READY" = false ]; then
+            echo ""
+            echo "  WARNING: MiniMax only $READY_COUNT/2 runners reached Ready."
             echo "  Check ~/exo.log on the Studios."
         fi
     fi
