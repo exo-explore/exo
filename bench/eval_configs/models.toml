@@ -268,6 +268,15 @@ temperature = 0.6
 # max_tokens=90000 to match vllm eval (100000 context - 10000 safety margin)
 
 [[model]]
+name = "MiniMax M2.7"
+patterns = ["MiniMax-M2.7"]
+reasoning = true
+temperature = 1.0
+top_p = 0.95
+enable_thinking = true
+max_tokens = 90000
+
+[[model]]
 name = "MiniMax M2.5"
 patterns = ["MiniMax-M2.5"]
 reasoning = true
