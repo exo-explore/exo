@@ -62,12 +62,15 @@ from loguru import logger
 # ---------------------------------------------------------------------------
 
 MAX_RETRIES = 30
-INSTANCE_HEALTH_CHECK_AFTER = 3  # Check instance health after this many consecutive failures
+INSTANCE_HEALTH_CHECK_AFTER = (
+    3  # Check instance health after this many consecutive failures
+)
 
 
 class InstanceFailedError(RuntimeError):
     """Raised when the exo instance is detected as failed/gone."""
-    pass
+
+
 DEFAULT_MAX_TOKENS = 16_384
 REASONING_MAX_TOKENS = 131_072
 TEMPERATURE_NON_REASONING = 0.0
@@ -647,12 +650,25 @@ async def call_with_retries(
                 enable_thinking,
             )
         except Exception as e:
-            is_conn_error = isinstance(e, (httpx.ConnectError, httpx.RemoteProtocolError, ConnectionRefusedError, OSError))
-            if is_conn_error and attempt >= INSTANCE_HEALTH_CHECK_AFTER:
-                if not await _check_instance_health(base_url):
-                    if instance_failed:
-                        instance_failed.set()
-                    raise InstanceFailedError(f"Instance is down after {attempt + 1} failures: {e}")
+            is_conn_error = isinstance(
+                e,
+                (
+                    httpx.ConnectError,
+                    httpx.RemoteProtocolError,
+                    ConnectionRefusedError,
+                    OSError,
+                ),
+            )
+            if (
+                is_conn_error
+                and attempt >= INSTANCE_HEALTH_CHECK_AFTER
+                and not await _check_instance_health(base_url)
+            ):
+                if instance_failed:
+                    instance_failed.set()
+                raise InstanceFailedError(
+                    f"Instance is down after {attempt + 1} failures: {e}"
+                ) from e
             if attempt < MAX_RETRIES - 1:
                 wait = min(2**attempt, 60)
                 logger.warning(
@@ -836,22 +852,24 @@ async def evaluate_benchmark(
             t0 = time.monotonic()
             try:
                 # Race the API call against the instance_failed event
-                api_task = asyncio.create_task(call_with_retries(
-                    http_client,
-                    base_url,
-                    model,
-                    prompt,
-                    temperature,
-                    max_tokens,
-                    timeout,
-                    system_message=system_msg,
-                    reasoning_effort=reasoning_effort,
-                    top_p=top_p,
-                    top_k=top_k,
-                    min_p=min_p,
-                    enable_thinking=enable_thinking,
-                    instance_failed=instance_failed,
-                ))
+                api_task = asyncio.create_task(
+                    call_with_retries(
+                        http_client,
+                        base_url,
+                        model,
+                        prompt,
+                        temperature,
+                        max_tokens,
+                        timeout,
+                        system_message=system_msg,
+                        reasoning_effort=reasoning_effort,
+                        top_p=top_p,
+                        top_k=top_k,
+                        min_p=min_p,
+                        enable_thinking=enable_thinking,
+                        instance_failed=instance_failed,
+                    )
+                )
                 failed_waiter = asyncio.create_task(instance_failed.wait())
                 done, pending = await asyncio.wait(
                     [api_task, failed_waiter],
@@ -1045,6 +1063,7 @@ def _write_checkpoint(path: Path, result: QuestionResult) -> None:
     """Append a single result to the JSONL checkpoint file."""
     entry = {
         "question_id": result.question_id,
+        "prompt": result.prompt,
         "response": result.response,
         "extracted_answer": result.extracted_answer,
         "gold_answer": result.gold_answer,
@@ -1535,8 +1554,8 @@ def main() -> int:
                         client.request_json("DELETE", f"/instance/{old_id}")
                 if state.get("instances"):
                     time.sleep(2)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to clean up stale instances: {e}")
 
             client.request_json("POST", "/instance", body={"instance": instance})
             try:

@@ -309,10 +309,8 @@ def run_one_completion(
         for raw_line in client.stream_bench_chat_completions(payload):
             line = raw_line.strip()
             if line.startswith(": generation_stats "):
-                try:
-                    stats = json.loads(line[len(": generation_stats "):])
-                except json.JSONDecodeError:
-                    pass
+                with contextlib.suppress(json.JSONDecodeError):
+                    stats = json.loads(line[len(": generation_stats ") :])
                 continue
             if not line.startswith("data: "):
                 continue
@@ -596,7 +594,9 @@ def main() -> int:
         else:
             logger.info("Download: model already cached")
 
-    cluster_snapshot = capture_cluster_snapshot(client) if not args.skip_instance_setup else {}
+    cluster_snapshot = (
+        capture_cluster_snapshot(client) if not args.skip_instance_setup else {}
+    )
     all_rows: list[dict[str, Any]] = []
     all_system_metrics: dict[str, dict[str, dict[str, float]]] = {}
 
@@ -627,8 +627,8 @@ def main() -> int:
                         client.request_json("DELETE", f"/instance/{old_id}")
                 if state.get("instances"):
                     time.sleep(2)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to clean up stale instances: {e}")
 
             client.request_json("POST", "/instance", body={"instance": instance})
             try:
@@ -659,7 +659,15 @@ def main() -> int:
             sampler.start()
 
         def _do_one(c: ExoClient, pp: int, tg: int) -> tuple[dict[str, Any], int]:
-            return run_one_completion(c, full_model_id, pp, tg, prompt_sizer, use_prefix_cache=args.use_prefix_cache, stream=args.stream)
+            return run_one_completion(
+                c,
+                full_model_id,
+                pp,
+                tg,
+                prompt_sizer,
+                use_prefix_cache=args.use_prefix_cache,
+                stream=args.stream,
+            )
 
         try:
             for i in range(args.warmup):
@@ -834,9 +842,11 @@ def main() -> int:
                         gen_tps = per_req_tps * concurrency
                         ptok = mean(x["stats"]["prompt_tokens"] for x in runs)
                         gtok = mean(x["stats"]["generation_tokens"] for x in runs)
+
                         def _peak_bytes(s: dict[str, Any]) -> float:
                             pm = s["peak_memory_usage"]
                             return pm.get("inBytes") or pm.get("in_bytes", 0)
+
                         peak = mean(_peak_bytes(x["stats"]) for x in runs)
                         summary = (
                             f"prompt_tps={prompt_tps:.2f} gen_tps={gen_tps:.2f}    "

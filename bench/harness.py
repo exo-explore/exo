@@ -76,10 +76,15 @@ class ExoClient:
         data = json.dumps(payload).encode("utf-8")
         conn = http.client.HTTPConnection(self.host, self.port, timeout=self.timeout_s)
         try:
-            conn.request("POST", "/bench/chat/completions", body=data, headers={
-                "Content-Type": "application/json",
-                "Accept": "text/event-stream",
-            })
+            conn.request(
+                "POST",
+                "/bench/chat/completions",
+                body=data,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+            )
             resp = conn.getresponse()
             if resp.status >= 400:
                 raw = resp.read().decode("utf-8", errors="replace")
