@@ -45,7 +45,7 @@ from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import TaskId, TextGeneration
-from exo.shared.types.text_generation import TextGenerationTaskParams
+from exo.shared.types.text_generation import ChatTemplateValue, TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
     MlxJacclInstance,
@@ -59,8 +59,6 @@ from exo.shared.types.worker.shards import (
 )
 from exo.worker.engines.mlx.auto_parallel import (
     LayerLoadedCallback,
-    TimeoutCallback,
-    eval_with_timeout,
     get_inner_model,
     get_layers,
     pipeline_auto_parallel,
@@ -82,10 +80,6 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
             else model_shard_meta.world_size
         )
     )
-
-
-class ModelLoadingTimeoutError(Exception):
-    pass
 
 
 class HostList(RootModel[list[str]]):
@@ -169,7 +163,6 @@ def initialize_mlx(
 def load_mlx_items(
     bound_instance: BoundInstance,
     group: Group | None,
-    on_timeout: TimeoutCallback | None,
     on_layer_loaded: LayerLoadedCallback | None,
 ) -> "tuple[Model, TokenizerWrapper, VisionProcessor | None]":
     if group is None:
@@ -204,7 +197,6 @@ def load_mlx_items(
         model, tokenizer = shard_and_load(
             bound_instance.bound_shard,
             group=group,
-            on_timeout=on_timeout,
             on_layer_loaded=on_layer_loaded,
         )
         end_time = time.perf_counter()
@@ -282,7 +274,6 @@ def load_mlx_items(
 def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
-    on_timeout: TimeoutCallback | None,
     on_layer_loaded: LayerLoadedCallback | None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
@@ -323,27 +314,16 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
-    # Estimate timeout based on model size (5x default for large queued workloads)
-    base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "300"))
-    model_size = get_weights_size(shard_metadata)
-    timeout_seconds = base_timeout + model_size.in_gb
-    logger.info(
-        f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
-        f"(model size: {model_size.in_gb:.1f}GB)"
-    )
-
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(
-                model, group, timeout_seconds, on_timeout, on_layer_loaded
-            )
+            model = tensor_auto_parallel(model, group, on_layer_loaded)
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = pipeline_auto_parallel(
                 model, group, shard_metadata, on_layer_loaded=on_layer_loaded
             )
-            eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
+            mx.eval(model.parameters())
         case CfgShardMetadata():
             raise ValueError(
                 "CfgShardMetadata is not supported for text model loading - "
@@ -517,6 +497,8 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     elif "qwen3.5" in model_id_lower or "qwen-3.5" in model_id_lower:
         # For Qwen3.5: 248046 (<|im_end|>), 248044 (<|endoftext|>)
         return [248046, 248044]
+    elif "gemma-4" in model_id_lower or "gemma-3" in model_id_lower:
+        return [1, 106, 50]
     return None
 
 
@@ -588,22 +570,12 @@ def load_tokenizer_for_model_id(
             tool_parser=_parse_kimi_tool_calls,
         )
 
+    # We should really consider going back to mlx lm load to get tokenizer
     tokenizer = load_tokenizer(
         model_path,
         tokenizer_config_extra={"trust_remote_code": trust_remote_code},
         eos_token_ids=eos_token_ids,
     )
-
-    if "gemma-3" in model_id_lower:
-        gemma_3_eos_id = 1
-        gemma_3_end_of_turn_id = 106
-        if tokenizer.eos_token_ids is not None:
-            if gemma_3_end_of_turn_id not in tokenizer.eos_token_ids:
-                tokenizer.eos_token_ids = list(tokenizer.eos_token_ids) + [
-                    gemma_3_end_of_turn_id
-                ]
-        else:
-            tokenizer.eos_token_ids = [gemma_3_eos_id, gemma_3_end_of_turn_id]
 
     return tokenizer
 
@@ -792,10 +764,10 @@ def apply_chat_template(
     tokenizer: TokenizerWrapper,
     task_params: TextGenerationTaskParams,
 ) -> str:
-    messages: list[dict[str, Any]] = []
+    messages: list[dict[str, ChatTemplateValue]] = []
     if task_params.chat_template_messages is not None:
         # Use pre-formatted messages that preserve tool_calls, thinking, etc.
-        messages = list(task_params.chat_template_messages)
+        messages = task_params.chat_template_messages
     else:
         # Add system message (instructions) if present
         if task_params.instructions:
@@ -823,7 +795,7 @@ def system_prompt_token_count(
     if task_params.chat_template_messages is not None:
         for msg in task_params.chat_template_messages:
             if msg.get("role") in ("system", "developer"):
-                content = msg.get("content", "")  # type: ignore
+                content = msg.get("content", "")
                 if isinstance(content, str):
                     parts.append(content)
     else:
@@ -852,21 +824,37 @@ def fix_unmatched_think_end_tokens(
 ) -> mx.array:
     if not tokenizer.has_thinking:
         return tokens
-    assert tokenizer.think_start_id
-    assert tokenizer.think_end_id
-    think_start_id: int = tokenizer.think_start_id
-    think_end_id: int = tokenizer.think_end_id
+    assert tokenizer.think_start_tokens
+    assert tokenizer.think_end_tokens
+    think_start_tokens: list[int] = tokenizer.think_start_tokens
+    think_end_tokens: list[int] = tokenizer.think_end_tokens
     token_list: list[int] = cast(list[int], tokens.tolist())
     result: list[int] = []
+
     depth = 0
+    accumulated_think_start_length = 0
+    accumulated_think_end_length = 0
+
     for token in token_list:
-        if token == think_start_id:
-            depth += 1
-        elif token == think_end_id:
-            if depth == 0:
-                result.append(think_start_id)
-            else:
-                depth -= 1
+        if token == think_start_tokens[accumulated_think_start_length]:
+            accumulated_think_start_length += 1
+            if accumulated_think_start_length == len(think_start_tokens):
+                depth += 1
+                accumulated_think_start_length = 0
+
+        elif token == think_end_tokens[accumulated_think_end_length]:
+            accumulated_think_end_length += 1
+            if accumulated_think_end_length == len(think_end_tokens):
+                if depth == 0:
+                    result.extend(think_start_tokens)
+                else:
+                    depth -= 1
+                accumulated_think_end_length = 0
+
+        else:
+            accumulated_think_start_length = 0
+            accumulated_think_end_length = 0
+
         result.append(token)
     return mx.array(result)
 

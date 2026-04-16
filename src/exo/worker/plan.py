@@ -63,7 +63,7 @@ def plan(
     return (
         _cancel_tasks(runners, tasks)
         or _kill_runner(runners, all_runners, instances)
-        or _create_runner(node_id, runners, instances, instance_backoff)
+        or _create_runner(node_id, runners, all_runners, instances, instance_backoff)
         or _model_needs_download(
             node_id, runners, global_download_status, download_backoff, node_network
         )
@@ -83,6 +83,11 @@ def _kill_runner(
         runner_id = runner.bound_instance.bound_runner_id
         if (instance_id := runner.bound_instance.instance.instance_id) not in instances:
             return Shutdown(instance_id=instance_id, runner_id=runner_id)
+        if isinstance(runner.status, RunnerFailed):
+            return Shutdown(
+                instance_id=runner.bound_instance.instance.instance_id,
+                runner_id=runner_id,
+            )
 
         for (
             global_runner_id
@@ -100,13 +105,11 @@ def _kill_runner(
 def _create_runner(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
+    all_runners: Mapping[RunnerId, RunnerStatus],
     instances: Mapping[InstanceId, Instance],
     instance_backoff: KeyedBackoff[InstanceId],
 ) -> CreateRunner | None:
     for instance in instances.values():
-        if not instance_backoff.should_proceed(instance.instance_id):
-            continue
-
         runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
         if runner_id is None:
             continue
@@ -114,8 +117,18 @@ def _create_runner(
         if runner_id in runners:
             continue
 
-        shard = instance.shard(runner_id)
-        assert shard is not None
+        # don't create runners if any other nodes have runners that have failed - wait for them to fix themselves first.
+        instance_has_failed_runner = any(
+            isinstance(all_runners.get(remote_runner_id), RunnerFailed)
+            for remote_runner_id in instance.shard_assignments.node_to_runner.values()
+            if remote_runner_id != runner_id
+        )
+        we_have_failed_before = isinstance(all_runners.get(runner_id), RunnerFailed)
+        if instance_has_failed_runner and not we_have_failed_before:
+            continue
+
+        if not instance_backoff.should_proceed(instance.instance_id):
+            continue
 
         return CreateRunner(
             instance_id=instance.instance_id,

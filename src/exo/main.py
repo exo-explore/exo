@@ -41,6 +41,7 @@ class Node:
 
     node_id: NodeId
     offline: bool
+    _api_port: int
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
@@ -99,6 +100,7 @@ class Node:
                 event_sender=event_router.sender(),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
+                api_port=args.api_port,
             )
         else:
             worker = None
@@ -138,6 +140,7 @@ class Node:
             api,
             node_id,
             args.offline,
+            args.api_port,
         )
 
     async def run(self):
@@ -190,7 +193,6 @@ class Node:
                         self.router.receiver(topics.GLOBAL_EVENTS),
                         self.router.sender(topics.LOCAL_EVENTS),
                     )
-                    self._tg.start_soon(self.event_router.run)
 
                 if (
                     result.session_id.master_node_id == self.node_id
@@ -250,10 +252,12 @@ class Node:
                             download_command_sender=self.router.sender(
                                 topics.DOWNLOAD_COMMANDS
                             ),
+                            api_port=self._api_port,
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:
                         self.api.reset(result.won_clock, self.event_router.receiver())
+                    self._tg.start_soon(self.event_router.run)
                 else:
                     if self.api:
                         self.api.unpause(result.won_clock)
@@ -285,10 +289,10 @@ def main():
 
     # Set FAST_SYNCH override env var for runner subprocesses
     if args.fast_synch is True:
-        os.environ["EXO_FAST_SYNCH"] = "on"
+        os.environ["EXO_FAST_SYNCH"] = "true"
         logger.info("FAST_SYNCH forced ON")
     elif args.fast_synch is False:
-        os.environ["EXO_FAST_SYNCH"] = "off"
+        os.environ["EXO_FAST_SYNCH"] = "false"
         logger.info("FAST_SYNCH forced OFF")
 
     node = anyio.run(Node.create, args)

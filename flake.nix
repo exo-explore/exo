@@ -2,7 +2,7 @@
   description = "The development environment for Exo";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
 
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
@@ -45,9 +45,6 @@
       inputs.uv2nix.follows = "uv2nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-
-    # Pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
-    nixpkgs-swift.url = "github:NixOS/nixpkgs/08dacfca559e1d7da38f3cf05f1f45ee9bfd213c";
   };
 
   nixConfig = {
@@ -55,8 +52,7 @@
     extra-substituters = "https://exo.cachix.org";
   };
 
-  outputs =
-    inputs:
+  outputs = inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
@@ -71,12 +67,9 @@
         ./python/parts.nix
       ];
 
-      perSystem =
-        { config, self', pkgs, lib, system, ... }:
-        let
-          # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
-          pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
-        in
+      debug = true; # Enable options autocompletion
+
+      perSystem = { config, self', pkgs, lib, system, ... }:
         {
           # Allow unfree for metal-toolchain (needed for Darwin Metal packages)
           _module.args.pkgs = import inputs.nixpkgs {
@@ -84,16 +77,18 @@
             config.allowUnfreePredicate = pkg: (pkg.pname or "") == "metal-toolchain";
             overlays = [
               (import ./nix/apple-sdk-overlay.nix)
-              (final: prev: {
-                macmon = prev.macmon.overrideAttrs (_: {
+              (final: _: {
+                macmon = final.rustPlatform.buildRustPackage {
+                  pname = "macmon";
                   version = "git";
                   src = final.fetchFromGitHub {
-                    owner = "swiftraccoon";
+                    owner = "vladkens";
                     repo = "macmon";
-                    rev = "9154d234f763fbeffdcb4135d0bbbaf80609699b";
-                    hash = "sha256-CwhilKNbs5XL9/tF5DMwyPBlE/hpmjGNTuxQ36sM50M=";
+                    rev = "a1cd06b6cc0d5e61db24fd8832e74cd992097a7d";
+                    hash = "sha256-wcq4PUXK44XfUKOZKl32u8LpOxXpSbUUfItQGwS2Zso=";
                   };
-                });
+                  cargoHash = "sha256-Epj3L+db1flGNK5y6yfSig8piEiXTz15lPo/FNkqlkA=";
+                };
               })
             ];
           };
@@ -116,7 +111,7 @@
               };
               swift-format = {
                 enable = true;
-                package = pkgsSwift.swiftPackages.swift-format;
+                package = pkgs.swiftPackages.swift-format;
               };
               shfmt.enable = true;
               taplo.enable = true;
@@ -149,7 +144,7 @@
                 config.treefmt.build.wrapper
 
                 # PYTHON
-                python313
+                self'.packages.python
                 uv
                 ruff
                 basedpyright
@@ -159,6 +154,7 @@
                 maturin
 
                 # NIX
+                nixd
                 nixpkgs-fmt
 
                 # SVELTE
@@ -178,7 +174,7 @@
             OPENSSL_NO_VENDOR = "1";
 
             shellHook = ''
-              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${python313}/lib"
+              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${self'.packages.python}/lib"
               ${lib.optionalString stdenv.isLinux ''
                 export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
               ''}

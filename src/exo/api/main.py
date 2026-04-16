@@ -12,7 +12,7 @@ from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import anyio
-from anyio import BrokenResourceError
+from anyio import BrokenResourceError, ClosedResourceError
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -25,7 +25,6 @@ from loguru import logger
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
-    fetch_image_url,
     generate_chat_stream,
 )
 from exo.api.adapters.claude import (
@@ -174,11 +173,21 @@ from exo.shared.types.events import (
     ChunkGenerated,
     Event,
     IndexedEvent,
+    InstanceDeleted,
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
-from exo.shared.types.text_generation import TextGenerationTaskParams
+from exo.shared.types.tasks import (
+    ImageEdits as ImageEditsTask,
+)
+from exo.shared.types.tasks import (
+    ImageGeneration as ImageGenerationTask,
+)
+from exo.shared.types.tasks import (
+    TextGeneration as TextGenerationTask,
+)
+from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
@@ -753,9 +762,11 @@ class API:
                 self._sent_image_hashes.add(h)
                 new_images.append((idx, img))
 
+        wrapped_hashes = {idx: Base64Image(h) for idx, h in cached_hashes.items()}
+
         if not new_images:
             task_params = task_params.model_copy(
-                update={"images": [], "image_hashes": cached_hashes}
+                update={"images": [], "image_hashes": wrapped_hashes}
             )
             command = TextGeneration(task_params=task_params)
             await self._send(command)
@@ -769,7 +780,7 @@ class API:
         task_params = task_params.model_copy(
             update={
                 "images": [],
-                "image_hashes": cached_hashes,
+                "image_hashes": wrapped_hashes,
                 "total_input_chunks": len(all_chunks),
                 "image_count": len(new_images),
             }
@@ -838,7 +849,13 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        task_params = task_params.model_copy(update={"stream": False, "bench": True})
+        task_params = task_params.model_copy(
+            update={
+                "stream": False,
+                "bench": True,
+                "use_prefix_cache": payload.use_prefix_cache,
+            }
+        )
 
         command = await self._send_text_generation_with_images(task_params)
 
@@ -1396,15 +1413,7 @@ class API:
         self, payload: ClaudeMessagesRequest
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
-        task_params = claude_request_to_text_generation(payload)
-        if task_params.images:
-            resolved_images: list[str] = []
-            for img in task_params.images:
-                if img.startswith(("http://", "https://")):
-                    resolved_images.append(await fetch_image_url(img))
-                else:
-                    resolved_images.append(img)
-            task_params = task_params.model_copy(update={"images": resolved_images})
+        task_params = await claude_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )
@@ -1811,7 +1820,7 @@ class API:
                         assert isinstance(event.chunk, ImageChunk)
                         try:
                             await queue.send(event.chunk)
-                        except BrokenResourceError:
+                        except (BrokenResourceError, ClosedResourceError):
                             self._image_generation_queues.pop(event.command_id, None)
                     if queue := self._text_generation_queues.get(
                         event.command_id, None
@@ -1819,10 +1828,26 @@ class API:
                         assert not isinstance(event.chunk, ImageChunk)
                         try:
                             await queue.send(event.chunk)
-                        except BrokenResourceError:
+                        except (BrokenResourceError, ClosedResourceError):
                             self._text_generation_queues.pop(event.command_id, None)
+                if isinstance(event, InstanceDeleted):
+                    self._close_streams_for_instance(event.instance_id)
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
+
+    def _close_streams_for_instance(self, instance_id: InstanceId) -> None:
+        """Close any active generation streams for commands running on the given instance."""
+        for task in self.state.tasks.values():
+            if task.instance_id != instance_id:
+                continue
+            if not isinstance(
+                task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
+            ):
+                continue
+            if sender := self._text_generation_queues.pop(task.command_id, None):
+                sender.close()
+            if sender := self._image_generation_queues.pop(task.command_id, None):
+                sender.close()
 
     def _save_merged_trace(self, event: TracesMerged) -> None:
         traces = [

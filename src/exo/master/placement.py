@@ -153,6 +153,17 @@ def place_instance(
         raise ValueError(
             "Pipeline parallelism is not supported for DeepSeek V3.1 (8-bit)"
         )
+    if (
+        command.sharding == Sharding.Pipeline
+        and command.model_card.base_model.startswith("Gemma 4")
+    ):
+        cycles_with_sufficient_memory = [
+            cycle for cycle in cycles_with_sufficient_memory if len(cycle) == 1
+        ]
+        if not cycles_with_sufficient_memory:
+            raise ValueError(
+                "Pipeline parallelism is not supported for Gemma 4; use tensor parallelism instead."
+            )
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
 

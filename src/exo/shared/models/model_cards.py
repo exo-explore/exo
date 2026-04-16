@@ -41,7 +41,7 @@ _BUILTIN_CARD_DIRS = [
 _card_cache: dict[ModelId, "ModelCard"] = {}
 
 
-def _detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
+def detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
     normalized = model_id.normalize()
     for model_dir in [d / normalized for d in EXO_MODELS_DIRS]:
         config_path = model_dir / "config.json"
@@ -65,10 +65,6 @@ async def _load_cards_from_dir(directory: Path, *, is_custom: bool) -> None:
             card = await ModelCard.load_from_path(toml_file)
             if is_custom:
                 card = card.model_copy(update={"is_custom": True})
-            if card.vision is None:
-                vision = _detect_vision_from_config(card.model_id)
-                if vision is not None:
-                    card = card.model_copy(update={"vision": vision})
             if card.model_id not in _card_cache:
                 _card_cache[card.model_id] = card
         except (ValidationError, TOMLKitError):
@@ -139,6 +135,14 @@ class ModelCard(CamelCaseModel):
     trust_remote_code: bool = True
     is_custom: bool = False
     vision: VisionCardConfig | None = None
+
+    @model_validator(mode="after")
+    def _autodetect_vision(self) -> "ModelCard":
+        if self.vision is None:
+            detected = detect_vision_from_config(self.model_id)
+            if detected is not None:
+                object.__setattr__(self, "vision", detected)
+        return self
 
     @model_validator(mode="after")
     def _fill_vision_weights_repo(self) -> "ModelCard":
@@ -256,11 +260,13 @@ class ConfigData(BaseModel):
             ["Qwen3MoeForCausalLM"],
             ["Qwen3_5MoeForConditionalGeneration"],
             ["Qwen3_5ForConditionalGeneration"],
+            ["Qwen3VLForConditionalGeneration"],
             ["MiniMaxM2ForCausalLM"],
             ["LlamaForCausalLM"],
             ["GptOssForCausalLM"],
             ["Step3p5ForCausalLM"],
             ["NemotronHForCausalLM"],
+            ["Gemma4ForConditionalGeneration"],
         ]
 
     @model_validator(mode="before")
@@ -287,7 +293,7 @@ class ConfigData(BaseModel):
         image_token_id = data.get("image_token_id")
         if vision_config is not None and image_token_id is not None:
             model_type = str(
-                vision_config.get("model_type", data.get("model_type", ""))  # pyright: ignore[reportAny]
+                data.get("model_type", vision_config.get("model_type", ""))  # pyright: ignore[reportAny]
             )
             assert info.context is not None
 

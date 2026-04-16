@@ -23,6 +23,7 @@ from exo.api.types.openai_responses import (
     FunctionCallInputItem,
     FunctionCallOutputInputItem,
     ImageGenerationCallInputItem,
+    InputTokensDetails,
     ItemReferenceInputItem,
     LocalShellCallInputItem,
     LocalShellCallOutputInputItem,
@@ -30,6 +31,7 @@ from exo.api.types.openai_responses import (
     McpApprovalResponseInputItem,
     McpCallInputItem,
     McpListToolsInputItem,
+    OutputTokensDetails,
     ReasoningInputItem,
     ResponseCompletedEvent,
     ResponseContentPart,
@@ -74,10 +76,27 @@ from exo.shared.types.chunks import (
 )
 from exo.shared.types.common import CommandId
 from exo.shared.types.text_generation import (
+    Base64Image,
     InputMessage,
+    InputMessageContent,
     TextGenerationTaskParams,
     resolve_reasoning_params,
 )
+
+
+def _build_response_usage(usage: Usage) -> ResponseUsage:
+    """Build a ResponseUsage from the internal Usage type."""
+    return ResponseUsage(
+        input_tokens=usage.prompt_tokens,
+        input_tokens_details=InputTokensDetails(
+            cached_tokens=usage.prompt_tokens_details.cached_tokens,
+        ),
+        output_tokens=usage.completion_tokens,
+        output_tokens_details=OutputTokensDetails(
+            reasoning_tokens=usage.completion_tokens_details.reasoning_tokens,
+        ),
+        total_tokens=usage.total_tokens,
+    )
 
 
 def _format_sse(event: ResponsesStreamEvent) -> str:
@@ -99,9 +118,11 @@ async def responses_request_to_text_generation(
 ) -> TextGenerationTaskParams:
     input_value: list[InputMessage]
     built_chat_template: list[dict[str, Any]] | None = None
-    images: list[str] = []
+    images: list[Base64Image] = []
     if isinstance(request.input, str):
-        input_value = [InputMessage(role="user", content=request.input)]
+        input_value = [
+            InputMessage(role="user", content=InputMessageContent(request.input))
+        ]
     else:
         input_messages: list[InputMessage] = []
         chat_template_messages: list[dict[str, Any]] = []
@@ -130,7 +151,9 @@ async def responses_request_to_text_generation(
                                 has_images = True
                     if item.role in ("user", "assistant", "developer"):
                         input_messages.append(
-                            InputMessage(role=item.role, content=content)
+                            InputMessage(
+                                role=item.role, content=InputMessageContent(content)
+                            )
                         )
                     if item.role == "system":
                         chat_template_messages.append(
@@ -327,7 +350,7 @@ async def responses_request_to_text_generation(
         input_value = (
             input_messages
             if input_messages
-            else [InputMessage(role="user", content="")]
+            else [InputMessage(role="user", content=InputMessageContent(""))]
         )
         built_chat_template = chat_template_messages if chat_template_messages else None
 
@@ -361,7 +384,9 @@ async def responses_request_to_text_generation(
     return TextGenerationTaskParams(
         model=request.model,
         input=input_value,
-        instructions=request.instructions,
+        instructions=InputMessageContent(request.instructions)
+        if request.instructions
+        else None,
         max_output_tokens=request.max_output_tokens,
         temperature=request.temperature,
         top_p=request.top_p,
@@ -428,13 +453,7 @@ async def collect_responses_response(
         raise ValueError(error_message)
 
     # Create usage from usage data if available
-    usage = None
-    if last_usage is not None:
-        usage = ResponseUsage(
-            input_tokens=last_usage.prompt_tokens,
-            output_tokens=last_usage.completion_tokens,
-            total_tokens=last_usage.total_tokens,
-        )
+    usage = _build_response_usage(last_usage) if last_usage is not None else None
 
     output: list[ResponseItem] = []
     if thinking_parts:
@@ -783,13 +802,7 @@ async def generate_responses_stream(
     yield _format_sse(item_done)
 
     # Create usage from usage data if available
-    usage = None
-    if last_usage is not None:
-        usage = ResponseUsage(
-            input_tokens=last_usage.prompt_tokens,
-            output_tokens=last_usage.completion_tokens,
-            total_tokens=last_usage.total_tokens,
-        )
+    usage = _build_response_usage(last_usage) if last_usage is not None else None
 
     # response.completed
     output: list[ResponseItem] = []

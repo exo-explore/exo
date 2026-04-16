@@ -30,6 +30,32 @@ def get_gpt_oss_encoding():
     return encoding
 
 
+def count_reasoning_tokens(
+    responses: Generator[GenerationResponse | ToolCallResponse | None],
+) -> Generator[GenerationResponse | ToolCallResponse | None]:
+    """Count tokens with is_thinking=True and patch the total into Usage on the final response."""
+    reasoning_tokens = 0
+    for response in responses:
+        if response is None:
+            yield None
+            continue
+        if isinstance(response, GenerationResponse) and response.is_thinking:
+            reasoning_tokens += 1
+        if response.usage is not None and reasoning_tokens > 0:
+            response = response.model_copy(
+                update={
+                    "usage": response.usage.model_copy(
+                        update={
+                            "completion_tokens_details": response.usage.completion_tokens_details.model_copy(
+                                update={"reasoning_tokens": reasoning_tokens}
+                            )
+                        }
+                    )
+                }
+            )
+        yield response
+
+
 def apply_all_parsers(
     receiver: Generator[GenerationResponse | None],
     prompt: str,
@@ -41,14 +67,6 @@ def apply_all_parsers(
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     mlx_generator = receiver
 
-    if tokenizer.has_thinking:
-        mlx_generator = parse_thinking_models(
-            mlx_generator,
-            tokenizer.think_start,
-            tokenizer.think_end,
-            starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
-        )
-
     if issubclass(model_type, GptOssModel):
         mlx_generator = parse_gpt_oss(mlx_generator)
     elif (
@@ -56,10 +74,19 @@ def apply_all_parsers(
         and "deepseek" in model_id.normalize().lower()
     ):
         mlx_generator = parse_deepseek_v32(mlx_generator)
-    elif tool_parser:
-        mlx_generator = parse_tool_calls(mlx_generator, tool_parser, tools)
+    else:
+        if tokenizer.has_thinking:
+            mlx_generator = parse_thinking_models(
+                mlx_generator,
+                tokenizer.think_start,
+                tokenizer.think_end,
+                starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
+            )
 
-    return mlx_generator
+        if tool_parser:
+            mlx_generator = parse_tool_calls(mlx_generator, tool_parser, tools)
+
+    return count_reasoning_tokens(mlx_generator)
 
 
 def parse_gpt_oss(
@@ -67,7 +94,6 @@ def parse_gpt_oss(
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     encoding = get_gpt_oss_encoding()
     stream = StreamableParser(encoding, role=Role.ASSISTANT)
-    thinking = False
     current_tool_name: str | None = None
     tool_arg_parts: list[str] = []
 
@@ -121,14 +147,10 @@ def parse_gpt_oss(
                 tool_arg_parts = []
             continue
 
-        if ch == "analysis" and not thinking:
-            thinking = True
-
-        if ch != "analysis" and thinking:
-            thinking = False
-
         if delta:
-            yield response.model_copy(update={"text": delta, "is_thinking": thinking})
+            yield response.model_copy(
+                update={"text": delta, "is_thinking": ch == "analysis"}
+            )
 
         if response.finish_reason is not None:
             yield response
@@ -307,21 +329,46 @@ def parse_thinking_models(
     Always yields tokens with finish_reason to avoid hanging the chunk stream.
     """
     is_thinking = starts_in_thinking
+    accumulated = ""
+    pending_buffer: list[GenerationResponse] = []
+
+    def drain_pending(_is_thinking: bool):
+        for buffered in pending_buffer:
+            yield buffered.model_copy(update={"is_thinking": _is_thinking})
+        pending_buffer.clear()
+
     for response in responses:
         if response is None:
             yield None
             continue
+
+        accumulated += response.text
+
         if response.finish_reason is not None:
+            yield from drain_pending(is_thinking)
             yield response.model_copy(update={"is_thinking": False})
             continue
 
-        if response.text == think_start:
+        if accumulated == think_start and not is_thinking:
             is_thinking = True
+            accumulated = ""
+            pending_buffer.clear()
             continue
-        if response.text == think_end:
+        if accumulated == think_end and is_thinking:
             is_thinking = False
+            accumulated = ""
+            pending_buffer.clear()
             continue
 
+        if (think_start and accumulated == think_start[: len(accumulated)]) or (
+            think_end and accumulated == think_end[: len(accumulated)]
+        ):
+            pending_buffer.append(response)
+            continue
+
+        accumulated = ""
+
+        yield from drain_pending(is_thinking)
         yield response.model_copy(update={"is_thinking": is_thinking})
 
 
@@ -332,6 +379,8 @@ def parse_tool_calls(
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     in_tool_call = False
     tool_call_text_parts: list[str] = []
+    accumulated_tool_calls: list[ToolCallItem] = []
+
     for response in responses:
         if response is None:
             yield None
@@ -339,6 +388,19 @@ def parse_tool_calls(
 
         if not in_tool_call and response.text.startswith(tool_parser.start_parsing):
             in_tool_call = True
+
+        if (
+            not in_tool_call
+            and accumulated_tool_calls
+            and (response.stats is not None or response.finish_reason is not None)
+        ):
+            yield ToolCallResponse(
+                tool_calls=accumulated_tool_calls,
+                usage=response.usage,
+                stats=response.stats,
+            )
+            accumulated_tool_calls.clear()
+            continue
 
         if not in_tool_call:
             yield response
@@ -360,9 +422,16 @@ def parse_tool_calls(
                 )
                 break
 
-            yield ToolCallResponse(
-                tool_calls=parsed, usage=response.usage, stats=response.stats
-            )
+            accumulated_tool_calls.extend(parsed)
+            if accumulated_tool_calls and (
+                response.finish_reason is not None or response.stats is not None
+            ):
+                yield ToolCallResponse(
+                    tool_calls=accumulated_tool_calls,
+                    usage=response.usage,
+                    stats=response.stats,
+                )
+                accumulated_tool_calls.clear()
             continue
 
         if response.finish_reason is not None:
@@ -377,3 +446,6 @@ def parse_tool_calls(
                 }
             )
             yield response
+
+    if not accumulated_tool_calls:
+        logger.warning("Tool calls should have all been emitted but were not")

@@ -42,7 +42,6 @@ from exo.shared.types.worker.runner_response import (
 from exo.shared.types.worker.runners import (
     RunnerConnected,
     RunnerConnecting,
-    RunnerFailed,
     RunnerIdle,
     RunnerLoaded,
     RunnerLoading,
@@ -159,9 +158,7 @@ class Runner:
         self.send_task_status(task.task_id, TaskStatus.Running)
 
         match task:
-            case ConnectToGroup() if isinstance(
-                self.current_status, (RunnerIdle, RunnerFailed)
-            ):
+            case ConnectToGroup() if isinstance(self.current_status, RunnerIdle):
                 assert isinstance(self.generator, Builder)
                 logger.info("runner connecting")
                 self.update_status(RunnerConnecting())
@@ -194,12 +191,6 @@ class Runner:
                 )
                 self.acknowledge_task(task)
 
-                def on_model_load_timeout() -> None:
-                    self.update_status(
-                        RunnerFailed(error_message="Model loading timed out")
-                    )
-                    time.sleep(0.5)
-
                 def on_layer_loaded(layers_loaded: int, total: int) -> None:
                     self.update_status(
                         RunnerLoading(layers_loaded=layers_loaded, total_layers=total)
@@ -215,7 +206,6 @@ class Runner:
                 ) = load_mlx_items(
                     self.bound_instance,
                     self.generator.group,
-                    on_timeout=on_model_load_timeout,
                     on_layer_loaded=on_layer_loaded,
                 )
 

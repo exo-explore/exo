@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import anyio
-from anyio import current_time, to_thread
+from anyio import BrokenResourceError, ClosedResourceError, current_time, to_thread
 from loguru import logger
 
 from exo.download.download_utils import (
@@ -87,42 +87,47 @@ class DownloadCoordinator:
         model_id = callback_shard.model_card.model_id
         throttle_interval_secs = 1.0
 
-        if progress.status == "complete":
-            found = await to_thread.run_sync(resolve_existing_model, model_id)
-            if found is not None:
-                completed = self._completed_from_path(
-                    callback_shard, found, progress.total
+        try:
+            if progress.status == "complete":
+                found = await to_thread.run_sync(resolve_existing_model, model_id)
+                if found is not None:
+                    completed = self._completed_from_path(
+                        callback_shard, found, progress.total
+                    )
+                else:
+                    completed = DownloadCompleted(
+                        shard_metadata=callback_shard,
+                        node_id=self.node_id,
+                        total=progress.total,
+                        model_directory=self._default_model_dir(model_id),
+                    )
+                self.download_status[model_id] = completed
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=completed)
                 )
-            else:
-                completed = DownloadCompleted(
-                    shard_metadata=callback_shard,
+                self._last_progress_time.pop(model_id, None)
+            elif (
+                progress.status == "in_progress"
+                and current_time() - self._last_progress_time.get(model_id, 0.0)
+                > throttle_interval_secs
+            ):
+                ongoing = DownloadOngoing(
                     node_id=self.node_id,
-                    total=progress.total,
+                    shard_metadata=callback_shard,
+                    download_progress=map_repo_download_progress_to_download_progress_data(
+                        progress
+                    ),
                     model_directory=self._default_model_dir(model_id),
                 )
-            self.download_status[model_id] = completed
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=completed)
+                self.download_status[model_id] = ongoing
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=ongoing)
+                )
+                self._last_progress_time[model_id] = current_time()
+        except (BrokenResourceError, ClosedResourceError):
+            logger.debug(
+                f"Event stream closed while sending download progress for {model_id}, skipping update"
             )
-            self._last_progress_time.pop(model_id, None)
-        elif (
-            progress.status == "in_progress"
-            and current_time() - self._last_progress_time.get(model_id, 0.0)
-            > throttle_interval_secs
-        ):
-            ongoing = DownloadOngoing(
-                node_id=self.node_id,
-                shard_metadata=callback_shard,
-                download_progress=map_repo_download_progress_to_download_progress_data(
-                    progress
-                ),
-                model_directory=self._default_model_dir(model_id),
-            )
-            self.download_status[model_id] = ongoing
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=ongoing)
-            )
-            self._last_progress_time[model_id] = current_time()
 
     async def run(self) -> None:
         logger.info(

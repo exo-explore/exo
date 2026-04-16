@@ -112,8 +112,8 @@ Then restart the Nix daemon: `sudo launchctl kickstart -k system/org.nixos.nix-d
   Homebrew `macmon 0.6.1` still crashes on Apple M5.
 
   ```bash
-  cargo install --git https://github.com/swiftraccoon/macmon \
-    --rev 9154d234f763fbeffdcb4135d0bbbaf80609699b \
+  cargo install --git https://github.com/vladkens/macmon \
+    --rev a1cd06b6cc0d5e61db24fd8832e74cd992097a7d \
     macmon \
     --force
   ```

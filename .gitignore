@@ -39,3 +39,5 @@ bench/**/*.json
 # tmp
 tmp/models
 *.dylib
+/build/exo
+/.claude/skills

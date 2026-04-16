@@ -12,7 +12,7 @@ from exo_pyo3_bindings import (
 @pytest.mark.asyncio
 async def test_sleep_on_multiple_items() -> None:
     print("PYTHON: starting handle")
-    h = NetworkingHandle(Keypair.generate())
+    h = NetworkingHandle(Keypair.generate(), [], 0)
 
     rt = asyncio.create_task(_await_recv(h))
 
