@@ -51,6 +51,5 @@ def make_split_decoder_call(
         out = h + self.mlp(self.post_attention_layernorm(h))
         sent = mx.distributed.send(out, ATTN_RANK, group=group)
         return out
-        return out
 
     return _split_call
