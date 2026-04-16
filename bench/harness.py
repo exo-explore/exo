@@ -541,6 +541,23 @@ def run_planning_phase(
         time.sleep(10)
 
 
+def find_existing_instance(client: ExoClient, model_id: str) -> str | None:
+    """Find an existing running instance for the given model."""
+    try:
+        state = client.request_json("GET", "/state")
+    except Exception:
+        return None
+    for inst_id, inst in state.get("instances", {}).items():
+        # Instance structure is nested: {"MlxJacclInstance": {"shardAssignments": {"modelId": ...}}}
+        for _inst_type, inner in inst.items():
+            if not isinstance(inner, dict):
+                continue
+            sa = inner.get("shardAssignments", {})
+            if sa.get("modelId") == model_id:
+                return inst_id
+    return None
+
+
 def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--host", default=os.environ.get("EXO_HOST", "localhost"))
     ap.add_argument(
@@ -593,4 +610,9 @@ def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
         "--danger-delete-downloads",
         action="store_true",
         help="Delete existing models from smallest to largest to make room for benchmark model.",
+    )
+    ap.add_argument(
+        "--fresh-instance",
+        action="store_true",
+        help="Force creating a new instance even if one is already running for this model.",
     )
