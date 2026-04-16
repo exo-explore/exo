@@ -56,13 +56,22 @@ pub mod if_watcher {
     trait IfaceExt {
         fn has_link_local_v6(&self) -> bool;
         fn is_real_interface(&self) -> bool;
-        fn is_loopback_interface(&self) -> bool;
         fn will_babel(&self) -> bool;
         fn get_v6_in(&self, prefix: Ipv6Net) -> Option<Ipv6Net>;
     }
     impl IfaceExt for Interface {
         fn will_babel(&self) -> bool {
-            self.has_link_local_v6() && self.is_real_interface() && self.is_up()
+            self.has_link_local_v6()
+                && self.is_real_interface()
+                && self.is_up()
+                && (
+                    // this is a hack to see if bad ethernet ports are ruining connectivity;
+                    // this will only consume en2 and en3 which are thunderbolt ports on mac-mini
+                    //
+                    // if it does work then it means "bad" interfaces are accidentally being allowed
+                    // to be routed..., which is not good!!!
+                    ["en2", "en3"].contains(&self.name())
+                )
         }
 
         fn has_link_local_v6(&self) -> bool {
@@ -118,11 +127,6 @@ pub mod if_watcher {
             }
             true
         }
-
-        fn is_loopback_interface(&self) -> bool {
-            ["lo", "lo0"].contains(&self.name())
-        }
-
         fn get_v6_in(&self, prefix: Ipv6Net) -> Option<Ipv6Net> {
             for addr in self.addrs() {
                 if let IpNet::V6(v6) = addr
@@ -150,7 +154,7 @@ pub mod if_watcher {
 
         while let Some(s) = mon_stream.next().await {
             for iface in s.interfaces.values() {
-                if !iface.is_real_interface() && !iface.is_loopback_interface() {
+                if !iface.is_real_interface() {
                     continue;
                 }
                 for addr in iface.addrs() {
@@ -164,14 +168,6 @@ pub mod if_watcher {
                             tracing::warn!(%e, "failed to remove ip");
                         }
                     }
-                }
-                if iface.is_loopback_interface() {
-                    let addr = Ipv6Net::new_assert(my_range.addr(), 128);
-                    if iface.get_v6_in(addr).is_none() {
-                        tracing::info!("adding loopback ip {addr} to {}", iface.name());
-                        add_ip(addr, iface).await?;
-                    }
-                    continue;
                 }
                 if !iface.will_babel() {
                     continue;
