@@ -35,21 +35,16 @@ def make_split_decoder_call(
     rank = group.rank()
 
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
-        # Both ranks run attention (rank 1 discards result via all_sum)
+        # Both ranks run identical ops — symmetric graph like TP.
         if self.is_linear:
             r = self.linear_attn(self.input_layernorm(x), mask, cache)
         else:
             r = self.self_attn(self.input_layernorm(x), mask, cache)
         h = x + r
-        if rank != ATTN_RANK:
-            h = h - h  # zero out rank 1's result but keep graph structure
-        h = mx.distributed.all_sum(h, group=group)
+        h = mx.distributed.all_sum(h, group=group) * 0.5
 
-        # Both ranks run MoE (rank 0 discards result via all_sum)
         out = h + self.mlp(self.post_attention_layernorm(h))
-        if rank != MOE_RANK:
-            out = out - out  # zero out rank 0's result but keep graph structure
-        out = mx.distributed.all_sum(out, group=group)
+        out = mx.distributed.all_sum(out, group=group) * 0.5
 
         return out
 
