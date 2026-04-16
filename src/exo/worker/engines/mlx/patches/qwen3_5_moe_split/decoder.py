@@ -48,7 +48,7 @@ def make_split_decoder_call(
             h = x + r
         else:
             h = self.mlp(self.post_attention_layernorm(x))  # dummy MoE on x
-        h = mx.distributed.all_sum(h, group=group)
+        h = mx.distributed.all_gather(h, group=group)[ATTN_RANK : ATTN_RANK + 1]
 
         # Step 2: MOE_RANK does real MoE, ATTN_RANK does dummy MoE
         moe_out = self.mlp(self.post_attention_layernorm(h))
@@ -56,7 +56,7 @@ def make_split_decoder_call(
             out = h + moe_out
         else:
             out = moe_out
-        out = mx.distributed.all_sum(out, group=group)
+        out = mx.distributed.all_gather(out, group=group)[MOE_RANK : MOE_RANK + 1]
 
         if _layer_count % 4 == 0:
             mx.eval(out)
