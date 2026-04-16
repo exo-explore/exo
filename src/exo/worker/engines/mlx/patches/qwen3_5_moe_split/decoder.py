@@ -43,7 +43,7 @@ def make_split_decoder_call(
         if rank == ATTN_RANK:
             h = x + r
         else:
-            h = self.input_layernorm(x)  # discard r, keep graph weight
+            h = r
         h = mx.distributed.all_gather(h, group=group)[ATTN_RANK : ATTN_RANK + 1]
 
         # Step 2: both ranks run MoE, all_gather picks MOE_RANK's result
@@ -51,7 +51,7 @@ def make_split_decoder_call(
         if rank == MOE_RANK:
             out = h + _moe_out
         else:
-            out = self.post_attention_layernorm(h)  # discard _moe_out, keep graph weight
+            out = _moe_out
         out = mx.distributed.all_gather(out, group=group)[MOE_RANK : MOE_RANK + 1]
 
         return out
