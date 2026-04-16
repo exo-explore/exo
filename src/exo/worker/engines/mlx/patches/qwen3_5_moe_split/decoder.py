@@ -33,8 +33,16 @@ def make_split_decoder_call(
             f"qwen3_5_moe_split requires world_size==2, got {group.size()}"
         )
     rank = group.rank()
+    _call_count = 0
+    # Warmup is ~10 forward passes × 48 layers = ~480 layer calls.
+    # Use recv evals during warmup, drop them after for speed.
+    _WARMUP_CALLS = 600
 
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
+        nonlocal _call_count
+        _call_count += 1
+        is_warmup = _call_count <= _WARMUP_CALLS
+
         if rank == ATTN_RANK:
             if self.is_linear:
                 r = self.linear_attn(self.input_layernorm(x), mask, cache)
@@ -44,11 +52,13 @@ def make_split_decoder_call(
             h = mx.distributed.send(h, MOE_RANK, group=group)
             mx.async_eval(h)
             out = mx.distributed.recv_like(h, MOE_RANK, group=group)
-            mx.eval(out)
+            if is_warmup:
+                mx.eval(out)
             return out
 
         h = mx.distributed.recv_like(x, ATTN_RANK, group=group)
-        mx.eval(h)
+        if is_warmup:
+            mx.eval(h)
         out = h + self.mlp(self.post_attention_layernorm(h))
         sent = mx.distributed.send(out, ATTN_RANK, group=group)
         mx.async_eval(sent)
