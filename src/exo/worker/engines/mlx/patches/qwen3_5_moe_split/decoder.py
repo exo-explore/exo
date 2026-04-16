@@ -58,7 +58,7 @@ def make_split_decoder_call(
             out = moe_out
         out = mx.distributed.all_sum(out, group=group)
 
-        if _layer_count % 6 == 0:
+        if _layer_count % 4 == 0:
             mx.eval(out)
 
         return out
