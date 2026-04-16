@@ -1,0 +1,15 @@
+model_id = "mlx-community/Qwen3.6-35B-A3B-4bit"
+n_layers = 40
+hidden_size = 2048
+num_key_value_heads = 2
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "4bit"
+base_model = "Qwen3.6 35B A3B"
+capabilities = ["text", "thinking", "thinking_toggle", "vision"]
+
+context_length = 262144
+
+[storage_size]
+in_bytes = 20400000000
