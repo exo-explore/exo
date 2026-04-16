@@ -573,6 +573,9 @@ create_single_node_instance() {
         # Step 2: pick a Pipeline + MlxRing single-node preview that has
         # an instance attached and isn't an error.
         local instance_payload
+        # When the filtered array is empty (model still hydrating on the node),
+        # .[0] yields null — emit JSON null so the "$instance_payload" = "null"
+        # check below triggers the retry instead of POSTing {"instance": null}.
         instance_payload=$(echo "$previews_response" | jq -c '
             .previews
             | map(select(.sharding == "Pipeline"
@@ -580,7 +583,7 @@ create_single_node_instance() {
                          and .instance != null
                          and .error == null))
             | .[0]
-            | {instance: .instance}
+            | if . == null then null else {instance: .instance} end
         ')
 
         if [ "$instance_payload" = "null" ] || [ -z "$instance_payload" ]; then
