@@ -824,10 +824,16 @@ def fix_unmatched_think_end_tokens(
 ) -> mx.array:
     if not tokenizer.has_thinking:
         return tokens
-    assert tokenizer.think_start_tokens
-    assert tokenizer.think_end_tokens
-    think_start_tokens: list[int] = tokenizer.think_start_tokens
-    think_end_tokens: list[int] = tokenizer.think_end_tokens
+    # Newer mlx-lm (>= #1114) exposes plural think_*_tokens sequences for
+    # multi-token thinking markers; the version pinned in uv.lock only has
+    # the singular think_*_id ints. Fall back to wrapping the single ids.
+    raw_start = getattr(tokenizer, "think_start_tokens", None)
+    raw_end = getattr(tokenizer, "think_end_tokens", None)
+    if raw_start is None or raw_end is None:
+        raw_start = (tokenizer.think_start_id,)
+        raw_end = (tokenizer.think_end_id,)
+    think_start_tokens: list[int] = list(raw_start)
+    think_end_tokens: list[int] = list(raw_end)
     token_list: list[int] = cast(list[int], tokens.tolist())
     result: list[int] = []
 

@@ -612,7 +612,7 @@ class ExoBatchGenerator:
 
         with T("submit.kv_prefix_cache_lookup"):
             if self.kv_prefix_cache is not None and not is_bench:
-                cache, remaining_tokens, matched_index = self.kv_prefix_cache.get_kv_cache(
+                cache, remaining_tokens, matched_index, _is_exact = self.kv_prefix_cache.get_kv_cache(
                     self.model, all_prompt_tokens, media_regions=media_regions
                 )
                 prefix_hit_length = len(all_prompt_tokens) - len(remaining_tokens)

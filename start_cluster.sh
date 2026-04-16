@@ -30,9 +30,9 @@ fi
 : "${EXO_RUNNER_QOS:=off}"
 : "${LOG_LEVEL:=DEBUG}"
 
-# Model placed automatically at startup; 3 instances per Studio.
+# Model placed automatically at startup; 1 instance per Studio (2 total) for prediction-bot.
 : "${HUIHUI_MODEL_ID:=mlx-community/Huihui-Qwen3.5-35B-A3B-abliterated-mxfp4}"
-: "${HUIHUI_INSTANCES_PER_STUDIO:=3}"
+: "${HUIHUI_INSTANCES_PER_STUDIO:=1}"
 
 export IBV_FORK_SAFE=1
 export PYTHONUNBUFFERED=1
