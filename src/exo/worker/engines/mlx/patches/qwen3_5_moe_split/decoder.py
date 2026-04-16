@@ -33,8 +33,12 @@ def make_split_decoder_call(
             f"qwen3_5_moe_split requires world_size==2, got {group.size()}"
         )
     rank = group.rank()
+    _layer_count = 0
 
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
+        nonlocal _layer_count
+        _layer_count += 1
+
         # Step 1: ATTN_RANK does attention, MOE_RANK does MoE on x (dummy)
         if rank == ATTN_RANK:
             if self.is_linear:
@@ -53,6 +57,9 @@ def make_split_decoder_call(
         else:
             out = moe_out
         out = mx.distributed.all_sum(out, group=group)
+
+        if _layer_count % 2 == 0:
+            mx.eval(out)
 
         return out
 
