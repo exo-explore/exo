@@ -34,7 +34,7 @@ let
       ];
       pyprojectOverlay = workspace.mkPyprojectOverlay {
         sourcePreference = "wheel";
-        dependencies = { exo = lib.optionals isLinux [ uv_extra ]; exo-bench = []; };
+        dependencies = { exo = [ uv_extra ]; exo-bench = [ ]; };
       };
       exoOverlay = final: prev: {
         # Replace workspace exo_pyo3_bindings with Nix-built wheel.
@@ -214,8 +214,6 @@ in
     {
       packages = {
         exo = mkExo "exo" { exo = lib.optionals isLinux [ "cpu" ]; };
-        exo-cuda-12 = (mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_12) pkgs; }).mkExo "exo-cuda-12" { exo = [ "cuda12" ]; };
-        exo-cuda-13 = (mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_13) pkgs; }).mkExo "exo-cuda-13" { exo = [ "cuda13" ]; };
         # for devShell
         exo-venv = exoVenv;
         editableVenv = editablePythonSet.mkVirtualEnv "exo-dev-env" { exo = [ "dev" ]; };
@@ -226,6 +224,9 @@ in
         exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);
         # used by ./tests/run_exo_on.sh
         exo-get-all-models-on-cluster = mkSimplePythonScript "exo-get-all-models-on-cluster" (inputs.self + /tests/get_all_models_on_cluster.py);
+      } // lib.optionalAttrs isLinux {
+        exo-cuda-12 = (mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_12) pkgs; }).mkExo "exo-cuda-12" { exo = [ "cuda12" ]; };
+        exo-cuda-13 = (mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_13) pkgs; }).mkExo "exo-cuda-13" { exo = [ "cuda13" ]; };
       };
 
       checks = {

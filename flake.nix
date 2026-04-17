@@ -148,8 +148,6 @@
                 # PYTHON
                 self'.packages.editableVenv
                 uv
-                ruff
-                basedpyright
 
                 # RUST
                 config.rust.toolchain
@@ -165,9 +163,6 @@
                 # MISC
                 just
                 jq
-              ]
-              ++ lib.optionals stdenv.isLinux [
-                unixtools.ifconfig
               ]
               ++ lib.optionals stdenv.isDarwin [
                 macmon
