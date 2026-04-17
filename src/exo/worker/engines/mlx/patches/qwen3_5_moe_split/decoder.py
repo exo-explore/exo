@@ -33,33 +33,18 @@ def make_split_decoder_call(
             f"qwen3_5_moe_split requires world_size==2, got {group.size()}"
         )
     rank = group.rank()
-    _layer_count = 0
 
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
-        nonlocal _layer_count
-        _layer_count += 1
-
-        # Step 1: ATTN_RANK does attention, MOE_RANK does MoE on x (dummy)
+        # Both ranks start from x. One does attention, one does MoE, then all_sum.
         if rank == ATTN_RANK:
             if self.is_linear:
                 r = self.linear_attn(self.input_layernorm(x), mask, cache)
             else:
                 r = self.self_attn(self.input_layernorm(x), mask, cache)
-            h = x + r
+            out = x + r
         else:
-            h = self.mlp(self.post_attention_layernorm(x))  # dummy MoE on x
-        h = mx.distributed.all_gather(h, group=group)[ATTN_RANK : ATTN_RANK + 1]
-
-        # Step 2: MOE_RANK does real MoE, ATTN_RANK does dummy MoE
-        moe_out = self.mlp(self.post_attention_layernorm(h))
-        if rank == MOE_RANK:
-            out = h + moe_out
-        else:
-            out = moe_out
-        out = mx.distributed.all_gather(out, group=group)[MOE_RANK : MOE_RANK + 1]
-
-        if _layer_count % 4 == 0:
-            mx.eval(out)
+            out = self.mlp(self.post_attention_layernorm(x))
+        out = mx.distributed.all_sum(out, group=group)
 
         return out
 
