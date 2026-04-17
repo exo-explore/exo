@@ -61,7 +61,7 @@ def make_split_decoder_call(
             out = h
             for _ in range(50):
                 out = self.input_layernorm(out) + out
-            if _layer_count % 4 == 2:
+            if _layer_count % 4 == 0:
                 mx.eval(out)
         out = mx.distributed.all_gather(out, group=group)[MOE_RANK : MOE_RANK + 1]
 
