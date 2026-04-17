@@ -286,9 +286,6 @@ class KVPrefixCache:
             )
 
         if evicted_any:
-            # Force Python GC to release array references, then clear Metal buffer cache.
-            # Without this, evicted MLX arrays stay allocated until the next GC cycle,
-            # leaking ~3-4 GB between long-context requests.
             gc.collect()
             mx.clear_cache()
 
