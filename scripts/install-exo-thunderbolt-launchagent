@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLIST_SRC="$SCRIPT_DIR/../tmp/config_examples/io.exo.thunderbolt-watchdog.plist"
+PLIST_DST="$HOME/Library/LaunchAgents/io.exo.thunderbolt-watchdog.plist"
+GUI_DOMAIN="gui/$(id -u)"
+
+mkdir -p "$HOME/Library/LaunchAgents"
+cp "$PLIST_SRC" "$PLIST_DST"
+launchctl bootout "$GUI_DOMAIN" "$PLIST_DST" >/dev/null 2>&1 || true
+launchctl bootstrap "$GUI_DOMAIN" "$PLIST_DST"
+launchctl enable "$GUI_DOMAIN/io.exo.thunderbolt-watchdog"
+launchctl kickstart -k "$GUI_DOMAIN/io.exo.thunderbolt-watchdog"
+echo "Installed launch agent at $PLIST_DST"

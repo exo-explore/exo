@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/exo_thunderbolt_common.sh
+source "$SCRIPT_DIR/exo_thunderbolt_common.sh"
+
+interval="${EXO_WATCHDOG_INTERVAL:-15}"
+auto_restart_peer="${EXO_WATCHDOG_RESTART_PEER:-0}"
+attempted_local_restart=0
+
+log "starting watchdog interval=${interval}s" | tee -a "$EXO_WATCHDOG_LOG"
+
+while true; do
+  if [[ -d "$EXO_LOCK_DIR" ]]; then
+    sleep "$interval"
+    continue
+  fi
+
+  rotate_all_logs
+
+  if "$SCRIPT_DIR/exo-thunderbolt-check" --require-cluster --quiet; then
+    attempted_local_restart=0
+    sleep "$interval"
+    continue
+  fi
+
+  warn "health check failed; inspecting local bridge state" | tee -a "$EXO_WATCHDOG_LOG"
+
+  bridge_ok=0
+  if "$SCRIPT_DIR/exo-thunderbolt-check" --quiet; then
+    bridge_ok=1
+  fi
+
+  if [[ "$bridge_ok" -eq 1 ]]; then
+    if [[ "$attempted_local_restart" -eq 0 ]]; then
+      log "bridge is healthy; restarting local EXO" | tee -a "$EXO_WATCHDOG_LOG"
+      if restart_local_exo; then
+        attempted_local_restart=1
+      else
+        warn "local EXO restart failed" | tee -a "$EXO_WATCHDOG_LOG"
+      fi
+    elif [[ "$auto_restart_peer" -eq 1 ]]; then
+      log "trying remote EXO restart on $EXO_REMOTE_HOST" | tee -a "$EXO_WATCHDOG_LOG"
+      if restart_remote_exo && wait_for_cluster 20 1; then
+        log "cluster recovered after remote EXO restart" | tee -a "$EXO_WATCHDOG_LOG"
+      else
+        warn "remote EXO restart did not restore cluster" | tee -a "$EXO_WATCHDOG_LOG"
+      fi
+      attempted_local_restart=0
+    fi
+  else
+    if can_repair_bridge_non_interactive; then
+      log "bridge is unhealthy; running automatic recovery" | tee -a "$EXO_WATCHDOG_LOG"
+      if [[ "$auto_restart_peer" -eq 1 ]]; then
+        "$SCRIPT_DIR/exo-thunderbolt-recover" --restart-peer >>"$EXO_WATCHDOG_LOG" 2>&1 || true
+      else
+        "$SCRIPT_DIR/exo-thunderbolt-recover" >>"$EXO_WATCHDOG_LOG" 2>&1 || true
+      fi
+      attempted_local_restart=0
+    else
+      warn "bridge recovery needs sudo; run scripts/exo-thunderbolt-recover manually or allow passwordless sudo for this watchdog" | tee -a "$EXO_WATCHDOG_LOG"
+    fi
+  fi
+
+  sleep "$interval"
+done
