@@ -85,7 +85,7 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
         _pending_topk_idx = mx.take_along_axis(_pending_topk_idx, sort_order, axis=1)
         _pending_topk_val = mx.take_along_axis(_pending_topk_val, sort_order, axis=1)
         _pending_selected_lps = logprobs[mx.arange(batch_size), batch.y]
-        mx.eval(
+        mx.async_eval(
             batch.y,
             *batch.logprobs,
             *batch.tokens,
@@ -97,7 +97,7 @@ def _fast_next(self: BatchGenerator) -> list[BatchGenerator.Response]:
         _pending_topk_idx = None
         _pending_topk_val = None
         _pending_selected_lps = None
-        mx.eval(batch.y, *batch.logprobs, *batch.tokens)
+        mx.async_eval(batch.y, *batch.logprobs, *batch.tokens)
 
     prev_token_list: list[int] = cast(list[int], prev_tokens.tolist())
 
