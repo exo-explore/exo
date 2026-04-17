@@ -174,11 +174,21 @@ pub mod if_watcher {
                 }
             }
 
+            // advertise this address
             let lo_addr = advertised_addr(my_range);
             let localhost_iface = ifaces
                 .find(|i| LOCALHOST_INTERFACE_NAMES.contains(&i.name()))
                 .ok_or_else(|| BabbleError::FailedToSetIp)?; // TODO: I feel like this may need more context
             add_ip(lo_addr, localhost_iface).await?;
+
+            // // watch interface with babel
+            // if ready_ifaces.insert(localhost_iface.name().to_owned()) {
+            //     tracing::info!("telling babeld to watch {}", localhost_iface.name());
+            //     send.send(Babble::AddIface(localhost_iface.name().to_owned()))
+            //         .await
+            //         .map_err(|e| BabbleError::Other(e.to_string()))?;
+            // }
+
             lo_addr
         };
 
@@ -307,6 +317,12 @@ pub mod babel {
                 .arg(format!("redistribute local ip {advertised}"))
                 .arg("-C")
                 .arg("redistribute local deny")
+                .arg("-C")
+                .arg(format!(
+                    "install ip {} pref-src {}",
+                    crate::if_watcher::PREFIX,
+                    advertised.addr()
+                ))
                 .arg(iface)
                 .spawn()
             {
