@@ -47,8 +47,6 @@ def make_split_decoder_call(
             else:
                 r = self.self_attn(self.input_layernorm(x), mask, cache)
             out = x + r
-            mx.eval(out)
-            print(f"[rank {rank}] layer {_layer_idx} out.mean={out.mean().item():.4f}", flush=True)
         else:
             out = self.mlp(self.post_attention_layernorm(x))
             mx.eval(out)
