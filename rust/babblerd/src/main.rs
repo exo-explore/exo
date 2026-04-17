@@ -1,8 +1,10 @@
 use std::{fs::Permissions, io, net::Ipv6Addr, os::unix::fs::PermissionsExt};
 
-use babblerd::babel::handle_listener;
+use babblerd::{babel::handle_listener, if_watcher};
 use color_eyre::eyre::{WrapErr, eyre};
 use ipnet::Ipv6Net;
+use n0_watcher::Watcher;
+use netwatch::netmon;
 use tokio::{
     net::UnixListener,
     signal,
@@ -88,7 +90,8 @@ async fn inner_main() -> color_eyre::Result<()> {
                             Ipv6Addr::from_bits(babblerd::PREFIX.addr().to_bits() | ip_node_id),
                             112,
                         );
-                        let babel = tokio::spawn(babblerd::babel(my_range, mp_recv, br_send));
+                        let advertised = if_watcher::advertised_addr(my_range);
+                        let babel = tokio::spawn(babblerd::babel(advertised, mp_recv, br_send));
                         let watcher = tokio::spawn(babblerd::watch(my_range, mp_send));
                         let mut listeners = JoinSet::new();
                         listeners.spawn(handle_listener(sock, br_recv.resubscribe()));

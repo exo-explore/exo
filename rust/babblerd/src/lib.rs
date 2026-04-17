@@ -53,6 +53,17 @@ pub mod if_watcher {
         48,
     );
 
+    pub const LOCALHOST_INTERFACE_NAMES: [&'static str; 2] = ["lo", "lo0"];
+
+    pub fn advertised_addr(my_range: Ipv6Net) -> Ipv6Net {
+        assert!(PREFIX.contains(&my_range));
+        Ipv6Net::new_assert(
+            // interface-id 0 reserved for node's loopback identity
+            Ipv6Addr::from_bits(my_range.trunc().addr().to_bits()),
+            128,
+        )
+    }
+
     trait IfaceExt {
         fn has_link_local_v6(&self) -> bool;
         fn is_real_interface(&self) -> bool;
@@ -61,17 +72,7 @@ pub mod if_watcher {
     }
     impl IfaceExt for Interface {
         fn will_babel(&self) -> bool {
-            self.has_link_local_v6()
-                && self.is_real_interface()
-                && self.is_up()
-                && (
-                    // this is a hack to see if bad ethernet ports are ruining connectivity;
-                    // this will only consume en2 and en3 which are thunderbolt ports on mac-mini
-                    //
-                    // if it does work then it means "bad" interfaces are accidentally being allowed
-                    // to be routed..., which is not good!!!
-                    ["en2", "en3"].contains(&self.name())
-                )
+            self.has_link_local_v6() && self.is_real_interface() && self.is_up()
         }
 
         fn has_link_local_v6(&self) -> bool {
@@ -142,6 +143,7 @@ pub mod if_watcher {
     #[tracing::instrument(skip(send))]
     pub async fn watch(my_range: Ipv6Net, send: mpsc::Sender<Babble>) -> Result<()> {
         assert!(PREFIX.contains(&my_range));
+
         let mut ready_ifaces = HashSet::new();
         // 0 is reserved for the first loopback address
         let mut iface_num: u16 = 1;
@@ -150,20 +152,51 @@ pub mod if_watcher {
         let mon = netwatch::netmon::Monitor::new()
             .await
             .map_err(|_| BabbleError::Unspecified)?;
-        let mut mon_stream = mon.interface_state().stream();
+        // make sure old ULAs are removed from
 
+        // ensure the loopback interface exists, any old addresses are cleaned up first
+        let lo_addr: Ipv6Net = {
+            let state = mon.interface_state();
+            let mut ifaces = state.peek().interfaces.values();
+
+            // cleanup of any old addresses
+            for i in ifaces
+                .clone()
+                .filter(|i| LOCALHOST_INTERFACE_NAMES.contains(&i.name()))
+            {
+                for addr in i.addrs() {
+                    if let IpNet::V6(v6) = addr
+                        && PREFIX.contains(&v6.addr())
+                    {
+                        tracing::info!("removing stale ip {v6} from {}", i.name());
+                        remove_ip(v6, i).await? // TODO: do we care if it fails..?
+                    }
+                }
+            }
+
+            let lo_addr = advertised_addr(my_range);
+            let localhost_iface = ifaces
+                .find(|i| LOCALHOST_INTERFACE_NAMES.contains(&i.name()))
+                .ok_or_else(|| BabbleError::FailedToSetIp)?; // TODO: I feel like this may need more context
+            add_ip(lo_addr, localhost_iface).await?;
+            lo_addr
+        };
+
+        // stream updates
+        let mut mon_stream = mon.interface_state().stream();
         while let Some(s) = mon_stream.next().await {
             for iface in s.interfaces.values() {
                 if !iface.is_real_interface() {
                     continue;
                 }
+
+                // physical links should not carry babbler application-space addresses
                 for addr in iface.addrs() {
                     if let IpNet::V6(v6) = addr
                         && PREFIX.contains(&v6.addr())
-                        && !my_range.contains(&v6.addr())
                     {
-                        tracing::info!("removing stale ip {v6} from {}", iface.name());
-                        // don't really care if this fails
+                        tracing::info!("removing app ip {v6} from {}", iface.name());
+                        // maybe we should really care about this actually..?
                         if let Err(e) = remove_ip(v6, iface).await {
                             tracing::warn!(%e, "failed to remove ip");
                         }
@@ -172,17 +205,6 @@ pub mod if_watcher {
                 if !iface.will_babel() {
                     continue;
                 }
-                if iface.get_v6_in(my_range).is_none() {
-                    let addr = Ipv6Net::new_assert(
-                        Ipv6Addr::from_bits(my_range.addr().to_bits() | u128::from(iface_num)),
-                        128,
-                    );
-                    iface_num += 1;
-                    assert!(iface_num < u16::MAX, "Really? u16::MAX interfaces?");
-                    tracing::info!("adding new ip {addr} to {}", iface.name());
-                    add_ip(addr, iface).await?;
-                }
-
                 if ready_ifaces.insert(iface.name().to_owned()) {
                     tracing::info!("telling babeld to watch {}", iface.name());
                     let Ok(()) = send.send(Babble::AddIface(iface.name().to_owned())).await else {
@@ -272,7 +294,7 @@ pub mod babel {
     }
     impl BabeldProcess {
         #[tracing::instrument]
-        async fn spawn(my_range: Ipv6Net, iface: String) -> Result<Self> {
+        async fn spawn(advertised: Ipv6Net, iface: String) -> Result<Self> {
             tokio::fs::create_dir_all(PRIVATE_DIR).await?;
             tokio::fs::set_permissions(PRIVATE_DIR, Permissions::from_mode(0o0700)).await?;
             tracing::info!("spawning babeld socket in {PRIVATE_SOCK_PATH}");
@@ -282,7 +304,7 @@ pub mod babel {
                 .arg("-I")
                 .arg(format!("{PRIVATE_DIR}/babeld.pid"))
                 .arg("-C")
-                .arg(format!("redistribute local ip {my_range}"))
+                .arg(format!("redistribute local ip {advertised}"))
                 .arg("-C")
                 .arg("redistribute local deny")
                 .arg(iface)
@@ -294,6 +316,7 @@ pub mod babel {
                     Err(e.into())
                 }
             };
+
             tokio::time::sleep(Duration::from_millis(10)).await;
             while !matches!(tokio::fs::try_exists(PRIVATE_SOCK_PATH).await, Ok(true)) {
                 tracing::info!("where is the sock");
