@@ -44,7 +44,7 @@ def make_split_decoder_call(
             h = x + r
         else:
             h = x
-            for _ in range(100):
+            for _ in range(50):
                 h = self.post_attention_layernorm(h) + h
             mx.eval(h)
         h = mx.distributed.all_gather(h, group=group)[ATTN_RANK : ATTN_RANK + 1]
@@ -54,7 +54,7 @@ def make_split_decoder_call(
             out = h + self.mlp(self.post_attention_layernorm(h))
         else:
             out = h
-            for _ in range(100):
+            for _ in range(50):
                 out = self.input_layernorm(out) + out
         out = mx.distributed.all_gather(out, group=group)[MOE_RANK : MOE_RANK + 1]
 
