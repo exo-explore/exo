@@ -44,7 +44,7 @@ def make_split_decoder_call(
             h = x + r
         else:
             h = x - x
-        mx.async_eval(h)
+            mx.eval(h)
         h = mx.distributed.all_sum(h, group=group)
 
         # Step 2: MOE_RANK does MoE, ATTN_RANK contributes zeros
