@@ -33,8 +33,12 @@ def make_split_decoder_call(
             f"qwen3_5_moe_split requires world_size==2, got {group.size()}"
         )
     rank = group.rank()
+    _layer_count = 0
 
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
+        nonlocal _layer_count
+        _layer_count += 1
+
         # Step 1: ATTN_RANK does attention, MOE_RANK does dummy layernorm
         if rank == ATTN_RANK:
             if self.is_linear:
@@ -44,8 +48,9 @@ def make_split_decoder_call(
             h = x + r
         else:
             h = x
-            for _ in range(1000):
+            for _ in range(50):
                 h = self.post_attention_layernorm(h) + h
+        if _layer_count % 2 == 0:
             mx.eval(h)
         h = mx.distributed.all_gather(h, group=group)[ATTN_RANK : ATTN_RANK + 1]
 
@@ -54,7 +59,7 @@ def make_split_decoder_call(
             out = h + self.mlp(self.post_attention_layernorm(h))
         else:
             out = h
-            for _ in range(1000):
+            for _ in range(50):
                 out = self.input_layernorm(out) + out
         out = mx.distributed.all_gather(out, group=group)[MOE_RANK : MOE_RANK + 1]
 
