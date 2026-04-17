@@ -39,6 +39,7 @@ from exo.shared.types.events import (
     InputChunkReceived,
     InstanceDeleted,
     LocalForwarderEvent,
+    NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
     TaskCreated,
@@ -48,6 +49,9 @@ from exo.shared.types.events import (
     TracesCollected,
     TracesMerged,
 )
+from exo.shared.types.worker.downloads import DownloadCompleted
+from exo.shared.types.worker.instances import InstanceMeta
+from exo.shared.types.worker.shards import Sharding
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -419,6 +423,39 @@ class Master:
 
                     self._event_log.append(event)
                     await self._send_event(indexed)
+
+                    if isinstance(event, NodeDownloadProgress) and isinstance(event.download_progress, DownloadCompleted):
+                        await self._auto_place_on_download_completed(event.download_progress)
+
+    async def _auto_place_on_download_completed(self, progress: DownloadCompleted) -> None:
+        model_card = progress.shard_metadata.model_card
+        model_id = model_card.model_id
+        already_placed = any(
+            inst.shard_assignments.model_id == model_id
+            for inst in self.state.instances.values()
+        )
+        if already_placed:
+            return
+        logger.info(f"Auto-placing instance for {model_id} after download completed")
+        command = PlaceInstance(
+            model_card=model_card,
+            sharding=Sharding.Pipeline,
+            instance_meta=InstanceMeta.MlxRing,
+            min_nodes=1,
+        )
+        placement = place_instance(
+            command,
+            self.state.topology,
+            self.state.instances,
+            self.state.node_memory,
+            self.state.node_network,
+            download_status=self.state.downloads,
+        )
+        for transition_event in get_transition_events(self.state.instances, placement, self.state.tasks):
+            auto_indexed = IndexedEvent(event=transition_event, idx=len(self._event_log))
+            self.state = apply(self.state, auto_indexed)
+            self._event_log.append(transition_event)
+            await self._send_event(auto_indexed)
 
     # This function is re-entrant, take care!
     async def _send_event(self, event: IndexedEvent):
