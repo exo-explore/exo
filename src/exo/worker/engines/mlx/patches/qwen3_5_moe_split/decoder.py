@@ -50,6 +50,8 @@ def make_split_decoder_call(
             h = x
             for _ in range(50):
                 h = self.post_attention_layernorm(h) + h
+            if _layer_count == 1:
+                mx.eval(h)
         h = mx.distributed.all_gather(h, group=group)[ATTN_RANK : ATTN_RANK + 1]
 
         # Step 2: MOE_RANK does MoE, ATTN_RANK does dummy layernorm
