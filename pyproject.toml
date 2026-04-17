@@ -48,9 +48,18 @@ dev = [
 
 [project.optional-dependencies]
 build = ["nanobind"]
-cpu = ["mlx-cpu==0.31.1; sys_platform == 'linux'", "torch>=2.10.0; sys_platform == 'linux'"]
-cuda12 = ["mlx-cuda-12==0.31.1; sys_platform == 'linux'", "torch>=2.10.0; sys_platform == 'linux'"]
-cuda13 = ["mlx-cuda-13==0.31.1; sys_platform == 'linux'", "torch>=2.10.0; sys_platform == 'linux'"]
+cpu = [
+  "mlx-cpu==0.31.1; sys_platform == 'linux'",
+  "torch>=2.10.0; sys_platform == 'linux'",
+]
+cuda12 = [
+  "mlx-cuda-12==0.31.1; sys_platform == 'linux'",
+  "torch>=2.10.0; sys_platform == 'linux'",
+]
+cuda13 = [
+  "mlx-cuda-13==0.31.1; sys_platform == 'linux'",
+  "torch>=2.10.0; sys_platform == 'linux'",
+]
 
 ###
 # workspace configuration
