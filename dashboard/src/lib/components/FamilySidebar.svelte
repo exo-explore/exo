@@ -32,6 +32,7 @@
     flux: "FLUX",
     "qwen-image": "Qwen Img",
     nemotron: "NVIDIA",
+    gemma: "Google",
   };
 
   function getFamilyName(family: string): string {

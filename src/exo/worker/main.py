@@ -40,11 +40,13 @@ from exo.shared.types.tasks import (
     CreateRunner,
     DownloadModel,
     ImageEdits,
+    LoadModel,
     Shutdown,
     Task,
     TaskStatus,
     TextGeneration,
 )
+from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import InstanceId
@@ -69,12 +71,14 @@ class Worker:
         # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
+        api_port: int,
     ):
         self.node_id: NodeId = node_id
         self.event_receiver = event_receiver
         self.event_sender = event_sender
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
+        self.api_port = api_port
 
         self.state: State = State()
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
@@ -85,7 +89,7 @@ class Worker:
         # Buffer for input image chunks (for image editing)
         self.input_chunk_buffer: dict[CommandId, dict[int, InputImageChunk]] = {}
         self.input_chunk_counts: dict[CommandId, int] = {}
-        self.image_cache: dict[str, str] = {}
+        self.image_cache: dict[Base64ImageHash, Base64Image] = {}
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
         self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
@@ -308,7 +312,7 @@ class Worker:
                     or task.task_params.total_input_chunks > 0
                 ):
                     cmd_id = task.command_id
-                    by_index: dict[int, str] = {}
+                    by_index: dict[int, Base64Image] = {}
 
                     for idx, h in task.task_params.image_hashes.items():
                         assert h in self.image_cache
@@ -325,9 +329,11 @@ class Worker:
                             sorted_chunks = sorted(
                                 per_image[img_idx], key=lambda c: c.chunk_index
                             )
-                            img = "".join(c.data for c in sorted_chunks)
+                            img = Base64Image("".join(c.data for c in sorted_chunks))
                             self.image_cache[
-                                hashlib.sha256(img.encode("ascii")).hexdigest()
+                                Base64ImageHash(
+                                    hashlib.sha256(img.encode("ascii")).hexdigest()
+                                )
                             ] = img
                             by_index[img_idx] = img
                         logger.info(
@@ -335,7 +341,9 @@ class Worker:
                             f"from {len(chunk_buffer)} chunks"
                         )
 
-                    resolved_images = [by_index[i] for i in sorted(by_index)]
+                    resolved_images = [
+                        Base64Image(by_index[i]) for i in sorted(by_index)
+                    ]
                     modified_task = task.model_copy(
                         update={
                             "task_params": task.task_params.model_copy(
@@ -348,6 +356,12 @@ class Worker:
                     if cmd_id in self.input_chunk_counts:
                         del self.input_chunk_counts[cmd_id]
                     await self._start_runner_task(modified_task)
+                case LoadModel(instance_id=instance_id):
+                    if (instance := self.state.instances.get(instance_id)) is not None:
+                        model_id = instance.shard_assignments.model_id
+                        self._download_backoff.reset(model_id)
+
+                    await self._start_runner_task(task)
                 case task:
                     await self._start_runner_task(task)
 
@@ -381,16 +395,17 @@ class Worker:
                 self.state.topology,
                 self.node_id,
                 self.state.node_network,
+                api_port=self.api_port,
             ):
                 if ip in conns[nid]:
                     continue
                 conns[nid].add(ip)
                 edge = SocketConnection(
                     # nonsense multiaddr
-                    sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/52415")
+                    sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/{self.api_port}")
                     if "." in ip
                     # nonsense multiaddr
-                    else Multiaddr(address=f"/ip6/{ip}/tcp/52415"),
+                    else Multiaddr(address=f"/ip6/{ip}/tcp/{self.api_port}"),
                 )
                 if edge not in edges:
                     logger.debug(f"ping discovered {edge=}")
@@ -404,7 +419,7 @@ class Worker:
                 if not isinstance(conn.edge, SocketConnection):
                     continue
                 # ignore mDNS discovered connections
-                if conn.edge.sink_multiaddr.port != 52415:
+                if conn.edge.sink_multiaddr.port != self.api_port:
                     continue
                 if (
                     conn.sink not in conns

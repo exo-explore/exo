@@ -165,6 +165,7 @@ class GenerationStats(BaseModel):
     prompt_tokens: int
     generation_tokens: int
     peak_memory_usage: Memory
+    prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
 
 
 class ImageGenerationStats(BaseModel):
@@ -232,7 +233,7 @@ class ChatCompletionRequest(BaseModel):
 
 
 class BenchChatCompletionRequest(ChatCompletionRequest):
-    pass
+    use_prefix_cache: bool = False
 
 
 class AddCustomModelParams(BaseModel):
@@ -427,6 +428,15 @@ class StartDownloadResponse(CamelCaseModel):
 
 
 class DeleteDownloadResponse(CamelCaseModel):
+    command_id: CommandId
+
+
+class CancelDownloadParams(CamelCaseModel):
+    target_node_id: NodeId
+    model_id: ModelId
+
+
+class CancelDownloadResponse(CamelCaseModel):
     command_id: CommandId
 
 

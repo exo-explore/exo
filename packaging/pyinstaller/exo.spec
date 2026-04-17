@@ -56,6 +56,7 @@ HIDDEN_IMPORTS = sorted(
     set(
         collect_submodules("mlx")
         + _safe_collect("mlx_lm")
+        + _safe_collect("mlx_vlm")
         + _safe_collect("transformers")
     )
 )
@@ -72,8 +73,8 @@ if MACMON_PATH is None:
     raise SystemExit(
         "macmon binary not found in PATH. "
         "Install the pinned fork used by exo via: "
-        "cargo install --git https://github.com/swiftraccoon/macmon "
-        "--rev 9154d234f763fbeffdcb4135d0bbbaf80609699b macmon --force"
+        "cargo install --git https://github.com/vladkens/macmon "
+        "--rev a1cd06b6cc0d5e61db24fd8832e74cd992097a7d macmon --force"
     )
 
 BINARIES: list[tuple[str, str]] = [

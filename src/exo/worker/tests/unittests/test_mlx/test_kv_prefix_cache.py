@@ -189,7 +189,7 @@ class TestKVPrefixCacheWithModel:
         assert stored_length > 0
 
         # Retrieve with same prompt: exact match
-        result_cache, remaining_tokens, matched_index = kv_prefix_cache.get_kv_cache(
+        result_cache, remaining_tokens, matched_index, _ = kv_prefix_cache.get_kv_cache(
             model, tokens
         )
         assert matched_index == 0
@@ -242,7 +242,7 @@ class TestKVPrefixCacheWithModel:
             "Prompts should share a prefix from the chat template"
         )
 
-        result_cache, remaining_tokens, matched_index = kv_prefix_cache.get_kv_cache(
+        result_cache, remaining_tokens, matched_index, _ = kv_prefix_cache.get_kv_cache(
             model, long_tokens
         )
         assert matched_index == 0
@@ -282,7 +282,7 @@ class TestKVPrefixCacheWithModel:
         stored_length = cache_length(kv_prefix_cache.caches[0])
 
         # Get cache and mutate it (simulating what generation does)
-        result_cache, _, matched_index = kv_prefix_cache.get_kv_cache(model, tokens)
+        result_cache, _, matched_index, _ = kv_prefix_cache.get_kv_cache(model, tokens)
         assert matched_index == 0
 
         # Simulate generation: feed many additional tokens through the cache
@@ -329,7 +329,7 @@ class TestKVPrefixCacheWithModel:
         stored_length = cache_length(kv_prefix_cache.caches[0])
 
         for i in range(3):
-            result_cache, _, _ = kv_prefix_cache.get_kv_cache(model, tokens)
+            result_cache, _, _, _ = kv_prefix_cache.get_kv_cache(model, tokens)
 
             head_dim = result_cache[0].keys.shape[-1]
             num_heads = result_cache[0].keys.shape[1]
@@ -401,7 +401,7 @@ class TestKVPrefixCacheWithModel:
 
         # Second call should find a prefix match (the stored cache contains
         # prompt + generated tokens, which shares the prompt prefix)
-        result_cache, remaining_tokens, matched_index = kv_prefix_cache.get_kv_cache(
+        result_cache, remaining_tokens, matched_index, _ = kv_prefix_cache.get_kv_cache(
             model, prompt_tokens
         )
         # The stored cache is longer than the prompt (it includes generated tokens),

@@ -25,7 +25,11 @@ from exo.api.types import (
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.mlx import KVCacheType, Model
-from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
@@ -73,7 +77,11 @@ _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 
 @contextlib.contextmanager
 def patch_embed_tokens(
-    model: Model, embeddings: mx.array, start_offset: int = 0, token_count: int = 0
+    model: Model,
+    embeddings: mx.array,
+    start_offset: int = 0,
+    token_count: int = 0,
+    image_token_id: int | None = None,
 ) -> Generator[None]:
     inner = get_inner_model(model)  # type: ignore
     original_embed = inner.embed_tokens  # type: ignore
@@ -81,15 +89,30 @@ def patch_embed_tokens(
     offset = [start_offset]
 
     def _inject(input_ids: mx.array) -> mx.array:
-        start = offset[0]
-        if start >= end_offset:
-            return original_embed(input_ids)  # type: ignore
+        chunk_start = offset[0]
         chunk_len = input_ids.shape[-1]
-        end = min(start + chunk_len, end_offset)
-        offset[0] = end
-        if end - start < chunk_len:
+        chunk_end = chunk_start + chunk_len
+        offset[0] = chunk_end
+
+        # The injection window is [start_offset, end_offset).
+        if chunk_end <= start_offset or chunk_start >= end_offset:
             return original_embed(input_ids)  # type: ignore
-        return embeddings[:, start:end, :]
+
+        # Mixed chunk: splice the pre-computed embeddings for the overlap
+        # into `original_embed(input_ids)` for any text-only fringes.
+        overlap_start = max(chunk_start, start_offset)
+        overlap_end = min(chunk_end, end_offset)
+        dst_start = overlap_start - chunk_start
+        dst_end = overlap_end - chunk_start
+        text_embeds: mx.array = original_embed(input_ids)  # type: ignore
+        return mx.concatenate(
+            [
+                text_embeds[:, :dst_start, :],
+                embeddings[:, overlap_start:overlap_end, :],
+                text_embeds[:, dst_end:, :],
+            ],
+            axis=1,
+        )
 
     for attr in dir(original_embed):  # type: ignore
         if not attr.startswith("_") and not hasattr(_inject, attr):
@@ -97,10 +120,30 @@ def patch_embed_tokens(
                 setattr(_inject, attr, getattr(original_embed, attr))  # type: ignore
 
     inner.embed_tokens = _inject
+
+    # Gemma 4 (e2b/e4b) has a second, independent embedding table that produces
+    # per-layer conditioning signals via self.embed_tokens_per_layer(input_ids).
+    # The injected vision embeddings live in the main residual stream only, so
+    # if image_token_id positions are passed through as-is the per-layer table
+    # produces garbage signals at those positions (the `<image>` token was never
+    # trained to have meaningful per-layer inputs).
+    original_per_layer = getattr(inner, "embed_tokens_per_layer", None)  # type: ignore
+    if original_per_layer is not None and image_token_id is not None:
+
+        def _clean_per_layer(input_ids: mx.array) -> mx.array:
+            clean_ids = mx.where(
+                input_ids == image_token_id, mx.zeros_like(input_ids), input_ids
+            )
+            return original_per_layer(clean_ids)  # type: ignore
+
+        inner.embed_tokens_per_layer = _clean_per_layer
+
     try:
         yield
     finally:
         inner.embed_tokens = original_embed
+        if original_per_layer is not None and image_token_id is not None:
+            inner.embed_tokens_per_layer = original_per_layer
 
 
 class PrefillCancelled(BaseException):
@@ -355,7 +398,9 @@ def warmup_inference(
 ) -> int:
     logger.info(f"warming up inference for instance: {model_id}")
 
-    content = "Prompt to warm up the inference engine. Repeat this."
+    content = InputMessageContent(
+        "Prompt to warm up the inference engine. Repeat this."
+    )
 
     warmup_task_params = TextGenerationTaskParams(
         model=model_id,
@@ -523,18 +568,21 @@ def mlx_generate(
 
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench
-    if is_bench:
+    if is_bench and not task.use_prefix_cache:
         kv_prefix_cache = None
 
     # Use prefix cache if available, otherwise create fresh cache
     prefix_hit_length = 0
     matched_index: int | None = None
+    is_exact_hit = False
     if kv_prefix_cache is None:
         caches = make_kv_cache(model=model)
         prompt_tokens = all_prompt_tokens
     else:
-        caches, prompt_tokens, matched_index = kv_prefix_cache.get_kv_cache(
-            model, all_prompt_tokens, media_regions=media_regions
+        caches, prompt_tokens, matched_index, is_exact_hit = (
+            kv_prefix_cache.get_kv_cache(
+                model, all_prompt_tokens, media_regions=media_regions
+            )
         )
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
         if prefix_hit_length > 0:
@@ -570,7 +618,11 @@ def mlx_generate(
 
     maybe_vision_ctx = (
         patch_embed_tokens(
-            model, vision.embeddings, prefix_hit_length, len(prompt_tokens) - 1
+            model,
+            vision.embeddings,
+            prefix_hit_length,
+            len(prompt_tokens) - 1,
+            image_token_id=vision.image_token_id,
         )
         if vision is not None
         else contextlib.nullcontext()
@@ -588,6 +640,37 @@ def mlx_generate(
         )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
+    if kv_prefix_cache is not None and matched_index is not None and is_exact_hit:
+        prefill_tps = kv_prefix_cache.prefill_tps[matched_index]
+
+    if kv_prefix_cache is not None:
+        hit_ratio = (
+            prefix_hit_length / len(all_prompt_tokens)
+            if len(all_prompt_tokens) > 0
+            else 0.0
+        )
+        if matched_index is not None and (
+            prefix_hit_length >= min_prefix_hit_length
+            and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
+        ):
+            kv_prefix_cache.update_kv_cache(
+                matched_index,
+                all_prompt_tokens,
+                caches,
+                cache_snapshots,
+                restore_pos=prefix_hit_length,
+                media_regions=media_regions,
+                prefill_tps=prefill_tps,
+            )
+        else:
+            kv_prefix_cache.add_kv_cache(
+                all_prompt_tokens,
+                caches,
+                cache_snapshots,
+                media_regions=media_regions,
+                prefill_tps=prefill_tps,
+            )
+
     # stream_generate starts from the last token
     last_token = prompt_tokens[-2:]
 
@@ -596,11 +679,6 @@ def mlx_generate(
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
     usage: Usage | None = None
-    in_thinking = False
-    reasoning_tokens = 0
-    think_start = tokenizer.think_start
-    think_end = tokenizer.think_end
-
     logger.info("Starting decode")
     mx_barrier(group)
 
@@ -621,13 +699,6 @@ def mlx_generate(
     ):
         generated_text_parts.append(out.text)
         accumulated_text += out.text
-
-        if think_start is not None and out.text == think_start:
-            in_thinking = True
-        elif think_end is not None and out.text == think_end:
-            in_thinking = False
-        if in_thinking:
-            reasoning_tokens += 1
 
         # Check for stop sequences
         text = out.text
@@ -672,9 +743,7 @@ def mlx_generate(
                 prompt_tokens_details=PromptTokensDetails(
                     cached_tokens=prefix_hit_length
                 ),
-                completion_tokens_details=CompletionTokensDetails(
-                    reasoning_tokens=reasoning_tokens
-                ),
+                completion_tokens_details=CompletionTokensDetails(reasoning_tokens=0),
             )
 
         # Extract logprobs from the full vocabulary logprobs array
@@ -701,40 +770,6 @@ def mlx_generate(
                 f"{prefill_tps:.1f} tok/s, generated {generated_tokens} tokens @ "
                 f"{generation_tps:.1f} tok/s"
             )
-            if kv_prefix_cache is not None:
-                generated_tokens_array = mx.array(
-                    tokenizer.encode(
-                        "".join(generated_text_parts), add_special_tokens=False
-                    )
-                )
-                full_prompt_tokens = mx.concatenate(
-                    [all_prompt_tokens, generated_tokens_array]
-                )
-                hit_ratio = (
-                    prefix_hit_length / len(all_prompt_tokens)
-                    if len(all_prompt_tokens) > 0
-                    else 0.0
-                )
-                if matched_index is not None and (
-                    prefix_hit_length >= min_prefix_hit_length
-                    and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
-                ):
-                    kv_prefix_cache.update_kv_cache(
-                        matched_index,
-                        full_prompt_tokens,
-                        caches,
-                        cache_snapshots,
-                        restore_pos=prefix_hit_length,
-                        media_regions=media_regions,
-                    )
-                else:
-                    kv_prefix_cache.add_kv_cache(
-                        full_prompt_tokens,
-                        caches,
-                        cache_snapshots,
-                        media_regions=media_regions,
-                    )
-
         if on_generation_token is not None:
             on_generation_token()
 

@@ -407,11 +407,25 @@ class ResponseReasoningItem(BaseModel, frozen=True):
 ResponseItem = ResponseMessageItem | ResponseFunctionCallItem | ResponseReasoningItem
 
 
+class InputTokensDetails(BaseModel, frozen=True):
+    """Breakdown of input token counts in Responses API response."""
+
+    cached_tokens: int = 0
+
+
+class OutputTokensDetails(BaseModel, frozen=True):
+    """Breakdown of output token counts in Responses API response."""
+
+    reasoning_tokens: int = 0
+
+
 class ResponseUsage(BaseModel, frozen=True):
     """Token usage in Responses API response."""
 
     input_tokens: int
+    input_tokens_details: InputTokensDetails
     output_tokens: int
+    output_tokens_details: OutputTokensDetails
     total_tokens: int
 
 

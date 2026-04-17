@@ -136,12 +136,30 @@ class RunnerSupervisor:
                     "Runner process didn't shutdown succesfully, terminating"
                 )
                 self.runner_process.terminate()
-                self.runner_process.join(timeout=5)
-                # This is overkill but it's not technically bad, just unnecessary.
-                if self.runner_process.is_alive():
-                    logger.critical("Runner process didn't respond to SIGTERM, killing")
-                    self.runner_process.kill()
-                    self.runner_process.join(timeout=5)
+                self.runner_process.join(timeout=10)
+
+                if not self.runner_process.is_alive():
+                    logger.warning("Terminated nicely in the first attempt!")
+
+                else:
+                    # Try really hard to terminate
+                    for i in range(2, 11):
+                        self.runner_process.terminate()
+                        self.runner_process.join(timeout=2)
+                        if not self.runner_process.is_alive():
+                            logger.warning(f"That took {i} attempts :)")
+                            break
+                    # Try even harder to kill
+                    else:
+                        logger.critical(
+                            "Runner process didn't respond to SIGTERM, killing"
+                        )
+                        j = 0
+                        while self.runner_process.is_alive():
+                            j += 1
+                            self.runner_process.kill()
+                            self.runner_process.join(timeout=5)
+                            logger.warning(f"That took {j} attempts :(")
             else:
                 logger.info("Runner process succesfully terminated")
 
@@ -276,9 +294,7 @@ class RunnerSupervisor:
                 await self._event_sender.send(
                     RunnerStatusUpdated(
                         runner_id=self.bound_instance.bound_runner_id,
-                        runner_status=RunnerFailed(
-                            error_message=f"Terminated ({cause})"
-                        ),
+                        runner_status=self.status,
                     )
                 )
         except (ClosedResourceError, BrokenResourceError):

@@ -558,7 +558,7 @@ dependencies = [
     { name = "loguru", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mflux", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.30.6", source = { registry = "https://pypi.org/simple" }, extra = ["cpu"], marker = "sys_platform == 'linux'" },
-    { name = "mlx", version = "0.31.2.dev20260324+e5e64331", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#e5e64331830d9b04ae9082b843073f9c1fa7705e" }, marker = "sys_platform == 'darwin'" },
+    { name = "mlx", version = "0.31.2.dev20260416+503ca2b7", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#503ca2b7ce24d90104973eb069e7ba1c45fd0ef0" }, marker = "sys_platform == 'darwin'" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "msgspec", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1436,7 +1436,7 @@ dependencies = [
     { name = "huggingface-hub", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "matplotlib", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.30.6", source = { registry = "https://pypi.org/simple" }, extra = ["cuda13"], marker = "sys_platform == 'linux'" },
-    { name = "mlx", version = "0.31.2.dev20260324+e5e64331", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#e5e64331830d9b04ae9082b843073f9c1fa7705e" }, marker = "sys_platform == 'darwin'" },
+    { name = "mlx", version = "0.31.2.dev20260416+503ca2b7", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#503ca2b7ce24d90104973eb069e7ba1c45fd0ef0" }, marker = "sys_platform == 'darwin'" },
     { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "opencv-python", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "piexif", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1494,8 +1494,8 @@ cuda13 = [
 
 [[package]]
 name = "mlx"
-version = "0.31.2.dev20260324+e5e64331"
-source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#e5e64331830d9b04ae9082b843073f9c1fa7705e" }
+version = "0.31.2.dev20260416+503ca2b7"
+source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#503ca2b7ce24d90104973eb069e7ba1c45fd0ef0" }
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'darwin'",
     "python_full_version < '3.14' and sys_platform == 'darwin'",
@@ -1527,11 +1527,11 @@ wheels = [
 
 [[package]]
 name = "mlx-lm"
-version = "0.31.2"
-source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Ffix-arrayscache-leak#d36e9b661e55a5fc0f77fb6f17ea643aa2dc87aa" }
+version = "0.31.3"
+source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Ffix-arrayscache-leak#f5b9c9f42ef7577c73c7f6eeeb15b35a6682ff57" }
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "mlx", version = "0.31.2.dev20260324+e5e64331", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#e5e64331830d9b04ae9082b843073f9c1fa7705e" }, marker = "sys_platform == 'darwin'" },
+    { name = "mlx", version = "0.31.2.dev20260416+503ca2b7", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#503ca2b7ce24d90104973eb069e7ba1c45fd0ef0" }, marker = "sys_platform == 'darwin'" },
     { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "protobuf", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1541,14 +1541,14 @@ dependencies = [
 
 [[package]]
 name = "mlx-vlm"
-version = "0.4.1"
+version = "0.4.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "datasets", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "miniaudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", version = "0.30.6", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux'" },
-    { name = "mlx", version = "0.31.2.dev20260324+e5e64331", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#e5e64331830d9b04ae9082b843073f9c1fa7705e" }, marker = "sys_platform == 'darwin'" },
+    { name = "mlx", version = "0.31.2.dev20260416+503ca2b7", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#503ca2b7ce24d90104973eb069e7ba1c45fd0ef0" }, marker = "sys_platform == 'darwin'" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "opencv-python", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1558,9 +1558,9 @@ dependencies = [
     { name = "transformers", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "uvicorn", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/57/8f/31204f1a8c7404e523a5578949ea668e668e10dd67a0f63336f261014c0f/mlx_vlm-0.4.1.tar.gz", hash = "sha256:4e2d8a232715dbca72d346f43cf54d5738452848855792ffb1b285228ae7c7bd", size = 621840, upload-time = "2026-03-21T14:26:04.586Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/ec/108aec30efb159940ea29d133d5d8ec14840edbec914869b46eaafac5552/mlx_vlm-0.4.4.tar.gz", hash = "sha256:3197e277c1be9ed1712ea04624df029e486f7747ad93e40e7bd1c9c771f8b179", size = 836370, upload-time = "2026-04-04T15:19:01.087Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c1/78/856f44c6bdd8791427fa59a093a1d00c91cdbe16238506602fc3968017bb/mlx_vlm-0.4.1-py3-none-any.whl", hash = "sha256:89feca2e8be31609770c0e8a6d88fa21d00ee25bd3d56b4aafce59d35dd63b71", size = 768806, upload-time = "2026-03-21T14:26:03.129Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/81/235518176c3c8230e5274e91346ecf940591f653e73b0daeb505fb37eea9/mlx_vlm-0.4.4-py3-none-any.whl", hash = "sha256:3ff86ea738ab1914dc1b07e4fa5d4cc34bec5909e540692cfad0af808af13c11", size = 1014936, upload-time = "2026-04-04T15:18:59.328Z" },
 ]
 
 [[package]]

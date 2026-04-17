@@ -19,8 +19,8 @@ To run EXO from source:
 - [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
   Use the pinned fork revision used by this repo instead of Homebrew `macmon`.
   ```bash
-  cargo install --git https://github.com/swiftraccoon/macmon \
-    --rev 9154d234f763fbeffdcb4135d0bbbaf80609699b \
+  cargo install --git https://github.com/vladkens/macmon \
+    --rev a1cd06b6cc0d5e61db24fd8832e74cd992097a7d \
     macmon \
     --force
   ```

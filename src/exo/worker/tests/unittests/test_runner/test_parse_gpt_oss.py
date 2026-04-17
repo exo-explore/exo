@@ -1,11 +1,19 @@
 from collections.abc import Generator
 
-from exo.api.types import FinishReason
+from exo.api.types import (
+    CompletionTokensDetails,
+    FinishReason,
+    PromptTokensDetails,
+    Usage,
+)
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ToolCallResponse,
 )
-from exo.worker.runner.llm_inference.model_output_parsers import parse_gpt_oss
+from exo.worker.runner.llm_inference.model_output_parsers import (
+    count_reasoning_tokens,
+    parse_gpt_oss,
+)
 
 # Token IDs from mlx-community/gpt-oss-20b-MXFP4-Q8 tokenizer.
 # These are stable since they come from the model's vocabulary.
@@ -85,6 +93,7 @@ THINKING_THEN_TOOL_TOKENS: list[tuple[int, str]] = [
 def _make_gen_responses(
     tokens: list[tuple[int, str]],
     last_finish_reason: FinishReason = "stop",
+    last_usage: Usage | None = None,
 ) -> list[GenerationResponse]:
     """Build GenerationResponse list from (token_id, text) pairs."""
     responses: list[GenerationResponse] = []
@@ -95,7 +104,7 @@ def _make_gen_responses(
                 text=text,
                 token=tid,
                 finish_reason=last_finish_reason if is_last else None,
-                usage=None,
+                usage=last_usage if is_last else None,
             )
         )
     return responses
@@ -251,3 +260,43 @@ class TestParseGptOssMaxTokensTruncation:
         # due to Harmony encoding, so we just check something was emitted)
         all_text = "".join(r.text for r in gen_responses)
         assert len(all_text) > 0
+
+
+class TestGptOssReasoningTokensCounted:
+    """count_reasoning_tokens must patch Usage when parse_gpt_oss emits thinking tokens."""
+
+    def test_thinking_then_text_counts_reasoning_tokens(self):
+        usage = Usage(
+            prompt_tokens=10,
+            completion_tokens=len(PLAIN_TEXT_TOKENS),
+            total_tokens=10 + len(PLAIN_TEXT_TOKENS),
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=0),
+            completion_tokens_details=CompletionTokensDetails(reasoning_tokens=0),
+        )
+        responses = _make_gen_responses(PLAIN_TEXT_TOKENS, last_usage=usage)
+
+        def _gen() -> Generator[GenerationResponse, None, None]:
+            yield from responses
+
+        results = list(
+            x for x in count_reasoning_tokens(parse_gpt_oss(_gen())) if x is not None
+        )
+
+        # Verify thinking tokens were detected
+        thinking = [
+            r for r in results if isinstance(r, GenerationResponse) and r.is_thinking
+        ]
+        assert len(thinking) > 0
+
+        # Verify reasoning_tokens is patched on responses that carry Usage
+        with_usage = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse) and r.usage is not None
+        ]
+        assert len(with_usage) > 0
+        assert all(
+            r.usage is not None
+            and r.usage.completion_tokens_details.reasoning_tokens == len(thinking)
+            for r in with_usage
+        )

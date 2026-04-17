@@ -4,13 +4,13 @@ All external API formats (Chat Completions, Claude Messages, OpenAI Responses)
 are converted to TextGenerationTaskParams at the API boundary via adapters.
 """
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, WrapValidator
 
-from exo.shared.types.common import ModelId
+from exo.shared.types.common import ModelId, TruncatingString
 
-MessageRole = Literal["user", "assistant", "system", "developer"]
+MessageRole = Literal["user", "assistant", "system", "developer", "tool"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
 
@@ -36,11 +36,49 @@ def resolve_reasoning_params(
     return resolved_effort, resolved_thinking
 
 
+class InputMessageContent(TruncatingString):
+    truncate_length = 100
+
+
 class InputMessage(BaseModel, frozen=True):
     """Internal message for text generation pipelines."""
 
     role: MessageRole
-    content: str
+    content: InputMessageContent
+
+
+class Base64Image(TruncatingString):
+    truncate_length = 10
+
+
+class Base64ImageHash(TruncatingString):
+    truncate_length = 10
+
+
+def _wrap_chat_value(x: Any) -> Any:  # pyright: ignore[reportAny]
+    if isinstance(x, (InputMessageContent, Base64Image)):
+        return x
+    if isinstance(x, str):
+        return InputMessageContent(x)
+    if isinstance(x, dict):
+        return {k: _wrap_chat_value(v) for k, v in x.items()}  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(x, list):
+        return [_wrap_chat_value(i) for i in x]  # pyright: ignore[reportUnknownVariableType]
+    return x  # pyright: ignore[reportAny]
+
+
+type ChatTemplateValue = Annotated[
+    InputMessageContent
+    | Base64Image
+    | dict[str, ChatTemplateValue]
+    | list[ChatTemplateValue]
+    | str
+    | int
+    | float
+    | MessageRole
+    | bool,
+    WrapValidator(lambda a, b: b(_wrap_chat_value(a))),  # pyright: ignore[reportAny]
+]
 
 
 class TextGenerationTaskParams(BaseModel, frozen=True):
@@ -52,17 +90,18 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
 
     model: ModelId
     input: list[InputMessage]
-    instructions: str | None = None
+    instructions: InputMessageContent | None = None
     max_output_tokens: int | None = None
     temperature: float | None = None
     top_p: float | None = None
     stream: bool = False
     tools: list[dict[str, Any]] | None = None
     bench: bool = False
+    use_prefix_cache: bool = False
     top_k: int | None = None
     stop: str | list[str] | None = None
     seed: int | None = None
-    chat_template_messages: list[dict[str, Any]] | None = None
+    chat_template_messages: list[dict[str, ChatTemplateValue]] | None = None
     reasoning_effort: ReasoningEffort | None = None
     enable_thinking: bool | None = None
     logprobs: bool = False
@@ -70,7 +109,7 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     min_p: float | None = None
     repetition_penalty: float | None = None
     repetition_context_size: int | None = None
-    images: list[str] = Field(default_factory=list)
-    image_hashes: dict[int, str] = Field(default_factory=dict)
+    images: list[Base64Image] = Field(default_factory=list)
+    image_hashes: dict[int, Base64ImageHash] = Field(default_factory=dict)
     total_input_chunks: int = 0
     image_count: int = 0

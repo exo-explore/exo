@@ -5,6 +5,32 @@
 import { getDocument, GlobalWorkerOptions, version } from "pdfjs-dist";
 import type { DocumentInitParameters } from "pdfjs-dist/types/src/display/api";
 
+// Safari (through at least 18/26) does not implement
+// ReadableStream.prototype[Symbol.asyncIterator], which pdfjs-dist uses
+// internally in getTextContent(). Without this polyfill, `for await (const n
+// of stream)` throws "undefined is not a function" and PDF processing fails.
+if (
+  typeof ReadableStream !== "undefined" &&
+  !(ReadableStream.prototype as unknown as Record<symbol, unknown>)[
+    Symbol.asyncIterator
+  ]
+) {
+  (ReadableStream.prototype as unknown as Record<symbol, unknown>)[
+    Symbol.asyncIterator
+  ] = async function* (this: ReadableStream<unknown>) {
+    const reader = this.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        yield value;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  };
+}
+
 GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/pdf.worker.mjs`;
 
 const PDF_PAGE_SCALE = 2.0;
