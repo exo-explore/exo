@@ -33,19 +33,28 @@ def make_split_decoder_call(
             f"qwen3_5_moe_split requires world_size==2, got {group.size()}"
         )
     rank = group.rank()
+    _cpu_stream = mx.default_stream(mx.Device(mx.cpu))
 
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
-        # Both ranks start from x. One does attention, one does MoE, then all_sum.
+        # Step 1: ATTN_RANK does attention, MOE_RANK contributes zeros
         if rank == ATTN_RANK:
             if self.is_linear:
                 r = self.linear_attn(self.input_layernorm(x), mask, cache)
             else:
                 r = self.self_attn(self.input_layernorm(x), mask, cache)
-            out = x + r
+            h = x + r
         else:
-            out = self.mlp(self.post_attention_layernorm(x))
-            out = self.mlp(self.post_attention_layernorm(out))
-        out = mx.distributed.all_sum(out, group=group)
+            h = x - x
+        with mx.stream(_cpu_stream):
+            h = mx.distributed.all_sum(h, group=group)
+
+        # Step 2: MOE_RANK does MoE, ATTN_RANK contributes zeros
+        if rank == MOE_RANK:
+            out = h + self.mlp(self.post_attention_layernorm(h))
+        else:
+            out = h - h
+        with mx.stream(_cpu_stream):
+            out = mx.distributed.all_sum(out, group=group)
 
         return out
 
