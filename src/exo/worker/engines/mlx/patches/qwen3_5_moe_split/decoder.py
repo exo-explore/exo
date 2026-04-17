@@ -43,9 +43,10 @@ def make_split_decoder_call(
                 r = self.self_attn(self.input_layernorm(x), mask, cache)
             out = x + r
         else:
-            out = self.mlp(self.post_attention_layernorm(x))
-            mx.eval(out)
-        out = mx.distributed.all_sum(out, group=group) * 0.5
+            # out = self.mlp(self.post_attention_layernorm(x))
+            # mx.eval(out)
+            out = x
+        # out = mx.distributed.all_sum(out, group=group) * 0.5
 
         return out
 
