@@ -25,11 +25,12 @@ def make_split_decoder_call(
         )
     rank = group.rank()
     _layer_count = 0
-    # Cached mask slices for S>1 (set on first layer, reused across layers)
-    _cached_masks: dict[int, tuple] = {}  # keyed by S
+    _cached_masks: dict[int, tuple] = {}
+    # Cross-layer pipeline state: previous layer's self + pending h_H1
+    _prev_layer_self = None
+    _pending_h_H1: mx.array | None = None
 
     def _attn(self, x, mask, cache):  # type: ignore[no-untyped-def]
-        """Run attention (GDN or GQA)."""
         if self.is_linear:
             r = self.linear_attn(self.input_layernorm(x), mask, cache)
         else:
@@ -37,7 +38,6 @@ def make_split_decoder_call(
         return x + r
 
     def _get_masks(S, mid, mask, cache):  # type: ignore[no-untyped-def]
-        """Compute and cache mask slices for H0 and H1."""
         if S in _cached_masks:
             return _cached_masks[S]
         if mask is None:
@@ -54,13 +54,15 @@ def make_split_decoder_call(
         return result
 
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
-        nonlocal _layer_count
+        nonlocal _layer_count, _prev_layer_self, _pending_h_H1
         _layer_count += 1
         S = x.shape[1]
 
         # ---- S == 1: serial decode (Phase 1a path) ----
         if S == 1:
             _cached_masks.clear()
+            _prev_layer_self = None
+            _pending_h_H1 = None
             if rank == ATTN_RANK:
                 h = _attn(self, x, mask, cache)
             else:
@@ -82,43 +84,75 @@ def make_split_decoder_call(
             out = mx.distributed.all_gather(out, group=group)[MOE_RANK : MOE_RANK + 1]
             return out
 
-        # ---- S > 1: within-layer pipelined prefill/verify ----
+        # ---- S > 1: cross-layer pipelined prefill/verify ----
         mid = S // 2
         x_H0 = x[:, :mid, :]
         x_H1 = x[:, mid:, :]
         mask_H0, mask_H1 = _get_masks(S, mid, mask, cache)
+        is_last_layer = (_layer_count % n_layers == 0)
 
-        # Step 1: ATTN does H0 attention. MOE idle.
+        # Stage A: ATTN does H0 attention || MOE does prev layer's H1 MoE
         if rank == ATTN_RANK:
             h_H0 = _attn(self, x_H0, mask_H0, cache)
         else:
-            h_H0 = x_H0
+            h_H0 = x_H0  # placeholder
+
+        if rank == MOE_RANK and _pending_h_H1 is not None:
+            # Finish previous layer's H1 using previous layer's MLP
+            out_H1_prev = _pending_h_H1 + _prev_layer_self.mlp(
+                _prev_layer_self.post_attention_layernorm(_pending_h_H1)
+            )
+        else:
+            out_H1_prev = None
+
         h_H0 = mx.distributed.all_gather(h_H0, group=group)[ATTN_RANK : ATTN_RANK + 1]
+        if out_H1_prev is not None:
+            out_H1_prev = mx.distributed.all_gather(out_H1_prev, group=group)[MOE_RANK : MOE_RANK + 1]
         mx.eval(h_H0)
 
-        # Step 2: ATTN does H1 attention || MOE does H0 MoE (OVERLAP)
+        # Stage B: ATTN does H1 attention || MOE does this layer's H0 MoE
         if rank == ATTN_RANK:
             h_H1 = _attn(self, x_H1, mask_H1, cache)
         else:
-            h_H1 = x_H1
+            h_H1 = x_H1  # placeholder
 
         if rank == MOE_RANK:
             out_H0 = h_H0 + self.mlp(self.post_attention_layernorm(h_H0))
         else:
-            out_H0 = h_H0
+            out_H0 = h_H0  # placeholder
 
         h_H1 = mx.distributed.all_gather(h_H1, group=group)[ATTN_RANK : ATTN_RANK + 1]
         out_H0 = mx.distributed.all_gather(out_H0, group=group)[MOE_RANK : MOE_RANK + 1]
         mx.eval(h_H1)
         mx.eval(out_H0)
 
-        # Step 3: MOE does H1 MoE. ATTN idle.
-        if rank == MOE_RANK:
-            out_H1 = h_H1 + self.mlp(self.post_attention_layernorm(h_H1))
+        # Save state for next layer's Stage A
+        _prev_layer_self = self
+        _pending_h_H1 = h_H1
+
+        # Determine out_H1 for the return value
+        if is_last_layer:
+            # Last layer: flush — MOE processes H1 now
+            if rank == MOE_RANK:
+                out_H1 = h_H1 + self.mlp(self.post_attention_layernorm(h_H1))
+            else:
+                out_H1 = h_H1
+            out_H1 = mx.distributed.all_gather(out_H1, group=group)[MOE_RANK : MOE_RANK + 1]
+            mx.eval(out_H1)
+            _prev_layer_self = None
+            _pending_h_H1 = None
+        elif out_H1_prev is not None:
+            # Layers 1+: use prev layer's H1 MoE result (computed in Stage A)
+            mx.eval(out_H1_prev)
+            out_H1 = out_H1_prev
         else:
-            out_H1 = h_H1
-        out_H1 = mx.distributed.all_gather(out_H1, group=group)[MOE_RANK : MOE_RANK + 1]
-        mx.eval(out_H1)
+            # Layer 0: startup bubble — MOE processes H1 now (no overlap)
+            if rank == MOE_RANK:
+                out_H1 = h_H1 + self.mlp(self.post_attention_layernorm(h_H1))
+            else:
+                out_H1 = h_H1
+            out_H1 = mx.distributed.all_gather(out_H1, group=group)[MOE_RANK : MOE_RANK + 1]
+            mx.eval(out_H1)
 
         return mx.concatenate([out_H0, out_H1], axis=1)
 
