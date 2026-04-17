@@ -242,6 +242,7 @@ class Node:
                         await self.download_coordinator.shutdown()
                         storage_config = self.download_coordinator.storage_config
                         active_model_ids = self.download_coordinator._active_model_ids  # pyright: ignore[reportPrivateUsage]
+                        model_last_used = self.download_coordinator._model_last_used  # pyright: ignore[reportPrivateUsage]
                         self.download_coordinator = DownloadCoordinator(
                             self.node_id,
                             exo_shard_downloader(offline=self.offline),
@@ -254,6 +255,7 @@ class Node:
                             storage_config=storage_config,
                         )
                         self.download_coordinator._active_model_ids = active_model_ids  # pyright: ignore[reportPrivateUsage]
+                        self.download_coordinator._model_last_used = model_last_used  # pyright: ignore[reportPrivateUsage]
                         self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
                         await self.worker.shutdown()
