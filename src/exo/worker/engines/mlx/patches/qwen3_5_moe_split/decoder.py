@@ -25,6 +25,8 @@ def make_split_decoder_call(
         )
     rank = group.rank()
     _layer_count = 0
+    # Cached mask slices for S>1 (set on first layer, reused across layers)
+    _cached_masks: dict[int, tuple] = {}  # keyed by S
 
     def _attn(self, x, mask, cache):  # type: ignore[no-untyped-def]
         """Run attention (GDN or GQA)."""
@@ -34,6 +36,23 @@ def make_split_decoder_call(
             r = self.self_attn(self.input_layernorm(x), mask, cache)
         return x + r
 
+    def _get_masks(S, mid, mask, cache):  # type: ignore[no-untyped-def]
+        """Compute and cache mask slices for H0 and H1."""
+        if S in _cached_masks:
+            return _cached_masks[S]
+        if mask is None:
+            result = (None, None)
+        else:
+            if hasattr(cache, 'offset'):
+                offset = cache.offset
+            elif hasattr(cache, 'cache') and cache.cache[0] is not None:
+                offset = cache.cache[0].shape[1]
+            else:
+                offset = 0
+            result = (mask[:, :, :mid, :offset + mid], mask[:, :, mid:, :])
+        _cached_masks[S] = result
+        return result
+
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
         nonlocal _layer_count
         _layer_count += 1
@@ -41,6 +60,7 @@ def make_split_decoder_call(
 
         # ---- S == 1: serial decode (Phase 1a path) ----
         if S == 1:
+            _cached_masks.clear()
             if rank == ATTN_RANK:
                 h = _attn(self, x, mask, cache)
             else:
@@ -66,26 +86,13 @@ def make_split_decoder_call(
         mid = S // 2
         x_H0 = x[:, :mid, :]
         x_H1 = x[:, mid:, :]
-
-        # Slice masks for H0 and H1 queries
-        if mask is not None:
-            if hasattr(cache, 'offset'):
-                offset = cache.offset
-            elif hasattr(cache, 'cache') and cache.cache[0] is not None:
-                offset = cache.cache[0].shape[1]
-            else:
-                offset = 0
-            mask_H0 = mask[:, :, :mid, :offset + mid]
-            mask_H1 = mask[:, :, mid:, :]
-        else:
-            mask_H0 = None
-            mask_H1 = None
+        mask_H0, mask_H1 = _get_masks(S, mid, mask, cache)
 
         # Step 1: ATTN does H0 attention. MOE idle.
         if rank == ATTN_RANK:
             h_H0 = _attn(self, x_H0, mask_H0, cache)
         else:
-            h_H0 = x_H0  # placeholder
+            h_H0 = x_H0
         h_H0 = mx.distributed.all_gather(h_H0, group=group)[ATTN_RANK : ATTN_RANK + 1]
         mx.eval(h_H0)
 
@@ -93,14 +100,13 @@ def make_split_decoder_call(
         if rank == ATTN_RANK:
             h_H1 = _attn(self, x_H1, mask_H1, cache)
         else:
-            h_H1 = x_H1  # placeholder
+            h_H1 = x_H1
 
         if rank == MOE_RANK:
             out_H0 = h_H0 + self.mlp(self.post_attention_layernorm(h_H0))
         else:
-            out_H0 = h_H0  # placeholder
+            out_H0 = h_H0
 
-        # Share both results
         h_H1 = mx.distributed.all_gather(h_H1, group=group)[ATTN_RANK : ATTN_RANK + 1]
         out_H0 = mx.distributed.all_gather(out_H0, group=group)[MOE_RANK : MOE_RANK + 1]
         mx.eval(h_H1)
@@ -110,7 +116,7 @@ def make_split_decoder_call(
         if rank == MOE_RANK:
             out_H1 = h_H1 + self.mlp(self.post_attention_layernorm(h_H1))
         else:
-            out_H1 = h_H1  # placeholder
+            out_H1 = h_H1
         out_H1 = mx.distributed.all_gather(out_H1, group=group)[MOE_RANK : MOE_RANK + 1]
         mx.eval(out_H1)
 
