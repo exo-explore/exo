@@ -44,6 +44,7 @@ def make_split_decoder_call(
             h = x + r
         else:
             h = self.input_layernorm(x)
+            mx.eval(h)
         h = mx.distributed.all_gather(h, group=group)[ATTN_RANK : ATTN_RANK + 1]
 
         # Step 2: MOE_RANK does MoE, ATTN_RANK does dummy layernorm
