@@ -118,6 +118,8 @@ prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 extra-build-dependencies = { "miniaudio" = ["setuptools", "cffi", "pycparser"] }
 
+override-dependencies = ["mlx[cpu]==0.30.6; sys_platform == 'linux'"]
+
 ###
 # ruff configuration
 ###
