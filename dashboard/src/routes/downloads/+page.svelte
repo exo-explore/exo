@@ -39,13 +39,13 @@
         total: number;
         modelDirectory?: string;
       }
-    | { kind: "failed"; modelDirectory?: string }
+    | { kind: "failed"; errorMessage?: string; modelDirectory?: string }
     | {
         kind: "rejected";
         reason: string;
         requiredBytes: number;
         availableBytes: number;
-        limitBytes: number;
+        limitBytes?: number;
         modelDirectory?: string;
       }
     | { kind: "not_present" };
@@ -231,6 +231,18 @@
       ? Math.round((storageConfigNode.diskTotal ?? 0) / 1024 ** 3)
       : 0,
   );
+  let configEffectiveCapacityGb = $derived.by(() => {
+    if (!storageConfigNode) return 0;
+    const diskAvail = storageConfigNode.diskAvailable ?? 0;
+    const exoUsed = getNodeUsedStorage(storageConfigNode.nodeId);
+    return Math.round((diskAvail + exoUsed) / 1024 ** 3);
+  });
+  let configLimitExceedsDisk = $derived(
+    !configNoLimit &&
+      configMaxGb != null &&
+      configMaxGb > configEffectiveCapacityGb &&
+      configEffectiveCapacityGb > 0,
+  );
 
   function openStorageConfig(col: NodeColumn) {
     storageConfigNode = col;
@@ -378,7 +390,11 @@
               modelDirectory,
             };
           } else if (tag === "ModelDownloadFailed") {
-            cell = { kind: "failed", modelDirectory };
+            const errorMessage =
+              (payload.error_message as string) ??
+              (payload.errorMessage as string) ??
+              undefined;
+            cell = { kind: "failed", errorMessage, modelDirectory };
           } else {
             const downloaded = getBytes(
               payload.downloaded ??
@@ -581,7 +597,12 @@
               </th>
               {#each nodeColumns as col}
                 {@const usedStorage = getNodeUsedStorage(col.nodeId)}
-                {@const storageMax = col.storageLimit ?? col.diskTotal ?? 0}
+                {@const quotaLimit = col.storageLimit}
+                {@const diskAvail = col.diskAvailable ?? 0}
+                {@const storageMax =
+                  quotaLimit != null
+                    ? Math.min(quotaLimit, diskAvail + usedStorage)
+                    : diskAvail + usedStorage}
                 {@const storagePercent =
                   storageMax > 0
                     ? Math.min(100, (usedStorage / storageMax) * 100)
@@ -842,35 +863,36 @@
                         {/if}
                       </div>
                     {:else if cell.kind === "failed"}
-                      <div
-                        class="flex flex-col items-center gap-1"
-                        title="Download failed"
-                      >
-                        <svg
-                          class="w-7 h-7 text-red-400"
-                          viewBox="0 0 20 20"
-                          fill="currentColor"
-                        >
-                          <path
-                            fill-rule="evenodd"
-                            d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-                            clip-rule="evenodd"
-                          ></path>
-                        </svg>
-                        <div class="flex gap-1">
-                          {#if row.shardMetadata}
-                            <button
-                              type="button"
-                              class="text-white/50 hover:text-exo-yellow transition-colors cursor-pointer"
-                              onclick={() =>
-                                startDownload(col.nodeId, row.shardMetadata!)}
-                              title="Retry download on this node"
-                            >
-                              {@render downloadIcon()}
-                            </button>
-                          {/if}
-                          {@render deleteButton(col.nodeId, row.modelId)}
+                      <div class="flex flex-col items-center gap-1">
+                        <!-- Error icon with tooltip -->
+                        <div class="relative group">
+                          <svg
+                            class="w-7 h-7 text-red-400 cursor-help"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                          >
+                            <path
+                              fill-rule="evenodd"
+                              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                              clip-rule="evenodd"
+                            ></path>
+                          </svg>
+                          <div
+                            class="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-3 py-2 bg-black/95 border border-red-500/30 rounded-lg text-[10px] text-red-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 max-w-[300px] text-center"
+                          >
+                            {cell.errorMessage ?? "Download failed"}
+                          </div>
                         </div>
+                        {#if row.shardMetadata}
+                          <button
+                            type="button"
+                            class="text-[9px] text-white/50 hover:text-exo-yellow transition-colors cursor-pointer border border-white/10 hover:border-exo-yellow/40 rounded px-1.5 py-0.5"
+                            onclick={() =>
+                              startDownload(col.nodeId, row.shardMetadata!)}
+                          >
+                            Retry
+                          </button>
+                        {/if}
                       </div>
                     {:else}
                       <div
@@ -1152,6 +1174,29 @@
           <span>{Math.max(configDiskTotalGb, configMaxGb ?? 1)} GB</span>
         </div>
       </div>
+
+      <!-- Disk capacity warning -->
+      {#if configLimitExceedsDisk}
+        <div
+          class="flex items-start gap-2 px-3 py-2 rounded bg-orange-500/10 border border-orange-500/20"
+        >
+          <svg
+            class="w-4 h-4 text-orange-400 shrink-0 mt-0.5"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path
+              fill-rule="evenodd"
+              d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+              clip-rule="evenodd"
+            />
+          </svg>
+          <p class="text-[10px] text-orange-300/80 font-mono">
+            Disk only has {configEffectiveCapacityGb} GB available for models. The
+            {configMaxGb} GB limit has no effect.
+          </p>
+        </div>
+      {/if}
 
       <!-- Policy selector -->
       <div class="space-y-1.5">
