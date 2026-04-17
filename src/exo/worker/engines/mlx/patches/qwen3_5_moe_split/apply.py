@@ -213,7 +213,15 @@ def apply_qwen35_attn_moe_split_patches(
             f"Qwen3.5 attn/moe split requires world_size==2, got {group.size()}"
         )
 
-    DecoderLayer.__call__ = make_split_decoder_call(group)  # type: ignore[method-assign]
+    inner = model
+    for attr in ("model", "language_model"):
+        if hasattr(inner, attr):
+            inner = getattr(inner, attr)
+    if hasattr(inner, "model"):
+        inner = inner.model
+    n_layers = len(inner.layers) if hasattr(inner, "layers") else 48
+
+    DecoderLayer.__call__ = make_split_decoder_call(group, n_layers=n_layers)  # type: ignore[method-assign]
 
     if group.rank() == MOE_RANK:
         _patch_caches_for_moe_rank()

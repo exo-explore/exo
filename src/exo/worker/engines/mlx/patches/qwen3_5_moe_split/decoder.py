@@ -23,6 +23,7 @@ MOE_RANK = 1
 
 def make_split_decoder_call(
     group: mx.distributed.Group,
+    n_layers: int = 48,
 ) -> Callable[..., mx.array]:
     """Build a DecoderLayer.__call__ replacement closed over ``group``.
 
@@ -50,7 +51,7 @@ def make_split_decoder_call(
             h = x
             for _ in range(50):
                 h = self.post_attention_layernorm(h) + h
-            if _layer_count == 1:
+            if _layer_count % n_layers == 1:
                 mx.eval(h)
         h = mx.distributed.all_gather(h, group=group)[ATTN_RANK : ATTN_RANK + 1]
 
