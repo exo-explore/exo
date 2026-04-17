@@ -39,8 +39,6 @@ def make_split_decoder_call(
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
         nonlocal _layer_idx
         _layer_idx += 1
-        mx.eval(x)
-        print(f"[rank {rank}] layer {_layer_idx} x.sum={x.sum().item():.4f}", flush=True)
 
         # Step 1: ATTN_RANK does attention, MOE_RANK contributes zeros
         if rank == ATTN_RANK:
@@ -49,6 +47,8 @@ def make_split_decoder_call(
             else:
                 r = self.self_attn(self.input_layernorm(x), mask, cache)
             h = x + r
+            mx.eval(h)
+            print(f"[rank {rank}] layer {_layer_idx} h.sum={h.sum().item():.4f}", flush=True)
         else:
             h = x - x
         h = mx.distributed.all_sum(h, group=group)
@@ -56,6 +56,8 @@ def make_split_decoder_call(
         # Step 2: MOE_RANK does MoE, ATTN_RANK contributes zeros
         if rank == MOE_RANK:
             out = h + self.mlp(self.post_attention_layernorm(h))
+            mx.eval(out)
+            print(f"[rank {rank}] layer {_layer_idx} out.sum={out.sum().item():.4f}", flush=True)
         else:
             out = h - h
         out = mx.distributed.all_sum(out, group=group)
