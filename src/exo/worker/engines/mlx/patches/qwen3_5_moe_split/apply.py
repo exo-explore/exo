@@ -218,7 +218,43 @@ def apply_qwen35_attn_moe_split_patches(
     if group.rank() == MOE_RANK:
         _patch_caches_for_moe_rank()
 
+    _drop_unused_weights(model, group)
+
     logger.info(
         f"Qwen3.5 attn/moe split patch applied on rank {group.rank()}/{group.size()}"
     )
     return model
+
+
+def _drop_unused_weights(model: nn.Module, group: mx.distributed.Group) -> None:
+    """Free weights each rank doesn't need.
+
+    ATTN_RANK keeps attention + input_layernorm, drops MLP + post_attention_layernorm.
+    MOE_RANK keeps MLP + post_attention_layernorm, drops attention + input_layernorm.
+    embed_tokens, norm, and lm_head stay on both ranks.
+    """
+    import gc
+
+    inner = model
+    for attr in ("model", "language_model"):
+        if hasattr(inner, attr):
+            inner = getattr(inner, attr)
+    if hasattr(inner, "model"):
+        inner = inner.model
+
+    layers = inner.layers if hasattr(inner, "layers") else []
+
+    for layer in layers:
+        if group.rank() == ATTN_RANK:
+            layer.mlp = None  # type: ignore[assignment]
+            layer.post_attention_layernorm = None  # type: ignore[assignment]
+        else:
+            layer.self_attn = None  # type: ignore[assignment]
+            layer.linear_attn = None  # type: ignore[assignment]
+            layer.input_layernorm = None  # type: ignore[assignment]
+
+    gc.collect()
+    mx.clear_cache()
+    logger.info(
+        f"Rank {group.rank()}: dropped unused weights from {len(layers)} layers"
+    )
