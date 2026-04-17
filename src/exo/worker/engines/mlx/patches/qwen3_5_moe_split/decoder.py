@@ -34,12 +34,7 @@ def make_split_decoder_call(
         )
     rank = group.rank()
 
-    _layer_idx = 0
-
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
-        nonlocal _layer_idx
-        _layer_idx += 1
-
         # Step 1: ATTN_RANK does attention, MOE_RANK contributes zeros
         if rank == ATTN_RANK:
             if self.is_linear:
