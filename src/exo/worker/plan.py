@@ -63,7 +63,7 @@ def plan(
         or _model_needs_download(
             node_id, runners, global_download_status, download_backoff
         )
-        or _init_distributed_backend(runners, all_runners)
+        or _init_distributed_backend(runners, all_runners, global_download_status)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
         or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer)
@@ -168,6 +168,7 @@ def _model_needs_download(
 def _init_distributed_backend(
     runners: Mapping[RunnerId, RunnerSupervisor],
     all_runners: Mapping[RunnerId, RunnerStatus],
+    global_download_status: Mapping[NodeId, Sequence[ModelStatus]],
 ):
     for runner in runners.values():
         instance = runner.bound_instance.instance
@@ -175,6 +176,19 @@ def _init_distributed_backend(
 
         is_single_node_instance = len(shard_assignments.runner_to_shard) == 1
         if is_single_node_instance:
+            continue
+
+        # Don't connect until all nodes have downloaded the model
+        all_downloads_complete = all(
+            nid in global_download_status
+            and any(
+                isinstance(dp, ModelReady)
+                and dp.shard_metadata.model_card.model_id == shard_assignments.model_id
+                for dp in global_download_status[nid]
+            )
+            for nid in shard_assignments.node_to_runner
+        )
+        if not all_downloads_complete:
             continue
 
         runner_is_idle = isinstance(runner.status, RunnerIdle)
