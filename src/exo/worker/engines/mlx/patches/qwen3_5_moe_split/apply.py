@@ -18,7 +18,7 @@ from loguru import logger
 from mlx_lm.models import cache as cache_module
 from mlx_lm.models.qwen3_5 import DecoderLayer
 
-from .decoder import MOE_RANK, make_split_decoder_call
+from .decoder import ATTN_RANK, MOE_RANK, make_split_decoder_call
 
 _EMPTY_KV_PLACEHOLDER = mx.zeros((1, 1, 0, 1))
 
