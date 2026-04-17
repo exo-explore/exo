@@ -6,7 +6,7 @@ import aiofiles
 import aiofiles.os as aios
 import tomlkit
 from anyio import Path, open_file
-from huggingface_hub import model_info
+from huggingface_hub import HfApi
 from loguru import logger
 from pydantic import (
     AliasChoices,
@@ -20,6 +20,7 @@ from pydantic import (
 )
 from tomlkit.exceptions import TOMLKitError
 
+from exo.download.hf_endpoints import get_hf_endpoints
 from exo.shared.constants import (
     EXO_CUSTOM_MODEL_CARDS_DIR,
     EXO_ENABLE_IMAGE_MODELS,
@@ -354,7 +355,18 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
     if metadata is not None:
         return Memory.from_bytes(metadata.total_size)
 
-    info = model_info(model_id)
-    if info.safetensors is None:
-        raise ValueError(f"No safetensors info found for {model_id}")
-    return Memory.from_bytes(info.safetensors.total)
+    endpoints = get_hf_endpoints()
+    last_exc: Exception | None = None
+    for endpoint in endpoints:
+        try:
+            info = HfApi(endpoint=endpoint).model_info(model_id)
+            if info.safetensors is None:
+                raise ValueError(f"No safetensors info found for {model_id}")
+            return Memory.from_bytes(info.safetensors.total)
+        except ValueError:
+            raise
+        except Exception as e:
+            last_exc = e
+            logger.warning(f"model_info failed against {endpoint} for {model_id}: {e}")
+    assert last_exc is not None
+    raise last_exc

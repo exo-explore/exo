@@ -1732,7 +1732,9 @@ class API:
         self, query: str = "", limit: int = 20
     ) -> list[HuggingFaceSearchResult]:
         """Search HuggingFace Hub — tries mlx-community first, falls back to all of HuggingFace."""
-        from huggingface_hub import ModelInfo, list_models
+        from huggingface_hub import HfApi, ModelInfo
+
+        from exo.download.huggingface_utils import get_hf_endpoints
 
         def _to_results(models: Iterable[ModelInfo]) -> list[HuggingFaceSearchResult]:
             return [
@@ -1747,9 +1749,35 @@ class API:
                 for m in models
             ]
 
+        def _list_models_with_fallback(
+            search: str | None,
+            author: str | None,
+            sort: Literal[
+                "created_at", "downloads", "last_modified", "likes", "trending_score"
+            ],
+            limit: int,
+        ) -> list[ModelInfo]:
+            endpoints = get_hf_endpoints()
+            last_exc: Exception | None = None
+            for endpoint in endpoints:
+                try:
+                    return list(
+                        HfApi(endpoint=endpoint).list_models(
+                            search=search,
+                            author=author,
+                            sort=sort,
+                            limit=limit,
+                        )
+                    )
+                except Exception as e:
+                    last_exc = e
+                    logger.warning(f"list_models failed against {endpoint}: {e}")
+            assert last_exc is not None
+            raise last_exc
+
         # Search mlx-community first
         mlx_results = _to_results(
-            list_models(
+            _list_models_with_fallback(
                 search=query or None,
                 author="mlx-community",
                 sort="downloads",
@@ -1761,8 +1789,9 @@ class API:
 
         # Fall back to searching all of HuggingFace
         return _to_results(
-            list_models(
+            _list_models_with_fallback(
                 search=query or None,
+                author=None,
                 sort="downloads",
                 limit=limit,
             )
