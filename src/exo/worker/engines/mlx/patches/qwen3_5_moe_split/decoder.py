@@ -34,7 +34,14 @@ def make_split_decoder_call(
         )
     rank = group.rank()
 
+    _layer_idx = 0
+
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
+        nonlocal _layer_idx
+        _layer_idx += 1
+        mx.eval(x)
+        print(f"[rank {rank}] layer {_layer_idx} x.sum={x.sum().item():.4f}", flush=True)
+
         # Step 1: ATTN_RANK does attention, MOE_RANK contributes zeros
         if rank == ATTN_RANK:
             if self.is_linear:
