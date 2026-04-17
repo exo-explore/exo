@@ -35,19 +35,10 @@ def make_split_decoder_call(
     rank = group.rank()
 
     def _split_call(self, x, mask=None, cache=None):  # type: ignore[no-untyped-def]
-        # Both ranks compute on x: ATTN does attention, MOE does MoE
-        if rank == ATTN_RANK:
-            if self.is_linear:
-                r = self.linear_attn(self.input_layernorm(x), mask, cache)
-            else:
-                r = self.self_attn(self.input_layernorm(x), mask, cache)
-            out = x + r
+        if self.is_linear:
+            r = self.linear_attn(self.input_layernorm(x), mask, cache)
         else:
-            # out = self.mlp(self.post_attention_layernorm(x))
-            # mx.eval(out)
-            out = x
-        # out = mx.distributed.all_sum(out, group=group) * 0.5
-
-        return out
+            r = self.self_attn(self.input_layernorm(x), mask, cache)
+        return x + r
 
     return _split_call
