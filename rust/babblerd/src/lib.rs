@@ -1,6 +1,8 @@
+pub mod tun;
+
 pub use babel::{babel, handle_listener};
 pub use error::{BabbleError, Result};
-pub use if_watcher::{PREFIX, watch};
+pub use if_watcher::{watch, PREFIX};
 pub mod error {
     use std::io;
 
@@ -42,13 +44,11 @@ pub mod if_watcher {
     use netwatch::interfaces::{Interface, IpNet};
     use tokio::sync::mpsc;
 
-    use crate::{
-        BabbleError, Result,
-        babel::Babble,
-        ip_manager::{add_ip, remove_ip},
-    };
+    use crate::{babel::Babble, BabbleError, Result};
+    use crate::ip_manager::remove_ip;
 
     pub const PREFIX: Ipv6Net = Ipv6Net::new_assert(
+        // TODO: why is the prefix 48? what does the 0xffff achieve there??
         Ipv6Addr::new(0xfde0, 0x20c6, 0x1fa7, 0xffff, 0, 0, 0, 0),
         48,
     );
@@ -68,7 +68,6 @@ pub mod if_watcher {
         fn has_link_local_v6(&self) -> bool;
         fn is_real_interface(&self) -> bool;
         fn will_babel(&self) -> bool;
-        fn get_v6_in(&self, prefix: Ipv6Net) -> Option<Ipv6Net>;
     }
     impl IfaceExt for Interface {
         fn will_babel(&self) -> bool {
@@ -128,16 +127,6 @@ pub mod if_watcher {
             }
             true
         }
-        fn get_v6_in(&self, prefix: Ipv6Net) -> Option<Ipv6Net> {
-            for addr in self.addrs() {
-                if let IpNet::V6(v6) = addr
-                    && prefix.contains(&v6.addr())
-                {
-                    return Some(v6);
-                }
-            }
-            None
-        }
     }
 
     #[tracing::instrument(skip(send))]
@@ -145,52 +134,40 @@ pub mod if_watcher {
         assert!(PREFIX.contains(&my_range));
 
         let mut ready_ifaces = HashSet::new();
-        // 0 is reserved for the first loopback address
-        let mut iface_num: u16 = 1;
 
         tracing::info!("starting interface monitor");
         let mon = netwatch::netmon::Monitor::new()
             .await
             .map_err(|_| BabbleError::Unspecified)?;
-        // make sure old ULAs are removed from
 
-        // ensure the loopback interface exists, any old addresses are cleaned up first
-        let lo_addr: Ipv6Net = {
+        // TODD: this should never really be a thing thats the case, BUT I like the idea of having
+        //       "heuristic" scripts that can help resolve issues but not necessarily gurantee success;
+        //       I like the idea of generalising this concept into a framework where we have "heuristic tasks"
+        //       that run to aid in tyring to fix some system ale-ment or whatever
+        //
+        // one-shot cleanup:
+        // - remove any stale app-prefix addresses from lo0
+        // - remove any app-prefix addresses that accidentally landed on physical links
+        {
             let state = mon.interface_state();
-            let mut ifaces = state.peek().interfaces.values();
-
-            // cleanup of any old addresses
-            for i in ifaces
-                .clone()
-                .filter(|i| LOCALHOST_INTERFACE_NAMES.contains(&i.name()))
-            {
-                for addr in i.addrs() {
+            for iface in state.peek().interfaces.values() {
+                let cleanup_target =
+                    LOCALHOST_INTERFACE_NAMES.contains(&iface.name()) || iface.is_real_interface();
+                if !cleanup_target {
+                    continue;
+                }
+                for addr in iface.addrs() {
                     if let IpNet::V6(v6) = addr
                         && PREFIX.contains(&v6.addr())
                     {
-                        tracing::info!("removing stale ip {v6} from {}", i.name());
-                        remove_ip(v6, i).await? // TODO: do we care if it fails..?
+                        tracing::info!("removing stale app ip {v6} from {}", iface.name());
+                        if let Err(e) = remove_ip(v6, iface).await {
+                            tracing::warn!(%e, "failed to remove stale app ip");
+                        }
                     }
                 }
             }
-
-            // advertise this address
-            let lo_addr = advertised_addr(my_range);
-            let localhost_iface = ifaces
-                .find(|i| LOCALHOST_INTERFACE_NAMES.contains(&i.name()))
-                .ok_or_else(|| BabbleError::FailedToSetIp)?; // TODO: I feel like this may need more context
-            add_ip(lo_addr, localhost_iface).await?;
-
-            // // watch interface with babel
-            // if ready_ifaces.insert(localhost_iface.name().to_owned()) {
-            //     tracing::info!("telling babeld to watch {}", localhost_iface.name());
-            //     send.send(Babble::AddIface(localhost_iface.name().to_owned()))
-            //         .await
-            //         .map_err(|e| BabbleError::Other(e.to_string()))?;
-            // }
-
-            lo_addr
-        };
+        }
 
         // stream updates
         let mut mon_stream = mon.interface_state().stream();
@@ -206,7 +183,6 @@ pub mod if_watcher {
                         && PREFIX.contains(&v6.addr())
                     {
                         tracing::info!("removing app ip {v6} from {}", iface.name());
-                        // maybe we should really care about this actually..?
                         if let Err(e) = remove_ip(v6, iface).await {
                             tracing::warn!(%e, "failed to remove ip");
                         }
@@ -270,8 +246,8 @@ pub mod babel {
 
     use futures_lite::FutureExt;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-    use tokio::net::UnixStream;
     use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+    use tokio::net::UnixStream;
     use tokio::process::Command;
     use tokio::sync::{broadcast, mpsc};
 

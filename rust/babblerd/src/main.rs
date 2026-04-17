@@ -1,7 +1,8 @@
 use std::{fs::Permissions, io, net::Ipv6Addr, os::unix::fs::PermissionsExt};
 
+use babblerd::tun::UtunDevice;
 use babblerd::{babel::handle_listener, if_watcher};
-use color_eyre::eyre::{WrapErr, eyre};
+use color_eyre::eyre::{eyre, WrapErr};
 use ipnet::Ipv6Net;
 use n0_watcher::Watcher;
 use netwatch::netmon;
@@ -25,6 +26,7 @@ enum State {
     Idle,
     Active {
         recv: broadcast::Receiver<String>,
+        utun: UtunDevice, // TODO: either rename it to TUN because its cross-platform OR if this is a macOS-only hack then figure out better cross-platform abstractions
         babel: JoinHandle<babblerd::Result<()>>,
         watcher: JoinHandle<babblerd::Result<()>>,
         listeners: JoinSet<()>,
@@ -84,23 +86,35 @@ async fn inner_main() -> color_eyre::Result<()> {
                         tracing::info!("starting babeld");
                         let (br_send, br_recv) = broadcast::channel(1024);
                         let (mp_send, mp_recv) = mpsc::channel(32);
+
                         // node id is a PREFIX/64, NODE_ID/48 and an INTERFACE_ID/16
+                        // TODO: no longer we need interfaces :)
                         let ip_node_id = u128::from(rand::random::<u64>() & (u64::MAX>>16)) << 16;
                         let my_range = Ipv6Net::new_assert(
                             Ipv6Addr::from_bits(babblerd::PREFIX.addr().to_bits() | ip_node_id),
                             112,
                         );
+
+                        // create address (node-ID) then launch tunnel device with that address,
+                        // then advertise this tunnel device via babeld
                         let advertised = if_watcher::advertised_addr(my_range);
+                        let utun = UtunDevice::create(advertised.addr())
+                            .wrap_err("creating utun for advertised address")?;tracing::info!(
+                            "created {} with advertised address {}",
+                            utun.ifname(),
+                            advertised
+                        );
                         let babel = tokio::spawn(babblerd::babel(advertised, mp_recv, br_send));
                         let watcher = tokio::spawn(babblerd::watch(my_range, mp_send));
                         let mut listeners = JoinSet::new();
                         listeners.spawn(handle_listener(sock, br_recv.resubscribe()));
-                        State::Active { recv: br_recv, babel, watcher, listeners }
+                        State::Active { recv: br_recv, utun, babel, watcher, listeners }
                     }
                 }
             }
             State::Active {
                 recv,
+                utun,
                 mut babel,
                 mut watcher,
                 mut listeners,
@@ -134,12 +148,12 @@ async fn inner_main() -> color_eyre::Result<()> {
 
                             State::Idle
                         } else {
-                            State::Active { recv, babel, watcher, listeners }
+                            State::Active { recv, utun, babel, watcher, listeners }
                         }
                     }
                     sock = public_socket.accept() => {
                         listeners.spawn(handle_listener(sock?.0, recv.resubscribe()));
-                        State::Active { recv, babel, watcher, listeners }
+                        State::Active { recv, utun, babel, watcher, listeners }
                     }
                     res = &mut watcher => {
                         res??;
