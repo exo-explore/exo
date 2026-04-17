@@ -40,18 +40,25 @@ def make_split_decoder_call(
         nonlocal _layer_idx
         _layer_idx += 1
 
-        # Each rank does its own specialty on x, then all_sum * 0.5
+        # Step 1: ATTN_RANK does attention, MOE_RANK contributes zeros
         if rank == ATTN_RANK:
             if self.is_linear:
                 r = self.linear_attn(self.input_layernorm(x), mask, cache)
             else:
                 r = self.self_attn(self.input_layernorm(x), mask, cache)
-            out = x + r
+            h = x + r
         else:
-            out = self.mlp(self.post_attention_layernorm(x))
+            h = x - x
+            mx.eval(h)
+        h = mx.distributed.all_sum(h, group=group)
+
+        # Step 2: MOE_RANK does MoE, ATTN_RANK contributes zeros
+        if rank == MOE_RANK:
+            out = h + self.mlp(self.post_attention_layernorm(h))
+        else:
+            out = h - h
             mx.eval(out)
-            print(f"[rank {rank}] layer {_layer_idx} out.mean={out.mean().item():.4f}", flush=True)
-        out = mx.distributed.all_sum(out, group=group) * 0.5
+        out = mx.distributed.all_sum(out, group=group)
 
         return out
 
