@@ -1,6 +1,7 @@
 # Check tasks are complete before runner is ever ready.
 import unittest.mock
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Callable
 
 import mlx.core as mx
@@ -115,13 +116,22 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
         assert test_event == true_event, f"{test_event} != {true_event}"
 
 
+@dataclass
+class MockLoadOutput:
+    layers_loaded: int
+    total: int
+
+
 @pytest.fixture
 def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     # initialize_mlx returns a mock group
     monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
-    monkeypatch.setattr(
-        mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer, None))
-    )
+
+    def lmi_gen():
+        yield MockLoadOutput(1, 1)
+        return (1, MockTokenizer, None)
+
+    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin(lmi_gen()))
     monkeypatch.setattr(mlx_batch_generator, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_batch_generator, "_check_for_debug_prompts", nothin)
     monkeypatch.setattr(mlx_batch_generator, "mx_any", make_nothin(False))
@@ -318,6 +328,10 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
                 runner_status=RunnerLoading(layers_loaded=0, total_layers=32),
             ),
             TaskAcknowledged(task_id=LOAD_TASK_ID),
+            RunnerStatusUpdated(
+                runner_id=RUNNER_1_ID,
+                runner_status=RunnerLoading(layers_loaded=1, total_layers=1),
+            ),
             TaskStatusUpdated(task_id=LOAD_TASK_ID, task_status=TaskStatus.Complete),
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerLoaded()),
             TaskStatusUpdated(task_id=WARMUP_TASK_ID, task_status=TaskStatus.Running),
