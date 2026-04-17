@@ -51,7 +51,7 @@ class ModelRejected(BaseModelStatus):
     reason: str
     required: Memory
     available: Memory
-    limit: Memory
+    limit: Memory | None = None
 
 
 ModelStatus = (

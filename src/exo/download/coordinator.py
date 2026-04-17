@@ -22,6 +22,7 @@ from exo.download.shard_downloader import ShardDownloader
 from exo.shared.constants import (
     EXO_DEFAULT_MODELS_DIR,
     EXO_MODEL_USAGE_FILE,
+    EXO_MODELS_DIRS,
     EXO_MODELS_READ_ONLY_DIRS,
 )
 from exo.shared.models.model_cards import ModelId, get_model_cards
@@ -95,6 +96,21 @@ class DownloadCoordinator:
     @staticmethod
     def _default_model_dir(model_id: ModelId) -> str:
         return str(EXO_DEFAULT_MODELS_DIR / model_id.normalize())
+
+    @staticmethod
+    def _get_disk_free() -> Memory | None:
+        """Get free disk space for the first available models directory."""
+        import shutil
+
+        for candidate_dir in EXO_MODELS_DIRS:
+            if not candidate_dir.exists():
+                continue
+            try:
+                usage = shutil.disk_usage(candidate_dir)
+                return Memory.from_bytes(usage.free)
+            except OSError:
+                continue
+        return None
 
     def _completed_from_path(
         self,
@@ -240,15 +256,15 @@ class DownloadCoordinator:
     async def _start_download(self, shard: ShardMetadata) -> None:
         model_id = shard.model_card.model_id
 
-        # Check if already downloading, complete, or recently failed
+        # Check if already downloading or complete
         if model_id in self.download_status:
             status = self.download_status[model_id]
-            if isinstance(status, (ModelDownloading, ModelReady, ModelDownloadFailed)):
+            if isinstance(status, (ModelDownloading, ModelReady)):
                 logger.debug(
-                    f"Download for {model_id} already in progress, complete, or failed, skipping"
+                    f"Download for {model_id} skipped: current status is {type(status).__name__}"
                 )
                 return
-            if isinstance(status, ModelRejected):
+            if isinstance(status, (ModelRejected, ModelDownloadFailed)):
                 del self.download_status[model_id]
 
         # Check all model directories for pre-existing complete models
@@ -264,12 +280,14 @@ class DownloadCoordinator:
             )
             return
 
+        disk_free = await to_thread.run_sync(self._get_disk_free)
         action = decide_storage_action(
             shard.model_card.storage_size,
             self.storage_config,
             list(self.download_status.values()),
             self._model_last_used,
             frozenset(self._active_model_ids),
+            disk_free=disk_free,
         )
         match action:
             case StorageReject(reason=reason, available=available):
@@ -438,7 +456,10 @@ class DownloadCoordinator:
                     if model_id in self.active_downloads:
                         continue
 
-                    if isinstance(self.download_status.get(model_id), ModelRejected):
+                    if isinstance(
+                        self.download_status.get(model_id),
+                        (ModelRejected, ModelDownloadFailed),
+                    ):
                         continue
 
                     if progress.status == "complete":
@@ -477,7 +498,7 @@ class DownloadCoordinator:
                     else:
                         continue
 
-                    self.download_status[progress.shard.model_card.model_id] = status
+                    self.download_status[model_id] = status
                     await self.event_sender.send(
                         NodeDownloadProgress(download_progress=status)
                     )
@@ -522,7 +543,6 @@ class DownloadCoordinator:
     async def _reject_download(
         self, shard: ShardMetadata, reason: str, available: Memory
     ) -> None:
-        assert self.storage_config.max_storage is not None
         model_id = shard.model_card.model_id
         rejected = ModelRejected(
             shard_metadata=shard,
@@ -557,8 +577,11 @@ class DownloadCoordinator:
                 current_used = calculate_used_storage(
                     list(self.download_status.values())
                 )
-                assert self.storage_config.max_storage is not None
-                current_available = self.storage_config.max_storage - current_used
+                if self.storage_config.max_storage is not None:
+                    current_available = self.storage_config.max_storage - current_used
+                else:
+                    disk_free = self._get_disk_free()
+                    current_available = disk_free if disk_free is not None else Memory()
                 await self._reject_download(
                     shard,
                     f"Failed to delete model {evict_model_id} from disk",

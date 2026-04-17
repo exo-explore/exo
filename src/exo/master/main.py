@@ -67,7 +67,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
-from exo.shared.types.worker.downloads import ModelRejected
+from exo.shared.types.worker.downloads import ModelDownloadFailed, ModelRejected
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
@@ -125,7 +125,9 @@ class Master:
         with self.command_receiver as commands:
             async for forwarder_command in commands:
                 try:
-                    logger.info(f"Executing command: {forwarder_command.command}")
+                    logger.info(
+                        f"Executing command from {forwarder_command.origin}: {forwarder_command.command}"
+                    )
 
                     generated_events: list[Event] = []
                     command = forwarder_command.command
@@ -430,18 +432,18 @@ class Master:
                     self.state = apply(self.state, indexed)
 
                     if isinstance(event, NodeDownloadProgress) and isinstance(
-                        event.download_progress, ModelRejected
+                        event.download_progress, (ModelRejected, ModelDownloadFailed)
                     ):
                         dp = event.download_progress
-                        rejection_events = get_download_rejected_events(
+                        cleanup_events = get_download_rejected_events(
                             dp.shard_metadata.model_card.model_id,
                             dp.node_id,
                             self.state.instances,
                             self.state.tasks,
                         )
-                        for rejection_event in rejection_events:
-                            logger.info(f"Download rejected cleanup: {rejection_event}")
-                            await self.event_sender.send(rejection_event)
+                        for cleanup_event in cleanup_events:
+                            logger.info(f"Download failure cleanup: {cleanup_event}")
+                            await self.event_sender.send(cleanup_event)
 
                     event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
                     if isinstance(event, NodeGatheredInfo):

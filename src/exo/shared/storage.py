@@ -108,18 +108,50 @@ def decide_storage_action(
     downloads: Sequence[ModelStatus],
     model_last_used: Mapping[ModelId, datetime],
     active_model_ids: frozenset[ModelId],
+    disk_free: Memory | None = None,
 ) -> StorageDecision:
-    """Pure decision function: given storage state, decide whether to allow, evict, or reject."""
-    if config.max_storage is None:
-        return StorageAllow()
+    """Pure decision function: given storage state, decide whether to allow, evict, or reject.
 
-    allowed, reason = check_storage_quota(model_size, config, downloads)
-    if allowed:
+    If ``disk_free`` is provided, it is used alongside the quota to determine
+    the effective available space. This ensures evictions are triggered when the
+    physical disk is full, even if the quota accounting says there is room.
+    """
+    if config.max_storage is None:
+        if disk_free is not None and model_size > disk_free:
+            # No quota set, but disk is physically full — try auto-evict if enabled
+            if config.storage_policy == "auto-evict":
+                candidates = get_lru_eviction_candidates(
+                    downloads, model_last_used, active_model_ids
+                )
+                to_evict = compute_evictions_needed(model_size, disk_free, candidates)
+                if to_evict is not None:
+                    return StorageEvict(model_ids=to_evict)
+            return StorageReject(
+                reason=f"Need {model_size.in_gb:.1f} GiB but only {disk_free.in_gb:.1f} GiB free on disk",
+                available=disk_free,
+            )
         return StorageAllow()
 
     used = calculate_used_storage(downloads)
-    raw_available = config.max_storage - used
-    available = raw_available if raw_available.in_bytes >= 0 else Memory()
+    raw_quota_available = config.max_storage - used
+    quota_available = (
+        raw_quota_available if raw_quota_available.in_bytes >= 0 else Memory()
+    )
+
+    # Effective available is the minimum of quota headroom and physical disk free space
+    available = quota_available
+    if disk_free is not None and disk_free < available:
+        available = disk_free
+
+    if model_size <= available:
+        return StorageAllow()
+
+    reason = (
+        f"Need {model_size.in_gb:.1f} GiB, only {max(0, available.in_gb):.1f} GiB available"
+        f" (quota: {quota_available.in_gb:.1f} GiB, disk: {disk_free.in_gb:.1f} GiB)"
+        if disk_free is not None
+        else f"Need {model_size.in_gb:.1f} GiB, only {max(0, available.in_gb):.1f} GiB available within {config.max_storage.in_gb:.1f} GiB limit"
+    )
 
     if config.storage_policy == "auto-evict":
         candidates = get_lru_eviction_candidates(
