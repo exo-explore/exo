@@ -336,14 +336,14 @@
             >MODEL:</span
           >
           <!-- Model button — opens the full model picker -->
-          <div class="relative flex-1 max-w-xs">
+          <div class="relative flex-1 max-w-xl">
             <button
               type="button"
               onclick={() => onOpenModelPicker?.()}
               class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-1.5 text-xs font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70"
             >
               {#if currentModelLabel}
-                <span class="text-exo-yellow truncate">{currentModelLabel}</span
+                <span class="text-exo-yellow">{currentModelLabel}</span
                 >
               {:else}
                 <span class="text-exo-light-gray/50">— SELECT MODEL —</span>
