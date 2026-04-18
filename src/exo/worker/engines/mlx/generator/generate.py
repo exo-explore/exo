@@ -51,6 +51,7 @@ from exo.worker.engines.mlx.cache import (
     make_kv_cache,
     snapshot_ssm_states,
 )
+from exo.worker.engines.mlx.sampling import resolve_sampling
 from exo.worker.engines.mlx.constants import (
     DEFAULT_TOP_LOGPROBS,
     KV_BITS,
@@ -599,6 +600,10 @@ def mlx_generate(
     vision_processor: VisionProcessor | None = None,
     is_warmup: bool = False,
     max_kv_tokens: int | None = None,
+    instance_temperature: float | None = None,
+    instance_top_p: float | None = None,
+    instance_top_k: int | None = None,
+    instance_min_p: float | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -666,12 +671,16 @@ def mlx_generate(
         eos_ids = eos_ids_from_tokenizer(tokenizer)
         logits_processors = [ban_token_ids(eos_ids)] + logits_processors
 
-    sampler = make_sampler(
-        temp=task.temperature if task.temperature is not None else 0.7,
-        top_p=task.top_p if task.top_p is not None else 1.0,
-        min_p=task.min_p if task.min_p is not None else 0.05,
-        top_k=task.top_k if task.top_k is not None else 0,
-    )
+    sampler = make_sampler(**resolve_sampling(
+        request_temperature=task.temperature,
+        request_top_p=task.top_p,
+        request_top_k=task.top_k,
+        request_min_p=task.min_p,
+        instance_temperature=instance_temperature,
+        instance_top_p=instance_top_p,
+        instance_top_k=instance_top_k,
+        instance_min_p=instance_min_p,
+    ))
 
     # Normalize stop sequences to a list
     stop_sequences: list[str] = (

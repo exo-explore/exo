@@ -29,6 +29,13 @@ class BaseInstance(TaggedModel):
     max_prefix_sessions: int | None = None
     max_prefix_bytes: int | None = None
 
+    # Per-instance sampling defaults. Used when a request omits the field.
+    # Resolution order: request → instance → cluster env → hardcoded fallback.
+    default_temperature: float | None = None
+    default_top_p: float | None = None
+    default_top_k: int | None = None
+    default_min_p: float | None = None
+
     def shard(self, runner_id: RunnerId) -> ShardMetadata | None:
         return self.shard_assignments.runner_to_shard.get(runner_id, None)
 

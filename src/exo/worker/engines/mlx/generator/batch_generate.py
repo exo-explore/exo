@@ -35,6 +35,7 @@ from exo.worker.engines.mlx.cache import (
     has_non_kv_caches,
     make_kv_cache,
 )
+from exo.worker.engines.mlx.sampling import resolve_sampling
 from exo.worker.engines.mlx.constants import DEFAULT_TOP_LOGPROBS, KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.worker.engines.mlx.generator.generate import (
     ban_token_ids,
@@ -96,6 +97,10 @@ class ExoBatchGenerator:
     vision_processor: VisionProcessor | None = None
     model_id: str = ""
     max_kv_tokens: int | None = None
+    default_temperature: float | None = None
+    default_top_p: float | None = None
+    default_top_k: int | None = None
+    default_min_p: float | None = None
 
     _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
@@ -632,14 +637,16 @@ class ExoBatchGenerator:
         mx.random.seed(seed)
 
         with T("submit.make_sampler"):
-            sampler = make_sampler(
-                temp=task_params.temperature
-                if task_params.temperature is not None
-                else 0.7,
-                top_p=task_params.top_p if task_params.top_p is not None else 1.0,
-                min_p=task_params.min_p if task_params.min_p is not None else 0.05,
-                top_k=task_params.top_k if task_params.top_k is not None else 0,
-            )
+            sampler = make_sampler(**resolve_sampling(
+                request_temperature=task_params.temperature,
+                request_top_p=task_params.top_p,
+                request_top_k=task_params.top_k,
+                request_min_p=task_params.min_p,
+                instance_temperature=self.default_temperature,
+                instance_top_p=self.default_top_p,
+                instance_top_k=self.default_top_k,
+                instance_min_p=self.default_min_p,
+            ))
 
         vision_ctx = (
             patch_embed_tokens(
@@ -742,13 +749,18 @@ class ExoBatchGenerator:
                     mx.eval(_)
                     logger.info(f"MTP cache prefilled ({S_pre} positions)")
 
-        # Set per-request temperature for speculative
+        # Set per-request temperature for speculative. EXO_SPECULATIVE_TEMP
+        # overrides everything; otherwise fall through the same resolution
+        # chain (request → instance → cluster → hardcoded) as the sampler.
         if hasattr(self._mlx_gen, '_request_temp'):
             env_temp = os.environ.get("EXO_SPECULATIVE_TEMP")
             if env_temp is not None:
                 self._mlx_gen._request_temp[uid] = float(env_temp)
-            elif task_params.temperature is not None:
-                self._mlx_gen._request_temp[uid] = task_params.temperature
+            else:
+                self._mlx_gen._request_temp[uid] = resolve_sampling(
+                    request_temperature=task_params.temperature,
+                    instance_temperature=self.default_temperature,
+                )["temp"]
 
         self._active_tasks[uid] = _EngineTask(
             uid=uid,

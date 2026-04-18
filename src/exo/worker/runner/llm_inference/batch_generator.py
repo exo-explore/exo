@@ -125,6 +125,10 @@ class SequentialGenerator(InferenceGenerator):
     vision_processor: VisionProcessor | None = None
     check_for_cancel_every: int = 50
     max_kv_tokens: int | None = None
+    default_temperature: float | None = None
+    default_top_p: float | None = None
+    default_top_k: int | None = None
+    default_min_p: float | None = None
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -339,6 +343,10 @@ class SequentialGenerator(InferenceGenerator):
             group=self.group,
             vision_processor=self.vision_processor,
             max_kv_tokens=self.max_kv_tokens,
+            instance_temperature=self.default_temperature,
+            instance_top_p=self.default_top_p,
+            instance_top_k=self.default_top_k,
+            instance_min_p=self.default_min_p,
         )
 
     def close(self) -> None:
@@ -359,6 +367,10 @@ class BatchGenerator(InferenceGenerator):
     check_for_cancel_every: int = 50
     vision_processor: VisionProcessor | None = None
     max_kv_tokens: int | None = None
+    default_temperature: float | None = None
+    default_top_p: float | None = None
+    default_top_k: int | None = None
+    default_min_p: float | None = None
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -384,6 +396,10 @@ class BatchGenerator(InferenceGenerator):
             vision_processor=self.vision_processor,
             model_id=self.model_id,
             max_kv_tokens=self.max_kv_tokens,
+            default_temperature=self.default_temperature,
+            default_top_p=self.default_top_p,
+            default_top_k=self.default_top_k,
+            default_min_p=self.default_min_p,
         )
 
     def warmup(self):

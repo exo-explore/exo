@@ -119,6 +119,10 @@ class Runner:
             max_kv_tokens=self.instance.max_kv_tokens,
             max_prefix_sessions=self.instance.max_prefix_sessions,
             max_prefix_bytes=self.instance.max_prefix_bytes,
+            default_temperature=self.instance.default_temperature,
+            default_top_p=self.instance.default_top_p,
+            default_top_k=self.instance.default_top_k,
+            default_min_p=self.instance.default_min_p,
         )
 
         self.seen: set[TaskId] = set()
@@ -449,6 +453,10 @@ class Builder:
     max_kv_tokens: int | None = None
     max_prefix_sessions: int | None = None
     max_prefix_bytes: int | None = None
+    default_temperature: float | None = None
+    default_top_p: float | None = None
+    default_top_k: int | None = None
+    default_min_p: float | None = None
 
     def build(
         self,
@@ -492,6 +500,14 @@ class Builder:
             )
 
         device_rank = 0 if self.group is None else self.group.rank()
+        sampling_kwargs = dict(
+            default_temperature=self.default_temperature,
+            default_top_p=self.default_top_p,
+            default_top_k=self.default_top_k,
+            default_min_p=self.default_min_p,
+        )
+        if any(v is not None for v in sampling_kwargs.values()):
+            logger.info(f"Sampling defaults: {sampling_kwargs}")
         if os.environ.get("EXO_NO_BATCH"):
             logger.info("using SequentialGenerator (batching disabled)")
             return SequentialGenerator(
@@ -506,6 +522,7 @@ class Builder:
                 event_sender=self.event_sender,
                 vision_processor=vision_processor,
                 max_kv_tokens=self.max_kv_tokens,
+                **sampling_kwargs,
             )
         logger.info("using BatchGenerator")
         return BatchGenerator(
@@ -520,4 +537,5 @@ class Builder:
             event_sender=self.event_sender,
             vision_processor=vision_processor,
             max_kv_tokens=self.max_kv_tokens,
+            **sampling_kwargs,
         )

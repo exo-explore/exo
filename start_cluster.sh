@@ -41,6 +41,18 @@ fi
 # MiniMax: single 2-node Pipeline + MlxJaccl (RDMA) instance spanning both Studios.
 : "${MINIMAX_MODEL_ID:=mlx-community/MiniMax-M2.7-nvfp4}"
 : "${MINIMAX_ENABLED:=1}"
+# MiniMax sampling defaults (per HF model card recommendation).
+: "${MINIMAX_TEMPERATURE:=1.0}"
+: "${MINIMAX_TOP_P:=0.95}"
+: "${MINIMAX_TOP_K:=40}"
+: "${MINIMAX_MIN_P:=}"
+
+# Cluster-wide sampling defaults (apply when neither request nor instance specifies).
+# Unset by default — instance and hardcoded fallbacks take over.
+: "${EXO_DEFAULT_TEMPERATURE:=}"
+: "${EXO_DEFAULT_TOP_P:=}"
+: "${EXO_DEFAULT_TOP_K:=}"
+: "${EXO_DEFAULT_MIN_P:=}"
 
 export IBV_FORK_SAFE=1
 export PYTHONUNBUFFERED=1
@@ -384,6 +396,12 @@ for NODE in "${NODES[@]}"; do
     EXO_ENV="$EXO_ENV EXO_RUNNER_QOS=$EXO_RUNNER_QOS"
     EXO_ENV="$EXO_ENV LOG_LEVEL=$LOG_LEVEL"
 
+    # Cluster-wide sampling defaults (only export if explicitly set).
+    [ -n "$EXO_DEFAULT_TEMPERATURE" ] && EXO_ENV="$EXO_ENV EXO_DEFAULT_TEMPERATURE=$EXO_DEFAULT_TEMPERATURE"
+    [ -n "$EXO_DEFAULT_TOP_P" ]       && EXO_ENV="$EXO_ENV EXO_DEFAULT_TOP_P=$EXO_DEFAULT_TOP_P"
+    [ -n "$EXO_DEFAULT_TOP_K" ]       && EXO_ENV="$EXO_ENV EXO_DEFAULT_TOP_K=$EXO_DEFAULT_TOP_K"
+    [ -n "$EXO_DEFAULT_MIN_P" ]       && EXO_ENV="$EXO_ENV EXO_DEFAULT_MIN_P=$EXO_DEFAULT_MIN_P"
+
     # Metal GPU timeout mitigations
     if [ "$EXO_DISABLE_METAL_TIMEOUT" == "1" ]; then
         EXO_ENV="$EXO_ENV MTL_DISABLE_TIMEOUT=1 MTL_COMMAND_BUFFER_TIMEOUT=0 EXO_DISABLE_METAL_TIMEOUT=1"
@@ -487,6 +505,10 @@ create_instance_with_retry() {
     local sharding="${3:-Pipeline}"
     local instance_meta="${4:-MlxJaccl}"
     local min_nodes="${5:-2}"
+    local def_temp="${6:-}"
+    local def_top_p="${7:-}"
+    local def_top_k="${8:-}"
+    local def_min_p="${9:-}"
     local max_attempts=30
 
     for attempt in $(seq 1 $max_attempts); do
@@ -522,9 +544,25 @@ create_instance_with_retry() {
             fi
         fi
 
-        # Step 2: POST /instance with the placement result
+        # Step 2: POST /instance with the placement result.
+        # Inject per-instance sampling defaults into the inner tagged object
+        # (TaggedModel wraps it as {"MlxJacclInstance": {...}}).
         local create_payload
-        create_payload=$(echo "$placement_response" | jq -c '{instance: .}')
+        create_payload=$(echo "$placement_response" | jq -c \
+            --argjson temp "${def_temp:-null}" \
+            --argjson top_p "${def_top_p:-null}" \
+            --argjson top_k "${def_top_k:-null}" \
+            --argjson min_p "${def_min_p:-null}" \
+            '
+            . as $i
+            | ($i | keys[0]) as $tag
+            | {instance: ($i | .[$tag] |= (
+                (if $temp  != null then .defaultTemperature = $temp  else . end)
+                | (if $top_p != null then .defaultTopP        = $top_p else . end)
+                | (if $top_k != null then .defaultTopK        = $top_k else . end)
+                | (if $min_p != null then .defaultMinP        = $min_p else . end)
+              ) | {($tag): .[$tag]})}
+        ')
 
         local create_response create_code
         create_response=$(curl -s -w '\n%{http_code}' -X POST "$API/instance" \
@@ -711,7 +749,8 @@ if [ "${MINIMAX_ENABLED:-0}" = "1" ]; then
     if [ "$EXISTING_MINIMAX" -ge 1 ]; then
         echo "  MiniMax instance already running. Skipping."
     else
-        create_instance_with_retry "MiniMax M2.7" "$MINIMAX_MODEL_ID" "Pipeline" "MlxJaccl" 2 || true
+        create_instance_with_retry "MiniMax M2.7" "$MINIMAX_MODEL_ID" "Pipeline" "MlxJaccl" 2 \
+            "$MINIMAX_TEMPERATURE" "$MINIMAX_TOP_P" "$MINIMAX_TOP_K" "$MINIMAX_MIN_P" || true
 
         # Wait for both shard runners to reach Ready.
         echo -n "Waiting for 2 MiniMax runner(s) to become Ready..."
