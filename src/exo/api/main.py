@@ -21,6 +21,7 @@ from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType
 from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
+from pydantic import Field
 
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
@@ -137,6 +138,7 @@ from exo.shared.models.model_cards import (
     get_card,
     get_model_cards,
 )
+from exo.shared.storage import calculate_used_storage
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -161,6 +163,7 @@ from exo.shared.types.commands import (
     ImageGeneration,
     PlaceInstance,
     SendInputChunk,
+    SetStorageConfig,
     StartDownload,
     TaskCancelled,
     TaskFinished,
@@ -176,6 +179,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
+from exo.shared.types.storage import StorageConfig, StoragePolicy
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
 )
@@ -186,14 +190,27 @@ from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
-from exo.shared.types.worker.downloads import DownloadCompleted
+from exo.shared.types.worker.downloads import ModelReady
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
+from exo.utils.pydantic_ext import CamelCaseModel
 from exo.utils.task_group import TaskGroup
+
+
+class SetStorageConfigRequest(CamelCaseModel):
+    node_ids: list[NodeId] | None = None
+    max_storage_gb: Annotated[float, Field(ge=0)] | None = None
+    storage_policy: StoragePolicy = "manual"
+
+
+class NodeStorageInfo(CamelCaseModel):
+    config: StorageConfig
+    used: Memory
+
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
@@ -364,6 +381,9 @@ class API:
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.post("/download/cancel")(self.cancel_download)
+        self.app.get("/storage")(self.get_storage)
+        self.app.get("/storage/{node_id}")(self.get_storage_node)
+        self.app.put("/storage")(self.set_storage_config)
         self.app.get("/v1/traces")(self.list_traces)
         self.app.post("/v1/traces/delete")(self.delete_traces)
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
@@ -1566,7 +1586,7 @@ class API:
         downloaded_model_ids: set[str] = set()
         for node_downloads in self.state.downloads.values():
             for dl in node_downloads:
-                if isinstance(dl, DownloadCompleted):
+                if isinstance(dl, ModelReady):
                     downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
 
         cards = [
@@ -1653,7 +1673,7 @@ class API:
             downloaded_model_ids: set[str] = set()
             for node_downloads in self.state.downloads.values():
                 for dl in node_downloads:
-                    if isinstance(dl, DownloadCompleted):
+                    if isinstance(dl, ModelReady):
                         downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
             cards = [c for c in cards if c.model_id in downloaded_model_ids]
 
@@ -1918,6 +1938,48 @@ class API:
         )
         await self._send_download(command)
         return CancelDownloadResponse(command_id=command.command_id)
+
+    async def get_storage(self) -> dict[str, NodeStorageInfo]:
+        result: dict[str, NodeStorageInfo] = {}
+        for node_id, config in self.state.node_storage_config.items():
+            downloads = list(self.state.downloads.get(node_id, ()))
+            used = calculate_used_storage(downloads)
+            result[node_id] = NodeStorageInfo(config=config, used=used)
+        return result
+
+    async def get_storage_node(self, node_id: NodeId) -> NodeStorageInfo:
+        config = self.state.node_storage_config.get(node_id, StorageConfig())
+        downloads = list(self.state.downloads.get(node_id, ()))
+        used = calculate_used_storage(downloads)
+        return NodeStorageInfo(config=config, used=used)
+
+    async def set_storage_config(
+        self, request: SetStorageConfigRequest
+    ) -> dict[str, str | list[str]]:
+        max_storage = (
+            Memory.from_gb(request.max_storage_gb)
+            if request.max_storage_gb is not None
+            else None
+        )
+
+        target_node_ids = (
+            request.node_ids
+            if request.node_ids is not None
+            else list(self.state.node_storage_config.keys())
+        )
+
+        command_ids: list[str] = []
+        for node_id in target_node_ids:
+            command = SetStorageConfig(
+                target_node_id=node_id,
+                max_storage=max_storage,
+                storage_policy=request.storage_policy,
+            )
+            await self.command_sender.send(
+                ForwarderCommand(origin=self._system_id, command=command)
+            )
+            command_ids.append(str(command.command_id))
+        return {"status": "ok", "commandIds": command_ids}
 
     @staticmethod
     def _get_trace_path(task_id: str) -> Path:
