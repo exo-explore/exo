@@ -46,12 +46,27 @@ fi
 : "${HUIHUI_PRESENCE_PENALTY:=1.5}"
 : "${HUIHUI_REPETITION_PENALTY:=1.0}"
 
-# Qwen3.5-397B-A17B: single 2-node Pipeline + MlxJaccl (RDMA) instance spanning
-# both Studios. Picked over MiniMax-M2.7 because Qwen3.5 ships trained MTP
-# weights — Exo auto-detects, downloads (rank 0), q4-quantizes, and pairs them
-# with the base model for ~2-3× decode speedup via speculative decoding.
+# Pipeline-model selection — at most ONE of these should be enabled at a time.
+# Both fit on the cluster individually but together they exhaust RAM (Huihui
+# scouts also need ~18GB per node). Toggle via the *_ENABLED env vars.
+
+# MiniMax-M2.7 (mxfp4): smaller (~64GB/rank) so it coexists with the Huihui
+# scouts. No MTP weights upstream, so no spec-decode speedup. Default = on.
+: "${MINIMAX_MODEL_ID:=mlx-community/MiniMax-M2.7-4bit-mxfp4}"
+: "${MINIMAX_ENABLED:=1}"
+# MiniMax sampling defaults (per HF model card recommendation).
+: "${MINIMAX_TEMPERATURE:=1.0}"
+: "${MINIMAX_TOP_P:=0.95}"
+: "${MINIMAX_TOP_K:=40}"
+: "${MINIMAX_MIN_P:=}"
+: "${MINIMAX_PRESENCE_PENALTY:=}"
+: "${MINIMAX_REPETITION_PENALTY:=}"
+
+# Qwen3.5-397B-A17B (~105GB/rank): ships trained MTP weights for ~2-3× decode
+# speedup, but pushes both nodes to ~85-90% RAM by itself — won't coexist with
+# Huihui scouts. Set QWEN35_ENABLED=1 to use, and disable MiniMax + scouts.
 : "${QWEN35_MODEL_ID:=mlx-community/Qwen3.5-397B-A17B-4bit}"
-: "${QWEN35_ENABLED:=1}"
+: "${QWEN35_ENABLED:=0}"
 # Sampling defaults — Qwen3.5 thinking-mode recommendation from upstream
 # model card (the model is thinking-mode by default). min_p=0.0 explicitly
 # disables min_p filtering per Qwen's guidance.
@@ -771,6 +786,54 @@ if [ "${HUIHUI_INSTANCES_PER_STUDIO:-0}" -gt 0 ]; then
         if [ "$READY" = false ]; then
             echo ""
             echo "  WARNING: only $READY_COUNT/$EXPECTED_HUIHUI_TOTAL runners reached Ready."
+            echo "  Check ~/exo.log on the Studios."
+        fi
+    fi
+fi
+
+# ── Auto-place MiniMax M2.7 with RDMA ──
+# Single 2-node Pipeline + MlxJaccl instance spanning both Studios. Smaller
+# than Qwen3.5-397B so it fits alongside Huihui scouts. No MTP weights upstream.
+if [ "${MINIMAX_ENABLED:-0}" = "1" ]; then
+    echo ""
+    echo "Auto-placing MiniMax ($MINIMAX_MODEL_ID) across both Studios via RDMA..."
+
+    EXISTING_MINIMAX=$(curl -s "$API/state" | jq -r --arg m "$MINIMAX_MODEL_ID" \
+        '[.. | objects | select(has("shardAssignments")) | select(.shardAssignments.modelId == $m)] | length' 2>/dev/null)
+    if [ -z "$EXISTING_MINIMAX" ] || [ "$EXISTING_MINIMAX" = "null" ]; then
+        EXISTING_MINIMAX=0
+    fi
+
+    if [ "$EXISTING_MINIMAX" -ge 1 ]; then
+        echo "  MiniMax instance already running. Skipping."
+    else
+        create_instance_with_retry "MiniMax M2.7" "$MINIMAX_MODEL_ID" "Pipeline" "MlxJaccl" 2 \
+            "$MINIMAX_TEMPERATURE" "$MINIMAX_TOP_P" "$MINIMAX_TOP_K" "$MINIMAX_MIN_P" \
+            "$MINIMAX_PRESENCE_PENALTY" "$MINIMAX_REPETITION_PENALTY" || true
+
+        echo -n "Waiting for 2 MiniMax runner(s) to become Ready..."
+        READY=false
+        READY_COUNT=0
+        for i in {1..180}; do
+            READY_COUNT=$(curl -s "$API/state" | jq -r --arg m "$MINIMAX_MODEL_ID" '
+                . as $root
+                | [ $root.instances | to_entries[]
+                    | select(.value.MlxJacclInstance.shardAssignments.modelId == $m)
+                    | .value.MlxJacclInstance.shardAssignments.runnerToShard | keys[] ] as $rids
+                | [ $rids[] | $root.runners[.] | select(.RunnerReady? != null) ] | length
+            ' 2>/dev/null)
+            if [ -z "$READY_COUNT" ] || [ "$READY_COUNT" = "null" ]; then READY_COUNT=0; fi
+            if [ "$READY_COUNT" -ge 2 ]; then
+                echo " READY ($READY_COUNT/2)"
+                READY=true
+                break
+            fi
+            echo -n "."
+            sleep 2
+        done
+        if [ "$READY" = false ]; then
+            echo ""
+            echo "  WARNING: MiniMax only $READY_COUNT/2 runners reached Ready."
             echo "  Check ~/exo.log on the Studios."
         fi
     fi
