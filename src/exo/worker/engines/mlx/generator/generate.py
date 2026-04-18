@@ -677,11 +677,19 @@ def mlx_generate(
         instance_repetition_penalty=instance_repetition_penalty,
     )
 
+    # 1.0 is a no-op for repetition_penalty — collapse to None so mlx-lm
+    # skips the processor instead of running per-token mul-by-1 work.
+    # Passing context_size=None to mlx-lm's processor crashes inside it
+    # (`tokens[-None:]`), so always coerce to its default 20.
+    _rp = _resolved["repetition_penalty"]
+    if _rp == 1.0:
+        _rp = None
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
         make_logits_processors(
-            repetition_penalty=_resolved["repetition_penalty"],
-            repetition_context_size=task.repetition_context_size,
+            repetition_penalty=_rp,
+            repetition_context_size=task.repetition_context_size or 20,
             presence_penalty=_resolved["presence_penalty"],
+            presence_context_size=task.presence_context_size or 20,
         )
     )
     if is_bench:
