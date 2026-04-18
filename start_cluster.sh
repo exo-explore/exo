@@ -38,14 +38,18 @@ fi
 : "${HUIHUI_MAX_KV_TOKENS:=36864}"
 : "${HUIHUI_MAX_PREFIX_SESSIONS:=1}"
 
-# MiniMax: single 2-node Pipeline + MlxJaccl (RDMA) instance spanning both Studios.
-: "${MINIMAX_MODEL_ID:=mlx-community/MiniMax-M2.7-nvfp4}"
-: "${MINIMAX_ENABLED:=1}"
-# MiniMax sampling defaults (per HF model card recommendation).
-: "${MINIMAX_TEMPERATURE:=1.0}"
-: "${MINIMAX_TOP_P:=0.95}"
-: "${MINIMAX_TOP_K:=40}"
-: "${MINIMAX_MIN_P:=}"
+# Qwen3.5-397B-A17B: single 2-node Pipeline + MlxJaccl (RDMA) instance spanning
+# both Studios. Picked over MiniMax-M2.7 because Qwen3.5 ships trained MTP
+# weights — Exo auto-detects, downloads (rank 0), q4-quantizes, and pairs them
+# with the base model for ~2-3× decode speedup via speculative decoding.
+: "${QWEN35_MODEL_ID:=mlx-community/Qwen3.5-397B-A17B-4bit}"
+: "${QWEN35_ENABLED:=1}"
+# Sampling defaults — left unset; falls through to hardcoded Exo defaults
+# (temp=0.7 / top_p=1.0 / top_k=0 / min_p=0.05). Set if you want different.
+: "${QWEN35_TEMPERATURE:=}"
+: "${QWEN35_TOP_P:=}"
+: "${QWEN35_TOP_K:=}"
+: "${QWEN35_MIN_P:=}"
 
 # Cluster-wide sampling defaults (apply when neither request nor instance specifies).
 # Unset by default — instance and hardcoded fallbacks take over.
@@ -733,31 +737,33 @@ if [ "${HUIHUI_INSTANCES_PER_STUDIO:-0}" -gt 0 ]; then
     fi
 fi
 
-# ── Auto-place MiniMax M2.7 with RDMA ──
+# ── Auto-place Qwen3.5-397B-A17B with RDMA ──
 # Single 2-node Pipeline + MlxJaccl instance spanning both Studios. Set
-# MINIMAX_ENABLED=0 to skip, or override MINIMAX_MODEL_ID for a different build.
-if [ "${MINIMAX_ENABLED:-0}" = "1" ]; then
+# QWEN35_ENABLED=0 to skip, or override QWEN35_MODEL_ID for a different build.
+# MTP weights are auto-resolved on rank 0 via _prepare_mtp_weights (downloads
+# from upstream Qwen repo if not cached, q4-quantizes, then loads).
+if [ "${QWEN35_ENABLED:-0}" = "1" ]; then
     echo ""
-    echo "Auto-placing MiniMax ($MINIMAX_MODEL_ID) across both Studios via RDMA..."
+    echo "Auto-placing Qwen3.5 ($QWEN35_MODEL_ID) across both Studios via RDMA..."
 
-    EXISTING_MINIMAX=$(curl -s "$API/state" | jq -r --arg m "$MINIMAX_MODEL_ID" \
+    EXISTING_QWEN35=$(curl -s "$API/state" | jq -r --arg m "$QWEN35_MODEL_ID" \
         '[.. | objects | select(has("shardAssignments")) | select(.shardAssignments.modelId == $m)] | length' 2>/dev/null)
-    if [ -z "$EXISTING_MINIMAX" ] || [ "$EXISTING_MINIMAX" = "null" ]; then
-        EXISTING_MINIMAX=0
+    if [ -z "$EXISTING_QWEN35" ] || [ "$EXISTING_QWEN35" = "null" ]; then
+        EXISTING_QWEN35=0
     fi
 
-    if [ "$EXISTING_MINIMAX" -ge 1 ]; then
-        echo "  MiniMax instance already running. Skipping."
+    if [ "$EXISTING_QWEN35" -ge 1 ]; then
+        echo "  Qwen3.5 instance already running. Skipping."
     else
-        create_instance_with_retry "MiniMax M2.7" "$MINIMAX_MODEL_ID" "Pipeline" "MlxJaccl" 2 \
-            "$MINIMAX_TEMPERATURE" "$MINIMAX_TOP_P" "$MINIMAX_TOP_K" "$MINIMAX_MIN_P" || true
+        create_instance_with_retry "Qwen3.5 397B-A17B" "$QWEN35_MODEL_ID" "Pipeline" "MlxJaccl" 2 \
+            "$QWEN35_TEMPERATURE" "$QWEN35_TOP_P" "$QWEN35_TOP_K" "$QWEN35_MIN_P" || true
 
         # Wait for both shard runners to reach Ready.
-        echo -n "Waiting for 2 MiniMax runner(s) to become Ready..."
+        echo -n "Waiting for 2 Qwen3.5 runner(s) to become Ready..."
         READY=false
         READY_COUNT=0
         for i in {1..180}; do
-            READY_COUNT=$(curl -s "$API/state" | jq -r --arg m "$MINIMAX_MODEL_ID" '
+            READY_COUNT=$(curl -s "$API/state" | jq -r --arg m "$QWEN35_MODEL_ID" '
                 . as $root
                 | [ $root.instances | to_entries[]
                     | select(.value.MlxJacclInstance.shardAssignments.modelId == $m)
@@ -775,7 +781,7 @@ if [ "${MINIMAX_ENABLED:-0}" = "1" ]; then
         done
         if [ "$READY" = false ]; then
             echo ""
-            echo "  WARNING: MiniMax only $READY_COUNT/2 runners reached Ready."
+            echo "  WARNING: Qwen3.5 only $READY_COUNT/2 runners reached Ready."
             echo "  Check ~/exo.log on the Studios."
         fi
     fi
