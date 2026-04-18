@@ -88,10 +88,12 @@
   let codexModel = $state("");
   let codexMcpPath = $state("/Users/username");
   let openClawModel = $state("");
+  let piModel = $state("");
   $effect(() => {
     const def = modelsBySize.length > 0 ? modelsBySize[0] : "your-model-id";
     codexModel = def;
     openClawModel = def;
+    piModel = def;
   });
 
   const claudeShellCommand = $derived(
@@ -218,6 +220,45 @@
     ),
   );
 
+  const piModelsJson = $derived.by(() => {
+    const models: Record<string, unknown>[] = [];
+    for (const modelId of runningModels) {
+      const caps = modelCapabilities[modelId] || [];
+      const ctxLen = modelContextLengths[modelId] || 0;
+      const entry: Record<string, unknown> = { id: modelId };
+      if (caps.includes("vision")) {
+        entry.input = ["text", "image"];
+      }
+      if (ctxLen > 0) {
+        entry.contextWindow = ctxLen;
+      }
+      models.push(entry);
+    }
+    if (models.length === 0) {
+      models.push({ id: "your-model-id" });
+    }
+    return JSON.stringify(
+      {
+        providers: {
+          exo: {
+            baseUrl: `${apiUrl}/v1`,
+            api: "openai-completions",
+            apiKey: "exo",
+            compat: {
+              supportsDeveloperRole: false,
+              supportsReasoningEffort: false,
+            },
+            models,
+          },
+        },
+      },
+      null,
+      2,
+    );
+  });
+
+  const piShellCommand = $derived(`pi --provider exo --model ${piModel}`);
+
   const ollamaCommand = $derived(
     `OLLAMA_HOST=${apiUrl}/ollama ollama run ${modelsBySize.length > 0 ? modelsBySize[0] : "your-model-id"}`,
   );
@@ -277,6 +318,7 @@
     "OpenCode",
     "Codex",
     "OpenClaw",
+    "Pi",
     "Open WebUI",
     "n8n",
     "Firefox",
@@ -513,6 +555,33 @@
           subtitle="Run in terminal"
           description="After saving the config, run these commands to fix metadata and start the gateway."
           config={`openclaw doctor --fix${(modelCapabilities[openClawModel] || []).includes("vision") ? `\nopenclaw models set-image exo/${openClawModel}` : ""}\nopenclaw gateway &\nopenclaw dashboard`}
+          language="bash"
+        />
+      {:else if activeTab === "Pi"}
+        {#if runningModels.length > 1}
+          <div class="text-xs">
+            <span
+              class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1"
+              >Model</span
+            >
+            <select bind:value={piModel} class={selectClass}>
+              {#each runningModels as model}
+                <option value={model}>{model.split("/").pop()}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+        <IntegrationCard
+          title="Models Config"
+          subtitle="~/.pi/agent/models.json"
+          description="Register exo as a custom provider in pi. Create or edit this file, then run pi and pick an exo model via /model. Install pi with: npm install -g @mariozechner/pi-coding-agent"
+          config={piModelsJson}
+        />
+        <IntegrationCard
+          title="Shell Command"
+          subtitle="Run in terminal"
+          description="Launch pi directly with the exo provider and model selected."
+          config={piShellCommand}
           language="bash"
         />
       {:else if activeTab === "Open WebUI"}
