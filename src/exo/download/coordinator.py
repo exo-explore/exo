@@ -358,10 +358,13 @@ class DownloadCoordinator:
                                 progress.shard, found, progress.total
                             )
                         else:
-                            status = DownloadCompleted(
+                            # Probe reports complete but resolve_existing_model
+                            # found nothing on disk. Emit Pending so indexed
+                            # state clears any stale DownloadCompleted instead
+                            # of re-advertising a missing model.
+                            status = DownloadPending(
                                 node_id=self.node_id,
                                 shard_metadata=progress.shard,
-                                total=progress.total,
                                 model_directory=self._default_model_dir(model_id),
                             )
                     elif progress.status in ["in_progress", "not_started"]:
