@@ -123,6 +123,8 @@ class Runner:
             default_top_p=self.instance.default_top_p,
             default_top_k=self.instance.default_top_k,
             default_min_p=self.instance.default_min_p,
+            default_presence_penalty=self.instance.default_presence_penalty,
+            default_repetition_penalty=self.instance.default_repetition_penalty,
         )
 
         self.seen: set[TaskId] = set()
@@ -457,6 +459,8 @@ class Builder:
     default_top_p: float | None = None
     default_top_k: int | None = None
     default_min_p: float | None = None
+    default_presence_penalty: float | None = None
+    default_repetition_penalty: float | None = None
 
     def build(
         self,
@@ -505,6 +509,8 @@ class Builder:
             default_top_p=self.default_top_p,
             default_top_k=self.default_top_k,
             default_min_p=self.default_min_p,
+            default_presence_penalty=self.default_presence_penalty,
+            default_repetition_penalty=self.default_repetition_penalty,
         )
         if any(v is not None for v in sampling_kwargs.values()):
             logger.info(f"Sampling defaults: {sampling_kwargs}")

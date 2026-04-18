@@ -37,6 +37,14 @@ fi
 # can't accumulate prefix history that crowds out MiniMax on the same node.
 : "${HUIHUI_MAX_KV_TOKENS:=36864}"
 : "${HUIHUI_MAX_PREFIX_SESSIONS:=1}"
+# Qwen3.5-35B-A3B "General Thinking" sampling profile (per upstream model card).
+# Huihui inherits the base Qwen3.5-35B-A3B recommendations unchanged.
+: "${HUIHUI_TEMPERATURE:=1.0}"
+: "${HUIHUI_TOP_P:=0.95}"
+: "${HUIHUI_TOP_K:=20}"
+: "${HUIHUI_MIN_P:=0.0}"
+: "${HUIHUI_PRESENCE_PENALTY:=1.5}"
+: "${HUIHUI_REPETITION_PENALTY:=1.0}"
 
 # Qwen3.5-397B-A17B: single 2-node Pipeline + MlxJaccl (RDMA) instance spanning
 # both Studios. Picked over MiniMax-M2.7 because Qwen3.5 ships trained MTP
@@ -51,6 +59,8 @@ fi
 : "${QWEN35_TOP_P:=0.95}"
 : "${QWEN35_TOP_K:=20}"
 : "${QWEN35_MIN_P:=0.0}"
+: "${QWEN35_PRESENCE_PENALTY:=0.0}"
+: "${QWEN35_REPETITION_PENALTY:=1.0}"
 
 # Cluster-wide sampling defaults (apply when neither request nor instance specifies).
 # Unset by default — instance and hardcoded fallbacks take over.
@@ -514,6 +524,8 @@ create_instance_with_retry() {
     local def_top_p="${7:-}"
     local def_top_k="${8:-}"
     local def_min_p="${9:-}"
+    local def_presence="${10:-}"
+    local def_repetition="${11:-}"
     local max_attempts=30
 
     for attempt in $(seq 1 $max_attempts); do
@@ -558,14 +570,18 @@ create_instance_with_retry() {
             --argjson top_p "${def_top_p:-null}" \
             --argjson top_k "${def_top_k:-null}" \
             --argjson min_p "${def_min_p:-null}" \
+            --argjson presence "${def_presence:-null}" \
+            --argjson repetition "${def_repetition:-null}" \
             '
             . as $i
             | ($i | keys[0]) as $tag
             | {instance: ($i | .[$tag] |= (
-                (if $temp  != null then .defaultTemperature = $temp  else . end)
-                | (if $top_p != null then .defaultTopP        = $top_p else . end)
-                | (if $top_k != null then .defaultTopK        = $top_k else . end)
-                | (if $min_p != null then .defaultMinP        = $min_p else . end)
+                (if $temp     != null then .defaultTemperature      = $temp       else . end)
+                | (if $top_p    != null then .defaultTopP             = $top_p      else . end)
+                | (if $top_k    != null then .defaultTopK             = $top_k      else . end)
+                | (if $min_p    != null then .defaultMinP             = $min_p      else . end)
+                | (if $presence != null then .defaultPresencePenalty  = $presence   else . end)
+                | (if $repetition != null then .defaultRepetitionPenalty = $repetition else . end)
               ) | {($tag): .[$tag]})}
         ')
 
@@ -606,6 +622,12 @@ create_single_node_instance() {
     local instance_index="$4"
     local max_kv_tokens="${5:-}"
     local max_prefix_sessions="${6:-}"
+    local def_temp="${7:-}"
+    local def_top_p="${8:-}"
+    local def_top_k="${9:-}"
+    local def_min_p="${10:-}"
+    local def_presence="${11:-}"
+    local def_repetition="${12:-}"
     local max_attempts=20
 
     for attempt in $(seq 1 $max_attempts); do
@@ -629,11 +651,17 @@ create_single_node_instance() {
         # When the filtered array is empty (model still hydrating on the node),
         # .[0] yields null — emit JSON null so the "$instance_payload" = "null"
         # check below triggers the retry instead of POSTing {"instance": null}.
-        # Per-instance KV caps are injected into the inner tagged object
-        # (TaggedModel wraps it as {"MlxRingInstance": {...}}).
+        # Per-instance KV caps + sampling defaults are injected into the inner
+        # tagged object (TaggedModel wraps it as {"MlxRingInstance": {...}}).
         instance_payload=$(echo "$previews_response" | jq -c \
             --argjson kv "${max_kv_tokens:-null}" \
             --argjson sessions "${max_prefix_sessions:-null}" \
+            --argjson temp "${def_temp:-null}" \
+            --argjson top_p "${def_top_p:-null}" \
+            --argjson top_k "${def_top_k:-null}" \
+            --argjson min_p "${def_min_p:-null}" \
+            --argjson presence "${def_presence:-null}" \
+            --argjson repetition "${def_repetition:-null}" \
             '
             .previews
             | map(select(.sharding == "Pipeline"
@@ -646,8 +674,14 @@ create_single_node_instance() {
                 .instance as $i
                 | ($i | keys[0]) as $tag
                 | {instance: ($i | .[$tag] |= (
-                    (if $kv != null then .maxKvTokens = $kv else . end)
-                    | (if $sessions != null then .maxPrefixSessions = $sessions else . end)
+                    (if $kv         != null then .maxKvTokens             = $kv         else . end)
+                    | (if $sessions != null then .maxPrefixSessions       = $sessions   else . end)
+                    | (if $temp     != null then .defaultTemperature      = $temp       else . end)
+                    | (if $top_p    != null then .defaultTopP             = $top_p      else . end)
+                    | (if $top_k    != null then .defaultTopK             = $top_k      else . end)
+                    | (if $min_p    != null then .defaultMinP             = $min_p      else . end)
+                    | (if $presence != null then .defaultPresencePenalty  = $presence   else . end)
+                    | (if $repetition != null then .defaultRepetitionPenalty = $repetition else . end)
                   ) | {($tag): .[$tag]})}
               end
         ')
@@ -704,9 +738,13 @@ if [ "${HUIHUI_INSTANCES_PER_STUDIO:-0}" -gt 0 ]; then
     else
         for i in $(seq 1 $HUIHUI_INSTANCES_PER_STUDIO); do
             create_single_node_instance "$M4_1_NODE_ID" "$HUIHUI_MODEL_ID" "M4-1" "$i" \
-                "$HUIHUI_MAX_KV_TOKENS" "$HUIHUI_MAX_PREFIX_SESSIONS" || true
+                "$HUIHUI_MAX_KV_TOKENS" "$HUIHUI_MAX_PREFIX_SESSIONS" \
+                "$HUIHUI_TEMPERATURE" "$HUIHUI_TOP_P" "$HUIHUI_TOP_K" "$HUIHUI_MIN_P" \
+                "$HUIHUI_PRESENCE_PENALTY" "$HUIHUI_REPETITION_PENALTY" || true
             create_single_node_instance "$M4_2_NODE_ID" "$HUIHUI_MODEL_ID" "M4-2" "$i" \
-                "$HUIHUI_MAX_KV_TOKENS" "$HUIHUI_MAX_PREFIX_SESSIONS" || true
+                "$HUIHUI_MAX_KV_TOKENS" "$HUIHUI_MAX_PREFIX_SESSIONS" \
+                "$HUIHUI_TEMPERATURE" "$HUIHUI_TOP_P" "$HUIHUI_TOP_K" "$HUIHUI_MIN_P" \
+                "$HUIHUI_PRESENCE_PENALTY" "$HUIHUI_REPETITION_PENALTY" || true
         done
 
         # Wait until all expected instances have a Ready runner.
@@ -757,7 +795,8 @@ if [ "${QWEN35_ENABLED:-0}" = "1" ]; then
         echo "  Qwen3.5 instance already running. Skipping."
     else
         create_instance_with_retry "Qwen3.5 397B-A17B" "$QWEN35_MODEL_ID" "Pipeline" "MlxJaccl" 2 \
-            "$QWEN35_TEMPERATURE" "$QWEN35_TOP_P" "$QWEN35_TOP_K" "$QWEN35_MIN_P" || true
+            "$QWEN35_TEMPERATURE" "$QWEN35_TOP_P" "$QWEN35_TOP_K" "$QWEN35_MIN_P" \
+            "$QWEN35_PRESENCE_PENALTY" "$QWEN35_REPETITION_PENALTY" || true
 
         # Wait for both shard runners to reach Ready.
         echo -n "Waiting for 2 Qwen3.5 runner(s) to become Ready..."

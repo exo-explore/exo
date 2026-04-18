@@ -35,6 +35,8 @@ class BaseInstance(TaggedModel):
     default_top_p: float | None = None
     default_top_k: int | None = None
     default_min_p: float | None = None
+    default_presence_penalty: float | None = None
+    default_repetition_penalty: float | None = None
 
     def shard(self, runner_id: RunnerId) -> ShardMetadata | None:
         return self.shard_assignments.runner_to_shard.get(runner_id, None)

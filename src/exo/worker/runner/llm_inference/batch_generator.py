@@ -129,6 +129,8 @@ class SequentialGenerator(InferenceGenerator):
     default_top_p: float | None = None
     default_top_k: int | None = None
     default_min_p: float | None = None
+    default_presence_penalty: float | None = None
+    default_repetition_penalty: float | None = None
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -347,6 +349,8 @@ class SequentialGenerator(InferenceGenerator):
             instance_top_p=self.default_top_p,
             instance_top_k=self.default_top_k,
             instance_min_p=self.default_min_p,
+            instance_presence_penalty=self.default_presence_penalty,
+            instance_repetition_penalty=self.default_repetition_penalty,
         )
 
     def close(self) -> None:
@@ -371,6 +375,8 @@ class BatchGenerator(InferenceGenerator):
     default_top_p: float | None = None
     default_top_k: int | None = None
     default_min_p: float | None = None
+    default_presence_penalty: float | None = None
+    default_repetition_penalty: float | None = None
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -400,6 +406,8 @@ class BatchGenerator(InferenceGenerator):
             default_top_p=self.default_top_p,
             default_top_k=self.default_top_k,
             default_min_p=self.default_min_p,
+            default_presence_penalty=self.default_presence_penalty,
+            default_repetition_penalty=self.default_repetition_penalty,
         )
 
     def warmup(self):

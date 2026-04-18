@@ -604,6 +604,8 @@ def mlx_generate(
     instance_top_p: float | None = None,
     instance_top_k: int | None = None,
     instance_min_p: float | None = None,
+    instance_presence_penalty: float | None = None,
+    instance_repetition_penalty: float | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -660,10 +662,26 @@ def mlx_generate(
                 f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
             )
 
+    _resolved = resolve_sampling(
+        request_temperature=task.temperature,
+        request_top_p=task.top_p,
+        request_top_k=task.top_k,
+        request_min_p=task.min_p,
+        request_presence_penalty=task.presence_penalty,
+        request_repetition_penalty=task.repetition_penalty,
+        instance_temperature=instance_temperature,
+        instance_top_p=instance_top_p,
+        instance_top_k=instance_top_k,
+        instance_min_p=instance_min_p,
+        instance_presence_penalty=instance_presence_penalty,
+        instance_repetition_penalty=instance_repetition_penalty,
+    )
+
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
         make_logits_processors(
-            repetition_penalty=task.repetition_penalty,
+            repetition_penalty=_resolved["repetition_penalty"],
             repetition_context_size=task.repetition_context_size,
+            presence_penalty=_resolved["presence_penalty"],
         )
     )
     if is_bench:
@@ -671,16 +689,12 @@ def mlx_generate(
         eos_ids = eos_ids_from_tokenizer(tokenizer)
         logits_processors = [ban_token_ids(eos_ids)] + logits_processors
 
-    sampler = make_sampler(**resolve_sampling(
-        request_temperature=task.temperature,
-        request_top_p=task.top_p,
-        request_top_k=task.top_k,
-        request_min_p=task.min_p,
-        instance_temperature=instance_temperature,
-        instance_top_p=instance_top_p,
-        instance_top_k=instance_top_k,
-        instance_min_p=instance_min_p,
-    ))
+    sampler = make_sampler(
+        temp=_resolved["temp"],
+        top_p=_resolved["top_p"],
+        top_k=_resolved["top_k"],
+        min_p=_resolved["min_p"],
+    )
 
     # Normalize stop sequences to a list
     stop_sequences: list[str] = (

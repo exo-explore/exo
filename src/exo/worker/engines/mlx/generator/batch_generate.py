@@ -101,6 +101,8 @@ class ExoBatchGenerator:
     default_top_p: float | None = None
     default_top_k: int | None = None
     default_min_p: float | None = None
+    default_presence_penalty: float | None = None
+    default_repetition_penalty: float | None = None
 
     _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
@@ -636,17 +638,27 @@ class ExoBatchGenerator:
         seed = task_params.seed if task_params.seed is not None else 42
         mx.random.seed(seed)
 
+        _resolved = resolve_sampling(
+            request_temperature=task_params.temperature,
+            request_top_p=task_params.top_p,
+            request_top_k=task_params.top_k,
+            request_min_p=task_params.min_p,
+            request_presence_penalty=task_params.presence_penalty,
+            request_repetition_penalty=task_params.repetition_penalty,
+            instance_temperature=self.default_temperature,
+            instance_top_p=self.default_top_p,
+            instance_top_k=self.default_top_k,
+            instance_min_p=self.default_min_p,
+            instance_presence_penalty=self.default_presence_penalty,
+            instance_repetition_penalty=self.default_repetition_penalty,
+        )
         with T("submit.make_sampler"):
-            sampler = make_sampler(**resolve_sampling(
-                request_temperature=task_params.temperature,
-                request_top_p=task_params.top_p,
-                request_top_k=task_params.top_k,
-                request_min_p=task_params.min_p,
-                instance_temperature=self.default_temperature,
-                instance_top_p=self.default_top_p,
-                instance_top_k=self.default_top_k,
-                instance_min_p=self.default_min_p,
-            ))
+            sampler = make_sampler(
+                temp=_resolved["temp"],
+                top_p=_resolved["top_p"],
+                top_k=_resolved["top_k"],
+                min_p=_resolved["min_p"],
+            )
 
         vision_ctx = (
             patch_embed_tokens(
@@ -702,8 +714,9 @@ class ExoBatchGenerator:
         with T("submit.make_logits_processors"):
             logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
                 make_logits_processors(
-                    repetition_penalty=task_params.repetition_penalty,
+                    repetition_penalty=_resolved["repetition_penalty"],
                     repetition_context_size=task_params.repetition_context_size,
+                    presence_penalty=_resolved["presence_penalty"],
                 )
             )
             if is_bench:

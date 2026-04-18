@@ -109,6 +109,8 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     min_p: float | None = None
     repetition_penalty: float | None = None
     repetition_context_size: int | None = None
+    presence_penalty: float | None = None
+    presence_context_size: int | None = None
     images: list[Base64Image] = Field(default_factory=list)
     image_hashes: dict[int, Base64ImageHash] = Field(default_factory=dict)
     total_input_chunks: int = 0
