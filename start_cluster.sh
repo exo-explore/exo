@@ -33,6 +33,10 @@ fi
 # Model placed automatically at startup; 1 instance per Studio (2 total) for prediction-bot.
 : "${HUIHUI_MODEL_ID:=mlx-community/Huihui-Qwen3.5-35B-A3B-abliterated-mxfp4}"
 : "${HUIHUI_INSTANCES_PER_STUDIO:=1}"
+# Scout instances only ever serve a single request type — cap KV memory so they
+# can't accumulate prefix history that crowds out MiniMax on the same node.
+: "${HUIHUI_MAX_KV_TOKENS:=36864}"
+: "${HUIHUI_MAX_PREFIX_SESSIONS:=1}"
 
 # MiniMax: single 2-node Pipeline + MlxJaccl (RDMA) instance spanning both Studios.
 : "${MINIMAX_MODEL_ID:=mlx-community/MiniMax-M2.7-nvfp4}"
@@ -557,6 +561,8 @@ create_single_node_instance() {
     local model_id="$2"
     local node_label="$3"
     local instance_index="$4"
+    local max_kv_tokens="${5:-}"
+    local max_prefix_sessions="${6:-}"
     local max_attempts=20
 
     for attempt in $(seq 1 $max_attempts); do
@@ -580,14 +586,27 @@ create_single_node_instance() {
         # When the filtered array is empty (model still hydrating on the node),
         # .[0] yields null — emit JSON null so the "$instance_payload" = "null"
         # check below triggers the retry instead of POSTing {"instance": null}.
-        instance_payload=$(echo "$previews_response" | jq -c '
+        # Per-instance KV caps are injected into the inner tagged object
+        # (TaggedModel wraps it as {"MlxRingInstance": {...}}).
+        instance_payload=$(echo "$previews_response" | jq -c \
+            --argjson kv "${max_kv_tokens:-null}" \
+            --argjson sessions "${max_prefix_sessions:-null}" \
+            '
             .previews
             | map(select(.sharding == "Pipeline"
                          and .instance_meta == "MlxRing"
                          and .instance != null
                          and .error == null))
             | .[0]
-            | if . == null then null else {instance: .instance} end
+            | if . == null then null
+              else
+                .instance as $i
+                | ($i | keys[0]) as $tag
+                | {instance: ($i | .[$tag] |= (
+                    (if $kv != null then .maxKvTokens = $kv else . end)
+                    | (if $sessions != null then .maxPrefixSessions = $sessions else . end)
+                  ) | {($tag): .[$tag]})}
+              end
         ')
 
         if [ "$instance_payload" = "null" ] || [ -z "$instance_payload" ]; then
@@ -641,8 +660,10 @@ if [ "${HUIHUI_INSTANCES_PER_STUDIO:-0}" -gt 0 ]; then
         echo "  $EXISTING_HUIHUI Huihui instance(s) already running (target $EXPECTED_HUIHUI_TOTAL). Skipping."
     else
         for i in $(seq 1 $HUIHUI_INSTANCES_PER_STUDIO); do
-            create_single_node_instance "$M4_1_NODE_ID" "$HUIHUI_MODEL_ID" "M4-1" "$i" || true
-            create_single_node_instance "$M4_2_NODE_ID" "$HUIHUI_MODEL_ID" "M4-2" "$i" || true
+            create_single_node_instance "$M4_1_NODE_ID" "$HUIHUI_MODEL_ID" "M4-1" "$i" \
+                "$HUIHUI_MAX_KV_TOKENS" "$HUIHUI_MAX_PREFIX_SESSIONS" || true
+            create_single_node_instance "$M4_2_NODE_ID" "$HUIHUI_MODEL_ID" "M4-2" "$i" \
+                "$HUIHUI_MAX_KV_TOKENS" "$HUIHUI_MAX_PREFIX_SESSIONS" || true
         done
 
         # Wait until all expected instances have a Ready runner.

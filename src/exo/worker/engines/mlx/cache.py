@@ -122,7 +122,13 @@ def has_non_kv_caches(cache: KVCacheType) -> bool:
 
 
 class KVPrefixCache:
-    def __init__(self, group: mx.distributed.Group | None):
+    def __init__(
+        self,
+        group: mx.distributed.Group | None,
+        max_sessions: int | None = None,
+        max_bytes: int | None = None,
+        max_kv_tokens: int | None = None,
+    ):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[KVCacheType] = []
         self._snapshots: list[list[CacheSnapshot] | None] = []
@@ -132,6 +138,10 @@ class KVPrefixCache:
         self._access_counter: int = 0
         self._pinned: set[int] = set()  # indices protected from eviction
         self._group = group
+        # Per-instance caps. None = unbounded (default).
+        self._max_sessions = max_sessions
+        self._max_bytes = max_bytes
+        self._max_kv_tokens = max_kv_tokens
 
     def pin(self, index: int) -> None:
         """Mark a cache entry as non-evictable."""
@@ -257,7 +267,7 @@ class KVPrefixCache:
                 best_index, best_length = i, length
 
         if best_index is None:
-            return make_kv_cache(model), prompt_tokens, None, False
+            return make_kv_cache(model, max_kv_size=self._max_kv_tokens), prompt_tokens, None, False
 
         # For exact match: trim to max_length-1 so remaining has the last token
         # For partial match: trim to best_length, remaining has suffix to prefill
@@ -268,7 +278,7 @@ class KVPrefixCache:
 
         # No usable snapshot — need fresh cache
         if restore_snap is None and has_ssm:
-            return make_kv_cache(model), prompt_tokens, None, False
+            return make_kv_cache(model, max_kv_size=self._max_kv_tokens), prompt_tokens, None, False
 
         prompt_cache = deepcopy(self.caches[best_index])
         cached_length = cache_length(self.caches[best_index])
@@ -317,8 +327,49 @@ class KVPrefixCache:
 
         return match_length
 
+    def _evict_lru_once(self, reason: str) -> bool:
+        """Evict a single LRU non-pinned entry. Returns True if evicted."""
+        candidates = [
+            (i, ts) for i, ts in enumerate(self._last_used) if i not in self._pinned
+        ]
+        if not candidates:
+            return False
+        lru_index = min(candidates, key=lambda x: x[1])[0]
+        evicted_tokens = len(self.prompts[lru_index])
+        self.prompts.pop(lru_index)
+        self.caches.pop(lru_index)
+        self._snapshots.pop(lru_index)
+        self._media_regions.pop(lru_index)
+        self._last_used.pop(lru_index)
+        self.prefill_tps.pop(lru_index)
+        self._pinned = {p - 1 if p > lru_index else p for p in self._pinned if p != lru_index}
+        logger.info(f"KV cache evicted LRU entry ({evicted_tokens} tokens) — {reason}")
+        return True
+
+    def _entry_bytes(self, cache_list: KVCacheType) -> int:
+        """Best-effort byte accounting for a single cache entry's tensors."""
+        total = 0
+        for c in cache_list:
+            for attr in ("keys", "values", "state"):
+                t = getattr(c, attr, None)
+                if t is None:
+                    continue
+                if isinstance(t, list):
+                    for a in t:
+                        nb = getattr(a, "nbytes", None)
+                        if nb is not None:
+                            total += int(nb)
+                else:
+                    nb = getattr(t, "nbytes", None)
+                    if nb is not None:
+                        total += int(nb)
+        return total
+
+    def _total_bytes(self) -> int:
+        return sum(self._entry_bytes(c) for c in self.caches)
+
     def _evict_if_needed(self):
-        """Evict least recently used entries while memory usage is high.
+        """Evict LRU entries to satisfy: memory threshold, session count, total bytes.
 
         Pinned entries (via pin()) are never evicted.
         """
@@ -326,32 +377,28 @@ class KVPrefixCache:
             return
 
         evicted_any = False
-        # Evict LRU entries until below threshold
+        # 1. Memory-pressure eviction (existing behavior)
         while (
             len(self.caches) > 0
             and self.get_memory_used_percentage() > _MEMORY_THRESHOLD
         ):
-            # Find LRU among non-pinned entries
-            candidates = [
-                (i, ts) for i, ts in enumerate(self._last_used)
-                if i not in self._pinned
-            ]
-            if not candidates:
-                break  # all entries are pinned, can't evict
-            lru_index = min(candidates, key=lambda x: x[1])[0]
-            evicted_tokens = len(self.prompts[lru_index])
-            self.prompts.pop(lru_index)
-            self.caches.pop(lru_index)
-            self._snapshots.pop(lru_index)
-            self._media_regions.pop(lru_index)
-            self._last_used.pop(lru_index)
-            self.prefill_tps.pop(lru_index)
-            # Adjust pinned indices after removal
-            self._pinned = {p - 1 if p > lru_index else p for p in self._pinned if p != lru_index}
+            if not self._evict_lru_once("memory pressure"):
+                break
             evicted_any = True
-            logger.info(
-                f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
-            )
+
+        # 2. Per-instance session count cap
+        if self._max_sessions is not None:
+            while len(self.caches) > self._max_sessions:
+                if not self._evict_lru_once(f"session cap {self._max_sessions}"):
+                    break
+                evicted_any = True
+
+        # 3. Per-instance byte cap
+        if self._max_bytes is not None:
+            while len(self.caches) > 0 and self._total_bytes() > self._max_bytes:
+                if not self._evict_lru_once(f"byte cap {self._max_bytes}"):
+                    break
+                evicted_any = True
 
         if evicted_any:
             # Force Python GC to release array references, then clear Metal buffer cache
@@ -477,6 +524,21 @@ def make_kv_cache(
 
     if hasattr(model, "make_cache"):
         caches: KVCacheType = model.make_cache()  # type: ignore
+        # Per-instance per-request token cap: wrap plain KVCache entries in
+        # RotatingKVCache so a single request can't grow KV memory unbounded.
+        # Skips quantization/turboquant/step-size paths since they target full
+        # KVCache only and we're replacing those entries.
+        if max_kv_size is not None:
+            replaced = 0
+            for i, c in enumerate(caches):
+                if isinstance(c, KVCache):
+                    caches[i] = RotatingKVCache(max_size=max_kv_size, keep=keep)
+                    replaced += 1
+            if replaced:
+                logger.info(
+                    f"Capped KV cache at max_kv_size={max_kv_size} for {replaced}/{len(caches)} layers"
+                )
+            return caches
         if TURBOQUANT_ENABLED:
             from exo.worker.engines.mlx.turboquant_cache import (
                 TurboQuantConfig,

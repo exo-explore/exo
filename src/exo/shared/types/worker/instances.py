@@ -21,6 +21,14 @@ class BaseInstance(TaggedModel):
     instance_id: InstanceId
     shard_assignments: ShardAssignments
 
+    # Per-instance KV cache caps. None = unbounded (default behavior unchanged).
+    # max_kv_tokens: per-active-request token cap (wraps KVCache → RotatingKVCache)
+    # max_prefix_sessions: max number of cached past-prompt KV entries
+    # max_prefix_bytes: max total bytes across all prefix cache entries
+    max_kv_tokens: int | None = None
+    max_prefix_sessions: int | None = None
+    max_prefix_bytes: int | None = None
+
     def shard(self, runner_id: RunnerId) -> ShardMetadata | None:
         return self.shard_assignments.runner_to_shard.get(runner_id, None)
 

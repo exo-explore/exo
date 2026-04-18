@@ -116,6 +116,9 @@ class Runner:
             self.model_id,
             self.event_sender,
             self.cancel_receiver,
+            max_kv_tokens=self.instance.max_kv_tokens,
+            max_prefix_sessions=self.instance.max_prefix_sessions,
+            max_prefix_bytes=self.instance.max_prefix_bytes,
         )
 
         self.seen: set[TaskId] = set()
@@ -443,6 +446,9 @@ class Builder:
     tokenizer: TokenizerWrapper | None = None
     group: mx.distributed.Group | None = None
     vision_processor: VisionProcessor | None = None
+    max_kv_tokens: int | None = None
+    max_prefix_sessions: int | None = None
+    max_prefix_bytes: int | None = None
 
     def build(
         self,
@@ -468,7 +474,22 @@ class Builder:
                 self.tokenizer.tool_parser,  # type: ignore
             )
 
-        kv_prefix_cache = KVPrefixCache(self.group)
+        kv_prefix_cache = KVPrefixCache(
+            self.group,
+            max_sessions=self.max_prefix_sessions,
+            max_bytes=self.max_prefix_bytes,
+            max_kv_tokens=self.max_kv_tokens,
+        )
+        if (
+            self.max_kv_tokens is not None
+            or self.max_prefix_sessions is not None
+            or self.max_prefix_bytes is not None
+        ):
+            logger.info(
+                f"KV cache limits: max_kv_tokens={self.max_kv_tokens} "
+                f"max_prefix_sessions={self.max_prefix_sessions} "
+                f"max_prefix_bytes={self.max_prefix_bytes}"
+            )
 
         device_rank = 0 if self.group is None else self.group.rank()
         if os.environ.get("EXO_NO_BATCH"):
@@ -484,6 +505,7 @@ class Builder:
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
                 vision_processor=vision_processor,
+                max_kv_tokens=self.max_kv_tokens,
             )
         logger.info("using BatchGenerator")
         return BatchGenerator(
@@ -497,4 +519,5 @@ class Builder:
             cancel_receiver=self.cancel_receiver,
             event_sender=self.event_sender,
             vision_processor=vision_processor,
+            max_kv_tokens=self.max_kv_tokens,
         )

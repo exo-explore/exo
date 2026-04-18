@@ -95,6 +95,7 @@ class ExoBatchGenerator:
     kv_prefix_cache: KVPrefixCache | None
     vision_processor: VisionProcessor | None = None
     model_id: str = ""
+    max_kv_tokens: int | None = None
 
     _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
@@ -623,9 +624,9 @@ class ExoBatchGenerator:
                     )
                     prompt_tokens = remaining_tokens
                 else:
-                    cache = make_kv_cache(self.model)
+                    cache = make_kv_cache(self.model, max_kv_size=self.max_kv_tokens)
             else:
-                cache = make_kv_cache(self.model)
+                cache = make_kv_cache(self.model, max_kv_size=self.max_kv_tokens)
 
         seed = task_params.seed if task_params.seed is not None else 42
         mx.random.seed(seed)

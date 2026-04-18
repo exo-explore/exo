@@ -598,6 +598,7 @@ def mlx_generate(
     on_generation_token: Callable[[], None] | None = None,
     vision_processor: VisionProcessor | None = None,
     is_warmup: bool = False,
+    max_kv_tokens: int | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -640,7 +641,7 @@ def mlx_generate(
     matched_index: int | None = None
     is_exact_hit = False
     if kv_prefix_cache is None:
-        caches = make_kv_cache(model=model)
+        caches = make_kv_cache(model=model, max_kv_size=max_kv_tokens)
         prompt_tokens = all_prompt_tokens
     else:
         caches, prompt_tokens, matched_index, is_exact_hit = (
