@@ -44,12 +44,13 @@ fi
 # with the base model for ~2-3× decode speedup via speculative decoding.
 : "${QWEN35_MODEL_ID:=mlx-community/Qwen3.5-397B-A17B-4bit}"
 : "${QWEN35_ENABLED:=1}"
-# Sampling defaults — left unset; falls through to hardcoded Exo defaults
-# (temp=0.7 / top_p=1.0 / top_k=0 / min_p=0.05). Set if you want different.
-: "${QWEN35_TEMPERATURE:=}"
-: "${QWEN35_TOP_P:=}"
-: "${QWEN35_TOP_K:=}"
-: "${QWEN35_MIN_P:=}"
+# Sampling defaults — Qwen3.5 thinking-mode recommendation from upstream
+# model card (the model is thinking-mode by default). min_p=0.0 explicitly
+# disables min_p filtering per Qwen's guidance.
+: "${QWEN35_TEMPERATURE:=0.6}"
+: "${QWEN35_TOP_P:=0.95}"
+: "${QWEN35_TOP_K:=20}"
+: "${QWEN35_MIN_P:=0.0}"
 
 # Cluster-wide sampling defaults (apply when neither request nor instance specifies).
 # Unset by default — instance and hardcoded fallbacks take over.
