@@ -117,6 +117,31 @@ class VisionCardConfig(CamelCaseModel):
     processor_repo: str | None = None
 
 
+
+
+class SamplingDefaults(CamelCaseModel):
+    """Per-model sampling parameter defaults filled in when the request omits them.
+
+    Values here only populate *absent* (``None``) fields — they never override
+    an explicit caller-supplied value.  Sourced from each model's upstream card
+    (e.g. ``MiniMaxAI/MiniMax-M2.7`` recommends ``temperature=1.0, top_p=0.95``).
+    """
+
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    repetition_penalty: float | None = None
+    repetition_context_size: int | None = None
+
+    def fill_missing(self, overrides: dict[str, object]) -> dict[str, object]:
+        """Return *overrides* extended with any default whose key is absent/None."""
+        return {
+            field: getattr(self, field)
+            for field in self.model_fields
+            if overrides.get(field) is None and getattr(self, field) is not None
+        } | overrides
+
 class ModelCard(CamelCaseModel):
     model_id: ModelId
     storage_size: Memory
@@ -131,6 +156,7 @@ class ModelCard(CamelCaseModel):
     base_model: str = ""
     capabilities: list[str] = []
     context_length: int = 0
+    sampling_defaults: SamplingDefaults | None = None
     uses_cfg: bool = False
     trust_remote_code: bool = True
     is_custom: bool = False

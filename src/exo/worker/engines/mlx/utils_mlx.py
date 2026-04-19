@@ -26,7 +26,7 @@ from mlx_lm.models.cache import KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.models.model_cards import ModelId
+from exo.shared.models.model_cards import ModelId, SamplingDefaults
 from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 
 try:
@@ -863,3 +863,30 @@ def mx_all_gather_tasks(
     agreed = [local_tasks[tid] for tid in sorted(agreed_ids)]
     different = [task for task in tasks if task.task_id not in agreed_ids]
     return agreed, different
+
+
+def apply_sampling_defaults(
+    task_params: "TextGenerationTaskParams",
+    defaults: "SamplingDefaults",
+) -> "TextGenerationTaskParams":
+    """Return *task_params* with card sampling defaults filling absent fields.
+
+    The caller's explicit values always win; defaults only backfill ``None``
+    slots.  Returns the original object unchanged when nothing needs filling
+    (zero-allocation fast path).
+    """
+    overrides = {
+        field: getattr(defaults, field)
+        for field in defaults.model_fields
+        if getattr(task_params, field) is None and getattr(defaults, field) is not None
+    }
+    if not overrides:
+        return task_params
+
+    logger.debug(
+        "Applying {} sampling default(s) for {}: {}",
+        len(overrides),
+        task_params.model,
+        ", ".join(f"{k}={v}" for k, v in overrides.items()),
+    )
+    return task_params.model_copy(update=overrides)

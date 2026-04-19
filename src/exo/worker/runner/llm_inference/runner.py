@@ -7,7 +7,7 @@ import mlx.core as mx
 from anyio import WouldBlock
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.models.model_cards import ModelTask
+from exo.shared.models.model_cards import ModelTask, get_card
 from exo.shared.types.chunks import (
     ErrorChunk,
     TokenChunk,
@@ -53,6 +53,7 @@ from exo.shared.types.worker.runners import (
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.utils_mlx import (
+    apply_sampling_defaults,
     initialize_mlx,
     load_mlx_items,
 )
@@ -251,6 +252,11 @@ class Runner:
 
     def submit_text_generation(self, task: TextGeneration):
         assert isinstance(self.generator, InferenceGenerator)
+        card = get_card(task.task_params.model)
+        if card is not None and card.sampling_defaults is not None:
+            task = task.model_copy(
+                update={"task_params": apply_sampling_defaults(task.task_params, card.sampling_defaults)}
+            )
         self.active_tasks[task.task_id] = task
         self.generator.submit(task)
 
