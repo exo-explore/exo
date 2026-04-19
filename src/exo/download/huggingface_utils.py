@@ -7,7 +7,18 @@ import aiofiles
 import aiofiles.os as aios
 from loguru import logger
 
+from exo.download.hf_endpoints import get_hf_endpoint, get_hf_endpoints
 from exo.shared.types.worker.shards import ShardMetadata
+
+__all__ = [
+    "filter_repo_objects",
+    "get_allow_patterns",
+    "get_auth_headers",
+    "get_hf_endpoint",
+    "get_hf_endpoints",
+    "get_hf_home",
+    "get_hf_token",
+]
 
 
 def filter_repo_objects[T](
@@ -56,10 +67,6 @@ def _add_wildcard_to_directories(pattern: str) -> str:
     if pattern[-1] == "/":
         return pattern + "*"
     return pattern
-
-
-def get_hf_endpoint() -> str:
-    return os.environ.get("HF_ENDPOINT", "https://huggingface.co")
 
 
 def get_hf_home() -> Path:
