@@ -12,11 +12,14 @@ from pydantic import TypeAdapter
 
 from exo.download.download_utils import (
     delete_model,
+    download_shard,
     fetch_file_list_with_cache,
 )
+from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import FileListEntry, RepoFileDownloadProgress
+from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 
 
 @pytest.fixture
@@ -451,3 +454,185 @@ class TestProgressResetOnRedownload:
         assert downloaded_this_session == 600_000, (
             "downloaded_this_session should equal total downloaded so far"
         )
+
+
+def _make_shard(model_id: ModelId) -> ShardMetadata:
+    """Build a minimal shard for a text-generation model."""
+    return PipelineShardMetadata(
+        model_card=ModelCard(
+            model_id=model_id,
+            storage_size=Memory.from_bytes(0),
+            n_layers=1,
+            hidden_size=1,
+            supports_tensor=False,
+            tasks=[ModelTask.TextGeneration],
+        ),
+        device_rank=0,
+        world_size=1,
+        start_layer=0,
+        end_layer=1,
+        n_layers=1,
+    )
+
+
+class TestSkipDownloadStatusWithMissingSize:
+    """Tests that ``download_shard(skip_download=True)`` reports a fully-downloaded
+    model as ``status="complete"`` even when HuggingFace's tree API returns
+    ``size=None`` for one or more files.
+
+    Regression test for the Kimi K2.5 "downloaded status keeps reverting" bug:
+    when the ``DownloadCoordinator`` periodic re-scan runs ``download_shard`` with
+    ``skip_download=True``, a ``None`` size on any file would make the equality
+    check ``downloaded_bytes == file.size`` always False, so the whole repo got
+    classified ``in_progress`` and the coordinator demoted it back to
+    ``DownloadPending`` every 60 seconds.
+    """
+
+    async def test_status_complete_when_file_size_is_none(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        """HF tree API reporting ``size=None`` for a file on a complete model
+        should not cause that file to be reported ``not_started``."""
+        models_dir = tmp_path / "models"
+        model_dir = models_dir / model_id.normalize()
+        await aios.makedirs(model_dir, exist_ok=True)
+
+        # Create the files on disk as a "fully downloaded" model would have them.
+        weight_content = b"x" * 1000
+        config_content = b'{"hello": "world"}'
+        async with aiofiles.open(model_dir / "model.safetensors", "wb") as f:
+            await f.write(weight_content)
+        async with aiofiles.open(model_dir / "config.json", "wb") as f:
+            await f.write(config_content)
+
+        # Simulate what HF's tree API returns for Kimi K2.5: most files have a
+        # size, but at least one comes back with ``size=None``.
+        file_list = [
+            FileListEntry(
+                type="file", path="model.safetensors", size=len(weight_content)
+            ),
+            FileListEntry(type="file", path="config.json", size=None),
+        ]
+
+        shard = _make_shard(model_id)
+        collected_progress: list[object] = []
+
+        async def on_progress(_shard: ShardMetadata, progress: object) -> None:
+            collected_progress.append(progress)
+
+        with (
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
+            patch("exo.download.download_utils.EXO_MODELS_READ_ONLY_DIRS", ()),
+            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.fetch_file_list_with_cache",
+                new_callable=AsyncMock,
+                return_value=file_list,
+            ),
+        ):
+            target_dir, progress = await download_shard(
+                shard,
+                on_progress,
+                skip_download=True,
+            )
+
+        assert target_dir == model_dir
+        assert progress.status == "complete", (
+            f"Expected status='complete' when all files exist on disk "
+            f"(even with size=None in HF response), got {progress.status!r}. "
+            f"file_progress: "
+            f"{ {path: fp.status for path, fp in progress.file_progress.items()} }"
+        )
+        assert progress.file_progress["config.json"].status == "complete"
+        assert progress.file_progress["model.safetensors"].status == "complete"
+
+    async def test_status_not_started_when_file_with_none_size_missing(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        """Files reported with ``size=None`` that are ALSO missing on disk must
+        still be reported as ``not_started`` \u2014 we only waive size-verification
+        when the file physically exists."""
+        models_dir = tmp_path / "models"
+        model_dir = models_dir / model_id.normalize()
+        await aios.makedirs(model_dir, exist_ok=True)
+
+        # Create only the sized file; the size=None file is missing.
+        weight_content = b"x" * 1000
+        async with aiofiles.open(model_dir / "model.safetensors", "wb") as f:
+            await f.write(weight_content)
+
+        file_list = [
+            FileListEntry(
+                type="file", path="model.safetensors", size=len(weight_content)
+            ),
+            FileListEntry(type="file", path="config.json", size=None),
+        ]
+
+        shard = _make_shard(model_id)
+
+        async def on_progress(_shard: ShardMetadata, _progress: object) -> None:
+            pass
+
+        with (
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
+            patch("exo.download.download_utils.EXO_MODELS_READ_ONLY_DIRS", ()),
+            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.fetch_file_list_with_cache",
+                new_callable=AsyncMock,
+                return_value=file_list,
+            ),
+        ):
+            _, progress = await download_shard(
+                shard,
+                on_progress,
+                skip_download=True,
+            )
+
+        # model.safetensors exists with matching size -> complete.
+        # config.json is missing -> not_started, which makes overall not_started.
+        assert progress.file_progress["model.safetensors"].status == "complete"
+        assert progress.file_progress["config.json"].status == "not_started"
+        assert progress.status == "not_started"
+
+    async def test_status_not_started_when_sized_file_size_mismatch(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        """Guard against regressions: a size mismatch on a sized file is still
+        reported as ``not_started``. The fix must only relax the check for
+        ``size=None``, not for genuine size disagreements."""
+        models_dir = tmp_path / "models"
+        model_dir = models_dir / model_id.normalize()
+        await aios.makedirs(model_dir, exist_ok=True)
+
+        # On-disk size is 500, HF says 1000 \u2192 mismatch.
+        async with aiofiles.open(model_dir / "model.safetensors", "wb") as f:
+            await f.write(b"x" * 500)
+
+        file_list = [
+            FileListEntry(type="file", path="model.safetensors", size=1000),
+        ]
+
+        shard = _make_shard(model_id)
+
+        async def on_progress(_shard: ShardMetadata, _progress: object) -> None:
+            pass
+
+        with (
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
+            patch("exo.download.download_utils.EXO_MODELS_READ_ONLY_DIRS", ()),
+            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.fetch_file_list_with_cache",
+                new_callable=AsyncMock,
+                return_value=file_list,
+            ),
+        ):
+            _, progress = await download_shard(
+                shard,
+                on_progress,
+                skip_download=True,
+            )
+
+        assert progress.file_progress["model.safetensors"].status == "not_started"
+        assert progress.status == "not_started"
