@@ -65,6 +65,7 @@
     nodeThunderboltBridge,
     nodeIdentities,
     isConnected,
+    hfEndpoint,
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
@@ -87,6 +88,7 @@
   const selectedModelId = $derived(selectedPreviewModelId());
   const loadingPreviews = $derived(isLoadingPreviews());
   const debugEnabled = $derived(debugMode());
+  const hfBase = $derived(hfEndpoint());
   const topologyOnlyEnabled = $derived(topologyOnlyMode());
   const sidebarVisible = $derived(chatSidebarVisible());
   const mobileChatOpen = $derived(mobileChatSidebarOpen());
@@ -5244,7 +5246,7 @@
                         {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                           <a
                             class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
-                            href={`https://huggingface.co/${instanceModelId}`}
+                            href={`${hfBase}/${instanceModelId}`}
                             target="_blank"
                             rel="noreferrer noopener"
                             aria-label="View model on Hugging Face"
@@ -6379,7 +6381,7 @@
                           {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                             <a
                               class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
-                              href={`https://huggingface.co/${instanceModelId}`}
+                              href={`${hfBase}/${instanceModelId}`}
                               target="_blank"
                               rel="noreferrer noopener"
                               aria-label="View model on Hugging Face"

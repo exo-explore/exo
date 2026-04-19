@@ -28,6 +28,7 @@ from exo.download.huggingface_utils import (
     get_allow_patterns,
     get_auth_headers,
     get_hf_endpoint,
+    get_hf_endpoints,
     get_hf_token,
 )
 from exo.shared.constants import (
@@ -54,6 +55,24 @@ class HuggingFaceAuthenticationError(Exception):
 
 class HuggingFaceRateLimitError(Exception):
     """429 Huggingface code"""
+
+
+class XetNotReachableError(Exception):
+    """Raised when a download redirects to the xet CAS bridge but the bridge is unreachable.
+
+    hf-mirror does not proxy xet content; the redirect lands on cas-bridge.xethub.hf.co,
+    which is blocked or slow on many Chinese networks. See exo-explore/exo#1914.
+    """
+
+
+_XET_CAS_HOST_MARKERS: tuple[str, ...] = (
+    "cas-bridge.xethub.hf.co",
+    "cas-bridge-direct.xethub.hf.co",
+)
+
+
+def _is_xet_cas_url(url: str) -> bool:
+    return any(marker in url for marker in _XET_CAS_HOST_MARKERS)
 
 
 async def _build_auth_error_message(status_code: int, model_id: ModelId) -> str:
@@ -385,16 +404,23 @@ async def fetch_file_list_with_retry(
     recursive: bool = False,
     on_connection_lost: Callable[[], None] = lambda: None,
 ) -> list[FileListEntry]:
-    n_attempts = 3
+    endpoints = get_hf_endpoints()
+    n_attempts = max(3, len(endpoints))
     for attempt in range(n_attempts):
+        endpoint = endpoints[attempt % len(endpoints)]
         try:
-            return await _fetch_file_list(model_id, revision, path, recursive)
+            return await _fetch_file_list(
+                model_id, revision, path, recursive, endpoint=endpoint
+            )
         except HuggingFaceAuthenticationError:
             raise
         except Exception as e:
             on_connection_lost()
             if attempt == n_attempts - 1:
                 raise e
+            logger.warning(
+                f"fetch_file_list failed against {endpoint} (attempt {attempt + 1}/{n_attempts}): {e}"
+            )
             await asyncio.sleep(2.0**attempt)
     raise Exception(
         f"Failed to fetch file list for {model_id=} {revision=} {path=} {recursive=}"
@@ -402,9 +428,14 @@ async def fetch_file_list_with_retry(
 
 
 async def _fetch_file_list(
-    model_id: ModelId, revision: str = "main", path: str = "", recursive: bool = False
+    model_id: ModelId,
+    revision: str = "main",
+    path: str = "",
+    recursive: bool = False,
+    endpoint: str | None = None,
 ) -> list[FileListEntry]:
-    api_url = f"{get_hf_endpoint()}/api/models/{model_id}/tree/{revision}"
+    endpoint = endpoint if endpoint is not None else get_hf_endpoint()
+    api_url = f"{endpoint}/api/models/{model_id}/tree/{revision}"
     url = f"{api_url}/{path}" if path else api_url
 
     headers = await get_download_headers()
@@ -428,7 +459,7 @@ async def _fetch_file_list(
                     files.append(FileListEntry.model_validate(item))
                 elif item.type == "directory" and recursive:
                     subfiles = await _fetch_file_list(
-                        model_id, revision, item.path, recursive
+                        model_id, revision, item.path, recursive, endpoint=endpoint
                     )
                     files.extend(subfiles)
             return files
@@ -485,29 +516,40 @@ async def calc_hash(path: Path, hash_type: Literal["sha1", "sha256"] = "sha1") -
 
 
 async def file_meta(
-    model_id: ModelId, revision: str, path: str, redirected_location: str | None = None
+    model_id: ModelId,
+    revision: str,
+    path: str,
+    redirected_location: str | None = None,
+    endpoint: str | None = None,
 ) -> tuple[int, str]:
-    url = (
-        urljoin(f"{get_hf_endpoint()}/{model_id}/resolve/{revision}/", path)
-        if redirected_location is None
-        else f"{get_hf_endpoint()}{redirected_location}"
-    )
+    endpoint = endpoint if endpoint is not None else get_hf_endpoint()
+    if redirected_location is None:
+        url = urljoin(f"{endpoint}/{model_id}/resolve/{revision}/", path)
+    elif redirected_location.startswith(("http://", "https://")):
+        url = redirected_location
+    else:
+        url = f"{endpoint}{redirected_location}"
     headers = await get_download_headers()
     async with (
         create_http_session(timeout_profile="short") as session,
         session.head(url, headers=headers) as r,
     ):
-        if r.status == 307:
-            # On redirect, only trust Hugging Face's x-linked-* headers.
+        # Both huggingface.co and hf-mirror use 307 for small (non-LFS) files and
+        # 302 for LFS/xet files. Treat any 30x the same: trust x-linked-* if present,
+        # otherwise follow the Location.
+        if r.status in (301, 302, 303, 307, 308):
             x_linked_size = r.headers.get("x-linked-size")
             x_linked_etag = r.headers.get("x-linked-etag")
             if x_linked_size and x_linked_etag:
                 content_length = int(x_linked_size)
                 etag = trim_etag(x_linked_etag)
                 return content_length, etag
-            # Otherwise, follow the redirect to get authoritative size/hash
             redirected_location = r.headers.get("location")
-            return await file_meta(model_id, revision, path, redirected_location)
+            if redirected_location is None:
+                raise Exception(f"{r.status} redirect without Location for {url}")
+            return await file_meta(
+                model_id, revision, path, redirected_location, endpoint=endpoint
+            )
         if r.status in [401, 403]:
             msg = await _build_auth_error_message(r.status, model_id)
             raise HuggingFaceAuthenticationError(msg)
@@ -530,21 +572,32 @@ async def download_file_with_retry(
     on_connection_lost: Callable[[], None] = lambda: None,
     skip_internet: bool = False,
 ) -> Path:
-    n_attempts = 3
+    endpoints = get_hf_endpoints()
+    n_attempts = max(3, len(endpoints))
     for attempt in range(n_attempts):
+        endpoint = endpoints[attempt % len(endpoints)]
         try:
             return await _download_file(
-                model_id, revision, path, target_dir, on_progress, skip_internet
+                model_id,
+                revision,
+                path,
+                target_dir,
+                on_progress,
+                skip_internet,
+                endpoint=endpoint,
             )
         except HuggingFaceAuthenticationError:
             raise
         except FileNotFoundError:
             raise
+        except XetNotReachableError:
+            # Same failure mode on any endpoint (xet CDN is the bottleneck, not the mirror).
+            raise
         except HuggingFaceRateLimitError as e:
             if attempt == n_attempts - 1:
                 raise e
             logger.error(
-                f"Download error on attempt {attempt}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
+                f"Download error on attempt {attempt}/{n_attempts} via {endpoint} for {model_id=} {revision=} {path=} {target_dir=}"
             )
             logger.error(traceback.format_exc())
             await asyncio.sleep(2.0**attempt)
@@ -553,7 +606,7 @@ async def download_file_with_retry(
                 on_connection_lost()
                 raise e
             logger.error(
-                f"Download error on attempt {attempt + 1}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
+                f"Download error on attempt {attempt + 1}/{n_attempts} via {endpoint} for {model_id=} {revision=} {path=} {target_dir=}"
             )
             logger.error(traceback.format_exc())
             await asyncio.sleep(2.0**attempt)
@@ -569,7 +622,9 @@ async def _download_file(
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
     skip_internet: bool = False,
+    endpoint: str | None = None,
 ) -> Path:
+    endpoint = endpoint if endpoint is not None else get_hf_endpoint()
     target_path = target_dir / path
 
     if await aios.path.exists(target_path):
@@ -580,7 +635,9 @@ async def _download_file(
 
         # Try to verify against remote, but allow offline operation
         try:
-            remote_size, _ = await file_meta(model_id, revision, path)
+            remote_size, _ = await file_meta(
+                model_id, revision, path, endpoint=endpoint
+            )
             if local_size != remote_size:
                 logger.info(
                     f"File {path} size mismatch (local={local_size}, remote={remote_size}), re-downloading"
@@ -601,7 +658,7 @@ async def _download_file(
         )
 
     await aios.makedirs((target_dir / path).parent, exist_ok=True)
-    length, etag = await file_meta(model_id, revision, path)
+    length, etag = await file_meta(model_id, revision, path, endpoint=endpoint)
     remote_hash = etag[:-5] if etag.endswith("-gzip") else etag
     partial_path = target_dir / f"{path}.partial"
     resume_byte_pos = (
@@ -609,8 +666,17 @@ async def _download_file(
         if (await aios.path.exists(partial_path))
         else None
     )
+    # Why: if the partial is >= the current remote size, it's stale (upstream file
+    # changed, endpoint served a different revision, or a prior attempt corrupted it).
+    # Resuming would send Range past EOF → HTTP 416 on a loop. See exo-explore/exo#1914.
+    if resume_byte_pos is not None and resume_byte_pos >= length:
+        logger.info(
+            f"Stale partial for {path} ({resume_byte_pos} >= remote {length}); restarting fresh"
+        )
+        await aios.remove(partial_path)
+        resume_byte_pos = None
     if resume_byte_pos != length:
-        url = urljoin(f"{get_hf_endpoint()}/{model_id}/resolve/{revision}/", path)
+        url = urljoin(f"{endpoint}/{model_id}/resolve/{revision}/", path)
         headers = await get_download_headers()
         if resume_byte_pos:
             headers["Range"] = f"bytes={resume_byte_pos}-"
@@ -624,15 +690,48 @@ async def _download_file(
             if r.status in [401, 403]:
                 msg = await _build_auth_error_message(r.status, model_id)
                 raise HuggingFaceAuthenticationError(msg)
+            if r.status == 416:
+                # Partial is past EOF for the current remote; clear it and let the
+                # retry layer re-enter from scratch.
+                if await aios.path.exists(partial_path):
+                    await aios.remove(partial_path)
+                raise Exception(
+                    f"HTTP 416 on {url}: partial was past EOF, discarded for retry"
+                )
+            # If we followed a redirect into xet CAS and the final URL points at
+            # cas-bridge.xethub.hf.co, record it: if this connection fails the caller
+            # should see XetNotReachableError with actionable guidance (#1914).
+            final_url = str(r.url)
+            if _is_xet_cas_url(final_url) and r.status not in (200, 206):
+                raise XetNotReachableError(
+                    f"This model is xet-backed. The request redirected to {final_url} "
+                    f"(status {r.status}), which hf-mirror does not proxy. Options: "
+                    f"use a non-xet model, set HTTPS_PROXY to reach cas-bridge.xethub.hf.co, "
+                    f"or pre-download the model on a machine with HF access and place it in $HF_HOME."
+                )
             assert r.status in [200, 206], (
                 f"Failed to download {path} from {url}: {r.status}"
             )
-            async with aiofiles.open(
-                partial_path, "ab" if resume_byte_pos else "wb"
-            ) as f:
-                while chunk := await r.content.read(8 * 1024 * 1024):
-                    n_read = n_read + (await f.write(chunk))
-                    on_progress(n_read, length, False)
+            try:
+                async with aiofiles.open(
+                    partial_path, "ab" if resume_byte_pos else "wb"
+                ) as f:
+                    while chunk := await r.content.read(8 * 1024 * 1024):
+                        n_read = n_read + (await f.write(chunk))
+                        on_progress(n_read, length, False)
+            except (
+                aiohttp.ClientConnectorError,
+                aiohttp.ServerDisconnectedError,
+                asyncio.TimeoutError,
+            ) as e:
+                if _is_xet_cas_url(final_url):
+                    raise XetNotReachableError(
+                        f"Lost connection while downloading {path} from {final_url}. "
+                        f"This model is xet-backed; hf-mirror does not proxy xet content. "
+                        f"Options: use a non-xet model, set HTTPS_PROXY to reach "
+                        f"cas-bridge.xethub.hf.co, or pre-download on a machine with HF access."
+                    ) from e
+                raise
 
     final_hash = await calc_hash(
         partial_path, hash_type="sha256" if len(remote_hash) == 64 else "sha1"
@@ -703,11 +802,26 @@ def calculate_repo_progress(
 async def get_weight_map(model_id: ModelId, revision: str = "main") -> dict[str, str]:
     target_dir = await resolve_model_dir(model_id)
 
-    index_files_dir = snapshot_download(
-        repo_id=model_id,
-        local_dir=target_dir,
-        allow_patterns="*.safetensors.index.json",
-    )
+    endpoints = get_hf_endpoints()
+    last_exc: Exception | None = None
+    index_files_dir: str | None = None
+    for endpoint in endpoints:
+        try:
+            index_files_dir = snapshot_download(
+                repo_id=model_id,
+                local_dir=target_dir,
+                allow_patterns="*.safetensors.index.json",
+                endpoint=endpoint,
+            )
+            break
+        except Exception as e:
+            last_exc = e
+            logger.warning(
+                f"snapshot_download failed against {endpoint} for {model_id}: {e}"
+            )
+    if index_files_dir is None:
+        assert last_exc is not None
+        raise last_exc
 
     index_files = list(Path(index_files_dir).glob("**/*.safetensors.index.json"))
 

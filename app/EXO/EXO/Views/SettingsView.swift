@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var pendingNamespace: String = ""
     @State private var pendingHFToken: String = ""
     @State private var pendingHFEndpoint: String = ""
+    @State private var pendingHFMirrorEndpoint: String = ""
     @State private var pendingEnableImageModels = false
     @State private var pendingOfflineMode = false
     @State private var pendingFastSynchEnabled = false
@@ -53,6 +54,7 @@ struct SettingsView: View {
             pendingNamespace = controller.customNamespace
             pendingHFToken = controller.hfToken
             pendingHFEndpoint = controller.hfEndpoint
+            pendingHFMirrorEndpoint = controller.hfMirrorEndpoint
             pendingEnableImageModels = controller.enableImageModels
             pendingOfflineMode = controller.offlineMode
             pendingFastSynchEnabled = controller.fastSynchEnabled
@@ -97,6 +99,17 @@ struct SettingsView: View {
                         .frame(width: 260)
                 }
                 Text("Defaults to huggingface.co. Use a mirror (e.g. hf-mirror.com) for China.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section {
+                LabeledContent("HuggingFace Mirror (fallback)") {
+                    TextField("", text: $pendingHFMirrorEndpoint, prompt: Text("hf-mirror.com"))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 260)
+                }
+                Text("Optional. Tried if the primary endpoint fails. Defaults to hf-mirror.com.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -621,6 +634,7 @@ struct SettingsView: View {
     private var hasGeneralChanges: Bool {
         pendingNamespace != controller.customNamespace || pendingHFToken != controller.hfToken
             || pendingHFEndpoint != controller.hfEndpoint
+            || pendingHFMirrorEndpoint != controller.hfMirrorEndpoint
             || pendingOfflineMode != controller.offlineMode
     }
 
@@ -643,6 +657,7 @@ struct SettingsView: View {
         controller.customNamespace = pendingNamespace
         controller.hfToken = pendingHFToken
         controller.hfEndpoint = pendingHFEndpoint
+        controller.hfMirrorEndpoint = pendingHFMirrorEndpoint
         controller.offlineMode = pendingOfflineMode
         restartIfRunning()
     }

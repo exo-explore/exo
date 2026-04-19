@@ -5,6 +5,7 @@ import Foundation
 private let customNamespaceKey = "EXOCustomNamespace"
 private let hfTokenKey = "EXOHFToken"
 private let hfEndpointKey = "EXOHFEndpoint"
+private let hfMirrorEndpointKey = "EXOHFMirrorEndpoint"
 private let enableImageModelsKey = "EXOEnableImageModels"
 private let offlineModeKey = "EXOOfflineMode"
 private let fastSynchEnabledKey = "EXOFastSynchEnabled"
@@ -80,6 +81,14 @@ final class ExoProcessController: ObservableObject {
     {
         didSet {
             UserDefaults.standard.set(hfEndpoint, forKey: hfEndpointKey)
+        }
+    }
+    @Published var hfMirrorEndpoint: String = {
+        return UserDefaults.standard.string(forKey: hfMirrorEndpointKey) ?? ""
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(hfMirrorEndpoint, forKey: hfMirrorEndpointKey)
         }
     }
     @Published var enableImageModels: Bool = {
@@ -358,6 +367,9 @@ final class ExoProcessController: ObservableObject {
         }
         if !hfEndpoint.isEmpty {
             environment["HF_ENDPOINT"] = hfEndpoint
+        }
+        if !hfMirrorEndpoint.isEmpty {
+            environment["HF_MIRROR_ENDPOINT"] = hfMirrorEndpoint
         }
         if enableImageModels {
             environment["EXO_ENABLE_IMAGE_MODELS"] = "true"

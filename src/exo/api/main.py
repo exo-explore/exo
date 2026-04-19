@@ -328,6 +328,7 @@ class API:
         self.app.post("/models/add")(self.add_custom_model)
         self.app.delete("/models/custom/{model_id:path}")(self.delete_custom_model)
         self.app.get("/models/search")(self.search_models)
+        self.app.get("/hf-endpoint")(self.get_hf_endpoint_config)
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
         )
@@ -1728,11 +1729,27 @@ class API:
             {"message": "Model card deleted", "model_id": str(model_id)}
         )
 
+    async def get_hf_endpoint_config(self) -> dict[str, str]:
+        """Return the effective HF endpoint for client-side URL construction
+        (e.g. dashboard "View on HF" links). Chinese users configuring hf-mirror
+        shouldn't get sent to a blocked huggingface.co URL."""
+        from exo.download.hf_endpoints import (
+            get_hf_endpoint,
+            get_hf_mirror_endpoint,
+        )
+
+        return {
+            "endpoint": get_hf_endpoint(),
+            "mirror_endpoint": get_hf_mirror_endpoint() or "",
+        }
+
     async def search_models(
         self, query: str = "", limit: int = 20
     ) -> list[HuggingFaceSearchResult]:
         """Search HuggingFace Hub — tries mlx-community first, falls back to all of HuggingFace."""
-        from huggingface_hub import ModelInfo, list_models
+        from huggingface_hub import HfApi, ModelInfo
+
+        from exo.download.hf_endpoints import get_hf_endpoints
 
         def _to_results(models: Iterable[ModelInfo]) -> list[HuggingFaceSearchResult]:
             return [
@@ -1747,9 +1764,35 @@ class API:
                 for m in models
             ]
 
+        def _list_models_with_fallback(
+            search: str | None,
+            author: str | None,
+            sort: Literal[
+                "created_at", "downloads", "last_modified", "likes", "trending_score"
+            ],
+            limit: int,
+        ) -> list[ModelInfo]:
+            endpoints = get_hf_endpoints()
+            last_exc: Exception | None = None
+            for endpoint in endpoints:
+                try:
+                    return list(
+                        HfApi(endpoint=endpoint).list_models(
+                            search=search,
+                            author=author,
+                            sort=sort,
+                            limit=limit,
+                        )
+                    )
+                except Exception as e:
+                    last_exc = e
+                    logger.warning(f"list_models failed against {endpoint}: {e}")
+            assert last_exc is not None
+            raise last_exc
+
         # Search mlx-community first
         mlx_results = _to_results(
-            list_models(
+            _list_models_with_fallback(
                 search=query or None,
                 author="mlx-community",
                 sort="downloads",
@@ -1761,8 +1804,9 @@ class API:
 
         # Fall back to searching all of HuggingFace
         return _to_results(
-            list_models(
+            _list_models_with_fallback(
                 search=query or None,
+                author=None,
                 sort="downloads",
                 limit=limit,
             )

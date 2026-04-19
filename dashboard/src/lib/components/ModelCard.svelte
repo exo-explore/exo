@@ -5,7 +5,7 @@
     PlacementPreview,
     TopologyEdge,
   } from "$lib/stores/app.svelte";
-  import { debugMode, topologyData } from "$lib/stores/app.svelte";
+  import { debugMode, hfEndpoint, topologyData } from "$lib/stores/app.svelte";
 
   interface Props {
     model: { id: string; name?: string; storage_size_megabytes?: number };
@@ -505,7 +505,7 @@
           {#if huggingFaceModelId}
             <a
               class="shrink-0 text-white/60 hover:text-exo-yellow transition-colors"
-              href={`https://huggingface.co/${huggingFaceModelId}`}
+              href={`${hfEndpoint()}/${huggingFaceModelId}`}
               target="_blank"
               rel="noreferrer noopener"
               aria-label="View model on Hugging Face"

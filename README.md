@@ -303,6 +303,37 @@ exo supports several environment variables for configuration:
 | `EXO_LIBP2P_NAMESPACE` | Custom namespace for cluster isolation | None |
 | `EXO_FAST_SYNCH` | Control MLX_METAL_FAST_SYNCH behavior (for JACCL backend) | Auto |
 | `EXO_TRACING_ENABLED` | Enable distributed tracing for performance analysis | `false` |
+| `HF_ENDPOINT` | Primary HuggingFace endpoint. Set to `https://hf-mirror.com` in China. | `https://huggingface.co` |
+| `HF_MIRROR_ENDPOINT` | Fallback endpoint tried if the primary fails. Set to empty string to disable. | `https://hf-mirror.com` |
+| `HF_TOKEN` | HuggingFace token for gated / private models | None |
+
+### Running exo in China
+
+The default `huggingface.co` host is not reachable from mainland China. exo falls back to `hf-mirror.com` automatically when the primary endpoint fails, so in many cases no configuration is needed. For best results, set `HF_ENDPOINT` explicitly:
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com uv run exo
+```
+
+Diagnose connectivity (~3 seconds, <5 KB transferred) with the bundled diagnostic:
+
+```bash
+uv run exo-hf-check
+```
+
+The diagnostic probes the configured endpoints and reports per-endpoint reachability of the tree API, small-file downloads, LFS metadata, and the xet CAS CDN.
+
+**Known limitation (xet-backed models):** `hf-mirror.com` does not proxy xet content. Any model whose `.safetensors` is xet-backed (many newer Hugging Face uploads) redirects downloads to `cas-bridge.xethub.hf.co`, which is typically unreachable from Chinese networks. When this happens, exo surfaces a `XetNotReachableError` with actionable options:
+
+1. Use a non-xet model (most older/quantized community uploads).
+2. Set `HTTPS_PROXY` to a proxy that can reach `cas-bridge.xethub.hf.co`.
+3. Pre-download the model on a machine with Hugging Face access and place it in `$HF_HOME` (default: `~/.cache/huggingface`). exo will detect the local files and skip the download.
+
+Validate end-to-end against real hf-mirror traffic (opt-in, not part of CI):
+
+```bash
+EXO_TEST_NETWORK=1 uv run pytest -m slow src/exo/download/tests/test_hf_mirror_integration.py -v
+```
 
 **Example usage:**
 

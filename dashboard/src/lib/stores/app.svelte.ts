@@ -553,6 +553,7 @@ class AppStore {
   isLoadingPreviews = $state(false);
   previewNodeFilter = $state<Set<string>>(new Set());
   lastUpdate = $state<number | null>(null);
+  hfEndpoint = $state<string>("https://huggingface.co");
   nodeIdentities = $state<Record<string, RawNodeIdentity>>({});
   thunderboltBridgeCycles = $state<string[][]>([]);
   nodeThunderbolt = $state<
@@ -606,11 +607,25 @@ class AppStore {
   constructor() {
     if (browser) {
       this.startPolling();
+      this.fetchHfEndpoint();
       this.loadConversationsFromStorage();
       this.loadDebugModeFromStorage();
       this.loadTopologyOnlyModeFromStorage();
       this.loadChatSidebarVisibleFromStorage();
       this.loadImageGenerationParamsFromStorage();
+    }
+  }
+
+  async fetchHfEndpoint() {
+    try {
+      const response = await fetch("/hf-endpoint");
+      if (!response.ok) return;
+      const data: { endpoint?: string } = await response.json();
+      if (typeof data.endpoint === "string" && data.endpoint.length > 0) {
+        this.hfEndpoint = data.endpoint.replace(/\/$/, "");
+      }
+    } catch {
+      // Keep default; offline is fine here.
     }
   }
 
@@ -3385,6 +3400,7 @@ export const placementPreviews = () => appStore.placementPreviews;
 export const selectedPreviewModelId = () => appStore.selectedPreviewModelId;
 export const isLoadingPreviews = () => appStore.isLoadingPreviews;
 export const lastUpdate = () => appStore.lastUpdate;
+export const hfEndpoint = () => appStore.hfEndpoint;
 export const isTopologyMinimized = () => appStore.isTopologyMinimized;
 export const selectedChatModel = () => appStore.selectedChatModel;
 export const thinkingEnabled = () => appStore.thinkingEnabled;

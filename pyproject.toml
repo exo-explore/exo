@@ -35,6 +35,7 @@ dependencies = [
 
 [project.scripts]
 exo = "exo.main:main"
+exo-hf-check = "exo.download.hf_check:main"
 
 # dependencies only required for development
 [dependency-groups]
