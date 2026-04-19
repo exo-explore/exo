@@ -146,13 +146,16 @@ def make_split_decoder_call(
         else:
             h_H0 = x_H0  # placeholder (will be discarded by all_gather slice)
 
-        if rank == MOE_RANK and not is_first_layer:
-            prev = state["prev_layer"]
+        if not is_first_layer:
             prev_pending = state["pending_h_H1"]
-            # Critical: use the PREVIOUS layer's MLP weights, not self.mlp
-            out_H1_prev = prev_pending + prev.mlp(
-                prev.post_attention_layernorm(prev_pending)
-            )
+            if rank == MOE_RANK:
+                prev = state["prev_layer"]
+                # Critical: use PREVIOUS layer's MLP weights, not self.mlp
+                out_H1_prev = prev_pending + prev.mlp(
+                    prev.post_attention_layernorm(prev_pending)
+                )
+            else:
+                out_H1_prev = prev_pending  # placeholder on ATTN_RANK
         else:
             out_H1_prev = None
 
