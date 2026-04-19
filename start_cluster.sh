@@ -54,6 +54,11 @@ fi
 # scouts. No MTP weights upstream, so no spec-decode speedup. Default = on.
 : "${MINIMAX_MODEL_ID:=mlx-community/MiniMax-M2.7-4bit-mxfp4}"
 : "${MINIMAX_ENABLED:=1}"
+# Prefix caching: cache up to N past-prompt KV entries so multi-turn Hermes
+# conversations reuse prefill across turns instead of re-prefilling every time.
+# 4 fits comfortably alongside Huihui scouts within the 128 GiB/node budget.
+: "${MINIMAX_MAX_PREFIX_SESSIONS:=4}"
+: "${MINIMAX_MAX_KV_TOKENS:=}"
 # MiniMax sampling defaults (per HF model card recommendation).
 : "${MINIMAX_TEMPERATURE:=1.0}"
 : "${MINIMAX_TOP_P:=0.95}"
@@ -541,6 +546,8 @@ create_instance_with_retry() {
     local def_min_p="${9:-}"
     local def_presence="${10:-}"
     local def_repetition="${11:-}"
+    local max_kv_tokens="${12:-}"
+    local max_prefix_sessions="${13:-}"
     local max_attempts=30
 
     for attempt in $(seq 1 $max_attempts); do
@@ -587,6 +594,8 @@ create_instance_with_retry() {
             --argjson min_p "${def_min_p:-null}" \
             --argjson presence "${def_presence:-null}" \
             --argjson repetition "${def_repetition:-null}" \
+            --argjson kv "${max_kv_tokens:-null}" \
+            --argjson sessions "${max_prefix_sessions:-null}" \
             '
             . as $i
             | ($i | keys[0]) as $tag
@@ -597,6 +606,8 @@ create_instance_with_retry() {
                 | (if $min_p    != null then .defaultMinP             = $min_p      else . end)
                 | (if $presence != null then .defaultPresencePenalty  = $presence   else . end)
                 | (if $repetition != null then .defaultRepetitionPenalty = $repetition else . end)
+                | (if $kv       != null then .maxKvTokens             = $kv         else . end)
+                | (if $sessions != null then .maxPrefixSessions       = $sessions   else . end)
               ) | {($tag): .[$tag]})}
         ')
 
@@ -809,7 +820,8 @@ if [ "${MINIMAX_ENABLED:-0}" = "1" ]; then
     else
         create_instance_with_retry "MiniMax M2.7" "$MINIMAX_MODEL_ID" "Pipeline" "MlxJaccl" 2 \
             "$MINIMAX_TEMPERATURE" "$MINIMAX_TOP_P" "$MINIMAX_TOP_K" "$MINIMAX_MIN_P" \
-            "$MINIMAX_PRESENCE_PENALTY" "$MINIMAX_REPETITION_PENALTY" || true
+            "$MINIMAX_PRESENCE_PENALTY" "$MINIMAX_REPETITION_PENALTY" \
+            "$MINIMAX_MAX_KV_TOKENS" "$MINIMAX_MAX_PREFIX_SESSIONS" || true
 
         echo -n "Waiting for 2 MiniMax runner(s) to become Ready..."
         READY=false
