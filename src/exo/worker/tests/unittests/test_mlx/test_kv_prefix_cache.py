@@ -94,8 +94,8 @@ class TestKVPrefix:
 
     def test_clear_empties_cache(self, mock_tokenizer):
         cache = KVPrefixCache(None)
-        cache.prompts.append(mx.array([1, 2, 3]))
-        cache.caches.append([KVCache()])
+        cache.add_kv_cache(mx.array([1, 2, 3]), [KVCache()])
+        assert len(cache.prompts) == 1
         cache.clear()
         assert len(cache.prompts) == 0
         assert len(cache.caches) == 0
@@ -104,6 +104,155 @@ class TestKVPrefix:
         cache = KVPrefixCache(None)
         cache.clear()
         assert len(cache.prompts) == 0
+
+
+def _fake_kv_cache(num_layers: int, num_tokens: int) -> list[KVCache]:
+    """Build a KV cache of `num_layers` KVCache entries each holding a small
+    but valid K/V tensor covering `num_tokens` tokens along the sequence axis.
+    Shape [B=1, H=2, S=num_tokens, D=4].
+    """
+    caches: list[KVCache] = []
+    for layer_idx in range(num_layers):
+        c = KVCache()
+        k = mx.arange(num_tokens, dtype=mx.float32)
+        k = mx.broadcast_to(k.reshape(1, 1, num_tokens, 1), (1, 2, num_tokens, 4))
+        # Layer-dependent offset so different layers aren't identical.
+        k = k + float(layer_idx)
+        v = k + 0.5
+        c.keys = mx.array(k)
+        c.values = mx.array(v)
+        c.offset = num_tokens
+        caches.append(c)
+    return caches
+
+
+class TestRadixTrieStorage:
+    """Verify that storage is actually deduplicated across sessions sharing a prefix."""
+
+    def test_two_sessions_share_prefix_node(self):
+        cache = KVPrefixCache(None)
+        # Two prompts sharing [1,2,3,4,5] then diverging.
+        shared = [1, 2, 3, 4, 5]
+        tokens_a = mx.array(shared + [10, 11], dtype=mx.int32)
+        tokens_b = mx.array(shared + [20, 21], dtype=mx.int32)
+
+        id_a = cache.add_kv_cache(tokens_a, _fake_kv_cache(num_layers=2, num_tokens=7))
+        id_b = cache.add_kv_cache(tokens_b, _fake_kv_cache(num_layers=2, num_tokens=7))
+
+        # Both leaves reachable under the shared node at depth 5.
+        root = cache._root  # pyright: ignore[reportPrivateUsage]
+        first = root.children.get(1)
+        assert first is not None
+        # The first child's edge should cover exactly the shared prefix, then
+        # split into two children (10 and 20).
+        assert first.depth == 5
+        assert first.edge_length == 5
+        assert set(first.children.keys()) == {10, 20}
+        # Ref count == 2 leaves under the shared node.
+        assert first.ref_count == 2
+        assert id_a != id_b
+
+    def test_prefix_hit_reuses_stored_kv(self):
+        cache = KVPrefixCache(None)
+        shared = [1, 2, 3, 4, 5]
+        tokens_a = mx.array(shared + [10, 11], dtype=mx.int32)
+        cache.add_kv_cache(tokens_a, _fake_kv_cache(num_layers=2, num_tokens=7))
+
+        # Query with a longer prompt sharing the prefix.
+        tokens_b = mx.array(shared + [20, 21, 22], dtype=mx.int32)
+        # Model mock: _materialize_full_leaf_cache doesn't need the model, and
+        # get_kv_cache constructs a fresh cache for remaining tokens via
+        # make_kv_cache(model). Provide a stub with .layers that routes to
+        # make_kv_cache's fallback branch.
+        #
+        # In practice, miss case is what matters here: verify the hit branch
+        # returns the expected match depth and leaf id.
+        from unittest.mock import MagicMock
+
+        model = MagicMock()
+        model.layers = [None, None]
+
+        result_cache, remaining, matched_id, is_exact = cache.get_kv_cache(
+            model, tokens_b
+        )
+        assert matched_id == 0
+        assert int(remaining.shape[0]) == 3  # [20, 21, 22]
+        assert is_exact is False
+        # Materialized cache should have 5 tokens along the sequence axis.
+        assert result_cache[0].offset == 5
+
+    def test_eviction_of_one_leaf_frees_only_unique_branch(self):
+        cache = KVPrefixCache(None, max_sessions=2)
+        shared = [1, 2, 3, 4, 5]
+        tokens_a = mx.array(shared + [10, 11], dtype=mx.int32)
+        tokens_b = mx.array(shared + [20, 21], dtype=mx.int32)
+        tokens_c = mx.array(shared + [30, 31], dtype=mx.int32)
+
+        id_a = cache.add_kv_cache(tokens_a, _fake_kv_cache(num_layers=2, num_tokens=7))
+        id_b = cache.add_kv_cache(tokens_b, _fake_kv_cache(num_layers=2, num_tokens=7))
+        # Adding C forces eviction of A (the LRU non-pinned).
+        id_c = cache.add_kv_cache(tokens_c, _fake_kv_cache(num_layers=2, num_tokens=7))
+
+        assert id_a not in cache.prompts
+        assert id_b in cache.prompts
+        assert id_c in cache.prompts
+
+        # Shared prefix node must still exist (referenced by B and C).
+        root = cache._root  # pyright: ignore[reportPrivateUsage]
+        first = root.children.get(1)
+        assert first is not None
+        assert first.ref_count == 2
+        # A's unique branch (first token 10) is gone; B and C's branches remain.
+        assert set(first.children.keys()) == {20, 30}
+
+    def test_pin_prevents_eviction(self):
+        cache = KVPrefixCache(None, max_sessions=1)
+        tokens_a = mx.array([1, 2, 3, 4, 5], dtype=mx.int32)
+        tokens_b = mx.array([6, 7, 8, 9, 10], dtype=mx.int32)
+        id_a = cache.add_kv_cache(tokens_a, _fake_kv_cache(num_layers=2, num_tokens=5))
+        cache.pin(id_a)
+        cache.add_kv_cache(tokens_b, _fake_kv_cache(num_layers=2, num_tokens=5))
+        # Pinned A survives; the cap is "soft" under pinning.
+        assert id_a in cache.prompts
+
+    def test_update_extends_existing_leaf(self):
+        cache = KVPrefixCache(None)
+        tokens_short = mx.array([1, 2, 3], dtype=mx.int32)
+        id_s = cache.add_kv_cache(
+            tokens_short, _fake_kv_cache(num_layers=2, num_tokens=3)
+        )
+        tokens_long = mx.array([1, 2, 3, 4, 5], dtype=mx.int32)
+        cache.update_kv_cache(
+            leaf_id=id_s,
+            prompt_tokens=tokens_long,
+            cache=_fake_kv_cache(num_layers=2, num_tokens=5),
+            snapshots=None,
+            restore_pos=3,
+        )
+        assert list(cache.prompts.keys()) == [id_s]
+        stored = cache.prompts[id_s]
+        assert int(stored.shape[0]) == 5
+
+    def test_media_region_mismatch_truncates_match(self):
+        from exo.worker.engines.mlx.vision import MediaRegion
+
+        cache = KVPrefixCache(None)
+        tokens = mx.array([1, 2, 3, 4, 5, 6, 7], dtype=mx.int32)
+        regions_a = [MediaRegion(content_hash="img-A", start_pos=2, end_pos=5)]
+        cache.add_kv_cache(
+            tokens, _fake_kv_cache(num_layers=1, num_tokens=7), media_regions=regions_a
+        )
+
+        from unittest.mock import MagicMock
+
+        model = MagicMock()
+        model.layers = [None]
+
+        # Query with the same tokens but a different image hash at pos 2.
+        regions_b = [MediaRegion(content_hash="img-B", start_pos=2, end_pos=5)]
+        _, remaining, _, _ = cache.get_kv_cache(model, tokens, media_regions=regions_b)
+        # Match should be truncated to pos 2 (start of the mismatching region).
+        assert int(remaining.shape[0]) == 5  # tokens 2..6
 
 
 def _load_gpt_oss() -> tuple[Model, object]:
