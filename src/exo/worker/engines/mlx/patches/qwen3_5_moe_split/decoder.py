@@ -75,27 +75,37 @@ def make_split_decoder_call(
         return gathered[rank_to_pick : rank_to_pick + 1]
 
     def get_masks(S: int, mid: int, mask, cache):  # type: ignore[no-untyped-def]
-        """Slice the full mask into H0 and H1 masks. Cached by S."""
-        cached = state["mask_cache"].get(S)
+        """Slice the full mask into H0 and H1 masks. Cached by layer+S.
+
+        Handles three mask types:
+          - None: both halves get None
+          - "causal" string sentinel (from create_attention_mask): both get "causal"
+          - 4D tensor (B, 1, S, S+offset): GQA attention mask
+          - 2D tensor (B, S): SSM mask from ArraysCache.make_mask
+        """
+        cache_key = (id(cache), S)
+        cached = state["mask_cache"].get(cache_key)
         if cached is not None:
             return cached
-        if mask is None:
-            result = (None, None)
-        else:
-            # Offset = KV length BEFORE this forward pass. Needed so H0's
-            # mask columns match H0's attention's actual KV length
-            # (offset prior + mid new from H0).
+
+        if mask is None or isinstance(mask, str):
+            # None or "causal" — same for both halves
+            result = (mask, mask)
+        elif mask.ndim == 4:
+            # GQA attention mask (1, 1, S, S+offset): slice queries + columns
             if hasattr(cache, "offset"):
                 offset = cache.offset
-            elif hasattr(cache, "cache") and cache.cache[0] is not None:
-                offset = cache.cache[0].shape[1]
             else:
                 offset = 0
-            # H0: queries [0, mid), keys [0, offset+mid)
-            # H1: queries [mid, S), keys [0, offset+S) — full width since
-            #     after H0 is cached the KV has offset+S entries.
             result = (mask[:, :, :mid, : offset + mid], mask[:, :, mid:, :])
-        state["mask_cache"][S] = result
+        elif mask.ndim == 2:
+            # SSM mask (B, S): slice along sequence dim
+            result = (mask[:, :mid], mask[:, mid:])
+        else:
+            raise ValueError(
+                f"unexpected mask shape in split decoder: {mask.shape}"
+            )
+        state["mask_cache"][cache_key] = result
         return result
 
     # ------------------------------------------------------------------
