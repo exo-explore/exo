@@ -56,8 +56,9 @@ fi
 : "${MINIMAX_ENABLED:=1}"
 # Prefix caching: cache up to N past-prompt KV entries so multi-turn Hermes
 # conversations reuse prefill across turns instead of re-prefilling every time.
-# 4 fits comfortably alongside Huihui scouts within the 128 GiB/node budget.
-: "${MINIMAX_MAX_PREFIX_SESSIONS:=4}"
+# 2 keeps turn-to-turn reuse for the active conversation while leaving enough
+# headroom on both Studios for the Huihui scouts co-resident on each node.
+: "${MINIMAX_MAX_PREFIX_SESSIONS:=2}"
 : "${MINIMAX_MAX_KV_TOKENS:=}"
 # MiniMax sampling defaults (per HF model card recommendation).
 : "${MINIMAX_TEMPERATURE:=1.0}"
@@ -818,7 +819,7 @@ if [ "${MINIMAX_ENABLED:-0}" = "1" ]; then
     if [ "$EXISTING_MINIMAX" -ge 1 ]; then
         echo "  MiniMax instance already running. Skipping."
     else
-        create_instance_with_retry "MiniMax M2.7" "$MINIMAX_MODEL_ID" "Pipeline" "MlxJaccl" 2 \
+        create_instance_with_retry "MiniMax M2.7" "$MINIMAX_MODEL_ID" "Tensor" "MlxJaccl" 2 \
             "$MINIMAX_TEMPERATURE" "$MINIMAX_TOP_P" "$MINIMAX_TOP_K" "$MINIMAX_MIN_P" \
             "$MINIMAX_PRESENCE_PENALTY" "$MINIMAX_REPETITION_PENALTY" \
             "$MINIMAX_MAX_KV_TOKENS" "$MINIMAX_MAX_PREFIX_SESSIONS" || true
