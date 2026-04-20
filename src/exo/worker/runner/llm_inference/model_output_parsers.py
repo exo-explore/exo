@@ -1,4 +1,4 @@
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from functools import cache
 from typing import Any
 
@@ -14,6 +14,12 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 )
 
 from exo.api.types import ToolCallItem
+from exo.shared.types.chunks import (
+    ErrorChunk,
+    GenerationChunk,
+    TokenChunk,
+    ToolCallChunk,
+)
 from exo.shared.types.common import ModelId
 from exo.shared.types.mlx import Model
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
@@ -64,29 +70,70 @@ def apply_all_parsers(
     model_type: type[Model],
     model_id: ModelId,
     tools: list[dict[str, Any]] | None,
-) -> Generator[GenerationResponse | ToolCallResponse | None]:
-    mlx_generator = receiver
+) -> Iterator[GenerationChunk | None]:
+    generator = receiver
 
     if issubclass(model_type, GptOssModel):
-        mlx_generator = parse_gpt_oss(mlx_generator)
+        generator = parse_gpt_oss(generator)
     elif (
         issubclass(model_type, DeepseekV32Model)
         and "deepseek" in model_id.normalize().lower()
     ):
-        mlx_generator = parse_deepseek_v32(mlx_generator)
+        generator = parse_deepseek_v32(generator)
     else:
         if tokenizer.has_thinking:
-            mlx_generator = parse_thinking_models(
-                mlx_generator,
+            generator = parse_thinking_models(
+                generator,
                 tokenizer.think_start,
                 tokenizer.think_end,
                 starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
             )
 
         if tool_parser:
-            mlx_generator = parse_tool_calls(mlx_generator, tool_parser, tools)
+            generator = parse_tool_calls(generator, tool_parser, tools)
 
-    return count_reasoning_tokens(mlx_generator)
+    generator = count_reasoning_tokens(generator)
+
+    return map(lambda r: map_responses_to_chunks(r, model_id), generator)
+
+
+def map_responses_to_chunks(
+    response: GenerationResponse | ToolCallResponse | None, model_id: ModelId
+) -> GenerationChunk | None:
+    match response:
+        case None:
+            return None
+        case GenerationResponse():
+            if response.finish_reason == "error":
+                return ErrorChunk(
+                    error_message=response.text,
+                    model=model_id,
+                )
+            else:
+                finish_reason = response.finish_reason
+                assert finish_reason not in (
+                    "error",
+                    "tool_calls",
+                    "function_call",
+                )
+                return TokenChunk(
+                    model=model_id,
+                    text=response.text,
+                    token_id=response.token,
+                    usage=response.usage,
+                    finish_reason=finish_reason,
+                    stats=response.stats,
+                    logprob=response.logprob,
+                    top_logprobs=response.top_logprobs,
+                    is_thinking=response.is_thinking,
+                )
+        case ToolCallResponse():
+            return ToolCallChunk(
+                tool_calls=response.tool_calls,
+                model=model_id,
+                usage=response.usage,
+                stats=response.stats,
+            )
 
 
 def parse_gpt_oss(
