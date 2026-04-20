@@ -14,11 +14,27 @@ from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.commands import PlaceInstance
 from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.events import InstanceCreated, InstanceDeleted
+from exo.shared.types.events import (
+    InstanceCreated,
+    InstanceDeleted,
+    TaskStatusUpdated,
+)
 from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import NetworkInterfaceInfo, NodeNetworkInfo
+from exo.shared.types.tasks import TaskId, TaskStatus, TextGeneration
+from exo.shared.types.text_generation import (
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.topology import Connection, SocketConnection
+from exo.shared.types.worker.downloads import (
+    DownloadCompleted,
+    DownloadFailed,
+    DownloadOngoing,
+    DownloadProgressData,
+)
 from exo.shared.types.worker.instances import (
     Instance,
     InstanceId,
@@ -27,7 +43,7 @@ from exo.shared.types.worker.instances import (
     MlxRingInstance,
 )
 from exo.shared.types.worker.runners import ShardAssignments
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 
 
 @pytest.fixture
@@ -80,8 +96,8 @@ def test_get_instance_placements_create_instance(
 ):
     # arrange
     model_card.n_layers = total_layers
-    model_card.storage_size.in_bytes = sum(
-        available_memory
+    model_card.storage_size = Memory.from_bytes(
+        sum(available_memory)
     )  # make it exactly fit across all nodes
     topology = Topology()
 
@@ -239,7 +255,7 @@ def test_get_transition_events_no_change(instance: Instance):
     target_instances = {instance_id: instance}
 
     # act
-    events = get_transition_events(current_instances, target_instances)
+    events = get_transition_events(current_instances, target_instances, {})
 
     # assert
     assert len(events) == 0
@@ -252,7 +268,7 @@ def test_get_transition_events_create_instance(instance: Instance):
     target_instances: dict[InstanceId, Instance] = {instance_id: instance}
 
     # act
-    events = get_transition_events(current_instances, target_instances)
+    events = get_transition_events(current_instances, target_instances, {})
 
     # assert
     assert len(events) == 1
@@ -266,7 +282,7 @@ def test_get_transition_events_delete_instance(instance: Instance):
     target_instances: dict[InstanceId, Instance] = {}
 
     # act
-    events = get_transition_events(current_instances, target_instances)
+    events = get_transition_events(current_instances, target_instances, {})
 
     # assert
     assert len(events) == 1
@@ -349,7 +365,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
     # arrange
     topology = Topology()
     model_card.n_layers = 12
-    model_card.storage_size.in_bytes = 1500
+    model_card.storage_size = Memory.from_bytes(1500)
 
     node_a = NodeId()
     node_b = NodeId()
@@ -456,3 +472,297 @@ def test_tensor_rdma_backend_connectivity_matrix(
         else:
             ip_part = coordinator.split(":")[0]
             assert len(ip_part.split(".")) == 4
+
+
+def _make_task(
+    instance_id: InstanceId,
+    status: TaskStatus = TaskStatus.Running,
+) -> TextGeneration:
+    return TextGeneration(
+        task_id=TaskId(),
+        task_status=status,
+        instance_id=instance_id,
+        command_id=CommandId(),
+        task_params=TextGenerationTaskParams(
+            model=ModelId("test-model"),
+            input=[InputMessage(role="user", content=InputMessageContent("hello"))],
+        ),
+    )
+
+
+def test_get_transition_events_delete_instance_cancels_running_tasks(
+    instance: Instance,
+):
+    # arrange
+    instance_id = InstanceId()
+    current_instances: dict[InstanceId, Instance] = {instance_id: instance}
+    target_instances: dict[InstanceId, Instance] = {}
+    task = _make_task(instance_id, TaskStatus.Running)
+    tasks = {task.task_id: task}
+
+    # act
+    events = get_transition_events(current_instances, target_instances, tasks)
+
+    # assert – cancellation event should come before the deletion event
+    assert len(events) == 2
+    assert isinstance(events[0], TaskStatusUpdated)
+    assert events[0].task_id == task.task_id
+    assert events[0].task_status == TaskStatus.Cancelled
+    assert isinstance(events[1], InstanceDeleted)
+    assert events[1].instance_id == instance_id
+
+
+def test_get_transition_events_delete_instance_cancels_pending_tasks(
+    instance: Instance,
+):
+    # arrange
+    instance_id = InstanceId()
+    current_instances: dict[InstanceId, Instance] = {instance_id: instance}
+    target_instances: dict[InstanceId, Instance] = {}
+    task = _make_task(instance_id, TaskStatus.Pending)
+    tasks = {task.task_id: task}
+
+    # act
+    events = get_transition_events(current_instances, target_instances, tasks)
+
+    # assert
+    assert len(events) == 2
+    assert isinstance(events[0], TaskStatusUpdated)
+    assert events[0].task_id == task.task_id
+    assert events[0].task_status == TaskStatus.Cancelled
+    assert isinstance(events[1], InstanceDeleted)
+
+
+def test_get_transition_events_delete_instance_ignores_completed_tasks(
+    instance: Instance,
+):
+    # arrange
+    instance_id = InstanceId()
+    current_instances: dict[InstanceId, Instance] = {instance_id: instance}
+    target_instances: dict[InstanceId, Instance] = {}
+    tasks = {
+        t.task_id: t
+        for t in [
+            _make_task(instance_id, TaskStatus.Complete),
+            _make_task(instance_id, TaskStatus.Failed),
+            _make_task(instance_id, TaskStatus.TimedOut),
+            _make_task(instance_id, TaskStatus.Cancelled),
+        ]
+    }
+
+    # act
+    events = get_transition_events(current_instances, target_instances, tasks)
+
+    # assert – only the InstanceDeleted event, no cancellations
+    assert len(events) == 1
+    assert isinstance(events[0], InstanceDeleted)
+
+
+def test_get_transition_events_delete_instance_cancels_only_matching_tasks(
+    instance: Instance,
+):
+    # arrange
+    instance_id_a = InstanceId()
+    instance_id_b = InstanceId()
+    current_instances: dict[InstanceId, Instance] = {
+        instance_id_a: instance,
+        instance_id_b: instance,
+    }
+    # only delete instance A, keep instance B
+    target_instances: dict[InstanceId, Instance] = {instance_id_b: instance}
+
+    task_a = _make_task(instance_id_a, TaskStatus.Running)
+    task_b = _make_task(instance_id_b, TaskStatus.Running)
+    tasks = {task_a.task_id: task_a, task_b.task_id: task_b}
+
+    # act
+    events = get_transition_events(current_instances, target_instances, tasks)
+
+    # assert – only task_a should be cancelled
+    cancel_events = [e for e in events if isinstance(e, TaskStatusUpdated)]
+    delete_events = [e for e in events if isinstance(e, InstanceDeleted)]
+    assert len(cancel_events) == 1
+    assert cancel_events[0].task_id == task_a.task_id
+    assert cancel_events[0].task_status == TaskStatus.Cancelled
+    assert len(delete_events) == 1
+    assert delete_events[0].instance_id == instance_id_a
+
+
+def _make_shard_metadata(model_card: ModelCard) -> PipelineShardMetadata:
+    return PipelineShardMetadata(
+        model_card=model_card,
+        device_rank=0,
+        world_size=1,
+        start_layer=0,
+        end_layer=model_card.n_layers,
+        n_layers=model_card.n_layers,
+    )
+
+
+def test_placement_prefers_cycle_with_downloaded_model(
+    model_card: ModelCard,
+) -> None:
+    """When two cycles are otherwise equal, prefer the one with the model already downloaded."""
+    topology = Topology()
+
+    model_card.storage_size = Memory.from_bytes(500)
+
+    node_a = NodeId()
+    node_b = NodeId()
+
+    node_memory = {
+        node_a: create_node_memory(1000),
+        node_b: create_node_memory(1000),
+    }
+    node_network = {
+        node_a: create_node_network(),
+        node_b: create_node_network(),
+    }
+
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    # No connections between them — two single-node cycles
+
+    shard_meta = _make_shard_metadata(model_card)
+
+    # node_b has the model fully downloaded, node_a does not
+    download_status = {
+        node_b: [
+            DownloadCompleted(
+                node_id=node_b,
+                shard_metadata=shard_meta,
+                total=model_card.storage_size,
+            ),
+        ],
+    }
+
+    cic = place_instance_command(model_card)
+    placements = place_instance(
+        cic, topology, {}, node_memory, node_network, download_status=download_status
+    )
+
+    assert len(placements) == 1
+    instance = list(placements.values())[0]
+    assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
+    assert assigned_nodes == {node_b}
+
+
+def test_placement_prefers_cycle_with_higher_download_progress(
+    model_card: ModelCard,
+) -> None:
+    """When two cycles are otherwise equal, prefer the one with more download progress."""
+    topology = Topology()
+
+    model_card.storage_size = Memory.from_bytes(1000)
+
+    node_a = NodeId()
+    node_b = NodeId()
+
+    node_memory = {
+        node_a: create_node_memory(1000),
+        node_b: create_node_memory(1000),
+    }
+    node_network = {
+        node_a: create_node_network(),
+        node_b: create_node_network(),
+    }
+
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+
+    shard_meta = _make_shard_metadata(model_card)
+
+    # node_a: 30% downloaded, node_b: 80% downloaded
+    download_status = {
+        node_a: [
+            DownloadOngoing(
+                node_id=node_a,
+                shard_metadata=shard_meta,
+                download_progress=DownloadProgressData(
+                    total=Memory.from_bytes(1000),
+                    downloaded=Memory.from_bytes(300),
+                    downloaded_this_session=Memory.from_bytes(300),
+                    completed_files=0,
+                    total_files=1,
+                    speed=0.0,
+                    eta_ms=0,
+                    files={},
+                ),
+            ),
+        ],
+        node_b: [
+            DownloadOngoing(
+                node_id=node_b,
+                shard_metadata=shard_meta,
+                download_progress=DownloadProgressData(
+                    total=Memory.from_bytes(1000),
+                    downloaded=Memory.from_bytes(800),
+                    downloaded_this_session=Memory.from_bytes(800),
+                    completed_files=0,
+                    total_files=1,
+                    speed=0.0,
+                    eta_ms=0,
+                    files={},
+                ),
+            ),
+        ],
+    }
+
+    cic = place_instance_command(model_card)
+    placements = place_instance(
+        cic, topology, {}, node_memory, node_network, download_status=download_status
+    )
+
+    assert len(placements) == 1
+    instance = list(placements.values())[0]
+    assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
+    assert assigned_nodes == {node_b}
+
+
+def test_placement_does_not_prefer_cycle_with_failed_download(
+    model_card: ModelCard,
+) -> None:
+    """A failed download should count as 0% — not preferred over a node with no download history."""
+    topology = Topology()
+
+    model_card.storage_size = Memory.from_bytes(500)
+
+    node_a = NodeId()
+    node_b = NodeId()
+
+    # node_a has slightly more RAM so it would win on the RAM tiebreaker
+    node_memory = {
+        node_a: create_node_memory(1001),
+        node_b: create_node_memory(1000),
+    }
+    node_network = {
+        node_a: create_node_network(),
+        node_b: create_node_network(),
+    }
+
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+
+    shard_meta = _make_shard_metadata(model_card)
+
+    # node_b has a failed download — should not be preferred
+    download_status = {
+        node_b: [
+            DownloadFailed(
+                node_id=node_b,
+                shard_metadata=shard_meta,
+                error_message="connection reset",
+            ),
+        ],
+    }
+
+    cic = place_instance_command(model_card)
+    placements = place_instance(
+        cic, topology, {}, node_memory, node_network, download_status=download_status
+    )
+
+    assert len(placements) == 1
+    instance = list(placements.values())[0]
+    assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
+    # node_a should win on RAM tiebreaker since failed download scores 0.0
+    assert assigned_nodes == {node_a}

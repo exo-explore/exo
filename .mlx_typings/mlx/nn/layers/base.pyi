@@ -53,7 +53,7 @@ class Module(dict):
         mx.eval(model.parameters())
     """
 
-    __call__: Callable
+    def __call__(self, *args: Any, **kwargs: Any) -> mx.array: ...
     def __init__(self) -> None:
         """Should be called by the subclasses of ``Module``."""
 
@@ -200,7 +200,7 @@ class Module(dict):
     ) -> mx.MX_ARRAY_TREE:  # -> dict[Any, Any | dict[Any, Any | dict[Any, Any] | list[Any]] | dict[Any, Any] | list[Any]]:
         """Return the submodules that do not contain other modules."""
 
-    def update(self, parameters: dict, strict: bool = ...) -> Module:
+    def update(self, parameters: dict[str, Any], strict: bool = ...) -> Module:
         """Replace the parameters of this Module with the provided ones in the
         dict of dicts and lists.
 

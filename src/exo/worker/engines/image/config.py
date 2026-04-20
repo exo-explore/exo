@@ -1,5 +1,4 @@
 from enum import Enum
-from math import ceil
 
 from pydantic import BaseModel
 
@@ -23,7 +22,7 @@ class ImageModelConfig(BaseModel):
     block_configs: tuple[TransformerBlockConfig, ...]
 
     default_steps: dict[str, int]  # {"low": X, "medium": Y, "high": Z}
-    num_sync_steps_factor: float  # Fraction of steps for sync phase
+    num_sync_steps: int  # Number of sync steps for distributed inference
 
     guidance_scale: float | None = None  # None or <= 1.0 disables CFG
 
@@ -45,6 +44,3 @@ class ImageModelConfig(BaseModel):
 
     def get_steps_for_quality(self, quality: str) -> int:
         return self.default_steps[quality]
-
-    def get_num_sync_steps(self, steps: int) -> int:
-        return ceil(steps * self.num_sync_steps_factor)

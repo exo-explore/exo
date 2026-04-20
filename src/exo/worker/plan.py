@@ -2,9 +2,10 @@
 
 from collections.abc import Mapping, Sequence
 
-from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.chunks import InputImageChunk
+from exo.shared.types.common import CommandId, ModelId, NodeId
 from exo.shared.types.tasks import (
-    ChatCompletion,
+    CancelTask,
     ConnectToGroup,
     CreateRunner,
     DownloadModel,
@@ -16,6 +17,7 @@ from exo.shared.types.tasks import (
     Task,
     TaskId,
     TaskStatus,
+    TextGeneration,
 )
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -37,6 +39,7 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
+from exo.utils.keyed_backoff import KeyedBackoff
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
 
@@ -48,14 +51,18 @@ def plan(
     instances: Mapping[InstanceId, Instance],
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
     tasks: Mapping[TaskId, Task],
-    input_chunk_buffer: Mapping[CommandId, dict[int, str]] | None = None,
-    input_chunk_counts: Mapping[CommandId, int] | None = None,
+    input_chunk_buffer: Mapping[CommandId, Mapping[int, InputImageChunk]],
+    instance_backoff: KeyedBackoff[InstanceId],
+    download_backoff: KeyedBackoff[ModelId],
 ) -> Task | None:
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
-        _kill_runner(runners, all_runners, instances)
-        or _create_runner(node_id, runners, instances)
-        or _model_needs_download(node_id, runners, global_download_status)
+        _cancel_tasks(runners, tasks)
+        or _kill_runner(runners, all_runners, instances)
+        or _create_runner(node_id, runners, all_runners, instances, instance_backoff)
+        or _model_needs_download(
+            node_id, runners, global_download_status, download_backoff
+        )
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
@@ -72,6 +79,11 @@ def _kill_runner(
         runner_id = runner.bound_instance.bound_runner_id
         if (instance_id := runner.bound_instance.instance.instance_id) not in instances:
             return Shutdown(instance_id=instance_id, runner_id=runner_id)
+        if isinstance(runner.status, RunnerFailed):
+            return Shutdown(
+                instance_id=runner.bound_instance.instance.instance_id,
+                runner_id=runner_id,
+            )
 
         for (
             global_runner_id
@@ -89,7 +101,9 @@ def _kill_runner(
 def _create_runner(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
+    all_runners: Mapping[RunnerId, RunnerStatus],
     instances: Mapping[InstanceId, Instance],
+    instance_backoff: KeyedBackoff[InstanceId],
 ) -> CreateRunner | None:
     for instance in instances.values():
         runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
@@ -99,8 +113,18 @@ def _create_runner(
         if runner_id in runners:
             continue
 
-        shard = instance.shard(runner_id)
-        assert shard is not None
+        # don't create runners if any other nodes have runners that have failed - wait for them to fix themselves first.
+        instance_has_failed_runner = any(
+            isinstance(all_runners.get(remote_runner_id), RunnerFailed)
+            for remote_runner_id in instance.shard_assignments.node_to_runner.values()
+            if remote_runner_id != runner_id
+        )
+        we_have_failed_before = isinstance(all_runners.get(runner_id), RunnerFailed)
+        if instance_has_failed_runner and not we_have_failed_before:
+            continue
+
+        if not instance_backoff.should_proceed(instance.instance_id):
+            continue
 
         return CreateRunner(
             instance_id=instance.instance_id,
@@ -114,6 +138,7 @@ def _model_needs_download(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    download_backoff: KeyedBackoff[ModelId],
 ) -> DownloadModel | None:
     local_downloads = global_download_status.get(node_id, [])
     download_status = {
@@ -122,12 +147,16 @@ def _model_needs_download(
 
     for runner in runners.values():
         model_id = runner.bound_instance.bound_shard.model_card.model_id
-        if isinstance(runner.status, RunnerIdle) and (
-            model_id not in download_status
-            or not isinstance(
-                download_status[model_id],
-                (DownloadOngoing, DownloadCompleted, DownloadFailed),
+        if (
+            isinstance(runner.status, RunnerIdle)
+            and (
+                model_id not in download_status
+                or not isinstance(
+                    download_status[model_id],
+                    (DownloadOngoing, DownloadCompleted, DownloadFailed),
+                )
             )
+            and download_backoff.should_proceed(model_id)
         ):
             # We don't invalidate download_status randomly in case a file gets deleted on disk
             return DownloadModel(
@@ -270,38 +299,57 @@ def _pending_tasks(
     runners: Mapping[RunnerId, RunnerSupervisor],
     tasks: Mapping[TaskId, Task],
     all_runners: Mapping[RunnerId, RunnerStatus],
-    input_chunk_buffer: Mapping[CommandId, dict[int, str]] | None = None,
+    input_chunk_buffer: Mapping[CommandId, Mapping[int, InputImageChunk]],
 ) -> Task | None:
     for task in tasks.values():
         # for now, just forward chat completions
         # TODO(ciaran): do this better!
-        if not isinstance(task, (ChatCompletion, ImageGeneration, ImageEdits)):
+        if not isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
             continue
         if task.task_status not in (TaskStatus.Pending, TaskStatus.Running):
             continue
 
-        # For ImageEdits tasks, verify all input chunks have been received
-        if isinstance(task, ImageEdits) and task.task_params.total_input_chunks > 0:
+        # For tasks with images, verify all input chunks have been received
+        expected_image_chunks = 0
+        if isinstance(task, (ImageEdits, TextGeneration)):
+            expected_image_chunks = task.task_params.total_input_chunks
+        if expected_image_chunks > 0:
             cmd_id = task.command_id
-            expected = task.task_params.total_input_chunks
-            received = len((input_chunk_buffer or {}).get(cmd_id, {}))
-            if received < expected:
+            received = len(input_chunk_buffer.get(cmd_id, {}))
+            if received < expected_image_chunks:
                 continue  # Wait for all chunks to arrive
 
         for runner in runners.values():
             if task.instance_id != runner.bound_instance.instance.instance_id:
                 continue
 
-            # I have a design point here; this is a state race in disguise as the task status doesn't get updated to completed fast enough
-            # however, realistically the task status should be set to completed by the LAST runner, so this is a true race
-            # the actual solution is somewhat deeper than this bypass - TODO!
-            if task.task_id in runner.completed:
+            # the task status _should_ be set to completed by the LAST runner
+            # it is currently set by the first
+            # this is definitely a hack
+            if task.task_id in runner.completed or task.task_id in runner.in_progress:
                 continue
 
-            # TODO: Check ordering aligns with MLX distributeds expectations.
-
-            if isinstance(runner.status, RunnerReady) and all(
+            if isinstance(runner.status, (RunnerReady, RunnerRunning)) and all(
                 isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))
                 for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
             ):
                 return task
+
+
+def _cancel_tasks(
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    tasks: Mapping[TaskId, Task],
+) -> Task | None:
+    for task in tasks.values():
+        if task.task_status != TaskStatus.Cancelled:
+            continue
+        for runner_id, runner in runners.items():
+            if task.instance_id != runner.bound_instance.instance.instance_id:
+                continue
+            if task.task_id in runner.cancelled:
+                continue
+            return CancelTask(
+                instance_id=task.instance_id,
+                cancelled_task_id=task.task_id,
+                runner_id=runner_id,
+            )

@@ -69,6 +69,10 @@ class QwenPromptData(PromptData):
     def conditioning_latents(self) -> mx.array | None:
         return None
 
+    @property
+    def kontext_image_ids(self) -> mx.array | None:
+        return None
+
     def get_batched_cfg_data(
         self,
     ) -> tuple[mx.array, mx.array, mx.array | None, mx.array | None] | None:
@@ -132,6 +136,24 @@ class QwenPromptData(PromptData):
             cond_latents = mx.concatenate([cond_latents, cond_latents], axis=0)
 
         return batched_embeds, batched_mask, None, cond_latents
+
+    def get_cfg_branch_data(
+        self, positive: bool
+    ) -> tuple[mx.array, mx.array | None, mx.array | None, mx.array | None]:
+        if positive:
+            return (
+                self._prompt_embeds,
+                self._prompt_mask,
+                None,
+                self.conditioning_latents,
+            )
+        else:
+            return (
+                self._negative_prompt_embeds,
+                self._negative_prompt_mask,
+                None,
+                self.conditioning_latents,
+            )
 
 
 class QwenModelAdapter(ModelAdapter[QwenImage, QwenTransformer]):

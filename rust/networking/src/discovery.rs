@@ -1,8 +1,7 @@
 use crate::ext::MultiaddrExt;
-use crate::keep_alive;
 use delegate::delegate;
 use either::Either;
-use futures::FutureExt;
+use futures_lite::FutureExt;
 use futures_timer::Delay;
 use libp2p::core::transport::PortUse;
 use libp2p::core::{ConnectedPoint, Endpoint};
@@ -105,6 +104,7 @@ pub struct Behaviour {
     // state-tracking for managed behaviors & mDNS-discovered peers
     managed: managed::Behaviour,
     mdns_discovered: HashMap<PeerId, BTreeSet<Multiaddr>>,
+    bootstrap_peers: Vec<Multiaddr>,
 
     retry_delay: Delay, // retry interval
 
@@ -113,10 +113,11 @@ pub struct Behaviour {
 }
 
 impl Behaviour {
-    pub fn new(keypair: &identity::Keypair) -> io::Result<Self> {
+    pub fn new(keypair: &identity::Keypair, bootstrap_peers: Vec<Multiaddr>) -> io::Result<Self> {
         Ok(Self {
             managed: managed::Behaviour::new(keypair)?,
             mdns_discovered: HashMap::new(),
+            bootstrap_peers,
             retry_delay: Delay::new(RETRY_CONNECT_INTERVAL),
             pending_events: WakerDeque::new(),
         })
@@ -363,11 +364,17 @@ impl NetworkBehaviour for Behaviour {
         }
 
         // retry connecting to all mDNS peers periodically (fails safely if already connected)
-        if self.retry_delay.poll_unpin(cx).is_ready() {
+        if self.retry_delay.poll(cx).is_ready() {
             for (p, mas) in self.mdns_discovered.clone() {
                 for ma in mas {
                     self.dial(p, ma)
                 }
+            }
+            // dial bootstrap peers (for environments where mDNS is unavailable)
+            for addr in &self.bootstrap_peers {
+                self.pending_events.push_back(ToSwarm::Dial {
+                    opts: DialOpts::unknown_peer_id().address(addr.clone()).build(),
+                })
             }
             self.retry_delay.reset(RETRY_CONNECT_INTERVAL) // reset timeout
         }

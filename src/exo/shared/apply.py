@@ -7,6 +7,8 @@ from loguru import logger
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
+    CustomModelCardAdded,
+    CustomModelCardDeleted,
     Event,
     IndexedEvent,
     InputChunkReceived,
@@ -15,7 +17,6 @@ from exo.shared.types.events import (
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
-    RunnerDeleted,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskCreated,
@@ -25,10 +26,13 @@ from exo.shared.types.events import (
     TestEvent,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
+    TracesCollected,
+    TracesMerged,
 )
 from exo.shared.types.profiling import (
     NodeIdentity,
     NodeNetworkInfo,
+    NodeRdmaCtlStatus,
     NodeThunderboltInfo,
     ThunderboltBridgeStatus,
 )
@@ -37,7 +41,7 @@ from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
-from exo.shared.types.worker.runners import RunnerId, RunnerStatus
+from exo.shared.types.worker.runners import RunnerId, RunnerShutdown, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import (
     MacmonMetrics,
     MacThunderboltConnections,
@@ -45,7 +49,9 @@ from exo.utils.info_gatherer.info_gatherer import (
     MemoryUsage,
     MiscData,
     NodeConfig,
+    NodeDiskUsage,
     NodeNetworkInterfaces,
+    RdmaCtlStatus,
     StaticNodeInformation,
     ThunderboltBridgeInfo,
 )
@@ -55,7 +61,14 @@ def event_apply(event: Event, state: State) -> State:
     """Apply an event to state."""
     match event:
         case (
-            TestEvent() | ChunkGenerated() | TaskAcknowledged() | InputChunkReceived()
+            TestEvent()
+            | ChunkGenerated()
+            | TaskAcknowledged()
+            | InputChunkReceived()
+            | TracesCollected()
+            | TracesMerged()
+            | CustomModelCardAdded()
+            | CustomModelCardDeleted()
         ):  # Pass-through events that don't modify state
             return state
         case InstanceCreated():
@@ -68,8 +81,6 @@ def event_apply(event: Event, state: State) -> State:
             return apply_node_download_progress(event, state)
         case NodeGatheredInfo():
             return apply_node_gathered_info(event, state)
-        case RunnerDeleted():
-            return apply_runner_deleted(event, state)
         case RunnerStatusUpdated():
             return apply_runner_status_updated(event, state)
         case TaskCreated():
@@ -108,7 +119,13 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
 
     replaced = False
     for i, existing_dp in enumerate(current):
-        if existing_dp.shard_metadata == dp.shard_metadata:
+        # TODO(ciaran): deduplicate by model_id for now. Will need to use
+        # shard_metadata again when pipeline and tensor downloads differ.
+        # For now this is fine
+        if (
+            existing_dp.shard_metadata.model_card.model_id
+            == dp.shard_metadata.model_card.model_id
+        ):
             current[i] = dp
             replaced = True
             break
@@ -181,19 +198,14 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
 
 
 def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> State:
-    new_runners: Mapping[RunnerId, RunnerStatus] = {
+    if isinstance(event.runner_status, RunnerShutdown):
+        new_runners: Mapping[RunnerId, RunnerStatus] = {
+            rid: rs for rid, rs in state.runners.items() if rid != event.runner_id
+        }
+        return state.model_copy(update={"runners": new_runners})
+    new_runners = {
         **state.runners,
         event.runner_id: event.runner_status,
-    }
-    return state.model_copy(update={"runners": new_runners})
-
-
-def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
-    assert event.runner_id in state.runners, (
-        "RunnerDeleted before any RunnerStatusUpdated events"
-    )
-    new_runners: Mapping[RunnerId, RunnerStatus] = {
-        rid: rs for rid, rs in state.runners.items() if rid != event.runner_id
     }
     return state.model_copy(update={"runners": new_runners})
 
@@ -208,13 +220,11 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
         key: value for key, value in state.downloads.items() if key != event.node_id
     }
     # Clean up all granular node mappings
-    node_identities = {
-        key: value
-        for key, value in state.node_identities.items()
-        if key != event.node_id
-    }
     node_memory = {
         key: value for key, value in state.node_memory.items() if key != event.node_id
+    }
+    node_disk = {
+        key: value for key, value in state.node_disk.items() if key != event.node_id
     }
     node_system = {
         key: value for key, value in state.node_system.items() if key != event.node_id
@@ -232,6 +242,9 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
         for key, value in state.node_thunderbolt_bridge.items()
         if key != event.node_id
     }
+    node_rdma_ctl = {
+        key: value for key, value in state.node_rdma_ctl.items() if key != event.node_id
+    }
     # Only recompute cycles if the leaving node had TB bridge enabled
     leaving_node_status = state.node_thunderbolt_bridge.get(event.node_id)
     leaving_node_had_tb_enabled = (
@@ -247,12 +260,13 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "downloads": downloads,
             "topology": topology,
             "last_seen": last_seen,
-            "node_identities": node_identities,
             "node_memory": node_memory,
+            "node_disk": node_disk,
             "node_system": node_system,
             "node_network": node_network,
             "node_thunderbolt": node_thunderbolt,
             "node_thunderbolt_bridge": node_thunderbolt_bridge,
+            "node_rdma_ctl": node_rdma_ctl,
             "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
         }
     )
@@ -281,6 +295,8 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             update["node_memory"] = {**state.node_memory, event.node_id: info.memory}
         case MemoryUsage():
             update["node_memory"] = {**state.node_memory, event.node_id: info}
+        case NodeDiskUsage():
+            update["node_disk"] = {**state.node_disk, event.node_id: info.disk_usage}
         case NodeConfig():
             pass
         case MiscData():
@@ -295,7 +311,12 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
         case StaticNodeInformation():
             current_identity = state.node_identities.get(event.node_id, NodeIdentity())
             new_identity = current_identity.model_copy(
-                update={"model_id": info.model, "chip_id": info.chip}
+                update={
+                    "model_id": info.model,
+                    "chip_id": info.chip,
+                    "os_version": info.os_version,
+                    "os_build_version": info.os_build_version,
+                }
             )
             update["node_identities"] = {
                 **state.node_identities,
@@ -347,6 +368,11 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                         new_tb_bridge, state.node_network
                     )
                 )
+        case RdmaCtlStatus():
+            update["node_rdma_ctl"] = {
+                **state.node_rdma_ctl,
+                event.node_id: NodeRdmaCtlStatus(enabled=info.enabled),
+            }
 
     return state.model_copy(update=update)
 

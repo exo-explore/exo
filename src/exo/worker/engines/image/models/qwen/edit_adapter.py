@@ -86,6 +86,10 @@ class QwenEditPromptData(PromptData):
         return self._qwen_image_ids
 
     @property
+    def kontext_image_ids(self) -> mx.array | None:
+        return None
+
+    @property
     def is_edit_mode(self) -> bool:
         return True
 
@@ -152,6 +156,24 @@ class QwenEditPromptData(PromptData):
         )
 
         return batched_embeds, batched_mask, None, batched_cond_latents
+
+    def get_cfg_branch_data(
+        self, positive: bool
+    ) -> tuple[mx.array, mx.array | None, mx.array | None, mx.array | None]:
+        if positive:
+            return (
+                self._prompt_embeds,
+                self._prompt_mask,
+                None,
+                self._conditioning_latents,
+            )
+        else:
+            return (
+                self._negative_prompt_embeds,
+                self._negative_prompt_mask,
+                None,
+                self._conditioning_latents,
+            )
 
 
 class QwenEditModelAdapter(ModelAdapter[QwenImageEdit, QwenTransformer]):

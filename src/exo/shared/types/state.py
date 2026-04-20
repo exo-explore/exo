@@ -8,9 +8,11 @@ from pydantic.alias_generators import to_camel
 from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import (
+    DiskUsage,
     MemoryUsage,
     NodeIdentity,
     NodeNetworkInfo,
+    NodeRdmaCtlStatus,
     NodeThunderboltInfo,
     SystemPerformanceProfile,
     ThunderboltBridgeStatus,
@@ -49,10 +51,12 @@ class State(CamelCaseModel):
     # Granular node state mappings (update independently at different frequencies)
     node_identities: Mapping[NodeId, NodeIdentity] = {}
     node_memory: Mapping[NodeId, MemoryUsage] = {}
+    node_disk: Mapping[NodeId, DiskUsage] = {}
     node_system: Mapping[NodeId, SystemPerformanceProfile] = {}
     node_network: Mapping[NodeId, NodeNetworkInfo] = {}
     node_thunderbolt: Mapping[NodeId, NodeThunderboltInfo] = {}
     node_thunderbolt_bridge: Mapping[NodeId, ThunderboltBridgeStatus] = {}
+    node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] = {}
 
     # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
     thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []

@@ -215,6 +215,22 @@ class StreamContext:
         traceback: object | None = ...,
     ) -> None: ...
 
+def device_info() -> dict[str, str | int]:
+    """
+    Get information about the GPU device and system settings.
+
+    Currently returns:
+
+    * ``architecture``
+    * ``max_buffer_size``
+    * ``max_recommended_working_set_size``
+    * ``memory_size``
+    * ``resource_limit``
+
+    Returns:
+        dict: A dictionary with string keys and string or integer values.
+    """
+
 def abs(a: array, /, *, stream: Stream | Device | None = ...) -> array:
     """
     Element-wise absolute value.
@@ -1139,7 +1155,7 @@ class array:
     ) -> array:
         """See :func:`flatten`."""
 
-    def reshape(self, *shape, stream: Stream | Device | None = ...) -> array:
+    def reshape(self, *shape: int, stream: Stream | Device | None = ...) -> array:
         """
         Equivalent to :func:`reshape` but the shape can be passed either as a
         :obj:`tuple` or as separate arguments.
@@ -1222,7 +1238,7 @@ class array:
     ) -> array:
         """See :func:`swapaxes`."""
 
-    def transpose(self, *axes, stream: Stream | Device | None = ...) -> array:
+    def transpose(self, *axes: int, stream: Stream | Device | None = ...) -> array:
         """
         Equivalent to :func:`transpose` but the axes can be passed either as
         a tuple or as separate arguments.
@@ -2366,7 +2382,7 @@ class custom_function:
 def default_device() -> Device:
     """Get the default device."""
 
-def default_stream(device: Device) -> Stream:
+def default_stream(device: Device | DeviceType) -> Stream:
     """Get the device's default stream."""
 
 def degrees(a: array, /, *, stream: Stream | Device | None = ...) -> array:
@@ -2380,7 +2396,7 @@ def degrees(a: array, /, *, stream: Stream | Device | None = ...) -> array:
         array: The angles in degrees.
     """
 
-def depends(inputs: array | Sequence[array], dependencies: array | Sequence[array]):
+def depends[T](inputs: T, dependencies: array | Sequence[array]) -> T:
     """
     Insert dependencies between arrays in the graph. The outputs are
     identical to ``inputs`` but with dependencies on ``dependencies``.

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from copy import copy
 from itertools import count
 from math import inf
@@ -8,15 +9,16 @@ from typing import cast
 from anyio import (
     BrokenResourceError,
     ClosedResourceError,
-    create_task_group,
+    move_on_after,
     sleep_forever,
 )
-from anyio.abc import TaskGroup
 from exo_pyo3_bindings import (
     AllQueuesFullError,
     Keypair,
+    MessageTooLargeError,
     NetworkingHandle,
     NoPeersSubscribedToTopicError,
+    PyFromSwarm,
 )
 from filelock import FileLock
 from loguru import logger
@@ -24,6 +26,7 @@ from loguru import logger
 from exo.shared.constants import EXO_NODE_ID_KEYPAIR
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.task_group import TaskGroup
 
 from .connection_message import ConnectionMessage
 from .topics import CONNECTION_MESSAGES, PublishPolicy, TypedTopic
@@ -100,8 +103,15 @@ class TopicRouter[T: CamelCaseModel]:
 
 class Router:
     @classmethod
-    def create(cls, identity: Keypair) -> "Router":
-        return cls(handle=NetworkingHandle(identity))
+    def create(
+        cls,
+        identity: Keypair,
+        bootstrap_peers: Sequence[str] = (),
+        listen_port: int = 0,
+    ) -> "Router":
+        return cls(
+            handle=NetworkingHandle(identity, list(bootstrap_peers), listen_port)
+        )
 
     def __init__(self, handle: NetworkingHandle):
         self.topic_routers: dict[str, TopicRouter[CamelCaseModel]] = {}
@@ -110,10 +120,9 @@ class Router:
         self._net: NetworkingHandle = handle
         self._tmp_networking_sender: Sender[tuple[str, bytes]] | None = send
         self._id_count = count()
-        self._tg: TaskGroup | None = None
+        self._tg: TaskGroup = TaskGroup()
 
     async def register_topic[T: CamelCaseModel](self, topic: TypedTopic[T]):
-        assert self._tg is None, "Attempted to register topic after setup time"
         send = self._tmp_networking_sender
         if send:
             self._tmp_networking_sender = None
@@ -121,7 +130,8 @@ class Router:
             send = self.networking_receiver.clone_sender()
         router = TopicRouter[T](topic, send)
         self.topic_routers[topic.topic] = cast(TopicRouter[CamelCaseModel], router)
-        await self._networking_subscribe(str(topic.topic))
+        if self._tg.is_running():
+            await self._networking_subscribe(topic.topic)
 
     def sender[T: CamelCaseModel](self, topic: TypedTopic[T]) -> Sender[T]:
         router = self.topic_routers.get(topic.topic, None)
@@ -146,67 +156,90 @@ class Router:
 
     async def run(self):
         logger.debug("Starting Router")
-        async with create_task_group() as tg:
-            self._tg = tg
-            for topic in self.topic_routers:
-                router = self.topic_routers[topic]
-                tg.start_soon(router.run)
-            tg.start_soon(self._networking_recv)
-            tg.start_soon(self._networking_recv_connection_messages)
-            tg.start_soon(self._networking_publish)
-            # Router only shuts down if you cancel it.
-            await sleep_forever()
-        for topic in self.topic_routers:
-            await self._networking_unsubscribe(str(topic))
+        try:
+            async with self._tg as tg:
+                for topic in self.topic_routers:
+                    router = self.topic_routers[topic]
+                    tg.start_soon(router.run)
+                tg.start_soon(self._networking_recv)
+                tg.start_soon(self._networking_publish)
+                # subscribe to pending topics
+                for topic in self.topic_routers:
+                    await self._networking_subscribe(topic)
+                # Router only shuts down if you cancel it.
+                await sleep_forever()
+        finally:
+            with move_on_after(1, shield=True):
+                for topic in self.topic_routers:
+                    await self._networking_unsubscribe(str(topic))
 
     async def shutdown(self):
         logger.debug("Shutting down Router")
-        if not self._tg:
-            return
-        self._tg.cancel_scope.cancel()
+        self._tg.cancel_tasks()
 
     async def _networking_subscribe(self, topic: str):
-        logger.info(f"Subscribing to {topic}")
         await self._net.gossipsub_subscribe(topic)
+        logger.info(f"Subscribed to {topic}")
 
     async def _networking_unsubscribe(self, topic: str):
-        logger.info(f"Unsubscribing from {topic}")
         await self._net.gossipsub_unsubscribe(topic)
+        logger.info(f"Unsubscribed from {topic}")
 
     async def _networking_recv(self):
-        while True:
-            topic, data = await self._net.gossipsub_recv()
-            logger.trace(f"Received message on {topic} with payload {data}")
-            if topic not in self.topic_routers:
-                logger.warning(f"Received message on unknown or inactive topic {topic}")
-                continue
-
-            router = self.topic_routers[topic]
-            await router.publish_bytes(data)
-
-    async def _networking_recv_connection_messages(self):
-        while True:
-            update = await self._net.connection_update_recv()
-            message = ConnectionMessage.from_update(update)
-            logger.trace(
-                f"Received message on connection_messages with payload {message}"
+        try:
+            while True:
+                from_swarm = await self._net.recv()
+                logger.debug(from_swarm)
+                match from_swarm:
+                    case PyFromSwarm.Message(origin, topic, data):
+                        logger.trace(
+                            f"Received message on {topic} from {origin} with payload {data}"
+                        )
+                        if topic not in self.topic_routers:
+                            logger.warning(
+                                f"Received message on unknown or inactive topic {topic}"
+                            )
+                            continue
+                        router = self.topic_routers[topic]
+                        await router.publish_bytes(data)
+                    case PyFromSwarm.Connection():
+                        message = ConnectionMessage.from_update(from_swarm)
+                        logger.trace(
+                            f"Received message on connection_messages with payload {message}"
+                        )
+                        if CONNECTION_MESSAGES.topic in self.topic_routers:
+                            router = self.topic_routers[CONNECTION_MESSAGES.topic]
+                            assert router.topic.model_type == ConnectionMessage
+                            router = cast(TopicRouter[ConnectionMessage], router)
+                            await router.publish(message)
+                    case _:
+                        logger.critical(
+                            "failed to exhaustively check FromSwarm messages - logic error"
+                        )
+        except Exception as exception:
+            logger.opt(exception=exception).error(
+                "Gossipsub receive loop terminated unexpectedly"
             )
-            if CONNECTION_MESSAGES.topic in self.topic_routers:
-                router = self.topic_routers[CONNECTION_MESSAGES.topic]
-                assert router.topic.model_type == ConnectionMessage
-                router = cast(TopicRouter[ConnectionMessage], router)
-                await router.publish(message)
+            raise
 
     async def _networking_publish(self):
         with self.networking_receiver as networked_items:
             async for topic, data in networked_items:
                 try:
                     logger.trace(f"Sending message on {topic} with payload {data}")
+                    if len(data) > 1024 * 1024:
+                        logger.warning(
+                            "Sending overlarge payload, network performance may be temporarily degraded"
+                        )
                     await self._net.gossipsub_publish(topic, data)
-                # As a hack, this also catches AllQueuesFull
-                # Need to fix that ASAP.
-                except (NoPeersSubscribedToTopicError, AllQueuesFullError):
+                except NoPeersSubscribedToTopicError:
                     pass
+                except AllQueuesFullError:
+                    logger.warning(f"All peer queues full, dropping message on {topic}")
+                except MessageTooLargeError:
+                    logger.warning(
+                        f"Message too large for gossipsub on {topic} ({len(data)} bytes), dropping"
+                    )
 
 
 def get_node_id_keypair(
@@ -216,6 +249,8 @@ def get_node_id_keypair(
     Obtains the :class:`Keypair` associated with this node-ID.
     Obtain the :class:`PeerId` by from it.
     """
+    # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
+    return Keypair.generate()
 
     def lock_path(path: str | bytes | PathLike[str] | PathLike[bytes]) -> Path:
         return Path(str(path) + ".lock")
@@ -229,12 +264,12 @@ def get_node_id_keypair(
                 protobuf_encoded = f.read()
 
                 try:  # if decoded successfully, save & return
-                    return Keypair.from_protobuf_encoding(protobuf_encoded)
+                    return Keypair.from_bytes(protobuf_encoded)
                 except ValueError as e:  # on runtime error, assume corrupt file
                     logger.warning(f"Encountered error when trying to get keypair: {e}")
 
         # if no valid credentials, create new ones and persist
         with open(path, "w+b") as f:
-            keypair = Keypair.generate_ed25519()
-            f.write(keypair.to_protobuf_encoding())
+            keypair = Keypair.generate()
+            f.write(keypair.to_bytes())
             return keypair

@@ -15,6 +15,7 @@ struct ClusterState: Decodable {
     let nodeMemory: [String: MemoryInfo]
     let nodeSystem: [String: SystemInfo]
     let nodeThunderboltBridge: [String: ThunderboltBridgeStatus]
+    let nodeRdmaCtl: [String: NodeRdmaCtlStatus]
 
     /// Computed property for backwards compatibility - merges granular state into NodeProfile
     var nodeProfiles: [String: NodeProfile] {
@@ -65,6 +66,10 @@ struct ClusterState: Decodable {
             try container.decodeIfPresent(
                 [String: ThunderboltBridgeStatus].self, forKey: .nodeThunderboltBridge
             ) ?? [:]
+        self.nodeRdmaCtl =
+            try container.decodeIfPresent(
+                [String: NodeRdmaCtlStatus].self, forKey: .nodeRdmaCtl
+            ) ?? [:]
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -78,6 +83,7 @@ struct ClusterState: Decodable {
         case nodeMemory
         case nodeSystem
         case nodeThunderboltBridge
+        case nodeRdmaCtl
     }
 }
 
@@ -157,6 +163,10 @@ struct ThunderboltBridgeStatus: Decodable {
     let enabled: Bool
     let exists: Bool
     let serviceName: String?
+}
+
+struct NodeRdmaCtlStatus: Decodable {
+    let enabled: Bool
 }
 
 struct MemoryInfo: Decodable {
@@ -293,7 +303,7 @@ struct ClusterTask {
     let modelName: String?
     let promptPreview: String?
     let errorMessage: String?
-    let parameters: ChatCompletionTaskParameters?
+    let parameters: TextGenerationTaskParameters?
 
     var sortPriority: Int {
         switch status {
@@ -330,12 +340,12 @@ struct ClusterTaskPayload: Decodable {
     let taskStatus: TaskStatus?
     let instanceId: String?
     let commandId: String?
-    let taskParams: ChatCompletionTaskParameters?
+    let taskParams: TextGenerationTaskParameters?
     let errorType: String?
     let errorMessage: String?
 }
 
-struct ChatCompletionTaskParameters: Decodable, Equatable {
+struct TextGenerationTaskParameters: Decodable, Equatable {
     let model: String?
     let messages: [ChatCompletionMessage]?
     let maxTokens: Int?
@@ -374,7 +384,7 @@ extension ClusterTask {
         guard let id = payload.taskId else { return nil }
         let status = payload.taskStatus ?? .unknown
         switch kindKey {
-        case "ChatCompletion":
+        case "TextGeneration":
             self.init(
                 id: id,
                 status: status,

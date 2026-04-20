@@ -1,10 +1,14 @@
 import json
 import os
-import resource
+import re
 import sys
+import tempfile
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from exo.worker.engines.mlx.vision import VisionProcessor
 
 # Monkey-patch for transformers 5.x compatibility
 # Kimi's tokenization_kimi.py imports bytes_to_unicode from the old location
@@ -18,17 +22,12 @@ try:
 except ImportError:
     pass  # transformers < 5.0 or bytes_to_unicode not available
 
-from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
+from mlx_lm.models.cache import KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
-from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelId
-from exo.worker.engines.mlx.constants import (
-    CACHE_GROUP_SIZE,
-    KV_CACHE_BITS,
-    TRUST_REMOTE_CODE,
-)
+from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
@@ -42,36 +41,34 @@ from mlx_lm.utils import load_model
 from pydantic import RootModel
 
 from exo.download.download_utils import build_model_path
-from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
-from exo.shared.types.tasks import ChatCompletionTaskParams
+from exo.shared.types.mlx import Model
+from exo.shared.types.tasks import TaskId, TextGeneration
+from exo.shared.types.text_generation import ChatTemplateValue, TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
     MlxJacclInstance,
     MlxRingInstance,
 )
 from exo.shared.types.worker.shards import (
+    CfgShardMetadata,
     PipelineShardMetadata,
     ShardMetadata,
     TensorShardMetadata,
 )
-from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import (
-    TimeoutCallback,
-    eval_with_timeout,
+    LayerLoadedCallback,
+    get_inner_model,
+    get_layers,
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
 from exo.worker.runner.bootstrap import logger
 
 Group = mx.distributed.Group
-# Needed for 8 bit model
-resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 
 
-# TODO: Test this
-#  ALSO https://github.com/exo-explore/exo/pull/233#discussion_r2549683673
 def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
     return Memory.from_float_kb(
         (model_shard_meta.end_layer - model_shard_meta.start_layer)
@@ -83,34 +80,6 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
             else model_shard_meta.world_size
         )
     )
-
-
-class ModelLoadingTimeoutError(Exception):
-    pass
-
-
-def mx_barrier(group: Group | None = None):
-    mx.eval(
-        mx.distributed.all_sum(
-            mx.array(1.0),
-            stream=mx.default_stream(mx.Device(mx.cpu)),
-            group=group,
-        )
-    )
-
-
-def broadcast_from_zero(value: int, group: Group | None = None):
-    if group is None:
-        return value
-
-    if group.rank() == 0:
-        a = mx.array([value], dtype=mx.int32)
-    else:
-        a = mx.array([0], dtype=mx.int32)
-
-    m = mx.distributed.all_sum(a, stream=mx.Device(mx.DeviceType.cpu), group=group)
-    mx.eval(m)
-    return int(m.item())
 
 
 class HostList(RootModel[list[str]]):
@@ -128,14 +97,13 @@ def mlx_distributed_init(
     rank = bound_instance.bound_shard.device_rank
     logger.info(f"Starting initialization for rank {rank}")
 
-    coordination_file = None
-    try:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        coordination_file = str(
+            Path(tmpdir) / f"hosts_{bound_instance.instance.instance_id}_{rank}.json"
+        )
         # TODO: singleton instances
         match bound_instance.instance:
             case MlxRingInstance(hosts_by_node=hosts_by_node, ephemeral_port=_):
-                coordination_file = (
-                    f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
-                )
                 hosts_for_node = hosts_by_node[bound_instance.bound_node_id]
                 hosts_json = HostList.from_hosts(hosts_for_node).model_dump_json()
 
@@ -158,9 +126,6 @@ def mlx_distributed_init(
                     jaccl_devices[i][i] is None for i in range(len(jaccl_devices))
                 )
                 # Use RDMA connectivity matrix
-                coordination_file = (
-                    f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
-                )
                 jaccl_devices_json = json.dumps(jaccl_devices)
 
                 with open(coordination_file, "w") as f:
@@ -168,12 +133,11 @@ def mlx_distributed_init(
 
                 jaccl_coordinator = jaccl_coordinators[bound_instance.bound_node_id]
 
-                # TODO: update once upstream fixes
                 logger.info(
-                    f"rank {rank} MLX_JACCL_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
+                    f"rank {rank} MLX_IBV_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
                 )
                 logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
-                os.environ["MLX_JACCL_DEVICES"] = coordination_file
+                os.environ["MLX_IBV_DEVICES"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
                 group = mx.distributed.init(backend="jaccl", strict=True)
@@ -181,10 +145,6 @@ def mlx_distributed_init(
         logger.info(f"Rank {rank} mlx distributed initialization complete")
 
         return group
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            if coordination_file:
-                os.remove(coordination_file)
 
 
 def initialize_mlx(
@@ -203,13 +163,27 @@ def initialize_mlx(
 def load_mlx_items(
     bound_instance: BoundInstance,
     group: Group | None,
-    on_timeout: TimeoutCallback | None = None,
-) -> tuple[Model, TokenizerWrapper]:
+    on_layer_loaded: LayerLoadedCallback | None,
+) -> "tuple[Model, TokenizerWrapper, VisionProcessor | None]":
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
-        model, _ = load_model(model_path, strict=True)
+        model, _ = load_model(model_path, lazy=True, strict=False)
+        # Eval layers one by one for progress reporting
+        try:
+            inner = get_inner_model(model)
+            layers = get_layers(inner)
+            total = len(layers)
+            for i, layer in enumerate(layers):
+                mx.eval(layer)  # type: ignore
+                if on_layer_loaded is not None:
+                    on_layer_loaded(i, total)
+        except ValueError as e:
+            logger.opt(exception=e).debug(
+                "Model architecture doesn't support layer-by-layer progress tracking",
+            )
+        mx.eval(model)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
@@ -218,7 +192,9 @@ def load_mlx_items(
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
         model, tokenizer = shard_and_load(
-            bound_instance.bound_shard, group=group, on_timeout=on_timeout
+            bound_instance.bound_shard,
+            group=group,
+            on_layer_loaded=on_layer_loaded,
         )
         end_time = time.perf_counter()
         logger.info(
@@ -227,13 +203,26 @@ def load_mlx_items(
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
-    return cast(Model, model), tokenizer
+    mx.clear_cache()
+
+    vision_config = bound_instance.bound_shard.model_card.vision
+
+    if vision_config is not None:
+        from exo.worker.engines.mlx.vision import VisionProcessor
+
+        vision_processor: VisionProcessor | None = VisionProcessor(
+            vision_config, bound_instance.bound_shard.model_card.model_id
+        )
+    else:
+        vision_processor = None
+
+    return cast(Model, model), tokenizer, vision_processor
 
 
 def shard_and_load(
     shard_metadata: ShardMetadata,
     group: Group,
-    on_timeout: TimeoutCallback | None = None,
+    on_layer_loaded: LayerLoadedCallback | None,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
@@ -262,23 +251,21 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
-    # Estimate timeout based on model size
-    base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "60"))
-    model_size_gb = get_weights_size(shard_metadata).in_bytes / (1024**3)
-    timeout_seconds = base_timeout + model_size_gb / 5
-    logger.info(
-        f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
-        f"(model size: {model_size_gb:.1f}GB)"
-    )
-
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(model, group, timeout_seconds, on_timeout)
+            model = tensor_auto_parallel(model, group, on_layer_loaded)
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
-            model = pipeline_auto_parallel(model, group, shard_metadata)
-            eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
+            model = pipeline_auto_parallel(
+                model, group, shard_metadata, on_layer_loaded=on_layer_loaded
+            )
+            mx.eval(model.parameters())
+        case CfgShardMetadata():
+            raise ValueError(
+                "CfgShardMetadata is not supported for text model loading - "
+                "this metadata type is only for image generation models"
+            )
 
     # TODO: Do we need this?
     mx.eval(model)
@@ -294,7 +281,11 @@ def shard_and_load(
 
 def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerWrapper:
     """Load tokenizer for a model shard. Delegates to load_tokenizer_for_model_id."""
-    return load_tokenizer_for_model_id(shard_metadata.model_card.model_id, model_path)
+    return load_tokenizer_for_model_id(
+        shard_metadata.model_card.model_id,
+        model_path,
+        trust_remote_code=shard_metadata.model_card.trust_remote_code,
+    )
 
 
 def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
@@ -313,16 +304,30 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     model_id_lower = model_id.lower()
     if "kimi-k2" in model_id_lower:
         return [163586]
-    elif "glm-4.7-flash" in model_id_lower:
+    elif "glm-5" in model_id_lower or "glm-4.7" in model_id_lower:
+        # For GLM-5 and GLM-4.7
         # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
         return [154820, 154827, 154829]
     elif "glm" in model_id_lower:
+        # For GLM-4.5 and older
         return [151336, 151329, 151338]
+    elif "gpt-oss" in model_id_lower:
+        return [200002, 200012]
+    elif (
+        "qwen3.5" in model_id_lower
+        or "qwen-3.5" in model_id_lower
+        or "qwen3.6" in model_id_lower
+        or "qwen-3.6" in model_id_lower
+    ):
+        # For Qwen3.5 / Qwen3.6: 248046 (<|im_end|>), 248044 (<|endoftext|>)
+        return [248046, 248044]
+    elif "gemma-4" in model_id_lower or "gemma-3" in model_id_lower:
+        return [1, 106, 50]
     return None
 
 
 def load_tokenizer_for_model_id(
-    model_id: ModelId, model_path: Path
+    model_id: ModelId, model_path: Path, *, trust_remote_code: bool = TRUST_REMOTE_CODE
 ) -> TokenizerWrapper:
     """
     Load tokenizer for a model given its ID and local path.
@@ -342,8 +347,35 @@ def load_tokenizer_for_model_id(
 
     # Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
     if "kimi-k2" in model_id_lower:
+        import importlib.util
+        import types
+
         sys.path.insert(0, str(model_path))
-        from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
+
+        # Load tool_declaration_ts first (tokenization_kimi imports it with relative import)
+        tool_decl_path = model_path / "tool_declaration_ts.py"
+        if tool_decl_path.exists():
+            spec = importlib.util.spec_from_file_location(
+                "tool_declaration_ts", tool_decl_path
+            )
+            if spec and spec.loader:
+                tool_decl_module = importlib.util.module_from_spec(spec)
+                sys.modules["tool_declaration_ts"] = tool_decl_module
+                spec.loader.exec_module(tool_decl_module)
+
+        # Load tokenization_kimi with patched source (convert relative to absolute import)
+        tok_path = model_path / "tokenization_kimi.py"
+        source = tok_path.read_text()
+        source = source.replace("from .tool_declaration_ts", "from tool_declaration_ts")
+        spec = importlib.util.spec_from_file_location("tokenization_kimi", tok_path)
+        if spec:
+            tok_module = types.ModuleType("tokenization_kimi")
+            tok_module.__file__ = str(tok_path)
+            sys.modules["tokenization_kimi"] = tok_module
+            exec(compile(source, tok_path, "exec"), tok_module.__dict__)  # noqa: S102
+            TikTokenTokenizer = tok_module.TikTokenTokenizer  # type: ignore[attr-defined]  # noqa: N806
+        else:
+            from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
 
         hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(model_path)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -354,11 +386,18 @@ def load_tokenizer_for_model_id(
             return list(hf_tokenizer.model.encode(text, allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
         hf_tokenizer.encode = _patched_encode
-        return TokenizerWrapper(hf_tokenizer, eos_token_ids=eos_token_ids)
+        return TokenizerWrapper(
+            hf_tokenizer,
+            eos_token_ids=eos_token_ids,
+            tool_call_start="<|tool_calls_section_begin|>",
+            tool_call_end="<|tool_calls_section_end|>",
+            tool_parser=_parse_kimi_tool_calls,
+        )
 
+    # We should really consider going back to mlx lm load to get tokenizer
     tokenizer = load_tokenizer(
         model_path,
-        tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
+        tokenizer_config_extra={"trust_remote_code": trust_remote_code},
         eos_token_ids=eos_token_ids,
     )
 
@@ -366,8 +405,7 @@ def load_tokenizer_for_model_id(
 
 
 def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
-    """
-    Normalize tool_calls in a message dict.
+    """Normalize tool_calls in a message dict.
 
     OpenAI format has tool_calls[].function.arguments as a JSON string,
     but some chat templates (e.g., GLM) expect it as a dict.
@@ -388,45 +426,211 @@ def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:
                 func["arguments"] = json.loads(args)
 
 
-def apply_chat_template(
-    tokenizer: TokenizerWrapper,
-    chat_task_data: ChatCompletionTaskParams,
-) -> str:
-    messages = chat_task_data.messages
-    tools = chat_task_data.tools
-
-    formatted_messages: list[dict[str, Any]] = []
-    for message in messages:
-        if isinstance(message.content, ChatCompletionMessageText):
-            message.content = message.content.text
-        if isinstance(message.content, list):
-            if len(message.content) == 0:
-                logger.warning("Received prompt with no content, skipping")
-                continue
-
-            message.content = "\n".join(c.text for c in message.content).strip()
-        if message.content is None and message.thinking is None:
+def _collect_nested_property_names(schema: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    properties: dict[str, Any] = schema.get("properties", {})  # type: ignore[reportAny]
+    for prop_spec in properties.values():  # pyright: ignore[reportAny]
+        if not isinstance(prop_spec, dict):
             continue
+        if prop_spec.get("type") == "array":  # type: ignore[reportAny]
+            items: dict[str, Any] | None = prop_spec.get("items")  # type: ignore[reportAny]
+            if isinstance(items, dict) and items.get("type") == "object":  # type: ignore[reportAny]
+                inner_props: dict[str, Any] = items.get("properties", {})  # type: ignore[reportAny]
+                for k in inner_props:  # pyright: ignore[reportUnknownVariableType]
+                    names.add(str(k))  # pyright: ignore[reportUnknownArgumentType]
+                names.update(_collect_nested_property_names(items))  # pyright: ignore[reportUnknownArgumentType]
+    return names
 
-        # Null values are not valid when applying templates in tokenizer
-        dumped: dict[str, Any] = message.model_dump()
-        msg_dict: dict[str, Any] = {k: v for k, v in dumped.items() if v is not None}  # pyright: ignore[reportAny]
 
-        # Parse tool_calls arguments from JSON string to dict for templates that expect dicts
-        _normalize_tool_calls(msg_dict)
+def _schemas_lost_in_prompt(prompt: str, tools: list[dict[str, Any]]) -> bool:
+    """Return True if nested property names from any tool schema are absent."""
+    for tool in tools:
+        fn: dict[str, Any] = tool.get("function", {})  # type: ignore
+        params: dict[str, Any] = fn.get("parameters", {})  # type: ignore
+        nested = _collect_nested_property_names(params)
+        if nested and not all(name in prompt for name in nested):
+            return True
+    return False
 
-        formatted_messages.append(msg_dict)
+
+_LOSSY_TEMPLATE_PATTERN = re.compile(
+    r"""inner_type\s*==\s*["']object \| object["']\s*or\s*inner_type\|length\s*>\s*\d+""",
+)
+
+
+def _patch_lossy_chat_template(template: str) -> str | None:
+    """Patch chat templates that collapse nested object schemas to ``any[]``.
+
+    Some templates (e.g., GPT-OSS) have a guard like::
+
+        inner_type == "object | object" or inner_type|length > 50
+
+    The length check silently drops complex array-of-object schemas.
+    We remove the length guard, keeping only the object-union check.
+    Returns the patched template, or *None* if no patch was needed.
+    """
+    patched, n = _LOSSY_TEMPLATE_PATTERN.subn(
+        lambda m: m.group(0).split(" or ")[0],  # keep only the object-union check
+        template,
+    )
+    return patched if n > 0 else None
+
+
+def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
+    return "deepseek-v3.2" in task_params.model.lower()
+
+
+def consolidate_system_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    System messages almost exclusively must go at the start of a message
+    and there must only be a single one.
+
+    Also, Codex sends "developer" messages which are just system prompts.
+    """
+    system_parts: list[str] = []
+    non_system: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.get("role") in ("system", "developer"):
+            content = cast(str, msg.get("content", ""))
+            if content:
+                system_parts.append(content)
+        else:
+            non_system.append(msg)
+    formatted_messages = non_system
+    if system_parts:
+        formatted_messages.insert(
+            0, {"role": "system", "content": "\n".join(system_parts)}
+        )
+    return formatted_messages
+
+
+def render_chat_template(
+    tokenizer: TokenizerWrapper,
+    messages: list[dict[str, Any]],
+    task_params: TextGenerationTaskParams,
+) -> str:
+    """
+    Convert TextGenerationTaskParams to a chat template prompt.
+
+    Converts the internal format (input + instructions) to a messages list
+    that can be processed by the tokenizer's chat template.
+
+    When chat_template_messages is available (from Chat Completions API),
+    uses those directly to preserve tool_calls, thinking, and other fields.
+    """
+    formatted_messages = consolidate_system_messages(messages)
+
+    # For assistant prefilling, append content after templating to avoid a closing turn token.
+    partial_assistant_content: str | None = None
+    if formatted_messages and formatted_messages[-1].get("role") == "assistant":
+        partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
+        formatted_messages = formatted_messages[:-1]
+
+    if _needs_dsml_encoding(task_params):
+        from exo.worker.engines.mlx.dsml_encoding import encode_messages
+
+        prompt = encode_messages(
+            messages=formatted_messages,
+            # Only use chat mode if enable thinking is explicitly Fakse.
+            thinking_mode="chat"
+            if task_params.enable_thinking is False
+            else "thinking",
+            tools=task_params.tools,
+        )
+        if partial_assistant_content:
+            prompt += partial_assistant_content
+        logger.info(prompt)
+        return prompt
+
+    for msg in formatted_messages:
+        _normalize_tool_calls(msg)
+
+    extra_kwargs: dict[str, Any] = {}
+    if task_params.enable_thinking is not None:
+        # Qwen3 and GLM use "enable_thinking"; DeepSeek uses "thinking".
+        # Jinja ignores unknown variables, so passing both is safe.
+        extra_kwargs["enable_thinking"] = task_params.enable_thinking
+        extra_kwargs["thinking"] = task_params.enable_thinking
+    if task_params.reasoning_effort is not None:
+        extra_kwargs["reasoning_effort"] = task_params.reasoning_effort
+
+    patched_template: str | None = None
+    if task_params.tools:
+        original_template: str | None = getattr(tokenizer, "chat_template", None)
+        if isinstance(original_template, str):
+            patched_template = _patch_lossy_chat_template(original_template)
+            if patched_template is not None:
+                logger.info(
+                    "Patched lossy chat template (removed inner_type length guard)"
+                )
 
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
-        tools=tools,
+        tools=task_params.tools,
+        **({"chat_template": patched_template} if patched_template is not None else {}),
+        **extra_kwargs,
     )
 
+    if task_params.tools and _schemas_lost_in_prompt(prompt, task_params.tools):
+        logger.warning("Chat template lost nested tool schemas even after patching")
+
+    if partial_assistant_content:
+        prompt += partial_assistant_content
+
+    return prompt
+
+
+def apply_chat_template(
+    tokenizer: TokenizerWrapper,
+    task_params: TextGenerationTaskParams,
+) -> str:
+    messages: list[dict[str, ChatTemplateValue]] = []
+    if task_params.chat_template_messages is not None:
+        # Use pre-formatted messages that preserve tool_calls, thinking, etc.
+        messages = task_params.chat_template_messages
+    else:
+        # Add system message (instructions) if present
+        if task_params.instructions:
+            messages.append({"role": "system", "content": task_params.instructions})
+
+        # Convert input to messages
+        for msg in task_params.input:
+            if not msg.content:
+                logger.warning("Received message with empty content, skipping")
+                continue
+            messages.append({"role": msg.role, "content": msg.content})
+
+    prompt = render_chat_template(tokenizer, messages, task_params)
     logger.info(prompt)
 
     return prompt
+
+
+def system_prompt_token_count(
+    task_params: TextGenerationTaskParams,
+    tokenizer: TokenizerWrapper,
+) -> int:
+    """Approximate token count of the system prompt portion of the input."""
+    parts: list[str] = []
+    if task_params.chat_template_messages is not None:
+        for msg in task_params.chat_template_messages:
+            if msg.get("role") in ("system", "developer"):
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    parts.append(content)
+    else:
+        if task_params.instructions:
+            parts.append(task_params.instructions)
+        for msg in task_params.input:
+            if msg.role in ("system", "developer"):
+                parts.append(msg.content)
+    if len(parts) == 0:
+        return 0
+    return len(tokenizer.encode(" ".join(parts), add_special_tokens=False))
 
 
 def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> bool:
@@ -437,6 +641,46 @@ def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> b
     think_token = tokenizer.think_start
 
     return think_token is not None and prompt.rstrip().endswith(think_token)
+
+
+def fix_unmatched_think_end_tokens(
+    tokens: mx.array, tokenizer: TokenizerWrapper
+) -> mx.array:
+    if not tokenizer.has_thinking:
+        return tokens
+    assert tokenizer.think_start_tokens
+    assert tokenizer.think_end_tokens
+    think_start_tokens: list[int] = tokenizer.think_start_tokens
+    think_end_tokens: list[int] = tokenizer.think_end_tokens
+    token_list: list[int] = cast(list[int], tokens.tolist())
+    result: list[int] = []
+
+    depth = 0
+    accumulated_think_start_length = 0
+    accumulated_think_end_length = 0
+
+    for token in token_list:
+        if token == think_start_tokens[accumulated_think_start_length]:
+            accumulated_think_start_length += 1
+            if accumulated_think_start_length == len(think_start_tokens):
+                depth += 1
+                accumulated_think_start_length = 0
+
+        elif token == think_end_tokens[accumulated_think_end_length]:
+            accumulated_think_end_length += 1
+            if accumulated_think_end_length == len(think_end_tokens):
+                if depth == 0:
+                    result.extend(think_start_tokens)
+                else:
+                    depth -= 1
+                accumulated_think_end_length = 0
+
+        else:
+            accumulated_think_start_length = 0
+            accumulated_think_end_length = 0
+
+        result.append(token)
+    return mx.array(result)
 
 
 class NullKVCache(KVCache):
@@ -455,6 +699,7 @@ class NullKVCache(KVCache):
     @property
     def state(self) -> tuple[mx.array, mx.array]:
         # matches what mx.save_safetensors / mx.eval expect
+        assert self.keys is not None and self.values is not None
         return self.keys, self.values
 
     @state.setter
@@ -462,32 +707,7 @@ class NullKVCache(KVCache):
         raise NotImplementedError("We should not be setting a NullKVCache.")
 
 
-def make_kv_cache(
-    model: Model, max_kv_size: int | None = None, keep: int = 0
-) -> list[KVCache | RotatingKVCache | QuantizedKVCache]:
-    assert hasattr(model, "layers")
-
-    # TODO: Do this for all models
-    if hasattr(model, "make_cache") and isinstance(model, GptOssModel):
-        logger.info("Using MLX LM's make cache")
-        return model.make_cache()  # type: ignore
-
-    if max_kv_size is None:
-        if KV_CACHE_BITS is None:
-            logger.info("Using default KV cache")
-            return [KVCache() for _ in model.layers]
-        else:
-            logger.info("Using quantized KV cache")
-            return [
-                QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
-                for _ in model.layers
-            ]
-    else:
-        logger.info(f"Using rotating KV cache with {max_kv_size=} with {keep=}")
-        return [RotatingKVCache(max_size=max_kv_size, keep=keep) for _ in model.layers]
-
-
-def mlx_force_oom(size: int = 40000) -> None:
+def mlx_force_oom(size: int = 200000) -> None:
     """
     Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
     """
@@ -513,18 +733,17 @@ def set_wired_limit_for_model(model_size: Memory):
     if not mx.metal.is_available():
         return
 
-    model_bytes = model_size.in_bytes
-    max_rec_size = int(mx.metal.device_info()["max_recommended_working_set_size"])
-    if model_bytes > 0.9 * max_rec_size:
-        model_mb = model_bytes // 2**20
-        max_rec_mb = max_rec_size // 2**20
+    max_rec_size = Memory.from_bytes(
+        int(mx.device_info()["max_recommended_working_set_size"])
+    )
+    if model_size > 0.9 * max_rec_size:
         logger.warning(
-            f"Generating with a model that requires {model_mb} MB "
-            f"which is close to the maximum recommended size of {max_rec_mb} "
+            f"Generating with a model that requires {model_size.in_float_mb:.1f} MB "
+            f"which is close to the maximum recommended size of {max_rec_size.in_float_mb:.1f} "
             "MB. This can be slow. See the documentation for possible work-arounds: "
             "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
         )
-    mx.set_wired_limit(max_rec_size)
+    mx.set_wired_limit(max_rec_size.in_bytes)
     logger.info(f"Wired limit set to {max_rec_size}.")
 
 
@@ -536,3 +755,111 @@ def mlx_cleanup(
     import gc
 
     gc.collect()
+
+
+def mx_any(bool_: bool, group: Group | None) -> bool:
+    if group is None:
+        return bool_
+    num_true = mx.distributed.all_sum(
+        mx.array(bool_), group=group, stream=mx.default_stream(mx.Device(mx.cpu))
+    )
+    mx.eval(num_true)
+    return num_true.item() > 0
+
+
+def mx_barrier(group: Group | None):
+    if group is None:
+        return
+    mx.eval(
+        mx.distributed.all_sum(
+            mx.array(1.0), group=group, stream=mx.default_stream(mx.Device(mx.cpu))
+        )
+    )
+
+
+def _parse_kimi_tool_calls(text: str):
+    import regex as re
+
+    # kimi has a fixed function naming scheme, with a json formatted arg
+    #   functions.multiply:0<|tool_call_argument_begin|>{"a": 2, "b": 3}
+    _func_name_regex = re.compile(
+        r"^\s*((?:functions\.)?(.+?):\d+)\s*<\|tool_call_argument_begin\|>", re.DOTALL
+    )
+    _func_arg_regex = re.compile(r"<\|tool_call_argument_begin\|>\s*(.*)\s*", re.DOTALL)
+    _tool_call_split_regex = re.compile(
+        r"<\|tool_call_begin\|>(.*?)<\|tool_call_end\|>", re.DOTALL
+    )
+
+    def _parse_single_tool(text: str) -> dict[str, Any]:
+        func_name_match = _func_name_regex.search(text)
+        if func_name_match is None:
+            raise ValueError("No tool call found.")
+        tool_call_id = func_name_match.group(1)  # e.g. "functions.get_weather:0"
+        func_name = func_name_match.group(2)  # e.g. "get_weather"
+
+        func_args_match = _func_arg_regex.search(text)
+        if func_args_match is None:
+            raise ValueError("No tool call arguments found.")
+        func_args = func_args_match.group(1)
+        arg_dct = json.loads(func_args)  # pyright: ignore[reportAny]
+
+        return dict(id=tool_call_id, name=func_name, arguments=arg_dct)  # pyright: ignore[reportAny]
+
+    tool_matches = _tool_call_split_regex.findall(text)
+    if tool_matches:
+        return [_parse_single_tool(match) for match in tool_matches]  # pyright: ignore[reportAny]
+    else:
+        return [_parse_single_tool(text)]
+
+
+def mx_all_gather_tasks(
+    tasks: list[TextGeneration],
+    group: mx.distributed.Group | None,
+) -> tuple[list[TextGeneration], list[TextGeneration]]:
+    def encode_task_id(task_id: TaskId) -> list[int]:
+        utf8_task_id = task_id.encode()
+        return [
+            int.from_bytes(utf8_task_id[i : i + 1]) for i in range(len(utf8_task_id))
+        ]
+
+    def decode_task_id(encoded_task_id: list[int]) -> TaskId:
+        return TaskId(
+            bytes.decode(b"".join((x).to_bytes(length=1) for x in encoded_task_id))
+        )
+
+    uuid_byte_length = 36
+
+    n_tasks = len(tasks)
+    all_counts = cast(
+        list[int],
+        mx.distributed.all_gather(mx.array([n_tasks]), group=group).tolist(),
+    )
+    max_tasks = max(all_counts)
+    world_size: int = 1 if group is None else group.size()
+
+    if max_tasks == 0:
+        return [], []
+
+    padded = [encode_task_id(task.task_id) for task in tasks] + [
+        [0] * uuid_byte_length
+    ] * (max_tasks - n_tasks)
+
+    assert all(len(encoded_task_id) == uuid_byte_length for encoded_task_id in padded)
+
+    gathered = cast(
+        list[list[list[int]]],
+        mx.distributed.all_gather(mx.array(padded), group=group)
+        .reshape(world_size, max_tasks, -1)
+        .tolist(),
+    )
+    all_task_ids: list[list[TaskId]] = [
+        [decode_task_id(encoded_task_id) for encoded_task_id in rank_tasks[:count]]
+        for rank_tasks, count in zip(gathered, all_counts, strict=True)
+    ]
+
+    agreed_ids = set[TaskId].intersection(*(set(tids) for tids in all_task_ids))
+
+    local_tasks = {task.task_id: task for task in tasks}
+    agreed = [local_tasks[tid] for tid in sorted(agreed_ids)]
+    different = [task for task in tasks if task.task_id not in agreed_ids]
+    return agreed, different

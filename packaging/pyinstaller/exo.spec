@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
 import importlib.util
 import shutil
 from pathlib import Path
@@ -10,6 +11,7 @@ PROJECT_ROOT = Path.cwd()
 SOURCE_ROOT = PROJECT_ROOT / "src"
 ENTRYPOINT = SOURCE_ROOT / "exo" / "__main__.py"
 DASHBOARD_DIR = PROJECT_ROOT / "dashboard" / "build"
+RESOURCES_DIR = PROJECT_ROOT / "resources"
 EXO_SHARED_MODELS_DIR = SOURCE_ROOT / "exo" / "shared" / "models"
 
 if not ENTRYPOINT.is_file():
@@ -17,6 +19,9 @@ if not ENTRYPOINT.is_file():
 
 if not DASHBOARD_DIR.is_dir():
     raise SystemExit(f"Dashboard assets are missing: {DASHBOARD_DIR}")
+
+if not RESOURCES_DIR.is_dir():
+    raise SystemExit(f"Resource assets are missing: {RESOURCES_DIR}")
 
 if not EXO_SHARED_MODELS_DIR.is_dir():
     raise SystemExit(f"Shared model assets are missing: {EXO_SHARED_MODELS_DIR}")
@@ -52,26 +57,31 @@ HIDDEN_IMPORTS = sorted(
     set(
         collect_submodules("mlx")
         + _safe_collect("mlx_lm")
+        + _safe_collect("mlx_vlm")
         + _safe_collect("transformers")
     )
 )
 
 DATAS: list[tuple[str, str]] = [
     (str(DASHBOARD_DIR), "dashboard"),
+    (str(RESOURCES_DIR), "resources"),
     (str(MLX_LIB_DIR), "mlx/lib"),
     (str(EXO_SHARED_MODELS_DIR), "exo/shared/models"),
 ]
 
+if sys.platform == "darwin":
 MACMON_PATH = shutil.which("macmon")
-if MACMON_PATH is None:
-    raise SystemExit(
-        "macmon binary not found in PATH. "
-        "Install it via: brew install macmon"
-    )
+    if MACMON_PATH is None:
+        raise SystemExit(
+            "macmon binary not found in PATH. "
+            "Install the pinned fork used by exo via: "
+            "cargo install --git https://github.com/vladkens/macmon "
+            "--rev a1cd06b6cc0d5e61db24fd8832e74cd992097a7d macmon --force"
+        )
 
 BINARIES: list[tuple[str, str]] = [
     (MACMON_PATH, "."),
-]
+] if sys.platform == "darwin" else []
 
 a = Analysis(
     [str(ENTRYPOINT)],
@@ -115,4 +125,3 @@ coll = COLLECT(
     upx_exclude=[],
     name="exo",
 )
-

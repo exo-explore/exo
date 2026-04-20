@@ -1,0 +1,15 @@
+model_id = "mlx-community/Qwen3-Next-80B-A3B-Instruct-4bit"
+n_layers = 48
+hidden_size = 2048
+num_key_value_heads = 2
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "4bit"
+base_model = "Qwen3 Next 80B"
+capabilities = ["text"]
+
+context_length = 262144
+
+[storage_size]
+in_bytes = 46976204800

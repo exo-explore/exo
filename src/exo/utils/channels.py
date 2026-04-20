@@ -1,10 +1,11 @@
+import contextlib
 import multiprocessing as mp
 from dataclasses import dataclass, field
 from math import inf
 from multiprocessing.synchronize import Event
 from queue import Empty, Full
 from types import TracebackType
-from typing import Self
+from typing import Any, Self
 
 from anyio import (
     CapacityLimiter,
@@ -125,12 +126,15 @@ class MpSender[T]:
             self._state.buffer.put(item, block=True)
 
     async def send_async(self, item: T) -> None:
-        await to_thread.run_sync(self.send, item, limiter=CapacityLimiter(1))
+        await to_thread.run_sync(
+            self.send, item, limiter=CapacityLimiter(1), abandon_on_cancel=True
+        )
 
     def close(self) -> None:
         if not self._state.closed.is_set():
             self._state.closed.set()
-        self._state.buffer.put(_MpEndOfStream())
+        with contextlib.suppress(Exception):
+            self._state.buffer.put_nowait(_MpEndOfStream())
         self._state.buffer.close()
 
     # == unique to Mp channels ==
@@ -153,7 +157,7 @@ class MpSender[T]:
     ) -> None:
         self.close()
 
-    def __getstate__(self):
+    def __getstate__(self) -> dict[str, Any]:
         d = self.__dict__.copy()
         d.pop("__orig_class__", None)
         return d
@@ -188,19 +192,28 @@ class MpReceiver[T]:
         try:
             return self.receive_nowait()
         except WouldBlock:
-            item = self._state.buffer.get()
+            try:
+                item = self._state.buffer.get()
+            except (TypeError, OSError):
+                # Queue pipe can get closed while we are blocked on get().
+                # The underlying connection._handle becomes None, causing
+                # TypeError in read(handle, remaining).
+                raise ClosedResourceError from None
             if isinstance(item, _MpEndOfStream):
                 self.close()
                 raise EndOfStream from None
             return item
 
-    # nb: this function will not cancel particularly well
     async def receive_async(self) -> T:
-        return await to_thread.run_sync(self.receive, limiter=CapacityLimiter(1))
+        return await to_thread.run_sync(
+            self.receive, limiter=CapacityLimiter(1), abandon_on_cancel=True
+        )
 
     def close(self) -> None:
         if not self._state.closed.is_set():
             self._state.closed.set()
+        with contextlib.suppress(Exception):
+            self._state.buffer.put_nowait(_MpEndOfStream())
         self._state.buffer.close()
 
     # == unique to Mp channels ==

@@ -1,4 +1,5 @@
-from collections.abc import Mapping
+from collections import defaultdict
+from collections.abc import AsyncGenerator, Mapping
 
 import anyio
 import httpx
@@ -8,6 +9,7 @@ from loguru import logger
 from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import NodeNetworkInfo
+from exo.utils.channels import Sender, channel
 
 REACHABILITY_ATTEMPTS = 3
 
@@ -17,13 +19,14 @@ async def check_reachability(
     expected_node_id: NodeId,
     out: dict[NodeId, set[str]],
     client: httpx.AsyncClient,
+    api_port: int,
 ) -> None:
     """Check if a node is reachable at the given IP and verify its identity."""
     if ":" in target_ip:
         # TODO: use real IpAddress types
-        url = f"http://[{target_ip}]:52415/node_id"
+        url = f"http://[{target_ip}]:{api_port}/node_id"
     else:
-        url = f"http://{target_ip}:52415/node_id"
+        url = f"http://{target_ip}:{api_port}/node_id"
 
     remote_node_id = None
     last_error = None
@@ -80,10 +83,11 @@ async def check_reachable(
     topology: Topology,
     self_node_id: NodeId,
     node_network: Mapping[NodeId, NodeNetworkInfo],
-) -> dict[NodeId, set[str]]:
-    """Check which nodes are reachable and return their IPs."""
+    api_port: int,
+) -> AsyncGenerator[tuple[str, NodeId], None]:
+    """Yield (ip, node_id) pairs as reachability probes complete."""
 
-    reachable: dict[NodeId, set[str]] = {}
+    send, recv = channel[tuple[str, NodeId]]()
 
     # these are intentionally httpx's defaults so we can tune them later
     timeout = httpx.Timeout(timeout=5.0)
@@ -93,8 +97,20 @@ async def check_reachable(
         keepalive_expiry=5,
     )
 
+    async def _probe(
+        target_ip: str,
+        expected_node_id: NodeId,
+        client: httpx.AsyncClient,
+        send: Sender[tuple[str, NodeId]],
+    ) -> None:
+        async with send:
+            out: defaultdict[NodeId, set[str]] = defaultdict(set)
+            await check_reachability(target_ip, expected_node_id, out, client, api_port)
+            if expected_node_id in out:
+                await send.send((target_ip, expected_node_id))
+
     async with (
-        httpx.AsyncClient(timeout=timeout, limits=limits) as client,
+        httpx.AsyncClient(timeout=timeout, limits=limits, verify=False) as client,
         create_task_group() as tg,
     ):
         for node_id in topology.list_nodes():
@@ -103,12 +119,9 @@ async def check_reachable(
             if node_id == self_node_id:
                 continue
             for iface in node_network[node_id].interfaces:
-                tg.start_soon(
-                    check_reachability,
-                    iface.ip_address,
-                    node_id,
-                    reachable,
-                    client,
-                )
+                tg.start_soon(_probe, iface.ip_address, node_id, client, send.clone())
+        send.close()
 
-    return reachable
+        with recv:
+            async for item in recv:
+                yield item

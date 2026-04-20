@@ -7,19 +7,21 @@ from loguru import logger
 
 from exo.master.main import Master
 from exo.routing.router import get_node_id_keypair
-from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
-from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
+from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.commands import (
-    ChatCompletion,
     CommandId,
     ForwarderCommand,
+    ForwarderDownloadCommand,
     PlaceInstance,
+    TextGeneration,
 )
-from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.common import ModelId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
-    ForwarderEvent,
+    Event,
+    GlobalForwarderEvent,
     IndexedEvent,
     InstanceCreated,
+    LocalForwarderEvent,
     NodeGatheredInfo,
     TaskCreated,
 )
@@ -27,8 +29,13 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     MemoryUsage,
 )
-from exo.shared.types.tasks import ChatCompletion as ChatCompletionTask
 from exo.shared.types.tasks import TaskStatus
+from exo.shared.types.tasks import TextGeneration as TextGenerationTask
+from exo.shared.types.text_generation import (
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.worker.instances import (
     InstanceMeta,
     MlxRingInstance,
@@ -41,12 +48,29 @@ from exo.utils.channels import channel
 @pytest.mark.asyncio
 async def test_master():
     keypair = get_node_id_keypair()
-    node_id = NodeId(keypair.to_peer_id().to_base58())
+    node_id = NodeId(keypair.to_node_id())
     session_id = SessionId(master_node_id=node_id, election_clock=0)
 
-    ge_sender, global_event_receiver = channel[ForwarderEvent]()
+    ge_sender, global_event_receiver = channel[GlobalForwarderEvent]()
     command_sender, co_receiver = channel[ForwarderCommand]()
-    local_event_sender, le_receiver = channel[ForwarderEvent]()
+    local_event_sender, le_receiver = channel[LocalForwarderEvent]()
+    fcds, _fcdr = channel[ForwarderDownloadCommand]()
+    ev_send, ev_recv = channel[Event]()
+
+    async def mock_event_router():
+        idx = 0
+        sid = SystemId()
+        with ev_recv as master_events:
+            async for event in master_events:
+                await local_event_sender.send(
+                    LocalForwarderEvent(
+                        origin=sid,
+                        origin_idx=idx,
+                        session=session_id,
+                        event=event,
+                    )
+                )
+                idx += 1
 
     all_events: list[IndexedEvent] = []
 
@@ -64,21 +88,23 @@ async def test_master():
     master = Master(
         node_id,
         session_id,
+        event_sender=ev_send,
         global_event_sender=ge_sender,
         local_event_receiver=le_receiver,
         command_receiver=co_receiver,
+        download_command_sender=fcds,
     )
     logger.info("run the master")
     async with anyio.create_task_group() as tg:
         tg.start_soon(master.run)
+        tg.start_soon(mock_event_router)
 
-        sender_node_id = NodeId(f"{keypair.to_peer_id().to_base58()}_sender")
         # inject a NodeGatheredInfo event
         logger.info("inject a NodeGatheredInfo event")
         await local_event_sender.send(
-            ForwarderEvent(
+            LocalForwarderEvent(
                 origin_idx=0,
-                origin=sender_node_id,
+                origin=SystemId("Worker"),
                 session=session_id,
                 event=(
                     NodeGatheredInfo(
@@ -105,7 +131,7 @@ async def test_master():
         logger.info("inject a CreateInstance Command")
         await command_sender.send(
             ForwarderCommand(
-                origin=node_id,
+                origin=SystemId("API"),
                 command=(
                     PlaceInstance(
                         command_id=CommandId(),
@@ -127,18 +153,19 @@ async def test_master():
         logger.info("wait for an instance")
         while len(master.state.instances.keys()) == 0:
             await anyio.sleep(0.001)
-        logger.info("inject a ChatCompletion Command")
+        logger.info("inject a TextGeneration Command")
         await command_sender.send(
             ForwarderCommand(
-                origin=node_id,
+                origin=SystemId("API"),
                 command=(
-                    ChatCompletion(
+                    TextGeneration(
                         command_id=CommandId(),
-                        request_params=ChatCompletionTaskParams(
-                            model="llama-3.2-1b",
-                            messages=[
-                                ChatCompletionMessage(
-                                    role="user", content="Hello, how are you?"
+                        task_params=TextGenerationTaskParams(
+                            model=ModelId("llama-3.2-1b"),
+                            input=[
+                                InputMessage(
+                                    role="user",
+                                    content=InputMessageContent("Hello, how are you?"),
                                 )
                             ],
                         ),
@@ -190,12 +217,15 @@ async def test_master():
         assert created_instance.ephemeral_port > 0
         assert isinstance(events[2].event, TaskCreated)
         assert events[2].event.task.task_status == TaskStatus.Pending
-        assert isinstance(events[2].event.task, ChatCompletionTask)
-        assert events[2].event.task.task_params == ChatCompletionTaskParams(
-            model="llama-3.2-1b",
-            messages=[
-                ChatCompletionMessage(role="user", content="Hello, how are you?")
+        assert isinstance(events[2].event.task, TextGenerationTask)
+        assert events[2].event.task.task_params == TextGenerationTaskParams(
+            model=ModelId("llama-3.2-1b"),
+            input=[
+                InputMessage(
+                    role="user", content=InputMessageContent("Hello, how are you?")
+                )
             ],
         )
 
+        ev_send.close()
         await master.shutdown()

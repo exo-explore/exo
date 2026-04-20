@@ -1,11 +1,13 @@
 from collections.abc import Generator
 from typing import Any, Literal
 
-from exo.shared.types.api import (
+from exo.api.types import (
     FinishReason,
     GenerationStats,
     ImageGenerationStats,
     ToolCallItem,
+    TopLogprobItem,
+    Usage,
 )
 from exo.utils.pydantic_ext import TaggedModel
 
@@ -21,9 +23,12 @@ class TokenizedResponse(BaseRunnerResponse):
 class GenerationResponse(BaseRunnerResponse):
     text: str
     token: int
-    # logprobs: list[float] | None = None # too big. we can change to be top-k
+    logprob: float | None = None
+    top_logprobs: list[TopLogprobItem] | None = None
     finish_reason: FinishReason | None = None
     stats: GenerationStats | None = None
+    usage: Usage | None
+    is_thinking: bool = False
 
 
 class ImageGenerationResponse(BaseRunnerResponse):
@@ -57,7 +62,14 @@ class PartialImageResponse(BaseRunnerResponse):
 
 class ToolCallResponse(BaseRunnerResponse):
     tool_calls: list[ToolCallItem]
+    usage: Usage | None
+    stats: GenerationStats | None = None
 
 
 class FinishedResponse(BaseRunnerResponse):
     pass
+
+
+class PrefillProgressResponse(BaseRunnerResponse):
+    processed_tokens: int
+    total_tokens: int

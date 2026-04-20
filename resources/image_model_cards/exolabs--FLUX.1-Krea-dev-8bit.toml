@@ -1,0 +1,49 @@
+model_id = "exolabs/FLUX.1-Krea-dev-8bit"
+n_layers = 57
+hidden_size = 1
+supports_tensor = false
+tasks = ["TextToImage"]
+family = "flux"
+quantization = "8bit"
+base_model = "FLUX.1 Krea"
+capabilities = ["image_gen"]
+
+[storage_size]
+in_bytes = 21426029632
+
+[[components]]
+component_name = "text_encoder"
+component_path = "text_encoder/"
+n_layers = 12
+can_shard = false
+
+[components.storage_size]
+in_bytes = 0
+
+[[components]]
+component_name = "text_encoder_2"
+component_path = "text_encoder_2/"
+n_layers = 24
+can_shard = false
+safetensors_index_filename = "model.safetensors.index.json"
+
+[components.storage_size]
+in_bytes = 9524621312
+
+[[components]]
+component_name = "transformer"
+component_path = "transformer/"
+n_layers = 57
+can_shard = true
+safetensors_index_filename = "diffusion_pytorch_model.safetensors.index.json"
+
+[components.storage_size]
+in_bytes = 11901408320
+
+[[components]]
+component_name = "vae"
+component_path = "vae/"
+can_shard = false
+
+[components.storage_size]
+in_bytes = 0

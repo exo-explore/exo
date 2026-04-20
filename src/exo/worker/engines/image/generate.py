@@ -3,17 +3,19 @@ import io
 import random
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Generator, Literal
 
 import mlx.core as mx
 from PIL import Image
 
-from exo.shared.types.api import (
+from exo.api.types import (
     AdvancedImageParams,
-    ImageEditsInternalParams,
+    ImageEditsTaskParams,
     ImageGenerationStats,
     ImageGenerationTaskParams,
+    ImageSize,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.runner_response import (
@@ -23,9 +25,9 @@ from exo.shared.types.worker.runner_response import (
 from exo.worker.engines.image.distributed_model import DistributedImageModel
 
 
-def parse_size(size_str: str | None) -> tuple[int, int]:
+def parse_size(size_str: ImageSize) -> tuple[int, int]:
     """Parse size parameter like '1024x1024' to (width, height) tuple."""
-    if not size_str:
+    if size_str == "auto":
         return (1024, 1024)
 
     try:
@@ -67,7 +69,8 @@ def warmup_image_generator(model: DistributedImageModel) -> Image.Image | None:
 
 def generate_image(
     model: DistributedImageModel,
-    task: ImageGenerationTaskParams | ImageEditsInternalParams,
+    task: ImageGenerationTaskParams | ImageEditsTaskParams,
+    cancel_checker: Callable[[], bool] | None = None,
 ) -> Generator[ImageGenerationResponse | PartialImageResponse, None, None]:
     """Generate image(s), optionally yielding partial results.
 
@@ -98,17 +101,20 @@ def generate_image(
 
     partial_images = (
         task.partial_images
-        if task.partial_images is not None
-        else (3 if task.stream else 0)
+        if task.partial_images is not None and task.stream is not None and task.stream
+        else 0
     )
 
     image_path: Path | None = None
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        if isinstance(task, ImageEditsInternalParams):
+        if isinstance(task, ImageEditsTaskParams):
             # Decode base64 image data and save to temp file
             image_path = Path(tmpdir) / "input.png"
             image_path.write_bytes(base64.b64decode(task.image_data))
+            if task.size == "auto":
+                with Image.open(image_path) as img:
+                    width, height = img.size
 
         for image_num in range(num_images):
             # Increment seed for each image to ensure unique results
@@ -123,6 +129,7 @@ def generate_image(
                 image_path=image_path,
                 partial_images=partial_images,
                 advanced_params=advanced_params,
+                cancel_checker=cancel_checker,
             ):
                 if isinstance(result, tuple):
                     # Partial image: (Image, partial_index, total_partials)
@@ -162,7 +169,7 @@ def generate_image(
                             else 0.0
                         )
 
-                        peak_memory_gb = mx.get_peak_memory() / (1024**3)
+                        peak_memory = Memory.from_bytes(mx.get_peak_memory())
 
                         stats = ImageGenerationStats(
                             seconds_per_step=seconds_per_step,
@@ -171,7 +178,7 @@ def generate_image(
                             num_images=num_images,
                             image_width=width,
                             image_height=height,
-                            peak_memory_usage=Memory.from_gb(peak_memory_gb),
+                            peak_memory_usage=peak_memory,
                         )
 
                     buffer = io.BytesIO()

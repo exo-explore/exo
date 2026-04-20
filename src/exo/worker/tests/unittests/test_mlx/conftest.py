@@ -10,14 +10,13 @@ from typing import Any, cast
 import mlx.core as mx
 import mlx.nn as nn
 
-from exo.shared.constants import EXO_MODELS_DIR
+from exo.shared.constants import EXO_DEFAULT_MODELS_DIR
 from exo.shared.models.model_cards import ModelCard, ModelTask
-from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
-from exo.shared.types.tasks import ChatCompletionTaskParams
+from exo.shared.types.mlx import Model
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata
-from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate
 from exo.worker.engines.mlx.utils_mlx import apply_chat_template, shard_and_load
 
@@ -53,7 +52,7 @@ def create_hostfile(world_size: int, base_port: int) -> tuple[str, list[str]]:
 # Use GPT OSS 20b to test as it is a model with a lot of strange behaviour
 
 DEFAULT_GPT_OSS_CONFIG = PipelineTestConfig(
-    model_path=EXO_MODELS_DIR / "mlx-community--gpt-oss-20b-MXFP4-Q8",
+    model_path=EXO_DEFAULT_MODELS_DIR / "mlx-community--gpt-oss-20b-MXFP4-Q8",
     total_layers=24,
     base_port=29600,
     max_tokens=200,
@@ -97,7 +96,7 @@ def run_gpt_oss_pipeline_device(
             n_layers=24,
         )
 
-        model, tokenizer = shard_and_load(shard_meta, group)
+        model, tokenizer = shard_and_load(shard_meta, group, on_layer_loaded=None)
         model = cast(Model, model)
 
         # Generate a prompt of exact token length
@@ -113,10 +112,10 @@ def run_gpt_oss_pipeline_device(
         tokens = tokens[:prompt_tokens]
         prompt_text = tokenizer.decode(tokens)
 
-        task = ChatCompletionTaskParams(
+        task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[ChatCompletionMessage(role="user", content=prompt_text)],
-            max_tokens=max_tokens,
+            input=[InputMessage(role="user", content=prompt_text)],
+            max_output_tokens=max_tokens,
         )
 
         prompt = apply_chat_template(tokenizer, task)
@@ -124,7 +123,12 @@ def run_gpt_oss_pipeline_device(
         generated_text = ""
 
         for response in mlx_generate(
-            model=model, tokenizer=tokenizer, task=task, prompt=prompt
+            model=model,
+            tokenizer=tokenizer,
+            task=task,
+            prompt=prompt,
+            kv_prefix_cache=None,
+            group=group,
         ):
             generated_text += response.text
             if response.finish_reason is not None:
@@ -168,7 +172,7 @@ def run_gpt_oss_tensor_parallel_device(
             n_layers=24,
         )
 
-        model, tokenizer = shard_and_load(shard_meta, group)
+        model, tokenizer = shard_and_load(shard_meta, group, on_layer_loaded=None)
         model = cast(Model, model)
 
         base_text = "The quick brown fox jumps over the lazy dog. "
@@ -181,10 +185,10 @@ def run_gpt_oss_tensor_parallel_device(
         tokens = tokens[:prompt_tokens]
         prompt_text = tokenizer.decode(tokens)
 
-        task = ChatCompletionTaskParams(
+        task = TextGenerationTaskParams(
             model=DEFAULT_GPT_OSS_MODEL_ID,
-            messages=[ChatCompletionMessage(role="user", content=prompt_text)],
-            max_tokens=max_tokens,
+            input=[InputMessage(role="user", content=prompt_text)],
+            max_output_tokens=max_tokens,
         )
 
         prompt = apply_chat_template(tokenizer, task)
@@ -195,6 +199,8 @@ def run_gpt_oss_tensor_parallel_device(
             tokenizer=tokenizer,
             task=task,
             prompt=prompt,
+            kv_prefix_cache=None,
+            group=group,
         ):
             generated_text += response.text
             if response.finish_reason is not None:

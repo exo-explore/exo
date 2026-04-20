@@ -1,17 +1,15 @@
 <script lang="ts">
   import {
     isLoading,
-    sendMessage,
-    generateImage,
-    editImage,
     editingImage,
     clearEditingImage,
     selectedChatModel,
-    setSelectedChatModel,
-    instances,
     ttftMs,
     tps,
     totalTokens,
+    thinkingEnabled as thinkingEnabledStore,
+    setConversationThinking,
+    stopGeneration,
   } from "$lib/stores/app.svelte";
   import ChatAttachments from "./ChatAttachments.svelte";
   import ImageParamsPanel from "./ImageParamsPanel.svelte";
@@ -25,6 +23,20 @@
     autofocus?: boolean;
     showModelSelector?: boolean;
     modelTasks?: Record<string, string[]>;
+    modelCapabilities?: Record<string, string[]>;
+    onSend?: () => void;
+    onAutoSend: (
+      content: string,
+      files?: {
+        id: string;
+        name: string;
+        type: string;
+        textContent?: string;
+        preview?: string;
+      }[],
+    ) => void;
+    onOpenModelPicker?: () => void;
+    modelDisplayOverride?: string;
   }
 
   let {
@@ -34,6 +46,11 @@
     autofocus = true,
     showModelSelector = false,
     modelTasks = {},
+    modelCapabilities = {},
+    onSend,
+    onAutoSend,
+    onOpenModelPicker,
+    modelDisplayOverride,
   }: Props = $props();
 
   let message = $state("");
@@ -41,28 +58,14 @@
   let fileInputRef: HTMLInputElement | undefined = $state();
   let uploadedFiles = $state<ChatUploadedFile[]>([]);
   let isDragOver = $state(false);
+  const thinkingEnabled = $derived(thinkingEnabledStore());
   let loading = $derived(isLoading());
   const currentModel = $derived(selectedChatModel());
-  const instanceData = $derived(instances());
   const currentTtft = $derived(ttftMs());
   const currentTps = $derived(tps());
   const currentTokens = $derived(totalTokens());
   const currentEditingImage = $derived(editingImage());
   const isEditMode = $derived(currentEditingImage !== null);
-
-  // Custom dropdown state
-  let isModelDropdownOpen = $state(false);
-  let dropdownButtonRef: HTMLButtonElement | undefined = $state();
-  let dropdownPosition = $derived(() => {
-    if (!dropdownButtonRef || !isModelDropdownOpen)
-      return { top: 0, left: 0, width: 0 };
-    const rect = dropdownButtonRef.getBoundingClientRect();
-    return {
-      top: rect.top,
-      left: rect.left,
-      width: rect.width,
-    };
-  });
 
   // Accept all supported file types
   const acceptString = getAcceptString(["image", "text", "pdf"]);
@@ -95,6 +98,12 @@
     );
   });
 
+  const modelSupportsThinking = $derived(() => {
+    if (!currentModel) return false;
+    const caps = modelCapabilities[currentModel] || [];
+    return caps.includes("thinking_toggle") && caps.includes("text");
+  });
+
   const isEditOnlyWithoutImage = $derived(
     currentModel !== null &&
       modelSupportsOnlyImageEditing(currentModel) &&
@@ -110,73 +119,14 @@
         uploadedFiles.length > 0),
   );
 
-  // Extract available models from running instances
-  const availableModels = $derived(() => {
-    const models: Array<{ id: string; label: string; isImageModel: boolean }> =
-      [];
-    for (const [, instance] of Object.entries(instanceData)) {
-      const modelId = getInstanceModelId(instance);
-      if (
-        modelId &&
-        modelId !== "Unknown" &&
-        !models.some((m) => m.id === modelId)
-      ) {
-        models.push({
-          id: modelId,
-          label: modelId.split("/").pop() || modelId,
-          isImageModel: modelSupportsImageGeneration(modelId),
-        });
-      }
-    }
-    return models;
-  });
-
-  // Track previous model IDs to detect newly added models (plain variable to avoid reactive loop)
-  let previousModelIds: Set<string> = new Set();
-
-  // Auto-select the first available model if none is selected, if current selection is stale, or if a new model is added
-  $effect(() => {
-    const models = availableModels();
-    const currentModelIds = new Set(models.map((m) => m.id));
-
-    if (models.length > 0) {
-      // Find newly added models (in current but not in previous)
-      const newModels = models.filter((m) => !previousModelIds.has(m.id));
-
-      // If no model selected, select the first available
-      if (!currentModel) {
-        setSelectedChatModel(models[0].id);
-      }
-      // If current model is stale (no longer has a running instance), reset to first available
-      else if (!models.some((m) => m.id === currentModel)) {
-        setSelectedChatModel(models[0].id);
-      }
-      // If a new model was just added, select it
-      else if (newModels.length > 0 && previousModelIds.size > 0) {
-        setSelectedChatModel(newModels[0].id);
-      }
-    } else {
-      // No instances running - clear the selected model
-      if (currentModel) {
-        setSelectedChatModel("");
-      }
-    }
-
-    // Update previous model IDs for next comparison
-    previousModelIds = currentModelIds;
-  });
-
-  function getInstanceModelId(instanceWrapped: unknown): string {
-    if (!instanceWrapped || typeof instanceWrapped !== "object") return "";
-    const keys = Object.keys(instanceWrapped as Record<string, unknown>);
-    if (keys.length === 1) {
-      const instance = (instanceWrapped as Record<string, unknown>)[
-        keys[0]
-      ] as { shardAssignments?: { modelId?: string } };
-      return instance?.shardAssignments?.modelId || "";
-    }
-    return "";
-  }
+  // Short label for the currently selected model
+  const currentModelLabel = $derived(
+    currentModel
+      ? currentModel.split("/").pop() || currentModel
+      : modelDisplayOverride
+        ? modelDisplayOverride.split("/").pop() || modelDisplayOverride
+        : "",
+  );
 
   async function handleFiles(files: File[]) {
     if (files.length === 0) return;
@@ -254,6 +204,7 @@
 
   function handleSubmit() {
     if ((!message.trim() && uploadedFiles.length === 0) || loading) return;
+    if (isEditOnlyWithoutImage) return;
 
     const content = message.trim();
     const files = [...uploadedFiles];
@@ -262,30 +213,10 @@
     uploadedFiles = [];
     resetTextareaHeight();
 
-    // Use image editing if in edit mode
-    if (isEditMode && currentEditingImage && content) {
-      editImage(content, currentEditingImage.imageDataUrl);
-    }
-    // If user attached an image with an ImageToImage model, use edit endpoint
-    else if (
-      currentModel &&
-      modelSupportsImageEditing(currentModel) &&
-      files.length > 0 &&
-      content
-    ) {
-      // Use the first attached image for editing
-      const imageFile = files[0];
-      if (imageFile.preview) {
-        editImage(content, imageFile.preview);
-      }
-    } else if (isImageModel() && content) {
-      // Use image generation for text-to-image models
-      generateImage(content);
-    } else {
-      sendMessage(content, files);
-    }
-
-    // Refocus the textarea after sending
+    // Parent controls all send logic (including image routing,
+    // launching non-running models before sending, etc.)
+    onAutoSend(content, files);
+    onSend?.();
     setTimeout(() => textareaRef?.focus(), 10);
   }
 
@@ -395,7 +326,7 @@
     {/if}
 
     <!-- Model selector (when enabled) -->
-    {#if showModelSelector && availableModels().length > 0}
+    {#if showModelSelector}
       <div
         class="flex items-center justify-between gap-2 px-3 py-2 border-b border-exo-medium-gray/30"
       >
@@ -404,33 +335,22 @@
             class="text-xs text-exo-light-gray uppercase tracking-wider flex-shrink-0"
             >MODEL:</span
           >
-          <!-- Custom dropdown -->
+          <!-- Model button — opens the full model picker -->
           <div class="relative flex-1 max-w-xs">
             <button
-              bind:this={dropdownButtonRef}
               type="button"
-              onclick={() => (isModelDropdownOpen = !isModelDropdownOpen)}
-              class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-1.5 text-xs font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70 {isModelDropdownOpen
-                ? 'border-exo-yellow/70'
-                : ''}"
+              onclick={() => onOpenModelPicker?.()}
+              class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-1.5 text-xs font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70"
             >
-              {#if availableModels().find((m) => m.id === currentModel)}
-                <span class="text-exo-yellow truncate"
-                  >{availableModels().find((m) => m.id === currentModel)
-                    ?.label}</span
-                >
-              {:else if availableModels().length > 0}
-                <span class="text-exo-yellow truncate"
-                  >{availableModels()[0].label}</span
+              {#if currentModelLabel}
+                <span class="text-exo-yellow truncate">{currentModelLabel}</span
                 >
               {:else}
                 <span class="text-exo-light-gray/50">— SELECT MODEL —</span>
               {/if}
             </button>
             <div
-              class="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-200 {isModelDropdownOpen
-                ? 'rotate-180'
-                : ''}"
+              class="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none"
             >
               <svg
                 class="w-3 h-3 text-exo-yellow/60"
@@ -447,79 +367,36 @@
               </svg>
             </div>
           </div>
-
-          {#if isModelDropdownOpen}
-            <!-- Backdrop to close dropdown -->
-            <button
-              type="button"
-              class="fixed inset-0 z-[9998] cursor-default"
-              onclick={() => (isModelDropdownOpen = false)}
-              aria-label="Close dropdown"
-            ></button>
-
-            <!-- Dropdown Panel - fixed positioning to escape overflow:hidden -->
-            <div
-              class="fixed bg-exo-dark-gray border border-exo-yellow/30 rounded shadow-lg shadow-black/50 z-[9999] max-h-48 overflow-y-auto"
-              style="bottom: calc(100vh - {dropdownPosition()
-                .top}px + 4px); left: {dropdownPosition()
-                .left}px; width: {dropdownPosition().width}px;"
-            >
-              <div class="py-1">
-                {#each availableModels() as model}
-                  <button
-                    type="button"
-                    onclick={() => {
-                      setSelectedChatModel(model.id);
-                      isModelDropdownOpen = false;
-                    }}
-                    class="w-full px-3 py-2 text-left text-xs font-mono tracking-wide transition-colors duration-100 flex items-center gap-2 {currentModel ===
-                    model.id
-                      ? 'bg-transparent text-exo-yellow'
-                      : 'text-exo-light-gray hover:text-exo-yellow'}"
-                  >
-                    {#if currentModel === model.id}
-                      <svg
-                        class="w-3 h-3 flex-shrink-0"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          fill-rule="evenodd"
-                          d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                          clip-rule="evenodd"
-                        />
-                      </svg>
-                    {:else}
-                      <span class="w-3"></span>
-                    {/if}
-                    {#if model.isImageModel}
-                      <svg
-                        class="w-3.5 h-3.5 flex-shrink-0 text-exo-yellow"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        aria-label="Image generation model"
-                      >
-                        <rect
-                          x="3"
-                          y="3"
-                          width="18"
-                          height="18"
-                          rx="2"
-                          ry="2"
-                        />
-                        <circle cx="8.5" cy="8.5" r="1.5" />
-                        <polyline points="21 15 16 10 5 21" />
-                      </svg>
-                    {/if}
-                    <span class="truncate flex-1">{model.label}</span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/if}
         </div>
+        <!-- Thinking toggle -->
+        {#if modelSupportsThinking()}
+          <button
+            type="button"
+            onclick={() => setConversationThinking(!thinkingEnabled)}
+            class="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-mono tracking-wide transition-all duration-200 flex-shrink-0 cursor-pointer border {thinkingEnabled
+              ? 'bg-exo-yellow/15 border-exo-yellow/40 text-exo-yellow'
+              : 'bg-exo-medium-gray/30 border-exo-medium-gray/50 text-exo-light-gray/60 hover:text-exo-light-gray'}"
+            title={thinkingEnabled
+              ? "Thinking enabled — click to disable"
+              : "Thinking disabled — click to enable"}
+          >
+            <svg
+              class="w-3.5 h-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path
+                d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7zM9 20h6M10 22h4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>{thinkingEnabled ? "THINK" : "NO THINK"}</span>
+          </button>
+        {/if}
+
         <!-- Performance stats -->
         {#if currentTtft !== null || currentTps !== null}
           <div class="flex items-center gap-4 text-xs font-mono flex-shrink-0">
@@ -599,92 +476,97 @@
             : isImageModel()
               ? "Describe the image you want to generate..."
               : placeholder}
-        disabled={loading}
         rows={1}
-        class="flex-1 resize-none bg-transparent text-foreground placeholder:text-exo-light-gray/60 placeholder:text-sm placeholder:tracking-[0.15em] placeholder:leading-7 focus:outline-none focus:ring-0 focus:border-none disabled:opacity-50 text-sm leading-7 font-mono"
+        class="flex-1 resize-none bg-transparent text-foreground placeholder:text-exo-light-gray/60 placeholder:text-sm placeholder:tracking-[0.15em] placeholder:leading-7 focus:outline-none focus:ring-0 focus:border-none text-sm leading-7 font-mono"
         style="min-height: 28px; max-height: 150px;"
       ></textarea>
 
-      <button
-        type="submit"
-        disabled={!canSend || loading || isEditOnlyWithoutImage}
-        class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap
-					{!canSend || loading || isEditOnlyWithoutImage
-          ? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed'
-          : 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
-        aria-label={shouldShowEditMode
-          ? "Edit image"
-          : isImageModel()
-            ? "Generate image"
-            : "Send message"}
-      >
-        {#if loading}
+      {#if loading}
+        <button
+          type="button"
+          onclick={() => stopGeneration()}
+          class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] font-medium transition-all duration-200 whitespace-nowrap bg-exo-medium-gray/70 text-exo-light-gray hover:bg-exo-medium-gray hover:text-white"
+          aria-label="Stop generation"
+        >
           <span class="inline-flex items-center gap-1 sm:gap-2">
-            <span
-              class="w-2.5 h-2.5 sm:w-3 sm:h-3 border-2 border-current border-t-transparent rounded-full animate-spin"
-            ></span>
-            <span class="hidden sm:inline"
-              >{shouldShowEditMode
-                ? "EDITING"
-                : isImageModel()
-                  ? "GENERATING"
-                  : "PROCESSING"}</span
-            >
-            <span class="sm:hidden">...</span>
-          </span>
-        {:else if shouldShowEditMode}
-          <span class="inline-flex items-center gap-1.5">
             <svg
-              class="w-3.5 h-3.5"
-              fill="none"
+              class="w-3 h-3 sm:w-3.5 sm:h-3.5"
+              fill="currentColor"
               viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="2"
             >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-              />
+              <rect x="6" y="6" width="12" height="12" rx="1" />
             </svg>
-            <span>EDIT</span>
+            <span class="hidden sm:inline">Cancel</span>
           </span>
-        {:else if isEditOnlyWithoutImage}
-          <span class="inline-flex items-center gap-1.5">
-            <svg
-              class="w-3.5 h-3.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-              />
-            </svg>
-            <span>EDIT</span>
-          </span>
-        {:else if isImageModel()}
-          <span class="inline-flex items-center gap-1.5">
-            <svg
-              class="w-3.5 h-3.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <polyline points="21 15 16 10 5 21" />
-            </svg>
-            <span>GENERATE</span>
-          </span>
-        {:else}
-          SEND
-        {/if}
-      </button>
+        </button>
+      {:else}
+        <button
+          type="submit"
+          disabled={!canSend || isEditOnlyWithoutImage}
+          class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap
+					{!canSend || isEditOnlyWithoutImage
+            ? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed'
+            : 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
+          aria-label={shouldShowEditMode
+            ? "Edit image"
+            : isImageModel()
+              ? "Generate image"
+              : "Send message"}
+        >
+          {#if shouldShowEditMode}
+            <span class="inline-flex items-center gap-1.5">
+              <svg
+                class="w-3.5 h-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                />
+              </svg>
+              <span>EDIT</span>
+            </span>
+          {:else if isEditOnlyWithoutImage}
+            <span class="inline-flex items-center gap-1.5">
+              <svg
+                class="w-3.5 h-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                />
+              </svg>
+              <span>EDIT</span>
+            </span>
+          {:else if isImageModel()}
+            <span class="inline-flex items-center gap-1.5">
+              <svg
+                class="w-3.5 h-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
+              </svg>
+              <span>GENERATE</span>
+            </span>
+          {:else}
+            SEND
+          {/if}
+        </button>
+      {/if}
     </div>
 
     <!-- Bottom accent line -->

@@ -6,6 +6,8 @@
     isTopologyMinimized,
     debugMode,
     nodeThunderboltBridge,
+    nodeRdmaCtl,
+    nodeIdentities,
     type NodeInfo,
   } from "$lib/stores/app.svelte";
 
@@ -31,6 +33,8 @@
   const data = $derived(topologyData());
   const debugEnabled = $derived(debugMode());
   const tbBridgeData = $derived(nodeThunderboltBridge());
+  const rdmaCtlData = $derived(nodeRdmaCtl());
+  const identitiesData = $derived(nodeIdentities());
 
   function getNodeLabel(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -333,14 +337,27 @@
       if (edge.source === a) entry.aToB = true;
       else entry.bToA = true;
 
-      const ip = edge.sendBackIp || "?";
-      const ifaceInfo = getInterfaceLabel(edge.source, ip);
+      let ip: string;
+      let ifaceLabel: string;
+      let missingIface: boolean;
+
+      if (edge.sourceRdmaIface || edge.sinkRdmaIface) {
+        ip = "RDMA";
+        ifaceLabel = `${edge.sourceRdmaIface || "?"} \u2192 ${edge.sinkRdmaIface || "?"}`;
+        missingIface = false;
+      } else {
+        ip = edge.sendBackIp || "?";
+        const ifaceInfo = getInterfaceLabel(edge.source, ip);
+        ifaceLabel = ifaceInfo.label;
+        missingIface = ifaceInfo.missing;
+      }
+
       entry.connections.push({
         from: edge.source,
         to: edge.target,
         ip,
-        ifaceLabel: ifaceInfo.label,
-        missingIface: ifaceInfo.missing,
+        ifaceLabel,
+        missingIface,
       });
       pairMap.set(key, entry);
     });
@@ -1120,15 +1137,17 @@
           .text(` (${ramUsagePercent.toFixed(0)}%)`);
       }
 
-      // Debug mode: Show TB bridge status
+      // Debug mode: Show TB bridge and RDMA status
       if (debugEnabled) {
+        let debugLabelY =
+          nodeInfo.y +
+          iconBaseHeight / 2 +
+          (showFullLabels ? 32 : showCompactLabels ? 26 : 22);
+        const debugFontSize = showFullLabels ? 9 : 7;
+        const debugLineHeight = showFullLabels ? 11 : 9;
+
         const tbStatus = tbBridgeData[nodeInfo.id];
         if (tbStatus) {
-          const tbY =
-            nodeInfo.y +
-            iconBaseHeight / 2 +
-            (showFullLabels ? 32 : showCompactLabels ? 26 : 22);
-          const tbFontSize = showFullLabels ? 9 : 7;
           const tbColor = tbStatus.enabled
             ? "rgba(234,179,8,0.9)"
             : "rgba(100,100,100,0.7)";
@@ -1136,12 +1155,46 @@
           nodeG
             .append("text")
             .attr("x", nodeInfo.x)
-            .attr("y", tbY)
+            .attr("y", debugLabelY)
             .attr("text-anchor", "middle")
             .attr("fill", tbColor)
-            .attr("font-size", tbFontSize)
+            .attr("font-size", debugFontSize)
             .attr("font-family", "SF Mono, Monaco, monospace")
             .text(tbText);
+          debugLabelY += debugLineHeight;
+        }
+
+        const rdmaStatus = rdmaCtlData[nodeInfo.id];
+        if (rdmaStatus !== undefined) {
+          const rdmaColor = rdmaStatus.enabled
+            ? "rgba(74,222,128,0.9)"
+            : "rgba(100,100,100,0.7)";
+          const rdmaText = rdmaStatus.enabled ? "RDMA:ON" : "RDMA:OFF";
+          nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", debugLabelY)
+            .attr("text-anchor", "middle")
+            .attr("fill", rdmaColor)
+            .attr("font-size", debugFontSize)
+            .attr("font-family", "SF Mono, Monaco, monospace")
+            .text(rdmaText);
+          debugLabelY += debugLineHeight;
+        }
+
+        const identity = identitiesData[nodeInfo.id];
+        if (identity?.osVersion) {
+          nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", debugLabelY)
+            .attr("text-anchor", "middle")
+            .attr("fill", "rgba(179,179,179,0.7)")
+            .attr("font-size", debugFontSize)
+            .attr("font-family", "SF Mono, Monaco, monospace")
+            .text(
+              `macOS ${identity.osVersion}${identity.osBuildVersion ? ` (${identity.osBuildVersion})` : ""}`,
+            );
         }
       }
     });

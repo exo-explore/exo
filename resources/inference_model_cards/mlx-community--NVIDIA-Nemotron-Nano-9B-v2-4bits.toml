@@ -1,0 +1,14 @@
+model_id = "mlx-community/NVIDIA-Nemotron-Nano-9B-v2-4bits"
+n_layers = 56
+hidden_size = 4480
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "nemotron"
+quantization = "4bit"
+base_model = "NVIDIA Nemotron-Nano-9B-v2"
+capabilities = ["text"]
+
+context_length = 131072
+
+[storage_size]
+in_bytes = 5002791936

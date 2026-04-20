@@ -8,6 +8,7 @@ from exo.shared.types.worker.runners import (
     RunnerConnected,
     RunnerIdle,
 )
+from exo.utils.keyed_backoff import KeyedBackoff
 from exo.worker.tests.constants import (
     INSTANCE_1_ID,
     MODEL_A_ID,
@@ -52,6 +53,9 @@ def test_plan_requests_download_when_waiting_and_shard_not_downloaded():
         instances=instances,
         all_runners=all_runners,
         tasks={},
+        input_chunk_buffer={},
+        instance_backoff=KeyedBackoff(),
+        download_backoff=KeyedBackoff(),
     )
 
     assert isinstance(result, plan_mod.DownloadModel)
@@ -90,14 +94,10 @@ def test_plan_loads_model_when_all_shards_downloaded_and_waiting():
 
     global_download_status = {
         NODE_A: [
-            DownloadCompleted(
-                shard_metadata=shard1, node_id=NODE_A, total_bytes=Memory()
-            )
+            DownloadCompleted(shard_metadata=shard1, node_id=NODE_A, total=Memory())
         ],
         NODE_B: [
-            DownloadCompleted(
-                shard_metadata=shard2, node_id=NODE_B, total_bytes=Memory()
-            )
+            DownloadCompleted(shard_metadata=shard2, node_id=NODE_B, total=Memory())
         ],
     }
 
@@ -108,6 +108,9 @@ def test_plan_loads_model_when_all_shards_downloaded_and_waiting():
         instances=instances,
         all_runners=all_runners,
         tasks={},
+        input_chunk_buffer={},
+        instance_backoff=KeyedBackoff(),
+        download_backoff=KeyedBackoff(),
     )
 
     assert isinstance(result, LoadModel)
@@ -138,9 +141,7 @@ def test_plan_does_not_request_download_when_shard_already_downloaded():
     # Global state shows shard is downloaded for NODE_A
     global_download_status: dict[NodeId, list[DownloadProgress]] = {
         NODE_A: [
-            DownloadCompleted(
-                shard_metadata=shard, node_id=NODE_A, total_bytes=Memory()
-            )
+            DownloadCompleted(shard_metadata=shard, node_id=NODE_A, total=Memory())
         ],
         NODE_B: [],
     }
@@ -152,6 +153,9 @@ def test_plan_does_not_request_download_when_shard_already_downloaded():
         instances=instances,
         all_runners=all_runners,
         tasks={},
+        input_chunk_buffer={},
+        instance_backoff=KeyedBackoff(),
+        download_backoff=KeyedBackoff(),
     )
 
     assert not isinstance(result, plan_mod.DownloadModel)
@@ -187,9 +191,7 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
 
     global_download_status = {
         NODE_A: [
-            DownloadCompleted(
-                shard_metadata=shard1, node_id=NODE_A, total_bytes=Memory()
-            )
+            DownloadCompleted(shard_metadata=shard1, node_id=NODE_A, total=Memory())
         ],
         NODE_B: [],  # NODE_B has no downloads completed yet
     }
@@ -201,20 +203,19 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
         instances=instances,
         all_runners=all_runners,
         tasks={},
+        input_chunk_buffer={},
+        instance_backoff=KeyedBackoff(),
+        download_backoff=KeyedBackoff(),
     )
 
     assert result is None
 
     global_download_status = {
         NODE_A: [
-            DownloadCompleted(
-                shard_metadata=shard1, node_id=NODE_A, total_bytes=Memory()
-            )
+            DownloadCompleted(shard_metadata=shard1, node_id=NODE_A, total=Memory())
         ],
         NODE_B: [
-            DownloadCompleted(
-                shard_metadata=shard2, node_id=NODE_B, total_bytes=Memory()
-            )
+            DownloadCompleted(shard_metadata=shard2, node_id=NODE_B, total=Memory())
         ],  # NODE_B has no downloads completed yet
     }
 
@@ -225,6 +226,9 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
         instances=instances,
         all_runners=all_runners,
         tasks={},
+        input_chunk_buffer={},
+        instance_backoff=KeyedBackoff(),
+        download_backoff=KeyedBackoff(),
     )
 
     assert result is not None

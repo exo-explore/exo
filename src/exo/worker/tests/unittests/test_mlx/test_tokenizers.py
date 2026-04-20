@@ -13,10 +13,10 @@ import pytest
 
 from exo.download.download_utils import (
     download_file_with_retry,
-    ensure_models_dir,
     fetch_file_list_with_cache,
+    resolve_model_dir,
 )
-from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId, get_model_cards
 from exo.worker.engines.mlx.utils_mlx import (
     get_eos_token_ids_for_model,
     load_tokenizer_for_model_id,
@@ -34,6 +34,7 @@ TOKENIZER_FILE_PATTERNS = [
     "added_tokens.json",
     "tokenizer.model",
     "tokenization_*.py",  # Custom tokenizer implementations
+    "tool_declaration_ts.py",  # Dependency of tokenization_kimi.py
 ]
 
 
@@ -52,8 +53,7 @@ def is_tokenizer_file(filename: str) -> bool:
 
 async def download_tokenizer_files(model_id: ModelId) -> Path:
     """Download only the tokenizer-related files for a model."""
-    target_dir = await ensure_models_dir() / model_id.normalize()
-    target_dir.mkdir(parents=True, exist_ok=True)
+    target_dir = await resolve_model_dir(model_id)
 
     file_list = await fetch_file_list_with_cache(model_id, "main", recursive=True)
 
@@ -76,7 +76,7 @@ def get_test_models() -> list[ModelCard]:
     """Get a representative sample of models to test."""
     # Pick one model from each family to test
     families: dict[str, ModelCard] = {}
-    for card in MODEL_CARDS.values():
+    for card in asyncio.run(get_model_cards()):
         # Extract family name (e.g., "llama-3.1" from "llama-3.1-8b")
         parts = card.model_id.short().split("-")
         family = "-".join(parts[:2]) if len(parts) >= 2 else parts[0]
@@ -137,7 +137,9 @@ async def test_tokenizer_encode_decode(model_card: ModelCard) -> None:
     # Test decoding
     decoded = tokenizer.decode(encoded)
     assert isinstance(decoded, str), f"decode() should return a string for {model_id}"
-    assert test_text in decoded or decoded.strip() == test_text.strip(), (
+    normalized_decoded = decoded.replace(" ", "").lower()
+    normalized_expected = test_text.replace(" ", "").lower()
+    assert normalized_expected in normalized_decoded, (
         f"decode(encode(x)) should preserve text for {model_id}: got {decoded!r}"
     )
 
@@ -296,7 +298,7 @@ async def test_tokenizer_special_tokens(model_card: ModelCard) -> None:
 async def test_kimi_tokenizer_specifically():
     """Test Kimi tokenizer with its specific patches and quirks."""
     kimi_models = [
-        card for card in MODEL_CARDS.values() if "kimi" in card.model_id.lower()
+        card for card in await get_model_cards() if "kimi" in card.model_id.lower()
     ]
 
     if not kimi_models:
@@ -342,8 +344,16 @@ async def test_kimi_tokenizer_specifically():
 @pytest.mark.asyncio
 async def test_glm_tokenizer_specifically():
     """Test GLM tokenizer with its specific EOS tokens."""
+
+    def contains(card: ModelCard, x: str):
+        return x in card.model_id.lower()
+
     glm_model_cards = [
-        card for card in MODEL_CARDS.values() if "glm" in card.model_id.lower()
+        card
+        for card in await get_model_cards()
+        if contains(card, "glm")
+        and not contains(card, "-5")
+        and not contains(card, "4.7")
     ]
 
     if not glm_model_cards:

@@ -14,7 +14,6 @@ import SwiftUI
 import UserNotifications
 import os.log
 
-@main
 struct EXOApp: App {
     @StateObject private var controller: ExoProcessController
     @StateObject private var stateService: ClusterStateService
@@ -22,7 +21,9 @@ struct EXOApp: App {
     @StateObject private var localNetworkChecker: LocalNetworkChecker
     @StateObject private var updater: SparkleUpdater
     @StateObject private var thunderboltBridgeService: ThunderboltBridgeService
+    @StateObject private var settingsWindowController: SettingsWindowController
     private let terminationObserver: TerminationObserver
+    private let firstLaunchPopout = FirstLaunchPopout()
     private let ciContext = CIContext(options: nil)
 
     init() {
@@ -44,12 +45,13 @@ struct EXOApp: App {
         _updater = StateObject(wrappedValue: updater)
         let thunderboltBridge = ThunderboltBridgeService(clusterStateService: service)
         _thunderboltBridgeService = StateObject(wrappedValue: thunderboltBridge)
+        _settingsWindowController = StateObject(wrappedValue: SettingsWindowController())
         enableLaunchAtLoginIfNeeded()
         // Install LaunchDaemon to disable Thunderbolt Bridge on startup (prevents network loops)
         NetworkSetupHelper.promptAndInstallIfNeeded()
         // Check local network access periodically (warning disappears when user grants permission)
         localNetwork.startPeriodicChecking(interval: 10)
-        controller.scheduleLaunch(after: 15)
+        controller.scheduleLaunch(after: 5)
         service.startPolling()
         networkStatus.startPolling()
     }
@@ -63,8 +65,19 @@ struct EXOApp: App {
                 .environmentObject(localNetworkChecker)
                 .environmentObject(updater)
                 .environmentObject(thunderboltBridgeService)
+                .environmentObject(settingsWindowController)
         } label: {
             menuBarIcon
+                .onReceive(controller.$isFirstLaunchReady) { ready in
+                    if ready {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                            self.firstLaunchPopout.onComplete = { [weak controller] in
+                                controller?.markOnboardingCompleted()
+                            }
+                            self.firstLaunchPopout.show()
+                        }
+                    }
+                }
         }
         .menuBarExtraStyle(.window)
     }
@@ -225,7 +238,7 @@ private final class ExoUpdaterDelegate: NSObject, SPUUpdaterDelegate {
         }
     }
 
-    private func showNotification(title: String, body: String) {
+    nonisolated private func showNotification(title: String, body: String) {
         let center = UNUserNotificationCenter.current()
         let content = UNMutableNotificationContent()
         content.title = title

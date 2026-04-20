@@ -1,7 +1,8 @@
 {
     "recommendations": [
         "detachhead.basedpyright",
-        "ms-python.python"
+        "ms-python.python",
+        "jnoortheen.nix-ide"
     ],
     "unwantedRecommendations": [
         "ms-python.vscode-pylance",

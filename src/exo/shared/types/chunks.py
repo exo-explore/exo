@@ -1,13 +1,18 @@
 from collections.abc import Generator
 from typing import Any, Literal
 
+from exo.api.types import (
+    FinishReason,
+    GenerationStats,
+    ImageGenerationStats,
+    ToolCallItem,
+    TopLogprobItem,
+    Usage,
+)
 from exo.shared.models.model_cards import ModelId
-from exo.shared.types.api import GenerationStats, ImageGenerationStats
 from exo.utils.pydantic_ext import TaggedModel
 
-from .api import FinishReason
 from .common import CommandId
-from .worker.runner_response import ToolCallItem
 
 
 class BaseChunk(TaggedModel):
@@ -17,8 +22,12 @@ class BaseChunk(TaggedModel):
 class TokenChunk(BaseChunk):
     text: str
     token_id: int
+    usage: Usage | None
     finish_reason: Literal["stop", "length", "content_filter"] | None = None
     stats: GenerationStats | None = None
+    logprob: float | None = None
+    top_logprobs: list[TopLogprobItem] | None = None
+    is_thinking: bool = False
 
 
 class ErrorChunk(BaseChunk):
@@ -28,6 +37,7 @@ class ErrorChunk(BaseChunk):
 
 class ToolCallChunk(BaseChunk):
     tool_calls: list[ToolCallItem]
+    usage: Usage | None
     finish_reason: Literal["tool_calls"] = "tool_calls"
     stats: GenerationStats | None = None
 
@@ -58,6 +68,7 @@ class InputImageChunk(BaseChunk):
     data: str
     chunk_index: int
     total_chunks: int
+    image_index: int = 0
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
@@ -67,4 +78,13 @@ class InputImageChunk(BaseChunk):
                 yield name, value
 
 
-GenerationChunk = TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk
+class PrefillProgressChunk(BaseChunk):
+    """Data class for prefill progress events during streaming."""
+
+    processed_tokens: int
+    total_tokens: int
+
+
+GenerationChunk = (
+    TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk | PrefillProgressChunk
+)

@@ -1,4 +1,6 @@
+import shutil
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Literal, Self
 
 import psutil
@@ -38,6 +40,22 @@ class MemoryUsage(CamelCaseModel):
         )
 
 
+class DiskUsage(CamelCaseModel):
+    """Disk space usage for the models directory."""
+
+    total: Memory
+    available: Memory
+
+    @classmethod
+    def from_path(cls, path: Path) -> Self:
+        """Get disk usage stats for the partition containing path."""
+        total, _used, free = shutil.disk_usage(path)
+        return cls(
+            total=Memory.from_bytes(total),
+            available=Memory.from_bytes(free),
+        )
+
+
 class SystemPerformanceProfile(CamelCaseModel):
     # TODO: flops_fp16: float
 
@@ -63,6 +81,8 @@ class NodeIdentity(CamelCaseModel):
     model_id: str = "Unknown"
     chip_id: str = "Unknown"
     friendly_name: str = "Unknown"
+    os_version: str = "Unknown"
+    os_build_version: str = "Unknown"
 
 
 class NodeNetworkInfo(CamelCaseModel):
@@ -75,6 +95,12 @@ class NodeThunderboltInfo(CamelCaseModel):
     """Thunderbolt interface identifiers for a node."""
 
     interfaces: Sequence[ThunderboltIdentifier] = []
+
+
+class NodeRdmaCtlStatus(CamelCaseModel):
+    """Whether RDMA is enabled on this node (via rdma_ctl)."""
+
+    enabled: bool
 
 
 class ThunderboltBridgeStatus(CamelCaseModel):

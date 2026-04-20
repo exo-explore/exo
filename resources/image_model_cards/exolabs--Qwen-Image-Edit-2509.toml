@@ -1,0 +1,40 @@
+model_id = "exolabs/Qwen-Image-Edit-2509"
+n_layers = 60
+hidden_size = 1
+supports_tensor = false
+tasks = ["ImageToImage"]
+uses_cfg = true
+family = "qwen-image"
+quantization = ""
+base_model = "Qwen Image Edit"
+capabilities = ["image_edit"]
+
+[storage_size]
+in_bytes = 57445135488
+
+[[components]]
+component_name = "text_encoder"
+component_path = "text_encoder/"
+n_layers = 12
+can_shard = false
+
+[components.storage_size]
+in_bytes = 16584333312
+
+[[components]]
+component_name = "transformer"
+component_path = "transformer/"
+n_layers = 60
+can_shard = true
+safetensors_index_filename = "diffusion_pytorch_model.safetensors.index.json"
+
+[components.storage_size]
+in_bytes = 40860802176
+
+[[components]]
+component_name = "vae"
+component_path = "vae/"
+can_shard = false
+
+[components.storage_size]
+in_bytes = 0

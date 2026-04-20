@@ -1,4 +1,4 @@
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -6,10 +6,10 @@ import mlx.core as mx
 from mflux.models.common.config.config import Config
 from PIL import Image
 
+from exo.api.types import AdvancedImageParams
 from exo.download.download_utils import build_model_path
-from exo.shared.types.api import AdvancedImageParams
 from exo.shared.types.worker.instances import BoundInstance
-from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.shared.types.worker.shards import CfgShardMetadata, PipelineShardMetadata
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models import (
     create_adapter_for_model,
@@ -30,14 +30,19 @@ class DistributedImageModel:
         self,
         model_id: str,
         local_path: Path,
-        shard_metadata: PipelineShardMetadata,
+        shard_metadata: PipelineShardMetadata | CfgShardMetadata,
         group: Optional[mx.distributed.Group] = None,
         quantize: int | None = None,
     ):
         config = get_config_for_model(model_id)
         adapter = create_adapter_for_model(config, model_id, local_path, quantize)
 
-        if group is not None:
+        has_layer_sharding = (
+            shard_metadata.start_layer != 0
+            or shard_metadata.end_layer != shard_metadata.n_layers
+        )
+
+        if group is not None and has_layer_sharding:
             adapter.slice_transformer_blocks(
                 start_layer=shard_metadata.start_layer,
                 end_layer=shard_metadata.end_layer,
@@ -75,8 +80,10 @@ class DistributedImageModel:
         model_path = build_model_path(model_id)
 
         shard_metadata = bound_instance.bound_shard
-        if not isinstance(shard_metadata, PipelineShardMetadata):
-            raise ValueError("Expected PipelineShardMetadata for image generation")
+        if not isinstance(shard_metadata, (PipelineShardMetadata, CfgShardMetadata)):
+            raise ValueError(
+                "Expected PipelineShardMetadata or CfgShardMetadata for image generation"
+            )
 
         is_distributed = (
             len(bound_instance.instance.shard_assignments.node_to_runner) > 1
@@ -109,6 +116,7 @@ class DistributedImageModel:
         image_path: Path | None = None,
         partial_images: int = 0,
         advanced_params: AdvancedImageParams | None = None,
+        cancel_checker: Callable[[], bool] | None = None,
     ) -> Generator[Image.Image | tuple[Image.Image, int, int], None, None]:
         if (
             advanced_params is not None
@@ -143,7 +151,10 @@ class DistributedImageModel:
             guidance=guidance_override if guidance_override is not None else 4.0,
         )
 
-        num_sync_steps = self._config.get_num_sync_steps(steps)
+        if advanced_params is not None and advanced_params.num_sync_steps is not None:
+            num_sync_steps = advanced_params.num_sync_steps
+        else:
+            num_sync_steps = self._config.num_sync_steps
 
         for result in self._runner.generate_image(
             runtime_config=config,
@@ -153,6 +164,7 @@ class DistributedImageModel:
             guidance_override=guidance_override,
             negative_prompt=negative_prompt,
             num_sync_steps=num_sync_steps,
+            cancel_checker=cancel_checker,
         ):
             if isinstance(result, tuple):
                 # Partial image: (GeneratedImage, partial_index, total_partials)

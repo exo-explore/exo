@@ -39,11 +39,11 @@ class StreamingDetokenizer:
     """
 
     __slots__ = ...
-    def reset(self): ...
-    def add_token(self, token): ...
-    def finalize(self): ...
+    def reset(self) -> None: ...
+    def add_token(self, token: int) -> None: ...
+    def finalize(self) -> None: ...
     @property
-    def last_segment(self):
+    def last_segment(self) -> str:
         """Return the last segment of readable text since last time this property was accessed."""
 
 class NaiveStreamingDetokenizer(StreamingDetokenizer):
@@ -108,16 +108,23 @@ class TokenizerWrapper:
     _tokenizer: PreTrainedTokenizerFast
     eos_token_id: int | None
     eos_token: str | None
+    eos_token_ids: list[int] | set[int] | None
     bos_token_id: int | None
     bos_token: str | None
     vocab_size: int
     all_special_tokens: list[str]
+    think_start: str | None
+    think_end: str | None
+    think_start_id: int | None
+    think_end_id: int | None
+    think_start_tokens: list[int] | None
+    think_end_tokens: list[int] | None
 
     def __init__(
         self,
         tokenizer: Any,
         detokenizer_class: Any = ...,
-        eos_token_ids: list[int] | None = ...,
+        eos_token_ids: list[int] | set[int] | None = ...,
         chat_template: Any = ...,
         tool_parser: Any = ...,
         tool_call_start: str | None = ...,

@@ -1,10 +1,11 @@
 import os
+import resource
 
 import loguru
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
-from exo.shared.types.tasks import Task
-from exo.shared.types.worker.instances import BoundInstance, MlxJacclInstance
+from exo.shared.types.tasks import Task, TaskId
+from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
@@ -15,30 +16,43 @@ def entrypoint(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
+    cancel_receiver: MpReceiver[TaskId],
     _logger: "loguru.Logger",
 ) -> None:
-    fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
-    if fast_synch_override == "on" or (
-        fast_synch_override != "off"
-        and (
-            isinstance(bound_instance.instance, MlxJacclInstance)
-            and len(bound_instance.instance.jaccl_devices) >= 2
-        )
-    ):
-        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
-    else:
-        os.environ["MLX_METAL_FAST_SYNCH"] = "0"
-
     global logger
     logger = _logger
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
+
+    fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
+    if fast_synch_override == "false":
+        os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+    else:
+        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
-        from exo.worker.runner.runner import main
+        if bound_instance.is_image_model:
+            from exo.worker.runner.image_models.runner import Runner as ImageRunner
 
-        main(bound_instance, event_sender, task_receiver)
+            runner = ImageRunner(
+                bound_instance, event_sender, task_receiver, cancel_receiver
+            )
+            runner.main()
+        else:
+            from exo.worker.engines.mlx.patches import apply_mlx_patches
+            from exo.worker.runner.llm_inference.runner import Runner
+
+            apply_mlx_patches()
+
+            runner = Runner(
+                bound_instance, event_sender, task_receiver, cancel_receiver
+            )
+            runner.main()
+
     except ClosedResourceError:
         logger.warning("Runner communication closed unexpectedly")
     except Exception as e:

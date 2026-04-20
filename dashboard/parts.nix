@@ -3,12 +3,28 @@
   perSystem =
     { pkgs, lib, ... }:
     let
+      # Filter source to ONLY include package.json and package-lock.json
+      # This ensures prettier-svelte only rebuilds when lockfiles change
+      dashboardLockfileSrc = lib.cleanSourceWith {
+        src = inputs.self;
+        filter =
+          path: type:
+          let
+            baseName = builtins.baseNameOf path;
+            isDashboardDir = baseName == "dashboard" && type == "directory";
+            isPackageFile =
+              (lib.hasInfix "/dashboard/" path || lib.hasSuffix "/dashboard" (builtins.dirOf path))
+              && (baseName == "package.json" || baseName == "package-lock.json");
+          in
+          isDashboardDir || isPackageFile;
+      };
+
       # Stub source with lockfiles and minimal files for build to succeed
       # This allows prettier-svelte to avoid rebuilding when dashboard source changes
       dashboardStubSrc = pkgs.runCommand "dashboard-stub-src" { } ''
         mkdir -p $out
-        cp ${inputs.self}/dashboard/package.json $out/
-        cp ${inputs.self}/dashboard/package-lock.json $out/
+        cp ${dashboardLockfileSrc}/dashboard/package.json $out/
+        cp ${dashboardLockfileSrc}/dashboard/package-lock.json $out/
         # Minimal files so vite build succeeds (produces empty output)
         echo '<!DOCTYPE html><html><head></head><body></body></html>' > $out/index.html
         mkdir -p $out/src

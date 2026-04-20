@@ -34,7 +34,8 @@ class RunnerConnected(BaseRunnerStatus):
 
 
 class RunnerLoading(BaseRunnerStatus):
-    pass
+    layers_loaded: int = 0
+    total_layers: int = 0
 
 
 class RunnerLoaded(BaseRunnerStatus):

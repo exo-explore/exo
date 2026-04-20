@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import TypeAlias, final
 
 from pydantic import Field
 
@@ -51,6 +52,7 @@ class BaseShardMetadata(TaggedModel):
         )
 
 
+@final
 class PipelineShardMetadata(BaseShardMetadata):
     """
     Pipeline parallelism shard meta.
@@ -60,8 +62,23 @@ class PipelineShardMetadata(BaseShardMetadata):
     """
 
 
+@final
+class CfgShardMetadata(BaseShardMetadata):
+    """Shard metadata for CFG-parallel image generation models."""
+
+    cfg_rank: int  # 0 = positive branch, 1 = negative branch
+    cfg_world_size: int = 2
+
+    # Pipeline-relative coordinates (computed at placement time)
+    pipeline_rank: int  # rank within the pipeline group (0, 1, 2, ...)
+    pipeline_world_size: int  # number of nodes per pipeline group
+
+
+@final
 class TensorShardMetadata(BaseShardMetadata):
     pass
 
 
-ShardMetadata = PipelineShardMetadata | TensorShardMetadata
+ShardMetadata: TypeAlias = (
+    PipelineShardMetadata | CfgShardMetadata | TensorShardMetadata
+)

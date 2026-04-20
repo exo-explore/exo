@@ -8,15 +8,15 @@ from subprocess import CalledProcessError
 from typing import Self, cast
 
 import anyio
-from anyio import create_task_group, open_process
-from anyio.abc import TaskGroup
+from anyio import fail_after, open_process, to_thread
 from anyio.streams.buffered import BufferedByteReceiveStream
-from anyio.streams.text import TextReceiveStream
 from loguru import logger
+from pydantic import ValidationError
 
-from exo.shared.constants import EXO_CONFIG_FILE
+from exo.shared.constants import EXO_CONFIG_FILE, EXO_DEFAULT_MODELS_DIR
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
+    DiskUsage,
     MemoryUsage,
     NetworkInterfaceInfo,
     ThunderboltBridgeStatus,
@@ -28,9 +28,16 @@ from exo.shared.types.thunderbolt import (
 )
 from exo.utils.channels import Sender
 from exo.utils.pydantic_ext import TaggedModel
+from exo.utils.task_group import TaskGroup
 
 from .macmon import MacmonMetrics
-from .system_info import get_friendly_name, get_model_and_chip, get_network_interfaces
+from .system_info import (
+    get_friendly_name,
+    get_model_and_chip,
+    get_network_interfaces,
+    get_os_build_version,
+    get_os_version,
+)
 
 IS_DARWIN = sys.platform == "darwin"
 
@@ -176,11 +183,18 @@ class StaticNodeInformation(TaggedModel):
 
     model: str
     chip: str
+    os_version: str
+    os_build_version: str
 
     @classmethod
     async def gather(cls) -> Self:
         model, chip = await get_model_and_chip()
-        return cls(model=model, chip=chip)
+        return cls(
+            model=model,
+            chip=chip,
+            os_version=get_os_version(),
+            os_build_version=await get_os_build_version(),
+        )
 
 
 class NodeNetworkInterfaces(TaggedModel):
@@ -193,6 +207,28 @@ class MacThunderboltIdentifiers(TaggedModel):
 
 class MacThunderboltConnections(TaggedModel):
     conns: Sequence[ThunderboltConnection]
+
+
+class RdmaCtlStatus(TaggedModel):
+    enabled: bool
+
+    @classmethod
+    async def gather(cls) -> Self | None:
+        if not IS_DARWIN or shutil.which("rdma_ctl") is None:
+            return None
+        try:
+            with anyio.fail_after(5):
+                proc = await anyio.run_process(["rdma_ctl", "status"], check=False)
+        except (TimeoutError, OSError):
+            return None
+        if proc.returncode != 0:
+            return None
+        output = proc.stdout.decode("utf-8").lower().strip()
+        if "enabled" in output:
+            return cls(enabled=True)
+        if "disabled" in output:
+            return cls(enabled=False)
+        return None
 
 
 class ThunderboltBridgeInfo(TaggedModel):
@@ -251,7 +287,7 @@ class ThunderboltBridgeInfo(TaggedModel):
                 )
             )
         except Exception as e:
-            logger.warning(f"Failed to gather Thunderbolt Bridge info: {e}")
+            logger.opt(exception=e).warning("Failed to gather Thunderbolt Bridge info")
             return None
 
 
@@ -261,13 +297,14 @@ class NodeConfig(TaggedModel):
     @classmethod
     async def gather(cls) -> Self | None:
         cfg_file = anyio.Path(EXO_CONFIG_FILE)
+        await cfg_file.parent.mkdir(parents=True, exist_ok=True)
         await cfg_file.touch(exist_ok=True)
         async with await cfg_file.open("rb") as f:
             try:
                 contents = (await f.read()).decode("utf-8")
                 data = tomllib.loads(contents)
                 return cls.model_validate(data)
-            except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+            except (tomllib.TOMLDecodeError, UnicodeDecodeError, ValidationError):
                 logger.warning("Invalid config file, skipping...")
                 return None
 
@@ -280,6 +317,20 @@ class MiscData(TaggedModel):
     @classmethod
     async def gather(cls) -> Self:
         return cls(friendly_name=await get_friendly_name())
+
+
+class NodeDiskUsage(TaggedModel):
+    """Disk space information for the models directory."""
+
+    disk_usage: DiskUsage
+
+    @classmethod
+    async def gather(cls) -> Self:
+        return cls(
+            disk_usage=await to_thread.run_sync(
+                DiskUsage.from_path, EXO_DEFAULT_MODELS_DIR
+            )
+        )
 
 
 async def _gather_iface_map() -> dict[str, str] | None:
@@ -308,139 +359,245 @@ GatheredInfo = (
     | NodeNetworkInterfaces
     | MacThunderboltIdentifiers
     | MacThunderboltConnections
+    | RdmaCtlStatus
     | ThunderboltBridgeInfo
     | NodeConfig
     | MiscData
     | StaticNodeInformation
+    | NodeDiskUsage
 )
 
 
 @dataclass
 class InfoGatherer:
     info_sender: Sender[GatheredInfo]
-    interface_watcher_interval: float | None = 10
-    misc_poll_interval: float | None = 60
-    system_profiler_interval: float | None = 5 if IS_DARWIN else None
-    memory_poll_rate: float | None = None if IS_DARWIN else 1
-    macmon_interval: float | None = 1 if IS_DARWIN else None
-    thunderbolt_bridge_poll_interval: float | None = 10 if IS_DARWIN else None
-    _tg: TaskGroup = field(init=False, default_factory=create_task_group)
+    _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
+    _psutil_enabled: bool = field(init=False, default=False)
+
+    async def _can_read_macmon_metrics(self, macmon_path: str) -> bool:
+        try:
+            with fail_after(5):
+                proc = await anyio.run_process(
+                    [macmon_path, "pipe", "--samples", "1", "--interval", "100"],
+                    check=False,
+                )
+        except Exception as e:
+            logger.opt(exception=e).warning(
+                f"Failed to validate macmon at {macmon_path}"
+            )
+            return False
+
+        if proc.returncode != 0:
+            stderr = proc.stderr.decode("utf-8", errors="replace").strip()
+            logger.warning(
+                f"macmon preflight failed with return code {proc.returncode}: "
+                f"{stderr or 'no stderr'}"
+            )
+            return False
+
+        stdout = proc.stdout.decode("utf-8", errors="replace").strip()
+        if not stdout:
+            logger.warning("macmon preflight returned no metrics")
+            return False
+
+        try:
+            MacmonMetrics.from_raw_json(stdout.splitlines()[0])
+        except ValidationError as e:
+            logger.opt(exception=e).warning(
+                "macmon preflight returned unexpected metrics JSON"
+            )
+            return False
+
+        return True
 
     async def run(self):
         async with self._tg as tg:
             if IS_DARWIN:
-                if (macmon_path := shutil.which("macmon")) is not None:
-                    tg.start_soon(self._monitor_macmon, macmon_path)
-                tg.start_soon(self._monitor_system_profiler_thunderbolt_data)
-                tg.start_soon(self._monitor_thunderbolt_bridge_status)
-            tg.start_soon(self._watch_system_info)
-            tg.start_soon(self._monitor_memory_usage)
-            tg.start_soon(self._monitor_misc)
+                tg.start_soon(self._monitor_macmon, 1)
+                tg.start_soon(self._monitor_system_profiler_thunderbolt_data, 5)
+                tg.start_soon(self._monitor_thunderbolt_bridge_status, 10)
+                tg.start_soon(self._monitor_rdma_ctl_status, 10)
+            if not IS_DARWIN:
+                tg.start_soon(self._monitor_memory_usage, 1)
+            tg.start_soon(self._watch_system_info, 10)
+            tg.start_soon(self._monitor_misc, 60)
+            tg.start_soon(self._monitor_static_info, 60)
+            tg.start_soon(self._monitor_disk_usage, 30)
 
             nc = await NodeConfig.gather()
             if nc is not None:
                 await self.info_sender.send(nc)
-            sni = await StaticNodeInformation.gather()
-            await self.info_sender.send(sni)
 
     def shutdown(self):
-        self._tg.cancel_scope.cancel()
+        self._tg.cancel_tasks()
 
-    async def _monitor_misc(self):
-        if self.misc_poll_interval is None:
-            return
-        prev = await MiscData.gather()
-        await self.info_sender.send(prev)
+    async def _monitor_static_info(self, static_info_poll_interval: float):
         while True:
-            curr = await MiscData.gather()
-            if prev != curr:
-                prev = curr
-                await self.info_sender.send(curr)
-            await anyio.sleep(self.misc_poll_interval)
+            try:
+                with fail_after(30):
+                    await self.info_sender.send(await StaticNodeInformation.gather())
+            except Exception as e:
+                logger.opt(exception=e).warning("Error gathering static node info")
+            await anyio.sleep(static_info_poll_interval)
 
-    async def _monitor_system_profiler_thunderbolt_data(self):
-        if self.system_profiler_interval is None:
-            return
-        iface_map = await _gather_iface_map()
-        if iface_map is None:
-            return
-
-        old_idents = []
+    async def _monitor_misc(self, misc_poll_interval: float):
         while True:
-            data = await ThunderboltConnectivity.gather()
-            assert data is not None
+            try:
+                with fail_after(10):
+                    await self.info_sender.send(await MiscData.gather())
+            except Exception as e:
+                logger.opt(exception=e).warning("Error gathering misc data")
+            await anyio.sleep(misc_poll_interval)
 
-            idents = [it for i in data if (it := i.ident(iface_map)) is not None]
-            if idents != old_idents:
-                await self.info_sender.send(MacThunderboltIdentifiers(idents=idents))
-            old_idents = idents
+    async def _monitor_system_profiler_thunderbolt_data(
+        self, system_profiler_interval: float
+    ):
+        while True:
+            try:
+                with fail_after(30):
+                    iface_map = await _gather_iface_map()
+                    if iface_map is None:
+                        raise ValueError("Failed to gather interface map")
 
-            conns = [it for i in data if (it := i.conn()) is not None]
-            await self.info_sender.send(MacThunderboltConnections(conns=conns))
+                    data = await ThunderboltConnectivity.gather()
+                    assert data is not None
 
-            await anyio.sleep(self.system_profiler_interval)
+                    idents = [
+                        it for i in data if (it := i.ident(iface_map)) is not None
+                    ]
+                    await self.info_sender.send(
+                        MacThunderboltIdentifiers(idents=idents)
+                    )
 
-    async def _monitor_memory_usage(self):
+                    conns = [it for i in data if (it := i.conn()) is not None]
+                    await self.info_sender.send(MacThunderboltConnections(conns=conns))
+            except Exception as e:
+                logger.opt(exception=e).warning("Error gathering Thunderbolt data")
+            await anyio.sleep(system_profiler_interval)
+
+    async def _monitor_memory_usage(self, memory_poll_rate: float):
+        if self._psutil_enabled:
+            return
+        self._psutil_enabled = True
         override_memory_env = os.getenv("OVERRIDE_MEMORY_MB")
         override_memory: int | None = (
             Memory.from_mb(int(override_memory_env)).in_bytes
             if override_memory_env
             else None
         )
-        if self.memory_poll_rate is None:
-            return
         while True:
-            await self.info_sender.send(
-                MemoryUsage.from_psutil(override_memory=override_memory)
+            try:
+                await self.info_sender.send(
+                    MemoryUsage.from_psutil(override_memory=override_memory)
+                )
+            except Exception as e:
+                logger.opt(exception=e).warning("Error gathering memory usage")
+            await anyio.sleep(memory_poll_rate)
+
+    async def _watch_system_info(self, interface_watcher_interval: float):
+        while True:
+            try:
+                with fail_after(10):
+                    nics = await get_network_interfaces()
+                    await self.info_sender.send(NodeNetworkInterfaces(ifaces=nics))
+            except Exception as e:
+                logger.opt(exception=e).warning("Error gathering network interfaces")
+            await anyio.sleep(interface_watcher_interval)
+
+    async def _monitor_thunderbolt_bridge_status(
+        self, thunderbolt_bridge_poll_interval: float
+    ):
+        while True:
+            try:
+                with fail_after(30):
+                    curr = await ThunderboltBridgeInfo.gather()
+                    if curr is not None:
+                        await self.info_sender.send(curr)
+            except Exception as e:
+                logger.opt(exception=e).warning(
+                    "Error gathering Thunderbolt Bridge status"
+                )
+            await anyio.sleep(thunderbolt_bridge_poll_interval)
+
+    async def _monitor_rdma_ctl_status(self, rdma_ctl_poll_interval: float):
+        while True:
+            try:
+                curr = await RdmaCtlStatus.gather()
+                if curr is not None:
+                    await self.info_sender.send(curr)
+            except Exception as e:
+                logger.opt(exception=e).warning("Error gathering RDMA ctl status")
+            await anyio.sleep(rdma_ctl_poll_interval)
+
+    async def _monitor_disk_usage(self, disk_poll_interval: float):
+        while True:
+            try:
+                with fail_after(5):
+                    await self.info_sender.send(await NodeDiskUsage.gather())
+            except Exception as e:
+                logger.opt(exception=e).warning("Error gathering disk usage")
+            await anyio.sleep(disk_poll_interval)
+
+    async def _monitor_macmon(self, macmon_interval: float):
+        if (
+            macmon_path := os.getenv("EXO_MACMON_PATH") or shutil.which("macmon")
+        ) is None:
+            logger.warning(
+                "macmon not found, falling back to psutil for memory monitoring"
             )
-            await anyio.sleep(self.memory_poll_rate)
-
-    async def _watch_system_info(self):
-        if self.interface_watcher_interval is None:
+            self._tg.start_soon(self._monitor_memory_usage, 1)
             return
-        old_nics = []
-        while True:
-            nics = await get_network_interfaces()
-            if nics != old_nics:
-                old_nics = nics
-                await self.info_sender.send(NodeNetworkInterfaces(ifaces=nics))
-            await anyio.sleep(self.interface_watcher_interval)
-
-    async def _monitor_thunderbolt_bridge_status(self):
-        if self.thunderbolt_bridge_poll_interval is None:
-            return
-        prev: ThunderboltBridgeInfo | None = None
-        while True:
-            curr = await ThunderboltBridgeInfo.gather()
-            if curr is not None and prev != curr:
-                prev = curr
-                await self.info_sender.send(curr)
-            await anyio.sleep(self.thunderbolt_bridge_poll_interval)
-
-    async def _monitor_macmon(self, macmon_path: str):
-        if self.macmon_interval is None:
+        if not await self._can_read_macmon_metrics(macmon_path):
+            logger.warning(
+                f"macmon at {macmon_path} is unusable, falling back to psutil memory monitoring"
+            )
+            self._tg.start_soon(self._monitor_memory_usage, 1)
             return
         # macmon pipe --interval [interval in ms]
-        try:
-            async with await open_process(
-                [macmon_path, "pipe", "--interval", str(self.macmon_interval * 1000)]
-            ) as p:
-                if not p.stdout:
-                    logger.critical("MacMon closed stdout")
-                    return
-                async for text in TextReceiveStream(
-                    BufferedByteReceiveStream(p.stdout)
-                ):
-                    await self.info_sender.send(MacmonMetrics.from_raw_json(text))
-        except CalledProcessError as e:
-            stderr_msg = "no stderr"
-            stderr_output = cast(bytes | str | None, e.stderr)
-            if stderr_output is not None:
-                stderr_msg = (
-                    stderr_output.decode()
-                    if isinstance(stderr_output, bytes)
-                    else str(stderr_output)
+        # Timeout: if macmon produces no output for this many seconds, restart it.
+        # macmon writes every macmon_interval seconds, so 10x that is generous.
+        read_timeout = max(macmon_interval * 10, 30)
+        while True:
+            try:
+                async with await open_process(
+                    [
+                        macmon_path,
+                        "pipe",
+                        "--interval",
+                        str(macmon_interval * 1000),
+                    ]
+                ) as p:
+                    if not p.stdout:
+                        logger.critical("MacMon closed stdout")
+                        return
+                    stream = BufferedByteReceiveStream(p.stdout)
+                    while True:
+                        with fail_after(read_timeout):
+                            data = await stream.receive_until(
+                                delimiter=b"\n", max_bytes=8 * 1024
+                            )
+                            text = data.decode("utf-8", errors="replace").strip()
+                            metrics = MacmonMetrics.from_raw_json(text)
+                        await self.info_sender.send(metrics)
+            except TimeoutError:
+                logger.warning(
+                    f"MacMon produced no output for {read_timeout}s, restarting"
                 )
-            logger.warning(
-                f"MacMon failed with return code {e.returncode}: {stderr_msg}"
-            )
+                self._tg.start_soon(self._monitor_memory_usage, 1)
+            except CalledProcessError as e:
+                stderr_msg = "no stderr"
+                stderr_output = cast(bytes | str | None, e.stderr)
+                if stderr_output is not None:
+                    stderr_msg = (
+                        stderr_output.decode()
+                        if isinstance(stderr_output, bytes)
+                        else str(stderr_output)
+                    )
+                logger.warning(
+                    f"MacMon failed with return code {e.returncode}: {stderr_msg}"
+                )
+                self._tg.start_soon(self._monitor_memory_usage, 1)
+            except Exception as e:
+                logger.opt(exception=e).warning("Error in macmon monitor")
+                self._tg.start_soon(self._monitor_memory_usage, 1)
+            await anyio.sleep(macmon_interval)

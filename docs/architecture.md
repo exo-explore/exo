@@ -28,6 +28,26 @@ There are currently 5 major systems:
     
     Implements a distributed algorithm for master election in unstable networking conditions
 
+## API Layer
+
+The API system uses multiple adapters to support multiple API formats, converting them to a single request / response type.
+
+### Adapter Pattern
+
+Adapters convert between external API formats and EXO's internal types:
+
+```
+Chat Completions → [adapter] → TextGenerationTaskParams → Application
+Claude Messages  → [adapter] → TextGenerationTaskParams → Application
+Responses API    → [adapter] → TextGenerationTaskParams → Application
+Ollama API       → [adapter] → TextGenerationTaskParams → Application
+```
+
+Each adapter implements two key functions:
+1. **Request conversion**: Converts API-specific requests to `TextGenerationTaskParams`
+2. **Response generation**: Converts internal `TokenChunk` streams back to API-specific formats (streaming and non-streaming)
+
+
 ## Topics
 
 There are currently 5 topics:

@@ -3,14 +3,18 @@
     messages,
     currentResponse,
     isLoading,
+    prefillProgress,
     deleteMessage,
     editAndRegenerate,
     regenerateLastResponse,
+    regenerateFromToken,
     setEditingImage,
   } from "$lib/stores/app.svelte";
-  import type { Message } from "$lib/stores/app.svelte";
   import type { MessageAttachment } from "$lib/stores/app.svelte";
   import MarkdownContent from "./MarkdownContent.svelte";
+  import TokenHeatmap from "./TokenHeatmap.svelte";
+  import PrefillProgressBar from "./PrefillProgressBar.svelte";
+  import ImageLightbox from "./ImageLightbox.svelte";
 
   interface Props {
     class?: string;
@@ -22,6 +26,7 @@
   const messageList = $derived(messages());
   const response = $derived(currentResponse());
   const loading = $derived(isLoading());
+  const prefill = $derived(prefillProgress());
 
   // Scroll management - user controls scroll, show button when not at bottom
   const SCROLL_THRESHOLD = 100;
@@ -99,6 +104,26 @@
   let copiedMessageId = $state<string | null>(null);
   let expandedThinkingMessageIds = $state<Set<string>>(new Set());
 
+  // Lightbox state
+  let expandedImageSrc = $state<string | null>(null);
+
+  // Uncertainty heatmap toggle
+  let heatmapMessageIds = $state<Set<string>>(new Set());
+
+  function toggleHeatmap(messageId: string) {
+    const next = new Set(heatmapMessageIds);
+    if (next.has(messageId)) {
+      next.delete(messageId);
+    } else {
+      next.add(messageId);
+    }
+    heatmapMessageIds = next;
+  }
+
+  function isHeatmapVisible(messageId: string): boolean {
+    return heatmapMessageIds.has(messageId);
+  }
+
   function formatTimestamp(timestamp: number): string {
     return new Date(timestamp).toLocaleTimeString("en-US", {
       hour12: false,
@@ -114,6 +139,8 @@
         return "🖼";
       case "text":
         return "📄";
+      case "pdf":
+        return "📑";
       default:
         return "📎";
     }
@@ -202,6 +229,7 @@
   }
 
   function handleDeleteClick(messageId: string) {
+    if (loading) return;
     deleteConfirmId = messageId;
   }
 
@@ -232,7 +260,7 @@
 </script>
 
 <div class="flex flex-col gap-4 sm:gap-6 {className}">
-  {#each messageList as message (message.id)}
+  {#each messageList as message, i (message.id)}
     <div
       class="group flex {message.role === 'user'
         ? 'justify-end'
@@ -294,9 +322,11 @@
           <!-- Delete confirmation -->
           <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
             <p class="text-xs text-red-400 mb-3">
-              Delete this message{message.role === "user"
-                ? " and all responses after it"
-                : ""}?
+              {#if i === messageList.length - 1}
+                Delete this message?
+              {:else}
+                Delete this message and all messages after it?
+              {/if}
             </p>
             <div class="flex gap-2 justify-end">
               <button
@@ -370,10 +400,15 @@
                         class="flex items-center gap-2 bg-exo-dark-gray/60 border border-exo-yellow/20 rounded px-2 py-1 text-xs font-mono"
                       >
                         {#if attachment.type === "image" && attachment.preview}
+                          <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
                           <img
                             src={attachment.preview}
                             alt={attachment.name}
-                            class="w-12 h-12 object-cover rounded border border-exo-yellow/20"
+                            class="w-12 h-12 object-cover rounded border border-exo-yellow/20 cursor-pointer hover:border-exo-yellow/50 transition-colors"
+                            onclick={() => {
+                              if (attachment.preview)
+                                expandedImageSrc = attachment.preview;
+                            }}
                           />
                         {:else}
                           <span>{getAttachmentIcon(attachment)}</span>
@@ -397,6 +432,9 @@
             {:else}
               <!-- Assistant message styling -->
               <div class="p-3 sm:p-4">
+                {#if loading && isLastAssistantMessage(message.id) && prefill && !message.content}
+                  <PrefillProgressBar progress={prefill} class="mb-3" />
+                {/if}
                 {#if message.thinking && message.thinking.trim().length > 0}
                   <div
                     class="mb-3 rounded border border-exo-yellow/20 bg-exo-black/40"
@@ -447,15 +485,44 @@
                   <div class="mb-3">
                     {#each message.attachments.filter((a) => a.type === "generated-image") as attachment}
                       <div class="relative group/img inline-block">
+                        <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
                         <img
                           src={attachment.preview}
                           alt=""
-                          class="max-w-full max-h-[512px] rounded-lg border border-exo-yellow/20 shadow-lg shadow-black/20"
+                          class="max-w-full max-h-[512px] rounded-lg border border-exo-yellow/20 shadow-lg shadow-black/20 cursor-pointer"
+                          onclick={() => {
+                            if (attachment.preview)
+                              expandedImageSrc = attachment.preview;
+                          }}
                         />
                         <!-- Button overlay -->
                         <div
                           class="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"
                         >
+                          <!-- Expand button -->
+                          <button
+                            type="button"
+                            class="p-2 rounded-lg bg-exo-dark-gray/80 border border-exo-yellow/30 text-exo-yellow hover:bg-exo-dark-gray hover:border-exo-yellow/50 cursor-pointer"
+                            onclick={() => {
+                              if (attachment.preview)
+                                expandedImageSrc = attachment.preview;
+                            }}
+                            title="Expand image"
+                          >
+                            <svg
+                              class="w-4 h-4"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              stroke-width="2"
+                            >
+                              <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
+                              />
+                            </svg>
+                          </button>
                           <!-- Edit button -->
                           <button
                             type="button"
@@ -548,13 +615,23 @@
                       >
                     </div>
                   {:else if message.content || (loading && !message.attachments?.some((a) => a.type === "generated-image"))}
-                    <MarkdownContent
-                      content={message.content || (loading ? response : "")}
-                    />
-                    {#if loading && !message.content}
-                      <span
-                        class="inline-block w-2 h-4 bg-exo-yellow/70 ml-1 cursor-blink"
-                      ></span>
+                    {#if isHeatmapVisible(message.id) && message.tokens && message.tokens.length > 0}
+                      <TokenHeatmap
+                        tokens={message.tokens}
+                        isGenerating={loading &&
+                          isLastAssistantMessage(message.id)}
+                        onRegenerateFrom={(tokenIndex) =>
+                          regenerateFromToken(message.id, tokenIndex)}
+                      />
+                    {:else}
+                      <MarkdownContent
+                        content={message.content || (loading ? response : "")}
+                      />
+                      {#if loading && !message.content}
+                        <span
+                          class="inline-block w-2 h-4 bg-exo-yellow/70 ml-1 cursor-blink"
+                        ></span>
+                      {/if}
                     {/if}
                   {/if}
                 </div>
@@ -629,6 +706,35 @@
               </button>
             {/if}
 
+            <!-- Uncertainty heatmap toggle (assistant messages with tokens) -->
+            {#if message.role === "assistant" && message.tokens && message.tokens.length > 0}
+              <button
+                onclick={() => toggleHeatmap(message.id)}
+                class="p-1.5 transition-colors rounded cursor-pointer {isHeatmapVisible(
+                  message.id,
+                )
+                  ? 'text-exo-yellow'
+                  : 'text-exo-light-gray hover:text-exo-yellow'}"
+                title={isHeatmapVisible(message.id)
+                  ? "Hide uncertainty heatmap"
+                  : "Show uncertainty heatmap"}
+              >
+                <svg
+                  class="w-3.5 h-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                  />
+                </svg>
+              </button>
+            {/if}
+
             <!-- Regenerate button (last assistant message only) -->
             {#if message.role === "assistant" && isLastAssistantMessage(message.id) && !loading}
               <button
@@ -655,8 +761,13 @@
             <!-- Delete button -->
             <button
               onclick={() => handleDeleteClick(message.id)}
-              class="p-1.5 text-exo-light-gray hover:text-red-400 transition-colors rounded hover:bg-red-500/10 cursor-pointer"
-              title="Delete message"
+              disabled={loading}
+              class="p-1.5 transition-colors rounded {loading
+                ? 'text-exo-light-gray/30 cursor-not-allowed'
+                : 'text-exo-light-gray hover:text-red-400 hover:bg-red-500/10 cursor-pointer'}"
+              title={loading
+                ? "Cannot delete while generating"
+                : "Delete message"}
             >
               <svg
                 class="w-3.5 h-3.5"
@@ -698,8 +809,8 @@
       >
         AWAITING INPUT
       </p>
-      <p class="text-sm sm:text-xs text-exo-light-gray tracking-wider mt-1">
-        ENTER A QUERY TO BEGIN
+      <p class="text-xs text-white/30 tracking-wider mt-1.5 font-mono">
+        Type a message below &middot; Shift+Enter for newline
       </p>
     </div>
   {/if}
@@ -714,6 +825,7 @@
       onclick={scrollToBottom}
       class="sticky bottom-4 left-1/2 -translate-x-1/2 w-10 h-10 rounded-full bg-exo-dark-gray/90 border border-exo-medium-gray/50 flex items-center justify-center text-exo-light-gray hover:text-exo-yellow hover:border-exo-yellow/50 transition-all shadow-lg cursor-pointer z-10"
       title="Scroll to bottom"
+      aria-label="Scroll to bottom of messages"
     >
       <svg
         class="w-5 h-5"
@@ -731,3 +843,8 @@
     </button>
   {/if}
 </div>
+
+<ImageLightbox
+  src={expandedImageSrc}
+  onclose={() => (expandedImageSrc = null)}
+/>

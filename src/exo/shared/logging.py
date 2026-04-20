@@ -1,10 +1,29 @@
 import logging
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
+import zstandard
 from hypercorn import Config
 from hypercorn.logging import Logger as HypercornLogger
 from loguru import logger
+
+_MAX_LOG_ARCHIVES = 5
+
+
+def _zstd_compress(filepath: str) -> None:
+    source = Path(filepath)
+    dest = source.with_suffix(source.suffix + ".zst")
+    cctx = zstandard.ZstdCompressor()
+    with open(source, "rb") as f_in, open(dest, "wb") as f_out:
+        cctx.copy_stream(f_in, f_out)
+    source.unlink()
+
+
+def _once_then_never() -> Iterator[bool]:
+    yield True
+    while True:
+        yield False
 
 
 class InterceptLogger(HypercornLogger):
@@ -47,19 +66,22 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
     else:
         logger.add(
             sys.__stderr__,  # type: ignore
-            format="[ {time:HH:mm:ss.SSS} | <level>{level: <8}</level> | {name}:{function}:{line} ] <level>{message}</level>",
+            format="[ {time:YYYY-MM-DD HH:mm:ss.SSS} | <level>{level: <8}</level> | {name}:{function}:{line} ] <level>{message}</level>",
             level="DEBUG",
             colorize=True,
             enqueue=True,
         )
     if log_file:
+        rotate_once = _once_then_never()
         logger.add(
             log_file,
             format="[ {time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} ] {message}",
-            level="INFO",
+            level="DEBUG" if verbosity > 0 else "INFO",
             colorize=False,
             enqueue=True,
-            rotation="1 week",
+            rotation=lambda _, __: next(rotate_once),
+            retention=_MAX_LOG_ARCHIVES,
+            compression=_zstd_compress,
         )
 
 

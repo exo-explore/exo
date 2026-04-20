@@ -66,6 +66,19 @@ class PromptData(ABC):
         """
         ...
 
+    @property
+    @abstractmethod
+    def kontext_image_ids(self) -> mx.array | None:
+        """Kontext-style position IDs for image conditioning.
+
+        For FLUX.1-Kontext models, returns position IDs with first_coord=1
+        to distinguish conditioning tokens from generation tokens (first_coord=0).
+
+        Returns:
+            Position IDs array [1, seq_len, 3] for Kontext, None for other models.
+        """
+        ...
+
     @abstractmethod
     def get_batched_cfg_data(
         self,
@@ -83,6 +96,27 @@ class PromptData(ABC):
             - batched_pooled: [2, hidden] pooled embeddings or None
             - conditioning_latents: [2, latent_seq, latent_dim] or None
             TODO(ciaran): type this
+        """
+        ...
+
+    @abstractmethod
+    def get_cfg_branch_data(
+        self, positive: bool
+    ) -> tuple[mx.array, mx.array | None, mx.array | None, mx.array | None]:
+        """Get embeddings for a single CFG branch (positive or negative).
+
+        Used for sequential CFG and CFG parallel modes where we process
+        one branch at a time instead of batching.
+
+        Args:
+            positive: True for positive prompt, False for negative prompt
+
+        Returns:
+            Tuple of:
+            - embeds: [1, seq, hidden] prompt embeddings
+            - mask: [1, seq] attention mask or None
+            - pooled: [1, hidden] pooled embeddings or None
+            - conditioning_latents: [1, latent_seq, latent_dim] or None
         """
         ...
 

@@ -5,7 +5,9 @@ from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models.base import ModelAdapter
 from exo.worker.engines.image.models.flux import (
     FLUX_DEV_CONFIG,
+    FLUX_KONTEXT_CONFIG,
     FLUX_SCHNELL_CONFIG,
+    FluxKontextModelAdapter,
     FluxModelAdapter,
 )
 from exo.worker.engines.image.models.qwen import (
@@ -26,13 +28,16 @@ AdapterFactory = Callable[
 # Registry maps model_family string to adapter factory
 _ADAPTER_REGISTRY: dict[str, AdapterFactory] = {
     "flux": FluxModelAdapter,
+    "flux-kontext": FluxKontextModelAdapter,
     "qwen-edit": QwenEditModelAdapter,
     "qwen": QwenModelAdapter,
 }
 
 # Config registry: maps model ID patterns to configs
+# Order matters: longer/more-specific patterns must come before shorter ones
 _CONFIG_REGISTRY: dict[str, ImageModelConfig] = {
     "flux.1-schnell": FLUX_SCHNELL_CONFIG,
+    "flux.1-kontext": FLUX_KONTEXT_CONFIG,  # Must come before "flux.1-dev" for pattern matching
     "flux.1-krea-dev": FLUX_DEV_CONFIG,  # Must come before "flux.1-dev" for pattern matching
     "flux.1-dev": FLUX_DEV_CONFIG,
     "qwen-image-edit": QWEN_IMAGE_EDIT_CONFIG,  # Must come before "qwen-image" for pattern matching

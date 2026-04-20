@@ -2,12 +2,12 @@ from enum import Enum
 
 from pydantic import Field
 
-from exo.shared.types.api import (
-    ChatCompletionTaskParams,
-    ImageEditsInternalParams,
+from exo.api.types import (
+    ImageEditsTaskParams,
     ImageGenerationTaskParams,
 )
 from exo.shared.types.common import CommandId, Id
+from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.shared.types.worker.shards import ShardMetadata
@@ -18,12 +18,16 @@ class TaskId(Id):
     pass
 
 
+CANCEL_ALL_TASKS = TaskId("CANCEL_ALL_TASKS")
+
+
 class TaskStatus(str, Enum):
     Pending = "Pending"
     Running = "Running"
     Complete = "Complete"
     TimedOut = "TimedOut"
     Failed = "Failed"
+    Cancelled = "Cancelled"
 
 
 class BaseTask(TaggedModel):
@@ -52,12 +56,17 @@ class StartWarmup(BaseTask):  # emitted by Worker
     pass
 
 
-class ChatCompletion(BaseTask):  # emitted by Master
+class TextGeneration(BaseTask):  # emitted by Master
     command_id: CommandId
-    task_params: ChatCompletionTaskParams
+    task_params: TextGenerationTaskParams
 
     error_type: str | None = Field(default=None)
     error_message: str | None = Field(default=None)
+
+
+class CancelTask(BaseTask):
+    cancelled_task_id: TaskId
+    runner_id: RunnerId
 
 
 class ImageGeneration(BaseTask):  # emitted by Master
@@ -70,7 +79,7 @@ class ImageGeneration(BaseTask):  # emitted by Master
 
 class ImageEdits(BaseTask):  # emitted by Master
     command_id: CommandId
-    task_params: ImageEditsInternalParams
+    task_params: ImageEditsTaskParams
 
     error_type: str | None = Field(default=None)
     error_message: str | None = Field(default=None)
@@ -86,7 +95,8 @@ Task = (
     | ConnectToGroup
     | LoadModel
     | StartWarmup
-    | ChatCompletion
+    | TextGeneration
+    | CancelTask
     | ImageGeneration
     | ImageEdits
     | Shutdown

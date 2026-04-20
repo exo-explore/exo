@@ -2,7 +2,6 @@
   import {
     conversations,
     activeConversationId,
-    createConversation,
     loadConversation,
     deleteConversation,
     deleteAllConversations,
@@ -17,9 +16,21 @@
 
   interface Props {
     class?: string;
+    onNewChat?: () => void;
+    onSelectConversation?: () => void;
+    isMobileDrawer?: boolean;
+    isOpen?: boolean;
+    onClose?: () => void;
   }
 
-  let { class: className = "" }: Props = $props();
+  let {
+    class: className = "",
+    onNewChat,
+    onSelectConversation,
+    isMobileDrawer = false,
+    isOpen = false,
+    onClose,
+  }: Props = $props();
 
   const conversationList = $derived(conversations());
   const activeId = $derived(activeConversationId());
@@ -42,11 +53,16 @@
   );
 
   function handleNewChat() {
-    createConversation();
+    onNewChat?.();
   }
 
   function handleSelectConversation(id: string) {
+    onSelectConversation?.();
     loadConversation(id);
+    // Close mobile drawer when selecting a conversation
+    if (isMobileDrawer && isOpen) {
+      onClose?.();
+    }
   }
 
   function handleStartEdit(id: string, name: string, event: MouseEvent) {
@@ -185,11 +201,7 @@
 
     let instanceType: string | null = null;
     if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
-    else if (
-      instanceTag === "MlxIbvInstance" ||
-      instanceTag === "MlxJacclInstance"
-    )
-      instanceType = "MLX RDMA";
+    else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
 
     let sharding: string | null = null;
     const inst = instance as {
@@ -250,9 +262,7 @@
   }
 </script>
 
-<aside
-  class="flex flex-col h-full bg-exo-dark-gray border-r border-exo-yellow/10 {className}"
->
+{#snippet sidebarContent()}
   <!-- Header -->
   <div class="p-4">
     <button
@@ -307,7 +317,7 @@
       <div class="py-2">
         <div class="px-4 py-2">
           <span
-            class="text-sm text-white/70 font-mono tracking-wider uppercase"
+            class="text-xs text-exo-light-gray font-mono tracking-wider uppercase"
           >
             {searchQuery ? "SEARCH RESULTS" : "CONVERSATIONS"}
           </span>
@@ -376,39 +386,37 @@
                 onkeydown={(e) =>
                   e.key === "Enter" &&
                   handleSelectConversation(conversation.id)}
-                class="group w-full flex items-center justify-between p-2 rounded mb-1 transition-all text-left cursor-pointer
+                class="group w-full flex items-center justify-between p-2.5 rounded-lg mb-1 transition-all text-left cursor-pointer
 									{activeId === conversation.id
-                  ? 'bg-transparent border border-exo-yellow/30'
-                  : 'hover:border-exo-yellow/20 border border-transparent'}"
+                  ? 'bg-exo-yellow/5 border border-exo-yellow/30'
+                  : 'hover:bg-white/[0.03] hover:border-white/10 border border-transparent'}"
               >
                 <div class="flex-1 min-w-0 pr-2">
                   <div
-                    class="text-sm truncate {activeId === conversation.id
+                    class="text-sm font-medium truncate {activeId ===
+                    conversation.id
                       ? 'text-exo-yellow'
-                      : 'text-white/90'}"
+                      : 'text-white'}"
                   >
                     {conversation.name}
                   </div>
-                  <div class="text-sm text-white/50 mt-0.5">
+                  <div class="text-xs text-white/60 mt-0.5">
                     {formatDate(conversation.updatedAt)}
                   </div>
-                  <div class="text-sm text-white/70 truncate">
+                  <div class="text-xs text-exo-light-gray truncate">
                     {info.modelLabel}
                   </div>
-                  <div class="text-xs text-white/60 font-mono">
-                    Strategy: <span class="text-white/80"
-                      >{info.strategyLabel}</span
-                    >
-                  </div>
                   {#if stats}
-                    <div class="text-xs text-white/60 font-mono mt-1">
-                      {#if stats.ttftMs}<span class="text-white/40">TTFT</span>
-                        {stats.ttftMs.toFixed(
-                          0,
-                        )}ms{/if}{#if stats.ttftMs && stats.tps}<span
-                          class="text-white/30 mx-1.5">•</span
-                        >{/if}{#if stats.tps}{stats.tps.toFixed(1)}
-                        <span class="text-white/40">tok/s</span>{/if}
+                    <div class="text-xs text-white/70 font-mono mt-1">
+                      {#if stats.ttftMs}<span class="text-white/50">TTFT</span>
+                        <span class="text-exo-yellow/80"
+                          >{stats.ttftMs.toFixed(0)}ms</span
+                        >{/if}{#if stats.ttftMs && stats.tps}<span
+                          class="text-white/30 mx-1.5">·</span
+                        >{/if}{#if stats.tps}<span class="text-exo-yellow/80"
+                          >{stats.tps.toFixed(1)}</span
+                        >
+                        <span class="text-white/50">tok/s</span>{/if}
                     </div>
                   {/if}
                 </div>
@@ -591,4 +599,30 @@
       </button>
     </div>
   </div>
-</aside>
+{/snippet}
+
+{#if isMobileDrawer}
+  <!-- Mobile drawer with overlay -->
+  {#if isOpen}
+    <!-- Overlay backdrop -->
+    <button
+      type="button"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+      onclick={() => onClose?.()}
+      aria-label="Close sidebar"
+    ></button>
+    <!-- Drawer panel -->
+    <aside
+      class="fixed left-0 top-0 bottom-0 w-72 bg-exo-dark-gray border-r border-exo-yellow/10 z-50 flex flex-col md:hidden"
+    >
+      {@render sidebarContent()}
+    </aside>
+  {/if}
+{:else}
+  <!-- Desktop sidebar -->
+  <aside
+    class="flex flex-col h-full bg-exo-dark-gray border-r border-exo-yellow/10 {className}"
+  >
+    {@render sidebarContent()}
+  </aside>
+{/if}

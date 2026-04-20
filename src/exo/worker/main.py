@@ -1,29 +1,32 @@
+import hashlib
+from collections import defaultdict
 from datetime import datetime, timezone
-from random import random
-from typing import Iterator
 
 import anyio
-from anyio import CancelScope, create_task_group, fail_after
-from anyio.abc import TaskGroup
+from anyio import fail_after, to_thread
 from loguru import logger
 
-from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
+from exo.api.types import ImageEditsTaskParams
+from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
 from exo.shared.apply import apply
-from exo.shared.models.model_cards import ModelId
-from exo.shared.types.api import ImageEditsInternalParams
+from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
+from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
+from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
+    DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
-    RequestEventLog,
     StartDownload,
 )
-from exo.shared.types.common import CommandId, NodeId, SessionId
+from exo.shared.types.common import CommandId, NodeId, SystemId
 from exo.shared.types.events import (
+    CustomModelCardAdded,
+    CustomModelCardDeleted,
     Event,
-    EventId,
-    ForwarderEvent,
     IndexedEvent,
     InputChunkReceived,
+    InstanceDeleted,
+    NodeDownloadProgress,
     NodeGatheredInfo,
     TaskCreated,
     TaskStatusUpdated,
@@ -33,20 +36,26 @@ from exo.shared.types.events import (
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
+    CancelTask,
     CreateRunner,
     DownloadModel,
     ImageEdits,
+    LoadModel,
     Shutdown,
     Task,
     TaskStatus,
+    TextGeneration,
 )
+from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.topology import Connection, SocketConnection
+from exo.shared.types.worker.downloads import DownloadCompleted
+from exo.shared.types.worker.instances import InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender, channel
-from exo.utils.event_buffer import OrderedBuffer
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
+from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
@@ -55,45 +64,38 @@ class Worker:
     def __init__(
         self,
         node_id: NodeId,
-        session_id: SessionId,
         *,
-        connection_message_receiver: Receiver[ConnectionMessage],
-        global_event_receiver: Receiver[ForwarderEvent],
-        local_event_sender: Sender[ForwarderEvent],
+        event_receiver: Receiver[IndexedEvent],
+        event_sender: Sender[Event],
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
-        event_index_counter: Iterator[int],
+        api_port: int,
     ):
         self.node_id: NodeId = node_id
-        self.session_id: SessionId = session_id
-
-        self.global_event_receiver = global_event_receiver
-        self.local_event_sender = local_event_sender
-        self.event_index_counter = event_index_counter
+        self.event_receiver = event_receiver
+        self.event_sender = event_sender
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
-        self.connection_message_receiver = connection_message_receiver
-        self.event_buffer = OrderedBuffer[Event]()
-        self.out_for_delivery: dict[EventId, ForwarderEvent] = {}
+        self.api_port = api_port
 
         self.state: State = State()
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
-        self._tg: TaskGroup = create_task_group()
+        self._tg: TaskGroup = TaskGroup()
 
-        self._nack_cancel_scope: CancelScope | None = None
-        self._nack_attempts: int = 0
-        self._nack_base_seconds: float = 0.5
-        self._nack_cap_seconds: float = 10.0
-
-        self.event_sender, self.event_receiver = channel[Event]()
+        self._system_id = SystemId()
 
         # Buffer for input image chunks (for image editing)
-        self.input_chunk_buffer: dict[CommandId, dict[int, str]] = {}
+        self.input_chunk_buffer: dict[CommandId, dict[int, InputImageChunk]] = {}
         self.input_chunk_counts: dict[CommandId, int] = {}
+        self.image_cache: dict[Base64ImageHash, Base64Image] = {}
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
+        self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
+            base=0.5, cap=10.0
+        )
+        self._stopped: anyio.Event = anyio.Event()
 
     async def run(self):
         logger.info("Starting Worker")
@@ -101,22 +103,22 @@ class Worker:
         info_send, info_recv = channel[GatheredInfo]()
         info_gatherer: InfoGatherer = InfoGatherer(info_send)
 
-        async with self._tg as tg:
-            tg.start_soon(info_gatherer.run)
-            tg.start_soon(self._forward_info, info_recv)
-            tg.start_soon(self.plan_step)
-            tg.start_soon(self._connection_message_event_writer)
-            tg.start_soon(self._resend_out_for_delivery)
-            tg.start_soon(self._event_applier)
-            tg.start_soon(self._forward_events)
-            tg.start_soon(self._poll_connection_updates)
-
-        # Actual shutdown code - waits for all tasks to complete before executing.
-        self.local_event_sender.close()
-        self.command_sender.close()
-        self.download_command_sender.close()
-        for runner in self.runners.values():
-            runner.shutdown()
+        try:
+            async with self._tg as tg:
+                tg.start_soon(info_gatherer.run)
+                tg.start_soon(self._forward_info, info_recv)
+                tg.start_soon(self.plan_step)
+                tg.start_soon(self._event_applier)
+                tg.start_soon(self._poll_connection_updates)
+        finally:
+            # Actual shutdown code - waits for all tasks to complete before executing.
+            logger.info("Stopping Worker")
+            self.event_sender.close()
+            self.command_sender.close()
+            self.download_command_sender.close()
+            for runner in self.runners.values():
+                runner.shutdown()
+            self._stopped.set()
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -130,45 +132,32 @@ class Worker:
                 )
 
     async def _event_applier(self):
-        with self.global_event_receiver as events:
-            async for f_event in events:
-                if f_event.origin != self.session_id.master_node_id:
-                    continue
-                self.event_buffer.ingest(f_event.origin_idx, f_event.event)
-                event_id = f_event.event.event_id
-                if event_id in self.out_for_delivery:
-                    del self.out_for_delivery[event_id]
-
+        with self.event_receiver as events:
+            async for event in events:
                 # 2. for each event, apply it to the state
-                indexed_events = self.event_buffer.drain_indexed()
-                if indexed_events:
-                    self._nack_attempts = 0
+                self.state = apply(self.state, event=event)
+                event = event.event
 
-                if not indexed_events and (
-                    self._nack_cancel_scope is None
-                    or self._nack_cancel_scope.cancel_called
-                ):
-                    # Request the next index.
-                    self._tg.start_soon(
-                        self._nack_request, self.state.last_event_applied_idx + 1
+                if isinstance(event, InstanceDeleted):
+                    self._instance_backoff.reset(event.instance_id)
+
+                # Buffer input image chunks for image editing
+                if isinstance(event, InputChunkReceived):
+                    cmd_id = event.command_id
+                    if cmd_id not in self.input_chunk_buffer:
+                        self.input_chunk_buffer[cmd_id] = {}
+                        self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
+
+                    self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
+                        event.chunk
                     )
-                    continue
-                elif indexed_events and self._nack_cancel_scope:
-                    self._nack_cancel_scope.cancel()
 
-                for idx, event in indexed_events:
-                    self.state = apply(self.state, IndexedEvent(idx=idx, event=event))
+                if isinstance(event, CustomModelCardAdded):
+                    await event.model_card.save_to_custom_dir()
+                    add_to_card_cache(event.model_card)
 
-                    # Buffer input image chunks for image editing
-                    if isinstance(event, InputChunkReceived):
-                        cmd_id = event.command_id
-                        if cmd_id not in self.input_chunk_buffer:
-                            self.input_chunk_buffer[cmd_id] = {}
-                            self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
-
-                        self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
-                            event.chunk.data
-                        )
+                if isinstance(event, CustomModelCardDeleted):
+                    await delete_custom_card(event.model_id)
 
     async def plan_step(self):
         while True:
@@ -181,10 +170,26 @@ class Worker:
                 self.state.runners,
                 self.state.tasks,
                 self.input_chunk_buffer,
-                self.input_chunk_counts,
+                self._instance_backoff,
+                self._download_backoff,
             )
             if task is None:
                 continue
+
+            if isinstance(task, CreateRunner):
+                iid = task.instance_id
+                if self._instance_backoff.attempts(iid) >= EXO_MAX_INSTANCE_RETRIES:
+                    logger.warning(
+                        f"Instance {iid} exceeded {EXO_MAX_INSTANCE_RETRIES} retries, requesting deletion"
+                    )
+                    await self.command_sender.send(
+                        ForwarderCommand(
+                            origin=self._system_id,
+                            command=DeleteInstance(instance_id=iid),
+                        )
+                    )
+                    continue
+
             logger.info(f"Worker plan: {task.__class__.__name__}")
             assert task.task_status
             await self.event_sender.send(TaskCreated(task_id=task.task_id, task=task))
@@ -193,6 +198,7 @@ class Worker:
             match task:
                 case CreateRunner():
                     self._create_supervisor(task)
+                    self._instance_backoff.record_attempt(task.instance_id)
                     await self.event_sender.send(
                         TaskStatusUpdated(
                             task_id=task.task_id, task_status=TaskStatus.Complete
@@ -200,40 +206,73 @@ class Worker:
                     )
                 case DownloadModel(shard_metadata=shard):
                     model_id = shard.model_card.model_id
-                    if not self._download_backoff.should_proceed(model_id):
-                        continue
-
                     self._download_backoff.record_attempt(model_id)
 
-                    await self.download_command_sender.send(
-                        ForwarderDownloadCommand(
-                            origin=self.node_id,
-                            command=StartDownload(
-                                target_node_id=self.node_id,
-                                shard_metadata=shard,
-                            ),
-                        )
+                    found_path = await to_thread.run_sync(
+                        resolve_existing_model, model_id
                     )
-                    await self.event_sender.send(
-                        TaskStatusUpdated(
-                            task_id=task.task_id, task_status=TaskStatus.Running
+                    if found_path is not None:
+                        logger.info(f"Model {model_id} found at {found_path}")
+                        await self.event_sender.send(
+                            NodeDownloadProgress(
+                                download_progress=DownloadCompleted(
+                                    node_id=self.node_id,
+                                    shard_metadata=shard,
+                                    model_directory=str(found_path),
+                                    total=shard.model_card.storage_size,
+                                    read_only=is_read_only_model_dir(found_path),
+                                )
+                            )
                         )
-                    )
+                        await self.event_sender.send(
+                            TaskStatusUpdated(
+                                task_id=task.task_id,
+                                task_status=TaskStatus.Complete,
+                            )
+                        )
+                    else:
+                        await self.download_command_sender.send(
+                            ForwarderDownloadCommand(
+                                origin=self._system_id,
+                                command=StartDownload(
+                                    target_node_id=self.node_id,
+                                    shard_metadata=shard,
+                                ),
+                            )
+                        )
+                        await self.event_sender.send(
+                            TaskStatusUpdated(
+                                task_id=task.task_id,
+                                task_status=TaskStatus.Running,
+                            )
+                        )
                 case Shutdown(runner_id=runner_id):
+                    runner = self.runners.pop(runner_id)
                     try:
                         with fail_after(3):
-                            await self.runners.pop(runner_id).start_task(task)
+                            await runner.start_task(task)
                     except TimeoutError:
                         await self.event_sender.send(
                             TaskStatusUpdated(
                                 task_id=task.task_id, task_status=TaskStatus.TimedOut
                             )
                         )
+                    finally:
+                        runner.shutdown()
+                case CancelTask(
+                    cancelled_task_id=cancelled_task_id, runner_id=runner_id
+                ):
+                    await self.runners[runner_id].cancel_task(cancelled_task_id)
+                    await self.event_sender.send(
+                        TaskStatusUpdated(
+                            task_id=task.task_id, task_status=TaskStatus.Complete
+                        )
+                    )
                 case ImageEdits() if task.task_params.total_input_chunks > 0:
                     # Assemble image from chunks and inject into task
                     cmd_id = task.command_id
                     chunks = self.input_chunk_buffer.get(cmd_id, {})
-                    assembled = "".join(chunks[i] for i in range(len(chunks)))
+                    assembled = "".join(chunks[i].data for i in range(len(chunks)))
                     logger.info(
                         f"Assembled input image from {len(chunks)} chunks, "
                         f"total size: {len(assembled)} bytes"
@@ -244,7 +283,7 @@ class Worker:
                         command_id=task.command_id,
                         instance_id=task.instance_id,
                         task_status=task.task_status,
-                        task_params=ImageEditsInternalParams(
+                        task_params=ImageEditsTaskParams(
                             image_data=assembled,
                             total_input_chunks=task.task_params.total_input_chunks,
                             prompt=task.task_params.prompt,
@@ -266,92 +305,75 @@ class Worker:
                         del self.input_chunk_buffer[cmd_id]
                     if cmd_id in self.input_chunk_counts:
                         del self.input_chunk_counts[cmd_id]
-                    await self.runners[self._task_to_runner_id(task)].start_task(
-                        modified_task
+                    await self._start_runner_task(modified_task)
+
+                case TextGeneration() if (
+                    task.task_params.image_hashes
+                    or task.task_params.total_input_chunks > 0
+                ):
+                    cmd_id = task.command_id
+                    by_index: dict[int, Base64Image] = {}
+
+                    for idx, h in task.task_params.image_hashes.items():
+                        assert h in self.image_cache
+                        by_index[idx] = self.image_cache[h]
+
+                    if task.task_params.total_input_chunks > 0:
+                        chunk_buffer = self.input_chunk_buffer.get(cmd_id, {})
+                        per_image: defaultdict[int, list[InputImageChunk]] = (
+                            defaultdict(list)
+                        )
+                        for chunk in chunk_buffer.values():
+                            per_image[chunk.image_index].append(chunk)
+                        for img_idx in sorted(per_image):
+                            sorted_chunks = sorted(
+                                per_image[img_idx], key=lambda c: c.chunk_index
+                            )
+                            img = Base64Image("".join(c.data for c in sorted_chunks))
+                            self.image_cache[
+                                Base64ImageHash(
+                                    hashlib.sha256(img.encode("ascii")).hexdigest()
+                                )
+                            ] = img
+                            by_index[img_idx] = img
+                        logger.info(
+                            f"Assembled {len(per_image)} VLM image(s) "
+                            f"from {len(chunk_buffer)} chunks"
+                        )
+
+                    resolved_images = [
+                        Base64Image(by_index[i]) for i in sorted(by_index)
+                    ]
+                    modified_task = task.model_copy(
+                        update={
+                            "task_params": task.task_params.model_copy(
+                                update={"images": resolved_images}
+                            )
+                        }
                     )
+                    if cmd_id in self.input_chunk_buffer:
+                        del self.input_chunk_buffer[cmd_id]
+                    if cmd_id in self.input_chunk_counts:
+                        del self.input_chunk_counts[cmd_id]
+                    await self._start_runner_task(modified_task)
+                case LoadModel(instance_id=instance_id):
+                    if (instance := self.state.instances.get(instance_id)) is not None:
+                        model_id = instance.shard_assignments.model_id
+                        self._download_backoff.reset(model_id)
+
+                    await self._start_runner_task(task)
                 case task:
-                    await self.runners[self._task_to_runner_id(task)].start_task(task)
+                    await self._start_runner_task(task)
 
-    def shutdown(self):
-        self._tg.cancel_scope.cancel()
+    async def shutdown(self):
+        self._tg.cancel_tasks()
+        await self._stopped.wait()
 
-    def _task_to_runner_id(self, task: Task):
-        instance = self.state.instances[task.instance_id]
-        return instance.shard_assignments.node_to_runner[self.node_id]
-
-    async def _connection_message_event_writer(self):
-        with self.connection_message_receiver as connection_messages:
-            async for msg in connection_messages:
-                await self.event_sender.send(
-                    self._convert_connection_message_to_event(msg)
-                )
-
-    def _convert_connection_message_to_event(self, msg: ConnectionMessage):
-        match msg.connection_type:
-            case ConnectionMessageType.Connected:
-                return TopologyEdgeCreated(
-                    conn=Connection(
-                        source=self.node_id,
-                        sink=msg.node_id,
-                        edge=SocketConnection(
-                            sink_multiaddr=Multiaddr(
-                                address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
-                            ),
-                        ),
-                    ),
-                )
-
-            case ConnectionMessageType.Disconnected:
-                return TopologyEdgeDeleted(
-                    conn=Connection(
-                        source=self.node_id,
-                        sink=msg.node_id,
-                        edge=SocketConnection(
-                            sink_multiaddr=Multiaddr(
-                                address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
-                            ),
-                        ),
-                    ),
-                )
-
-    async def _nack_request(self, since_idx: int) -> None:
-        # We request all events after (and including) the missing index.
-        # This function is started whenever we receive an event that is out of sequence.
-        # It is cancelled as soon as we receiver an event that is in sequence.
-
-        if since_idx < 0:
-            logger.warning(f"Negative value encountered for nack request {since_idx=}")
-            since_idx = 0
-
-        with CancelScope() as scope:
-            self._nack_cancel_scope = scope
-            delay: float = self._nack_base_seconds * (2.0**self._nack_attempts)
-            delay = min(self._nack_cap_seconds, delay)
-            self._nack_attempts += 1
-            try:
-                await anyio.sleep(delay)
-                logger.info(
-                    f"Nack attempt {self._nack_attempts}: Requesting Event Log from {since_idx}"
-                )
-                await self.command_sender.send(
-                    ForwarderCommand(
-                        origin=self.node_id,
-                        command=RequestEventLog(since_idx=since_idx),
-                    )
-                )
-            finally:
-                if self._nack_cancel_scope is scope:
-                    self._nack_cancel_scope = None
-
-    async def _resend_out_for_delivery(self) -> None:
-        # This can also be massively tightened, we should check events are at least a certain age before resending.
-        # Exponential backoff would also certainly help here.
-        while True:
-            await anyio.sleep(1 + random())
-            for event in self.out_for_delivery.copy().values():
-                await self.local_event_sender.send(event)
-
-    ## Op Executors
+    async def _start_runner_task(self, task: Task):
+        if (instance := self.state.instances.get(task.instance_id)) is not None:
+            await self.runners[
+                instance.shard_assignments.node_to_runner[self.node_id]
+            ].start_task(task)
 
     def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""
@@ -363,59 +385,45 @@ class Worker:
         self._tg.start_soon(runner.run)
         return runner
 
-    async def _forward_events(self) -> None:
-        with self.event_receiver as events:
-            async for event in events:
-                idx = next(self.event_index_counter)
-                fe = ForwarderEvent(
-                    origin_idx=idx,
-                    origin=self.node_id,
-                    session=self.session_id,
-                    event=event,
-                )
-                logger.debug(f"Worker published event {idx}: {str(event)[:100]}")
-                await self.local_event_sender.send(fe)
-                self.out_for_delivery[event.event_id] = fe
-
     async def _poll_connection_updates(self):
         while True:
             edges = set(
                 conn.edge for conn in self.state.topology.out_edges(self.node_id)
             )
-            conns = await check_reachable(
+            conns: defaultdict[NodeId, set[str]] = defaultdict(set)
+            async for ip, nid in check_reachable(
                 self.state.topology,
                 self.node_id,
                 self.state.node_network,
-            )
-            for nid in conns:
-                for ip in conns[nid]:
-                    edge = SocketConnection(
-                        # nonsense multiaddr
-                        sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/52415")
-                        if "." in ip
-                        # nonsense multiaddr
-                        else Multiaddr(address=f"/ip6/{ip}/tcp/52415"),
-                    )
-                    if edge not in edges:
-                        logger.debug(f"ping discovered {edge=}")
-                        await self.event_sender.send(
-                            TopologyEdgeCreated(
-                                conn=Connection(
-                                    source=self.node_id, sink=nid, edge=edge
-                                )
-                            )
+                api_port=self.api_port,
+            ):
+                if ip in conns[nid]:
+                    continue
+                conns[nid].add(ip)
+                edge = SocketConnection(
+                    # nonsense multiaddr
+                    sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/{self.api_port}")
+                    if "." in ip
+                    # nonsense multiaddr
+                    else Multiaddr(address=f"/ip6/{ip}/tcp/{self.api_port}"),
+                )
+                if edge not in edges:
+                    logger.debug(f"ping discovered {edge=}")
+                    await self.event_sender.send(
+                        TopologyEdgeCreated(
+                            conn=Connection(source=self.node_id, sink=nid, edge=edge)
                         )
+                    )
 
             for conn in self.state.topology.out_edges(self.node_id):
                 if not isinstance(conn.edge, SocketConnection):
                     continue
                 # ignore mDNS discovered connections
-                if conn.edge.sink_multiaddr.port != 52415:
+                if conn.edge.sink_multiaddr.port != self.api_port:
                     continue
                 if (
                     conn.sink not in conns
-                    or conn.edge.sink_multiaddr.ip_address
-                    not in conns.get(conn.sink, set())
+                    or conn.edge.sink_multiaddr.ip_address not in conns[conn.sink]
                 ):
                     logger.debug(f"ping failed to discover {conn=}")
                     await self.event_sender.send(TopologyEdgeDeleted(conn=conn))

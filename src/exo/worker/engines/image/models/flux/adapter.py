@@ -59,10 +59,20 @@ class FluxPromptData(PromptData):
     def conditioning_latents(self) -> mx.array | None:
         return None
 
+    @property
+    def kontext_image_ids(self) -> mx.array | None:
+        return None
+
     def get_batched_cfg_data(
         self,
     ) -> tuple[mx.array, mx.array, mx.array | None, mx.array | None] | None:
         return None
+
+    def get_cfg_branch_data(
+        self, positive: bool
+    ) -> tuple[mx.array, mx.array | None, mx.array | None, mx.array | None]:
+        """Flux doesn't use CFG, but we return positive data for compatibility."""
+        return (self._prompt_embeds, None, self._pooled_prompt_embeds, None)
 
 
 class FluxModelAdapter(ModelAdapter[Flux1, Transformer]):
@@ -83,7 +93,7 @@ class FluxModelAdapter(ModelAdapter[Flux1, Transformer]):
 
     @property
     def hidden_dim(self) -> int:
-        return self._transformer.x_embedder.weight.shape[0]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        return self._transformer.x_embedder.weight.shape[0]
 
     @property
     def needs_cfg(self) -> bool:
