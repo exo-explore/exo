@@ -15,11 +15,12 @@
 //! More concretely:
 //!
 //! - use [`parse::parse_line`] when reading from `babeld`
-//! - reduce [`Event`] values into in-memory state
+//! - reduce [`Event`] values into [`crate::babel::state::BabelState`]
 //! - treat [`Status`] as command acknowledgements
 //! - keep outbound socket/config commands in a separate module rather than mixing them into
 //!   this inbound line model
 
+use crate::babel::Eui64;
 use ipnet::IpNet;
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -106,9 +107,6 @@ pub struct RouteEvent {
     pub ifname: Box<str>,
 }
 
-/// An EUI-64 type aliased to [`macaddr::MacAddr8`].
-pub type Eui64 = macaddr::MacAddr8;
-
 /// Parser for `babeld`'s local socket output.
 ///
 /// This submodule is the wire-format counterpart to the parent [`crate::babel::line`] domain
@@ -179,9 +177,10 @@ pub type Eui64 = macaddr::MacAddr8;
 ///   fallbacks in `babeld` such as `???` are not treated as part of the formal grammar.
 pub mod parse {
     use crate::babel::line::{
-        BabelLine, Eui64, Event, EventKind, HeaderLine, InterfaceEvent, NeighbourEvent, RouteEvent,
+        BabelLine, Event, EventKind, HeaderLine, InterfaceEvent, NeighbourEvent, RouteEvent,
         Status, XRouteEvent,
     };
+    use crate::babel::Eui64;
     use ipnet::IpNet;
     use memchr::memchr;
     use std::{
@@ -540,7 +539,7 @@ pub mod parse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::babel::line::parse::{ParsedLines, parse_line};
+    use crate::babel::line::parse::{parse_line, ParsedLines};
     use std::str::FromStr;
 
     #[test]

@@ -9,9 +9,13 @@ pub mod command;
 pub mod line;
 pub mod process;
 pub mod session;
+pub mod state;
 
 use process::BabeldProcess;
 use session::BabelSession;
+
+/// An EUI-64 type aliased to [`macaddr::MacAddr8`].
+pub type Eui64 = macaddr::MacAddr8;
 
 #[tracing::instrument(skip_all)]
 pub async fn handle_listener(sock: UnixStream, mut receiver: broadcast::Receiver<String>) {

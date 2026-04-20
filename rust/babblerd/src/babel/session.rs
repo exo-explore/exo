@@ -11,22 +11,22 @@
 //! It intentionally does **not** own:
 //!
 //! - child-process spawn/shutdown, which belongs in [`crate::babel::process`]
-//! - long-lived reduced state, which should eventually live in a separate state layer
+//! - long-lived reduced state, which lives in [`crate::babel::state`]
 
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::UnixStream;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Duration;
 
+use crate::Result;
+use crate::babel::Babble;
 use crate::babel::command::BabelCommand;
 use crate::babel::line::{self, BabelLine, Status};
 use crate::babel::process::private_sock_path;
-use crate::babel::Babble;
-use crate::Result;
 
 pub(crate) struct BabelSession {
     read: Lines<BufReader<OwnedReadHalf>>,
@@ -50,8 +50,8 @@ impl BabelSession {
 
     #[tracing::instrument(skip_all)]
     pub(crate) async fn await_ready(&mut self) -> Result<()> {
-        /// TODO: replace with parsing logic which we have anyways...
-        ///       also i just don't like this being its own method for some reason
+        // TODO: replace with parsing logic which we have anyways...
+        //       also i just don't like this being its own method for some reason
         while let Some(line) = self.read.next_line().await? {
             tracing::debug!("[babeld] {}", line);
             if line == "ok" {

@@ -5,7 +5,7 @@ pub mod tun;
 
 pub use babel::{babel, handle_listener};
 pub use error::{BabbleError, Result};
-pub use if_watcher::{watch, PREFIX};
+pub use if_watcher::{PREFIX, watch};
 pub mod error {
     use std::io;
     use thiserror::Error;
@@ -41,7 +41,7 @@ pub mod if_watcher {
     use tokio::sync::mpsc;
 
     use crate::ip_manager::remove_ip;
-    use crate::{babel::Babble, BabbleError, Result};
+    use crate::{BabbleError, Result, babel::Babble};
 
     pub const PREFIX: Ipv6Net = Ipv6Net::new_assert(
         // TODO: why is the prefix 48? what does the 0xffff achieve there??
