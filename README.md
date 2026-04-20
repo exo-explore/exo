@@ -73,21 +73,18 @@ There are two ways to run exo:
 ### Run from Source (macOS)
 
 **Prerequisites:**
-
 - [brew](https://github.com/Homebrew/brew) (for simple package management on macOS)
-
+  
   ```bash
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   ```
-
 - [uv](https://github.com/astral-sh/uv) (for Python dependency management)
 - [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
 - [node](https://github.com/nodejs/node) (for building the dashboard)
-
+  
   ```bash
   brew install uv macmon node
   ```
-
 - [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
 
   ```bash
@@ -121,7 +118,6 @@ This starts the exo dashboard and API at http://localhost:52415/
 **Installation methods:**
 
 **Option 1: Using system package manager (Ubuntu/Debian example):**
-
 ```bash
 # Install Node.js and npm
 sudo apt update
@@ -136,7 +132,6 @@ rustup toolchain install nightly
 ```
 
 **Option 2: Using Homebrew on Linux (if preferred):**
-
 ```bash
 # Install Homebrew on Linux
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -228,7 +223,6 @@ sudo ./app/EXO/uninstall-exo.sh
 ```
 
 This removes:
-
 - Network setup LaunchDaemon
 - Network configuration script
 - Log files
@@ -314,6 +308,7 @@ curl -X POST http://localhost:52415/instance \
   }'
 ```
 
+
 Sample response:
 
 ```json
@@ -351,7 +346,7 @@ When you're done, delete the instance by its ID (find it via `/state` or `/insta
 curl -X DELETE http://localhost:52415/instance/YOUR_INSTANCE_ID
 ```
 
-**Other useful API endpoints\*:**
+**Other useful API endpoints*:**
 
 - List all models: `curl http://localhost:52415/models`
 - Inspect instance IDs and deployment state: `curl http://localhost:52415/state`
@@ -368,7 +363,6 @@ For further details, see:
 The `exo-bench` tool measures model prefill and token generation speed across different placement configurations. This helps you optimize model performance and validate improvements.
 
 **Prerequisites:**
-
 - Nodes should be running with `uv run exo` before benchmarking
 - The tool uses the `/bench/chat/completions` endpoint
 
