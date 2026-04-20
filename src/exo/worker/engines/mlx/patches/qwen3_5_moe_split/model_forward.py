@@ -175,7 +175,12 @@ def pipelined_layer_loop(
 
     # Compute cache offset for mask slicing (same for all GQA layers).
     fa_cache = cache[inner.fa_idx] if cache[inner.fa_idx] is not None else None
-    offset = fa_cache.offset if (fa_cache is not None and hasattr(fa_cache, "offset")) else 0
+    raw_offset = fa_cache.offset if (fa_cache is not None and hasattr(fa_cache, "offset")) else 0
+    # BatchKVCache stores offset as an mx.array (1,), KVCache stores it as a Python int.
+    if isinstance(raw_offset, mx.array):
+        offset = int(raw_offset.max().item())  # max so mask covers all batch entries
+    else:
+        offset = int(raw_offset)
 
     # Slice masks once (reused every stage)
     fa_mask_H0, fa_mask_H1 = slice_fa_mask(fa_mask, mid, offset)
