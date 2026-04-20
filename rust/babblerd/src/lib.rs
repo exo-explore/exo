@@ -328,6 +328,13 @@ pub mod babel {
                     return Ok(None);
                 };
                 tracing::info!("[babel] {:?}", line);
+
+                // TODO: replace later with propper parsing
+                match parse::parse_line(&line) {
+                    Ok(line) => tracing::info!("[parsed] {:?}", line),
+                    Err(err) => tracing::error!(error=%err, "failed to parse babeld line"),
+                }
+
                 let ret = match line.as_str() {
                     "ok" => Ok(Some(true)),
                     "bad" => {
@@ -409,6 +416,7 @@ pub mod babel {
                             Ok(line) => tracing::info!("[parsed] {:?}", line),
                             Err(err) => tracing::error!(error=%err, "failed to parse babeld line"),
                         }
+
                         let Ok(_) = send.send(line) else {
                             break;
                         };
