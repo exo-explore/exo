@@ -61,15 +61,24 @@ def moe(layer, h):  # type: ignore[no-untyped-def]
 
 
 def slice_fa_mask(fa_mask, mid: int, offset: int):  # type: ignore[no-untyped-def]
-    """Slice the 4D GQA mask for H0 / H1 queries.
+    """Slice the GQA attention mask for H0 / H1 queries.
 
-    fa_mask shape: (1, 1, S, offset+S)
-    mask_H0 shape: (1, 1, mid, offset+mid) — queries [0,mid), keys [0,offset+mid)
-    mask_H1 shape: (1, 1, mid, offset+S)   — queries [mid,S), keys [0,offset+S)
+    create_attention_mask(return_array=True) returns a 2D causal mask of
+    shape (S, offset+S) — the last two dims of a standard 4D attention mask.
+    scaled_dot_product_attention broadcasts 2D masks automatically.
+
+    mask_H0 shape: (mid, offset+mid)     — queries [0,mid),   keys [0,offset+mid)
+    mask_H1 shape: (S-mid, offset+S)     — queries [mid,S),   keys [0,offset+S)
+
+    Also handles 4D masks (B, 1, S, offset+S) defensively.
     """
     if fa_mask is None:
         return None, None
-    return fa_mask[:, :, :mid, : offset + mid], fa_mask[:, :, mid:, :]
+    if fa_mask.ndim == 2:
+        return fa_mask[:mid, : offset + mid], fa_mask[mid:, :]
+    if fa_mask.ndim == 4:
+        return fa_mask[:, :, :mid, : offset + mid], fa_mask[:, :, mid:, :]
+    raise ValueError(f"unexpected fa_mask ndim={fa_mask.ndim}, shape={fa_mask.shape}")
 
 
 def slice_ssm_mask(ssm_mask, mid: int):  # type: ignore[no-untyped-def]
