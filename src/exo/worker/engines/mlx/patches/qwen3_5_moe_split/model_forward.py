@@ -84,11 +84,11 @@ def slice_ssm_mask(ssm_mask, mid: int):  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 
 
-def _stage_all_gather(rank: int, my_contribution: mx.array, group) -> mx.array:
-    """Each rank contributes its real tensor; returns the gathered (2, S/2, D).
+def _gather_own(my_contribution: mx.array, group) -> mx.array:
+    """all_gather + return the tensor contributed by the CURRENT rank.
 
-    - gathered[0:1] = what ATTN_RANK contributed
-    - gathered[1:2] = what MOE_RANK contributed
+    Other ranks' slices are returned too but unused here — the caller runs
+    this separately on each rank's output so both sides see both tensors.
     """
     return mx.distributed.all_gather(my_contribution, group=group)
 
@@ -96,6 +96,37 @@ def _stage_all_gather(rank: int, my_contribution: mx.array, group) -> mx.array:
 def _zeros_like(x: mx.array) -> mx.array:
     """Return x - x (zeros with a data dependency on x so MLX can't const-fold)."""
     return x - x
+
+
+def _gather_two(
+    rank: int,
+    attn_side: mx.array,
+    moe_side: mx.array,
+    attn_shape_template: mx.array,
+    moe_shape_template: mx.array,
+    group,
+) -> tuple[mx.array, mx.array]:
+    """Two all_gathers per stage — one per shape.
+
+    Each rank contributes a placeholder of the OTHER rank's shape. One
+    all_gather for ATTN's output, one for MOE's. Handles odd S where
+    H0 and H1 have different sizes.
+
+    Args:
+      attn_side: what this rank is contributing for ATTN's all_gather.
+                 On ATTN_RANK this is the real attention output; on
+                 MOE_RANK it is a placeholder shaped like ATTN's output.
+      moe_side: same but for MOE's all_gather.
+
+    Returns (attn_result, moe_result) — both ranks get both after the
+    two collectives.
+    """
+    attn_gathered = mx.distributed.all_gather(attn_side, group=group)
+    moe_gathered = mx.distributed.all_gather(moe_side, group=group)
+    return (
+        attn_gathered[ATTN_RANK : ATTN_RANK + 1],
+        moe_gathered[MOE_RANK : MOE_RANK + 1],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -137,64 +168,68 @@ def pipelined_layer_loop(
             return fa_mask_H0 if half == "H0" else fa_mask_H1
 
     # Running state between stages (loop-local, no closure).
-    x_H0 = hidden_states[:, :mid, :]  # input to attn_T(H0) — updated to out_T_H0
-    x_H1 = hidden_states[:, mid:, :]  # input to attn_T(H1) — updated to out_T_H1
+    x_H0 = hidden_states[:, :mid, :]     # shape (B, mid, D)     — H0 half
+    x_H1 = hidden_states[:, mid:, :]     # shape (B, S-mid, D)   — H1 half
 
     # Pending handoffs between stages:
-    #   h_H0_ready: output of most recent attn(H0), awaiting moe
-    #   h_H1_pending: output of most recent attn(H1), awaiting moe (in a later stage)
+    #   h_H0_ready:   output of most recent attn(H0), shape (B, mid, D)
+    #   h_H1_pending: output of most recent attn(H1), shape (B, S-mid, D)
     h_H0_ready = None
     h_H1_pending = None
 
     # --- Stage 0 (startup bubble): ATTN attn_0(H0). MOE idle. ---
+    # Single all_gather for ATTN's output only — MOE contributes zeros of same shape.
     layer_0 = layers[0]
     c0 = cache[0]
     if rank == ATTN_RANK:
         contribution = attention(layer_0, x_H0, mask_for(layer_0, "H0"), c0)
     else:
-        contribution = _zeros_like(x_H0)
-    gathered = _stage_all_gather(rank, contribution, group)
+        contribution = _zeros_like(x_H0)   # shape (B, mid, D)
+    gathered = mx.distributed.all_gather(contribution, group=group)
     mx.eval(gathered)
     h_H0_ready = gathered[ATTN_RANK : ATTN_RANK + 1]
 
-    # --- Stages 1..2N-1: main pipeline ---
+    # --- Stages 1..2N-1: main pipeline (two all_gathers per stage) ---
     for stage in range(1, 2 * N):
-        is_B_stage = (stage % 2 == 1)  # True -> Stage B of layer T
+        is_B_stage = (stage % 2 == 1)
+        T = stage // 2
+
         if is_B_stage:
-            # Stage 2T+1: ATTN attn_T(H1), MOE moe_T(h_T_H0)
-            T = stage // 2
+            # Stage 2T+1: ATTN attn_T(H1) -> shape (B, S-mid, D)
+            #              MOE moe_T(h_T_H0) -> shape (B, mid, D)
             layer_T = layers[T]
             cT = cache[T]
             if rank == ATTN_RANK:
-                contribution = attention(layer_T, x_H1, mask_for(layer_T, "H1"), cT)
-            else:  # MOE_RANK
-                contribution = moe(layer_T, h_H0_ready)
+                attn_side = attention(layer_T, x_H1, mask_for(layer_T, "H1"), cT)
+                moe_side = _zeros_like(h_H0_ready)    # placeholder matching MOE shape
+            else:
+                attn_side = _zeros_like(x_H1)         # placeholder matching ATTN shape
+                moe_side = moe(layer_T, h_H0_ready)
         else:
-            # Stage 2T (T>=1): ATTN attn_T(H0) on input out_{T-1}_H0, MOE moe_{T-1}(h_{T-1}_H1)
-            T = stage // 2
+            # Stage 2T (T>=1): ATTN attn_T(H0) -> shape (B, mid, D)
+            #                   MOE moe_{T-1}(h_{T-1}_H1) -> shape (B, S-mid, D)
             layer_T = layers[T]
             cT = cache[T]
             prev_layer = layers[T - 1]
             if rank == ATTN_RANK:
-                contribution = attention(layer_T, x_H0, mask_for(layer_T, "H0"), cT)
-            else:  # MOE_RANK
-                contribution = moe(prev_layer, h_H1_pending)
+                attn_side = attention(layer_T, x_H0, mask_for(layer_T, "H0"), cT)
+                moe_side = _zeros_like(h_H1_pending)  # placeholder matching MOE shape
+            else:
+                attn_side = _zeros_like(x_H0)         # placeholder matching ATTN shape
+                moe_side = moe(prev_layer, h_H1_pending)
 
-        gathered = _stage_all_gather(rank, contribution, group)
-        mx.eval(gathered)
-        attn_contrib = gathered[ATTN_RANK : ATTN_RANK + 1]
-        moe_contrib = gathered[MOE_RANK : MOE_RANK + 1]
+        attn_contrib, moe_contrib = _gather_two(
+            rank, attn_side, moe_side, attn_side, moe_side, group
+        )
+        mx.eval(attn_contrib)
+        mx.eval(moe_contrib)
 
         if is_B_stage:
-            # ATTN produced h_T_H1 (becomes the pending H1 handoff)
-            # MOE produced out_T_H0 (becomes next-layer's x_H0)
-            h_H1_pending = attn_contrib
-            x_H0 = moe_contrib  # input for attn_{T+1}(H0)
+            h_H1_pending = attn_contrib   # (B, S-mid, D)
+            x_H0 = moe_contrib            # (B, mid, D) — input for attn_{T+1}(H0)
         else:
-            # ATTN produced h_T_H0 (ready for this layer's MOE in the next B stage)
-            # MOE produced out_{T-1}_H1 (becomes this layer's x_H1)
-            h_H0_ready = attn_contrib
-            x_H1 = moe_contrib  # input for attn_T(H1)
+            h_H0_ready = attn_contrib     # (B, mid, D)
+            x_H1 = moe_contrib            # (B, S-mid, D) — input for attn_T(H1)
 
     # --- Stage 2N (drain bubble): ATTN idle. MOE moe_{N-1}(h_{N-1}_H1). ---
     last_layer = layers[N - 1]
@@ -202,7 +237,7 @@ def pipelined_layer_loop(
         contribution = moe(last_layer, h_H1_pending)
     else:
         contribution = _zeros_like(h_H1_pending)
-    gathered = _stage_all_gather(rank, contribution, group)
+    gathered = mx.distributed.all_gather(contribution, group=group)
     mx.eval(gathered)
     out_H1 = gathered[MOE_RANK : MOE_RANK + 1]
 
@@ -242,10 +277,8 @@ def make_pipelined_model_call(group):  # type: ignore[no-untyped-def]
 
         S = hidden_states.shape[1]
 
-        # Fall back to stock (serial) layer loop for:
-        #   S == 1 : decode
-        #   S odd and > 1 : avoids H0/H1 shape mismatch in pipelined all_gather
-        if S == 1 or S % 2 != 0:
+        if S == 1:
+            # Decode: stock loop -> DecoderLayer.__call__ -> serial _split_call
             fa_mask = create_attention_mask(hidden_states, cache[self.fa_idx])
             ssm_mask = create_ssm_mask(hidden_states, cache[self.ssm_idx])
             for layer, c in zip(self.layers, cache):
@@ -253,7 +286,7 @@ def make_pipelined_model_call(group):  # type: ignore[no-untyped-def]
                 hidden_states = layer(hidden_states, mask=mask, cache=c)
             return self.norm(hidden_states)
 
-        # S > 1 and even: pipelined path. Force the fa_mask to be a real tensor.
+        # S > 1: pipelined path. Force fa_mask as a real tensor for slicing.
         fa_mask = create_attention_mask(
             hidden_states, cache[self.fa_idx], return_array=True
         )
@@ -345,8 +378,8 @@ def make_pipelined_speculative_forward(group):  # type: ignore[no-untyped-def]
                         )
                     gdn_spec_data.append((None, pre_conv, c, layer))
 
-        # Pipelined layer loop (S>1 and even) or stock (S==1 or odd S).
-        if S > 1 and S % 2 == 0:
+        # Pipelined layer loop for S>1; stock layer loop for S==1.
+        if S > 1:
             hidden_states = pipelined_layer_loop(
                 inner, hidden_states, cache_list, group, fa_mask, ssm_mask
             )
