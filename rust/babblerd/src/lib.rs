@@ -406,7 +406,7 @@ pub mod babel {
 
                         // TODO: replace later with propper parsing
                         match parse::parse_line(&line) {
-                            Ok(line) => tracing::info!("[parsed] {}", line),
+                            Ok(line) => tracing::info!("[parsed] {:?}", line),
                             Err(err) => tracing::error!(error=%err, "failed to parse babeld line"),
                         }
                         let Ok(_) = send.send(line) else {
