@@ -1,3 +1,71 @@
+//! Parser for `babeld`'s local socket output.
+//!
+//! The socket protocol implemented in `networking-related/babeld/local.c` is
+//! line-oriented ASCII. This module keeps the parsing split into two layers:
+//!
+//! - [`RawLines`] does zero-copy line framing over buffered bytes with [`memchr`].
+//! - [`parse_line`] parses one complete line with [`winnow`].
+//! - [`ParsedLines`] is a convenience adapter for buffered transcripts such as `dump` output.
+//!
+//! `monitor` mode uses the exact same line grammar as `dump`; it simply keeps emitting event lines
+//! after the initial snapshot.
+//!
+//!
+//! The accepted grammar is:
+//!
+//! ```text
+//! stream     ::= (line "\n")* line?
+//! line       ::= header | status | event
+//!
+//! header     ::= banner | version | host | my-id
+//! banner     ::= "BABEL " uint "." uint
+//! version    ::= "version " text
+//! host       ::= "host " text
+//! my-id      ::= "my-id " eui64
+//!
+//! status     ::= "ok" | "bad" | ("no" (" " text)?)
+//!
+//! event      ::= kind " " (interface | neighbour | xroute | route)
+//! kind       ::= "add" | "change" | "flush"
+//!
+//! interface  ::= "interface " ifname " up " bool
+//!               (" ipv6 " ip)?
+//!               (" ipv4 " ipv4)?
+//!
+//! neighbour  ::= "neighbour " hex " address " ip " if " ifname
+//!               " reach " hex " ureach " hex
+//!               " rxcost " uint " txcost " uint
+//!               (" rtt " millis " rttcost " uint)?
+//!               " cost " uint
+//!
+//! xroute     ::= "xroute " prefix "-" prefix
+//!               " prefix " prefix " from " prefix " metric " uint
+//!
+//! route      ::= "route " hex
+//!               " prefix " prefix " from " prefix
+//!               " installed " yesno
+//!               " id " eui64
+//!               " metric " uint " refmetric " uint
+//!               " via " ip " if " ifname
+//! ```
+//!
+//! The accepted grammar is written in a regex/BNF-ish notation:
+//!
+//! - `e1 e2` means concatenation
+//! - `e1 | e2` means choice
+//! - `e*` means zero or more
+//! - `e+` means one or more
+//! - `e?` means optional
+//! - `(e)` groups expressions
+//!
+//! # Notes
+//!
+//! - The `xroute` summary `prefix-from` token is parsed only to consume the wire format;
+//!   the later `prefix` and `from` fields are treated as the authoritative values.
+//! - The parser is intentionally strict about the documented token set. Internal defensive
+//!   fallbacks in `babeld` such as `???` are not treated as part of the formal grammar.
+//!
+
 use ipnet::IpNet;
 use memchr::memchr;
 use std::{
@@ -459,8 +527,8 @@ mod tests {
     #[test]
     fn parse_header_metadata() {
         assert_eq!(
-            parse_line("version babeld-1.13.2").unwrap(),
-            BabelLine::Header(HeaderLine::Version("babeld-1.13.2"))
+            parse_line("version babeld-1.13.1").unwrap(),
+            BabelLine::Header(HeaderLine::Version("babeld-1.13.1"))
         );
         assert_eq!(
             parse_line("host e2").unwrap(),

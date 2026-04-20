@@ -296,12 +296,6 @@ pub mod babel {
                 .arg(format!("redistribute local ip {advertised}"))
                 .arg("-C")
                 .arg("redistribute local deny")
-                // .arg("-C")
-                // .arg(format!(
-                //     "install ip {} pref-src {}",
-                //     crate::if_watcher::PREFIX,
-                //     advertised.addr()
-                // ))
                 .arg(iface)
                 .spawn()
             {
