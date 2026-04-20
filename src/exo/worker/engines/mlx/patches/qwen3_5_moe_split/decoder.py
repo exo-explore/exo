@@ -37,7 +37,6 @@ def make_split_decoder_call(
         nonlocal layer_counter
         layer_counter += 1
         lc = layer_counter
-        print(f"[rank {rank}] _split_call L={lc} begin S={x.shape[1]}", flush=True)
 
         # Step 1: ATTN does attention + residual; MOE does dummy layernorm.
         if rank == ATTN_RANK:
@@ -52,9 +51,9 @@ def make_split_decoder_call(
                 h = self.post_attention_layernorm(h) + h
             if lc % 2 == 0:
                 mx.eval(h)
-        print(f"[rank {rank}] _split_call L={lc} pre-gather-1", flush=True)
         h = gather_from(ATTN_RANK, h)
-        print(f"[rank {rank}] _split_call L={lc} post-gather-1 (lazy)", flush=True)
+        mx.eval(h)
+        print(f"[rank {rank}] L={lc} after gather-1  h.mean={h.mean().item():+.6f}", flush=True)
 
         # Step 2: MOE does MoE + residual; ATTN does dummy layernorm.
         if rank == MOE_RANK:
@@ -65,9 +64,9 @@ def make_split_decoder_call(
                 out = self.input_layernorm(out) + out
             if lc % 2 == 0:
                 mx.eval(out)
-        print(f"[rank {rank}] _split_call L={lc} pre-gather-2", flush=True)
         result = gather_from(MOE_RANK, out)
-        print(f"[rank {rank}] _split_call L={lc} done (lazy result)", flush=True)
+        mx.eval(result)
+        print(f"[rank {rank}] L={lc} after gather-2 out.mean={result.mean().item():+.6f}", flush=True)
         return result
 
     return _split_call
