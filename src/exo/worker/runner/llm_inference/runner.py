@@ -9,11 +9,7 @@ from anyio import WouldBlock
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelTask
-from exo.shared.types.chunks import (
-    ErrorChunk,
-    TokenChunk,
-    ToolCallChunk,
-)
+from exo.shared.types.chunks import GenerationChunk
 from exo.shared.types.common import CommandId, ModelId
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -35,9 +31,7 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
-    GenerationResponse,
     ModelLoadingResponse,
-    ToolCallResponse,
 )
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -285,9 +279,7 @@ class Runner:
                         self.send_task_status(task_id, TaskStatus.Complete)
                         finished.append(task_id)
                     case _:
-                        self.send_response(
-                            result, self.active_tasks[task_id].command_id
-                        )
+                        self.send_chunk(result, self.active_tasks[task_id].command_id)
 
             for task_id in finished:
                 self.active_tasks.pop(task_id, None)
@@ -320,59 +312,13 @@ class Runner:
 
         return ExitCode.AllTasksComplete
 
-    def send_response(
+    def send_chunk(
         self,
-        response: GenerationResponse | ToolCallResponse,
+        chunk: GenerationChunk,
         command_id: CommandId,
     ):
-        match response:
-            case GenerationResponse():
-                if self.device_rank == 0 and response.finish_reason == "error":
-                    self.event_sender.send(
-                        ChunkGenerated(
-                            command_id=command_id,
-                            chunk=ErrorChunk(
-                                error_message=response.text,
-                                model=self.model_id,
-                            ),
-                        )
-                    )
-
-                elif self.device_rank == 0:
-                    assert response.finish_reason not in (
-                        "error",
-                        "tool_calls",
-                        "function_call",
-                    )
-                    self.event_sender.send(
-                        ChunkGenerated(
-                            command_id=command_id,
-                            chunk=TokenChunk(
-                                model=self.model_id,
-                                text=response.text,
-                                token_id=response.token,
-                                usage=response.usage,
-                                finish_reason=response.finish_reason,
-                                stats=response.stats,
-                                logprob=response.logprob,
-                                top_logprobs=response.top_logprobs,
-                                is_thinking=response.is_thinking,
-                            ),
-                        )
-                    )
-            case ToolCallResponse():
-                if self.device_rank == 0:
-                    self.event_sender.send(
-                        ChunkGenerated(
-                            command_id=command_id,
-                            chunk=ToolCallChunk(
-                                tool_calls=response.tool_calls,
-                                model=self.model_id,
-                                usage=response.usage,
-                                stats=response.stats,
-                            ),
-                        )
-                    )
+        if self.device_rank == 0:
+            self.event_sender.send(ChunkGenerated(command_id=command_id, chunk=chunk))
 
 
 @dataclass

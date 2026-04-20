@@ -8,6 +8,7 @@ from PIL import Image
 
 from exo.api.types import AdvancedImageParams
 from exo.download.download_utils import build_model_path
+from exo.shared.types.common import ModelId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.shards import CfgShardMetadata, PipelineShardMetadata
 from exo.worker.engines.image.config import ImageModelConfig
@@ -22,13 +23,14 @@ from exo.worker.runner.bootstrap import logger
 
 
 class DistributedImageModel:
+    model_id: ModelId
     _config: ImageModelConfig
     _adapter: ModelAdapter[Any, Any]
     _runner: DiffusionRunner
 
     def __init__(
         self,
-        model_id: str,
+        model_id: ModelId,
         local_path: Path,
         shard_metadata: PipelineShardMetadata | CfgShardMetadata,
         group: Optional[mx.distributed.Group] = None,
@@ -68,6 +70,7 @@ class DistributedImageModel:
         else:
             logger.info("Single-node initialization")
 
+        self.model_id = model_id
         self._config = config
         self._adapter = adapter
         self._runner = runner
