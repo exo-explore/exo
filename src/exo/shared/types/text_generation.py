@@ -150,5 +150,5 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
                 self.frequency_penalty, card_values.frequency_penalty
             ),
         }
-        logger.info(f"Using sampling params for {self.model}:\n{updates}")
+        logger.debug(f"Using sampling params for {self.model}:\n{updates}")
         return self.model_copy(update=updates)

@@ -13,3 +13,10 @@ context_length = 262144
 
 [storage_size]
 in_bytes = 68899327465
+
+# Source: https://huggingface.co/mlx-community/Qwen3-Coder-Next-4bit/blob/main/generation_config.json
+# Source: https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
+top_k = 40

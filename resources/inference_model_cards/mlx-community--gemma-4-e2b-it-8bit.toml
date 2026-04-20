@@ -13,3 +13,10 @@ context_length = 131072
 
 [storage_size]
 in_bytes = 5899232198
+
+# Source: https://ai.google.dev/gemma/docs/core/model_card_4
+# Source: https://huggingface.co/google/gemma-4-e2b-it/blob/main/generation_config.json
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
+top_k = 64

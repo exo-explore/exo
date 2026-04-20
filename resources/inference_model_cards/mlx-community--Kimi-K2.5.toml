@@ -19,3 +19,17 @@ image_token_id = 163605
 model_type = "kimi_vl"
 weights_repo = "davehind/Kimi-K2.5-vision"
 processor_repo = "moonshotai/Kimi-K2.5"
+
+# Source: https://deepwiki.com/MoonshotAI/Kimi-K2.5/3.7-recommended-parameters
+# Source: https://unsloth.ai/docs/models/kimi-k2.5
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
+min_p = 0.01
+
+# Source: https://deepwiki.com/MoonshotAI/Kimi-K2.5/3.7-recommended-parameters
+# Source: https://unsloth.ai/docs/models/kimi-k2.5
+[sampling_defaults.non_thinking]
+temperature = 0.6
+top_p = 0.95
+min_p = 0.01

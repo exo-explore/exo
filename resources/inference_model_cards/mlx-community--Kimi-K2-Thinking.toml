@@ -13,3 +13,8 @@ context_length = 262144
 
 [storage_size]
 in_bytes = 706522120192
+
+# Source: https://huggingface.co/moonshotai/Kimi-K2-Thinking
+# Source: https://platform.kimi.ai/docs/guide/use-kimi-k2-thinking-model
+[sampling_defaults]
+temperature = 1.0

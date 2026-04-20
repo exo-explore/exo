@@ -13,3 +13,17 @@ context_length = 32768
 
 [storage_size]
 in_bytes = 698351616
+
+# Source: https://huggingface.co/Qwen/Qwen3-0.6B#best-practices
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+
+# Source: https://huggingface.co/Qwen/Qwen3-0.6B#best-practices
+[sampling_defaults.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0

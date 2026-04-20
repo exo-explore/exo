@@ -13,3 +13,10 @@ context_length = 262144
 
 [storage_size]
 in_bytes = 88814387200
+
+# Source: https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct#best-practices
+[sampling_defaults]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0

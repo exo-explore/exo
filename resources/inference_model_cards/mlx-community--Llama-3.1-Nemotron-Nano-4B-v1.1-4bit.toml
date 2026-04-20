@@ -12,3 +12,12 @@ context_length = 131072
 
 [storage_size]
 in_bytes = 2538706944
+
+# Source: https://huggingface.co/nvidia/Llama-3.1-Nemotron-Nano-4B-v1.1
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95
+
+# Source: https://huggingface.co/nvidia/Llama-3.1-Nemotron-Nano-4B-v1.1
+[sampling_defaults.non_thinking]
+temperature = 0.0

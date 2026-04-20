@@ -13,3 +13,8 @@ context_length = 131072
 
 [storage_size]
 in_bytes = 620622774272
+
+# Source: https://huggingface.co/moonshotai/Kimi-K2-Instruct
+# Source: https://platform.kimi.ai/docs/guide/kimi-k2-quickstart
+[sampling_defaults]
+temperature = 0.6

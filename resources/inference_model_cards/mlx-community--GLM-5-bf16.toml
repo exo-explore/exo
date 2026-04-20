@@ -13,3 +13,9 @@ context_length = 202752
 
 [storage_size]
 in_bytes = 1487822475264
+
+# Source: https://huggingface.co/zai-org/GLM-5
+# Source: https://docs.z.ai/api-reference/llm/chat-completion
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
