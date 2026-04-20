@@ -229,6 +229,12 @@
       if (caps.includes("vision")) {
         entry.input = ["text", "image"];
       }
+      // Mark thinking-capable models so pi surfaces its thinking-level selector
+      // for them. exo capability strings: "thinking" (model emits reasoning
+      // content) and "thinking_toggle" (user can turn it on/off).
+      if (caps.includes("thinking") || caps.includes("thinking_toggle")) {
+        entry.reasoning = true;
+      }
       if (ctxLen > 0) {
         entry.contextWindow = ctxLen;
       }
@@ -246,7 +252,11 @@
             apiKey: "exo",
             compat: {
               supportsDeveloperRole: false,
+              // exo's OpenAI surface takes a boolean `enable_thinking` toggle,
+              // not graded effort levels, so disable pi's `reasoning_effort`
+              // parameter and use the matching top-level-boolean format.
               supportsReasoningEffort: false,
+              thinkingFormat: "qwen",
             },
             models,
           },
