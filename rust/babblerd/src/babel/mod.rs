@@ -6,8 +6,8 @@ use tokio::time::Duration;
 
 use futures_lite::FutureExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::UnixStream;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::process::Command;
 use tokio::sync::{broadcast, mpsc};
 

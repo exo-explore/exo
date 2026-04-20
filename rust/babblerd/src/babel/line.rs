@@ -1,4 +1,25 @@
-use crate::babel::line::parse::parse_line;
+//! Typed representation of lines emitted by `babeld`'s local socket.
+//!
+//! This module models the inbound side of the Babel local control protocol:
+//!
+//! - [`BabelLine`] is one parsed wire line.
+//! - [`HeaderLine`] covers the connection prelude.
+//! - [`Status`] covers command completion lines such as `ok`, `bad`, and `no ...`.
+//! - [`Event`] and its associated structs cover the asynchronous routing/interface updates
+//!   emitted by `dump` and `monitor`.
+//!
+//! The sibling parser lives in [`parse`]. Its job is to turn raw socket lines into these domain
+//! types. Higher layers such as the Babel session/process code should depend on this module's
+//! types, and keep raw strings only at the actual socket boundary.
+//!
+//! More concretely:
+//!
+//! - use [`parse::parse_line`] when reading from `babeld`
+//! - reduce [`Event`] values into in-memory state
+//! - treat [`Status`] as command acknowledgements
+//! - keep outbound socket/config commands in a separate module rather than mixing them into
+//!   this inbound line model
+
 use ipnet::IpNet;
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -90,8 +111,11 @@ pub type Eui64 = macaddr::MacAddr8;
 
 /// Parser for `babeld`'s local socket output.
 ///
-/// The socket protocol implemented in `networking-related/babeld/local.c` is
-/// line-oriented ASCII. This module keeps the parsing split into two layers:
+/// This submodule is the wire-format counterpart to the parent [`crate::babel::line`] domain
+/// types. It turns raw socket text into [`BabelLine`] values.
+///
+/// The local socket protocol implemented in `networking-related/babeld/local.c` is line-oriented
+/// ASCII. The parser is split into two layers:
 ///
 /// - [`RawLines`] does zero-copy line framing over buffered bytes with [`memchr`].
 /// - [`parse_line`] parses one complete line with [`winnow`].
@@ -99,7 +123,6 @@ pub type Eui64 = macaddr::MacAddr8;
 ///
 /// `monitor` mode uses the exact same line grammar as `dump`; it simply keeps emitting event lines
 /// after the initial snapshot.
-///
 ///
 /// The accepted grammar is:
 ///
@@ -517,7 +540,7 @@ pub mod parse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::babel::line::parse::{parse_line, ParsedLines};
+    use crate::babel::line::parse::{ParsedLines, parse_line};
     use std::str::FromStr;
 
     #[test]
