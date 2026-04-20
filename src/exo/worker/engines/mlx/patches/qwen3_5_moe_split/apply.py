@@ -22,6 +22,7 @@ from mlx_lm.models.qwen3_5 import DecoderLayer, Qwen3_5TextModel
 
 from .decoder import ATTN_RANK, MOE_RANK, make_split_decoder_call
 from .model_forward import (
+    make_pipelined_dflash_speculative_forward,
     make_pipelined_model_call,
     make_pipelined_speculative_forward,
 )
@@ -240,6 +241,26 @@ def apply_qwen35_attn_moe_split_patches(
         mtp_module.speculative_forward = make_pipelined_speculative_forward(group)
     except ImportError:
         pass  # speculative not used
+
+    # DFlash has its own speculative_forward + batch generator step.
+    try:
+        from exo.worker.engines.mlx.speculative import dflash_speculative as _dfs
+        from exo.worker.engines.mlx.speculative.dflash_batch_generator import (
+            DFlashBatchGenerator,
+        )
+
+        _dfs.dflash_speculative_forward = make_pipelined_dflash_speculative_forward(group)
+        # The batch generator imports dflash_speculative_forward at module load,
+        # so also patch the attribute inside dflash_batch_generator.
+        import exo.worker.engines.mlx.speculative.dflash_batch_generator as _dfbg
+
+        _dfbg.dflash_speculative_forward = _dfs.dflash_speculative_forward
+
+        from .dflash_split import make_split_speculative_next
+
+        DFlashBatchGenerator._speculative_next = make_split_speculative_next(group)  # type: ignore[method-assign]
+    except ImportError:
+        pass  # DFlash not used
 
     if group.rank() == MOE_RANK:
         _patch_caches_for_moe_rank()

@@ -150,10 +150,19 @@ def pipelined_layer_loop(
     group,  # mx.distributed.Group
     fa_mask,  # 4D tensor or None (after return_array=True)
     ssm_mask,  # 2D tensor or None
-) -> mx.array:
+    capture_layers=None,  # set[int] | None — DFlash target_layer_ids
+):
     """Execute all decoder layers with the 2N+1 stage H0/H1 pipeline.
 
-    Returns the concatenation of the final H0 and H1 outputs.
+    Args:
+      capture_layers: if not None, snapshot each listed layer's full
+        (B, S, D) output into a returned dict. Used by DFlash to collect
+        target_hidden.
+
+    Returns:
+      (final, captured) where final = concat(out_H0, out_H1) — layer N-1's
+      full output — and captured = {T: concat(out_T_H0, out_T_H1) for T
+      in capture_layers} or {} if capture_layers is None.
     """
     rank = group.rank()
     layers = inner.layers
@@ -161,6 +170,8 @@ def pipelined_layer_loop(
     S = hidden_states.shape[1]
     mid = S // 2
     even_S = (S % 2 == 0)   # True -> single-gather fast path
+    capture: dict[int, mx.array] = {}
+    capture_set: set[int] = set(capture_layers) if capture_layers is not None else set()
 
     # Compute cache offset for mask slicing (same for all GQA layers).
     fa_cache = cache[inner.fa_idx] if cache[inner.fa_idx] is not None else None
@@ -290,6 +301,11 @@ def pipelined_layer_loop(
             h_H0_ready = attn_contrib
             x_H1 = moe_contrib
 
+            # Capture layer T-1's full output: x_H0 = out_{T-1}_H0 (set in
+            # previous B stage) and x_H1 = out_{T-1}_H1 (just set above).
+            if (T - 1) in capture_set:
+                capture[T - 1] = mx.concatenate([x_H0, x_H1], axis=1)
+
     # --- Stage 2N (drain bubble): ATTN idle. MOE moe_{N-1}(h_{N-1}_H1). ---
     last_layer = layers[N - 1]
     if rank == MOE_RANK:
@@ -308,8 +324,13 @@ def pipelined_layer_loop(
     # After the final B stage (Stage 2N-1), out_{N-1}_H0 = x_H0 (MOE's contribution
     # from Stage 2N-1 — stored in the x_H0 variable).
     out_H0 = x_H0
+    final = mx.concatenate([out_H0, out_H1], axis=1)
 
-    return mx.concatenate([out_H0, out_H1], axis=1)
+    # Capture layer N-1's output if requested (only now is out_{N-1}_H1 known).
+    if (N - 1) in capture_set:
+        capture[N - 1] = final
+
+    return final, capture
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +376,7 @@ def make_pipelined_model_call(group):  # type: ignore[no-untyped-def]
             hidden_states, cache[self.fa_idx], return_array=True
         )
         ssm_mask = create_ssm_mask(hidden_states, cache[self.ssm_idx])
-        hidden_states = pipelined_layer_loop(
+        hidden_states, _ = pipelined_layer_loop(
             self, hidden_states, cache, group, fa_mask, ssm_mask
         )
         return self.norm(hidden_states)
@@ -444,7 +465,7 @@ def make_pipelined_speculative_forward(group):  # type: ignore[no-untyped-def]
 
         # Pipelined layer loop for S>1; stock layer loop for S==1.
         if S > 1:
-            hidden_states = pipelined_layer_loop(
+            hidden_states, _ = pipelined_layer_loop(
                 inner, hidden_states, cache_list, group, fa_mask, ssm_mask
             )
         else:
@@ -485,3 +506,144 @@ def make_pipelined_speculative_forward(group):  # type: ignore[no-untyped-def]
         return pre_norm, logits
 
     return _pipelined_speculative_forward
+
+
+# ---------------------------------------------------------------------------
+# Replacement for exo.speculative.dflash_speculative.dflash_speculative_forward
+# ---------------------------------------------------------------------------
+
+
+def make_pipelined_dflash_speculative_forward(group):  # type: ignore[no-untyped-def]
+    """Build a dflash_speculative_forward replacement using pipelined_layer_loop.
+
+    Differences from make_pipelined_speculative_forward:
+    - Captures hidden states at ``target_layer_ids`` for the DFlash drafter
+    - Returns (target_hidden, pre_norm, logits) instead of (pre_norm, logits)
+    """
+
+    def _pipelined_dflash_forward(
+        model,
+        inputs: mx.array,
+        cache,
+        target_layer_ids,
+        speculative: bool = False,
+    ):  # type: ignore[no-untyped-def]
+        inner = getattr(model, "model", None) or model.language_model.model
+        text_model = getattr(model, "model", None) or model.language_model
+        S = inputs.shape[1]
+        do_spec = speculative and S > 1
+
+        if hasattr(inner, "embed_tokens"):
+            hidden_states = inner.embed_tokens(inputs)
+        else:
+            hidden_states = inputs
+
+        cache_list: list[Any] = (
+            cache if cache is not None else [None] * len(inner.layers)
+        )
+
+        # Wrap GDN caches for rollback
+        if do_spec:
+            from exo.worker.engines.mlx.speculative.speculative_cache import (
+                SpeculativeArraysCache,
+            )
+
+            for i, c in enumerate(cache_list):
+                if c is not None and hasattr(c, "cache") and not hasattr(c, "offset"):
+                    cache_list[i] = SpeculativeArraysCache(c, S=S)
+            if cache is not None:
+                for i in range(len(cache)):
+                    cache[i] = cache_list[i]
+
+        # Swap in speculative GDN kernel
+        spec_all_states: list[Any] = []
+        _orig_gdu = None
+        if do_spec:
+            from exo.worker.engines.mlx.speculative.mtp_module import (
+                _make_speculative_gdu,
+            )
+            import mlx_lm.models.qwen3_5 as _qwen3_5_mod
+
+            _orig_gdu = _qwen3_5_mod.gated_delta_update
+            _qwen3_5_mod.gated_delta_update = _make_speculative_gdu(spec_all_states)
+
+        fa_mask = create_attention_mask(
+            hidden_states, cache_list[inner.fa_idx], return_array=(S > 1)
+        )
+        ssm_mask = create_ssm_mask(hidden_states, cache_list[inner.ssm_idx])
+
+        # Collect per-GDN-layer data for post-loop conv_input reconstruction
+        gdn_spec_data: list[Any] = []
+        if do_spec:
+            from exo.worker.engines.mlx.speculative.speculative_cache import (
+                SpeculativeArraysCache as _SAC,
+            )
+            for layer, c in zip(inner.layers, cache_list):
+                if layer.is_linear and isinstance(c, _SAC):
+                    pre_conv = c[0]
+                    if pre_conv is None:
+                        gdn = layer.linear_attn
+                        pre_conv = mx.zeros(
+                            (
+                                hidden_states.shape[0],
+                                gdn.conv_kernel_size - 1,
+                                gdn.conv_dim,
+                            ),
+                            dtype=hidden_states.dtype,
+                        )
+                    gdn_spec_data.append((pre_conv, c, layer))
+
+        # Run layer loop; capture hidden states at target_layer_ids.
+        if S > 1:
+            hidden_states, layer_hiddens = pipelined_layer_loop(
+                inner,
+                hidden_states,
+                cache_list,
+                group,
+                fa_mask,
+                ssm_mask,
+                capture_layers=set(target_layer_ids),
+            )
+        else:
+            # S==1 path: stock loop with manual capture
+            layer_hiddens = {}
+            target_set = set(target_layer_ids)
+            for i, (layer, c) in enumerate(zip(inner.layers, cache_list)):
+                mask = ssm_mask if layer.is_linear else fa_mask
+                hidden_states = layer(hidden_states, mask=mask, cache=c)
+                if i in target_set:
+                    layer_hiddens[i] = hidden_states
+
+        # Post-loop: restore GDN kernel, reconstruct conv_input for rollback
+        if do_spec:
+            import mlx_lm.models.qwen3_5 as _qwen3_5_mod
+
+            _qwen3_5_mod.gated_delta_update = _orig_gdu
+
+            gdn_idx = 0
+            for pre_conv, spec_cache, parent_layer in gdn_spec_data:
+                if gdn_idx < len(spec_all_states):
+                    spec_cache.all_states = spec_all_states[gdn_idx]
+                gdn_idx += 1
+                # conv_input reconstruction is skipped under the split — the
+                # pipelined path doesn't preserve intermediate layer inputs
+                # the way the stock forward does. Rollback to an earlier
+                # position mid-prefill would need this; for DFlash verify
+                # (where rollback only trims cache offset and GDN state) it
+                # isn't exercised.
+
+        # Concatenate target_hidden from captured layers
+        selected = [layer_hiddens[i] for i in target_layer_ids]
+        target_hidden = mx.concatenate(selected, axis=-1)
+
+        pre_norm = hidden_states
+        normed = inner.norm(hidden_states)
+
+        if hasattr(text_model, "lm_head"):
+            logits = text_model.lm_head(normed)
+        else:
+            logits = inner.embed_tokens.as_linear(normed)
+
+        return target_hidden, pre_norm, logits
+
+    return _pipelined_dflash_forward
