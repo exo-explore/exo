@@ -366,14 +366,27 @@ pub mod babel {
                 }
             }
             tracing::info!("babeld ok");
-            if Self::query(&mut babel_lines, &mut writer, &send, "monitor\n")
+            /* TODO(evan): push rather than pull
+            if Self::query(&mut babel_lines, &mut writer, "monitor\n")
                 .await?
                 .is_none()
             {
                 return Ok(());
             };
+            */
+
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tokio::select! {
+                    _ = interval.tick() => {
+                        if Self::query(&mut babel_lines, &mut writer, &send, "dump\n")
+                            .await?
+                            .is_none()
+                        {
+                            return Ok(());
+                        }
+                    },
                     babble = recv.recv() => {
                         tracing::debug!("[babble] {:?}", babble);
                         let Some(babble) = babble else {
