@@ -7,12 +7,10 @@ use crate::Result;
 
 pub mod command;
 pub mod line;
-pub mod process;
-pub mod session;
+pub mod runtime;
 pub mod state;
 
-use process::BabeldProcess;
-use session::BabelSession;
+use runtime::BabelRuntime;
 
 /// An EUI-64 type aliased to [`macaddr::MacAddr8`].
 pub type Eui64 = macaddr::MacAddr8;
@@ -60,9 +58,8 @@ pub async fn babel(
         }
     };
 
-    let babel = BabeldProcess::spawn(my_range, &iface).await?;
-    let session = BabelSession::connect(send).await?;
-    let res1 = session.run(recv).await;
-    let res2 = babel.shutdown().await;
+    let mut runtime = BabelRuntime::spawn(my_range, &iface, send).await?;
+    let res1 = runtime.run(recv).await;
+    let res2 = runtime.shutdown().await;
     res1.and(res2)
 }

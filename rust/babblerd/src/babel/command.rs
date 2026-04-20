@@ -8,7 +8,7 @@
 //! The scope here is intentionally narrow: this module only models the local-socket
 //! commands that `babblerd` currently issues at runtime.
 //!
-//! NOTE: spawn-time `-C` configuration strings are still assembled in the process layer for now.
+//! NOTE: spawn-time `-C` configuration strings are still assembled in the runtime layer for now.
 //!       If you want to push the protocol model further, the next obvious extraction is a typed
 //!       configuration/config-statement layer rather than more runtime socket commands.
 

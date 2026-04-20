@@ -17,10 +17,10 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
+use crate::babel::Eui64;
 use crate::babel::line::{
     Event, EventKind, InterfaceEvent, NeighbourEvent, RouteEvent, XRouteEvent,
 };
-use crate::babel::Eui64;
 use ipnet::IpNet;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -214,10 +214,10 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     use super::{BabelState, InterfaceState, XRouteKey};
+    use crate::babel::Eui64;
     use crate::babel::line::{
         Event, EventKind, InterfaceEvent, NeighbourEvent, RouteEvent, XRouteEvent,
     };
-    use crate::babel::Eui64;
     use ipnet::IpNet;
 
     fn net(s: &str) -> IpNet {

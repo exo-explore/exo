@@ -9,7 +9,7 @@
 //!   emitted by `dump` and `monitor`.
 //!
 //! The sibling parser lives in [`parse`]. Its job is to turn raw socket lines into these domain
-//! types. Higher layers such as the Babel session/process code should depend on this module's
+//! types. Higher layers such as the Babel runtime/state code should depend on this module's
 //! types, and keep raw strings only at the actual socket boundary.
 //!
 //! More concretely:
@@ -176,11 +176,11 @@ pub struct RouteEvent {
 /// - The parser is intentionally strict about the documented token set. Internal defensive
 ///   fallbacks in `babeld` such as `???` are not treated as part of the formal grammar.
 pub mod parse {
+    use crate::babel::Eui64;
     use crate::babel::line::{
         BabelLine, Event, EventKind, HeaderLine, InterfaceEvent, NeighbourEvent, RouteEvent,
         Status, XRouteEvent,
     };
-    use crate::babel::Eui64;
     use ipnet::IpNet;
     use memchr::memchr;
     use std::{
@@ -539,7 +539,7 @@ pub mod parse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::babel::line::parse::{parse_line, ParsedLines};
+    use crate::babel::line::parse::{ParsedLines, parse_line};
     use std::str::FromStr;
 
     #[test]
