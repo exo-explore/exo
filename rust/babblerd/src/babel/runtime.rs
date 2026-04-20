@@ -14,19 +14,21 @@
 use std::fs::Permissions;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
+use std::sync::Arc;
 
 use futures_lite::FutureExt;
 use ipnet::Ipv6Net;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::UnixStream;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::process::{Child, Command};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::Duration;
 
+use crate::babel::Babble;
 use crate::babel::command::BabelCommand;
 use crate::babel::line::{self, BabelLine, Status};
-use crate::babel::Babble;
+use crate::babel::state::BabelState;
 use crate::{BabbleError, Result};
 
 #[cfg(target_os = "macos")]
@@ -42,7 +44,8 @@ pub(crate) struct BabelRuntime {
     proc: Child,
     read: Lines<BufReader<OwnedReadHalf>>,
     write: OwnedWriteHalf,
-    send: broadcast::Sender<String>,
+    line_send: broadcast::Sender<String>,
+    state_send: watch::Sender<Arc<BabelState>>,
 }
 
 impl Drop for BabelRuntime {
@@ -64,11 +67,12 @@ impl Drop for BabelRuntime {
 }
 
 impl BabelRuntime {
-    #[tracing::instrument(skip(send))]
+    #[tracing::instrument(skip(line_send, state_send))]
     pub(crate) async fn spawn(
         advertised: Ipv6Net,
         iface: &str,
-        send: broadcast::Sender<String>,
+        line_send: broadcast::Sender<String>,
+        state_send: watch::Sender<Arc<BabelState>>,
     ) -> Result<Self> {
         tokio::fs::create_dir_all(PRIVATE_DIR).await?;
         // TODO: remove this magic constant (and magic constants in general)
@@ -121,7 +125,8 @@ impl BabelRuntime {
             proc,
             read: BufReader::new(reader).lines(),
             write,
-            send,
+            line_send,
+            state_send,
         };
 
         if let Err(err) = runtime.await_ready().await {
@@ -168,7 +173,10 @@ impl BabelRuntime {
                 tracing::warn!("babeld closed unexpectedly");
                 return Ok(None);
             };
-            let status = self.observe_line(line)?;
+            let status = self.observe_line(line)?.and_then(|parsed| match parsed {
+                BabelLine::Status(status) => Some(status),
+                _ => None,
+            });
             if let Some(status) = status {
                 match &status {
                     Status::Ok => {}
@@ -181,16 +189,13 @@ impl BabelRuntime {
     }
 
     #[tracing::instrument(skip(self))]
-    fn observe_line(&self, line: String) -> io::Result<Option<Status>> {
+    fn observe_line(&self, line: String) -> io::Result<Option<BabelLine>> {
         tracing::info!("[babel] {:?}", line);
 
-        let status = match line::parse::parse_line(&line) {
+        let parsed = match line::parse::parse_line(&line) {
             Ok(parsed) => {
                 tracing::info!("[parsed] {:?}", parsed);
-                match parsed {
-                    BabelLine::Status(status) => Some(status),
-                    _ => None,
-                }
+                Some(parsed)
             }
             Err(err) => {
                 tracing::error!(error=%err, "failed to parse babeld line");
@@ -198,10 +203,38 @@ impl BabelRuntime {
             }
         };
 
-        self.send
+        self.line_send
             .send(line)
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "babel listeners dropped"))?;
-        Ok(status)
+        Ok(parsed)
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn dump_snapshot(&mut self) -> io::Result<Option<Status>> {
+        let mut snapshot = BabelState::new();
+        self.write
+            .write_all(BabelCommand::Dump.encode().as_bytes())
+            .await?;
+        loop {
+            let Some(line) = self.read.next_line().await? else {
+                tracing::warn!("babeld closed unexpectedly");
+                return Ok(None);
+            };
+            match self.observe_line(line)? {
+                Some(BabelLine::Event(event)) => snapshot.apply(event),
+                Some(BabelLine::Status(status)) => {
+                    match &status {
+                        Status::Ok => {
+                            self.state_send.send_replace(Arc::new(snapshot));
+                        }
+                        Status::Bad => tracing::warn!("malformed message sent to babeld"),
+                        Status::No(rest) => tracing::warn!("message rejected: {rest:?}"),
+                    }
+                    return Ok(Some(status));
+                }
+                Some(BabelLine::Header(_)) | None => {}
+            }
+        }
     }
 
     #[tracing::instrument(skip_all)]
@@ -217,7 +250,7 @@ impl BabelRuntime {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    if self.query(&BabelCommand::Dump).await?.is_none() {
+                    if self.dump_snapshot().await?.is_none() {
                         return Ok(());
                     }
                 },
@@ -237,7 +270,7 @@ impl BabelRuntime {
                     let Ok(Some(line)) = line else {
                         break;
                     };
-                    if self.observe_line(line)?.is_some() {
+                    if matches!(self.observe_line(line)?, Some(BabelLine::Status(_))) {
                         tracing::debug!("ignoring unsolicited status line from babeld");
                     }
                 },

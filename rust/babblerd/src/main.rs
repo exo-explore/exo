@@ -1,7 +1,10 @@
-use std::{fs::Permissions, io, net::Ipv6Addr, os::unix::fs::PermissionsExt};
+use std::{fs::Permissions, io, net::Ipv6Addr, os::unix::fs::PermissionsExt, sync::Arc};
 
 use babblerd::tun::UtunDevice;
-use babblerd::{babel::handle_listener, if_watcher};
+use babblerd::{
+    babel::{BabelState, handle_listener},
+    if_watcher,
+};
 use color_eyre::eyre::{WrapErr, eyre};
 use ipnet::Ipv6Net;
 use n0_watcher::Watcher;
@@ -9,7 +12,7 @@ use netwatch::netmon;
 use tokio::{
     net::UnixListener,
     signal,
-    sync::{broadcast, mpsc},
+    sync::{broadcast, mpsc, watch},
     task::{JoinHandle, JoinSet},
 };
 
@@ -29,8 +32,17 @@ enum State {
         utun: UtunDevice, // TODO: either rename it to TUN because its cross-platform OR if this is a macOS-only hack then figure out better cross-platform abstractions
         babel: JoinHandle<babblerd::Result<()>>,
         watcher: JoinHandle<babblerd::Result<()>>,
+        state_logger: JoinHandle<()>,
         listeners: JoinSet<()>,
     },
+}
+
+async fn log_babel_state(mut recv: watch::Receiver<Arc<BabelState>>) {
+    while recv.changed().await.is_ok() {
+        let snapshot = recv.borrow_and_update();
+        tracing::info!(state = ?*snapshot, "babel state snapshot updated");
+    }
+    tracing::info!("babel state stream closed");
 }
 
 #[tokio::main]
@@ -85,6 +97,8 @@ async fn inner_main() -> color_eyre::Result<()> {
                         let sock = sock?.0;
                         tracing::info!("starting babeld");
                         let (br_send, br_recv) = broadcast::channel(1024);
+                        let (state_send, state_recv) =
+                            watch::channel(Arc::new(BabelState::new()));
                         let (mp_send, mp_recv) = mpsc::channel(32);
 
                         // node id is a PREFIX/64, NODE_ID/48 and an INTERFACE_ID/16
@@ -104,11 +118,12 @@ async fn inner_main() -> color_eyre::Result<()> {
                             utun.ifname(),
                             advertised
                         );
-                        let babel = tokio::spawn(babblerd::babel(advertised, mp_recv, br_send));
+                        let babel = tokio::spawn(babblerd::babel(advertised, mp_recv, br_send, state_send));
                         let watcher = tokio::spawn(babblerd::watch(my_range, mp_send));
+                        let state_logger = tokio::spawn(log_babel_state(state_recv));
                         let mut listeners = JoinSet::new();
                         listeners.spawn(handle_listener(sock, br_recv.resubscribe()));
-                        State::Active { recv: br_recv, utun, babel, watcher, listeners }
+                        State::Active { recv: br_recv, utun, babel, watcher, state_logger, listeners }
                     }
                 }
             }
@@ -117,6 +132,7 @@ async fn inner_main() -> color_eyre::Result<()> {
                 utun,
                 mut babel,
                 mut watcher,
+                state_logger,
                 mut listeners,
             } => {
                 tokio::select! {
@@ -127,6 +143,8 @@ async fn inner_main() -> color_eyre::Result<()> {
                         if let Ok(e) = watcher.await {
                             e.wrap_err("while ctrl-c")?;
                         }
+                        state_logger.abort();
+                        let _ = state_logger.await;
                         babel.await?.wrap_err("while ctrl-c")?;
                         while let Some(res) = listeners.join_next().await {
                             res.wrap_err("while ctrl-c")?;
@@ -144,20 +162,24 @@ async fn inner_main() -> color_eyre::Result<()> {
                             if let Ok(e) = watcher.await {
                                 e.wrap_err("while closing listeners")?;
                             }
+                            state_logger.abort();
+                            let _ = state_logger.await;
                             babel.await?.wrap_err("while closing listeners")?;
 
                             State::Idle
                         } else {
-                            State::Active { recv, utun, babel, watcher, listeners }
+                            State::Active { recv, utun, babel, watcher, state_logger, listeners }
                         }
                     }
                     sock = public_socket.accept() => {
                         listeners.spawn(handle_listener(sock?.0, recv.resubscribe()));
-                        State::Active { recv, utun, babel, watcher, listeners }
+                        State::Active { recv, utun, babel, watcher, state_logger, listeners }
                     }
                     res = &mut watcher => {
                         res??;
                         drop(recv);
+                        state_logger.abort();
+                        let _ = state_logger.await;
                         babel.await?.wrap_err("while closing watcher")?;
                         while let Some(res2) = listeners.join_next().await {
                             res2.wrap_err("while closing watcher")?;
@@ -171,6 +193,8 @@ async fn inner_main() -> color_eyre::Result<()> {
                         if let Ok(e) = watcher.await {
                             e.wrap_err("while closing babeld")?;
                         }
+                        state_logger.abort();
+                        let _ = state_logger.await;
                         while let Some(res2) = listeners.join_next().await {
                             res2.wrap_err("while closing babeld")?;
                         }
