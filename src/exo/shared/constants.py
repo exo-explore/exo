@@ -4,13 +4,13 @@ from pathlib import Path
 
 from exo.utils.dashboard_path import find_dashboard, find_resources
 
-_EXO_HOME_ENV = os.environ.get("EXO_HOME", None)
+_EXO_HOME_ENV = os.environ.get("EXO_HOME", "")
 
 
 def _get_xdg_dir(env_var: str, fallback: str) -> Path:
     """Get XDG directory, prioritising EXO_HOME environment variable if its set. On non-Linux platforms, default to ~/.exo."""
 
-    if _EXO_HOME_ENV is not None:
+    if _EXO_HOME_ENV != "":
         return Path.home() / _EXO_HOME_ENV
 
     if sys.platform != "linux":
