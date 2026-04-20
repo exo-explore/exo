@@ -19,6 +19,8 @@ tun-rs = "2.8.1"                                                       # if you 
 # parsing
 memchr = "2.8"
 winnow = "1.0"
+thiserror = "2.0"
+macaddr = "1.0"
 
 [lints]
 workspace = true

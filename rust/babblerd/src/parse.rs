@@ -1,11 +1,10 @@
 use std::{
-    fmt,
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
 };
-
 use ipnet::IpNet;
 use memchr::memchr;
+use thiserror::Error;
 use winnow::{
     ascii::{dec_uint, space1},
     combinator::{alt, eof, opt, preceded, terminated},
@@ -97,49 +96,16 @@ pub(crate) struct RouteEvent<'a> {
     pub(crate) ifname: &'a str,
 }
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub(crate) enum ParseError {
-    InvalidUtf8(std::str::Utf8Error),
+    #[error("invalid utf8 in babeld output: {0}")]
+    InvalidUtf8(#[from] std::str::Utf8Error),
+    #[error("failed to parse babeld line {line:?}: {error}")]
     Syntax { line: String, error: String },
 }
 
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidUtf8(err) => write!(f, "invalid utf8 in babeld output: {err}"),
-            Self::Syntax { line, error } => {
-                write!(f, "failed to parse babeld line {line:?}: {error}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ParseError {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct Eui64(pub(crate) [u8; 8]);
-
-impl FromStr for Eui64 {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut out = [0u8; 8];
-        let mut parts = s.split(':');
-        for byte in &mut out {
-            let Some(part) = parts.next() else {
-                return Err("expected 8-byte EUI-64");
-            };
-            if part.len() != 2 {
-                return Err("invalid EUI-64 byte width");
-            }
-            *byte = u8::from_str_radix(part, 16).map_err(|_| "invalid EUI-64 hex")?;
-        }
-        if parts.next().is_some() {
-            return Err("expected exactly 8 EUI-64 bytes");
-        }
-        Ok(Self(out))
-    }
-}
+/// An EUI-64 type aliased to [`macaddr::MacAddr8`].
+pub type Eui64 = macaddr::MacAddr8;
 
 /// Zero-copy line framing for already-buffered socket output.
 ///
@@ -507,7 +473,7 @@ mod tests {
         );
         assert_eq!(
             parse_line("my-id 02:00:00:00:00:00:00:01").unwrap(),
-            BabelLine::Header(HeaderLine::MyId(Eui64([2, 0, 0, 0, 0, 0, 0, 1])))
+            BabelLine::Header(HeaderLine::MyId(Eui64::from([2, 0, 0, 0, 0, 0, 0, 1])))
         );
     }
 
@@ -597,7 +563,7 @@ mod tests {
                 prefix: IpNet::from_str("fd00::1/128").unwrap(),
                 from: IpNet::from_str("fd00::/64").unwrap(),
                 installed: true,
-                id: Eui64([2, 0, 0, 0, 0, 0, 0, 1]),
+                id: Eui64::from([2, 0, 0, 0, 0, 0, 0, 1]),
                 metric: 96,
                 refmetric: 0,
                 via: IpAddr::from_str("fe80::2").unwrap(),
