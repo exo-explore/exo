@@ -6,13 +6,15 @@ use tokio::time::Duration;
 
 use futures_lite::FutureExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::UnixStream;
 use tokio::process::Command;
 use tokio::sync::{broadcast, mpsc};
 
+use crate::babel::line::{BabelLine, Status};
 use crate::{BabbleError, Result};
 
+pub mod command;
 pub mod line;
 
 #[tracing::instrument(skip_all)]
@@ -113,33 +115,41 @@ impl BabeldProcess {
         read: &mut Lines<BufReader<OwnedReadHalf>>,
         write: &mut OwnedWriteHalf,
         send: &broadcast::Sender<String>,
-        cmd: &str,
+        cmd: &command::BabelCommand,
     ) -> io::Result<Option<bool>> {
-        write.write_all(cmd.as_bytes()).await?;
+        let encoded = cmd.to_string();
+        write.write_all(encoded.as_bytes()).await?;
+        write.write_all(b"\n").await?;
         loop {
+            // Ok(None) is only ever returned when stream is closed.
+            // When parsing errors occur from babeld, those Ok(None)'s are ignored in the loop
+
             let Some(line) = read.next_line().await? else {
                 tracing::warn!("babeld closed unexpectedly");
                 return Ok(None);
             };
             tracing::info!("[babel] {:?}", line);
 
-            // TODO: replace later with propper parsing
-            match line::parse::parse_line(&line) {
-                Ok(line) => tracing::info!("[parsed] {:?}", line),
-                Err(err) => tracing::error!(error=%err, "failed to parse babeld line"),
-            }
-
-            let ret = match line.as_str() {
-                "ok" => Ok(Some(true)),
-                "bad" => {
-                    tracing::warn!("malformed message sent to babeld");
-                    Ok(Some(false))
+            let ret = match line::parse::parse_line(&line) {
+                Ok(parsed) => {
+                    tracing::info!("[parsed] {:?}", parsed);
+                    match parsed {
+                        BabelLine::Status(Status::Ok) => Ok(Some(true)),
+                        BabelLine::Status(Status::Bad) => {
+                            tracing::warn!("malformed message sent to babeld");
+                            Ok(Some(false))
+                        }
+                        BabelLine::Status(Status::No(rest)) => {
+                            tracing::warn!("message rejected: {rest:?}");
+                            Ok(Some(false))
+                        }
+                        _ => Ok(None),
+                    }
                 }
-                _ if line.starts_with("no") => {
-                    tracing::warn!("message rejected");
-                    Ok(Some(false))
+                Err(err) => {
+                    tracing::error!(error=%err, "failed to parse babeld line");
+                    Ok(None)
                 }
-                _ => Ok(None),
             };
             let Ok(_) = send.send(line) else {
                 return Ok(None);
@@ -168,7 +178,7 @@ impl BabeldProcess {
         }
         tracing::info!("babeld ok");
         /* TODO(evan): push rather than pull
-        if Self::query(&mut babel_lines, &mut writer, "monitor\n")
+        if Self::query(&mut babel_lines, &mut writer, &command::BabelCommand::Monitor)
             .await?
             .is_none()
         {
@@ -181,7 +191,7 @@ impl BabeldProcess {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    if Self::query(&mut babel_lines, &mut writer, &send, "dump\n")
+                    if Self::query(&mut babel_lines, &mut writer, &send, &command::BabelCommand::Dump)
                         .await?
                         .is_none()
                     {
@@ -195,7 +205,8 @@ impl BabeldProcess {
                     };
                     match babble {
                         Babble::AddIface(iface) => {
-                            Self::query(&mut babel_lines, &mut writer, &send, format!("interface {iface}\n").as_ref()).await?;
+                            let cmd = command::BabelCommand::Interface(iface.into_boxed_str());
+                            Self::query(&mut babel_lines, &mut writer, &send, &cmd).await?;
                         }
                     }
                 },
