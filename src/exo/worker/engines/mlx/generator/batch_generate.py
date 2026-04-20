@@ -254,6 +254,8 @@ class ExoBatchGenerator:
             make_logits_processors(
                 repetition_penalty=task_params.repetition_penalty,
                 repetition_context_size=task_params.repetition_context_size,
+                presence_penalty=task_params.presence_penalty,
+                frequency_penalty=task_params.frequency_penalty,
             )
         )
         if is_bench:

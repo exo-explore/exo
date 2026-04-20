@@ -594,6 +594,8 @@ def mlx_generate(
         make_logits_processors(
             repetition_penalty=task.repetition_penalty,
             repetition_context_size=task.repetition_context_size,
+            presence_penalty=task.presence_penalty,
+            frequency_penalty=task.frequency_penalty,
         )
     )
     if is_bench:
