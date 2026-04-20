@@ -193,6 +193,7 @@ def pipelined_layer_loop(
         contribution = attention(layer_0, x_H0, mask_for(layer_0, "H0"), c0)
     else:
         contribution = _zeros_like(x_H0)
+    mx.eval(contribution)
     gathered = mx.distributed.all_gather(contribution, group=group)
     mx.eval(gathered)
     h_H0_ready = gathered[ATTN_RANK : ATTN_RANK + 1]
@@ -216,6 +217,7 @@ def pipelined_layer_loop(
                     my_out = attention(layer_T, x_H1, mask_for(layer_T, "H1"), cT)
                 else:
                     my_out = moe(layer_T, h_H0_ready)
+                mx.eval(my_out)
                 gathered = mx.distributed.all_gather(my_out, group=group)
                 mx.eval(gathered)
                 attn_contrib = gathered[ATTN_RANK : ATTN_RANK + 1]
@@ -227,6 +229,8 @@ def pipelined_layer_loop(
                 else:
                     attn_side = _zeros_like(x_H1)
                     moe_side = moe(layer_T, h_H0_ready)
+                mx.eval(attn_side)
+                mx.eval(moe_side)
                 attn_contrib, moe_contrib = _gather_two(
                     rank, attn_side, moe_side, attn_side, moe_side, group
                 )
@@ -245,6 +249,7 @@ def pipelined_layer_loop(
                     my_out = attention(layer_T, x_H0, mask_for(layer_T, "H0"), cT)
                 else:
                     my_out = moe(prev_layer, h_H1_pending)
+                mx.eval(my_out)
                 gathered = mx.distributed.all_gather(my_out, group=group)
                 mx.eval(gathered)
                 attn_contrib = gathered[ATTN_RANK : ATTN_RANK + 1]
@@ -256,6 +261,8 @@ def pipelined_layer_loop(
                 else:
                     attn_side = _zeros_like(x_H0)
                     moe_side = moe(prev_layer, h_H1_pending)
+                mx.eval(attn_side)
+                mx.eval(moe_side)
                 attn_contrib, moe_contrib = _gather_two(
                     rank, attn_side, moe_side, attn_side, moe_side, group
                 )
@@ -271,6 +278,7 @@ def pipelined_layer_loop(
         contribution = moe(last_layer, h_H1_pending)
     else:
         contribution = _zeros_like(h_H1_pending)
+    mx.eval(contribution)
     gathered = mx.distributed.all_gather(contribution, group=group)
     mx.eval(gathered)
     out_H1 = gathered[MOE_RANK : MOE_RANK + 1]
