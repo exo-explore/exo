@@ -1,10 +1,18 @@
-"""Rank-aware DFlashBatchGenerator._speculative_next for the attn/MoE split.
+"""Rank-aware DFlashBatchGenerator patches for the attn/MoE split.
 
 Both ranks draft independently, then sync on MOE_RANK's drafts before the
 pipelined verify forward. Acceptance is deterministic at temp=0 (both ranks
 get the same verify_logits via the pipelined forward, so both compute the
 same n_accepted). At temp>0, MOE_RANK's n_accepted wins via all_gather so
 stochastic decisions stay consistent.
+
+Also replaces `_first_step_capture` — the stock one relies on a
+`_CapturingLayer` wrapper that wraps `inner.layers[i]` and captures during
+the layer's `__call__`. Our pipelined_layer_loop bypasses `layer.__call__`
+entirely (it calls `layer.self_attn` / `layer.linear_attn` / `layer.mlp`
+directly), so the capture never fires. We fix this by running our pipelined
+dflash forward explicitly to compute target_hidden from the current cache
+state on the last token.
 """
 
 import time
@@ -34,7 +42,17 @@ def make_split_speculative_next(group):  # type: ignore[no-untyped-def]
 
         last_target_hidden = self._last_target_hidden.get(uid)
         if last_target_hidden is None:
+            print(
+                f"[rank {rank}] DFlash: NO target_hidden -> fallback to super()._next() "
+                f"(y_val={y_val})",
+                flush=True,
+            )
             return super(type(self), self)._next()
+        print(
+            f"[rank {rank}] DFlash speculative cycle "
+            f"(y_val={y_val}, target_hidden.shape={last_target_hidden.shape})",
+            flush=True,
+        )
 
         bs = self.drafter.block_size
         verify_len = self.verify_len
