@@ -2,7 +2,7 @@ use std::{fs::Permissions, io, net::Ipv6Addr, os::unix::fs::PermissionsExt};
 
 use babblerd::tun::UtunDevice;
 use babblerd::{babel::handle_listener, if_watcher};
-use color_eyre::eyre::{eyre, WrapErr};
+use color_eyre::eyre::{WrapErr, eyre};
 use ipnet::Ipv6Net;
 use n0_watcher::Watcher;
 use netwatch::netmon;

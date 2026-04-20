@@ -14,7 +14,11 @@ rand = "0.10.0"
 tokio = { workspace = true, features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
-tun-rs = "2.8.1" # if you update, it causes transitive dependeny clashes that need patch.crates-io fixes or whatnot, too long to do now :)
+tun-rs = "2.8.1"                                                       # if you update, it causes transitive dependeny clashes that need patch.crates-io fixes or whatnot, too long to do now :)
+
+# parsing
+memchr = "2.8"
+winnow = "1.0"
 
 [lints]
 workspace = true

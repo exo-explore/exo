@@ -1,5 +1,5 @@
-use std::net::Ipv6Addr;
 use ipnet::Ipv6Net;
+use std::net::Ipv6Addr;
 use tun_rs::{DeviceBuilder, SyncDevice};
 
 /// Holds the utun device open for the lifetime of the daemon.

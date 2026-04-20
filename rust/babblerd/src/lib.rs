@@ -1,8 +1,9 @@
+pub(crate) mod parse;
 pub mod tun;
 
 pub use babel::{babel, handle_listener};
 pub use error::{BabbleError, Result};
-pub use if_watcher::{watch, PREFIX};
+pub use if_watcher::{PREFIX, watch};
 pub mod error {
     use std::io;
 
@@ -44,8 +45,8 @@ pub mod if_watcher {
     use netwatch::interfaces::{Interface, IpNet};
     use tokio::sync::mpsc;
 
-    use crate::{babel::Babble, BabbleError, Result};
     use crate::ip_manager::remove_ip;
+    use crate::{BabbleError, Result, babel::Babble};
 
     pub const PREFIX: Ipv6Net = Ipv6Net::new_assert(
         // TODO: why is the prefix 48? what does the 0xffff achieve there??
@@ -246,8 +247,8 @@ pub mod babel {
 
     use futures_lite::FutureExt;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-    use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
     use tokio::net::UnixStream;
+    use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
     use tokio::process::Command;
     use tokio::sync::{broadcast, mpsc};
 

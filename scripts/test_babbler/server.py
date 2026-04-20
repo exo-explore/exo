@@ -3,9 +3,14 @@ import argparse
 import socket
 import sys
 
+
 def main() -> int:
-    p = argparse.ArgumentParser(description="IPv6 UDP server bound to a specific local address")
-    p.add_argument("--bind", required=True, help="Local IPv6 address to bind to, e.g. fde0:...")
+    p = argparse.ArgumentParser(
+        description="IPv6 UDP server bound to a specific local address"
+    )
+    p.add_argument(
+        "--bind", required=True, help="Local IPv6 address to bind to, e.g. fde0:..."
+    )
     p.add_argument("--port", type=int, default=45679, help="UDP port to listen on")
     p.add_argument("--reply", default="ok", help="Reply prefix")
     args = p.parse_args()
@@ -24,6 +29,7 @@ def main() -> int:
     s.sendto(out, peer)
     print(f"sent={out!r} to={peer}")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
