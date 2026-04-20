@@ -191,19 +191,18 @@ def pipelined_layer_loop(
     # --- Stage 0 (startup bubble): ATTN attn_0(H0). MOE idle. ---
     layer_0 = layers[0]
     c0 = cache[0]
-    print(f"[rank {rank}] stage 0 pre-compute", flush=True)
     if rank == ATTN_RANK:
         contribution = attention(layer_0, x_H0, mask_for(layer_0, "H0"), c0)
     else:
         contribution = _zeros_like(x_H0)
-    print(f"[rank {rank}] stage 0 pre-eval-contribution", flush=True)
     mx.eval(contribution)
-    print(f"[rank {rank}] stage 0 pre-all_gather", flush=True)
     gathered = mx.distributed.all_gather(contribution, group=group)
-    print(f"[rank {rank}] stage 0 post-all_gather (lazy)", flush=True)
     mx.eval(gathered)
-    print(f"[rank {rank}] stage 0 post-eval-gathered", flush=True)
     h_H0_ready = gathered[ATTN_RANK : ATTN_RANK + 1]
+    print(
+        f"[rank {rank}] stage 0 (T=0 startup) h_H0.mean={h_H0_ready.mean().item():+.6f}",
+        flush=True,
+    )
 
     # --- Stages 1..2N-1: main pipeline ---
     # Even S: attn_side and moe_side have the same shape (mid == S-mid), so
@@ -214,7 +213,6 @@ def pipelined_layer_loop(
     for stage in range(1, 2 * N):
         is_B_stage = (stage % 2 == 1)
         T = stage // 2
-        print(f"[rank {rank}] stage {stage} (T={T}, {'B' if is_B_stage else 'A'}) begin", flush=True)
 
         if is_B_stage:
             # Stage 2T+1: ATTN attn_T(H1) (B, S-mid, D) | MOE moe_T(h_T_H0) (B, mid, D)
@@ -225,12 +223,9 @@ def pipelined_layer_loop(
                     my_out = attention(layer_T, x_H1, mask_for(layer_T, "H1"), cT)
                 else:
                     my_out = moe(layer_T, h_H0_ready)
-                print(f"[rank {rank}] stage {stage} pre-eval-my_out", flush=True)
                 mx.eval(my_out)
-                print(f"[rank {rank}] stage {stage} pre-all_gather", flush=True)
                 gathered = mx.distributed.all_gather(my_out, group=group)
                 mx.eval(gathered)
-                print(f"[rank {rank}] stage {stage} post-eval-gathered", flush=True)
                 attn_contrib = gathered[ATTN_RANK : ATTN_RANK + 1]
                 moe_contrib = gathered[MOE_RANK : MOE_RANK + 1]
             else:
@@ -240,16 +235,19 @@ def pipelined_layer_loop(
                 else:
                     attn_side = _zeros_like(x_H1)
                     moe_side = moe(layer_T, h_H0_ready)
-                print(f"[rank {rank}] stage {stage} pre-eval-sides", flush=True)
                 mx.eval(attn_side)
                 mx.eval(moe_side)
-                print(f"[rank {rank}] stage {stage} pre-gather_two", flush=True)
                 attn_contrib, moe_contrib = _gather_two(
                     rank, attn_side, moe_side, attn_side, moe_side, group
                 )
                 mx.eval(attn_contrib)
                 mx.eval(moe_contrib)
-                print(f"[rank {rank}] stage {stage} post-gather_two", flush=True)
+            print(
+                f"[rank {rank}] stage {stage} (T={T} B) "
+                f"h_H1.mean={attn_contrib.mean().item():+.6f} "
+                f"out_H0.mean={moe_contrib.mean().item():+.6f}",
+                flush=True,
+            )
 
             h_H1_pending = attn_contrib
             x_H0 = moe_contrib
@@ -263,12 +261,9 @@ def pipelined_layer_loop(
                     my_out = attention(layer_T, x_H0, mask_for(layer_T, "H0"), cT)
                 else:
                     my_out = moe(prev_layer, h_H1_pending)
-                print(f"[rank {rank}] stage {stage} pre-eval-my_out", flush=True)
                 mx.eval(my_out)
-                print(f"[rank {rank}] stage {stage} pre-all_gather", flush=True)
                 gathered = mx.distributed.all_gather(my_out, group=group)
                 mx.eval(gathered)
-                print(f"[rank {rank}] stage {stage} post-eval-gathered", flush=True)
                 attn_contrib = gathered[ATTN_RANK : ATTN_RANK + 1]
                 moe_contrib = gathered[MOE_RANK : MOE_RANK + 1]
             else:
@@ -278,33 +273,37 @@ def pipelined_layer_loop(
                 else:
                     attn_side = _zeros_like(x_H0)
                     moe_side = moe(prev_layer, h_H1_pending)
-                print(f"[rank {rank}] stage {stage} pre-eval-sides", flush=True)
                 mx.eval(attn_side)
                 mx.eval(moe_side)
-                print(f"[rank {rank}] stage {stage} pre-gather_two", flush=True)
                 attn_contrib, moe_contrib = _gather_two(
                     rank, attn_side, moe_side, attn_side, moe_side, group
                 )
                 mx.eval(attn_contrib)
                 mx.eval(moe_contrib)
-                print(f"[rank {rank}] stage {stage} post-gather_two", flush=True)
+            print(
+                f"[rank {rank}] stage {stage} (T={T} A) "
+                f"h_H0.mean={attn_contrib.mean().item():+.6f} "
+                f"out_H1.mean={moe_contrib.mean().item():+.6f}",
+                flush=True,
+            )
 
             h_H0_ready = attn_contrib
             x_H1 = moe_contrib
 
     # --- Stage 2N (drain bubble): ATTN idle. MOE moe_{N-1}(h_{N-1}_H1). ---
-    print(f"[rank {rank}] drain stage pre-compute", flush=True)
     last_layer = layers[N - 1]
     if rank == MOE_RANK:
         contribution = moe(last_layer, h_H1_pending)
     else:
         contribution = _zeros_like(h_H1_pending)
     mx.eval(contribution)
-    print(f"[rank {rank}] drain stage pre-all_gather", flush=True)
     gathered = mx.distributed.all_gather(contribution, group=group)
     mx.eval(gathered)
-    print(f"[rank {rank}] drain stage done", flush=True)
     out_H1 = gathered[MOE_RANK : MOE_RANK + 1]
+    print(
+        f"[rank {rank}] drain out_H1.mean={out_H1.mean().item():+.6f}",
+        flush=True,
+    )
 
     # After the final B stage (Stage 2N-1), out_{N-1}_H0 = x_H0 (MOE's contribution
     # from Stage 2N-1 — stored in the x_H0 variable).
