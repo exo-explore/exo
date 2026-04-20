@@ -151,9 +151,9 @@ def pipelined_layer_loop(
     N = len(layers)
     S = hidden_states.shape[1]
     mid = S // 2
+    even_S = (S % 2 == 0)   # True -> single-gather fast path
 
-    # Compute cache offset for mask slicing (same for all GQA layers —
-    # the offset is a property of the forward pass, not of individual layers).
+    # Compute cache offset for mask slicing (same for all GQA layers).
     fa_cache = cache[inner.fa_idx] if cache[inner.fa_idx] is not None else None
     offset = fa_cache.offset if (fa_cache is not None and hasattr(fa_cache, "offset")) else 0
 
@@ -168,68 +168,93 @@ def pipelined_layer_loop(
             return fa_mask_H0 if half == "H0" else fa_mask_H1
 
     # Running state between stages (loop-local, no closure).
-    x_H0 = hidden_states[:, :mid, :]     # shape (B, mid, D)     — H0 half
-    x_H1 = hidden_states[:, mid:, :]     # shape (B, S-mid, D)   — H1 half
+    x_H0 = hidden_states[:, :mid, :]     # (B, mid, D)
+    x_H1 = hidden_states[:, mid:, :]     # (B, S-mid, D)
 
-    # Pending handoffs between stages:
-    #   h_H0_ready:   output of most recent attn(H0), shape (B, mid, D)
-    #   h_H1_pending: output of most recent attn(H1), shape (B, S-mid, D)
+    # Pending handoffs:
+    #   h_H0_ready:   output of most recent attn(H0) — awaiting moe
+    #   h_H1_pending: output of most recent attn(H1) — awaiting moe
     h_H0_ready = None
     h_H1_pending = None
 
     # --- Stage 0 (startup bubble): ATTN attn_0(H0). MOE idle. ---
-    # Single all_gather for ATTN's output only — MOE contributes zeros of same shape.
     layer_0 = layers[0]
     c0 = cache[0]
     if rank == ATTN_RANK:
         contribution = attention(layer_0, x_H0, mask_for(layer_0, "H0"), c0)
     else:
-        contribution = _zeros_like(x_H0)   # shape (B, mid, D)
+        contribution = _zeros_like(x_H0)
     gathered = mx.distributed.all_gather(contribution, group=group)
     mx.eval(gathered)
     h_H0_ready = gathered[ATTN_RANK : ATTN_RANK + 1]
 
-    # --- Stages 1..2N-1: main pipeline (two all_gathers per stage) ---
+    # --- Stages 1..2N-1: main pipeline ---
+    # Even S: attn_side and moe_side have the same shape (mid == S-mid), so
+    #         we do ONE all_gather per stage — each rank contributes its real
+    #         output, both get both.
+    # Odd S:  shapes differ, so we do TWO all_gathers per stage — each rank
+    #         contributes a zero placeholder of the OTHER side's shape.
     for stage in range(1, 2 * N):
         is_B_stage = (stage % 2 == 1)
         T = stage // 2
 
         if is_B_stage:
-            # Stage 2T+1: ATTN attn_T(H1) -> shape (B, S-mid, D)
-            #              MOE moe_T(h_T_H0) -> shape (B, mid, D)
+            # Stage 2T+1: ATTN attn_T(H1) (B, S-mid, D) | MOE moe_T(h_T_H0) (B, mid, D)
             layer_T = layers[T]
             cT = cache[T]
-            if rank == ATTN_RANK:
-                attn_side = attention(layer_T, x_H1, mask_for(layer_T, "H1"), cT)
-                moe_side = _zeros_like(h_H0_ready)    # placeholder matching MOE shape
+            if even_S:
+                if rank == ATTN_RANK:
+                    my_out = attention(layer_T, x_H1, mask_for(layer_T, "H1"), cT)
+                else:
+                    my_out = moe(layer_T, h_H0_ready)
+                gathered = mx.distributed.all_gather(my_out, group=group)
+                mx.eval(gathered)
+                attn_contrib = gathered[ATTN_RANK : ATTN_RANK + 1]
+                moe_contrib = gathered[MOE_RANK : MOE_RANK + 1]
             else:
-                attn_side = _zeros_like(x_H1)         # placeholder matching ATTN shape
-                moe_side = moe(layer_T, h_H0_ready)
+                if rank == ATTN_RANK:
+                    attn_side = attention(layer_T, x_H1, mask_for(layer_T, "H1"), cT)
+                    moe_side = _zeros_like(h_H0_ready)
+                else:
+                    attn_side = _zeros_like(x_H1)
+                    moe_side = moe(layer_T, h_H0_ready)
+                attn_contrib, moe_contrib = _gather_two(
+                    rank, attn_side, moe_side, attn_side, moe_side, group
+                )
+                mx.eval(attn_contrib)
+                mx.eval(moe_contrib)
+
+            h_H1_pending = attn_contrib
+            x_H0 = moe_contrib
         else:
-            # Stage 2T (T>=1): ATTN attn_T(H0) -> shape (B, mid, D)
-            #                   MOE moe_{T-1}(h_{T-1}_H1) -> shape (B, S-mid, D)
+            # Stage 2T (T>=1): ATTN attn_T(H0) (B, mid, D) | MOE moe_{T-1}(h_{T-1}_H1) (B, S-mid, D)
             layer_T = layers[T]
             cT = cache[T]
             prev_layer = layers[T - 1]
-            if rank == ATTN_RANK:
-                attn_side = attention(layer_T, x_H0, mask_for(layer_T, "H0"), cT)
-                moe_side = _zeros_like(h_H1_pending)  # placeholder matching MOE shape
+            if even_S:
+                if rank == ATTN_RANK:
+                    my_out = attention(layer_T, x_H0, mask_for(layer_T, "H0"), cT)
+                else:
+                    my_out = moe(prev_layer, h_H1_pending)
+                gathered = mx.distributed.all_gather(my_out, group=group)
+                mx.eval(gathered)
+                attn_contrib = gathered[ATTN_RANK : ATTN_RANK + 1]
+                moe_contrib = gathered[MOE_RANK : MOE_RANK + 1]
             else:
-                attn_side = _zeros_like(x_H0)         # placeholder matching ATTN shape
-                moe_side = moe(prev_layer, h_H1_pending)
+                if rank == ATTN_RANK:
+                    attn_side = attention(layer_T, x_H0, mask_for(layer_T, "H0"), cT)
+                    moe_side = _zeros_like(h_H1_pending)
+                else:
+                    attn_side = _zeros_like(x_H0)
+                    moe_side = moe(prev_layer, h_H1_pending)
+                attn_contrib, moe_contrib = _gather_two(
+                    rank, attn_side, moe_side, attn_side, moe_side, group
+                )
+                mx.eval(attn_contrib)
+                mx.eval(moe_contrib)
 
-        attn_contrib, moe_contrib = _gather_two(
-            rank, attn_side, moe_side, attn_side, moe_side, group
-        )
-        mx.eval(attn_contrib)
-        mx.eval(moe_contrib)
-
-        if is_B_stage:
-            h_H1_pending = attn_contrib   # (B, S-mid, D)
-            x_H0 = moe_contrib            # (B, mid, D) — input for attn_{T+1}(H0)
-        else:
-            h_H0_ready = attn_contrib     # (B, mid, D)
-            x_H1 = moe_contrib            # (B, S-mid, D) — input for attn_T(H1)
+            h_H0_ready = attn_contrib
+            x_H1 = moe_contrib
 
     # --- Stage 2N (drain bubble): ATTN idle. MOE moe_{N-1}(h_{N-1}_H1). ---
     last_layer = layers[N - 1]
