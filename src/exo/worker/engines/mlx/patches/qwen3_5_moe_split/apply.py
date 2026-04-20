@@ -12,13 +12,19 @@ single-device branch, so there is no conflict for distributed AttnMoeSplit
 runs — we call this directly from attn_moe_split_auto_parallel.
 """
 
+import os
+
 import mlx.core as mx
 import mlx.nn as nn
 from loguru import logger
 from mlx_lm.models import cache as cache_module
-from mlx_lm.models.qwen3_5 import DecoderLayer
+from mlx_lm.models.qwen3_5 import DecoderLayer, Qwen3_5TextModel
 
 from .decoder import ATTN_RANK, MOE_RANK, make_split_decoder_call
+from .model_forward import (
+    make_pipelined_model_call,
+    make_pipelined_speculative_forward,
+)
 
 _EMPTY_KV_PLACEHOLDER = mx.zeros((1, 1, 0, 1))
 
@@ -221,12 +227,27 @@ def apply_qwen35_attn_moe_split_patches(
         inner = inner.model
     n_layers = len(inner.layers) if hasattr(inner, "layers") else 48
 
+    # S == 1 serial split lives in DecoderLayer.__call__.
     DecoderLayer.__call__ = make_split_decoder_call(group, n_layers=n_layers)  # type: ignore[method-assign]
+
+    # S > 1 pipelined split lives in Qwen3_5TextModel.__call__.
+    Qwen3_5TextModel.__call__ = make_pipelined_model_call(group)  # type: ignore[method-assign]
+
+    # Speculative verify path gets its own pipelined forward.
+    try:
+        from exo.worker.engines.mlx.speculative import mtp_module
+
+        mtp_module.speculative_forward = make_pipelined_speculative_forward(group)
+    except ImportError:
+        pass  # speculative not used
 
     if group.rank() == MOE_RANK:
         _patch_caches_for_moe_rank()
 
-    _drop_unused_weights(model, group)
+    # Skip weight dropping under speculative — speculative_forward accesses
+    # linear_attn/input_layernorm on both ranks in its post-loop.
+    if os.environ.get("EXO_SPECULATIVE") != "1":
+        _drop_unused_weights(model, group)
 
     logger.info(
         f"Qwen3.5 attn/moe split patch applied on rank {group.rank()}/{group.size()}"
