@@ -228,6 +228,18 @@ def apply_qwen35_attn_moe_split_patches(
         inner = inner.model
     n_layers = len(inner.layers) if hasattr(inner, "layers") else 48
 
+    # Apply target-side LPB projection patches BEFORE the split patches.
+    # Dynamic kernel picking at call time (M <= 16 uses the LpB fast path).
+    # Benefits decode (S=1) and DFlash verify (S=V+1=6); prefill falls back.
+    # Only meaningful for dense Qwen3.5 variants (e.g. 27B); on MoE variants
+    # it is mostly a no-op (MLP structure differs, only attn + lm_head patched).
+    try:
+        if os.environ.get("EXO_LPB_PATCHES", "1") != "0":
+            from exo.worker.engines.mlx.patches.qwen3_5.lpb_patch import apply_lpb_patches
+            apply_lpb_patches(model)
+    except Exception as e:
+        logger.warning(f"LPB target patches skipped: {e}")
+
     # S == 1 serial split lives in DecoderLayer.__call__.
     DecoderLayer.__call__ = make_split_decoder_call(group, n_layers=n_layers)  # type: ignore[method-assign]
 
