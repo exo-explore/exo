@@ -242,7 +242,10 @@ def make_pipelined_model_call(group):  # type: ignore[no-untyped-def]
 
         S = hidden_states.shape[1]
 
-        if S == 1:
+        # Fall back to stock (serial) layer loop for:
+        #   S == 1 : decode
+        #   S odd and > 1 : avoids H0/H1 shape mismatch in pipelined all_gather
+        if S == 1 or S % 2 != 0:
             fa_mask = create_attention_mask(hidden_states, cache[self.fa_idx])
             ssm_mask = create_ssm_mask(hidden_states, cache[self.ssm_idx])
             for layer, c in zip(self.layers, cache):
@@ -250,7 +253,7 @@ def make_pipelined_model_call(group):  # type: ignore[no-untyped-def]
                 hidden_states = layer(hidden_states, mask=mask, cache=c)
             return self.norm(hidden_states)
 
-        # S > 1: pipelined path. Force the fa_mask to be a real tensor.
+        # S > 1 and even: pipelined path. Force the fa_mask to be a real tensor.
         fa_mask = create_attention_mask(
             hidden_states, cache[self.fa_idx], return_array=True
         )
@@ -342,9 +345,8 @@ def make_pipelined_speculative_forward(group):  # type: ignore[no-untyped-def]
                         )
                     gdn_spec_data.append((None, pre_conv, c, layer))
 
-        # Pipelined layer loop (S>1) or stock (S==1). Speculative verify
-        # always has S>1 (verify_input is γ+1).
-        if S > 1:
+        # Pipelined layer loop (S>1 and even) or stock (S==1 or odd S).
+        if S > 1 and S % 2 == 0:
             hidden_states = pipelined_layer_loop(
                 inner, hidden_states, cache_list, group, fa_mask, ssm_mask
             )
