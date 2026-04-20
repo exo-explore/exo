@@ -18,7 +18,7 @@ impl UtunDevice {
             .with(|builder| {
                 #[cfg(target_os = "macos")]
                 {
-                    // Babel owns remote routing; do not let tun-rs auto-add routes.
+                    // Route ownership stays in userspace; do not let tun-rs auto-add routes.
                     builder.associate_route(false).packet_information(false);
                 }
             })

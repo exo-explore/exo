@@ -1,14 +1,16 @@
 { stdenv
 , lib
-, fetchurl
+, fetchgit
 }:
-stdenv.mkDerivation rec {
+stdenv.mkDerivation {
   pname = "babeld";
-  version = "1.13.1";
+  version = "1.13.2-rc";
 
-  src = fetchurl {
-    url = "https://www.irif.fr/~jch/software/files/${pname}-${version}.tar.gz";
-    hash = "sha256-FfJNJtoMz8Bzq83vAwnygeRoTyqnESb4JlcsTIRejdk=";
+  # TODO: pin to specific version/revision, or better yet, use a patch file
+  src = fetchgit {
+    url = "https://github.com/AndreiCravtov/babeld.git";
+    fetchSubmodules = true;
+    sha256 = "sha256-/qsoMSRhtwa/2hvACtFwbl+563o+TKxWMS684D+g8mk=";
   };
 
   outputs = [
