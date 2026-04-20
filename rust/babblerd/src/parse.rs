@@ -1,12 +1,12 @@
+use ipnet::IpNet;
+use memchr::memchr;
 use std::{
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
 };
-use ipnet::IpNet;
-use memchr::memchr;
 use thiserror::Error;
 use winnow::{
-    ascii::{dec_uint, space1},
+    ascii::{dec_uint, hex_uint, space1},
     combinator::{alt, eof, opt, preceded, terminated},
     error::ContextError,
     prelude::*,
@@ -105,7 +105,7 @@ pub(crate) enum ParseError {
 }
 
 /// An EUI-64 type aliased to [`macaddr::MacAddr8`].
-pub type Eui64 = macaddr::MacAddr8;
+pub(crate) type Eui64 = macaddr::MacAddr8;
 
 /// Zero-copy line framing for already-buffered socket output.
 ///
@@ -406,20 +406,15 @@ fn parse_prefix_until(separator: char) -> impl FnMut(&mut &str) -> ModalResult<I
 }
 
 fn parse_eui64(input: &mut &str) -> ModalResult<Eui64> {
-    let word = parse_word.parse_next(input)?;
-    Eui64::from_str(word).map_err(|_| winnow::error::ErrMode::Backtrack(ContextError::new()))
+    parse_word.try_map(Eui64::from_str).parse_next(input)
 }
 
 fn parse_hex_u64(input: &mut &str) -> ModalResult<u64> {
-    parse_word
-        .try_map(|hex: &str| u64::from_str_radix(hex, 16))
-        .parse_next(input)
+    hex_uint.parse_next(input)
 }
 
 fn parse_hex_u16(input: &mut &str) -> ModalResult<u16> {
-    parse_word
-        .try_map(|hex: &str| u16::from_str_radix(hex, 16))
-        .parse_next(input)
+    hex_uint.parse_next(input)
 }
 
 fn parse_millis(input: &mut &str) -> ModalResult<u32> {
@@ -473,7 +468,7 @@ mod tests {
         );
         assert_eq!(
             parse_line("my-id 02:00:00:00:00:00:00:01").unwrap(),
-            BabelLine::Header(HeaderLine::MyId(Eui64::from([2, 0, 0, 0, 0, 0, 0, 1])))
+            BabelLine::Header(HeaderLine::MyId(Eui64::new(2, 0, 0, 0, 0, 0, 0, 1)))
         );
     }
 
@@ -563,7 +558,7 @@ mod tests {
                 prefix: IpNet::from_str("fd00::1/128").unwrap(),
                 from: IpNet::from_str("fd00::/64").unwrap(),
                 installed: true,
-                id: Eui64::from([2, 0, 0, 0, 0, 0, 0, 1]),
+                id: Eui64::new(2, 0, 0, 0, 0, 0, 0, 1),
                 metric: 96,
                 refmetric: 0,
                 via: IpAddr::from_str("fe80::2").unwrap(),
