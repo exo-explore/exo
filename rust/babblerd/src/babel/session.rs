@@ -136,7 +136,7 @@ impl BabelSession {
                     };
                     match babble {
                         Babble::AddIface(iface) => {
-                            let cmd = BabelCommand::Interface(iface.into_boxed_str());
+                            let cmd = BabelCommand::Interface(iface);
                             self.query(&cmd).await?;
                         }
                     }

@@ -57,7 +57,7 @@ impl Drop for BabeldProcess {
 
 impl BabeldProcess {
     #[tracing::instrument]
-    pub(crate) async fn spawn(advertised: Ipv6Net, iface: String) -> Result<Self> {
+    pub(crate) async fn spawn(advertised: Ipv6Net, iface: &str) -> Result<Self> {
         tokio::fs::create_dir_all(PRIVATE_DIR).await?;
         // TODO: remove this magic constant (and magic constants in general)
         tokio::fs::set_permissions(PRIVATE_DIR, Permissions::from_mode(0o0700)).await?;

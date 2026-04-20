@@ -39,7 +39,7 @@ pub async fn handle_listener(sock: UnixStream, mut receiver: broadcast::Receiver
 
 #[derive(Debug)]
 pub enum Babble {
-    AddIface(String),
+    AddIface(Box<str>),
 }
 
 #[tracing::instrument(skip(send, recv))]
@@ -56,7 +56,7 @@ pub async fn babel(
         }
     };
 
-    let babel = BabeldProcess::spawn(my_range, iface).await?;
+    let babel = BabeldProcess::spawn(my_range, &iface).await?;
     let session = BabelSession::connect(send).await?;
     let res1 = session.run(recv).await;
     let res2 = babel.shutdown().await;
