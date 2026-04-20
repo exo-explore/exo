@@ -252,7 +252,7 @@ pub mod babel {
     use tokio::process::Command;
     use tokio::sync::{broadcast, mpsc};
 
-    use crate::{BabbleError, Result};
+    use crate::{BabbleError, Result, parse};
 
     #[derive(Debug)]
     pub enum Babble {
@@ -403,6 +403,12 @@ pub mod babel {
                             break;
                         };
                         tracing::debug!("[babeld] {}", line);
+
+                        // TODO: replace later with propper parsing
+                        match parse::parse_line(&line) {
+                            Ok(line) => tracing::info!("[parsed] {}", line),
+                            Err(err) => tracing::error!(error=%err, "failed to parse babeld line"),
+                        }
                         let Ok(_) = send.send(line) else {
                             break;
                         };

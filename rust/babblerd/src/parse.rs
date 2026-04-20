@@ -82,33 +82,33 @@ use winnow::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum BabelLine<'a> {
-    Header(HeaderLine<'a>),
-    Status(Status<'a>),
-    Event(Event<'a>),
+pub(crate) enum BabelLine {
+    Header(HeaderLine),
+    Status(Status),
+    Event(Event),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum HeaderLine<'a> {
+pub(crate) enum HeaderLine {
     Banner { major: u8, minor: u8 },
-    Version(&'a str),
-    Host(&'a str),
+    Version(Box<str>),
+    Host(Box<str>),
     MyId(Eui64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Status<'a> {
+pub(crate) enum Status {
     Ok,
     Bad,
-    No(Option<&'a str>),
+    No(Option<Box<str>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Event<'a> {
-    Interface(InterfaceEvent<'a>),
-    Neighbour(NeighbourEvent<'a>),
+pub(crate) enum Event {
+    Interface(InterfaceEvent),
+    Neighbour(NeighbourEvent),
     XRoute(XRouteEvent),
-    Route(RouteEvent<'a>),
+    Route(RouteEvent),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,20 +119,20 @@ pub(crate) enum EventKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct InterfaceEvent<'a> {
+pub(crate) struct InterfaceEvent {
     pub(crate) kind: EventKind,
-    pub(crate) ifname: &'a str,
+    pub(crate) ifname: Box<str>,
     pub(crate) up: bool,
     pub(crate) ipv6: Option<IpAddr>,
     pub(crate) ipv4: Option<Ipv4Addr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct NeighbourEvent<'a> {
+pub(crate) struct NeighbourEvent {
     pub(crate) kind: EventKind,
     pub(crate) handle: u64,
     pub(crate) address: IpAddr,
-    pub(crate) ifname: &'a str,
+    pub(crate) ifname: Box<str>,
     pub(crate) reach: u16,
     pub(crate) ureach: u16,
     pub(crate) rxcost: u32,
@@ -151,7 +151,7 @@ pub(crate) struct XRouteEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RouteEvent<'a> {
+pub(crate) struct RouteEvent {
     pub(crate) kind: EventKind,
     pub(crate) handle: u64,
     pub(crate) prefix: IpNet,
@@ -161,7 +161,7 @@ pub(crate) struct RouteEvent<'a> {
     pub(crate) metric: u32,
     pub(crate) refmetric: u32,
     pub(crate) via: IpAddr,
-    pub(crate) ifname: &'a str,
+    pub(crate) ifname: Box<str>,
 }
 
 #[derive(Error, Debug)]
@@ -230,14 +230,14 @@ impl<'a> ParsedLines<'a> {
 }
 
 impl<'a> Iterator for ParsedLines<'a> {
-    type Item = Result<BabelLine<'a>, ParseError>;
+    type Item = Result<BabelLine, ParseError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.raw.next().map(|line| line.and_then(parse_line))
     }
 }
 
-pub(crate) fn parse_line(line: &str) -> Result<BabelLine<'_>, ParseError> {
+pub(crate) fn parse_line(line: &str) -> Result<BabelLine, ParseError> {
     terminated(parse_babel_line, eof)
         .parse(line)
         .map_err(|err| ParseError::Syntax {
@@ -246,7 +246,7 @@ pub(crate) fn parse_line(line: &str) -> Result<BabelLine<'_>, ParseError> {
         })
 }
 
-fn parse_babel_line<'a>(input: &mut &'a str) -> ModalResult<BabelLine<'a>> {
+fn parse_babel_line<'a>(input: &mut &'a str) -> ModalResult<BabelLine> {
     alt((
         parse_banner,
         parse_version,
@@ -260,7 +260,7 @@ fn parse_babel_line<'a>(input: &mut &'a str) -> ModalResult<BabelLine<'a>> {
     .parse_next(input)
 }
 
-fn parse_banner<'a>(input: &mut &'a str) -> ModalResult<BabelLine<'a>> {
+fn parse_banner<'a>(input: &mut &'a str) -> ModalResult<BabelLine> {
     let _ = "BABEL ".parse_next(input)?;
     let major = dec_uint::<_, u8, _>.parse_next(input)?;
     let _ = '.'.parse_next(input)?;
@@ -268,42 +268,42 @@ fn parse_banner<'a>(input: &mut &'a str) -> ModalResult<BabelLine<'a>> {
     Ok(BabelLine::Header(HeaderLine::Banner { major, minor }))
 }
 
-fn parse_version<'a>(input: &mut &'a str) -> ModalResult<BabelLine<'a>> {
+fn parse_version<'a>(input: &mut &'a str) -> ModalResult<BabelLine> {
     let _ = "version ".parse_next(input)?;
-    let version = rest.parse_next(input)?;
+    let version = Box::<str>::from(rest.parse_next(input)?);
     Ok(BabelLine::Header(HeaderLine::Version(version)))
 }
 
-fn parse_host<'a>(input: &mut &'a str) -> ModalResult<BabelLine<'a>> {
+fn parse_host<'a>(input: &mut &'a str) -> ModalResult<BabelLine> {
     let _ = "host ".parse_next(input)?;
-    let host = rest.parse_next(input)?;
+    let host = Box::<str>::from(rest.parse_next(input)?);
     Ok(BabelLine::Header(HeaderLine::Host(host)))
 }
 
-fn parse_my_id<'a>(input: &mut &'a str) -> ModalResult<BabelLine<'a>> {
+fn parse_my_id<'a>(input: &mut &'a str) -> ModalResult<BabelLine> {
     let _ = "my-id ".parse_next(input)?;
     let id = parse_eui64.parse_next(input)?;
     Ok(BabelLine::Header(HeaderLine::MyId(id)))
 }
 
-fn parse_ok<'a>(input: &mut &'a str) -> ModalResult<BabelLine<'a>> {
+fn parse_ok<'a>(input: &mut &'a str) -> ModalResult<BabelLine> {
     let _ = "ok".parse_next(input)?;
     Ok(BabelLine::Status(Status::Ok))
 }
 
-fn parse_bad<'a>(input: &mut &'a str) -> ModalResult<BabelLine<'a>> {
+fn parse_bad<'a>(input: &mut &'a str) -> ModalResult<BabelLine> {
     let _ = "bad".parse_next(input)?;
     Ok(BabelLine::Status(Status::Bad))
 }
 
-fn parse_no<'a>(input: &mut &'a str) -> ModalResult<BabelLine<'a>> {
+fn parse_no<'a>(input: &mut &'a str) -> ModalResult<BabelLine> {
     let _ = "no".parse_next(input)?;
     let message = opt(preceded(space1, rest)).parse_next(input)?;
-    let message = message.filter(|msg| !msg.is_empty());
+    let message = message.filter(|msg| !msg.is_empty()).map(Into::into);
     Ok(BabelLine::Status(Status::No(message)))
 }
 
-fn parse_event<'a>(input: &mut &'a str) -> ModalResult<BabelLine<'a>> {
+fn parse_event<'a>(input: &mut &'a str) -> ModalResult<BabelLine> {
     let kind = parse_kind.parse_next(input)?;
     let _ = ' '.parse_next(input)?;
     let entity = parse_word.parse_next(input)?;
@@ -318,10 +318,7 @@ fn parse_event<'a>(input: &mut &'a str) -> ModalResult<BabelLine<'a>> {
     .map(BabelLine::Event)
 }
 
-fn parse_interface_event<'a>(
-    kind: EventKind,
-    input: &mut &'a str,
-) -> ModalResult<InterfaceEvent<'a>> {
+fn parse_interface_event<'a>(kind: EventKind, input: &mut &'a str) -> ModalResult<InterfaceEvent> {
     let _ = ' '.parse_next(input)?;
     let ifname = parse_word.parse_next(input)?;
     let _ = " up ".parse_next(input)?;
@@ -331,17 +328,14 @@ fn parse_interface_event<'a>(
 
     Ok(InterfaceEvent {
         kind,
-        ifname,
+        ifname: ifname.into(),
         up,
         ipv6,
         ipv4,
     })
 }
 
-fn parse_neighbour_event<'a>(
-    kind: EventKind,
-    input: &mut &'a str,
-) -> ModalResult<NeighbourEvent<'a>> {
+fn parse_neighbour_event<'a>(kind: EventKind, input: &mut &'a str) -> ModalResult<NeighbourEvent> {
     let _ = ' '.parse_next(input)?;
     let handle = parse_hex_u64.parse_next(input)?;
     let _ = " address ".parse_next(input)?;
@@ -364,7 +358,7 @@ fn parse_neighbour_event<'a>(
         kind,
         handle,
         address,
-        ifname,
+        ifname: ifname.into(),
         reach,
         ureach,
         rxcost,
@@ -395,7 +389,7 @@ fn parse_xroute_event(kind: EventKind, input: &mut &str) -> ModalResult<XRouteEv
     })
 }
 
-fn parse_route_event<'a>(kind: EventKind, input: &mut &'a str) -> ModalResult<RouteEvent<'a>> {
+fn parse_route_event<'a>(kind: EventKind, input: &mut &'a str) -> ModalResult<RouteEvent> {
     let _ = ' '.parse_next(input)?;
     let handle = parse_hex_u64.parse_next(input)?;
     let _ = " prefix ".parse_next(input)?;
@@ -425,7 +419,7 @@ fn parse_route_event<'a>(kind: EventKind, input: &mut &'a str) -> ModalResult<Ro
         metric,
         refmetric,
         via,
-        ifname,
+        ifname: ifname.into(),
     })
 }
 
@@ -528,11 +522,11 @@ mod tests {
     fn parse_header_metadata() {
         assert_eq!(
             parse_line("version babeld-1.13.1").unwrap(),
-            BabelLine::Header(HeaderLine::Version("babeld-1.13.1"))
+            BabelLine::Header(HeaderLine::Version("babeld-1.13.1".into()))
         );
         assert_eq!(
             parse_line("host e2").unwrap(),
-            BabelLine::Header(HeaderLine::Host("e2"))
+            BabelLine::Header(HeaderLine::Host("e2".into()))
         );
         assert_eq!(
             parse_line("my-id 02:00:00:00:00:00:00:01").unwrap(),
@@ -546,7 +540,7 @@ mod tests {
         assert_eq!(parse_line("bad").unwrap(), BabelLine::Status(Status::Bad));
         assert_eq!(
             parse_line("no No such interface").unwrap(),
-            BabelLine::Status(Status::No(Some("No such interface")))
+            BabelLine::Status(Status::No(Some("No such interface".into())))
         );
     }
 
@@ -556,7 +550,7 @@ mod tests {
             parse_line("add interface en2 up true ipv6 fe80::1 ipv4 169.254.1.2").unwrap(),
             BabelLine::Event(Event::Interface(InterfaceEvent {
                 kind: EventKind::Add,
-                ifname: "en2",
+                ifname: "en2".into(),
                 up: true,
                 ipv6: Some(IpAddr::from_str("fe80::1").unwrap()),
                 ipv4: Some(Ipv4Addr::new(169, 254, 1, 2)),
@@ -566,7 +560,7 @@ mod tests {
             parse_line("change interface en3 up false").unwrap(),
             BabelLine::Event(Event::Interface(InterfaceEvent {
                 kind: EventKind::Change,
-                ifname: "en3",
+                ifname: "en3".into(),
                 up: false,
                 ipv6: None,
                 ipv4: None,
@@ -585,7 +579,7 @@ mod tests {
                 kind: EventKind::Add,
                 handle: 0x7ffdeadbeef,
                 address: IpAddr::from_str("fe80::1").unwrap(),
-                ifname: "en2",
+                ifname: "en2".into(),
                 reach: 0x00ff,
                 ureach: 0x000f,
                 rxcost: 256,
@@ -630,7 +624,7 @@ mod tests {
                 metric: 96,
                 refmetric: 0,
                 via: IpAddr::from_str("fe80::2").unwrap(),
-                ifname: "en2",
+                ifname: "en2".into(),
             }))
         );
     }
@@ -649,7 +643,7 @@ mod tests {
                 BabelLine::Status(Status::Ok),
                 BabelLine::Event(Event::Interface(InterfaceEvent {
                     kind: EventKind::Add,
-                    ifname: "en2",
+                    ifname: "en2".into(),
                     up: false,
                     ipv6: None,
                     ipv4: None,
