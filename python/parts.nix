@@ -183,7 +183,24 @@ let
       inherit venv;
       editablePythonSet = pythonSet.overrideScope editableOverlay;
       mkPythonScript = path: mkApp ''python ${path} "$@"'';
-      mkExo = mkApp ''exo "$@"'';
+      mkOutputs = name:
+        let package = mkApp ''exo "$@"'' name;
+        in {
+          ${name} = package;
+          "${name}-docker-image" = pkgs.dockerTools.buildLayeredImage {
+            name = "${name}-docker-image";
+            config = {
+              Entrypoint = [ (lib.getExe package) ];
+              Env = [
+                "EXO_HOME=/var/lib/${name}"
+              ];
+            };
+
+            extraCommands = ''
+              mkdir -p  var/lib/${name}
+            '';
+          };
+        };
     };
 in
 {
@@ -191,7 +208,7 @@ in
     { self', pkgs, unfreePkgs, lib, ... }:
     let
       inherit (pkgs.stdenv.hostPlatform) isLinux;
-      inherit (mkPythonSet { inherit self' pkgs lib; members = { exo = [ "cpu" ]; }; }) editablePythonSet mkExo;
+      inherit (mkPythonSet { inherit self' pkgs lib; members.exo = [ "cpu" ]; }) editablePythonSet mkOutputs;
 
       # Virtual environment with dev dependencies for testing
       testVenv = (mkPythonSet {
@@ -213,10 +230,13 @@ in
         text = ''exec python ${path} "$@"'';
       };
 
+      defaultOutputs = mkOutputs "exo";
+      cuda12Outputs = (mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_12) pkgs; members.exo=["cuda12"]; }).mkOutputs "exo-cuda-12";
+      cuda13Outputs = (mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_13) pkgs; members.exo=["cuda13"]; }).mkOutputs "exo-cuda-13";
     in
     {
       packages = {
-        exo = mkExo "exo";
+        # for devShell
         editableVenv = editablePythonSet.mkVirtualEnv "exo-dev-env" { exo = [ "dev" ]; };
         # for running tests in ci
         exo-test-env = testVenv;
@@ -225,10 +245,9 @@ in
         exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);
         # used by ./tests/run_exo_on.sh
         exo-get-all-models-on-cluster = mkSimplePythonScript "exo-get-all-models-on-cluster" (inputs.self + /tests/get_all_models_on_cluster.py);
-      } // lib.optionalAttrs isLinux {
-        exo-cuda-12 = (mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_12) pkgs; members = { exo = [ "cuda12" ]; }; }).mkExo "exo-cuda-12";
-        exo-cuda-13 = (mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_13) pkgs; members = { exo = [ "cuda13" ]; }; }).mkExo "exo-cuda-13";
-      };
+      } // defaultOutputs
+      // lib.optionalAttrs isLinux cuda12Outputs
+      // lib.optionalAttrs isLinux cuda13Outputs;
 
       checks = {
         lint = pkgs.runCommand "ruff-lint" { } ''
