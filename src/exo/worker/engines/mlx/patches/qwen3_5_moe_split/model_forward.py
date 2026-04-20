@@ -174,13 +174,20 @@ def pipelined_layer_loop(
     capture_set: set[int] = set(capture_layers) if capture_layers is not None else set()
 
     # Compute cache offset for mask slicing (same for all GQA layers).
+    # For BatchKVCache, update_and_fetch returns keys[:_idx], so the mask must
+    # match _idx (actual K buffer length), NOT `offset` (which is _idx minus
+    # left_padding for positional encodings). Plain KVCache uses `offset`.
     fa_cache = cache[inner.fa_idx] if cache[inner.fa_idx] is not None else None
-    raw_offset = fa_cache.offset if (fa_cache is not None and hasattr(fa_cache, "offset")) else 0
-    # BatchKVCache stores offset as an mx.array (1,), KVCache stores it as a Python int.
-    if isinstance(raw_offset, mx.array):
-        offset = int(raw_offset.max().item())  # max so mask covers all batch entries
+    if fa_cache is None:
+        offset = 0
+    elif hasattr(fa_cache, "_idx"):
+        # BatchKVCache: _idx is Python int tracking actual K length
+        offset = int(fa_cache._idx)
+    elif hasattr(fa_cache, "offset"):
+        raw = fa_cache.offset
+        offset = int(raw.max().item()) if isinstance(raw, mx.array) else int(raw)
     else:
-        offset = int(raw_offset)
+        offset = 0
 
     # Slice masks once (reused every stage)
     fa_mask_H0, fa_mask_H1 = slice_fa_mask(fa_mask, mid, offset)
