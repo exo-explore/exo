@@ -8,9 +8,9 @@
 //! The scope here is intentionally narrow: this module only models the local-socket
 //! commands that `babblerd` currently issues at runtime.
 //!
-//! NOTE: spawn-time `-C` configuration strings are still assembled in the process layer for now;
-//!       they are the next obvious thing to extract once the session loop is no longer
-//!       stringly-typed.
+//! NOTE: spawn-time `-C` configuration strings are still assembled in the process layer for now.
+//!       If you want to push the protocol model further, the next obvious extraction is a typed
+//!       configuration/config-statement layer rather than more runtime socket commands.
 
 use std::fmt;
 
@@ -21,6 +21,14 @@ pub enum BabelCommand {
     Unmonitor,
     Quit,
     Interface(Box<str>),
+}
+
+impl BabelCommand {
+    /// Encode this command for the local `babeld` socket, including line framing.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        format!("{self}\n")
+    }
 }
 
 impl fmt::Display for BabelCommand {
@@ -48,6 +56,16 @@ mod tests {
         assert_eq!(
             BabelCommand::Interface("en2".into()).to_string(),
             "interface en2"
+        );
+    }
+
+    #[test]
+    fn encodes_commands() {
+        assert_eq!(BabelCommand::Dump.encode(), "dump\n");
+        assert_eq!(BabelCommand::Monitor.encode(), "monitor\n");
+        assert_eq!(
+            BabelCommand::Interface("en2".into()).encode(),
+            "interface en2\n"
         );
     }
 }
