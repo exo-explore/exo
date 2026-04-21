@@ -17,7 +17,7 @@ dependencies = [
   "loguru>=0.7.3",
   "exo_pyo3_bindings",                         # rust bindings
   "anyio==4.11.0",
-  "mlx; sys_platform == 'darwin'",
+  "mlx==0.31.1; sys_platform == 'darwin'",
   "mlx[cpu]==0.30.6; sys_platform == 'linux'",
   "mlx-lm",
   "tiktoken>=0.12.0",                          # required for kimi k2 tokenizer
@@ -25,8 +25,8 @@ dependencies = [
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",
   "tomlkit>=0.14.0",
-  "pillow>=11.0,<12.0",                        # compatibility with mflux
-  "mflux==0.15.5",
+  "pillow>=12.1.1",
+  "mflux>=0.17.5",
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
@@ -61,7 +61,8 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
-mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
+# mlx uses PyPI wheel with macOS 26 support
+# mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/eval-left-padding-in-batched-rotation" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
