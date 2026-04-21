@@ -485,6 +485,10 @@ def tensor_auto_parallel(
     group: mx.distributed.Group,
     on_layer_loaded: LayerLoadedCallback | None,
 ) -> nn.Module:
+    if not hasattr(mx, "set_splitk_partitions_override"):
+        raise RuntimeError(
+            "TP sharding requires the exo MLX fork (mx.set_splitk_partitions_override missing)"
+        )
     all_to_sharded_linear = partial(
         shard_linear,
         sharding="all-to-sharded",
