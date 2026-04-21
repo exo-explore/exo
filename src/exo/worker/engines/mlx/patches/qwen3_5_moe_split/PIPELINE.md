@@ -257,26 +257,96 @@ Note: `MAX_M=16` in both LpB patches means branches for `M_rnd ∈ {32, 64}` are
 
 ### 8a. Existing prints
 
+Init-time (once per process):
+
+| Print | Source | Notes |
+|-------|--------|-------|
+| `DFlash config: ...` | `dflash_module.py:133` | Drafter arch summary |
+| `Target layers: [...], mask_token=...` | `dflash_module.py:136` | **Exact `target_layer_ids` the drafter expects** |
+| `DFlash loaded: N tensors, M params` | `dflash_module.py:164` | Drafter weight load confirmation |
+| `Patched X target projections with dynamic LpB` | `lpb_patch.py:130` | Target-side LpB swap count |
+| `Patched X DFlash drafter projections with dynamic LpB` | `bf16_lpb_patch.py:143` | Drafter-side LpB swap count |
+| `DFLASH_LPB_ONLY=...` | `bf16_lpb_patch.py:109` | Only if the bisect env var is set |
+| `Qwen3.5 attn/moe split patch applied on rank N/2` | `apply.py:291` | Structural patches done |
+| `Warming up DFlash speculative decoding kernels...` / `DFlash warmup complete` | `batch_generate.py:298, 357` | Kernel warmup bookends |
+
+Per forward / per cycle (hot path — noisy, disable once stable):
+
 | Print | Source | When |
 |-------|--------|------|
-| `[rank N] pipeline begin S=... N=... even=...` | `model_forward.py:212` | Once per pipelined forward |
-| `[rank N] stage K (T=... A/B) h_*.mean=... out_*.mean=...` | `model_forward.py:268, 306` | Per stage in main loop |
-| `[rank N] stage 0 (T=0 startup) ...` | `model_forward.py:225` | Startup |
-| `[rank N] drain out_H1.mean=...` | `model_forward.py:331` | Drain |
-| `[rank N] L=lc after gather-1 h.mean=...` / `gather-2 out.mean=...` | `decoder.py:56, 69` | Per layer in S==1 decode |
-| `[rank N] DFlash speculative cycle (y_val=..., target_hidden.shape=...)` | `dflash_split.py:51` | Once per cycle |
-| `[rank N] DFlash: NO target_hidden -> fallback ...` | `dflash_split.py:46` | Fallback path |
+| `[rank N] pipeline begin S=... N=... even=...` | `model_forward.py:212` | Once per pipelined forward (prefill + verify + warmup verify) |
+| `[rank N] stage 0 (T=0 startup) ...` | `model_forward.py:225` | Startup stage of pipelined loop |
+| `[rank N] stage K (T=... B) h_H1.mean=... out_H0.mean=...` | `model_forward.py:268` | Per B stage in main loop |
+| `[rank N] stage K (T=... A) h_H0.mean=... out_H1.mean=...` | `model_forward.py:306` | Per A stage in main loop |
+| `[rank N] drain out_H1.mean=...` | `model_forward.py:331` | Drain stage of pipelined loop |
+| `[rank N] L=lc after gather-1 h.mean=...` | `decoder.py:56` | Per layer, mid-`_split_call` (S==1 decode) |
+| `[rank N] L=lc after gather-2 out.mean=...` | `decoder.py:69` | Per layer, end of `_split_call` |
+| `[rank N] DFlash speculative cycle (y_val=..., target_hidden.shape=...)` | `dflash_split.py:51` | Once per speculative cycle |
+| `[rank N] DFlash: NO target_hidden -> fallback ...` | `dflash_split.py:46` | When `_last_target_hidden[uid]` is missing |
 | `[DFlash] n_accepted=X/V` | `dflash_split.py:165` | MOE_RANK only, end of cycle |
 
-### 8b. Suggested instrumentation points
+### 8b. `mx.eval` / `mx.async_eval` inventory
+
+Evals serve three distinct purposes in this pipeline, and removing the wrong one
+can silently break correctness or JACCL flow control. Classification:
+
+**(i) Pipeline graph-break evals.** Force the MLX graph to materialize between
+stages of `pipelined_layer_loop` and between gathers of the S==1 `_split_call`.
+Without these, MLX would fuse arbitrarily many stages into one graph, blowing
+up memory and (more importantly) desynchronizing `all_gather` order with
+JACCL's internal queue (`MAX_SEND_WR=32`). Keep these unless you're
+intentionally testing graph fusion.
+
+| File:line | Target | Location in schedule |
+|-----------|--------|----------------------|
+| `model_forward.py:221` | `contribution` | Before startup gather |
+| `model_forward.py:223` | `gathered` | After startup gather |
+| `model_forward.py:249, 251` | `my_out`, `gathered` | B stage, even-S (single gather) |
+| `model_forward.py:261, 262` | `attn_side`, `moe_side` | B stage, odd-S (pre two-gather) |
+| `model_forward.py:266, 267` | `attn_contrib`, `moe_contrib` | B stage, odd-S (post two-gather) |
+| `model_forward.py:287, 289` | `my_out`, `gathered` | A stage, even-S |
+| `model_forward.py:299, 300` | `attn_side`, `moe_side` | A stage, odd-S (pre) |
+| `model_forward.py:304, 305` | `attn_contrib`, `moe_contrib` | A stage, odd-S (post) |
+| `model_forward.py:327, 329` | `contribution`, `gathered` | Drain stage (pre / post gather) |
+| `decoder.py:53` | `h` | Idle rank's dummy layernorm, every 2nd layer — bounds JACCL queue under S==1 |
+| `decoder.py:55` | `h` | After per-layer gather-1 |
+| `decoder.py:66` | `out` | Idle rank's dummy layernorm, every 2nd layer |
+| `decoder.py:68` | `result` | After per-layer gather-2 |
+
+**(ii) Sampling evals (pre-`.item()` / `.tolist()`).** Required because Python-side
+control flow depends on concrete values (draft tokens, acceptance bits, `n_accepted`).
+
+| File:line | Target | Used for |
+|-----------|--------|----------|
+| `dflash_split.py:81` | `all_drafts_arr` | `.tolist()` to build `drafts` (temp=0) |
+| `dflash_split.py:97` | `drafts_arr` | `.tolist()` after draft-sync `all_gather` |
+| `dflash_batch_generator.py:125` | `target_hidden` | Before caching as `_last_target_hidden[uid]` (stock capture path) |
+| `dflash_batch_generator.py:145, 151` | `prompt_toks`, `(target_hidden, logits)` | "direct" prefill mode only (unused under our patched path) |
+| `dflash_batch_generator.py:199` | `all_drafts_arr` | Same role as `dflash_split.py:81`, stock path |
+
+**(iii) Async evals (kick off compute, keep the Python loop moving).** These don't
+block; MLX schedules the compute and the next `.item()` will wait. Used to
+overlap acceptance math with the next forward's dispatch.
+
+| File:line | Targets | Purpose |
+|-----------|---------|---------|
+| `dflash_split.py:120` | `matches`, `all_next`, `target_hidden` | temp=0 acceptance loop reads `matches[i].item()`; kicked off early |
+| `dflash_split.py:146–148` | `accept_ratios`, `uniforms`, `corrections`, `bonus_token`, `target_hidden` | temp>0 acceptance |
+| `dflash_split.py:239, 250` | `batch.y` | Emit next-token without blocking the `Response` return |
+| `dflash_batch_generator.py:225, 243, 327, 338` | same four roles, stock path | Stock DFlash mirror — only fires if `_speculative_next` isn't patched |
+| `mtp_batch_generator.py:115, 162, 182, 278, 291` | MTP equivalents | Not on DFlash path, here for cross-reference |
+
+Note: `mtp_module.py:340, 359` also call `mx.eval` during MTP weight load; not on our hot path.
+
+### 8c. Suggested instrumentation points
 
 - Before/after each `all_gather` in `_split_speculative_next` (`dflash_split.py:66, 95, 159`) — shape + mean.
 - `_populate_dflash_captured` (`model_forward.py:387`) — dump the set of keys written on each call.
 - `SpeculativeArraysCache.rollback` (`speculative_cache.py:81`) — print `n_accepted`, whether `all_states` / `conv_input` were non-None, and the resulting `base.cache[*]` shapes.
-- Entry to `_pipelined_dflash_forward` (`model_forward.py:536`) — print `inputs.shape`, length of `cache_list`, and whether any `SpeculativeArraysCache` already exists.
+- Entry to `_pipelined_dflash_forward` (`model_forward.py:623`) — print `inputs.shape`, length of `cache_list`, and whether any `SpeculativeArraysCache` already exists.
 - Warmup completion — pair with `model_forward.py:212` to confirm one pipelined forward happens during warmup at `M=V+1`.
 
-### 8c. Gotchas (bug history, one-liner each)
+### 8d. Gotchas (bug history, one-liner each)
 
 - Mask from `create_attention_mask(..., return_array=True)` is 2D `(S, offset+S)`, not 4D — `slice_fa_mask` handles both (`model_forward.py:63`).
 - `BatchKVCache.offset` is sometimes an `mx.array`, sometimes `int`. Use `.max().item()` when unsure (`model_forward.py:188`).
