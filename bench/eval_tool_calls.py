@@ -209,7 +209,7 @@ def _openai_build_request(
         "model": model,
         "messages": messages,
         "tools": tools,
-        "max_tokens": 16384,
+        "max_tokens": 4096,
         "temperature": 0.0,
     }
     return "/v1/chat/completions", body
@@ -276,7 +276,7 @@ def _openai_build_followup(
         "model": model,
         "messages": followup_messages,
         "tools": tools,
-        "max_tokens": 16384,
+        "max_tokens": 4096,
         "temperature": 0.0,
     }
     return "/v1/chat/completions", body
@@ -379,7 +379,7 @@ def _claude_build_request(
         "model": model,
         "messages": claude_messages,
         "tools": claude_tools,
-        "max_tokens": 16384,
+        "max_tokens": 4096,
         "temperature": 0.0,
     }
     if system_content is not None:
@@ -489,7 +489,7 @@ def _claude_build_followup(
         "model": model,
         "messages": claude_messages,
         "tools": claude_tools,
-        "max_tokens": 16384,
+        "max_tokens": 4096,
         "temperature": 0.0,
     }
     if system_content is not None:

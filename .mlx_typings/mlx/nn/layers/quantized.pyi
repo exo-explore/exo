@@ -85,27 +85,14 @@ class QuantizedEmbedding(Module):
         """Create a :obj:`QuantizedEmbedding` layer from an :obj:`Embedding` layer."""
 
 class QuantizedLinear(Module):
-    """Applies an affine transformation to the input using a quantized weight matrix.
+    weight: mx.array
+    scales: mx.array
+    biases: mx.array
+    bias: mx.array | None
+    group_size: int
+    bits: int
+    mode: str
 
-    It is the quantized equivalent of :class:`Linear`. For now its
-    parameters are frozen and will not be included in any gradient computation
-    but this will probably change in the future.
-
-    :obj:`QuantizedLinear` also provides a classmethod :meth:`from_linear` to
-    convert linear layers to :obj:`QuantizedLinear` layers.
-
-    Args:
-        input_dims (int): The dimensionality of the input features.
-        output_dims (int): The dimensionality of the output features.
-        bias (bool, optional): If set to ``False`` then the layer will not use
-            a bias. Default: ``True``.
-        group_size (int, optional): The group size to use for the quantized
-            weight. See :func:`~mlx.core.quantize`. Default: ``64``.
-        bits (int, optional): The bit width to use for the quantized weight.
-            See :func:`~mlx.core.quantize`. Default: ``4``.
-        mode (str): The quantization method to use (see
-           :func:`mlx.core.quantize`). Default: ``"affine"``.
-    """
     def __init__(
         self,
         input_dims: int,

@@ -57,6 +57,10 @@ class Module(dict):
     def __init__(self) -> None:
         """Should be called by the subclasses of ``Module``."""
 
+    def __getitem__(self, key: str) -> mx.array | Module: ...
+    def get(
+        self, key: str, default: mx.array | Module | None = ...
+    ) -> mx.array | Module | None: ...
     @property
     def training(self):  # -> bool:
         """Boolean indicating if the model is in training mode."""

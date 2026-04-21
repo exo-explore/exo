@@ -1767,12 +1767,12 @@ def clip(
         array: The clipped array.
     """
 
-def compile(
-    fun: Callable,
+def compile[F: Callable[..., object]](
+    fun: F,
     inputs: object | None = ...,
     outputs: object | None = ...,
     shapeless: bool = ...,
-) -> Callable:
+) -> F:
     """
     Returns a compiled function which produces the same output as ``fun``.
 
@@ -2915,8 +2915,8 @@ def gather_mm(
     a: array,
     b: array,
     /,
-    lhs_indices: array,
-    rhs_indices: array,
+    lhs_indices: array | None = ...,
+    rhs_indices: array | None = ...,
     *,
     sorted_indices: bool = ...,
     stream: Stream | Device | None = ...,
@@ -3683,7 +3683,14 @@ def logsumexp(
         array: The output array with the corresponding axes reduced.
     """
 
-def matmul(a: array, b: array, /, *, stream: Stream | Device | None = ...) -> array:
+def matmul(
+    a: array,
+    b: array,
+    /,
+    *,
+    output_dtype: Dtype | None = ...,
+    stream: Stream | Device | None = ...,
+) -> array:
     """
     Matrix multiplication.
 
@@ -4707,6 +4714,7 @@ def softmax(
     /,
     axis: int | Sequence[int] | None = ...,
     *,
+    precise: bool = ...,
     stream: Stream | Device | None = ...,
 ) -> array:
     """
@@ -5430,6 +5438,12 @@ def zeros_like(a: array, /, *, stream: Stream | Device | None = ...) -> array:
     Returns:
         array: The output array filled with zeros.
     """
+
+def compute_splitk_partitions(m: int, n: int, k: int) -> int:
+    """Return the splitk partition count mlx would use for an (m x k) @ (k x n) matmul."""
+
+def set_splitk_partitions_override(n: int) -> None:
+    """Override the splitk partition count for subsequent matmul dispatches. Pass 0 to clear."""
 
 scalar: TypeAlias = int | float | bool
 list_or_scalar: TypeAlias = scalar | list["list_or_scalar"]

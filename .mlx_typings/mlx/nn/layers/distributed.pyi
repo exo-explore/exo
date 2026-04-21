@@ -70,6 +70,10 @@ def shard_linear(
     """
 
 class AllToShardedLinear(Module):
+    weight: mx.array
+    bias: mx.array | None
+    group: mx.distributed.Group
+
     """Each member of the group applies part of the affine transformation such
     that the result is sharded across the group.
 
@@ -102,6 +106,10 @@ class AllToShardedLinear(Module):
     ) -> AllToShardedLinear: ...
 
 class ShardedToAllLinear(Module):
+    weight: mx.array
+    bias: mx.array | None
+    group: mx.distributed.Group
+
     """Each member of the group applies part of the affine transformation and
     then aggregates the results.
 

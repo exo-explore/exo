@@ -92,6 +92,15 @@ class NemotronHAttention(nn.Module):
         cache: Optional[KVCache] = None,
     ) -> mx.array: ...
 
+class MoEGate(nn.Module):
+    config: ModelArgs
+    top_k: int
+    norm_topk_prob: bool
+    weight: mx.array
+
+    def __init__(self, config: ModelArgs) -> None: ...
+    def __call__(self, x: mx.array) -> tuple[mx.array, mx.array]: ...
+
 class NemotronHMLP(nn.Module):
     up_proj: nn.Linear
     down_proj: nn.Linear
@@ -102,9 +111,14 @@ class NemotronHMLP(nn.Module):
     def __call__(self, x: mx.array) -> mx.array: ...
 
 class NemotronHMoE(nn.Module):
+    config: ModelArgs
     num_experts_per_tok: int
+    moe_latent_size: Optional[int]
     switch_mlp: SwitchMLP
+    gate: MoEGate
     shared_experts: NemotronHMLP
+    fc1_latent_proj: nn.Linear
+    fc2_latent_proj: nn.Linear
 
     def __init__(self, config: ModelArgs) -> None: ...
     def __call__(self, x: mx.array) -> mx.array: ...

@@ -1,3 +1,6 @@
+# type: ignore
+"""uv run pytest -v -m "" src/exo/worker/tests/unittests/test_mlx/test_tp_bit_exact.py"""
+
 import importlib
 import json
 import multiprocessing as mp
