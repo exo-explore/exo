@@ -103,9 +103,7 @@ Entry: `BatchGenerator.step` → `DFlashBatchGenerator._next` (`dflash_batch_gen
 2. `super()._next()` → stock `BatchGenerator._next` processes the prompt, calls `self.model(prompt_tokens, cache)`.
 3. That reaches our patched `Qwen3_5TextModel.__call__` = `_pipelined_call` (`model_forward.py:430`). S = prompt_len > 1, so it takes the pipelined branch (`:456–481`):
    1. `_dflash_capturing_target_ids(self)` (`model_forward.py:353`) detects the `_CapturingLayer` wrappers.
-   2. `pipelined_layer_loop(..., capture_layers=target_ids)` (`model_forward.py:146`) runs the 2N+1 stage pipeline — see section 4c steps A/B for stage structure.
-      > *Prints:* `[rank N] pipeline begin S=prompt_len N=64 even=<bool>` (`model_forward.py:212`); then per stage `[rank N] stage 0 (T=0 startup) ...` (`:225`), 127× `[rank N] stage K (T=... A/B) ...` (`:268, 306`), and `[rank N] drain out_H1.mean=...` (`:331`).
-      > *Evals:* full graph-break sequence — `mx.eval` at `model_forward.py:221, 223` (startup), `:249, 251` or `:261–267` (each B stage), `:287, 289` or `:299–305` (each A stage), `:327, 329` (drain). Section 8b(i) has the full table.
+   2. `pipelined_layer_loop(..., capture_layers=target_ids)` (`model_forward.py:146`) runs the 2N+1 stage pipeline — see section 4c step 7.5 for the full stage-by-stage print/eval inventory. Same structure applies here at `S = prompt_len`; whether the single-gather fast path or the two-gather slow path fires depends on `prompt_len % 2`.
    3. `_populate_dflash_captured(self, layer_hiddens, S)` (`model_forward.py:387`) writes `_captured['layer_hiddens']` and `_captured['prefill_hiddens']` via closure introspection.
 4. Back in `super()._next()`: `inner.norm` → `lm_head` (LpB wrapper, M = prompt_len, typically > 16 → fallback to stock GEMM). First token sampled.
 5. Back in `_first_step_capture`: reads `_captured['prefill_hiddens']` → `_last_target_hidden[uid]` shape `(1, prompt_len, D·|target_layers|)`. Seeds `_draft_position[uid]` from `cache.offset` on one of the caches.
@@ -128,8 +126,6 @@ Numbered per the source, cross-referenced with `dflash_split.py` line numbers.
    > *Evals:* `mx.eval(drafts_arr)` (`dflash_split.py:97`) before `.tolist()` — required because the list is used Python-side to build `verify_input`.
 6. **Build verify input** (`:101–102`). `verify_input = concat([[y_val]], drafts_arr)`, shape `(1, V+1)`.
 7. **Pipelined verify forward** (`:106–112`). `dflash_speculative_forward(model, verify_input, cache, target_layer_ids, speculative=True)` → our `_pipelined_dflash_forward` (`model_forward.py:623`):
-   > *Prints:* `[rank N] pipeline begin S=V+1 N=64 even=<bool>` (`model_forward.py:212`) + full per-stage stream as in section 4b step 3.2 (startup + 2·(N−1) main + drain = 2N+1 stage lines per rank).
-   > *Evals:* same graph-break table as 4b step 3.2 — section 8b(i).
    1. Wrap GDN caches in `SpeculativeArraysCache` (`speculative_cache.py:15`).
    2. Monkey-patch `gated_delta_update` → `_make_speculative_gdu(spec_all_states)` (`mtp_module.py:126`, installed at `model_forward.py:667`). The speculative kernel returns `(y, state_out, all_states)` and appends `all_states` to the closure list. Shape: `(B, T, H_v, D_v, D_k)`.
    3. Collect GDN pre-loop data: for each `is_linear` layer, take `spec_cache[0]` (existing conv state) or zeros, store `(pre_conv, c, layer, idx)`.
@@ -143,6 +139,10 @@ Numbered per the source, cross-referenced with `dflash_split.py` line numbers.
       - Capture of layer N-1 happens post-drain (`:342–343`).
       - Total collectives: even S → 2N+1; odd S → 4N-1.
       - Per-stage `mx.eval` calls (`:221`, `:249`, `:262` etc.) break MLX's graph accumulation and keep JACCL's queue drained.
+
+      > *Prints per stage:* `[rank N] pipeline begin S=V+1 N=64 even=<bool>` at loop entry (`model_forward.py:212`), then `[rank N] stage 0 (T=0 startup) h_H0.mean=...` (`:225`), per B-stage `[rank N] stage K (T=... B) h_H1.mean=... out_H0.mean=...` (`:268`), per A-stage `[rank N] stage K (T=... A) h_H0.mean=... out_H1.mean=...` (`:306`), and `[rank N] drain out_H1.mean=...` (`:331`). Total = 1 + 1 + (2N−1) + 1 = 2N+1 print lines per rank per pipelined forward.
+      > *Evals per stage (graph-break + JACCL queue bound):* startup — `mx.eval(contribution)` (`:221`), `mx.eval(gathered)` (`:223`). Main-loop B stage — even S: `mx.eval(my_out)` (`:249`), `mx.eval(gathered)` (`:251`). Odd S: `mx.eval(attn_side)` (`:261`), `mx.eval(moe_side)` (`:262`), `mx.eval(attn_contrib)` (`:266`), `mx.eval(moe_contrib)` (`:267`). Main-loop A stage — even S: `mx.eval(my_out)` (`:287`), `mx.eval(gathered)` (`:289`). Odd S: `mx.eval(attn_side)` (`:299`), `mx.eval(moe_side)` (`:300`), `mx.eval(attn_contrib)` (`:304`), `mx.eval(moe_contrib)` (`:305`). Drain — `mx.eval(contribution)` (`:327`), `mx.eval(gathered)` (`:329`).
+      > *Async / no eval:* captured tensors written to the `capture` dict (`:319`, `:343`) and the final `concat([out_H0, out_H1])` (`:339`) are **not** eval'd here — they materialize implicitly when post-loop reconstruction reads them (step 7.7 / 7.8) and when `lm_head` runs in step 7.10.
    6. Restore stock `gated_delta_update` (`:732`).
    7. **Merge H0+H1 speculative states** (`:741–752`). `spec_all_states` has `2 × len(gdn_spec_data)` entries (one per half per layer). Concat consecutive pairs along step dim → per-layer `all_states`. On MOE_RANK `spec_all_states` is empty because the monkey-patched GDU never ran there → `merged_states == []`.
    8. **Reconstruct conv_input per GDN layer** (`:754–788`). `layer_input = initial_embed` (for layer 0) or `layer_hiddens[layer_idx - 1]` (captured by the pipeline). Then `normed = input_layernorm(layer_input)`, `qkv = in_proj_qkv(normed)`, and `spec_cache.conv_input = concat([pre_conv, qkv], axis=1)`. On MOE_RANK we keep `input_layernorm` and `linear_attn` under `EXO_SPECULATIVE=1`, so this runs there too.
