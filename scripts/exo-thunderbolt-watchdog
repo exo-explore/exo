@@ -22,6 +22,17 @@ while true; do
 
   if "$SCRIPT_DIR/exo-thunderbolt-check" --require-cluster --quiet; then
     attempted_local_restart=0
+    # Auto-place default model if no instance is running
+    if [[ -n "${EXO_DEFAULT_MODEL:-}" ]]; then
+      instance_count=$(curl -fsS "http://localhost:${EXO_API_PORT}/instance/placement?model_id=${EXO_DEFAULT_MODEL}" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); n=len(d.get('MlxRingInstance',{}).get('shardAssignments',{}).get('nodeToRunner',{})); print(n)" 2>/dev/null || echo "0")
+      if [[ "${instance_count}" -eq 0 ]]; then
+        log "no instance for ${EXO_DEFAULT_MODEL}; placing now" | tee -a "$EXO_WATCHDOG_LOG"
+        curl -fsS -X POST "http://localhost:${EXO_API_PORT}/place_instance" \
+          -H "Content-Type: application/json" \
+          -d "{\"model_id\":\"${EXO_DEFAULT_MODEL}\",\"sharding\":\"Pipeline\",\"instance_meta\":\"MlxRing\",\"min_nodes\":1}" \
+          >/dev/null 2>&1 || true
+      fi
+    fi
     sleep "$interval"
     continue
   fi
