@@ -19,16 +19,17 @@ use std::sync::Arc;
 use futures_lite::FutureExt;
 use ipnet::Ipv6Net;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::UnixStream;
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::Duration;
 
-use crate::babel::Babble;
 use crate::babel::command::BabelCommand;
-use crate::babel::line::{self, BabelLine, Status};
+use crate::babel::line::parse::ParseError;
+use crate::babel::line::{self, BabelLine, HeaderLine, Status};
 use crate::babel::state::BabelState;
+use crate::babel::Babble;
 use crate::{BabbleError, Result};
 
 #[cfg(target_os = "macos")]
@@ -46,6 +47,32 @@ pub(crate) struct BabelRuntime {
     write: OwnedWriteHalf,
     line_send: broadcast::Sender<String>,
     state_send: watch::Sender<Arc<BabelState>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupStage {
+    Banner,
+    Version,
+    Host,
+    MyId,
+    Ready,
+}
+
+impl StartupStage {
+    fn advance(self, line: BabelLine) -> Result<Option<Self>> {
+        match (self, line) {
+            (Self::Banner, BabelLine::Header(HeaderLine::Banner { major: 1, minor: 0 })) => {
+                Ok(Some(Self::Version))
+            }
+            (Self::Version, BabelLine::Header(HeaderLine::Version(_))) => Ok(Some(Self::Host)),
+            (Self::Host, BabelLine::Header(HeaderLine::Host(_))) => Ok(Some(Self::MyId)),
+            (Self::MyId, BabelLine::Header(HeaderLine::MyId(_))) => Ok(Some(Self::Ready)),
+            (Self::Ready, BabelLine::Status(Status::Ok)) => Ok(None),
+            (stage, other) => Err(BabbleError::Other(format!(
+                "unexpected babeld startup line while waiting for {stage:?}: {other:?}"
+            ))),
+        }
+    }
 }
 
 impl Drop for BabelRuntime {
@@ -100,7 +127,7 @@ impl BabelRuntime {
             }
         };
 
-        if let Err(err) = Self::wait_for_socket().await {
+        if let Err(err) = Self::wait_for_socket(&mut proc).await {
             Self::abort_child(&mut proc).await;
             return Err(err);
         }
@@ -137,10 +164,13 @@ impl BabelRuntime {
         Ok(runtime)
     }
 
-    async fn wait_for_socket() -> Result<()> {
+    async fn wait_for_socket(proc: &mut Child) -> Result<()> {
         // maybe spinning logic is fine with magic numbers...?
         tokio::time::sleep(Duration::from_millis(10)).await;
         while !matches!(tokio::fs::try_exists(PRIVATE_SOCK_PATH).await, Ok(true)) {
+            if let Some(status) = proc.try_wait()? {
+                return Err(BabbleError::BabeldCrashed(status.code()));
+            }
             tracing::info!("where is the sock");
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
@@ -153,16 +183,26 @@ impl BabelRuntime {
 
     #[tracing::instrument(skip_all)]
     async fn await_ready(&mut self) -> Result<()> {
-        // TODO: replace with parsing logic which we have anyways...
-        //       also i just don't like this being its own method for some reason
+        let mut stage = StartupStage::Banner;
         while let Some(line) = self.read.next_line().await? {
-            tracing::debug!("[babeld] {}", line);
-            if line == "ok" {
-                tracing::info!("babeld ok");
-                break;
+            match self.observe_line(line)? {
+                Ok(parsed) => match stage.advance(parsed)? {
+                    Some(next) => stage = next,
+                    None => {
+                        tracing::info!("babeld ok");
+                        return Ok(());
+                    }
+                },
+                Err(err) => {
+                    return Err(BabbleError::Other(format!(
+                        "failed to parse babeld startup prelude: {err}"
+                    )));
+                }
             }
         }
-        Ok(())
+        Err(BabbleError::Other(
+            "babeld closed before completing startup prelude".into(),
+        ))
     }
 
     #[tracing::instrument(skip(self))]
@@ -173,45 +213,51 @@ impl BabelRuntime {
                 tracing::warn!("babeld closed unexpectedly");
                 return Ok(None);
             };
-            let status = self.observe_line(line)?.and_then(|parsed| match parsed {
-                BabelLine::Status(status) => Some(status),
-                _ => None,
-            });
-            if let Some(status) = status {
-                match &status {
-                    Status::Ok => {}
-                    Status::Bad => tracing::warn!("malformed message sent to babeld"),
-                    Status::No(rest) => tracing::warn!("message rejected: {rest:?}"),
+            match self.observe_line(line)? {
+                Ok(BabelLine::Status(status)) => {
+                    match &status {
+                        Status::Ok => {}
+                        Status::Bad => tracing::warn!("malformed message sent to babeld"),
+                        Status::No(rest) => tracing::warn!("message rejected: {rest:?}"),
+                    }
+                    return Ok(Some(status));
                 }
-                return Ok(Some(status));
+                Ok(_) => {}
+                Err(err) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("failed to parse babeld command output: {err}"),
+                    ));
+                }
             }
         }
     }
 
     #[tracing::instrument(skip(self))]
-    fn observe_line(&self, line: String) -> io::Result<Option<BabelLine>> {
+    fn observe_line(&self, line: String) -> io::Result<std::result::Result<BabelLine, ParseError>> {
         tracing::info!("[babel] {:?}", line);
 
-        let parsed = match line::parse::parse_line(&line) {
+        let observed = match line::parse::parse_line(&line) {
             Ok(parsed) => {
                 tracing::info!("[parsed] {:?}", parsed);
-                Some(parsed)
+                Ok(parsed)
             }
             Err(err) => {
                 tracing::error!(error=%err, "failed to parse babeld line");
-                None
+                Err(err)
             }
         };
 
         self.line_send
             .send(line)
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "babel listeners dropped"))?;
-        Ok(parsed)
+        Ok(observed)
     }
 
     #[tracing::instrument(skip(self))]
     async fn dump_snapshot(&mut self) -> io::Result<Option<Status>> {
         let mut snapshot = BabelState::new();
+        let mut invalid_reason = None::<String>;
         self.write
             .write_all(BabelCommand::Dump.encode().as_bytes())
             .await?;
@@ -221,8 +267,15 @@ impl BabelRuntime {
                 return Ok(None);
             };
             match self.observe_line(line)? {
-                Some(BabelLine::Event(event)) => snapshot.apply(event),
-                Some(BabelLine::Status(status)) => {
+                Ok(BabelLine::Event(event)) => {
+                    if invalid_reason.is_none() {
+                        snapshot.apply(event);
+                    }
+                }
+                Ok(BabelLine::Status(status)) => {
+                    if let Some(reason) = invalid_reason {
+                        return Err(io::Error::new(io::ErrorKind::InvalidData, reason));
+                    }
                     match &status {
                         Status::Ok => {
                             self.state_send.send_replace(Arc::new(snapshot));
@@ -232,7 +285,16 @@ impl BabelRuntime {
                     }
                     return Ok(Some(status));
                 }
-                Some(BabelLine::Header(_)) | None => {}
+                Ok(BabelLine::Header(header)) => {
+                    invalid_reason.get_or_insert_with(|| {
+                        format!("unexpected header line during dump snapshot: {header:?}")
+                    });
+                }
+                Err(err) => {
+                    invalid_reason.get_or_insert_with(|| {
+                        format!("failed to parse babeld dump output: {err}")
+                    });
+                }
             }
         }
     }
@@ -270,7 +332,7 @@ impl BabelRuntime {
                     let Ok(Some(line)) = line else {
                         break;
                     };
-                    if matches!(self.observe_line(line)?, Some(BabelLine::Status(_))) {
+                    if matches!(self.observe_line(line)?, Ok(BabelLine::Status(_))) {
                         tracing::debug!("ignoring unsolicited status line from babeld");
                     }
                 },
