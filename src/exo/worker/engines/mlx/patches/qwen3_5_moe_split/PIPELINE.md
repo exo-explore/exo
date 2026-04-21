@@ -84,11 +84,16 @@ Stock `DFlashBatchGenerator._setup_hidden_capture` (`speculative/dflash_batch_ge
 ### 4a. Startup & warmup
 
 1. Model loads via `auto_parallel.attn_moe_split_auto_parallel` (`auto_parallel.py:436`), which calls `apply_qwen35_attn_moe_split_patches(model, group)` (`auto_parallel.py:474`). Both ranks run patch install; differences are gated by `group.rank()`.
+   > *Prints:* `Patched X target projections with dynamic LpB` (`lpb_patch.py:130`) if `EXO_LPB_PATCHES!=0`; `Qwen3.5 attn/moe split patch applied on rank N/2` (`apply.py:291`).
 2. `BatchGenerator` init reads `EXO_SPECULATIVE=1 EXO_SPECULATIVE_MODE=dflash` (`batch_generate.py:100`).
 3. Drafter is instantiated: `DFlashDrafter(self.model, dflash_path)` (`batch_generate.py:116`). See `dflash_module.py:107` — weights loaded via `huggingface_hub.snapshot_download` if not cached.
+   > *Prints:* `DFlash config: N layers, hidden=..., heads=.../..., block=...` (`dflash_module.py:133`); `Target layers: [...], mask_token=...` (`:136`) — **this is the authoritative list of `target_layer_ids`**; `DFlash loaded: X tensors, Y.YM params` (`:164`).
 4. Drafter is LpB-patched: `apply_bf16_lpb_patches(drafter)` (`batch_generate.py:117`).
+   > *Prints:* `DFLASH_LPB_ONLY=...` only if that env var is set (`bf16_lpb_patch.py:109`); `Patched X DFlash drafter projections with dynamic LpB` (`:143`).
 5. `DFlashBatchGenerator.__init__` (`dflash_batch_generator.py:23`) runs `_setup_hidden_capture` (`dflash_batch_generator.py:53`) — wraps each index in `drafter.target_layer_ids` with `_CapturingLayer`.
 6. **Warmup** — `warmup_dflash` (`batch_generate.py:272`) sweeps drafter projections across every M they'll see: `S_ctx ∈ [1, V+1]` × `block_size`. Then one target verify at `M=V+1` to compile every target projection. Without this, Metal kernel compilation stalls the first real batch. Warmup also runs one non-speculative `dflash_speculative_forward` (`batch_generate.py:311`) for target-only kernel priming, then rolls back the cache.
+   > *Prints:* bookends `Warming up DFlash speculative decoding kernels...` (`batch_generate.py:298`) and `DFlash warmup complete` (`:357`). Each pipelined forward inside warmup emits the full `[rank N] pipeline begin ...` + per-stage stream from `model_forward.py:212, 225, 268, 306, 331`.
+   > *Evals:* `mx.eval(target_hidden_full, logits)` (`:313`), `mx.eval(dl)` per drafter sweep iteration (`:332`), `mx.eval(target_hidden, vl)` after the verify forward (`:341`).
 
 ### 4b. Prefill (first step for a uid)
 
@@ -99,9 +104,12 @@ Entry: `BatchGenerator.step` → `DFlashBatchGenerator._next` (`dflash_batch_gen
 3. That reaches our patched `Qwen3_5TextModel.__call__` = `_pipelined_call` (`model_forward.py:430`). S = prompt_len > 1, so it takes the pipelined branch (`:456–481`):
    1. `_dflash_capturing_target_ids(self)` (`model_forward.py:353`) detects the `_CapturingLayer` wrappers.
    2. `pipelined_layer_loop(..., capture_layers=target_ids)` (`model_forward.py:146`) runs the 2N+1 stage pipeline — see section 4c steps A/B for stage structure.
+      > *Prints:* `[rank N] pipeline begin S=prompt_len N=64 even=<bool>` (`model_forward.py:212`); then per stage `[rank N] stage 0 (T=0 startup) ...` (`:225`), 127× `[rank N] stage K (T=... A/B) ...` (`:268, 306`), and `[rank N] drain out_H1.mean=...` (`:331`).
+      > *Evals:* full graph-break sequence — `mx.eval` at `model_forward.py:221, 223` (startup), `:249, 251` or `:261–267` (each B stage), `:287, 289` or `:299–305` (each A stage), `:327, 329` (drain). Section 8b(i) has the full table.
    3. `_populate_dflash_captured(self, layer_hiddens, S)` (`model_forward.py:387`) writes `_captured['layer_hiddens']` and `_captured['prefill_hiddens']` via closure introspection.
 4. Back in `super()._next()`: `inner.norm` → `lm_head` (LpB wrapper, M = prompt_len, typically > 16 → fallback to stock GEMM). First token sampled.
 5. Back in `_first_step_capture`: reads `_captured['prefill_hiddens']` → `_last_target_hidden[uid]` shape `(1, prompt_len, D·|target_layers|)`. Seeds `_draft_position[uid]` from `cache.offset` on one of the caches.
+   > *Evals:* `mx.eval(target_hidden)` (`dflash_batch_generator.py:125`) before caching — forces the concatenated prefill hiddens to materialize.
 6. Falls into `_speculative_next` (first real cycle).
 
 ### 4c. Speculative cycle (per step)
@@ -111,12 +119,17 @@ Entry: `DFlashBatchGenerator._speculative_next` — patched to `_split_speculati
 Numbered per the source, cross-referenced with `dflash_split.py` line numbers.
 
 1. **Preamble** (`:34–55`). Record `tic`, append `y_val` to `batch.tokens[0]`, read `_last_target_hidden[uid]`. If missing, fall back to `super()._next()` — this hits the S==1 decode path (section 4d). Logs `DFlash speculative cycle (...)` and any fallback.
+   > *Prints:* either `[rank N] DFlash: NO target_hidden -> fallback ... (y_val=...)` (`dflash_split.py:46`) OR `[rank N] DFlash speculative cycle (y_val=..., target_hidden.shape=...)` (`:51`) — one per cycle per rank.
 2. **Draft-position sync** (`:65–70`). `all_gather(_draft_position)` → take `ATTN_RANK`'s. ATTN_RANK's cache offset is authoritative; MOE_RANK's stays at 0 because it never runs attention.
 3. **Draft** (`:73–76`). Both ranks: `drafter.draft(last_target_hidden, block_ids, start)` → `draft_logits` of shape `(B, block_size-1, vocab)`. `block_ids` is `[y_val, MASK, MASK, ...]` of length `block_size`. The drafter implementation is `dflash_module.py:226` — see notes at the bottom of section 4c.
 4. **Sample** (`:79–91`). temp=0: `argmax` of `draft_logits`. temp>0: per-position `mx.random.categorical` with softmax. Both ranks sample **independently** (RNG seeds may diverge).
+   > *Evals:* `mx.eval(all_drafts_arr)` (`dflash_split.py:81`) before `.tolist()` on temp=0 path; temp>0 uses `.item()` per position which evals inline.
 5. **Draft sync** (`:94–98`). `all_gather(drafts_local)` → take MOE_RANK's `drafts_arr`. After this, both ranks have identical `drafts` of length `verify_len`.
+   > *Evals:* `mx.eval(drafts_arr)` (`dflash_split.py:97`) before `.tolist()` — required because the list is used Python-side to build `verify_input`.
 6. **Build verify input** (`:101–102`). `verify_input = concat([[y_val]], drafts_arr)`, shape `(1, V+1)`.
 7. **Pipelined verify forward** (`:106–112`). `dflash_speculative_forward(model, verify_input, cache, target_layer_ids, speculative=True)` → our `_pipelined_dflash_forward` (`model_forward.py:623`):
+   > *Prints:* `[rank N] pipeline begin S=V+1 N=64 even=<bool>` (`model_forward.py:212`) + full per-stage stream as in section 4b step 3.2 (startup + 2·(N−1) main + drain = 2N+1 stage lines per rank).
+   > *Evals:* same graph-break table as 4b step 3.2 — section 8b(i).
    1. Wrap GDN caches in `SpeculativeArraysCache` (`speculative_cache.py:15`).
    2. Monkey-patch `gated_delta_update` → `_make_speculative_gdu(spec_all_states)` (`mtp_module.py:126`, installed at `model_forward.py:667`). The speculative kernel returns `(y, state_out, all_states)` and appends `all_states` to the closure list. Shape: `(B, T, H_v, D_v, D_k)`.
    3. Collect GDN pre-loop data: for each `is_linear` layer, take `spec_cache[0]` (existing conv state) or zeros, store `(pre_conv, c, layer, idx)`.
@@ -136,9 +149,12 @@ Numbered per the source, cross-referenced with `dflash_split.py` line numbers.
    9. Concat captured target hiddens → `target_hidden` of shape `(1, V+1, D·|target_layers|)` (`:791`).
    10. Final norm + lm_head (LpB wrapper, M = V+1 — LpB fires) → `verify_logits` of shape `(1, V+1, vocab)`.
 8. **Acceptance** (`:116–162`). temp=0: `argmax(verify_logits[:, :V, :]) == drafts_arr` → `matches`, count leading True → `n_accepted`. temp>0: MOE_RANK computes acceptance ratios + uniforms; `all_gather([n_accepted_local])` broadcasts MOE's value.
+   > *Async evals:* temp=0 — `mx.async_eval(matches, all_next, target_hidden)` (`dflash_split.py:120`) kicks off acceptance + next-step state; the Python `for i in range(V): if matches[i].item(): ...` loop blocks per-index on the already-scheduled compute. temp>0 — `mx.async_eval(accept_ratios, uniforms, corrections, bonus_token, target_hidden)` (`:146–148`).
+   > *Prints:* `[DFlash] n_accepted=X/V` on MOE_RANK only (`:165`) — one line per cycle.
 9. **Rollback** (`:171–177`). `rollback = V - n_accepted`. If > 0: GQA `BatchKVCache` → `c.offset -= rollback`. GDN `SpeculativeArraysCache` → `c.rollback(n_accepted)` (`speculative_cache.py:81`): sets `base.cache[1] = all_states[0, n_accepted]` if `all_states` is set (ATTN_RANK only), and `base.cache[0] = conv_input[:, n_accepted+1 : n_accepted+1+3, :]` (both ranks).
 10. **Unwrap speculative caches** (`:179–181`). Replace each `SpeculativeArraysCache` with its `.base` for the next cycle's stock layer dispatch.
 11. **Emit tokens** (`:184–212`). Bonus/correction token (all accepted: `all_next[V]` or `bonus_token`; partial: `all_next[n_accepted]` or `corrections[n_accepted]`). Update `_last_target_hidden[uid] = target_hidden[:, :n_accepted+1, :]`, advance `_draft_position += n_accepted+1`. Buffer accepted draft tokens into `_token_buffer[uid]` (`:234` or `:248`).
+   > *Async evals:* `mx.async_eval(batch.y)` at `dflash_split.py:239` (stop-token path) or `:250` (normal return) — schedules the next-step bonus token without blocking the `Response` yield.
 
 **Notes on the drafter.** `DFlashDrafter.draft` (`dflash_module.py:226`):
 - `target_hidden` shape `(B, accepted_len, n_layers · hidden_size)` — compressed via `self.fc` (`dflash_module.py:243`) to `(B, accepted_len, hidden_size)`.
@@ -155,6 +171,8 @@ Numbered per the source, cross-referenced with `dflash_split.py` line numbers.
   - Step 2: MOE runs MLP; ATTN burns layernorms.
   - 2nd all_gather picks MOE's output.
   - Two `all_gather`s per layer, N layers → `2N` total collectives for an S==1 decode.
+  > *Prints:* per layer per rank — `[rank N] L=lc after gather-1 h.mean=...` (`decoder.py:56`) and `[rank N] L=lc after gather-2 out.mean=...` (`:69`). 2·N lines per decode step per rank.
+  > *Evals:* per layer — `mx.eval(h)` (`:53`) on the idle rank every 2nd `lc` (JACCL queue bound); `mx.eval(h)` post-gather-1 (`:55`); `mx.eval(out)` (`:66`) idle-rank equivalent; `mx.eval(result)` post-gather-2 (`:68`).
 - At M=1 every LpB wrapper fires its fast-path kernel.
 
 ### 4e. Termination
