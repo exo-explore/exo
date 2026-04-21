@@ -193,6 +193,9 @@ This starts the exo dashboard and API at http://localhost:52415/
 
 **Important note for Linux users:** Currently, exo runs on CPU on Linux. GPU support for Linux platforms is under development. If you'd like to see support for your specific Linux hardware, please [search for existing feature requests](https://github.com/exo-explore/exo/issues) or create a new one.
 
+**Connectivity:**
+If you intend to connect a linux device directly to a mac (thunderbolt, ethernet) without a router, both devices need IPv4 addresses. The MacOS app assigns these, the linux equivalent varies by distro. For ubuntu, run `avahi-autoipd` on the relevant interface. For example for the DGX Spark, you may run `sudo avahi-autoipd -D -w enP7s7` to start the avahi IPv4 daemon on the Spark's ethernet port.
+
 **Configuration Options:**
 
 - `--no-worker`: Run exo without the worker component. Useful for coordinator-only nodes that handle networking and orchestration but don't execute inference tasks. This is helpful for machines without sufficient GPU resources but with good network connectivity.

@@ -1,3 +1,13 @@
-*   @ToxicPine
-*   @AlexCheema
-*   @GeluVrabie
+# default reviewers
+*         @evanev7
+
+# filetypes
+*.svelte  @ciaranbor
+*.swift   @ciaranbor @AlexCheema
+*.nix     @evanev7
+*.rs      @evanev7
+
+# folders
+bench     @rltakashige @ciaranbor
+nix       @evanev7
+src       @evenev7 @rltakashige

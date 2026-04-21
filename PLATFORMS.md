@@ -5,10 +5,14 @@
 Apple Silicon MacOS
 - Mac Studio: M3 Ultra
 - Mac Mini: M4 Pro
-- Macbook Pro: M5, M4 Max
+- Macbook Pro: M5 Max, M5 Pro, M5, M4 Max
+
+Linux CPU Support
 
 ## Tier 2 support - checked occasionally, should run without crashing
 
+Linux CUDA Support
+- Nvidia DGX Spark
 
 ## Tier 3 support - minimal support and testing, but no theoretical reason it shouldnt work
 
@@ -19,8 +23,6 @@ Apple Silicon MacOS
 
 Linux CUDA Support
 - Nvidia DGX Spark
-
-Linux CPU Support
 
 ## Tier 2
 
