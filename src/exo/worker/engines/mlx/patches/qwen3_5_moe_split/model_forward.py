@@ -590,7 +590,7 @@ def make_pipelined_dflash_speculative_forward(group):  # type: ignore[no-untyped
             from exo.worker.engines.mlx.speculative.speculative_cache import (
                 SpeculativeArraysCache as _SAC,
             )
-            for layer, c in zip(inner.layers, cache_list):
+            for idx, (layer, c) in enumerate(zip(inner.layers, cache_list)):
                 if layer.is_linear and isinstance(c, _SAC):
                     pre_conv = c[0]
                     if pre_conv is None:
@@ -603,9 +603,22 @@ def make_pipelined_dflash_speculative_forward(group):  # type: ignore[no-untyped
                             ),
                             dtype=hidden_states.dtype,
                         )
-                    gdn_spec_data.append((pre_conv, c, layer))
+                    # Tuple order matches stock: (pre_conv, spec_cache, layer, layer_idx).
+                    # layer_idx is used post-loop to look up the layer's input.
+                    gdn_spec_data.append((pre_conv, c, layer, idx))
 
-        # Run layer loop; capture hidden states at target_layer_ids.
+        # Run layer loop; capture hidden states at target_layer_ids + GDN
+        # layer INPUTS (which equal layer L-1's outputs) for conv rollback.
+        # Initial embed is layer 0's input; we pass it explicitly below.
+        initial_embed = hidden_states
+        gdn_layer_idxs = [
+            i for i, layer in enumerate(inner.layers) if layer.is_linear
+        ]
+        # For GDN layer L, we need layer L's input = layer L-1's output (or
+        # initial embed if L=0). Request capture of outputs for indices L-1.
+        extra_capture = {L - 1 for L in gdn_layer_idxs if L >= 1}
+        capture_set = set(target_layer_ids) | extra_capture
+
         if S > 1:
             hidden_states, layer_hiddens = pipelined_layer_loop(
                 inner,
@@ -614,16 +627,15 @@ def make_pipelined_dflash_speculative_forward(group):  # type: ignore[no-untyped
                 group,
                 fa_mask,
                 ssm_mask,
-                capture_layers=set(target_layer_ids),
+                capture_layers=capture_set,
             )
         else:
             # S==1 path: stock loop with manual capture
             layer_hiddens = {}
-            target_set = set(target_layer_ids)
             for i, (layer, c) in enumerate(zip(inner.layers, cache_list)):
                 mask = ssm_mask if layer.is_linear else fa_mask
                 hidden_states = layer(hidden_states, mask=mask, cache=c)
-                if i in target_set:
+                if i in capture_set:
                     layer_hiddens[i] = hidden_states
 
         # Post-loop: restore GDN kernel, reconstruct conv_input for rollback
@@ -653,16 +665,40 @@ def make_pipelined_dflash_speculative_forward(group):  # type: ignore[no-untyped
                 merged_states = spec_all_states
 
             gdn_idx = 0
-            for pre_conv, spec_cache, parent_layer in gdn_spec_data:
+            for pre_conv, spec_cache, parent_layer, layer_idx in gdn_spec_data:
                 if gdn_idx < len(merged_states):
                     spec_cache.all_states = merged_states[gdn_idx]
                 gdn_idx += 1
-                # conv_input reconstruction is skipped under the split — the
-                # pipelined path doesn't preserve intermediate layer inputs
-                # the way the stock forward does. Rollback to an earlier
-                # position mid-prefill would need this; for DFlash verify
-                # (where rollback only trims cache offset and GDN state) it
-                # isn't exercised.
+
+                # Reconstruct conv_input for rollback. Mirrors stock
+                # dflash_speculative.py:97-113 but retrieves layer_input from
+                # our captured layer outputs (capture[L-1] is layer L's input)
+                # or the initial embedding for layer 0.
+                if layer_idx == 0:
+                    layer_input = initial_embed
+                else:
+                    layer_input = layer_hiddens.get(layer_idx - 1)
+                if layer_input is None:
+                    continue  # shouldn't happen given our capture_set, safety
+
+                gdn = parent_layer.linear_attn
+                normed = parent_layer.input_layernorm(layer_input)
+                if hasattr(gdn, "in_proj_qkv"):
+                    qkv = gdn.in_proj_qkv(normed)
+                else:
+                    q, k, v, z, b, a = gdn.fix_query_key_value_ordering(
+                        gdn.in_proj_qkvz(normed), gdn.in_proj_ba(normed)
+                    )
+                    B_dim = normed.shape[0]
+                    qkv = mx.concatenate(
+                        [
+                            q.reshape(B_dim, S, -1),
+                            k.reshape(B_dim, S, -1),
+                            v.reshape(B_dim, S, -1),
+                        ],
+                        axis=-1,
+                    )
+                spec_cache.conv_input = mx.concatenate([pre_conv, qkv], axis=1)
 
         # Concatenate target_hidden from captured layers
         selected = [layer_hiddens[i] for i in target_layer_ids]
