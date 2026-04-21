@@ -346,6 +346,69 @@ def pipelined_layer_loop(
 
 
 # ---------------------------------------------------------------------------
+# DFlash _CapturingLayer detection / population
+# ---------------------------------------------------------------------------
+
+
+def _dflash_capturing_target_ids(inner) -> set[int]:
+    """Return layer indices wrapped by DFlashBatchGenerator._CapturingLayer.
+
+    Detected by the presence of both ``_orig`` and ``_layer_idx`` attributes —
+    the two instance attrs set in _CapturingLayer.__init__.
+    """
+    ids: set[int] = set()
+    for layer in inner.layers:
+        if hasattr(layer, "_orig") and hasattr(layer, "_layer_idx"):
+            ids.add(int(layer._layer_idx))
+    return ids
+
+
+def _dflash_captured_dict(inner):  # type: ignore[no-untyped-def]
+    """Return the ``captured`` dict shared by all _CapturingLayer instances.
+
+    _CapturingLayer.__call__ writes to a closure variable ``captured`` which
+    is a reference to DFlashBatchGenerator._captured. We fish it out via
+    ``__call__.__closure__`` so we can populate it from the pipelined path
+    (which bypasses _CapturingLayer.__call__ entirely).
+    """
+    for layer in inner.layers:
+        if hasattr(layer, "_orig") and hasattr(layer, "_layer_idx"):
+            call_fn = type(layer).__call__
+            closure = getattr(call_fn, "__closure__", None)
+            if closure is None:
+                return None
+            for name, cell in zip(call_fn.__code__.co_freevars, closure):
+                if name == "captured":
+                    return cell.cell_contents
+            return None
+    return None
+
+
+def _populate_dflash_captured(
+    inner, layer_hiddens: dict, S: int
+) -> None:  # type: ignore[no-untyped-def]
+    """Write captured layer outputs into the DFlash ``_captured`` dict.
+
+    Mirrors _CapturingLayer.__call__'s behavior: always writes to
+    ``layer_hiddens``, and additionally to ``prefill_hiddens`` when S > 1.
+    """
+    if not layer_hiddens:
+        return
+    captured = _dflash_captured_dict(inner)
+    if captured is None:
+        return
+    if "layer_hiddens" not in captured:
+        captured["layer_hiddens"] = {}
+    for idx, out in layer_hiddens.items():
+        captured["layer_hiddens"][idx] = out
+    if S > 1:
+        if "prefill_hiddens" not in captured:
+            captured["prefill_hiddens"] = {}
+        for idx, out in layer_hiddens.items():
+            captured["prefill_hiddens"][idx] = out
+
+
+# ---------------------------------------------------------------------------
 # Replacement for Qwen3_5TextModel.__call__
 # ---------------------------------------------------------------------------
 
@@ -356,6 +419,12 @@ def make_pipelined_model_call(group):  # type: ignore[no-untyped-def]
     For S==1 decode, falls through to the stock layer loop which calls
     DecoderLayer.__call__ — i.e. our serial _split_call. For S>1, runs the
     pipelined layer loop.
+
+    DFlash integration: if DFlashBatchGenerator._setup_hidden_capture has
+    wrapped any decoder layer in _CapturingLayer, we detect it and populate
+    its closure-captured ``captured`` dict with layer outputs directly —
+    because the pipelined path bypasses layer.__call__ and _CapturingLayer
+    never fires on its own during prefill.
     """
 
     def _pipelined_call(
@@ -375,7 +444,8 @@ def make_pipelined_model_call(group):  # type: ignore[no-untyped-def]
         S = hidden_states.shape[1]
 
         if S == 1:
-            # Decode: stock loop -> DecoderLayer.__call__ -> serial _split_call
+            # Decode: stock loop -> DecoderLayer.__call__ -> serial _split_call.
+            # _CapturingLayer.__call__ fires naturally here for S==1.
             fa_mask = create_attention_mask(hidden_states, cache[self.fa_idx])
             ssm_mask = create_ssm_mask(hidden_states, cache[self.ssm_idx])
             for layer, c in zip(self.layers, cache):
@@ -388,9 +458,26 @@ def make_pipelined_model_call(group):  # type: ignore[no-untyped-def]
             hidden_states, cache[self.fa_idx], return_array=True
         )
         ssm_mask = create_ssm_mask(hidden_states, cache[self.ssm_idx])
-        hidden_states, _ = pipelined_layer_loop(
-            self, hidden_states, cache, group, fa_mask, ssm_mask
+
+        # If DFlash has wrapped target layers, request their outputs so we can
+        # populate its captured dict (stock _CapturingLayer.__call__ never
+        # fires on the pipelined path).
+        target_ids = _dflash_capturing_target_ids(self)
+        capture_layers = target_ids if target_ids else None
+
+        hidden_states, layer_hiddens = pipelined_layer_loop(
+            self,
+            hidden_states,
+            cache,
+            group,
+            fa_mask,
+            ssm_mask,
+            capture_layers=capture_layers,
         )
+
+        if target_ids:
+            _populate_dflash_captured(self, layer_hiddens, S)
+
         return self.norm(hidden_states)
 
     return _pipelined_call

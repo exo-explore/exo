@@ -6,13 +6,13 @@ get the same verify_logits via the pipelined forward, so both compute the
 same n_accepted). At temp>0, MOE_RANK's n_accepted wins via all_gather so
 stochastic decisions stay consistent.
 
-Also replaces `_first_step_capture` — the stock one relies on a
-`_CapturingLayer` wrapper that wraps `inner.layers[i]` and captures during
-the layer's `__call__`. Our pipelined_layer_loop bypasses `layer.__call__`
-entirely (it calls `layer.self_attn` / `layer.linear_attn` / `layer.mlp`
-directly), so the capture never fires. We fix this by running our pipelined
-dflash forward explicitly to compute target_hidden from the current cache
-state on the last token.
+Stock `_first_step_capture` is kept — it reads `self._captured['prefill_hiddens']`
+which is populated by `_CapturingLayer.__call__` during prefill. Our
+pipelined prefill bypasses `layer.__call__` entirely, so `_CapturingLayer`
+would never fire on its own. `make_pipelined_model_call` compensates by
+detecting the `_CapturingLayer` wrappers and writing the captured layer
+outputs from `pipelined_layer_loop` directly into the closure-captured
+`captured` dict (see `_populate_dflash_captured` in `model_forward.py`).
 """
 
 import time
