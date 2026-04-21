@@ -222,6 +222,10 @@ def pipelined_layer_loop(
     gathered = mx.distributed.all_gather(contribution, group=group)
     mx.eval(gathered)
     h_H0_ready = gathered[ATTN_RANK : ATTN_RANK + 1]
+    print(
+        f"[rank {rank}] stage 0 (T=0 startup) h_H0.mean={h_H0_ready.mean().item():+.6f}",
+        flush=True,
+    )
 
     # --- Stages 1..2N-1: main pipeline ---
     # Even S: attn_side and moe_side have the same shape (mid == S-mid), so
@@ -260,6 +264,12 @@ def pipelined_layer_loop(
                 )
                 mx.eval(attn_contrib)
                 mx.eval(moe_contrib)
+            print(
+                f"[rank {rank}] stage {stage} (T={T} B) "
+                f"h_H1.mean={attn_contrib.mean().item():+.6f} "
+                f"out_H0.mean={moe_contrib.mean().item():+.6f}",
+                flush=True,
+            )
 
             h_H1_pending = attn_contrib
             x_H0 = moe_contrib
@@ -290,6 +300,12 @@ def pipelined_layer_loop(
                 )
                 mx.eval(attn_contrib)
                 mx.eval(moe_contrib)
+            print(
+                f"[rank {rank}] stage {stage} (T={T} A) "
+                f"h_H0.mean={attn_contrib.mean().item():+.6f} "
+                f"out_H1.mean={moe_contrib.mean().item():+.6f}",
+                flush=True,
+            )
 
             h_H0_ready = attn_contrib
             x_H1 = moe_contrib
@@ -308,6 +324,10 @@ def pipelined_layer_loop(
     gathered = mx.distributed.all_gather(contribution, group=group)
     mx.eval(gathered)
     out_H1 = gathered[MOE_RANK : MOE_RANK + 1]
+    print(
+        f"[rank {rank}] drain out_H1.mean={out_H1.mean().item():+.6f}",
+        flush=True,
+    )
 
     # After the final B stage (Stage 2N-1), out_{N-1}_H0 = x_H0 (MOE's contribution
     # from Stage 2N-1 — stored in the x_H0 variable).
