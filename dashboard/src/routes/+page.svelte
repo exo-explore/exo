@@ -1581,12 +1581,14 @@
     progress: DownloadProgress | null;
     perNode: NodeDownloadStatus[];
     failedError: string | null;
+    rejectedError: string | null;
   } {
     const empty = {
       isDownloading: false,
       progress: null,
       perNode: [] as NodeDownloadStatus[],
       failedError: null,
+      rejectedError: null,
     };
 
     if (!downloadsData || Object.keys(downloadsData).length === 0) {
@@ -1618,8 +1620,8 @@
         const downloadModelId = extractModelIdFromDownload(downloadPayload);
         if (!downloadModelId || downloadModelId !== modelId) continue;
 
-        // DownloadFailed — return with any data collected so far
-        if (downloadKind === "DownloadFailed") {
+        // ModelDownloadFailed — return with any data collected so far
+        if (downloadKind === "ModelDownloadFailed") {
           return {
             isDownloading: false,
             progress: null,
@@ -1628,20 +1630,33 @@
               (downloadPayload.errorMessage as string) ||
               (downloadPayload.error_message as string) ||
               "Download failed",
+            rejectedError: null,
+          };
+        }
+
+        // ModelRejected — storage limit exceeded
+        if (downloadKind === "ModelRejected") {
+          return {
+            isDownloading: false,
+            progress: null,
+            perNode: Array.from(perNodeMap.values()),
+            failedError: null,
+            rejectedError:
+              (downloadPayload.reason as string) || "Storage limit exceeded",
           };
         }
 
         if (
-          downloadKind !== "DownloadOngoing" &&
-          downloadKind !== "DownloadPending" &&
-          downloadKind !== "DownloadCompleted"
+          downloadKind !== "ModelDownloading" &&
+          downloadKind !== "ModelNotDownloading" &&
+          downloadKind !== "ModelReady"
         )
           continue;
 
         const nodeName =
           data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
 
-        if (downloadKind === "DownloadCompleted") {
+        if (downloadKind === "ModelReady") {
           perNodeMap.set(nodeId, {
             nodeId,
             nodeName,
@@ -1652,7 +1667,7 @@
           continue;
         }
 
-        if (downloadKind === "DownloadPending") {
+        if (downloadKind === "ModelNotDownloading") {
           const pendingDownloaded = getBytes(
             downloadPayload.downloaded ??
               downloadPayload.downloaded_bytes ??
@@ -1676,7 +1691,7 @@
           continue;
         }
 
-        // DownloadOngoing
+        // ModelDownloading
         const progress = parseDownloadProgress(downloadPayload);
         if (
           !progress ||
@@ -1722,6 +1737,7 @@
         progress: null,
         perNode,
         failedError: null,
+        rejectedError: null,
       };
     }
 
@@ -1742,6 +1758,7 @@
       },
       perNode,
       failedError: null,
+      rejectedError: null,
     };
   }
 
@@ -1822,6 +1839,17 @@
         errorMessage: result.failedError,
         progress: null,
         statusText: "FAILED",
+        perNode: [],
+      };
+    }
+
+    if (result.rejectedError) {
+      return {
+        isDownloading: false,
+        isFailed: true,
+        errorMessage: result.rejectedError,
+        progress: null,
+        statusText: "REJECTED",
         perNode: [],
       };
     }
@@ -2475,7 +2503,13 @@
     if (Object.keys(prev).length > 0) {
       for (const [id, currentStatus] of Object.entries(currentStatuses)) {
         const prevStatus = prev[id];
-        if (!prevStatus || prevStatus === currentStatus) continue;
+        if (prevStatus === currentStatus) continue;
+        if (
+          !prevStatus &&
+          currentStatus !== "REJECTED" &&
+          currentStatus !== "FAILED"
+        )
+          continue;
 
         const modelId = getInstanceModelId(instanceData[id]);
         const shortName = modelId
@@ -2509,6 +2543,14 @@
           addToast({ type: "error", message: `Model failed: ${shortName}` });
         }
 
+        if (prevStatus !== "REJECTED" && currentStatus === "REJECTED") {
+          addToast({
+            type: "warning",
+            message: `Storage limit exceeded: ${shortName}`,
+            duration: 8000,
+          });
+        }
+
         // Any -> Shutdown
         if (prevStatus !== "SHUTDOWN" && currentStatus === "SHUTDOWN") {
           addToast({ type: "info", message: `Model shut down: ${shortName}` });
@@ -2517,6 +2559,46 @@
     }
 
     previousInstanceStatuses = currentStatuses;
+  });
+
+  // ── Download rejection toasts (independent of instances) ──
+  // Instances are deleted immediately after rejection, so the instance-based
+  // toast logic above never sees them. Watch downloads directly instead.
+  let previousRejectedModels = new Set<string>();
+
+  $effect(() => {
+    const currentRejected = new Set<string>();
+    if (downloadsData && typeof downloadsData === "object") {
+      for (const nodeDownloads of Object.values(downloadsData)) {
+        if (!Array.isArray(nodeDownloads)) continue;
+        for (const entry of nodeDownloads) {
+          if (!entry || typeof entry !== "object") continue;
+          const keys = Object.keys(entry as Record<string, unknown>);
+          if (keys.length !== 1) continue;
+          if (keys[0] === "ModelRejected") {
+            const payload = (entry as Record<string, unknown>)[
+              keys[0]
+            ] as Record<string, unknown>;
+            const modelId = extractModelIdFromDownload(payload);
+            if (modelId) currentRejected.add(modelId);
+          }
+        }
+      }
+    }
+
+    if (previousRejectedModels.size > 0 || currentRejected.size > 0) {
+      for (const modelId of currentRejected) {
+        if (!previousRejectedModels.has(modelId)) {
+          const shortName = modelId.split("/").pop() ?? modelId;
+          addToast({
+            type: "warning",
+            message: `Storage limit exceeded: ${shortName}`,
+            duration: 8000,
+          });
+        }
+      }
+    }
+    previousRejectedModels = currentRejected;
   });
 
   // ── Connection status toasts ──

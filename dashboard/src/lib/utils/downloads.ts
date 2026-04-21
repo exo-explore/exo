@@ -5,7 +5,7 @@
  *   Record<NodeId, Array<TaggedDownloadEntry>>
  *
  * Each entry is a tagged union object like:
- *   { "DownloadCompleted": { shard_metadata: { "PipelineShardMetadata": { model_card: { model_id: "..." }, ... } }, ... } }
+ *   { "ModelReady": { shard_metadata: { "PipelineShardMetadata": { model_card: { model_id: "..." }, ... } }, ... } }
  */
 
 /** Unwrap one level of tagged-union envelope, returning [tag, payload]. */
@@ -49,7 +49,7 @@ export function extractShardMetadata(
   return shardMetadata as Record<string, unknown>;
 }
 
-/** Get the download tag (DownloadCompleted, DownloadOngoing, etc.) from a wrapped entry. */
+/** Get the download tag (ModelReady, ModelDownloading, etc.) from a wrapped entry. */
 export function getDownloadTag(
   entry: unknown,
 ): [string, Record<string, unknown>] | null {
@@ -73,7 +73,7 @@ function* iterNodeDownloads(
   }
 }
 
-/** Check if a specific model is fully downloaded (DownloadCompleted) on a specific node. */
+/** Check if a specific model is fully downloaded (ModelReady) on a specific node. */
 export function isModelDownloadedOnNode(
   downloadsData: Record<string, unknown[]>,
   nodeId: string,
@@ -83,12 +83,12 @@ export function isModelDownloadedOnNode(
   if (!Array.isArray(nodeDownloads)) return false;
 
   for (const [tag, , entryModelId] of iterNodeDownloads(nodeDownloads)) {
-    if (tag === "DownloadCompleted" && entryModelId === modelId) return true;
+    if (tag === "ModelReady" && entryModelId === modelId) return true;
   }
   return false;
 }
 
-/** Get all node IDs where a model is fully downloaded (DownloadCompleted). */
+/** Get all node IDs where a model is fully downloaded (ModelReady). */
 export function getNodesWithModelDownloaded(
   downloadsData: Record<string, unknown[]>,
   modelId: string,
@@ -122,7 +122,7 @@ export function getShardMetadataForModel(
       const shard = extractShardMetadata(payload);
       if (!shard) continue;
 
-      if (tag === "DownloadCompleted") return shard;
+      if (tag === "ModelReady") return shard;
       if (!fallback) fallback = shard;
     }
   }
@@ -131,7 +131,7 @@ export function getShardMetadataForModel(
 
 /**
  * Get the download status tag for a specific model on a specific node.
- * Returns the "best" status: DownloadCompleted > DownloadOngoing > others.
+ * Returns the "best" status: ModelReady > ModelDownloading > others.
  */
 export function getModelDownloadStatus(
   downloadsData: Record<string, unknown[]>,
@@ -144,8 +144,8 @@ export function getModelDownloadStatus(
   let best: string | null = null;
   for (const [tag, , entryModelId] of iterNodeDownloads(nodeDownloads)) {
     if (entryModelId !== modelId) continue;
-    if (tag === "DownloadCompleted") return tag;
-    if (tag === "DownloadOngoing") best = tag;
+    if (tag === "ModelReady") return tag;
+    if (tag === "ModelDownloading") best = tag;
     else if (!best) best = tag;
   }
   return best;

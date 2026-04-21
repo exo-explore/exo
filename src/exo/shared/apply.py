@@ -18,6 +18,7 @@ from exo.shared.types.events import (
     NodeGatheredInfo,
     NodeTimedOut,
     RunnerStatusUpdated,
+    StorageConfigUpdated,
     TaskAcknowledged,
     TaskCreated,
     TaskDeleted,
@@ -39,7 +40,7 @@ from exo.shared.types.profiling import (
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
-from exo.shared.types.worker.downloads import DownloadProgress
+from exo.shared.types.worker.downloads import ModelStatus
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerShutdown, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import (
@@ -95,6 +96,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_topology_edge_created(event, state)
         case TopologyEdgeDeleted():
             return apply_topology_edge_deleted(event, state)
+        case StorageConfigUpdated():
+            return apply_storage_config_updated(event, state)
 
 
 def apply(state: State, event: IndexedEvent) -> State:
@@ -114,18 +117,13 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
     """
     dp = event.download_progress
     node_id = dp.node_id
+    model_id = dp.shard_metadata.model_card.model_id
 
     current = list(state.downloads.get(node_id, ()))
 
     replaced = False
     for i, existing_dp in enumerate(current):
-        # TODO(ciaran): deduplicate by model_id for now. Will need to use
-        # shard_metadata again when pipeline and tensor downloads differ.
-        # For now this is fine
-        if (
-            existing_dp.shard_metadata.model_card.model_id
-            == dp.shard_metadata.model_card.model_id
-        ):
+        if existing_dp.shard_metadata.model_card.model_id == model_id:
             current[i] = dp
             replaced = True
             break
@@ -133,7 +131,7 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
     if not replaced:
         current.append(dp)
 
-    new_downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {
+    new_downloads: Mapping[NodeId, Sequence[ModelStatus]] = {
         **state.downloads,
         node_id: current,
     }
@@ -245,6 +243,11 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     node_rdma_ctl = {
         key: value for key, value in state.node_rdma_ctl.items() if key != event.node_id
     }
+    node_storage_config = {
+        key: value
+        for key, value in state.node_storage_config.items()
+        if key != event.node_id
+    }
     # Only recompute cycles if the leaving node had TB bridge enabled
     leaving_node_status = state.node_thunderbolt_bridge.get(event.node_id)
     leaving_node_had_tb_enabled = (
@@ -267,6 +270,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "node_thunderbolt": node_thunderbolt,
             "node_thunderbolt_bridge": node_thunderbolt_bridge,
             "node_rdma_ctl": node_rdma_ctl,
+            "node_storage_config": node_storage_config,
             "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
         }
     )
@@ -298,7 +302,10 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
         case NodeDiskUsage():
             update["node_disk"] = {**state.node_disk, event.node_id: info.disk_usage}
         case NodeConfig():
-            pass
+            update["node_storage_config"] = {
+                **state.node_storage_config,
+                event.node_id: info.storage_config,
+            }
         case MiscData():
             current_identity = state.node_identities.get(event.node_id, NodeIdentity())
             new_identity = current_identity.model_copy(
@@ -375,6 +382,14 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             }
 
     return state.model_copy(update=update)
+
+
+def apply_storage_config_updated(event: StorageConfigUpdated, state: State) -> State:
+    new_node_storage_config = {
+        **state.node_storage_config,
+        event.node_id: event.storage_config,
+    }
+    return state.model_copy(update={"node_storage_config": new_node_storage_config})
 
 
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:

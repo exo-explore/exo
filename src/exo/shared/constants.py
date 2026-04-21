@@ -94,6 +94,8 @@ EXO_ENABLE_IMAGE_MODELS = (
 
 EXO_OFFLINE = os.getenv("EXO_OFFLINE", "false").lower() == "true"
 
+EXO_MODEL_USAGE_FILE = EXO_DATA_HOME / "model_usage.json"
+
 EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true"
 
 EXO_MAX_CONCURRENT_REQUESTS = int(os.getenv("EXO_MAX_CONCURRENT_REQUESTS", "8"))

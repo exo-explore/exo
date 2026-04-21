@@ -32,11 +32,12 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
-    DownloadCompleted,
-    DownloadFailed,
-    DownloadOngoing,
-    DownloadPending,
-    DownloadProgress,
+    ModelDownloadFailed,
+    ModelDownloading,
+    ModelNotDownloading,
+    ModelReady,
+    ModelRejected,
+    ModelStatus,
 )
 from exo.shared.types.worker.instances import (
     Instance,
@@ -66,26 +67,28 @@ def add_instance_to_placements(
 def _get_node_download_fraction(
     node_id: NodeId,
     model_id: ModelId,
-    download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    download_status: Mapping[NodeId, Sequence[ModelStatus]],
 ) -> float:
     """Return the download fraction (0.0–1.0) for a model on a given node."""
     for progress in download_status.get(node_id, []):
         if progress.shard_metadata.model_card.model_id != model_id:
             continue
         match progress:
-            case DownloadCompleted():
+            case ModelReady():
                 return 1.0
-            case DownloadOngoing():
+            case ModelDownloading():
                 total = progress.download_progress.total.in_bytes
                 return (
                     progress.download_progress.downloaded.in_bytes / total
                     if total > 0
                     else 0.0
                 )
-            case DownloadPending():
+            case ModelNotDownloading():
                 total = progress.total.in_bytes
                 return progress.downloaded.in_bytes / total if total > 0 else 0.0
-            case DownloadFailed():
+            case ModelDownloadFailed():
+                return 0.0
+            case ModelRejected():
                 return 0.0
     return 0.0
 
@@ -93,7 +96,7 @@ def _get_node_download_fraction(
 def _cycle_download_score(
     cycle: Cycle,
     model_id: ModelId,
-    download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    download_status: Mapping[NodeId, Sequence[ModelStatus]],
 ) -> float:
     """Sum of download fractions across all nodes in a cycle."""
     return sum(
@@ -109,7 +112,7 @@ def place_instance(
     node_memory: Mapping[NodeId, MemoryUsage],
     node_network: Mapping[NodeId, NodeNetworkInfo],
     required_nodes: set[NodeId] | None = None,
-    download_status: Mapping[NodeId, Sequence[DownloadProgress]] | None = None,
+    download_status: Mapping[NodeId, Sequence[ModelStatus]] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
@@ -320,14 +323,14 @@ def get_transition_events(
 
 def cancel_unnecessary_downloads(
     instances: Mapping[InstanceId, Instance],
-    download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+    download_status: Mapping[NodeId, Sequence[ModelStatus]],
 ) -> Sequence[DownloadCommand]:
     commands: list[DownloadCommand] = []
     currently_downloading = [
         (k, v.shard_metadata.model_card.model_id)
         for k, vs in download_status.items()
         for v in vs
-        if isinstance(v, (DownloadOngoing))
+        if isinstance(v, (ModelDownloading))
     ]
     active_models = set(
         (

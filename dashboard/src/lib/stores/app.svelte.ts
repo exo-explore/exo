@@ -254,6 +254,13 @@ interface RawStateResponse {
     string,
     { total: { inBytes: number }; available: { inBytes: number } }
   >;
+  nodeStorageConfig?: Record<
+    string,
+    {
+      maxStorage: { inBytes: number } | null;
+      storagePolicy: "manual" | "auto-evict";
+    }
+  >;
 }
 
 export interface MessageAttachment {
@@ -568,6 +575,15 @@ class AppStore {
     >
   >({});
   nodeRdmaCtl = $state<Record<string, { enabled: boolean }>>({});
+  nodeStorageConfig = $state<
+    Record<
+      string,
+      {
+        maxStorage: { inBytes: number } | null;
+        storagePolicy: "manual" | "auto-evict";
+      }
+    >
+  >({});
   nodeThunderboltBridge = $state<
     Record<
       string,
@@ -1326,6 +1342,7 @@ class AppStore {
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
       this.nodeThunderboltBridge = data.nodeThunderboltBridge ?? {};
+      this.nodeStorageConfig = data.nodeStorageConfig ?? {};
       this.lastUpdate = Date.now();
       // Connection recovered
       if (!this.isConnected) {
@@ -3304,6 +3321,29 @@ class AppStore {
     }
   }
 
+  async setStorageConfig(
+    nodeIds: string[] | null,
+    maxStorageGb: number | null,
+    storagePolicy: "manual" | "auto-evict",
+  ): Promise<void> {
+    try {
+      const response = await fetch("/storage", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nodeIds, maxStorageGb, storagePolicy }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to set storage config: ${response.status} - ${errorText}`,
+        );
+      }
+    } catch (error) {
+      console.error("Error setting storage config:", error);
+      throw error;
+    }
+  }
+
   /**
    * List all available traces
    */
@@ -3381,6 +3421,7 @@ export const instances = () => appStore.instances;
 export const runners = () => appStore.runners;
 export const downloads = () => appStore.downloads;
 export const nodeDisk = () => appStore.nodeDisk;
+export const nodeStorageConfig = () => appStore.nodeStorageConfig;
 export const placementPreviews = () => appStore.placementPreviews;
 export const selectedPreviewModelId = () => appStore.selectedPreviewModelId;
 export const isLoadingPreviews = () => appStore.isLoadingPreviews;
@@ -3506,6 +3547,11 @@ export const cancelDownload = (nodeId: string, modelId: string) =>
   appStore.cancelDownload(nodeId, modelId);
 export const deleteDownload = (nodeId: string, modelId: string) =>
   appStore.deleteDownload(nodeId, modelId);
+export const setStorageConfig = (
+  nodeIds: string[] | null,
+  maxStorageGb: number | null,
+  storagePolicy: "manual" | "auto-evict",
+) => appStore.setStorageConfig(nodeIds, maxStorageGb, storagePolicy);
 
 // Trace actions
 export const listTraces = () => appStore.listTraces();
