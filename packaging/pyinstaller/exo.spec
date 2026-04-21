@@ -70,7 +70,7 @@ DATAS: list[tuple[str, str]] = [
 ]
 
 if sys.platform == "darwin":
-MACMON_PATH = shutil.which("macmon")
+    MACMON_PATH = shutil.which("macmon")
     if MACMON_PATH is None:
         raise SystemExit(
             "macmon binary not found in PATH. "
