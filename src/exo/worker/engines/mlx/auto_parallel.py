@@ -59,13 +59,14 @@ from mlx_lm.models.qwen3_vl import Model as Qwen3VLModel
 from mlx_lm.models.step3p5 import Model as Step35Model
 from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
-from mlx_lm.models.switch_layers import QuantizedSwitchLinear, SwitchLinear
+from mlx_lm.models.switch_layers import QuantizedSwitchLinear
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
     from mlx_lm.models.cache import Cache
+
 
 def _fp32_reducing_sharded_to_all_call(
     self: ShardedToAllLinear, x: mx.array
@@ -85,7 +86,7 @@ ShardedToAllLinear.__call__ = _fp32_reducing_sharded_to_all_call
 from mlx.nn.layers.distributed import AllToShardedLinear  # noqa: E402
 
 
-def _splitk_override_for_unsharded(M: int, N_full: int, K: int) -> int:
+def _splitk_override_for_unsharded(m: int, n_full: int, k: int) -> int:
     """Return the override value that forces a per-rank matmul to match the
     unsharded kernel's K-reduction shape.
 
@@ -95,7 +96,7 @@ def _splitk_override_for_unsharded(M: int, N_full: int, K: int) -> int:
     set the override to n so the per-rank matmul uses the same partition
     count as the unsharded call.
     """
-    n = mx.compute_splitk_partitions(M, N_full, K)
+    n = mx.compute_splitk_partitions(m, n_full, k)
     return n if n > 0 else -1
 
 
@@ -111,10 +112,10 @@ def _splitk_override_all_to_sharded_call(
     """
     x = sum_gradients(self.group)(x)  # pyright: ignore[reportAttributeAccessIssue]
     weight = cast(mx.array, self["weight"])
-    per_rank_N, K = weight.shape
-    N_full = per_rank_N * self.group.size()  # pyright: ignore[reportAttributeAccessIssue]
-    M = x.shape[-2] if x.ndim >= 2 else 1
-    mx.set_splitk_partitions_override(_splitk_override_for_unsharded(M, N_full, K))
+    per_rank_n, k = weight.shape
+    n_full = per_rank_n * self.group.size()  # pyright: ignore[reportAttributeAccessIssue]
+    m = x.shape[-2] if x.ndim >= 2 else 1
+    mx.set_splitk_partitions_override(_splitk_override_for_unsharded(m, n_full, k))
     try:
         if "bias" in self:
             y = mx.addmm(cast(mx.array, self["bias"]), x, weight.T)
@@ -700,13 +701,17 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
-            layer.self_attn.o_proj = NShardedLinear.from_linear(layer.self_attn.o_proj, self.group)
+            layer.self_attn.o_proj = NShardedLinear.from_linear(
+                layer.self_attn.o_proj, self.group
+            )
             layer.self_attn.n_heads //= self.N
             if layer.self_attn.n_kv_heads is not None:
                 layer.self_attn.n_kv_heads //= self.N
 
             layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
-            layer.mlp.down_proj = NShardedLinear.from_linear(layer.mlp.down_proj, self.group)
+            layer.mlp.down_proj = NShardedLinear.from_linear(
+                layer.mlp.down_proj, self.group
+            )
             layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
             mx.eval(layer)
             if on_layer_loaded is not None:
@@ -762,7 +767,9 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                     layer.self_attn.q_b_proj
                 )
 
-            layer.self_attn.o_proj = NShardedLinear.from_linear(layer.self_attn.o_proj, self.group)
+            layer.self_attn.o_proj = NShardedLinear.from_linear(
+                layer.self_attn.o_proj, self.group
+            )
             layer.self_attn.num_heads //= self.N
 
             # Logic from upstream mlx
@@ -779,7 +786,9 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
             # Shard the MLP
             if isinstance(layer.mlp, (DeepseekV3MLP, DeepseekV32MLP)):
                 layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
-                layer.mlp.down_proj = NShardedLinear.from_linear(layer.mlp.down_proj, self.group)
+                layer.mlp.down_proj = NShardedLinear.from_linear(
+                    layer.mlp.down_proj, self.group
+                )
                 layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
 
             # Shard the MoE with column-sharded down_proj for bit-exactness.
@@ -808,21 +817,38 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
 
 
 class NShardedLinear(nn.Module):
-    def __init__(self, in_dims: int, out_dims: int, bias: bool, group: mx.distributed.Group):
+    def __init__(
+        self, in_dims: int, out_dims: int, bias: bool, group: mx.distributed.Group
+    ):
         super().__init__()
-        N = group.size()
+        n = group.size()
         self.group = group
-        self.weight = mx.zeros((out_dims // N, in_dims))
+        self.quantized = False
+        self.weight = mx.zeros((out_dims // n, in_dims))
         if bias:
-            self.bias = mx.zeros((out_dims // N,))
+            self.bias = mx.zeros((out_dims // n,))
 
     def __call__(self, x: mx.array) -> mx.array:
         x_full = _all_gather_last(x, self.group)
+        if self.quantized:
+            y = mx.quantized_matmul(
+                x_full,
+                cast(mx.array, self["weight"]),
+                cast(mx.array, self["scales"]),
+                cast(mx.array | None, self.get("biases")),
+                transpose=True,
+                group_size=self.group_size,  # pyright: ignore[reportAttributeAccessIssue]
+                bits=self.bits,  # pyright: ignore[reportAttributeAccessIssue]
+                mode=self.mode,  # pyright: ignore[reportAttributeAccessIssue]
+            )
+            if "bias" in self:
+                y = y + cast(mx.array, self["bias"])
+            return _all_gather_last(y, self.group)
         weight = cast(mx.array, self["weight"])
-        M = x_full.shape[-2] if x_full.ndim >= 2 else 1
-        per_rank_N, K = weight.shape
-        N_full = per_rank_N * self.group.size()
-        mx.set_splitk_partitions_override(_splitk_override_for_unsharded(M, N_full, K))
+        m = x_full.shape[-2] if x_full.ndim >= 2 else 1
+        per_rank_n, k = weight.shape
+        n_full = per_rank_n * self.group.size()
+        mx.set_splitk_partitions_override(_splitk_override_for_unsharded(m, n_full, k))
         try:
             if "bias" in self:
                 y = mx.addmm(cast(mx.array, self["bias"]), x_full, weight.T)
@@ -833,17 +859,56 @@ class NShardedLinear(nn.Module):
         return _all_gather_last(y, self.group)
 
     @classmethod
-    def from_linear(cls, linear: nn.Linear, group: mx.distributed.Group) -> "NShardedLinear":
+    def from_linear(
+        cls, linear: nn.Linear, group: mx.distributed.Group
+    ) -> "NShardedLinear":
+        if isinstance(linear, nn.QuantizedLinear):
+            return cls._from_quantized(linear, group)
         out_dims, in_dims = linear.weight.shape  # pyright: ignore[reportAttributeAccessIssue]
-        N = group.size()
+        n = group.size()
         rank = group.rank()
-        per_rank = out_dims // N
+        per_rank = out_dims // n
         instance = cls(in_dims, out_dims, hasattr(linear, "bias"), group)
-        new_weight = cast(mx.array, linear["weight"])[rank * per_rank : (rank + 1) * per_rank]
+        new_weight = cast(mx.array, linear["weight"])[
+            rank * per_rank : (rank + 1) * per_rank
+        ]
         instance.update({"weight": new_weight})
         if hasattr(linear, "bias"):
-            new_bias = cast(mx.array, linear["bias"])[rank * per_rank : (rank + 1) * per_rank]
+            new_bias = cast(mx.array, linear["bias"])[
+                rank * per_rank : (rank + 1) * per_rank
+            ]
             instance.update({"bias": new_bias})
+        return instance
+
+    @classmethod
+    def _from_quantized(
+        cls, linear: nn.QuantizedLinear, group: mx.distributed.Group
+    ) -> "NShardedLinear":
+        out_dims = linear.weight.shape[0]  # pyright: ignore[reportAttributeAccessIssue]
+        n = group.size()
+        rank = group.rank()
+        per_rank = out_dims // n
+        in_dims = linear.scales.shape[1] * linear.group_size  # pyright: ignore[reportAttributeAccessIssue]
+        instance = cls(in_dims, out_dims, hasattr(linear, "bias"), group)
+        # Replace the empty bf16 stub weight with the sharded quantized tensors.
+        sl = slice(rank * per_rank, (rank + 1) * per_rank)
+        update: dict[str, mx.array] = {
+            "weight": cast(mx.array, linear["weight"])[sl],
+            "scales": cast(mx.array, linear["scales"])[sl],
+        }
+        if "biases" in linear:
+            update["biases"] = cast(mx.array, linear["biases"])[sl]
+        if "bias" in linear:
+            update["bias"] = cast(mx.array, linear["bias"])[sl]
+        del instance["weight"]  # pyright: ignore[reportAttributeAccessIssue]
+        if "bias" in instance:
+            del instance["bias"]  # pyright: ignore[reportAttributeAccessIssue]
+        for k, v in update.items():
+            setattr(instance, k, v)
+        instance.quantized = True
+        instance.group_size = linear.group_size  # pyright: ignore[reportAttributeAccessIssue]
+        instance.bits = linear.bits  # pyright: ignore[reportAttributeAccessIssue]
+        instance.mode = linear.mode  # pyright: ignore[reportAttributeAccessIssue]
         return instance
 
 
@@ -885,8 +950,8 @@ class ShardedEmbedding(CustomMlxLayer):
 
     def __call__(self, ids: mx.array) -> mx.array:
         y = cast(mx.array, self.original_layer(ids))
-        N = self.group.size()
-        per_rank = y.shape[-1] // N
+        n = self.group.size()
+        per_rank = y.shape[-1] // n
         rank = self.group.rank()
         return y[..., rank * per_rank : (rank + 1) * per_rank]
 
@@ -894,7 +959,7 @@ class ShardedEmbedding(CustomMlxLayer):
 def _wrap_block_entry_norms(layer: nn.Module, group: mx.distributed.Group) -> None:
     children = layer.children() if hasattr(layer, "children") else {}
     to_wrap: list[str] = []
-    for name, child in (children.items() if isinstance(children, dict) else children):  # pyright: ignore[reportGeneralTypeIssues]
+    for name, child in children.items() if isinstance(children, dict) else children:  # pyright: ignore[reportGeneralTypeIssues]
         if isinstance(child, (nn.RMSNorm, nn.LayerNorm)):
             to_wrap.append(name)
     for name in to_wrap:
@@ -902,11 +967,44 @@ def _wrap_block_entry_norms(layer: nn.Module, group: mx.distributed.Group) -> No
         setattr(layer, name, ShardedInputNorm(orig, group))
 
 
-def _switch_mlp_activation(switch_mlp: object, x_gate: mx.array, x_up: mx.array) -> mx.array:
+def _switch_mlp_activation(
+    switch_mlp: object, x_gate: mx.array, x_up: mx.array
+) -> mx.array:
     activation = getattr(switch_mlp, "activation", None)
     if activation is not None:
         return cast(mx.array, activation(x_up, x_gate))
     return nn.silu(x_gate) * x_up
+
+
+def _switch_linear_forward(
+    sl: object, x: mx.array, indices: mx.array, sorted_indices: bool
+) -> mx.array:
+    """Forward a SwitchLinear or QuantizedSwitchLinear with column-sharded
+    (output-dim-sliced) weights. Returns the per-rank output slice.
+    """
+    if isinstance(sl, QuantizedSwitchLinear):
+        y = mx.gather_qmm(
+            x,
+            cast(mx.array, sl["weight"]),
+            cast(mx.array, sl["scales"]),
+            cast(mx.array | None, sl.get("biases")),
+            rhs_indices=indices,
+            transpose=True,
+            group_size=sl.group_size,  # pyright: ignore[reportAttributeAccessIssue]
+            bits=sl.bits,  # pyright: ignore[reportAttributeAccessIssue]
+            mode=sl.mode,  # pyright: ignore[reportAttributeAccessIssue]
+            sorted_indices=sorted_indices,
+        )
+    else:
+        y = mx.gather_mm(
+            x,
+            cast(mx.array, sl["weight"]).swapaxes(-1, -2),
+            rhs_indices=indices,
+            sorted_indices=sorted_indices,
+        )
+    if "bias" in sl:  # pyright: ignore[reportOperatorIssue]
+        y = y + mx.expand_dims(cast(mx.array, sl["bias"])[indices], -2)  # pyright: ignore[reportIndexIssue]
+    return y
 
 
 def _switch_mlp_n_sharded_sharded_out(
@@ -940,34 +1038,13 @@ def _switch_mlp_n_sharded_sharded_out(
     up = switch_mlp.up_proj  # pyright: ignore[reportAttributeAccessIssue]
     dp = switch_mlp.down_proj  # pyright: ignore[reportAttributeAccessIssue]
 
-    x_up = mx.gather_mm(
-        x_exp,
-        cast(mx.array, up["weight"]).swapaxes(-1, -2),
-        rhs_indices=idx,
-        sorted_indices=do_sort,
-    )
-    if "bias" in up:
-        x_up = x_up + mx.expand_dims(cast(mx.array, up["bias"])[idx], -2)
-    x_gate = mx.gather_mm(
-        x_exp,
-        cast(mx.array, gp["weight"]).swapaxes(-1, -2),
-        rhs_indices=idx,
-        sorted_indices=do_sort,
-    )
-    if "bias" in gp:
-        x_gate = x_gate + mx.expand_dims(cast(mx.array, gp["bias"])[idx], -2)
+    x_up = _switch_linear_forward(up, x_exp, idx, do_sort)
+    x_gate = _switch_linear_forward(gp, x_exp, idx, do_sort)
     hidden_shard = _switch_mlp_activation(switch_mlp, x_gate, x_up)
 
     hidden_full = _all_gather_last(hidden_shard, group)
 
-    out_shard = mx.gather_mm(
-        hidden_full,
-        cast(mx.array, dp["weight"]).swapaxes(-1, -2),
-        rhs_indices=idx,
-        sorted_indices=do_sort,
-    )
-    if "bias" in dp:
-        out_shard = out_shard + mx.expand_dims(cast(mx.array, dp["bias"])[idx], -2)
+    out_shard = _switch_linear_forward(dp, hidden_full, idx, do_sort)
 
     if do_sort:
         out_shard = _scatter_unsort(out_shard, inv_order, indices.shape)
@@ -982,9 +1059,7 @@ def _switch_mlp_n_sharded(
     scores: mx.array,
     group: mx.distributed.Group,
 ) -> mx.array:
-    out_shard = _switch_mlp_n_sharded_sharded_out(
-        switch_mlp, x, indices, scores, group
-    )
+    out_shard = _switch_mlp_n_sharded_sharded_out(switch_mlp, x, indices, scores, group)
     return _all_gather_last(out_shard, group)
 
 
@@ -1012,21 +1087,11 @@ def _switch_fc_n_sharded(
     fc1 = switch_mlp.fc1  # pyright: ignore[reportAttributeAccessIssue]
     fc2 = switch_mlp.fc2  # pyright: ignore[reportAttributeAccessIssue]
 
-    h_shard = mx.gather_mm(
-        x_exp,
-        cast(mx.array, fc1["weight"]).swapaxes(-1, -2),
-        rhs_indices=idx,
-        sorted_indices=do_sort,
-    )
+    h_shard = _switch_linear_forward(fc1, x_exp, idx, do_sort)
     h_shard = activation(h_shard)
     h_full = _all_gather_last(h_shard, group)
 
-    out_shard = mx.gather_mm(
-        h_full,
-        cast(mx.array, fc2["weight"]).swapaxes(-1, -2),
-        rhs_indices=idx,
-        sorted_indices=do_sort,
-    )
+    out_shard = _switch_linear_forward(fc2, h_full, idx, do_sort)
     out_full = _all_gather_last(out_shard, group)
 
     if do_sort:
@@ -1035,14 +1100,45 @@ def _switch_fc_n_sharded(
 
 
 def _matmul_with_unsharded_splitk(
-    x: mx.array, weight: mx.array, per_rank_N: int, K: int, group: mx.distributed.Group
+    x: mx.array,
+    weight: mx.array,
+    per_rank_n: int,
+    k: int,
+    group: mx.distributed.Group,
 ) -> mx.array:
     """Per-rank matmul with splitk override forced to the unsharded count."""
-    N_full = per_rank_N * group.size()
-    M = x.shape[-2] if x.ndim >= 2 else 1
-    mx.set_splitk_partitions_override(_splitk_override_for_unsharded(M, N_full, K))
+    n_full = per_rank_n * group.size()
+    m = x.shape[-2] if x.ndim >= 2 else 1
+    mx.set_splitk_partitions_override(_splitk_override_for_unsharded(m, n_full, k))
     try:
         y = mx.matmul(x, weight.T)
+    finally:
+        mx.set_splitk_partitions_override(0)
+    return y
+
+
+def _linear_column_sharded_forward(
+    lin: object, x: mx.array, group: mx.distributed.Group
+) -> mx.array:
+    """Forward an nn.Linear or nn.QuantizedLinear that was column-sharded on
+    its output dim (i.e. per-rank weight has ``weight.shape[0]`` = N_full/group.size()).
+    For bf16 nn.Linear we bypass the module and use the splitk override so the
+    per-rank matmul is bit-exact per column to the unsharded kernel. For
+    quantized linears we invoke the module directly since the quantized kernel
+    doesn't participate in splitk.
+    """
+    if isinstance(lin, nn.QuantizedLinear):
+        return cast(mx.array, lin.__call__(x))
+    w = cast(mx.array, lin["weight"])  # pyright: ignore[reportIndexIssue]
+    per_rank_n, k = w.shape
+    n_full = per_rank_n * group.size()
+    m = x.shape[-2] if x.ndim >= 2 else 1
+    mx.set_splitk_partitions_override(_splitk_override_for_unsharded(m, n_full, k))
+    try:
+        if "bias" in lin:  # pyright: ignore[reportOperatorIssue]
+            y = mx.addmm(cast(mx.array, lin["bias"]), x, w.T)  # pyright: ignore[reportIndexIssue]
+        else:
+            y = mx.matmul(x, w.T)
     finally:
         mx.set_splitk_partitions_override(0)
     return y
@@ -1054,25 +1150,18 @@ def _mlp_n_sharded_sharded_out(
     """Like _mlp_n_sharded but returns the output still sharded on H/N."""
     up = mlp.up_proj  # pyright: ignore[reportAttributeAccessIssue]
     dp = mlp.down_proj  # pyright: ignore[reportAttributeAccessIssue]
-    up_w = cast(mx.array, up["weight"])
-    dp_w = cast(mx.array, dp["weight"])
 
-    x_up = _matmul_with_unsharded_splitk(x, up_w, up_w.shape[0], up_w.shape[1], group)
+    x_up = _linear_column_sharded_forward(up, x, group)
     if hasattr(mlp, "gate_proj"):
         gp = mlp.gate_proj  # pyright: ignore[reportAttributeAccessIssue]
-        gp_w = cast(mx.array, gp["weight"])
-        x_gate = _matmul_with_unsharded_splitk(
-            x, gp_w, gp_w.shape[0], gp_w.shape[1], group
-        )
+        x_gate = _linear_column_sharded_forward(gp, x, group)
         hidden_shard = nn.silu(x_gate) * x_up
     else:
         hidden_shard = nn.relu2(x_up)
 
     hidden_full = _all_gather_last(hidden_shard, group)
 
-    return _matmul_with_unsharded_splitk(
-        hidden_full, dp_w, dp_w.shape[0], dp_w.shape[1], group
-    )
+    return _linear_column_sharded_forward(dp, hidden_full, group)
 
 
 def _mlp_n_sharded(mlp: object, x: mx.array, group: mx.distributed.Group) -> mx.array:
@@ -1111,8 +1200,10 @@ class ShardedMoE(CustomMlxLayer):
             return cast(mx.array, self.original_layer.__call__(x))
 
         moe = self.original_layer
-        if hasattr(moe, "switch_mlp") and hasattr(moe, "shared_expert") and hasattr(
-            moe, "shared_expert_gate"
+        if (
+            hasattr(moe, "switch_mlp")
+            and hasattr(moe, "shared_expert")
+            and hasattr(moe, "shared_expert_gate")
         ):
             return self._qwen_style(x)
         if hasattr(moe, "switch_mlp") and hasattr(moe.switch_mlp, "fc1"):
@@ -1131,7 +1222,9 @@ class ShardedMoE(CustomMlxLayer):
         x = sum_gradients(self.sharding_group)(x)
         return cast(mx.array, moe.__call__(x))
 
-    def _route_softmax_topk(self, moe: object, x: mx.array) -> tuple[mx.array, mx.array]:
+    def _route_softmax_topk(
+        self, moe: object, x: mx.array
+    ) -> tuple[mx.array, mx.array]:
         gates = moe.gate(x)  # pyright: ignore[reportAttributeAccessIssue]
         gates = mx.softmax(gates, axis=-1, precise=True)
         k = getattr(moe, "top_k", None) or moe.num_experts_per_tok  # pyright: ignore[reportAttributeAccessIssue]
@@ -1147,9 +1240,15 @@ class ShardedMoE(CustomMlxLayer):
         moe = self.original_layer
         inds, scores = self._route_softmax_topk(moe, x)
         y_shard = _switch_mlp_n_sharded_sharded_out(
-            moe.switch_mlp, x, inds, scores, self.sharding_group  # pyright: ignore[reportAttributeAccessIssue]
+            moe.switch_mlp,
+            x,
+            inds,
+            scores,
+            self.sharding_group,  # pyright: ignore[reportAttributeAccessIssue]
         )
-        shared_shard = _mlp_n_sharded_sharded_out(moe.shared_expert, x, self.sharding_group)  # pyright: ignore[reportAttributeAccessIssue]
+        shared_shard = _mlp_n_sharded_sharded_out(
+            moe.shared_expert, x, self.sharding_group
+        )  # pyright: ignore[reportAttributeAccessIssue]
         shared_shard = mx.sigmoid(moe.shared_expert_gate(x)) * shared_shard  # pyright: ignore[reportAttributeAccessIssue]
         return _all_gather_last(y_shard + shared_shard, self.sharding_group)
 
@@ -1159,11 +1258,17 @@ class ShardedMoE(CustomMlxLayer):
         moe = self.original_layer
         inds, scores = moe.gate(x)  # pyright: ignore[reportAttributeAccessIssue]
         y_shard = _switch_mlp_n_sharded_sharded_out(
-            moe.switch_mlp, x, inds, scores, self.sharding_group  # pyright: ignore[reportAttributeAccessIssue]
+            moe.switch_mlp,
+            x,
+            inds,
+            scores,
+            self.sharding_group,  # pyright: ignore[reportAttributeAccessIssue]
         )
         if getattr(moe.config, "n_shared_experts", None) is not None:  # pyright: ignore[reportAttributeAccessIssue]
             y_shard = y_shard + _mlp_n_sharded_sharded_out(
-                moe.shared_experts, x, self.sharding_group  # pyright: ignore[reportAttributeAccessIssue]
+                moe.shared_experts,
+                x,
+                self.sharding_group,  # pyright: ignore[reportAttributeAccessIssue]
             )
         return _all_gather_last(y_shard, self.sharding_group)
 
@@ -1220,7 +1325,9 @@ class ShardedMoE(CustomMlxLayer):
         return y
 
     def _gpt_oss_style(self, x: mx.array) -> mx.array:
-        from mlx_lm.models.gpt_oss import mlx_topk  # pyright: ignore[reportUnknownVariableType]
+        from mlx_lm.models.gpt_oss import (
+            mlx_topk,  # pyright: ignore[reportUnknownVariableType]
+        )
 
         assert self.sharding_group is not None
         x = sum_gradients(self.sharding_group)(x)
@@ -1228,7 +1335,9 @@ class ShardedMoE(CustomMlxLayer):
         g = moe.router(x)  # pyright: ignore[reportAttributeAccessIssue]
         expert_weights, indices = mlx_topk(g, k=moe.num_experts_per_tok, axis=-1)  # pyright: ignore[reportAttributeAccessIssue]
         expert_weights = mx.softmax(expert_weights, axis=-1, precise=True)
-        y = _switch_mlp_n_sharded(moe.experts, x, indices, expert_weights, self.sharding_group)  # pyright: ignore[reportAttributeAccessIssue]
+        y = _switch_mlp_n_sharded(
+            moe.experts, x, indices, expert_weights, self.sharding_group
+        )  # pyright: ignore[reportAttributeAccessIssue]
         return y
 
     def _generic_switch_mlp_style(self, x: mx.array) -> mx.array:
@@ -1264,7 +1373,9 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
                     layer.self_attn.q_b_proj
                 )
 
-            layer.self_attn.o_proj = NShardedLinear.from_linear(layer.self_attn.o_proj, self.group)
+            layer.self_attn.o_proj = NShardedLinear.from_linear(
+                layer.self_attn.o_proj, self.group
+            )
             layer.self_attn.num_heads //= self.N
 
             # Logic from upstream mlx
@@ -1280,7 +1391,9 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
 
             if isinstance(layer.mlp, Glm4MoeLiteMLP):
                 layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
-                layer.mlp.down_proj = NShardedLinear.from_linear(layer.mlp.down_proj, self.group)
+                layer.mlp.down_proj = NShardedLinear.from_linear(
+                    layer.mlp.down_proj, self.group
+                )
                 layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
 
             else:
@@ -1398,7 +1511,9 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
-            layer.self_attn.o_proj = NShardedLinear.from_linear(layer.self_attn.o_proj, self.group)
+            layer.self_attn.o_proj = NShardedLinear.from_linear(
+                layer.self_attn.o_proj, self.group
+            )
 
             layer.self_attn.num_attention_heads //= self.N
             layer.self_attn.num_key_value_heads //= self.N
@@ -1583,7 +1698,9 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
             # Shard the MLP
             else:
                 layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
-                layer.mlp.down_proj = NShardedLinear.from_linear(layer.mlp.down_proj, self.group)
+                layer.mlp.down_proj = NShardedLinear.from_linear(
+                    layer.mlp.down_proj, self.group
+                )
                 layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
 
             mx.eval(layer)
@@ -1606,7 +1723,9 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
-            layer.self_attn.o_proj = NShardedLinear.from_linear(layer.self_attn.o_proj, self.group)
+            layer.self_attn.o_proj = NShardedLinear.from_linear(
+                layer.self_attn.o_proj, self.group
+            )
             layer.self_attn.n_heads //= self.N
             layer.self_attn.n_kv_heads //= self.N
 
@@ -1629,7 +1748,9 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
 
             else:
                 layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
-                layer.mlp.down_proj = NShardedLinear.from_linear(layer.mlp.down_proj, self.group)
+                layer.mlp.down_proj = NShardedLinear.from_linear(
+                    layer.mlp.down_proj, self.group
+                )
                 layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
 
             mx.eval(layer)
@@ -1652,7 +1773,9 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
-            layer.self_attn.o_proj = NShardedLinear.from_linear(layer.self_attn.o_proj, self.group)
+            layer.self_attn.o_proj = NShardedLinear.from_linear(
+                layer.self_attn.o_proj, self.group
+            )
 
             layer.self_attn.num_attention_heads //= self.N
             layer.self_attn.num_key_value_heads //= self.N
@@ -1693,7 +1816,9 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
-            layer.self_attn.o_proj = NShardedLinear.from_linear(layer.self_attn.o_proj, self.group)
+            layer.self_attn.o_proj = NShardedLinear.from_linear(
+                layer.self_attn.o_proj, self.group
+            )
 
             layer.self_attn.num_heads //= self.N
             layer.self_attn.num_kv_heads //= self.N
@@ -1706,7 +1831,9 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
             if isinstance(layer.mlp, Step35MLP):
                 layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
                 layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
-                layer.mlp.down_proj = NShardedLinear.from_linear(layer.mlp.down_proj, self.group)
+                layer.mlp.down_proj = NShardedLinear.from_linear(
+                    layer.mlp.down_proj, self.group
+                )
             else:
                 self.all_to_sharded_linear_in_place(layer.mlp.share_expert.gate_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.share_expert.up_proj)
@@ -1891,7 +2018,9 @@ class Gemma4ShardingStrategy(TensorParallelShardingStrategy):
             attn.n_kv_heads //= self.N
 
             layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
-            layer.mlp.down_proj = NShardedLinear.from_linear(layer.mlp.down_proj, self.group)
+            layer.mlp.down_proj = NShardedLinear.from_linear(
+                layer.mlp.down_proj, self.group
+            )
             layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
 
             if layer.enable_moe:
