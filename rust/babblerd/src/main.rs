@@ -1,11 +1,15 @@
+//! Major TODO: at some point don't call it "babbler" because that is a silly name that makes no sense
+//!             but this is at the very bottom of my concerns right now :)
+
 use std::{fs::Permissions, io, net::Ipv6Addr, os::unix::fs::PermissionsExt, sync::Arc};
 
 use babblerd::tun::UtunDevice;
 use babblerd::{
-    babel::{BabelState, handle_listener},
+    babel::{handle_listener, BabelState},
+    config::Config,
     if_watcher,
 };
-use color_eyre::eyre::{WrapErr, eyre};
+use color_eyre::eyre::{eyre, WrapErr};
 use ipnet::Ipv6Net;
 use n0_watcher::Watcher;
 use netwatch::netmon;
@@ -15,15 +19,6 @@ use tokio::{
     sync::{broadcast, mpsc, watch},
     task::{JoinHandle, JoinSet},
 };
-
-#[cfg(target_os = "macos")]
-const PUBLIC_DIR: &str = "/var/run/babbler";
-#[cfg(target_os = "linux")]
-const PUBLIC_DIR: &str = "/run/babbler";
-#[cfg(target_os = "macos")]
-const PUBLIC_SOCK_PATH: &str = "/var/run/babbler/babblerd.sock";
-#[cfg(target_os = "linux")]
-const PUBLIC_SOCK_PATH: &str = "/run/babbler/babblerd.sock";
 
 enum State {
     Idle,
@@ -51,19 +46,23 @@ async fn main() -> color_eyre::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    let config = Config::from_env()?;
     // cleanup old data
-    match std::fs::remove_file(PUBLIC_SOCK_PATH) {
+    match std::fs::remove_file(&config.public_socket_path) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => {
             return Err(e.into());
         }
         Ok(()) => {
-            tracing::info!("cleaned up old file at {PUBLIC_SOCK_PATH}");
+            tracing::info!(
+                "cleaned up old file at {}",
+                config.public_socket_path.display()
+            );
         }
         _ => {}
     }
-    std::fs::create_dir_all(PUBLIC_DIR)?;
+    std::fs::create_dir_all(&config.public_dir)?;
     // make our directory world readable
-    if let Err(e) = std::fs::set_permissions(PUBLIC_DIR, Permissions::from_mode(0o0755)) {
+    if let Err(e) = std::fs::set_permissions(&config.public_dir, Permissions::from_mode(0o0755)) {
         if e.kind() == io::ErrorKind::PermissionDenied {
             return Err(eyre!(
                 "Insufficient permissions to run daemon -- did you forget sudo?"
@@ -72,16 +71,22 @@ async fn main() -> color_eyre::Result<()> {
         return Err(e.into());
     }
 
-    let res = inner_main().await;
-    _ = std::fs::remove_file(PUBLIC_SOCK_PATH);
+    let res = inner_main(&config).await;
+    _ = std::fs::remove_file(&config.public_socket_path);
     res
 }
 
-async fn inner_main() -> color_eyre::Result<()> {
-    tracing::info!("creating socket at {PUBLIC_SOCK_PATH}");
-    let public_socket = UnixListener::bind(PUBLIC_SOCK_PATH)?;
+async fn inner_main(config: &Config) -> color_eyre::Result<()> {
+    tracing::info!("creating socket at {}", config.public_socket_path.display());
+    tracing::info!(
+        "router defaults: udp_port={} node_id_file={} app_prefix={}",
+        config.router_udp_port,
+        config.node_id_file.display(),
+        config.exo_ula_prefix
+    );
+    let public_socket = UnixListener::bind(&config.public_socket_path)?;
     // make our socket world accessible
-    std::fs::set_permissions(PUBLIC_SOCK_PATH, Permissions::from_mode(0o0666))?;
+    std::fs::set_permissions(&config.public_socket_path, Permissions::from_mode(0o0666))?;
     let mut babbler: State = State::Idle;
 
     loop {

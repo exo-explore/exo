@@ -1,11 +1,13 @@
 extern crate core;
 
 pub mod babel;
+pub mod config;
 pub mod tun;
 
 pub use babel::{babel, handle_listener};
+pub use config::EXO_ULA_PREFIX as PREFIX;
 pub use error::{BabbleError, Result};
-pub use if_watcher::{PREFIX, watch};
+pub use if_watcher::watch;
 pub mod error {
     use std::io;
     use thiserror::Error;
@@ -40,19 +42,14 @@ pub mod if_watcher {
     use netwatch::interfaces::{Interface, IpNet};
     use tokio::sync::mpsc;
 
+    use crate::config::EXO_ULA_PREFIX;
     use crate::ip_manager::remove_ip;
-    use crate::{BabbleError, Result, babel::Babble};
-
-    pub const PREFIX: Ipv6Net = Ipv6Net::new_assert(
-        // TODO: why is the prefix 48? what does the 0xffff achieve there??
-        Ipv6Addr::new(0xfde0, 0x20c6, 0x1fa7, 0xffff, 0, 0, 0, 0),
-        48,
-    );
+    use crate::{babel::Babble, BabbleError, Result};
 
     pub const LOCALHOST_INTERFACE_NAMES: [&'static str; 2] = ["lo", "lo0"];
 
     pub fn advertised_addr(my_range: Ipv6Net) -> Ipv6Net {
-        assert!(PREFIX.contains(&my_range));
+        assert!(EXO_ULA_PREFIX.contains(&my_range));
         Ipv6Net::new_assert(
             // interface-id 0 reserved for node's loopback identity
             Ipv6Addr::from_bits(my_range.trunc().addr().to_bits()),
@@ -127,7 +124,7 @@ pub mod if_watcher {
 
     #[tracing::instrument(skip(send))]
     pub async fn watch(my_range: Ipv6Net, send: mpsc::Sender<Babble>) -> Result<()> {
-        assert!(PREFIX.contains(&my_range));
+        assert!(EXO_ULA_PREFIX.contains(&my_range));
 
         let mut ready_ifaces = HashSet::new();
 
@@ -154,7 +151,7 @@ pub mod if_watcher {
                 }
                 for addr in iface.addrs() {
                     if let IpNet::V6(v6) = addr
-                        && PREFIX.contains(&v6.addr())
+                        && EXO_ULA_PREFIX.contains(&v6.addr())
                     {
                         tracing::info!("removing stale app ip {v6} from {}", iface.name());
                         if let Err(e) = remove_ip(v6, iface).await {
@@ -176,7 +173,7 @@ pub mod if_watcher {
                 // physical links should not carry babbler application-space addresses
                 for addr in iface.addrs() {
                     if let IpNet::V6(v6) = addr
-                        && PREFIX.contains(&v6.addr())
+                        && EXO_ULA_PREFIX.contains(&v6.addr())
                     {
                         tracing::info!("removing app ip {v6} from {}", iface.name());
                         if let Err(e) = remove_ip(v6, iface).await {
