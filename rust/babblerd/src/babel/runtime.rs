@@ -18,6 +18,9 @@ use std::sync::Arc;
 
 use futures_lite::FutureExt;
 use ipnet::Ipv6Net;
+use nix::errno::Errno;
+use nix::sys::signal::{Signal, kill};
+use nix::unistd::Pid;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
@@ -381,13 +384,10 @@ impl BabelRuntime {
 
     pub(crate) async fn shutdown(mut self) -> Result<()> {
         let kill_res = if let Some(pid) = self.proc.id() {
-            let pid: libc::pid_t = pid.try_into().expect("pid overflow");
-            // SAFETY: pid >= 0, freshly checked.
-            let rc = unsafe { libc::kill(pid, libc::SIGINT) };
-            let rc_err = if rc != 0 && rc != libc::ESRCH {
-                Err(io::Error::last_os_error().into())
-            } else {
-                Ok(())
+            let pid: i32 = pid.try_into().expect("pid overflow");
+            let rc_err = match kill(Pid::from_raw(pid), Signal::SIGINT) {
+                Ok(()) | Err(Errno::ESRCH) => Ok(()),
+                Err(err) => Err(io::Error::from_raw_os_error(err as i32).into()),
             };
             let exit_code = async { Some(self.proc.wait().await) }
                 .or(async {

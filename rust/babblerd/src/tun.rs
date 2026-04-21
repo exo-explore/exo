@@ -13,6 +13,7 @@ pub struct UtunDevice {
 impl UtunDevice {
     pub fn create(advertised: Ipv6Addr) -> crate::Result<Self> {
         let dev = DeviceBuilder::new()
+            // .name("exo") // TODO: can you even set these on macOS??
             .ipv6(advertised, 128u8)
             .mtu(1500) // TODO: is this patform specific??? is this a magic number??
             .with(|builder| {

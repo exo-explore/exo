@@ -48,7 +48,7 @@ pub enum Babble {
 
 #[tracing::instrument(skip(line_send, state_send, recv))]
 pub async fn babel(
-    my_range: Ipv6Net,
+    advertised: Ipv6Net,
     mut recv: mpsc::Receiver<Babble>,
     line_send: broadcast::Sender<String>,
     state_send: watch::Sender<Arc<BabelState>>,
@@ -61,7 +61,7 @@ pub async fn babel(
         }
     };
 
-    let mut runtime = BabelRuntime::spawn(my_range, &iface, line_send, state_send).await?;
+    let mut runtime = BabelRuntime::spawn(advertised, &iface, line_send, state_send).await?;
     let res1 = runtime.run(recv).await;
     let res2 = runtime.shutdown().await;
     res1.and(res2)

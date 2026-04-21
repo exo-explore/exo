@@ -1,7 +1,11 @@
+#[cfg(not(unix))]
+compile_error!("babblerd is unix-only");
+
 extern crate core;
 
 pub mod babel;
 pub mod config;
+pub mod identity;
 pub mod tun;
 
 pub use babel::{babel, handle_listener};
@@ -31,31 +35,18 @@ pub mod error {
 pub mod if_watcher {
     #[cfg(target_os = "linux")]
     use std::path::PathBuf;
-    use std::{
-        collections::HashSet,
-        net::{IpAddr, Ipv6Addr},
-    };
+    use std::{collections::HashSet, net::IpAddr};
 
     use futures_lite::StreamExt;
-    use ipnet::Ipv6Net;
     use n0_watcher::Watcher;
     use netwatch::interfaces::{Interface, IpNet};
     use tokio::sync::mpsc;
 
     use crate::config::EXO_ULA_PREFIX;
     use crate::ip_manager::remove_ip;
-    use crate::{babel::Babble, BabbleError, Result};
+    use crate::{BabbleError, Result, babel::Babble};
 
     pub const LOCALHOST_INTERFACE_NAMES: [&'static str; 2] = ["lo", "lo0"];
-
-    pub fn advertised_addr(my_range: Ipv6Net) -> Ipv6Net {
-        assert!(EXO_ULA_PREFIX.contains(&my_range));
-        Ipv6Net::new_assert(
-            // interface-id 0 reserved for node's loopback identity
-            Ipv6Addr::from_bits(my_range.trunc().addr().to_bits()),
-            128,
-        )
-    }
 
     trait IfaceExt {
         fn has_link_local_v6(&self) -> bool;
@@ -123,9 +114,7 @@ pub mod if_watcher {
     }
 
     #[tracing::instrument(skip(send))]
-    pub async fn watch(my_range: Ipv6Net, send: mpsc::Sender<Babble>) -> Result<()> {
-        assert!(EXO_ULA_PREFIX.contains(&my_range));
-
+    pub async fn watch(send: mpsc::Sender<Babble>) -> Result<()> {
         let mut ready_ifaces = HashSet::new();
 
         tracing::info!("starting interface monitor");
@@ -150,7 +139,7 @@ pub mod if_watcher {
                     continue;
                 }
                 for addr in iface.addrs() {
-                    if let IpNet::V6(v6) = addr
+                    if let IpNet::V6 { net: v6, .. } = addr
                         && EXO_ULA_PREFIX.contains(&v6.addr())
                     {
                         tracing::info!("removing stale app ip {v6} from {}", iface.name());
@@ -172,7 +161,7 @@ pub mod if_watcher {
 
                 // physical links should not carry babbler application-space addresses
                 for addr in iface.addrs() {
-                    if let IpNet::V6(v6) = addr
+                    if let IpNet::V6 { net: v6, .. } = addr
                         && EXO_ULA_PREFIX.contains(&v6.addr())
                     {
                         tracing::info!("removing app ip {v6} from {}", iface.name());

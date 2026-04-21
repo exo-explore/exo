@@ -7,8 +7,7 @@
 //! - protocol/application constants such as the mesh prefix
 //! - coarse daemon defaults such as the router UDP port
 
-use color_eyre::eyre;
-use color_eyre::eyre::eyre;
+use color_eyre::eyre::{self, eyre};
 use ipnet::Ipv6Net;
 use std::env;
 use std::net::Ipv6Addr;

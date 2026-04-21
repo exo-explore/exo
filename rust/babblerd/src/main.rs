@@ -1,18 +1,18 @@
-//! Major TODO: at some point don't call it "babbler" because that is a silly name that makes no sense
-//!             but this is at the very bottom of my concerns right now :)
+// Major TODO: at some point don't call it "babbler" because that is a silly name that makes no sense
+//             but this is at the very bottom of my concerns right now :)
 
-use std::{fs::Permissions, io, net::Ipv6Addr, os::unix::fs::PermissionsExt, sync::Arc};
+#[cfg(not(unix))]
+compile_error!("babblerd is unix-only");
+
+use std::{fs::Permissions, io, os::unix::fs::PermissionsExt, sync::Arc};
 
 use babblerd::tun::UtunDevice;
 use babblerd::{
-    babel::{handle_listener, BabelState},
+    babel::{BabelState, handle_listener},
     config::Config,
-    if_watcher,
+    identity,
 };
-use color_eyre::eyre::{eyre, WrapErr};
-use ipnet::Ipv6Net;
-use n0_watcher::Watcher;
-use netwatch::netmon;
+use color_eyre::eyre::{self, WrapErr, eyre};
 use tokio::{
     net::UnixListener,
     signal,
@@ -41,7 +41,7 @@ async fn log_babel_state(mut recv: watch::Receiver<Arc<BabelState>>) {
 }
 
 #[tokio::main]
-async fn main() -> color_eyre::Result<()> {
+async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -76,13 +76,18 @@ async fn main() -> color_eyre::Result<()> {
     res
 }
 
-async fn inner_main(config: &Config) -> color_eyre::Result<()> {
+async fn inner_main(config: &Config) -> eyre::Result<()> {
+    let node_id = identity::load_or_create_node_id(&config.node_id_file)?;
+    let node_addr = identity::node_addr(config.exo_ula_prefix, node_id)?;
+
     tracing::info!("creating socket at {}", config.public_socket_path.display());
     tracing::info!(
-        "router defaults: udp_port={} node_id_file={} app_prefix={}",
+        "router defaults: udp_port={} node_id_file={} app_prefix={} node_id={:#018x} node_addr={}",
         config.router_udp_port,
         config.node_id_file.display(),
-        config.exo_ula_prefix
+        config.exo_ula_prefix,
+        node_id,
+        node_addr
     );
     let public_socket = UnixListener::bind(&config.public_socket_path)?;
     // make our socket world accessible
@@ -105,26 +110,14 @@ async fn inner_main(config: &Config) -> color_eyre::Result<()> {
                         let (state_send, state_recv) =
                             watch::channel(Arc::new(BabelState::new()));
                         let (mp_send, mp_recv) = mpsc::channel(32);
-
-                        // node id is a PREFIX/64, NODE_ID/48 and an INTERFACE_ID/16
-                        // TODO: no longer we need interfaces :)
-                        let ip_node_id = u128::from(rand::random::<u64>() & (u64::MAX>>16)) << 16;
-                        let my_range = Ipv6Net::new_assert(
-                            Ipv6Addr::from_bits(babblerd::PREFIX.addr().to_bits() | ip_node_id),
-                            112,
-                        );
-
-                        // create address (node-ID) then launch tunnel device with that address,
-                        // then advertise this tunnel device via babeld
-                        let advertised = if_watcher::advertised_addr(my_range);
-                        let utun = UtunDevice::create(advertised.addr())
+                        let utun = UtunDevice::create(node_addr.addr())
                             .wrap_err("creating utun for advertised address")?;tracing::info!(
                             "created {} with advertised address {}",
                             utun.ifname(),
-                            advertised
+                            node_addr
                         );
-                        let babel = tokio::spawn(babblerd::babel(advertised, mp_recv, br_send, state_send));
-                        let watcher = tokio::spawn(babblerd::watch(my_range, mp_send));
+                        let babel = tokio::spawn(babblerd::babel(node_addr, mp_recv, br_send, state_send));
+                        let watcher = tokio::spawn(babblerd::watch(mp_send));
                         let state_logger = tokio::spawn(log_babel_state(state_recv));
                         let mut listeners = JoinSet::new();
                         listeners.spawn(handle_listener(sock, br_recv.resubscribe()));
