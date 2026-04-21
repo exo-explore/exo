@@ -1008,8 +1008,9 @@ async def evaluate_benchmark(
 
         results[idx] = result
 
-        # Write checkpoint (skip failures so they get retried on resume)
-        if checkpoint_path is not None and not result.error and result.response:
+        # Write checkpoint (skip infra failures so they get retried on resume,
+        # but keep wrong answers — they are legitimate results)
+        if checkpoint_path is not None and result.response:
             _write_checkpoint(checkpoint_path, result)
 
         async with lock:
