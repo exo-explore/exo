@@ -256,6 +256,8 @@ class DFlashBatchGenerator(BatchGenerator):
                 else:
                     break
 
+        print(f"[DFlash] n_accepted={n_accepted}/{verify_len}", flush=True)
+
         # 5. Rollback
         rollback = verify_len - n_accepted
         if rollback > 0:
