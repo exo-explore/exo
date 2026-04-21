@@ -632,10 +632,30 @@ def make_pipelined_dflash_speculative_forward(group):  # type: ignore[no-untyped
 
             _qwen3_5_mod.gated_delta_update = _orig_gdu
 
+            # Cross-layer pipeline calls GDN.linear_attn TWICE per GDN layer
+            # (once for H0, once for H1 with S>1). The monkey-patched
+            # gated_delta_update appends per-step states on each call, so
+            # spec_all_states has 2*N_gdn entries: [H0 states of layer 0,
+            # H1 states of layer 0, H0 states of layer 1, H1 states of layer 1, ...].
+            # Merge consecutive pairs so one entry per GDN layer.
+            # S==1 case: only one call per layer — no merging needed.
+            merged_states: list[Any] = []
+            if S > 1 and len(spec_all_states) == 2 * len(gdn_spec_data):
+                for i in range(0, len(spec_all_states), 2):
+                    # all_states shape: (B, step_count, H_v, D_v, D_k).
+                    # Concat H0 (step_count=mid) and H1 (step_count=S-mid) along step dim.
+                    merged_states.append(
+                        mx.concatenate(
+                            [spec_all_states[i], spec_all_states[i + 1]], axis=1
+                        )
+                    )
+            else:
+                merged_states = spec_all_states
+
             gdn_idx = 0
             for pre_conv, spec_cache, parent_layer in gdn_spec_data:
-                if gdn_idx < len(spec_all_states):
-                    spec_cache.all_states = spec_all_states[gdn_idx]
+                if gdn_idx < len(merged_states):
+                    spec_cache.all_states = merged_states[gdn_idx]
                 gdn_idx += 1
                 # conv_input reconstruction is skipped under the split — the
                 # pipelined path doesn't preserve intermediate layer inputs

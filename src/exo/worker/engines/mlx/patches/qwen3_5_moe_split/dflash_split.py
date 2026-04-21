@@ -152,19 +152,12 @@ def make_split_speculative_next(group):  # type: ignore[no-untyped-def]
             )
             n_accepted = int(gathered_n[MOE_RANK].item())
 
-        # 7. Rollback — same n_accepted on both ranks keeps caches consistent.
-        # For BatchKVCache, both `offset` AND `_idx` must be decremented.
-        # `_idx` is the buffer-length tracker that `update_and_fetch` uses to
-        # decide where to write next and `fetch` uses to slice returned keys.
-        # Stock DFlash only decrements offset, which leaves stale rejected-draft
-        # entries in the cache that corrupt subsequent verifies.
+        # 7. Rollback — same n_accepted on both ranks keeps caches consistent
         rollback = verify_len - n_accepted
         if rollback > 0:
             for c in batch.cache:
                 if hasattr(c, "offset"):
                     c.offset -= rollback
-                    if hasattr(c, "_idx"):
-                        c._idx -= rollback
                 elif hasattr(c, "rollback"):
                     c.rollback(n_accepted)
 
