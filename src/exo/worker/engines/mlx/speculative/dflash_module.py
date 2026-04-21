@@ -23,7 +23,8 @@ class DFlashAttention(nn.Module):
     Non-causal: every draft position attends to every other + context.
     """
 
-    def __init__(self, hidden_size, num_heads, num_kv_heads, head_dim, rope_theta):
+    def __init__(self, hidden_size, num_heads, num_kv_heads, head_dim, rope_theta,
+                 rms_norm_eps=1e-6):
         super().__init__()
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
@@ -34,8 +35,8 @@ class DFlashAttention(nn.Module):
         self.k_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
         self.v_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
         self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=False)
-        self.q_norm = nn.RMSNorm(head_dim)
-        self.k_norm = nn.RMSNorm(head_dim)
+        self.q_norm = nn.RMSNorm(head_dim, eps=rms_norm_eps)
+        self.k_norm = nn.RMSNorm(head_dim, eps=rms_norm_eps)
         self.rope = nn.RoPE(head_dim, base=rope_theta)
 
     def __call__(self, hidden_states, target_hidden, q_offset, cache=None):
@@ -72,15 +73,16 @@ class DFlashAttention(nn.Module):
 
 class DFlashDecoderLayer(nn.Module):
     def __init__(self, hidden_size, num_heads, num_kv_heads, head_dim,
-                 intermediate_size, rope_theta):
+                 intermediate_size, rope_theta, rms_norm_eps=1e-6):
         super().__init__()
         self.self_attn = DFlashAttention(
-            hidden_size, num_heads, num_kv_heads, head_dim, rope_theta)
+            hidden_size, num_heads, num_kv_heads, head_dim, rope_theta,
+            rms_norm_eps=rms_norm_eps)
         self.mlp_gate = nn.Linear(hidden_size, intermediate_size, bias=False)
         self.mlp_up = nn.Linear(hidden_size, intermediate_size, bias=False)
         self.mlp_down = nn.Linear(intermediate_size, hidden_size, bias=False)
-        self.input_layernorm = nn.RMSNorm(hidden_size)
-        self.post_attention_layernorm = nn.RMSNorm(hidden_size)
+        self.input_layernorm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.post_attention_layernorm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
 
     def __call__(self, hidden_states, target_hidden, q_offset, cache=None):
         residual = hidden_states
@@ -129,10 +131,11 @@ class DFlashDrafter:
         self.target_layer_ids = config['dflash_config']['target_layer_ids']
         self.mask_token_id = config['dflash_config']['mask_token_id']
         self.rope_theta = config.get('rope_theta', 10000000)
+        self.rms_norm_eps = config.get('rms_norm_eps', 1e-6)
 
         print(f"  DFlash config: {self.num_layers} layers, hidden={self.hidden_size}, "
               f"heads={self.num_heads}/{self.num_kv_heads}, head_dim={self.head_dim}, "
-              f"block={self.block_size}")
+              f"block={self.block_size}, rms_norm_eps={self.rms_norm_eps}")
         print(f"  Target layers: {self.target_layer_ids}, mask_token={self.mask_token_id}")
 
         # Build layers
@@ -140,12 +143,13 @@ class DFlashDrafter:
         for i in range(self.num_layers):
             self.layers.append(DFlashDecoderLayer(
                 self.hidden_size, self.num_heads, self.num_kv_heads,
-                self.head_dim, self.intermediate_size, self.rope_theta))
+                self.head_dim, self.intermediate_size, self.rope_theta,
+                rms_norm_eps=self.rms_norm_eps))
 
         n_target = len(self.target_layer_ids)
         self.fc = nn.Linear(n_target * self.hidden_size, self.hidden_size, bias=False)
-        self.hidden_norm = nn.RMSNorm(self.hidden_size)
-        self.norm = nn.RMSNorm(self.hidden_size)
+        self.hidden_norm = nn.RMSNorm(self.hidden_size, eps=self.rms_norm_eps)
+        self.norm = nn.RMSNorm(self.hidden_size, eps=self.rms_norm_eps)
 
         # Shared from target
         self.embed_tokens = self._inner.embed_tokens
