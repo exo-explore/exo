@@ -36,6 +36,7 @@ jobs:
         with:
           name: exo
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+          pushFilter: '-docker-image.tar.gz$'
 
       - name: Build Metal packages (macOS only)
         if: runner.os == 'macOS'
