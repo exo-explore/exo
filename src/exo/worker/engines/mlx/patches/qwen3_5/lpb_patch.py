@@ -113,6 +113,17 @@ def apply_lpb_patches(model, batch_size=None, verify_len=None):
         for pn in ('gate_proj', 'up_proj', 'down_proj'):
             patched += _patch_proj(mlp, pn)
 
+        # MoE (Qwen3NextSparseMoeBlock): dense sub-modules worth LpB-patching.
+        # Silent-skip on dense 27B (attributes don't exist). Routed experts
+        # (switch_mlp) use SwitchLinear which needs routing indices — left on
+        # stock.
+        patched += _patch_proj(mlp, 'gate')
+        patched += _patch_proj(mlp, 'shared_expert_gate')
+        shared = getattr(mlp, 'shared_expert', None)
+        if shared is not None:
+            for pn in ('gate_proj', 'up_proj', 'down_proj'):
+                patched += _patch_proj(shared, pn)
+
         if layer.is_linear:
             attn = layer.linear_attn
             for pn in ('in_proj_qkv', 'in_proj_z', 'out_proj'):
