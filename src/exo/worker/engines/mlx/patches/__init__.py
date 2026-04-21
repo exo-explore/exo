@@ -26,9 +26,6 @@ def apply_mlx_patches() -> None:
 def maybe_apply_patches(model: nn.Module, model_path: Path) -> None:
     """Detect model type and apply kernel fusion patches if available."""
     fused_mode = os.environ.get("EXO_FUSED_KERNELS", "1")
-    if fused_mode == "0":
-        logger.info("Kernel fusion patches disabled (EXO_FUSED_KERNELS=0)")
-        return
 
     config_path = model_path / "config.json"
     if not config_path.exists():
@@ -38,6 +35,23 @@ def maybe_apply_patches(model: nn.Module, model_path: Path) -> None:
         config = json.load(f)
 
     model_type = config.get("model_type", "")
+
+    if fused_mode == "0":
+        # Fused kernels disabled — fall back to dynamic LpB patches for both
+        # dense and MoE Qwen3.5. apply_lpb_patches silently skips submodules
+        # it doesn't recognize (e.g. routed experts), so it's safe on either
+        # variant.
+        if model_type in ("qwen3_5", "qwen3_5_moe"):
+            from .qwen3_5.lpb_patch import apply_lpb_patches
+
+            logger.info(
+                f"Fused kernels disabled (EXO_FUSED_KERNELS=0); "
+                f"applying LpB patches for {model_type}"
+            )
+            apply_lpb_patches(model, batch_size=4)
+        else:
+            logger.info("Kernel fusion patches disabled (EXO_FUSED_KERNELS=0)")
+        return
 
     if model_type == "qwen3_5_moe":
         from .qwen3_5_moe.apply import apply_qwen35_batched_fused_patches
