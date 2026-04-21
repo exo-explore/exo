@@ -217,6 +217,7 @@ def pipelined_layer_loop(
     c0 = cache[0]
     if rank == ATTN_RANK:
         contribution = attention(layer_0, x_H0, mask_for(layer_0, "H0"), c0)
+        mx.eval(contribution)
     else:
         contribution = _zeros_like(x_H0)
     gathered = mx.distributed.all_gather(contribution, group=group)
