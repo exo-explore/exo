@@ -334,7 +334,11 @@ impl BabelRuntime {
                     "babeld rejected monitor command: {reason:?}"
                 )));
             }
-            None => return Ok(()),
+            None => {
+                return Err(BabbleError::Other(
+                    "babeld control socket closed during monitor bootstrap".into(),
+                ));
+            }
         }
 
         loop {
