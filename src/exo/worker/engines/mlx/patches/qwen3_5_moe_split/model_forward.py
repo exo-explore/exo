@@ -219,20 +219,8 @@ def pipelined_layer_loop(
         contribution = attention(layer_0, x_H0, mask_for(layer_0, "H0"), c0)
     else:
         contribution = _zeros_like(x_H0)
-    _t0 = time.perf_counter()
-    mx.eval(contribution)
-    _t_eval_local_ms = (time.perf_counter() - _t0) * 1000.0
     gathered = mx.distributed.all_gather(contribution, group=group)
-    _t0 = time.perf_counter()
-    mx.eval(gathered)
-    _t_eval_gather_ms = (time.perf_counter() - _t0) * 1000.0
     h_H0_ready = gathered[ATTN_RANK : ATTN_RANK + 1]
-    _role = "attn_0(H0)" if rank == ATTN_RANK else "idle"
-    print(
-        f"[rank {rank}] stage 0 (T=0 startup) h_H0.mean={h_H0_ready.mean().item():+.6f} "
-        f"[rank {rank}:{_role}] eval_local={_t_eval_local_ms:.2f}ms eval_gather={_t_eval_gather_ms:.2f}ms",
-        flush=True,
-    )
 
     # --- Stages 1..2N-1: main pipeline ---
     # Even S: attn_side and moe_side have the same shape (mid == S-mid), so
@@ -316,20 +304,8 @@ def pipelined_layer_loop(
         contribution = moe(last_layer, h_H1_pending)
     else:
         contribution = _zeros_like(h_H1_pending)
-    _t0 = time.perf_counter()
-    mx.eval(contribution)
-    _t_eval_local_ms = (time.perf_counter() - _t0) * 1000.0
     gathered = mx.distributed.all_gather(contribution, group=group)
-    _t0 = time.perf_counter()
-    mx.eval(gathered)
-    _t_eval_gather_ms = (time.perf_counter() - _t0) * 1000.0
     out_H1 = gathered[MOE_RANK : MOE_RANK + 1]
-    _role = f"moe_{N - 1}(h_{N - 1}_H1)" if rank == MOE_RANK else "idle"
-    print(
-        f"[rank {rank}] drain out_H1.mean={out_H1.mean().item():+.6f} "
-        f"[rank {rank}:{_role}] eval_local={_t_eval_local_ms:.2f}ms eval_gather={_t_eval_gather_ms:.2f}ms",
-        flush=True,
-    )
 
     # After the final B stage (Stage 2N-1), out_{N-1}_H0 = x_H0 (MOE's contribution
     # from Stage 2N-1 — stored in the x_H0 variable).
