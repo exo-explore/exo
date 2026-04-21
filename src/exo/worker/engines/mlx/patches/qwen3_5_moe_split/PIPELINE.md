@@ -140,7 +140,7 @@ Numbered per the source, cross-referenced with `dflash_split.py` line numbers.
       - Total collectives: even S → 2N+1; odd S → 4N-1.
       - Per-stage `mx.eval` calls (`:221`, `:249`, `:262` etc.) break MLX's graph accumulation and keep JACCL's queue drained.
 
-      > *Prints per stage:* `[rank N] pipeline begin S=V+1 N=64 even=<bool>` at loop entry (`model_forward.py:212`), then `[rank N] stage 0 (T=0 startup) h_H0.mean=...` (`:225`), per B-stage `[rank N] stage K (T=... B) h_H1.mean=... out_H0.mean=...` (`:268`), per A-stage `[rank N] stage K (T=... A) h_H0.mean=... out_H1.mean=...` (`:306`), and `[rank N] drain out_H1.mean=...` (`:331`). Total = 1 + 1 + (2N−1) + 1 = 2N+1 print lines per rank per pipelined forward.
+      > *Prints per stage:* `[rank N] pipeline begin S=V+1 N=64 even=<bool>` at loop entry (`model_forward.py:212`), then per-stage lines each carrying `... [rank N:role] eval_local=X.XXms eval_gather=Y.YYms` at `:225` (startup), `:268` (B), `:306` (A), `:331` (drain). Total = 1 + (2N+1) = 2N+2 lines per rank per pipelined forward. `eval_local` times only `mx.eval(my_out)`; `eval_gather` times only `mx.eval(gathered)` — see section 8a for the role labels and what to read from them.
       > *Evals per stage (graph-break + JACCL queue bound):* startup — `mx.eval(contribution)` (`:221`), `mx.eval(gathered)` (`:223`). Main-loop B stage — even S: `mx.eval(my_out)` (`:249`), `mx.eval(gathered)` (`:251`). Odd S: `mx.eval(attn_side)` (`:261`), `mx.eval(moe_side)` (`:262`), `mx.eval(attn_contrib)` (`:266`), `mx.eval(moe_contrib)` (`:267`). Main-loop A stage — even S: `mx.eval(my_out)` (`:287`), `mx.eval(gathered)` (`:289`). Odd S: `mx.eval(attn_side)` (`:299`), `mx.eval(moe_side)` (`:300`), `mx.eval(attn_contrib)` (`:304`), `mx.eval(moe_contrib)` (`:305`). Drain — `mx.eval(contribution)` (`:327`), `mx.eval(gathered)` (`:329`).
       > *Async / no eval:* captured tensors written to the `capture` dict (`:319`, `:343`) and the final `concat([out_H0, out_H1])` (`:339`) are **not** eval'd here — they materialize implicitly when post-loop reconstruction reads them (step 7.7 / 7.8) and when `lm_head` runs in step 7.10.
    6. Restore stock `gated_delta_update` (`:732`).
@@ -293,10 +293,15 @@ Per forward / per cycle (hot path — noisy, disable once stable):
 | Print | Source | When |
 |-------|--------|------|
 | `[rank N] pipeline begin S=... N=... even=...` | `model_forward.py:212` | Once per pipelined forward (prefill + verify + warmup verify) |
-| `[rank N] stage 0 (T=0 startup) ...` | `model_forward.py:225` | Startup stage of pipelined loop |
-| `[rank N] stage K (T=... B) h_H1.mean=... out_H0.mean=...` | `model_forward.py:268` | Per B stage in main loop |
-| `[rank N] stage K (T=... A) h_H0.mean=... out_H1.mean=...` | `model_forward.py:306` | Per A stage in main loop |
-| `[rank N] drain out_H1.mean=...` | `model_forward.py:331` | Drain stage of pipelined loop |
+| `[rank N] stage 0 (T=0 startup) h_H0.mean=... [rank N:role] eval_local=X.XXms eval_gather=Y.YYms` | `model_forward.py:225` | Startup stage. `role` is `attn_0(H0)` on rank 0 or `idle` on rank 1. |
+| `[rank N] stage K (T=... B) ... [rank N:role] eval_local=... eval_gather=...` | `model_forward.py:268` | Per B stage. `role` is `attn_T(H1)` on rank 0 or `moe_T(h_T_H0)` on rank 1. |
+| `[rank N] stage K (T=... A) ... [rank N:role] eval_local=... eval_gather=...` | `model_forward.py:306` | Per A stage. `role` is `attn_T(H0)` on rank 0 or `moe_{T-1}(h_{T-1}_H1)` on rank 1. |
+| `[rank N] drain out_H1.mean=... [rank N:role] eval_local=... eval_gather=...` | `model_forward.py:331` | Drain stage. `role` is `idle` on rank 0 or `moe_{N-1}(h_{N-1}_H1)` on rank 1. |
+
+**Per-stage timing.** Both numbers bracket **only `mx.eval`** — graph-building code (`attention(...)`, `moe(...)`, `all_gather(...)`) runs outside the timer, so the numbers reflect real Metal / network work, not Python overhead.
+- `eval_local` = walltime of `mx.eval(my_out)` (or `mx.eval(contribution)` at startup/drain). On the active rank: attention or MoE Metal kernels. On the idle rank (startup for MOE_RANK, drain for ATTN_RANK): a trivial `x - x` — should be near zero.
+- `eval_gather` = walltime of `mx.eval(gathered)`. This is the collective itself — network + the implicit barrier that forces both ranks to converge.
+- **Compare `eval_local` across ranks at the same stage number** to see whether attn or MoE is the limiter for that layer. The slower side's `eval_local` is the critical-path work; the faster side's `eval_gather` absorbs the difference (it sits in the collective waiting).
 | `[rank N] L=lc after gather-1 h.mean=...` | `decoder.py:56` | Per layer, mid-`_split_call` (S==1 decode) |
 | `[rank N] L=lc after gather-2 out.mean=...` | `decoder.py:69` | Per layer, end of `_split_call` |
 | `[rank N] DFlash speculative cycle (y_val=..., target_hidden.shape=...)` | `dflash_split.py:51` | Once per speculative cycle |
