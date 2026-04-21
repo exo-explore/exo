@@ -5,7 +5,7 @@ from pydantic import Field
 
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Connection
-from exo.shared.types.chunks import Chunk, InputImageChunk
+from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, Id, ModelId, NodeId, SessionId, SystemId
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
@@ -89,11 +89,6 @@ class NodeDownloadProgress(BaseEvent):
     download_progress: DownloadProgress
 
 
-class ChunkGenerated(BaseEvent):
-    command_id: CommandId
-    chunk: Chunk
-
-
 class InputChunkReceived(BaseEvent):
     command_id: CommandId
     chunk: InputImageChunk
@@ -150,7 +145,6 @@ Event = (
     | NodeTimedOut
     | NodeGatheredInfo
     | NodeDownloadProgress
-    | ChunkGenerated
     | InputChunkReceived
     | TopologyEdgeCreated
     | TopologyEdgeDeleted

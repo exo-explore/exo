@@ -59,11 +59,13 @@ class Node:
         await router.register_topic(topics.ELECTION_MESSAGES)
         await router.register_topic(topics.CONNECTION_MESSAGES)
         await router.register_topic(topics.DOWNLOAD_COMMANDS)
+        await router.register_topic(topics.STATE_SNAPSHOTS)
         event_router = EventRouter(
             session_id,
             command_sender=router.sender(topics.COMMANDS),
             external_outbound=router.sender(topics.LOCAL_EVENTS),
             external_inbound=router.receiver(topics.GLOBAL_EVENTS),
+            state_snapshots=router.receiver(topics.STATE_SNAPSHOTS),
         )
 
         logger.info(f"Starting node {node_id}")

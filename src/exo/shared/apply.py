@@ -10,7 +10,6 @@ from exo.shared.types.events import (
     CustomModelCardAdded,
     CustomModelCardDeleted,
     Event,
-    IndexedEvent,
     InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
@@ -97,15 +96,15 @@ def event_apply(event: Event, state: State) -> State:
             return apply_topology_edge_deleted(event, state)
 
 
-def apply(state: State, event: IndexedEvent) -> State:
+def apply(state: State, event: Event, idx: int) -> State:
     # Just to test that events are only applied in correct order
-    if state.last_event_applied_idx != event.idx - 1:
+    if state.last_event_applied_idx != idx - 1:
         logger.warning(
-            f"Expected event {state.last_event_applied_idx + 1} but received {event.idx}"
+            f"Expected event {state.last_event_applied_idx + 1} but received {idx}"
         )
-    assert state.last_event_applied_idx == event.idx - 1
-    new_state: State = event_apply(event.event, state)
-    return new_state.model_copy(update={"last_event_applied_idx": event.idx})
+    assert state.last_event_applied_idx == idx - 1
+    new_state: State = event_apply(event, state)
+    return new_state.model_copy(update={"last_event_applied_idx": idx})
 
 
 def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> State:

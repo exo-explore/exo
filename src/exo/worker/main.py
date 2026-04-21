@@ -8,7 +8,7 @@ from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
-from exo.shared.apply import apply
+from exo.routing.event_router import StateRef
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
 from exo.shared.types.chunks import InputImageChunk
@@ -65,6 +65,7 @@ class Worker:
         self,
         node_id: NodeId,
         *,
+        state_ref: StateRef,
         event_receiver: Receiver[IndexedEvent],
         event_sender: Sender[Event],
         # This is for requesting updates. It doesn't need to be a general command sender right now,
@@ -74,13 +75,13 @@ class Worker:
         api_port: int,
     ):
         self.node_id: NodeId = node_id
+        self.state_ref = state_ref
         self.event_receiver = event_receiver
         self.event_sender = event_sender
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.api_port = api_port
 
-        self.state: State = State()
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
         self._tg: TaskGroup = TaskGroup()
 
@@ -134,10 +135,9 @@ class Worker:
     async def _event_applier(self):
         with self.event_receiver as events:
             async for event in events:
-                # 2. for each event, apply it to the state
-                self.state = apply(self.state, event=event)
                 event = event.event
 
+                # TODO: delete these!
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
 
@@ -159,16 +159,20 @@ class Worker:
                 if isinstance(event, CustomModelCardDeleted):
                     await delete_custom_card(event.model_id)
 
-    async def plan_step(self):
+    async def plan_step(self) -> None:
         while True:
+            state = self.state_ref.get()
+            if state is None:
+                await anyio.sleep(5)
+                continue
             await anyio.sleep(0.1)
             task: Task | None = plan(
                 self.node_id,
                 self.runners,
-                self.state.downloads,
-                self.state.instances,
-                self.state.runners,
-                self.state.tasks,
+                state.downloads,
+                state.instances,
+                state.runners,
+                state.tasks,
                 self.input_chunk_buffer,
                 self._instance_backoff,
                 self._download_backoff,
@@ -193,6 +197,7 @@ class Worker:
             logger.info(f"Worker plan: {task.__class__.__name__}")
             assert task.task_status
             await self.event_sender.send(TaskCreated(task_id=task.task_id, task=task))
+
 
             # lets not kill the worker if a runner is unresponsive
             match task:
@@ -305,7 +310,7 @@ class Worker:
                         del self.input_chunk_buffer[cmd_id]
                     if cmd_id in self.input_chunk_counts:
                         del self.input_chunk_counts[cmd_id]
-                    await self._start_runner_task(modified_task)
+                    await self._start_runner_task(state, modified_task)
 
                 case TextGeneration() if (
                     task.task_params.image_hashes
@@ -355,25 +360,25 @@ class Worker:
                         del self.input_chunk_buffer[cmd_id]
                     if cmd_id in self.input_chunk_counts:
                         del self.input_chunk_counts[cmd_id]
-                    await self._start_runner_task(modified_task)
+                    await self._start_runner_task(state, modified_task)
                 case LoadModel(instance_id=instance_id):
-                    if (instance := self.state.instances.get(instance_id)) is not None:
+                    if (instance := state.instances.get(instance_id)) is not None:
                         model_id = instance.shard_assignments.model_id
                         self._download_backoff.reset(model_id)
 
-                    await self._start_runner_task(task)
+                    await self._start_runner_task(state, task)
                 case task:
-                    await self._start_runner_task(task)
+                    await self._start_runner_task(state, task)
+
+    async def _start_runner_task(self, state: State, task: Task):
+        if (instance := state.instances.get(task.instance_id)) is not None:
+            await self.runners[
+                instance.shard_assignments.node_to_runner[self.node_id]
+            ].start_task(task)
 
     async def shutdown(self):
         self._tg.cancel_tasks()
         await self._stopped.wait()
-
-    async def _start_runner_task(self, task: Task):
-        if (instance := self.state.instances.get(task.instance_id)) is not None:
-            await self.runners[
-                instance.shard_assignments.node_to_runner[self.node_id]
-            ].start_task(task)
 
     def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""
@@ -387,14 +392,16 @@ class Worker:
 
     async def _poll_connection_updates(self):
         while True:
-            edges = set(
-                conn.edge for conn in self.state.topology.out_edges(self.node_id)
-            )
+            state = self.state_ref.get()
+            if not state:
+                await anyio.sleep(10)
+                continue
+            edges = set(conn.edge for conn in state.topology.out_edges(self.node_id))
             conns: defaultdict[NodeId, set[str]] = defaultdict(set)
             async for ip, nid in check_reachable(
-                self.state.topology,
+                state.topology,
                 self.node_id,
-                self.state.node_network,
+                state.node_network,
                 api_port=self.api_port,
             ):
                 if ip in conns[nid]:
@@ -415,7 +422,7 @@ class Worker:
                         )
                     )
 
-            for conn in self.state.topology.out_edges(self.node_id):
+            for conn in state.topology.out_edges(self.node_id):
                 if not isinstance(conn.edge, SocketConnection):
                     continue
                 # ignore mDNS discovered connections

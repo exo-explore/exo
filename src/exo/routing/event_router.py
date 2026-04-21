@@ -1,3 +1,5 @@
+import weakref
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from random import random
 
@@ -6,6 +8,7 @@ from anyio import BrokenResourceError, ClosedResourceError
 from anyio.abc import CancelScope
 from loguru import logger
 
+from exo.shared.apply import apply
 from exo.shared.types.commands import ForwarderCommand, RequestEventLog
 from exo.shared.types.common import SessionId, SystemId
 from exo.shared.types.events import (
@@ -15,9 +18,19 @@ from exo.shared.types.events import (
     IndexedEvent,
     LocalForwarderEvent,
 )
+from exo.shared.types.state import ForwarderState, State
+from exo.utils import fmap
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
 from exo.utils.task_group import TaskGroup
+
+
+@dataclass
+class StateRef:
+    ref: weakref.WeakMethod[Callable[[], State]]
+
+    def get(self) -> State | None:
+        return f() if (f := self.ref()) else None
 
 
 @dataclass
@@ -26,6 +39,8 @@ class EventRouter:
     command_sender: Sender[ForwarderCommand]
     external_inbound: Receiver[GlobalForwarderEvent]
     external_outbound: Sender[LocalForwarderEvent]
+    state_snapshots: Receiver[ForwarderState]
+    _state: State = field(init=False, default_factory=State)
     _system_id: SystemId = field(init=False, default_factory=SystemId)
     internal_outbound: list[Sender[IndexedEvent]] = field(
         init=False, default_factory=list
@@ -63,6 +78,12 @@ class EventRouter:
                     self.out_for_delivery[e_id] = (anyio.current_time(), event)
                     await self.external_outbound.send(event)
 
+    def get_state(self) -> State:
+        return self._state
+
+    def state_ref(self) -> StateRef:
+        return StateRef(weakref.WeakMethod(self.get_state))
+
     def sender(self) -> Sender[Event]:
         send, recv = channel[Event]()
         if self._tg.is_running():
@@ -70,12 +91,6 @@ class EventRouter:
         else:
             self._tg.queue(self._ingest, SystemId(), recv)
         return send
-
-    def receiver(self) -> Receiver[IndexedEvent]:
-        assert not self._tg.is_running()
-        send, recv = channel[IndexedEvent]()
-        self.internal_outbound.append(send)
-        return recv
 
     def shutdown(self) -> None:
         self._tg.cancel_tasks()
@@ -103,6 +118,22 @@ class EventRouter:
                 if event.origin != self.session_id.master_node_id:
                     continue
 
+                def state_filter(s: ForwarderState) -> State | None:
+                    return s.state if s.session == self.session_id else None
+
+                # eagerly update state - matches our state and leai > our leai
+                if (
+                    states := list(fmap(state_filter, self.state_snapshots.collect()))
+                ) and (
+                    new_state := max(
+                        states, key=lambda state: state.last_event_applied_idx
+                    )
+                ).last_event_applied_idx > self._state.last_event_applied_idx:
+                    self._state = new_state
+
+                if event.origin_idx <= self._state.last_event_applied_idx:
+                    continue
+
                 buf.ingest(event.origin_idx, event.event)
                 event_id = event.event.event_id
                 if event_id in self.out_for_delivery:
@@ -123,6 +154,8 @@ class EventRouter:
                     continue
 
                 for idx, event in drained:
+                    self._state = apply(self._state, event, idx)
+
                     to_clear = set[int]()
                     for i, sender in enumerate(self.internal_outbound):
                         try:

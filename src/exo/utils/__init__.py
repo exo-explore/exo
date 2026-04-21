@@ -1,16 +1,9 @@
-from typing import Any, Type
-
-from .phantom import PhantomData
-
-
-def ensure_type[T](obj: Any, expected_type: Type[T]) -> T:  # type: ignore
-    if not isinstance(obj, expected_type):
-        raise TypeError(f"Expected {expected_type}, got {type(obj)}")  # type: ignore
-    return obj
+from collections.abc import Callable, Iterable
+from typing import TypeGuard
 
 
-def todo[T](
-    msg: str = "This code has not been implemented yet.",
-    _phantom: PhantomData[T] = None,
-) -> T:
-    raise NotImplementedError(msg)
+def fmap[T, U](c: Callable[[T], U | None], i: Iterable[T]) -> Iterable[U]:
+    def is_real(it: U | None) -> TypeGuard[U]:
+        return it is not None
+
+    return filter(is_real, map(c, i))

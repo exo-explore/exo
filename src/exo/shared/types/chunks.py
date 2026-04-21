@@ -10,7 +10,7 @@ from exo.api.types import (
     Usage,
 )
 from exo.shared.models.model_cards import ModelId
-from exo.utils.pydantic_ext import TaggedModel
+from exo.utils.pydantic_ext import FrozenModel, TaggedModel
 
 from .common import CommandId
 
@@ -88,3 +88,9 @@ class PrefillProgressChunk(BaseChunk):
 StatusChunk = PrefillProgressChunk
 GenerationChunk = TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk
 Chunk = StatusChunk | GenerationChunk
+
+
+class ForwarderChunk(FrozenModel):
+    chunk: Chunk
+    local_idx: int
+    command_id: CommandId

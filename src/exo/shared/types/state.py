@@ -1,10 +1,9 @@
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Any, cast
 
 from pydantic import ConfigDict, Field, field_serializer, field_validator
-from pydantic.alias_generators import to_camel
 
+from exo.shared.election import SessionId
 from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import (
@@ -21,10 +20,10 @@ from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 
 
-class State(CamelCaseModel):
+class State(FrozenModel):
     """Global system state.
 
     The :class:`Topology` instance is encoded/decoded via an immutable
@@ -33,11 +32,6 @@ class State(CamelCaseModel):
     """
 
     model_config = ConfigDict(
-        alias_generator=to_camel,
-        validate_by_name=True,
-        extra="forbid",
-        # I want to reenable this ASAP, but it's causing an issue with TaskStatus
-        strict=True,
         arbitrary_types_allowed=True,
     )
     instances: Mapping[InstanceId, Instance] = {}
@@ -78,7 +72,12 @@ class State(CamelCaseModel):
             return value
 
         if isinstance(value, Mapping):  # likely a snapshot-dict coming from JSON
-            snapshot = TopologySnapshot(**cast(dict[str, Any], value))  # type: ignore[arg-type]
+            snapshot = TopologySnapshot.model_validate(value)
             return Topology.from_snapshot(snapshot)
 
         raise TypeError("Invalid representation for Topology field in State")
+
+
+class ForwarderState(FrozenModel):
+    state: State
+    session: SessionId

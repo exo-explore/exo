@@ -12,7 +12,6 @@ from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import anyio
-from anyio import BrokenResourceError, ClosedResourceError
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -119,7 +118,7 @@ from exo.api.types.openai_responses import (
 )
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
-from exo.shared.apply import apply
+from exo.routing.event_router import StateRef
 from exo.shared.constants import (
     DASHBOARD_DIR,
     EXO_CACHE_HOME,
@@ -139,6 +138,7 @@ from exo.shared.models.model_cards import (
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
+    Chunk,
     ErrorChunk,
     ImageChunk,
     InputImageChunk,
@@ -168,30 +168,16 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SystemId
 from exo.shared.types.events import (
-    ChunkGenerated,
-    Event,
-    IndexedEvent,
-    InstanceDeleted,
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
-from exo.shared.types.tasks import (
-    ImageEdits as ImageEditsTask,
-)
-from exo.shared.types.tasks import (
-    ImageGeneration as ImageGenerationTask,
-)
-from exo.shared.types.tasks import (
-    TextGeneration as TextGenerationTask,
-)
 from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
-from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
 
@@ -218,18 +204,18 @@ class API:
         node_id: NodeId,
         *,
         port: int,
-        event_receiver: Receiver[IndexedEvent],
+        state_ref: StateRef,
+        chunk_receiver: Receiver[Chunk],
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
-        self.state = State()
-        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
+        self.state_ref = state_ref
         self._system_id = SystemId()
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
-        self.event_receiver = event_receiver
+        self.chunk_receiver = chunk_receiver
         self.election_receiver = election_receiver
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
@@ -271,18 +257,17 @@ class API:
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
 
-    def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):
+    def reset(
+        self, result_clock: int, chunk_receiver: Receiver[Chunk], state_ref: StateRef
+    ):
         logger.info("Resetting API State")
-        self._event_log.close()
-        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
-        self.state = State()
+        self.state_ref = state_ref
         self._system_id = SystemId()
         self._text_generation_queues = {}
         self._image_generation_queues = {}
         self.unpause(result_clock)
-        self.event_receiver.close()
-        self.event_receiver = event_receiver
-        self._tg.start_soon(self._apply_state)
+        self.chunk_receiver.close()
+        self.chunk_receiver = chunk_receiver
 
     def unpause(self, result_clock: int):
         logger.info("Unpausing API")
@@ -360,7 +345,6 @@ class API:
 
         self.app.get("/state")(self.get_state)
         self.app.get("/state/{path:path}")(self.get_state)
-        self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.post("/download/cancel")(self.cancel_download)
@@ -372,11 +356,12 @@ class API:
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
 
-    def get_state(self, path: str = ""):
+    def get_state(self, path: str = "") -> Any:  # pyright: ignore[reportAny]
+        state = self._unwrap_state()
         if path == "":
-            return self.state
+            return state
         try:
-            x = self.state.model_dump(by_alias=True)
+            x = state.model_dump(by_alias=True)
             for attr in path.split("/"):
                 if attr != "":
                     if isinstance(x, dict):
@@ -389,6 +374,12 @@ class API:
                 status_code=404,
                 detail=f"unable to find path '{path.replace('/', '.')}' in state json",
             ) from e
+
+    def _unwrap_state(self) -> State:
+        state = self.state_ref.get()
+        if state is None:
+            raise HTTPException(status_code=503, detail=str("no state, try again soon"))
+        return state
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -440,6 +431,7 @@ class API:
         model_card = await ModelCard.load(model_id)
 
         try:
+            state = self._unwrap_state()
             placements = get_instance_placements(
                 PlaceInstance(
                     model_card=model_card,
@@ -447,16 +439,16 @@ class API:
                     instance_meta=instance_meta,
                     min_nodes=min_nodes,
                 ),
-                node_memory=self.state.node_memory,
-                node_network=self.state.node_network,
-                topology=self.state.topology,
-                current_instances=self.state.instances,
-                download_status=self.state.downloads,
+                node_memory=state.node_memory,
+                node_network=state.node_network,
+                topology=state.topology,
+                current_instances=state.instances,
+                download_status=state.downloads,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        current_ids = set(self.state.instances.keys())
+        current_ids = set(state.instances.keys())
         new_ids = [
             instance_id for instance_id in placements if instance_id not in current_ids
         ]
@@ -477,7 +469,9 @@ class API:
         previews: list[PlacementPreview] = []
         required_nodes = set(node_ids) if node_ids else None
 
-        if len(list(self.state.topology.list_nodes())) == 0:
+        if (state := self.state_ref.get()) is None or len(
+            list(state.topology.list_nodes())
+        ) == 0:
             return PlacementPreviewResponse(previews=[])
 
         try:
@@ -492,9 +486,7 @@ class API:
                 instance_combinations.extend(
                     [
                         (sharding, instance_meta, i)
-                        for i in range(
-                            1, len(list(self.state.topology.list_nodes())) + 1
-                        )
+                        for i in range(1, len(list(state.topology.list_nodes())) + 1)
                     ]
                 )
         # TODO: PDD
@@ -509,12 +501,12 @@ class API:
                         instance_meta=instance_meta,
                         min_nodes=min_nodes,
                     ),
-                    node_memory=self.state.node_memory,
-                    node_network=self.state.node_network,
-                    topology=self.state.topology,
-                    current_instances=self.state.instances,
+                    node_memory=state.node_memory,
+                    node_network=state.node_network,
+                    topology=state.topology,
+                    current_instances=state.instances,
                     required_nodes=required_nodes,
-                    download_status=self.state.downloads,
+                    download_status=state.downloads,
                 )
             except ValueError as exc:
                 if (model_card.model_id, sharding, instance_meta, 0) not in seen:
@@ -530,7 +522,7 @@ class API:
                 seen.add((model_card.model_id, sharding, instance_meta, 0))
                 continue
 
-            current_ids = set(self.state.instances.keys())
+            current_ids = set(state.instances.keys())
             new_instances = [
                 instance
                 for instance_id, instance in placements.items()
@@ -592,12 +584,16 @@ class API:
         return PlacementPreviewResponse(previews=previews)
 
     def get_instance(self, instance_id: InstanceId) -> Instance:
-        if instance_id not in self.state.instances:
+        if (
+            state := self.state_ref.get()
+        ) is None or instance_id not in state.instances:
             raise HTTPException(status_code=404, detail="Instance not found")
-        return self.state.instances[instance_id]
+        return state.instances[instance_id]
 
     async def delete_instance(self, instance_id: InstanceId) -> DeleteInstanceResponse:
-        if instance_id not in self.state.instances:
+        if (
+            state := self.state_ref.get()
+        ) is None or instance_id not in state.instances:
             raise HTTPException(status_code=404, detail="Instance not found")
 
         command = DeleteInstance(
@@ -666,7 +662,7 @@ class API:
     async def _collect_text_generation_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
-        sampler = PowerSampler(get_node_system=lambda: self.state.node_system)
+        sampler = PowerSampler(get_node_system=lambda: self._unwrap_state().node_system)
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         model: ModelId | None = None
@@ -864,9 +860,9 @@ class API:
 
         Raises HTTPException 404 if no instance is found for the model.
         """
-        if not any(
+        if (state := self.state_ref.get()) is None or not any(
             instance.shard_assignments.model_id == model_id
-            for instance in self.state.instances.values()
+            for instance in state.instances.values()
         ):
             await self._trigger_notify_user_to_download_model(model_id)
             raise HTTPException(
@@ -882,31 +878,15 @@ class API:
         """
         model_card = await ModelCard.load(model)
         resolved_model = model_card.model_id
-        if not any(
+        if (state := self.state_ref.get()) is None or not any(
             instance.shard_assignments.model_id == resolved_model
-            for instance in self.state.instances.values()
+            for instance in state.instances.values()
         ):
             await self._trigger_notify_user_to_download_model(resolved_model)
             raise HTTPException(
                 status_code=404, detail=f"No instance found for model {resolved_model}"
             )
         return resolved_model
-
-    def stream_events(self) -> StreamingResponse:
-        def _generate_json_array(events: Iterable[Event]) -> Iterable[str]:
-            yield "["
-            first = True
-            for event in events:
-                if not first:
-                    yield ","
-                first = False
-                yield event.model_dump_json()
-            yield "]"
-
-        return StreamingResponse(
-            _generate_json_array(self._event_log.read_all()),
-            media_type="application/json",
-        )
 
     async def get_image(self, image_id: str) -> FileResponse:
         stored = self._image_store.get(Id(image_id))
@@ -1194,7 +1174,7 @@ class API:
         num_images: int,
         response_format: str,
     ) -> BenchImageGenerationResponse:
-        sampler = PowerSampler(get_node_system=lambda: self.state.node_system)
+        sampler = PowerSampler(get_node_system=lambda: self._unwrap_state().node_system)
         images: list[ImageData] = []
         stats: ImageGenerationStats | None = None
         async with anyio.create_task_group() as tg:
@@ -1561,14 +1541,13 @@ class API:
     async def ollama_tags(self) -> OllamaTagsResponse:
         """Returns list of models in Ollama tags format. We return the downloaded ones only."""
 
-        def none_if_empty(value: str) -> str | None:
-            return value or None
-
+        state = self.state_ref.get()
         downloaded_model_ids: set[str] = set()
-        for node_downloads in self.state.downloads.values():
-            for dl in node_downloads:
-                if isinstance(dl, DownloadCompleted):
-                    downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
+        if state is not None:
+            for node_downloads in state.downloads.values():
+                for dl in node_downloads:
+                    if isinstance(dl, DownloadCompleted):
+                        downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
 
         cards = [
             c for c in await get_model_cards() if c.model_id in downloaded_model_ids
@@ -1584,8 +1563,8 @@ class API:
                     size=card.storage_size.in_bytes,
                     digest="sha256:000000000000",
                     details=OllamaModelDetails(
-                        family=none_if_empty(card.family),
-                        quantization_level=none_if_empty(card.quantization),
+                        family=card.family or None,
+                        quantization_level=card.quantization or None,
                     ),
                 )
                 for card in cards
@@ -1619,7 +1598,7 @@ class API:
         """Returns list of running models (active instances)."""
         models: list[OllamaPsModel] = []
         seen: set[str] = set()
-        for instance in self.state.instances.values():
+        for instance in self._unwrap_state().instances.values():
             model_id = str(instance.shard_assignments.model_id)
             if model_id in seen:
                 continue
@@ -1641,18 +1620,19 @@ class API:
         """Calculate total available memory across all nodes in bytes."""
         total_available = Memory()
 
-        for memory in self.state.node_memory.values():
+        for memory in self._unwrap_state().node_memory.values():
             total_available += memory.ram_available
 
         return total_available
 
     async def get_models(self, status: str | None = Query(default=None)) -> ModelList:
         """Returns list of available models, optionally filtered by being downloaded."""
+        state = self.state_ref.get()
         cards = await get_model_cards()
 
-        if status == "downloaded":
+        if status == "downloaded" and state is not None:
             downloaded_model_ids: set[str] = set()
-            for node_downloads in self.state.downloads.values():
+            for node_downloads in state.downloads.values():
                 for dl in node_downloads:
                     if isinstance(dl, DownloadCompleted):
                         downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
@@ -1775,7 +1755,6 @@ class API:
         try:
             async with self._tg as tg:
                 logger.info("Starting API")
-                tg.start_soon(self._apply_state)
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)
                 print_startup_banner(self.port)
@@ -1786,9 +1765,8 @@ class API:
                     with anyio.CancelScope(shield=True):
                         shutdown_ev.set()
         finally:
-            self._event_log.close()
             self.command_sender.close()
-            self.event_receiver.close()
+            self.chunk_receiver.close()
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
@@ -1804,48 +1782,28 @@ class API:
                 shutdown_trigger=ev.wait,
             )
 
-    async def _apply_state(self):
-        with self.event_receiver as events:
-            async for i_event in events:
-                self._event_log.append(i_event.event)
-                self.state = apply(self.state, i_event)
-                event = i_event.event
-
-                if isinstance(event, ChunkGenerated):
-                    if queue := self._image_generation_queues.get(
-                        event.command_id, None
-                    ):
-                        assert isinstance(event.chunk, ImageChunk)
-                        try:
-                            await queue.send(event.chunk)
-                        except (BrokenResourceError, ClosedResourceError):
-                            self._image_generation_queues.pop(event.command_id, None)
-                    if queue := self._text_generation_queues.get(
-                        event.command_id, None
-                    ):
-                        assert not isinstance(event.chunk, ImageChunk)
-                        try:
-                            await queue.send(event.chunk)
-                        except (BrokenResourceError, ClosedResourceError):
-                            self._text_generation_queues.pop(event.command_id, None)
+        """TODO
                 if isinstance(event, InstanceDeleted):
                     self._close_streams_for_instance(event.instance_id)
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
+        """
 
-    def _close_streams_for_instance(self, instance_id: InstanceId) -> None:
-        """Close any active generation streams for commands running on the given instance."""
-        for task in self.state.tasks.values():
-            if task.instance_id != instance_id:
+    async def plan(self) -> None:
+        while True:
+            await anyio.sleep(5)
+            state = self.state_ref.get()
+            if state is None:
                 continue
-            if not isinstance(
-                task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
+            import itertools
+
+            for command_id, sender in itertools.chain(
+                self._text_generation_queues.items(),
+                self._image_generation_queues.items(),
             ):
-                continue
-            if sender := self._text_generation_queues.pop(task.command_id, None):
-                sender.close()
-            if sender := self._image_generation_queues.pop(task.command_id, None):
-                sender.close()
+                # if can't find command_id / instance dead
+                if False:
+                    sender.close()
 
     def _save_merged_trace(self, event: TracesMerged) -> None:
         traces = [

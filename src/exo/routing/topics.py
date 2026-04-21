@@ -1,14 +1,17 @@
 from dataclasses import dataclass
 from enum import Enum
 
+from pydantic import BaseModel
+
 from exo.routing.connection_message import ConnectionMessage
 from exo.shared.election import ElectionMessage
+from exo.shared.types.chunks import ForwarderChunk
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.events import (
     GlobalForwarderEvent,
     LocalForwarderEvent,
 )
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.shared.types.state import ForwarderState
 
 
 class PublishPolicy(str, Enum):
@@ -21,7 +24,7 @@ class PublishPolicy(str, Enum):
 
 
 @dataclass  # (frozen=True)
-class TypedTopic[T: CamelCaseModel]:
+class TypedTopic[T: BaseModel]:
     topic: str
     publish_policy: PublishPolicy
 
@@ -49,3 +52,5 @@ CONNECTION_MESSAGES = TypedTopic(
 DOWNLOAD_COMMANDS = TypedTopic(
     "download_commands", PublishPolicy.Always, ForwarderDownloadCommand
 )
+CHUNKS = TypedTopic("chunks", PublishPolicy.Always, ForwarderChunk)
+STATE_SNAPSHOTS = TypedTopic("state_snapshots", PublishPolicy.Always, ForwarderState)

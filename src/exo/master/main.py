@@ -10,7 +10,7 @@ from exo.master.placement import (
     get_transition_events,
     place_instance,
 )
-from exo.shared.apply import apply
+from exo.routing.event_router import StateRef
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
     AddCustomModelCard,
@@ -48,7 +48,7 @@ from exo.shared.types.events import (
     TracesCollected,
     TracesMerged,
 )
-from exo.shared.types.state import State
+from exo.shared.types.state import ForwarderState, State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
 )
@@ -75,15 +75,17 @@ class Master:
         node_id: NodeId,
         session_id: SessionId,
         *,
+        state_ref: StateRef,
         command_receiver: Receiver[ForwarderCommand],
         event_sender: Sender[Event],
+        state_sender: Sender[ForwarderState],
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
         download_command_sender: Sender[ForwarderDownloadCommand],
     ):
         self.node_id = node_id
         self.session_id = session_id
-        self.state = State()
+        self.state_ref = state_ref
         self._tg: TaskGroup = TaskGroup()
         self.command_task_mapping: dict[CommandId, TaskId] = {}
         self.command_receiver = command_receiver
@@ -91,11 +93,16 @@ class Master:
         self.global_event_sender = global_event_sender
         self.download_command_sender = download_command_sender
         self.event_sender = event_sender
+        self.state_sender = state_sender
         self._system_id = SystemId()
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
+
+    def _unwrap_state(self):
+        assert (state := self.state_ref.get()) is not None
+        return state
 
     async def run(self):
         logger.info("Starting Master")
@@ -119,6 +126,7 @@ class Master:
         with self.command_receiver as commands:
             async for forwarder_command in commands:
                 try:
+                    state = self._unwrap_state()
                     logger.info(f"Executing command: {forwarder_command.command}")
 
                     generated_events: list[Event] = []
@@ -128,14 +136,14 @@ class Master:
                         case TestCommand():
                             pass
                         case TextGeneration():
-                            for instance in self.state.instances.values():
+                            for instance in state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
-                                        for task in self.state.tasks.values()
+                                        for task in state.tasks.values()
                                         if task.instance_id == instance.instance_id
                                     )
                                     instance_task_counts[instance.instance_id] = (
@@ -170,14 +178,14 @@ class Master:
 
                             self.command_task_mapping[command.command_id] = task_id
                         case ImageGeneration():
-                            for instance in self.state.instances.values():
+                            for instance in state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
-                                        for task in self.state.tasks.values()
+                                        for task in state.tasks.values()
                                         if task.instance_id == instance.instance_id
                                     )
                                     instance_task_counts[instance.instance_id] = (
@@ -214,7 +222,7 @@ class Master:
                             self.command_task_mapping[command.command_id] = task_id
 
                             if EXO_TRACING_ENABLED:
-                                selected_instance = self.state.instances.get(
+                                selected_instance = state.instances.get(
                                     selected_instance_id
                                 )
                                 if selected_instance:
@@ -224,14 +232,14 @@ class Master:
                                     )
                                     self._expected_ranks[task_id] = ranks
                         case ImageEdits():
-                            for instance in self.state.instances.values():
+                            for instance in state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
-                                        for task in self.state.tasks.values()
+                                        for task in state.tasks.values()
                                         if task.instance_id == instance.instance_id
                                     )
                                     instance_task_counts[instance.instance_id] = (
@@ -268,7 +276,7 @@ class Master:
                             self.command_task_mapping[command.command_id] = task_id
 
                             if EXO_TRACING_ENABLED:
-                                selected_instance = self.state.instances.get(
+                                selected_instance = state.instances.get(
                                     selected_instance_id
                                 )
                                 if selected_instance:
@@ -278,12 +286,12 @@ class Master:
                                     )
                                     self._expected_ranks[task_id] = ranks
                         case DeleteInstance():
-                            placement = delete_instance(command, self.state.instances)
+                            placement = delete_instance(command, state.instances)
                             transition_events = get_transition_events(
-                                self.state.instances, placement, self.state.tasks
+                                state.instances, placement, state.tasks
                             )
                             for cmd in cancel_unnecessary_downloads(
-                                placement, self.state.downloads
+                                placement, state.downloads
                             ):
                                 await self.download_command_sender.send(
                                     ForwarderDownloadCommand(
@@ -294,24 +302,24 @@ class Master:
                         case PlaceInstance():
                             placement = place_instance(
                                 command,
-                                self.state.topology,
-                                self.state.instances,
-                                self.state.node_memory,
-                                self.state.node_network,
-                                download_status=self.state.downloads,
+                                state.topology,
+                                state.instances,
+                                state.node_memory,
+                                state.node_network,
+                                download_status=state.downloads,
                             )
                             transition_events = get_transition_events(
-                                self.state.instances, placement, self.state.tasks
+                                state.instances, placement, state.tasks
                             )
                             generated_events.extend(transition_events)
                         case CreateInstance():
                             placement = add_instance_to_placements(
                                 command,
-                                self.state.topology,
-                                self.state.instances,
+                                state.topology,
+                                state.instances,
                             )
                             transition_events = get_transition_events(
-                                self.state.instances, placement, self.state.tasks
+                                state.instances, placement, state.tasks
                             )
                             generated_events.extend(transition_events)
                         case SendInputChunk(chunk=chunk):
@@ -360,6 +368,10 @@ class Master:
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             # rate limit to 1000 at a time
+                            # send all of state if other node is 5000 behind
+                            if command.since_idx < len(self._event_log) - 5000:
+                                await self._send_state(self._unwrap_state())
+                                continue
                             end = min(command.since_idx + 1000, len(self._event_log))
                             for i, event in enumerate(
                                 self._event_log.read_range(command.since_idx, end),
@@ -374,9 +386,12 @@ class Master:
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
         while True:
+            state = self.state_ref.get()
+            if state is None:
+                continue
             # kill broken instances
-            connected_node_ids = set(self.state.topology.list_nodes())
-            for instance_id, instance in self.state.instances.items():
+            connected_node_ids = set(state.topology.list_nodes())
+            for instance_id, instance in state.instances.items():
                 for node_id in instance.shard_assignments.node_to_runner:
                     if node_id not in connected_node_ids:
                         await self.event_sender.send(
@@ -385,7 +400,7 @@ class Master:
                         break
 
             # time out dead nodes
-            for node_id, time in self.state.last_seen.items():
+            for node_id, time in state.last_seen.items():
                 now = datetime.now(tz=timezone.utc)
                 if now - time > timedelta(seconds=30):
                     logger.info(f"Manually removing node {node_id} due to inactivity")
@@ -411,8 +426,6 @@ class Master:
 
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
-                    self.state = apply(self.state, indexed)
-
                     event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
                     if isinstance(event, NodeGatheredInfo):
                         event.when = str(datetime.now(tz=timezone.utc))
@@ -420,8 +433,16 @@ class Master:
                     self._event_log.append(event)
                     await self._send_event(indexed)
 
+    async def _send_state(self, state: State) -> None:
+        await self.state_sender.send(
+            ForwarderState(
+                session=self.session_id,
+                state=state,
+            )
+        )
+
     # This function is re-entrant, take care!
-    async def _send_event(self, event: IndexedEvent):
+    async def _send_event(self, event: IndexedEvent) -> None:
         # Convenience method since this line is ugly
         await self.global_event_sender.send(
             GlobalForwarderEvent(
