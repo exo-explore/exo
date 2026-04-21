@@ -4,7 +4,7 @@ from uuid import uuid4
 from pydantic import GetCoreSchemaHandler, field_validator
 from pydantic_core import CoreSchema, core_schema
 
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 
 
 class Id(str):
@@ -59,12 +59,12 @@ class TruncatingString(str):
         )
 
 
-class SessionId(CamelCaseModel):
+class SessionId(FrozenModel):
     master_node_id: NodeId
     election_clock: int
 
 
-class Host(CamelCaseModel):
+class Host(FrozenModel):
     ip: str
     port: int
 

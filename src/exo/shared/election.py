@@ -12,13 +12,13 @@ from exo.routing.connection_message import ConnectionMessage
 from exo.shared.types.commands import ForwarderCommand
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, Sender
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 
 DEFAULT_ELECTION_TIMEOUT = 3.0
 
 
-class ElectionMessage(CamelCaseModel):
+class ElectionMessage(FrozenModel):
     clock: int
     seniority: int
     proposed_session: SessionId
@@ -39,7 +39,7 @@ class ElectionMessage(CamelCaseModel):
             )
 
 
-class ElectionResult(CamelCaseModel):
+class ElectionResult(FrozenModel):
     session_id: SessionId
     won_clock: int
     is_new_master: bool

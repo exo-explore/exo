@@ -12,7 +12,7 @@ from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo
-from exo.utils.pydantic_ext import CamelCaseModel, FrozenModel, TaggedModel
+from exo.utils.pydantic_ext import FrozenModel, TaggedModel
 
 
 class EventId(Id):
@@ -161,14 +161,14 @@ Event = (
 )
 
 
-class IndexedEvent(CamelCaseModel):
+class IndexedEvent(FrozenModel):
     """An event indexed by the master, with a globally unique index"""
 
     idx: int = Field(ge=0)
     event: Event
 
 
-class GlobalForwarderEvent(CamelCaseModel):
+class GlobalForwarderEvent(FrozenModel):
     """An event the forwarder will serialize and send over the network"""
 
     origin_idx: int = Field(ge=0)
@@ -177,7 +177,7 @@ class GlobalForwarderEvent(CamelCaseModel):
     event: Event
 
 
-class LocalForwarderEvent(CamelCaseModel):
+class LocalForwarderEvent(FrozenModel):
     """An event the forwarder will serialize and send over the network"""
 
     origin_idx: int = Field(ge=0)

@@ -1,15 +1,15 @@
 import anyio
 from pydantic import BaseModel, Field
 
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 
 
-class ThunderboltConnection(CamelCaseModel):
+class ThunderboltConnection(FrozenModel):
     source_uuid: str
     sink_uuid: str
 
 
-class ThunderboltIdentifier(CamelCaseModel):
+class ThunderboltIdentifier(FrozenModel):
     rdma_interface: str
     domain_uuid: str
     link_speed: str = ""

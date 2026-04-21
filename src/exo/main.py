@@ -22,7 +22,7 @@ from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
 
@@ -308,7 +308,7 @@ def main():
         logger_cleanup()
 
 
-class Args(CamelCaseModel):
+class Args(FrozenModel):
     verbosity: int = 0
     force_master: bool = False
     spawn_api: bool = False

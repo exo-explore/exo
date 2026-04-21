@@ -6,10 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.shards import ShardMetadata
-from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
+from exo.utils.pydantic_ext import FrozenModel, TaggedModel
 
 
-class DownloadProgressData(CamelCaseModel):
+class DownloadProgressData(FrozenModel):
     total: Memory
     downloaded: Memory
     downloaded_this_session: Memory
