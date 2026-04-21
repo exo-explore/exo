@@ -58,7 +58,16 @@ def make_split_speculative_next(group):  # type: ignore[no-untyped-def]
         verify_len = self.verify_len
         temp = self._request_temp.get(uid, self.temp)
         alpha = self.alpha
-        start = self._draft_position[uid]
+
+        # ATTN_RANK's cache offset is correct (updated by attention); MOE_RANK's
+        # stays at 0 because it never runs attention. Sync _draft_position
+        # across ranks so the drafter uses the right positional encoding.
+        local_start = self._draft_position[uid]
+        gathered = mx.distributed.all_gather(
+            mx.array([local_start], dtype=mx.int32), group=group
+        )
+        start = int(gathered[ATTN_RANK].item())
+        self._draft_position[uid] = start
 
         # 1. Draft — both ranks draft independently
         block_ids = mx.full((1, bs), self.drafter.mask_token_id, dtype=mx.int32)
