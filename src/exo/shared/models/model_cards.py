@@ -367,7 +367,7 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
         index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
 
     metadata = index_data.metadata
-    if metadata is not None:
+    if metadata is not None and metadata.total_size is not None:
         return Memory.from_bytes(metadata.total_size)
 
     info = model_info(model_id)

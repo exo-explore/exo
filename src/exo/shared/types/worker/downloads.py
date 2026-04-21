@@ -53,7 +53,7 @@ DownloadProgress = (
 
 
 class ModelSafetensorsIndexMetadata(BaseModel):
-    total_size: PositiveInt
+    total_size: PositiveInt | None = None
 
 
 class ModelSafetensorsIndex(BaseModel):
