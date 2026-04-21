@@ -305,6 +305,7 @@ def pipelined_layer_loop(
         contribution = moe(last_layer, h_H1_pending)
     else:
         contribution = _zeros_like(h_H1_pending)
+        mx.eval(contribution)
     gathered = mx.distributed.all_gather(contribution, group=group)
     out_H1 = gathered[MOE_RANK : MOE_RANK + 1]
 
