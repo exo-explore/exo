@@ -133,7 +133,12 @@ def apply_lpb_patches(model, batch_size=None, verify_len=None):
             for pn in ('q_proj', 'k_proj', 'v_proj', 'o_proj'):
                 patched += _patch_proj(attn, pn)
 
-    for holder in (model, inner):
+    # Qwen3.5 / Qwen3.5-MoE keep lm_head on the TextModel wrapper
+    # (model.language_model.lm_head), not on model or the inner Qwen3_5TextModel.
+    # Check all three levels so we cover both layouts.
+    for holder in (model, getattr(model, 'language_model', None), inner):
+        if holder is None:
+            continue
         if hasattr(holder, 'lm_head') and holder.lm_head is not None:
             patched += _patch_proj(holder, 'lm_head')
             break
