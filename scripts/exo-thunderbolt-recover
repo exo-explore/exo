@@ -40,32 +40,36 @@ if [[ "$(get_current_location || true)" != "$EXO_EXPECTED_LOCATION" ]]; then
   sudo scselect "$EXO_EXPECTED_LOCATION" >/dev/null
 fi
 
-service_name="$(find_bridge_service_name || true)"
-if [[ -n "$service_name" ]]; then
-  log "enabling bridge service: $service_name"
-  sudo networksetup -setnetworkserviceenabled "$service_name" on >/dev/null 2>&1 || true
-fi
-
-if ! bridge_exists; then
-  log "creating $EXO_BRIDGE_DEVICE"
-  sudo ifconfig "$EXO_BRIDGE_DEVICE" create
-fi
-
-for member in $EXO_THUNDERBOLT_MEMBERS; do
-  if ifconfig "$member" >/dev/null 2>&1; then
-    log "adding $member to $EXO_BRIDGE_DEVICE"
-    sudo ifconfig "$EXO_BRIDGE_DEVICE" addm "$member" >/dev/null 2>&1 || true
+if mode_requires_bridge; then
+  service_name="$(find_bridge_service_name || true)"
+  if [[ -n "$service_name" ]]; then
+    log "enabling bridge service: $service_name"
+    sudo networksetup -setnetworkserviceenabled "$service_name" on >/dev/null 2>&1 || true
   fi
-done
 
-log "assigning $EXO_LOCAL_BRIDGE_IP to $EXO_BRIDGE_DEVICE"
-sudo ifconfig "$EXO_BRIDGE_DEVICE" inet "$EXO_LOCAL_BRIDGE_IP" netmask 255.255.255.0 up
+  if ! bridge_exists; then
+    log "creating $EXO_BRIDGE_DEVICE"
+    sudo ifconfig "$EXO_BRIDGE_DEVICE" create
+  fi
 
-sleep 1
+  for member in $EXO_THUNDERBOLT_MEMBERS; do
+    if ifconfig "$member" >/dev/null 2>&1; then
+      log "adding $member to $EXO_BRIDGE_DEVICE"
+      sudo ifconfig "$EXO_BRIDGE_DEVICE" addm "$member" >/dev/null 2>&1 || true
+    fi
+  done
 
-route_iface="$(route_interface_to_peer || true)"
-if [[ "$route_iface" != "$EXO_BRIDGE_DEVICE" ]]; then
-  warn "peer route still not using $EXO_BRIDGE_DEVICE (got ${route_iface:-unknown})"
+  log "assigning $EXO_LOCAL_BRIDGE_IP to $EXO_BRIDGE_DEVICE"
+  sudo ifconfig "$EXO_BRIDGE_DEVICE" inet "$EXO_LOCAL_BRIDGE_IP" netmask 255.255.255.0 up
+
+  sleep 1
+
+  route_iface="$(route_interface_to_peer || true)"
+  if [[ "$route_iface" != "$EXO_BRIDGE_DEVICE" ]]; then
+    warn "peer route still not using $EXO_BRIDGE_DEVICE (got ${route_iface:-unknown})"
+  fi
+else
+  log "skipping bridge repair in mode=$EXO_MODE"
 fi
 
 if [[ "$restart_local" -eq 1 ]]; then

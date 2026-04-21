@@ -1,9 +1,12 @@
+import os
 from copy import copy
 from itertools import count
 from math import inf
 from os import PathLike
 from pathlib import Path
 from typing import cast
+
+from anyio import create_task_group
 
 from anyio import (
     BrokenResourceError,
@@ -102,10 +105,24 @@ class TopicRouter[T: CamelCaseModel]:
 
 class Router:
     @classmethod
-    def create(cls, identity: Keypair) -> "Router":
-        return cls(handle=NetworkingHandle(identity))
+    def create(
+        cls,
+        identity: Keypair,
+        bootstrap_peers: list[str] | None = None,
+        listen_port: int | None = None,
+    ) -> "Router":
+        return cls(
+            handle=NetworkingHandle(identity, bootstrap_peers or [], listen_port or 0),
+            bootstrap_peers=bootstrap_peers,
+            listen_port=listen_port,
+        )
 
-    def __init__(self, handle: NetworkingHandle):
+    def __init__(
+        self,
+        handle: NetworkingHandle,
+        bootstrap_peers: list[str] | None = None,
+        listen_port: int | None = None,
+    ):
         self.topic_routers: dict[str, TopicRouter[CamelCaseModel]] = {}
         send, recv = channel[tuple[str, bytes]]()
         self.networking_receiver: Receiver[tuple[str, bytes]] = recv
@@ -113,6 +130,12 @@ class Router:
         self._tmp_networking_sender: Sender[tuple[str, bytes]] | None = send
         self._id_count = count()
         self._tg: TaskGroup = TaskGroup()
+        self._listen_port = listen_port
+        self._bootstrap_peers: list[tuple[str, str]] = (
+            self._parse_bootstrap_peers(bootstrap_peers)
+            if bootstrap_peers is not None
+            else self._load_bootstrap_peers()
+        )
 
     async def register_topic[T: CamelCaseModel](self, topic: TypedTopic[T]):
         send = self._tmp_networking_sender
@@ -233,6 +256,19 @@ class Router:
                         f"Message too large for gossipsub on {topic} ({len(data)} bytes), dropping"
                     )
 
+    def _parse_bootstrap_peers(
+        self, bootstrap_peers: list[str] | None
+    ) -> list[str]:
+        if not bootstrap_peers:
+            return []
+        return [item.strip() for item in bootstrap_peers if item and item.strip()]
+
+    def _load_bootstrap_peers(self) -> list[str]:
+        raw = os.getenv("EXO_BOOTSTRAP_PEERS", "").strip()
+        if not raw:
+            return []
+        return self._parse_bootstrap_peers(raw.split(","))
+
 
 def get_node_id_keypair(
     path: str | bytes | PathLike[str] | PathLike[bytes] = EXO_NODE_ID_KEYPAIR,
@@ -241,27 +277,29 @@ def get_node_id_keypair(
     Obtains the :class:`Keypair` associated with this node-ID.
     Obtain the :class:`PeerId` by from it.
     """
-    # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
-    return Keypair.generate()
-
     def lock_path(path: str | bytes | PathLike[str] | PathLike[bytes]) -> Path:
         return Path(str(path) + ".lock")
 
+    keypair_path = Path(os.fsdecode(path))
+    keypair_path.parent.mkdir(parents=True, exist_ok=True)
+
     # operate with cross-process lock to avoid race conditions
-    with FileLock(lock_path(path)):
-        with open(path, "a+b") as f:  # opens in append-mode => starts at EOF
-            # if non-zero EOF, then file exists => use to get node-ID
-            if f.tell() != 0:
-                f.seek(0)  # go to start & read protobuf-encoded bytes
-                protobuf_encoded = f.read()
-
-                try:  # if decoded successfully, save & return
+    with FileLock(lock_path(keypair_path)):
+        if keypair_path.exists():
+            protobuf_encoded = keypair_path.read_bytes()
+            if protobuf_encoded:
+                try:
                     return Keypair.from_bytes(protobuf_encoded)
-                except ValueError as e:  # on runtime error, assume corrupt file
-                    logger.warning(f"Encountered error when trying to get keypair: {e}")
+                except (RuntimeError, ValueError) as error:
+                    logger.warning(
+                        f"Encountered invalid node identity keypair at {keypair_path}: {error}"
+                    )
 
-        # if no valid credentials, create new ones and persist
-        with open(path, "w+b") as f:
+        temp_path = keypair_path.with_suffix(keypair_path.suffix + ".tmp")
+        with open(temp_path, "w+b") as f:
             keypair = Keypair.generate()
             f.write(keypair.to_bytes())
-            return keypair
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, keypair_path)
+        return keypair

@@ -2,16 +2,22 @@
 
 set -euo pipefail
 
+EXO_MODE="${EXO_MODE:-ThunderboltPair}"
 EXO_BRIDGE_DEVICE="${EXO_BRIDGE_DEVICE:-bridge0}"
 EXO_LOCAL_BRIDGE_IP="${EXO_LOCAL_BRIDGE_IP:-10.0.0.2}"
 EXO_PEER_BRIDGE_IP="${EXO_PEER_BRIDGE_IP:-10.0.0.1}"
 EXO_THUNDERBOLT_MEMBERS="${EXO_THUNDERBOLT_MEMBERS:-en1 en2 en3}"
 EXO_EXPECTED_LOCATION="${EXO_EXPECTED_LOCATION:-Automatic}"
+EXO_EXPECTED_REMOTE_NODE_ID="${EXO_EXPECTED_REMOTE_NODE_ID:-}"
 EXO_NAMESPACE="${EXO_NAMESPACE:-leo-m2}"
-EXO_API_PORT="${EXO_API_PORT:-52415}"
+EXO_API_PORT="${EXO_API_PORT:-52416}"
 EXO_WORKDIR="${EXO_WORKDIR:-$HOME/exo}"
 EXO_UV_BIN="${EXO_UV_BIN:-/opt/homebrew/bin/uv}"
 EXO_REMOTE_HOST="${EXO_REMOTE_HOST:-zealous}"
+EXO_REMOTE_WORKDIR="${EXO_REMOTE_WORKDIR:-$HOME/exo}"
+EXO_REMOTE_UV_BIN="${EXO_REMOTE_UV_BIN:-/opt/homebrew/bin/uv}"
+EXO_REMOTE_START_ARGS="${EXO_REMOTE_START_ARGS:-}"
+EXO_START_ARGS="${EXO_START_ARGS:-}"
 EXO_LOG_DIR="${EXO_LOG_DIR:-$HOME/Library/Logs/exo-thunderbolt}"
 EXO_RUN_LOG="${EXO_RUN_LOG:-$EXO_LOG_DIR/exo-run.log}"
 EXO_WATCHDOG_LOG="${EXO_WATCHDOG_LOG:-$EXO_LOG_DIR/watchdog.log}"
@@ -168,18 +174,50 @@ wait_for_cluster() {
   local i
   for ((i = 1; i <= attempts; i++)); do
     if [[ "$(topology_node_count 2>/dev/null || echo 0)" -ge 2 ]]; then
-      return 0
+      if [[ -n "$EXO_EXPECTED_REMOTE_NODE_ID" ]]; then
+        if local_state 2>/dev/null | jq -e --arg id "$EXO_EXPECTED_REMOTE_NODE_ID" '.topology.nodes | index($id)' >/dev/null; then
+          return 0
+        fi
+      else
+        return 0
+      fi
     fi
     sleep "$delay"
   done
   return 1
 }
 
+mode_requires_bridge() {
+  [[ "$EXO_MODE" == "ThunderboltPair" ]]
+}
+
+start_args_resolved() {
+  if [[ -n "$EXO_START_ARGS" ]]; then
+    printf '%s' "$EXO_START_ARGS"
+  elif mode_requires_bridge; then
+    printf '%s' "--no-downloads"
+  else
+    printf '%s' ""
+  fi
+}
+
+remote_start_args_resolved() {
+  if [[ -n "$EXO_REMOTE_START_ARGS" ]]; then
+    printf '%s' "$EXO_REMOTE_START_ARGS"
+  elif mode_requires_bridge; then
+    printf '%s' "--no-downloads"
+  else
+    printf '%s' ""
+  fi
+}
+
 start_local_exo() {
+  local args
+  args="$(start_args_resolved)"
   (
     cd "$EXO_WORKDIR"
     nohup /usr/bin/script -q "$EXO_RUN_LOG" /bin/zsh -lc \
-      "cd '$EXO_WORKDIR' && env EXO_LIBP2P_NAMESPACE='$EXO_NAMESPACE' '$EXO_UV_BIN' run exo -v --no-downloads" \
+      "cd '$EXO_WORKDIR' && env EXO_LIBP2P_NAMESPACE='$EXO_NAMESPACE' '$EXO_UV_BIN' run exo -v ${args}" \
       </dev/null >/tmp/exo-thunderbolt-local-script.log 2>&1 &
   )
 }
@@ -196,6 +234,8 @@ restart_local_exo() {
 }
 
 restart_remote_exo() {
+  local remote_args
+  remote_args="$(remote_start_args_resolved)"
   ssh -tt -o BatchMode=yes -o ConnectTimeout=10 "$EXO_REMOTE_HOST" \
     "set -euo pipefail; \
      pid=\$(lsof -tiTCP:${EXO_API_PORT} -sTCP:LISTEN 2>/dev/null | head -n1 || true); \
@@ -204,8 +244,8 @@ restart_remote_exo() {
        if ! lsof -tiTCP:${EXO_API_PORT} -sTCP:LISTEN >/dev/null 2>&1; then break; fi; \
        sleep 1; \
      done; \
-     cd ~/exo; \
-     nohup /usr/bin/script -q /tmp/exo-thunderbolt-run.log /bin/zsh -lc 'cd ~/exo && env EXO_LIBP2P_NAMESPACE=${EXO_NAMESPACE} ${EXO_UV_BIN} run exo -v --no-downloads' </dev/null >/tmp/exo-thunderbolt-script.log 2>&1 & \
+     cd ${EXO_REMOTE_WORKDIR}; \
+     nohup /usr/bin/script -q /tmp/exo-thunderbolt-run.log /bin/zsh -lc 'cd ${EXO_REMOTE_WORKDIR} && env EXO_LIBP2P_NAMESPACE=${EXO_NAMESPACE} ${EXO_REMOTE_UV_BIN} run exo -v ${remote_args}' </dev/null >/tmp/exo-thunderbolt-script.log 2>&1 & \
      for _ in \$(seq 1 45); do \
        if curl -fsS http://localhost:${EXO_API_PORT}/node_id >/dev/null 2>&1; then exit 0; fi; \
        sleep 1; \

@@ -76,6 +76,9 @@ class EventRouter:
         self.internal_outbound.append(send)
         return recv
 
+    def update_session(self, session_id: SessionId) -> None:
+        self.session_id = session_id
+
     def shutdown(self) -> None:
         self._tg.cancel_tasks()
 
@@ -97,9 +100,11 @@ class EventRouter:
         buf = OrderedBuffer[Event]()
         with self.external_inbound as events:
             async for event in events:
-                if event.session != self.session_id:
-                    continue
-                if event.origin != self.session_id.master_node_id:
+                # During cluster convergence, peers may still be publishing under
+                # their own pre-election session ids. Accept events from any node
+                # that is the claimed master of its own session so state can flow
+                # before final session convergence.
+                if event.origin != event.session.master_node_id:
                     continue
 
                 buf.ingest(event.origin_idx, event.event)

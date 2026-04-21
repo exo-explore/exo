@@ -342,6 +342,11 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 if tb_conn.sink_uuid in conn_map
             ]
             topology.replace_all_out_rdma_connections(event.node_id, as_rdma_conns)
+            update["thunderbolt_bridge_cycles"] = (
+                topology.get_thunderbolt_bridge_cycles(
+                    state.node_thunderbolt_bridge, state.node_network
+                )
+            )
         case ThunderboltBridgeInfo():
             new_tb_bridge: dict[NodeId, ThunderboltBridgeStatus] = {
                 **state.node_thunderbolt_bridge,
@@ -370,11 +375,27 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:
     topology = copy.deepcopy(state.topology)
     topology.add_connection(event.conn)
-    return state.model_copy(update={"topology": topology})
+    thunderbolt_bridge_cycles = topology.get_thunderbolt_bridge_cycles(
+        state.node_thunderbolt_bridge, state.node_network
+    )
+    return state.model_copy(
+        update={
+            "topology": topology,
+            "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
+        }
+    )
 
 
 def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> State:
     topology = copy.deepcopy(state.topology)
     topology.remove_connection(event.conn)
     # TODO: Clean up removing the reverse connection
-    return state.model_copy(update={"topology": topology})
+    thunderbolt_bridge_cycles = topology.get_thunderbolt_bridge_cycles(
+        state.node_thunderbolt_bridge, state.node_network
+    )
+    return state.model_copy(
+        update={
+            "topology": topology,
+            "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
+        }
+    )

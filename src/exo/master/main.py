@@ -107,6 +107,9 @@ class Master:
             self.local_event_receiver.close()
             self.command_receiver.close()
 
+    def update_session(self, session_id: SessionId) -> None:
+        self.session_id = session_id
+
     async def shutdown(self):
         logger.info("Stopping Master")
         self._tg.cancel_tasks()

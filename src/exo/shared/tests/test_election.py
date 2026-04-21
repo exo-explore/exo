@@ -1,3 +1,4 @@
+import anyio
 import pytest
 from anyio import create_task_group, fail_after, move_on_after
 
@@ -298,6 +299,35 @@ async def test_promotion_new_seniority_counts_participants() -> None:
 
     # We + A + B = 3 → new seniority expected to be 3
     assert election.seniority == 3
+
+
+@pytest.mark.anyio
+async def test_disconnect_only_connection_message_does_not_trigger_new_round() -> None:
+    em_out_tx, em_out_rx = channel[ElectionMessage]()
+    em_in_tx, em_in_rx = channel[ElectionMessage]()
+    er_tx, _er_rx = channel[ElectionResult]()
+    cm_tx, cm_rx = channel[ConnectionMessage]()
+    co_tx, co_rx = channel[ForwarderCommand]()
+
+    election = Election(
+        node_id=NodeId("ME"),
+        election_message_receiver=em_in_rx,
+        election_message_sender=em_out_tx,
+        election_result_sender=er_tx,
+        connection_message_receiver=cm_rx,
+        command_receiver=co_rx,
+        is_candidate=True,
+    )
+
+    async with create_task_group() as tg:
+        with fail_after(2):
+            tg.start_soon(election.run)
+            await cm_tx.send(ConnectionMessage(node_id=NodeId(), connected=False))
+            await anyio.sleep(0.3)
+            assert election.clock == 0
+            em_in_tx.close()
+            cm_tx.close()
+            co_tx.close()
 
 
 @pytest.mark.anyio

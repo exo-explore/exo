@@ -166,6 +166,10 @@ class Election:
                 logger.debug(
                     f"Connection messages received: {first} followed by {rest}"
                 )
+                positive_updates = [msg for msg in [first, *rest] if msg.connected]
+                if not positive_updates:
+                    logger.debug("Ignoring disconnect-only connection update batch")
+                    continue
                 logger.debug(f"Current clock: {self.clock}")
                 # These messages are strictly peer to peer
                 self.clock += 1
@@ -177,7 +181,9 @@ class Election:
                     self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT
                 )
                 logger.debug("Campaign started")
-                logger.debug("Connection message added")
+                logger.debug(
+                    f"Connection message added for positive updates: {positive_updates}"
+                )
 
     async def _command_counter(self) -> None:
         with self._co_receiver as commands:

@@ -74,9 +74,12 @@ class DownloadCoordinator:
                 model_directory=self._model_dir(model_id),
             )
             self.download_status[model_id] = completed
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=completed)
-            )
+            try:
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=completed)
+                )
+            except anyio.BrokenResourceError:
+                logger.debug(f"Event sender closed while reporting download completion for {model_id}")
             if model_id in self.active_downloads:
                 del self.active_downloads[model_id]
             self._last_progress_time.pop(model_id, None)
@@ -94,9 +97,12 @@ class DownloadCoordinator:
                 model_directory=self._model_dir(model_id),
             )
             self.download_status[model_id] = ongoing
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=ongoing)
-            )
+            try:
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=ongoing)
+                )
+            except anyio.BrokenResourceError:
+                logger.debug(f"Event sender closed while reporting download progress for {model_id}")
             self._last_progress_time[model_id] = current_time()
 
     async def run(self) -> None:

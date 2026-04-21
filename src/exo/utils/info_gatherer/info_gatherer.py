@@ -528,6 +528,12 @@ class InfoGatherer:
     async def _monitor_macmon(self, macmon_path: str):
         if self.macmon_interval is None:
             return
+        override_memory_env = os.getenv("OVERRIDE_MEMORY_MB")
+        override_memory_bytes: int | None = (
+            Memory.from_mb(int(override_memory_env)).in_bytes
+            if override_memory_env
+            else None
+        )
         # macmon pipe --interval [interval in ms]
         while True:
             try:
@@ -545,7 +551,16 @@ class InfoGatherer:
                     async for text in TextReceiveStream(
                         BufferedByteReceiveStream(p.stdout)
                     ):
-                        await self.info_sender.send(MacmonMetrics.from_raw_json(text))
+                        metrics = MacmonMetrics.from_raw_json(text)
+                        if override_memory_bytes is not None:
+                            metrics = metrics.model_copy(
+                                update={
+                                    "memory": metrics.memory.model_copy(
+                                        update={"ram_available": Memory.from_bytes(override_memory_bytes)}
+                                    )
+                                }
+                            )
+                        await self.info_sender.send(metrics)
             except CalledProcessError as e:
                 stderr_msg = "no stderr"
                 stderr_output = cast(bytes | str | None, e.stderr)

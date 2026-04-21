@@ -1,0 +1,38 @@
+{
+  "last_indexed_sha": "c0d5bf92e6f136e29b5a52e39799fc0e141523a7",
+  "generated_at": "2026-04-21T00:00:00Z",
+  "generator": "wiki-build@0.1.0",
+  "page_count": 15,
+  "pages": [
+    "index.md",
+    "overview.md",
+    "architecture/event-sourcing-message-passing.md",
+    "architecture/module-boundaries.md",
+    "architecture/data-flow.md",
+    "architecture/diagrams.md",
+    "components/master.md",
+    "components/worker.md",
+    "components/routing.md",
+    "components/download.md",
+    "components/shared.md",
+    "components/rust-networking.md",
+    "components/rust-pyo3-bindings.md",
+    "components/dashboard.md",
+    "workflows/running-exo.md",
+    "workflows/testing-and-bench.md"
+  ],
+  "citation_count_estimate": 955,
+  "line_count_estimate": 3555,
+  "dispatch_log": {
+    "batch_1": { "agents": 6, "successful": 4, "failed": 2, "failure_reason": "Explore agent type lacks Write tool" },
+    "batch_2": { "agents": 11, "successful": 11, "failed": 0, "agent_type": "general-purpose" }
+  },
+  "notes": [
+    "Two pages (event-sourcing-message-passing.md, diagrams.md) required re-dispatch in batch 2 after batch 1 Explore agents returned content-in-message instead of written files.",
+    "3 broken cross-links were auto-fixed post-generation: data-flow.md had 2 sibling-link path errors, overview.md had a CONTRIBUTING.md depth error.",
+    "Existing docs/architecture.md, README.md, and CLAUDE.md were preserved unchanged — wiki is purely additive.",
+    "Notable discrepancy surfaced: docs/architecture.md:53 says '5 topics' but src/exo/routing/topics.py:40-51 defines 6 (DOWNLOAD_COMMANDS is newer). Flagged in affected pages.",
+    "Notable finding: rust/networking does NOT implement RDMA/Thunderbolt protocols directly — it's incidental to transport selection, which lives in Python.",
+    "Notable finding: Dashboard polls /state every 1s; no SSE/WebSockets for state updates."
+  ]
+}

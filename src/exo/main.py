@@ -41,13 +41,18 @@ class Node:
     node_id: NodeId
     offline: bool
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
+    _prev_master_node_id: NodeId | None = field(init=False, default=None)
 
     @classmethod
     async def create(cls, args: "Args") -> Self:
         keypair = get_node_id_keypair()
         node_id = NodeId(keypair.to_node_id())
         session_id = SessionId(master_node_id=node_id, election_clock=0)
-        router = Router.create(keypair)
+        router = Router.create(
+            keypair,
+            bootstrap_peers=args.bootstrap_peers,
+            listen_port=args.libp2p_port,
+        )
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
         await router.register_topic(topics.COMMANDS)
@@ -176,7 +181,12 @@ class Node:
                 # - Shutdown and re-create the worker
                 # - Shut down and re-create the API
 
-                if result.is_new_master:
+                new_master_node_id = result.session_id.master_node_id
+                master_node_changed = new_master_node_id != self._prev_master_node_id
+                self._prev_master_node_id = new_master_node_id
+
+                if result.is_new_master and master_node_changed:
+                    # Master NODE changed — full reset of EventRouter and Worker
                     await anyio.sleep(0)
                     self.event_router.shutdown()
                     self.event_router = EventRouter(
@@ -186,6 +196,11 @@ class Node:
                         self.router.sender(topics.LOCAL_EVENTS),
                     )
                     self._tg.start_soon(self.event_router.run)
+                elif result.is_new_master:
+                    # Same master node re-elected with a new clock — update session in-place
+                    self.event_router.update_session(result.session_id)
+                    if self.master is not None:
+                        self.master.update_session(result.session_id)
 
                 if (
                     result.session_id.master_node_id == self.node_id
@@ -222,7 +237,7 @@ class Node:
                     logger.info(
                         f"Node {result.session_id.master_node_id} elected master"
                     )
-                if result.is_new_master:
+                if result.is_new_master and master_node_changed:
                     if self.download_coordinator:
                         self.download_coordinator.shutdown()
                         self.download_coordinator = DownloadCoordinator(
@@ -300,6 +315,8 @@ class Args(CamelCaseModel):
     force_master: bool = False
     spawn_api: bool = False
     api_port: PositiveInt = 52415
+    libp2p_port: int = 0
+    bootstrap_peers: list[str] = []
     tb_only: bool = False
     no_worker: bool = False
     no_downloads: bool = False
@@ -342,6 +359,20 @@ class Args(CamelCaseModel):
             type=int,
             dest="api_port",
             default=52415,
+        )
+        parser.add_argument(
+            "--libp2p-port",
+            type=int,
+            dest="libp2p_port",
+            default=0,
+            help="TCP port to listen on for libp2p transport",
+        )
+        parser.add_argument(
+            "--bootstrap-peers",
+            dest="bootstrap_peers",
+            nargs="*",
+            default=os.getenv("EXO_BOOTSTRAP_PEERS", "").split(",") if os.getenv("EXO_BOOTSTRAP_PEERS") else [],
+            help="Space-separated libp2p multiaddrs to dial on startup (or set EXO_BOOTSTRAP_PEERS as comma-separated values)",
         )
         parser.add_argument(
             "--no-worker",

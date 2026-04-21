@@ -248,8 +248,8 @@ class Topology:
     ) -> list[list[NodeId]]:
         """
         Find cycles in the Thunderbolt topology where all nodes have TB bridge enabled.
-        Only returns cycles with >=2 nodes (2+ machines in a loop), as
-        1 node doesn't cause the broadcast storm problem.
+        Only direct Thunderbolt adjacencies should participate. Shared routed reachability
+        over the Thunderbolt subnet is not itself evidence of a direct Thunderbolt link.
         """
         enabled_nodes = {
             node_id
@@ -260,11 +260,7 @@ class Topology:
         if len(enabled_nodes) < 2:
             return []
 
-        thunderbolt_ips = _get_ips_with_interface_type(
-            enabled_nodes, node_network, "thunderbolt"
-        )
-
-        # Build subgraph with only TB bridge enabled nodes and thunderbolt connections
+        # Build subgraph with only TB bridge enabled nodes and direct thunderbolt connections
         graph: rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection] = rx.PyDiGraph()
         node_to_idx: dict[NodeId, int] = {}
 
@@ -276,19 +272,13 @@ class Topology:
             source_id, sink_id = self._graph[u], self._graph[v]
             if source_id not in node_to_idx or sink_id not in node_to_idx:
                 continue
-            # Include connection if it's over a thunderbolt interface
-            if (
-                isinstance(conn, SocketConnection)
-                and conn.sink_multiaddr.ip_address in thunderbolt_ips
-            ):
-                graph.add_edge(node_to_idx[source_id], node_to_idx[sink_id], conn)
             if isinstance(conn, RDMAConnection):
                 graph.add_edge(node_to_idx[source_id], node_to_idx[sink_id], conn)
 
         return [
             [graph[idx] for idx in cycle]
             for cycle in rx.simple_cycles(graph)
-            if len(cycle) >= 2
+            if len(cycle) >= 3
         ]
 
 

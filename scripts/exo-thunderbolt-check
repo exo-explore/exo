@@ -47,30 +47,37 @@ else
   status=1
 fi
 
-if bridge_exists; then
-  report "bridge: ok ($EXO_BRIDGE_DEVICE exists)"
-else
-  report "bridge: bad ($EXO_BRIDGE_DEVICE missing)"
-  status=1
-fi
+if mode_requires_bridge; then
+  if bridge_exists; then
+    report "bridge: ok ($EXO_BRIDGE_DEVICE exists)"
+  else
+    report "bridge: bad ($EXO_BRIDGE_DEVICE missing)"
+    status=1
+  fi
 
-ip="$(bridge_ip || true)"
-if [[ "$ip" == "$EXO_LOCAL_BRIDGE_IP" ]]; then
-  report "bridge_ip: ok ($ip)"
-else
-  report "bridge_ip: bad (${ip:-none}, expected $EXO_LOCAL_BRIDGE_IP)"
-  status=1
-fi
+  ip="$(bridge_ip || true)"
+  if [[ "$ip" == "$EXO_LOCAL_BRIDGE_IP" ]]; then
+    report "bridge_ip: ok ($ip)"
+  else
+    report "bridge_ip: bad (${ip:-none}, expected $EXO_LOCAL_BRIDGE_IP)"
+    status=1
+  fi
 
-members="$(bridge_members | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
-report "bridge_members: ${members:-none}"
+  members="$(bridge_members | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
+  report "bridge_members: ${members:-none}"
 
-route_iface="$(route_interface_to_peer || true)"
-if [[ "$route_iface" == "$EXO_BRIDGE_DEVICE" ]]; then
-  report "peer_route: ok ($EXO_PEER_BRIDGE_IP via $route_iface)"
+  route_iface="$(route_interface_to_peer || true)"
+  if [[ "$route_iface" == "$EXO_BRIDGE_DEVICE" ]]; then
+    report "peer_route: ok ($EXO_PEER_BRIDGE_IP via $route_iface)"
+  else
+    report "peer_route: bad ($EXO_PEER_BRIDGE_IP via ${route_iface:-unknown})"
+    status=1
+  fi
 else
-  report "peer_route: bad ($EXO_PEER_BRIDGE_IP via ${route_iface:-unknown})"
-  status=1
+  report "bridge: skipped (mode=$EXO_MODE)"
+  report "bridge_ip: skipped (mode=$EXO_MODE)"
+  report "bridge_members: skipped (mode=$EXO_MODE)"
+  report "peer_route: skipped (mode=$EXO_MODE)"
 fi
 
 pid="$(current_exo_pid || true)"
@@ -89,17 +96,29 @@ else
 fi
 
 if curl -fsS "http://localhost:${EXO_API_PORT}/state" >/dev/null 2>&1; then
-  tb_exists="$(local_state | jq -r '.nodeThunderboltBridge | to_entries[0].value.exists // false')"
-  tb_enabled="$(local_state | jq -r '.nodeThunderboltBridge | to_entries[0].value.enabled // false')"
-  report "thunderbolt_bridge_state: exists=$tb_exists enabled=$tb_enabled"
-  if [[ "$tb_exists" != "true" || "$tb_enabled" != "true" ]]; then
-    status=1
+  if mode_requires_bridge; then
+    tb_exists="$(local_state | jq -r '.nodeThunderboltBridge | to_entries[0].value.exists // false')"
+    tb_enabled="$(local_state | jq -r '.nodeThunderboltBridge | to_entries[0].value.enabled // false')"
+    report "thunderbolt_bridge_state: exists=$tb_exists enabled=$tb_enabled"
+    if [[ "$tb_exists" != "true" || "$tb_enabled" != "true" ]]; then
+      status=1
+    fi
+  else
+    report "thunderbolt_bridge_state: skipped (mode=$EXO_MODE)"
   fi
   if [[ "$require_cluster" -eq 1 ]]; then
     node_count="$(topology_node_count)"
     report "topology_nodes: $node_count"
     if [[ "$node_count" -lt 2 ]]; then
       status=1
+    fi
+    if [[ -n "$EXO_EXPECTED_REMOTE_NODE_ID" ]]; then
+      if local_state | jq -e --arg id "$EXO_EXPECTED_REMOTE_NODE_ID" '.topology.nodes | index($id)' >/dev/null; then
+        report "expected_remote_node: ok ($EXO_EXPECTED_REMOTE_NODE_ID)"
+      else
+        report "expected_remote_node: bad ($EXO_EXPECTED_REMOTE_NODE_ID missing)"
+        status=1
+      fi
     fi
   fi
 fi
