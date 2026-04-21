@@ -253,13 +253,8 @@ def pipelined_layer_loop(
                     my_out = attention(layer_T, x_H1, mask_for(layer_T, "H1"), cT)
                 else:
                     my_out = moe(layer_T, h_H0_ready)
-                _t0 = time.perf_counter()
-                mx.eval(my_out)
-                _t_eval_local_ms = (time.perf_counter() - _t0) * 1000.0
+                    mx.eval(my_out)
                 gathered = mx.distributed.all_gather(my_out, group=group)
-                _t0 = time.perf_counter()
-                mx.eval(gathered)
-                _t_eval_gather_ms = (time.perf_counter() - _t0) * 1000.0
                 attn_contrib = gathered[ATTN_RANK : ATTN_RANK + 1]
                 moe_contrib = gathered[MOE_RANK : MOE_RANK + 1]
             else:
@@ -269,25 +264,13 @@ def pipelined_layer_loop(
                 else:
                     attn_side = _zeros_like(x_H1)
                     moe_side = moe(layer_T, h_H0_ready)
-                _t0 = time.perf_counter()
                 mx.eval(attn_side)
                 mx.eval(moe_side)
-                _t_eval_local_ms = (time.perf_counter() - _t0) * 1000.0
                 attn_contrib, moe_contrib = _gather_two(
                     rank, attn_side, moe_side, attn_side, moe_side, group
                 )
-                _t0 = time.perf_counter()
                 mx.eval(attn_contrib)
                 mx.eval(moe_contrib)
-                _t_eval_gather_ms = (time.perf_counter() - _t0) * 1000.0
-            _role = f"attn_{T}(H1)" if rank == ATTN_RANK else f"moe_{T}(h_{T}_H0)"
-            print(
-                f"[rank {rank}] stage {stage} (T={T} B) "
-                f"h_H1.mean={attn_contrib.mean().item():+.6f} "
-                f"out_H0.mean={moe_contrib.mean().item():+.6f} "
-                f"[rank {rank}:{_role}] eval_local={_t_eval_local_ms:.2f}ms eval_gather={_t_eval_gather_ms:.2f}ms",
-                flush=True,
-            )
 
             h_H1_pending = attn_contrib
             x_H0 = moe_contrib
