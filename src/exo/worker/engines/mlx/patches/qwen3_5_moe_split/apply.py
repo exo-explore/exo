@@ -127,12 +127,18 @@ def _patch_caches_for_moe_rank() -> None:
     def _arrays_is_empty(self) -> bool:  # type: ignore[no-untyped-def]
         return all(c is None for c in self.cache)
 
-    _arrays_extract_orig = cache_module.ArraysCache.extract
-
     def _arrays_extract(self, idx):  # type: ignore[no-untyped-def]
-        if _arrays_is_empty(self):
-            return cache_module.ArraysCache(len(self.cache))
-        return _arrays_extract_orig(self, idx)
+        # Stock extract does [c[idx:idx+1] for c in self.cache] which crashes
+        # on None. On MOE_RANK the GDN base.cache is mixed after speculative
+        # rollback: conv_input gets reconstructed (base.cache[0] non-None)
+        # but all_states stays None (the monkey-patched gated_delta_update
+        # never runs on MOE_RANK, so spec_all_states is empty). Handle any
+        # None/non-None mixture per-element.
+        new_cache = cache_module.ArraysCache(len(self.cache))
+        new_cache.cache = [
+            c[idx : idx + 1] if c is not None else None for c in self.cache
+        ]
+        return new_cache
 
     cache_module.ArraysCache.extract = _arrays_extract  # type: ignore[method-assign]
 
