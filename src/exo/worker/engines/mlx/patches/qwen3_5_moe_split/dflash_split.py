@@ -152,6 +152,12 @@ def make_split_speculative_next(group):  # type: ignore[no-untyped-def]
             )
             n_accepted = int(gathered_n[MOE_RANK].item())
 
+        if rank == MOE_RANK:
+            print(
+                f"[DFlash] n_accepted={n_accepted}/{verify_len}",
+                flush=True,
+            )
+
         # 7. Rollback — same n_accepted on both ranks keeps caches consistent
         rollback = verify_len - n_accepted
         if rollback > 0:
