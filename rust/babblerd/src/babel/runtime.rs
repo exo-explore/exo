@@ -5,7 +5,7 @@
 //! - spawn-time configuration of the child process
 //! - the private Unix socket path used for the local control connection
 //! - connecting to that socket and speaking the local Babel protocol
-//! - running the current dump-based control loop
+//! - running the monitor-driven control loop
 //! - shutdown and cleanup of the child process and socket
 //!
 //! Unlike the old `process` / `session` split, this is intended to model the real runtime unit:
@@ -19,17 +19,17 @@ use std::sync::Arc;
 use futures_lite::FutureExt;
 use ipnet::Ipv6Net;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::UnixStream;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::Duration;
 
+use crate::babel::Babble;
 use crate::babel::command::BabelCommand;
 use crate::babel::line::parse::ParseError;
 use crate::babel::line::{self, BabelLine, HeaderLine, Status};
 use crate::babel::state::BabelState;
-use crate::babel::Babble;
 use crate::{BabbleError, Result};
 
 #[cfg(target_os = "macos")]
@@ -47,6 +47,7 @@ pub(crate) struct BabelRuntime {
     write: OwnedWriteHalf,
     line_send: broadcast::Sender<String>,
     state_send: watch::Sender<Arc<BabelState>>,
+    state: BabelState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +155,7 @@ impl BabelRuntime {
             write,
             line_send,
             state_send,
+            state: BabelState::new(),
         };
 
         if let Err(err) = runtime.await_ready().await {
@@ -214,7 +216,11 @@ impl BabelRuntime {
                 return Ok(None);
             };
             match self.observe_line(line)? {
-                Ok(BabelLine::Status(status)) => {
+                Ok(parsed) => {
+                    let status = self.reduce_live_line(parsed)?;
+                    let Some(status) = status else {
+                        continue;
+                    };
                     match &status {
                         Status::Ok => {}
                         Status::Bad => tracing::warn!("malformed message sent to babeld"),
@@ -222,7 +228,6 @@ impl BabelRuntime {
                     }
                     return Ok(Some(status));
                 }
-                Ok(_) => {}
                 Err(err) => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -255,11 +260,10 @@ impl BabelRuntime {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn dump_snapshot(&mut self) -> io::Result<Option<Status>> {
+    async fn start_monitoring(&mut self) -> io::Result<Option<Status>> {
         let mut snapshot = BabelState::new();
-        let mut invalid_reason = None::<String>;
         self.write
-            .write_all(BabelCommand::Dump.encode().as_bytes())
+            .write_all(BabelCommand::Monitor.encode().as_bytes())
             .await?;
         loop {
             let Some(line) = self.read.next_line().await? else {
@@ -268,17 +272,13 @@ impl BabelRuntime {
             };
             match self.observe_line(line)? {
                 Ok(BabelLine::Event(event)) => {
-                    if invalid_reason.is_none() {
-                        snapshot.apply(event);
-                    }
+                    snapshot.apply(event);
                 }
                 Ok(BabelLine::Status(status)) => {
-                    if let Some(reason) = invalid_reason {
-                        return Err(io::Error::new(io::ErrorKind::InvalidData, reason));
-                    }
                     match &status {
                         Status::Ok => {
-                            self.state_send.send_replace(Arc::new(snapshot));
+                            self.state = snapshot;
+                            self.publish_state();
                         }
                         Status::Bad => tracing::warn!("malformed message sent to babeld"),
                         Status::No(rest) => tracing::warn!("message rejected: {rest:?}"),
@@ -286,36 +286,59 @@ impl BabelRuntime {
                     return Ok(Some(status));
                 }
                 Ok(BabelLine::Header(header)) => {
-                    invalid_reason.get_or_insert_with(|| {
-                        format!("unexpected header line during dump snapshot: {header:?}")
-                    });
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unexpected header line during monitor bootstrap: {header:?}"),
+                    ));
                 }
                 Err(err) => {
-                    invalid_reason.get_or_insert_with(|| {
-                        format!("failed to parse babeld dump output: {err}")
-                    });
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("failed to parse babeld monitor bootstrap output: {err}"),
+                    ));
                 }
             }
         }
     }
 
+    fn publish_state(&self) {
+        self.state_send.send_replace(Arc::new(self.state.clone()));
+    }
+
+    fn reduce_live_line(&mut self, line: BabelLine) -> io::Result<Option<Status>> {
+        match line {
+            BabelLine::Event(event) => {
+                self.state.apply(event);
+                self.publish_state();
+                Ok(None)
+            }
+            BabelLine::Status(status) => Ok(Some(status)),
+            BabelLine::Header(header) => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unexpected header line after startup: {header:?}"),
+            )),
+        }
+    }
+
     #[tracing::instrument(skip_all)]
     pub(crate) async fn run(&mut self, mut recv: mpsc::Receiver<Babble>) -> Result<()> {
-        /* TODO(evan): push rather than pull
-        if self.query(&BabelCommand::Monitor).await?.is_none() {
-            return Ok(());
-        };
-        */
+        match self.start_monitoring().await? {
+            Some(Status::Ok) => {}
+            Some(Status::Bad) => {
+                return Err(BabbleError::Other(
+                    "babeld rejected monitor command as malformed".into(),
+                ));
+            }
+            Some(Status::No(reason)) => {
+                return Err(BabbleError::Other(format!(
+                    "babeld rejected monitor command: {reason:?}"
+                )));
+            }
+            None => return Ok(()),
+        }
 
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
-                _ = interval.tick() => {
-                    if self.dump_snapshot().await?.is_none() {
-                        return Ok(());
-                    }
-                },
                 babble = recv.recv() => {
                     tracing::debug!("[babble] {:?}", babble);
                     let Some(babble) = babble else {
@@ -332,8 +355,19 @@ impl BabelRuntime {
                     let Ok(Some(line)) = line else {
                         break;
                     };
-                    if matches!(self.observe_line(line)?, Ok(BabelLine::Status(_))) {
-                        tracing::debug!("ignoring unsolicited status line from babeld");
+                    match self.observe_line(line)? {
+                        Ok(parsed) => {
+                            if let Some(status) = self.reduce_live_line(parsed)? {
+                                tracing::debug!(?status, "ignoring unsolicited status line from babeld");
+                            }
+                        }
+                        Err(err) => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("failed to parse babeld monitor output: {err}"),
+                            )
+                            .into());
+                        }
                     }
                 },
             }
