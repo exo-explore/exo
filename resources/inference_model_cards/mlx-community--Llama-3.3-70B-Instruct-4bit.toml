@@ -13,3 +13,9 @@ context_length = 131072
 
 [storage_size]
 in_bytes = 40652242944
+
+# Source: https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct/blob/main/generation_config.json
+# Source: https://huggingface.co/unsloth/Llama-3.3-70B-Instruct/blob/main/generation_config.json
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.9

@@ -13,3 +13,8 @@ context_length = 131072
 
 [storage_size]
 in_bytes = 122406567936
+
+# Source: https://docs.z.ai/api-reference/llm/chat-completion
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95

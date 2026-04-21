@@ -13,3 +13,11 @@ context_length = 262144
 
 [storage_size]
 in_bytes = 579820584960
+
+# Source: https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct#best-practices
+# Source: https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF
+[sampling_defaults]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+repetition_penalty = 1.05

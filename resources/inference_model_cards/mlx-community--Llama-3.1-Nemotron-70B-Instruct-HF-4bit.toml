@@ -12,3 +12,9 @@ context_length = 131072
 
 [storage_size]
 in_bytes = 39688355840
+
+# Source: https://huggingface.co/RedHatAI/Llama-3.1-Nemotron-70B-Instruct-HF-FP8-dynamic
+# Source: https://deepinfra.com/nvidia/Llama-3.1-Nemotron-70B-Instruct/api
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.9

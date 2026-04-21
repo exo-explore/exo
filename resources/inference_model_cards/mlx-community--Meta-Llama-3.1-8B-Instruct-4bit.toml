@@ -13,3 +13,9 @@ context_length = 131072
 
 [storage_size]
 in_bytes = 4637851648
+
+# Source: https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct/blob/main/generation_config.json
+# Source: https://huggingface.co/unsloth/Meta-Llama-3.1-8B-Instruct/blob/main/generation_config.json
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.9
