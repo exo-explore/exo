@@ -1675,6 +1675,7 @@ class API:
                     base_model=card.base_model,
                     capabilities=card.capabilities,
                     context_length=card.context_length,
+                    sampling_defaults=card.sampling_defaults,
                 )
                 for card in cards
             ]

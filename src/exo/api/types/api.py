@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
-from exo.shared.models.model_cards import ModelCard, ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId, SamplingDefaults
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.text_generation import ReasoningEffort
@@ -48,6 +48,7 @@ class ModelListModel(BaseModel):
     quantization: str = Field(default="")
     base_model: str = Field(default="")
     capabilities: list[str] = Field(default_factory=list)
+    sampling_defaults: SamplingDefaults | None = None
 
 
 class ModelList(BaseModel):
