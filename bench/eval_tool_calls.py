@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import io
 import json
 import os
 import sys
 import time
 import tomllib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -914,6 +916,12 @@ Examples:
         help="Repeat each scenario N times (default: 1)",
     )
     parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Run up to N scenarios in parallel against the same instance (default: 1)",
+    )
+    parser.add_argument(
         "--scenarios",
         nargs="*",
         help="Run only these scenarios (by name)",
@@ -934,6 +942,13 @@ Examples:
         help="Write JSON results to stdout instead of file",
     )
     args = parser.parse_args()
+
+    if args.concurrency < 1:
+        print(
+            f"--concurrency must be >= 1 (got {args.concurrency})",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     all_scenarios = load_scenarios(SCENARIOS_PATH)
     if args.scenarios:
@@ -1010,42 +1025,72 @@ Examples:
     cluster_snapshot = capture_cluster_snapshot(exo)
     all_results: list[ScenarioResult] = []
 
+    tasks: list[tuple[int, Scenario, ApiName]] = [
+        (run_idx, scenario, api_name)
+        for run_idx in range(args.repeat)
+        for scenario in scenarios
+        for api_name in api_names
+    ]
+
+    def _run_one(
+        http_client: httpx.Client,
+        task: tuple[int, Scenario, ApiName],
+    ) -> tuple[tuple[int, Scenario, ApiName], list[ScenarioResult], str]:
+        run_idx, scenario, api_name = task
+        buf = io.StringIO()
+        run_tag = f"[run {run_idx + 1}/{args.repeat}]" if args.repeat > 1 else ""
+        print(
+            f"\n  {run_tag}[{api_name:>9}] {scenario.name}: {scenario.description}",
+            file=buf,
+        )
+        scenario_results = run_scenario(
+            http_client,
+            args.host,
+            args.port,
+            full_model_id,
+            scenario,
+            api_name,
+            args.timeout,
+            args.verbose,
+        )
+        for r in scenario_results:
+            status = "PASS" if r.passed else "FAIL"
+            print(
+                f"    [{r.phase:>10}] {status}  ({r.latency_ms:.0f}ms)",
+                file=buf,
+            )
+            for check_name, check_ok in r.checks.items():
+                mark = "+" if check_ok else "-"
+                print(f"      {mark} {check_name}", file=buf)
+            if r.error:
+                print(f"      ! {r.error}", file=buf)
+        return task, scenario_results, buf.getvalue()
+
     try:
         with httpx.Client() as http_client:
-            for run_idx in range(args.repeat):
-                if args.repeat > 1:
-                    print(f"\n--- Run {run_idx + 1}/{args.repeat} ---", file=log)
-
-                for scenario in scenarios:
-                    for api_name in api_names:
-                        print(
-                            f"\n  [{api_name:>9}] {scenario.name}: {scenario.description}",
-                            file=log,
-                        )
-
-                        scenario_results = run_scenario(
-                            http_client,
-                            args.host,
-                            args.port,
-                            full_model_id,
-                            scenario,
-                            api_name,
-                            args.timeout,
-                            args.verbose,
-                        )
+            if args.concurrency == 1:
+                current_run = -1
+                for task in tasks:
+                    run_idx = task[0]
+                    if args.repeat > 1 and run_idx != current_run:
+                        print(f"\n--- Run {run_idx + 1}/{args.repeat} ---", file=log)
+                        current_run = run_idx
+                    _, scenario_results, buffered = _run_one(http_client, task)
+                    all_results.extend(scenario_results)
+                    log.write(buffered)
+                    log.flush()
+            else:
+                print(
+                    f"Running {len(tasks)} tasks with concurrency={args.concurrency}",
+                    file=log,
+                )
+                with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
+                    futures = [pool.submit(_run_one, http_client, t) for t in tasks]
+                    for fut in as_completed(futures):
+                        _, scenario_results, buffered = fut.result()
                         all_results.extend(scenario_results)
-
-                        for r in scenario_results:
-                            status = "PASS" if r.passed else "FAIL"
-                            print(
-                                f"    [{r.phase:>10}] {status}  ({r.latency_ms:.0f}ms)",
-                                file=log,
-                            )
-                            for check_name, check_ok in r.checks.items():
-                                mark = "+" if check_ok else "-"
-                                print(f"      {mark} {check_name}", file=log)
-                            if r.error:
-                                print(f"      ! {r.error}", file=log)
+                        log.write(buffered)
+                        log.flush()
     finally:
         try:
             exo.request_json("DELETE", f"/instance/{instance_id}")
