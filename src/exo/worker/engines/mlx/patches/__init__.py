@@ -25,7 +25,7 @@ def apply_mlx_patches() -> None:
 
 def maybe_apply_patches(model: nn.Module, model_path: Path) -> None:
     """Detect model type and apply kernel fusion patches if available."""
-    fused_mode = os.environ.get("EXO_FUSED_KERNELS", "1")
+    fused_mode = os.environ.get("EXO_FUSED_KERNELS", "0")
 
     config_path = model_path / "config.json"
     if not config_path.exists():
