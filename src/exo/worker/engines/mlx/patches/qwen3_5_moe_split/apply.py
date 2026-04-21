@@ -283,10 +283,15 @@ def apply_qwen35_attn_moe_split_patches(
     if group.rank() == MOE_RANK:
         _patch_caches_for_moe_rank()
 
-    # Skip weight dropping under speculative — speculative_forward accesses
-    # linear_attn/input_layernorm on both ranks in its post-loop.
-    if os.environ.get("EXO_SPECULATIVE") != "1":
-        _drop_unused_weights(model, group)
+    # Drop unused weights. Under speculative we keep a narrower subset on
+    # MOE_RANK because the speculative forward's post-loop reconstruction
+    # runs input_layernorm + linear_attn.in_proj_* there. ATTN_RANK always
+    # drops mlp + post_attention_layernorm since attention never runs them.
+    _drop_unused_weights(
+        model,
+        group,
+        speculative=os.environ.get("EXO_SPECULATIVE") == "1",
+    )
 
     logger.info(
         f"Qwen3.5 attn/moe split patch applied on rank {group.rank()}/{group.size()}"
@@ -294,12 +299,25 @@ def apply_qwen35_attn_moe_split_patches(
     return model
 
 
-def _drop_unused_weights(model: nn.Module, group: mx.distributed.Group) -> None:
+def _drop_unused_weights(
+    model: nn.Module,
+    group: mx.distributed.Group,
+    speculative: bool = False,
+) -> None:
     """Free weights each rank doesn't need.
 
-    ATTN_RANK keeps attention + input_layernorm, drops MLP + post_attention_layernorm.
-    MOE_RANK keeps MLP + post_attention_layernorm, drops attention + input_layernorm.
-    embed_tokens, norm, and lm_head stay on both ranks.
+    Non-speculative:
+      ATTN_RANK drops mlp + post_attention_layernorm.
+      MOE_RANK  drops self_attn + linear_attn + input_layernorm.
+
+    Speculative (EXO_SPECULATIVE=1):
+      ATTN_RANK drops mlp + post_attention_layernorm (same as above).
+      MOE_RANK  drops self_attn only. Keeps linear_attn + input_layernorm
+                because the speculative forward's post-loop conv_input
+                reconstruction runs input_layernorm + linear_attn.in_proj_*
+                on MOE_RANK too.
+
+    embed_tokens, norm, and lm_head stay on both ranks in all cases.
     """
     import gc
 
@@ -318,11 +336,13 @@ def _drop_unused_weights(model: nn.Module, group: mx.distributed.Group) -> None:
             layer.post_attention_layernorm = None  # type: ignore[assignment]
         else:
             layer.self_attn = None  # type: ignore[assignment]
-            layer.linear_attn = None  # type: ignore[assignment]
-            layer.input_layernorm = None  # type: ignore[assignment]
+            if not speculative:
+                layer.linear_attn = None  # type: ignore[assignment]
+                layer.input_layernorm = None  # type: ignore[assignment]
 
     gc.collect()
     mx.clear_cache()
+    mode = "speculative" if speculative else "full"
     logger.info(
-        f"Rank {group.rank()}: dropped unused weights from {len(layers)} layers"
+        f"Rank {group.rank()}: dropped unused weights from {len(layers)} layers ({mode})"
     )
