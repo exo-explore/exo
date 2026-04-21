@@ -85,6 +85,8 @@ def _instantiate_projector(
     params = {n: p for n, p in init_sig.parameters.items() if n != "self"}
     kwargs: dict[str, Any] = {}
 
+    if "config" in params:
+        kwargs["config"] = model_config
     if "embedding_dim" in params:
         kwargs["embedding_dim"] = vision_config.hidden_size  # pyright: ignore[reportAny]
     if "text_hidden_size" in params:

@@ -249,7 +249,12 @@ class KVPrefixCache:
         # For partial match: trim to best_length, remaining has suffix to prefill
         # This ensures stream_generate always has at least one token to start with
         has_ssm = has_non_kv_caches(self.caches[best_index])
-        target = (max_length - 1) if is_exact and not has_ssm else best_length
+        cached_length = cache_length(self.caches[best_index])
+        if has_ssm:
+            target = best_length
+        else:
+            desired = (max_length - 1) if is_exact else best_length
+            target = min(cached_length, desired)
         restore_pos, restore_snap = self._get_snapshot(best_index, target)
 
         # No usable snapshot — need fresh cache
@@ -257,7 +262,6 @@ class KVPrefixCache:
             return make_kv_cache(model), prompt_tokens, None, False
 
         prompt_cache = deepcopy(self.caches[best_index])
-        cached_length = cache_length(self.caches[best_index])
         tokens_to_trim = cached_length - restore_pos
         if tokens_to_trim > 0:
             trim_cache(prompt_cache, tokens_to_trim, restore_snap)

@@ -113,6 +113,23 @@ def _extract_content(content: str | list[ResponseContentPart]) -> str:
     )
 
 
+def _append_tool_call(
+    chat_template_messages: list[dict[str, Any]], tool_call: dict[str, Any]
+) -> None:
+    if chat_template_messages:
+        prev = chat_template_messages[-1]
+        if prev.get("role") == "assistant" and isinstance(prev.get("content"), str):
+            existing: list[dict[str, Any]] | None = prev.get("tool_calls")
+            if existing is None:
+                prev["tool_calls"] = [tool_call]
+            else:
+                existing.append(tool_call)
+            return
+    chat_template_messages.append(
+        {"role": "assistant", "content": "", "tool_calls": [tool_call]}
+    )
+
+
 async def responses_request_to_text_generation(
     request: ResponsesRequest,
 ) -> TextGenerationTaskParams:
@@ -182,59 +199,44 @@ async def responses_request_to_text_generation(
                     | McpCallInputItem()
                     | CustomToolCallInputItem()
                 ):
-                    chat_template_messages.append(
+                    _append_tool_call(
+                        chat_template_messages,
                         {
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [
-                                {
-                                    "id": item.call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": item.name,
-                                        "arguments": item.arguments,
-                                    },
-                                }
-                            ],
-                        }
+                            "id": item.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": item.name,
+                                "arguments": item.arguments,
+                            },
+                        },
                     )
                 case (
                     LocalShellCallInputItem()
                     | ShellCallInputItem()
                     | ComputerCallInputItem()
                 ):
-                    chat_template_messages.append(
+                    _append_tool_call(
+                        chat_template_messages,
                         {
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [
-                                {
-                                    "id": item.call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": item.type,
-                                        "arguments": json.dumps(item.action),
-                                    },
-                                }
-                            ],
-                        }
+                            "id": item.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": item.type,
+                                "arguments": json.dumps(item.action),
+                            },
+                        },
                     )
                 case ApplyPatchCallInputItem():
-                    chat_template_messages.append(
+                    _append_tool_call(
+                        chat_template_messages,
                         {
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [
-                                {
-                                    "id": item.call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": "apply_patch",
-                                        "arguments": json.dumps({"patch": item.patch}),
-                                    },
-                                }
-                            ],
-                        }
+                            "id": item.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": "apply_patch",
+                                "arguments": json.dumps({"patch": item.patch}),
+                            },
+                        },
                     )
                 case (
                     WebSearchCallInputItem()
@@ -254,21 +256,16 @@ async def responses_request_to_text_generation(
                         args = {"prompt": item.prompt}
                     else:
                         args = {"query": item.query}
-                    chat_template_messages.append(
+                    _append_tool_call(
+                        chat_template_messages,
                         {
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [
-                                {
-                                    "id": item.call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": item.type,
-                                        "arguments": json.dumps(args),
-                                    },
-                                }
-                            ],
-                        }
+                            "id": item.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": item.type,
+                                "arguments": json.dumps(args),
+                            },
+                        },
                     )
                 case (
                     FunctionCallOutputInputItem()
@@ -320,21 +317,16 @@ async def responses_request_to_text_generation(
                             }
                         )
                 case McpApprovalRequestInputItem():
-                    chat_template_messages.append(
+                    _append_tool_call(
+                        chat_template_messages,
                         {
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [
-                                {
-                                    "id": item.call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": item.name,
-                                        "arguments": item.arguments,
-                                    },
-                                }
-                            ],
-                        }
+                            "id": item.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": item.name,
+                                "arguments": item.arguments,
+                            },
+                        },
                     )
                 case McpApprovalResponseInputItem():
                     chat_template_messages.append(
