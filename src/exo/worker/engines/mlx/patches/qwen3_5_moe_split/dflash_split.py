@@ -117,7 +117,7 @@ def make_split_speculative_next(group):  # type: ignore[no-untyped-def]
             target_tokens = mx.argmax(verify_logits[:, :verify_len, :], axis=-1)
             matches = mx.equal(target_tokens, drafts_arr).squeeze(0)
             all_next = mx.argmax(verify_logits[0], axis=-1)
-            mx.async_eval(matches, all_next, target_hidden)
+            mx.eval(matches, all_next, target_hidden)
             n_accepted = 0
             for i in range(verify_len):
                 if matches[i].item():
