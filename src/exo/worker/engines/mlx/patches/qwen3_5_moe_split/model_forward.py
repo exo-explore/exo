@@ -282,15 +282,10 @@ def pipelined_layer_loop(
             if even_S:
                 if rank == ATTN_RANK:
                     my_out = attention(layer_T, x_H0, mask_for(layer_T, "H0"), cT)
+                    mx.eval(my_out)
                 else:
                     my_out = moe(prev_layer, h_H1_pending)
-                _t0 = time.perf_counter()
-                mx.eval(my_out)
-                _t_eval_local_ms = (time.perf_counter() - _t0) * 1000.0
                 gathered = mx.distributed.all_gather(my_out, group=group)
-                _t0 = time.perf_counter()
-                mx.eval(gathered)
-                _t_eval_gather_ms = (time.perf_counter() - _t0) * 1000.0
                 attn_contrib = gathered[ATTN_RANK : ATTN_RANK + 1]
                 moe_contrib = gathered[MOE_RANK : MOE_RANK + 1]
             else:
@@ -300,25 +295,13 @@ def pipelined_layer_loop(
                 else:
                     attn_side = _zeros_like(x_H0)
                     moe_side = moe(prev_layer, h_H1_pending)
-                _t0 = time.perf_counter()
                 mx.eval(attn_side)
                 mx.eval(moe_side)
-                _t_eval_local_ms = (time.perf_counter() - _t0) * 1000.0
                 attn_contrib, moe_contrib = _gather_two(
                     rank, attn_side, moe_side, attn_side, moe_side, group
                 )
-                _t0 = time.perf_counter()
                 mx.eval(attn_contrib)
                 mx.eval(moe_contrib)
-                _t_eval_gather_ms = (time.perf_counter() - _t0) * 1000.0
-            _role = f"attn_{T}(H0)" if rank == ATTN_RANK else f"moe_{T - 1}(h_{T - 1}_H1)"
-            print(
-                f"[rank {rank}] stage {stage} (T={T} A) "
-                f"h_H0.mean={attn_contrib.mean().item():+.6f} "
-                f"out_H1.mean={moe_contrib.mean().item():+.6f} "
-                f"[rank {rank}:{_role}] eval_local={_t_eval_local_ms:.2f}ms eval_gather={_t_eval_gather_ms:.2f}ms",
-                flush=True,
-            )
 
             h_H0_ready = attn_contrib
             x_H1 = moe_contrib
