@@ -251,9 +251,9 @@ def pipelined_layer_loop(
             if even_S:
                 if rank == ATTN_RANK:
                     my_out = attention(layer_T, x_H1, mask_for(layer_T, "H1"), cT)
+                    mx.eval(my_out)
                 else:
                     my_out = moe(layer_T, h_H0_ready)
-                    mx.eval(my_out)
                 gathered = mx.distributed.all_gather(my_out, group=group)
                 attn_contrib = gathered[ATTN_RANK : ATTN_RANK + 1]
                 moe_contrib = gathered[MOE_RANK : MOE_RANK + 1]
