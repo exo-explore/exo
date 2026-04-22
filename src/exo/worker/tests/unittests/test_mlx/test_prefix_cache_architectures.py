@@ -14,6 +14,8 @@ import pytest
 from mlx.utils import tree_flatten, tree_unflatten
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.download.download_utils import resolve_existing_model
+from exo.shared.constants import EXO_MODELS_DIRS, EXO_MODELS_READ_ONLY_DIRS
 from exo.shared.types.common import ModelId
 from exo.shared.types.mlx import Model
 from exo.shared.types.text_generation import (
@@ -27,8 +29,6 @@ from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     load_tokenizer_for_model_id,
 )
-
-HF_CACHE = Path.home() / ".cache" / "huggingface" / "hub"
 
 # ── Config reduction ──────────────────────────────────────────────────────── #
 
@@ -100,12 +100,21 @@ def _reduce_config(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def _find_snapshot(hub_name: str) -> Path | None:
-    model_dir = HF_CACHE / f"models--mlx-community--{hub_name}"
-    snaps = model_dir / "snapshots"
-    if not snaps.exists():
-        return None
-    children = sorted(snaps.iterdir())
-    return children[0] if children else None
+    """Locate a model directory under exo's models dirs.
+
+    Uses resolve_existing_model for fully-downloaded models; falls back to any
+    existing directory (even partial) so that tokenizer-only copies still work.
+    """
+    model_id = ModelId(f"mlx-community/{hub_name}")
+    found = resolve_existing_model(model_id)
+    if found is not None:
+        return found
+    normalized = model_id.normalize()
+    for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
+        candidate = search_dir / normalized
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 def _copy_tokenizer(src: Path, dst: Path) -> None:
@@ -192,13 +201,31 @@ ARCHITECTURES: list[ArchSpec] = [
 ]
 
 
+def _has_chat_template(model_dir: Path) -> bool:
+    """Check if a model dir has a usable chat template (inline or separate)."""
+    if (model_dir / "chat_template.jinja").exists():
+        return True
+    cfg = model_dir / "tokenizer_config.json"
+    if not cfg.exists():
+        return False
+    try:
+        data = cast(dict[str, Any], json.loads(cfg.read_text()))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(data.get("chat_template"))
+
+
 def _arch_available(spec: ArchSpec) -> bool:
     snap = _find_snapshot(spec.hub_name)
     if snap is None or not (snap / "config.json").exists():
         return False
+    tokenizer_snap = snap
     if spec.tokenizer_hub is not None:
-        return _find_snapshot(spec.tokenizer_hub) is not None
-    return True
+        alt = _find_snapshot(spec.tokenizer_hub)
+        if alt is None:
+            return False
+        tokenizer_snap = alt
+    return _has_chat_template(tokenizer_snap)
 
 
 def _make_task() -> TextGenerationTaskParams:

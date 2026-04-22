@@ -12,7 +12,7 @@ from mlx.nn.layers.distributed import (
     sum_gradients,
 )
 from mlx_lm.models.base import (
-    scaled_dot_product_attention,  # pyright: ignore[reportUnknownVariableType]
+    scaled_dot_product_attention,
 )
 from mlx_lm.models.cache import ArraysCache, KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
@@ -306,24 +306,20 @@ def pipeline_auto_parallel(
     )
 
     if isinstance(inner_model_instance, GptOssMoeModel):
-        inner_model_instance.layer_types = inner_model_instance.layer_types[  # type: ignore
+        inner_model_instance.layer_types = inner_model_instance.layer_types[
             start_layer:end_layer
         ]
         # We can assume the model has at least one layer thanks to placement.
         # If a layer type doesn't exist, we can set it to 0.
         inner_model_instance.swa_idx = (
             0
-            if "sliding_attention" not in inner_model_instance.layer_types  # type: ignore
-            else inner_model_instance.layer_types.index(  # type: ignore
-                "sliding_attention"
-            )
+            if "sliding_attention" not in inner_model_instance.layer_types
+            else inner_model_instance.layer_types.index("sliding_attention")
         )
         inner_model_instance.ga_idx = (
             0
-            if "full_attention" not in inner_model_instance.layer_types  # type: ignore
-            else inner_model_instance.layer_types.index(  # type: ignore
-                "full_attention"
-            )
+            if "full_attention" not in inner_model_instance.layer_types
+            else inner_model_instance.layer_types.index("full_attention")
         )
 
     if isinstance(inner_model_instance, Step35InnerModel):
@@ -883,7 +879,7 @@ class WrappedMiniMaxAttention(CustomMlxLayer):
             keys,
             values,
             cache=cache,
-            scale=self._original_layer.scale,  # type: ignore
+            scale=self._original_layer.scale,
             mask=mask,
         )
 
@@ -922,8 +918,8 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             self.all_to_sharded_linear_in_place(
                 layer.block_sparse_moe.switch_mlp.up_proj
             )
-            layer.block_sparse_moe = ShardedMoE(layer.block_sparse_moe)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
-            layer.block_sparse_moe.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
+            layer.block_sparse_moe = ShardedMoE(layer.block_sparse_moe)  # type: ignore
+            layer.block_sparse_moe.sharding_group = self.group
             mx.eval(layer)
 
             yield ModelLoadingResponse(layers_loaded=i, total=total)
@@ -1172,7 +1168,7 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
             self.all_to_sharded_linear_in_place(layer.mlp.experts.up_proj)
 
             layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
-            layer.mlp.sharding_group = self.group  # pyright: ignore[reportAttributeAccessIssue]
+            layer.mlp.sharding_group = self.group
             mx.eval(layer)
 
             yield ModelLoadingResponse(layers_loaded=i, total=total)

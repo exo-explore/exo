@@ -1767,12 +1767,12 @@ def clip(
         array: The clipped array.
     """
 
-def compile(
-    fun: Callable,
+def compile[F: Callable[..., object]](
+    fun: F,
     inputs: object | None = ...,
     outputs: object | None = ...,
     shapeless: bool = ...,
-) -> Callable:
+) -> F:
     """
     Returns a compiled function which produces the same output as ``fun``.
 
@@ -2915,8 +2915,8 @@ def gather_mm(
     a: array,
     b: array,
     /,
-    lhs_indices: array,
-    rhs_indices: array,
+    lhs_indices: array | None = ...,
+    rhs_indices: array | None = ...,
     *,
     sorted_indices: bool = ...,
     stream: Stream | Device | None = ...,
@@ -4707,6 +4707,7 @@ def softmax(
     /,
     axis: int | Sequence[int] | None = ...,
     *,
+    precise: bool = ...,
     stream: Stream | Device | None = ...,
 ) -> array:
     """
