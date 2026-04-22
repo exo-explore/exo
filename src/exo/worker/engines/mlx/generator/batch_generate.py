@@ -219,7 +219,10 @@ class ExoBatchGenerator:
         cache_dir = Path.home() / ".cache" / "exo" / "mtp_weights"
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_key = hashlib.md5(repo_id.encode()).hexdigest()[:12]
-        cached_path = cache_dir / f"mtp_{cache_key}.safetensors"
+        # v2: preserve the 'mtp.' prefix in cached keys (MTPPredictor expects it).
+        # Older caches (mtp_<key>.safetensors) had the prefix stripped — invalidate
+        # them by using a new filename.
+        cached_path = cache_dir / f"mtp_v2_{cache_key}.safetensors"
 
         if cached_path.exists():
             logger.info(f"Using cached MTP weights: {cached_path}")
@@ -228,10 +231,12 @@ class ExoBatchGenerator:
         def _is_mtp_key(k: str) -> bool:
             return k.startswith("model.mtp.") or k.startswith("mtp.")
 
-        def _strip_mtp_prefix(k: str) -> str:
+        def _normalize_mtp_key(k: str) -> str:
+            # MTPPredictor._load_weights expects keys with the 'mtp.' prefix
+            # preserved. Strip the optional 'model.' wrapper only.
             if k.startswith("model.mtp."):
-                return k[len("model.mtp."):]
-            return k[len("mtp."):]
+                return k[len("model."):]
+            return k
 
         def _save_and_return(mtp_tensors: dict) -> str:
             save_file(mtp_tensors, str(cached_path))
@@ -270,7 +275,7 @@ class ExoBatchGenerator:
                 tensors = load_file(str(sf_file))
                 for k, v in tensors.items():
                     if _is_mtp_key(k):
-                        mtp_tensors[_strip_mtp_prefix(k)] = v
+                        mtp_tensors[_normalize_mtp_key(k)] = v
             if not mtp_tensors:
                 raise ValueError(f"No MTP tensors found in {repo_id}")
             return _save_and_return(mtp_tensors)
@@ -321,7 +326,7 @@ class ExoBatchGenerator:
                         t = torch.frombuffer(
                             bytearray(raw), dtype=dtype
                         ).reshape(meta["shape"])
-                        mtp_tensors[_strip_mtp_prefix(name)] = t
+                        mtp_tensors[_normalize_mtp_key(name)] = t
                         total_bytes += len(raw)
             if not mtp_tensors:
                 raise ValueError("Byte-range read returned no MTP tensors")
@@ -345,7 +350,7 @@ class ExoBatchGenerator:
             tensors = load_file(str(sf_file))
             for k, v in tensors.items():
                 if _is_mtp_key(k):
-                    mtp_tensors[_strip_mtp_prefix(k)] = v
+                    mtp_tensors[_normalize_mtp_key(k)] = v
         if not mtp_tensors:
             raise ValueError(f"No MTP tensors found in {repo_id} (shard fallback)")
         return _save_and_return(mtp_tensors)
