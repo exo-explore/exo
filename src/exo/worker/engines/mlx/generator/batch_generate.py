@@ -193,10 +193,23 @@ class ExoBatchGenerator:
             return None
 
     def _extract_mtp_from_hf(self, repo_id: str) -> str:
-        """Download MTP tensors from HF repo and cache as a single safetensors file."""
+        """Download MTP tensors from HF repo and cache as a single safetensors file.
+
+        Optimization: read model.safetensors.index.json first to find which
+        shard files contain MTP tensors, then download only those shards via
+        snapshot_download(allow_patterns=...). For Qwen/Qwen3.5-27B the MTP
+        head lives in 4 of 11 shards (~20 GB instead of ~55 GB). Falls back
+        to pulling all safetensors if no index is present (single-shard repo)
+        or if reading the index fails.
+
+        Both 'model.mtp.' and 'mtp.' tensor-key prefixes are accepted —
+        Qwen/Qwen3.5-27B's repo uses the bare 'mtp.' prefix; some MoE
+        variants may use 'model.mtp.'.
+        """
         import hashlib
+        import json as _json
         from pathlib import Path
-        from huggingface_hub import snapshot_download
+        from huggingface_hub import hf_hub_download, snapshot_download
         from safetensors.torch import load_file, save_file
 
         cache_dir = Path.home() / ".cache" / "exo" / "mtp_weights"
@@ -208,8 +221,38 @@ class ExoBatchGenerator:
             logger.info(f"Using cached MTP weights: {cached_path}")
             return str(cached_path)
 
-        logger.info(f"Downloading MTP weights from {repo_id}...")
-        model_dir = snapshot_download(repo_id, allow_patterns=["*.safetensors", "*.json"])
+        def _is_mtp_key(k: str) -> bool:
+            return k.startswith("model.mtp.") or k.startswith("mtp.")
+
+        # Try sharded-index path first — lets us pull only the MTP-bearing shards.
+        allow_patterns = ["*.safetensors", "*.json"]
+        try:
+            index_path = hf_hub_download(repo_id, "model.safetensors.index.json")
+            with open(index_path) as f:
+                index = _json.load(f)
+            weight_map = index.get("weight_map", {})
+            mtp_shards = sorted(
+                {shard for name, shard in weight_map.items() if _is_mtp_key(name)}
+            )
+            if not mtp_shards:
+                raise ValueError(
+                    f"No keys with prefix 'model.mtp.' or 'mtp.' in "
+                    f"{repo_id}'s weight_map"
+                )
+            total_shards = len(set(weight_map.values()))
+            logger.info(
+                f"MTP head spans {len(mtp_shards)}/{total_shards} shard(s) of "
+                f"{repo_id}: {mtp_shards}"
+            )
+            allow_patterns = list(mtp_shards) + ["*.json"]
+        except Exception as e:
+            logger.warning(
+                f"Couldn't use sharded index from {repo_id} ({e}); "
+                f"downloading all safetensors as fallback"
+            )
+
+        logger.info(f"Downloading from {repo_id} with patterns: {allow_patterns}")
+        model_dir = snapshot_download(repo_id, allow_patterns=allow_patterns)
 
         mtp_tensors = {}
         from pathlib import Path as P
@@ -218,11 +261,15 @@ class ExoBatchGenerator:
             tensors = load_file(str(sf_file))
             for k, v in tensors.items():
                 if k.startswith("model.mtp."):
-                    clean_key = k.replace("model.mtp.", "")
-                    mtp_tensors[clean_key] = v
+                    mtp_tensors[k[len("model.mtp."):]] = v
+                elif k.startswith("mtp."):
+                    mtp_tensors[k[len("mtp."):]] = v
 
         if not mtp_tensors:
-            raise ValueError(f"No MTP tensors found in {repo_id}")
+            raise ValueError(
+                f"No MTP tensors found in {repo_id} "
+                f"(looked for 'model.mtp.' or 'mtp.' prefix)"
+            )
 
         save_file(mtp_tensors, str(cached_path))
         logger.info(f"Cached {len(mtp_tensors)} MTP tensors to {cached_path}")
