@@ -66,13 +66,25 @@ Use the `exo` devshell and `uv` workflow.
 
 1. Change code locally.
 2. Push the updated `mlx` and `tinygrad` fork branches.
-3. On the remote Mac, pull the updated repos.
-4. Enter the devshell with `nix develop`.
-5. Refresh dependency resolution with `uv lock && uv sync`.
-6. Run tests and benchmarks with `uv run ...`.
+3. In local `exo`, enter the devshell with `nix develop`.
+4. Regenerate the lockfile against the new fork heads with:
+   `uv lock --upgrade-package mlx --upgrade-package tinygrad`
+5. Commit and push the updated `exo` branch, including the regenerated
+   `uv.lock`.
+6. On the remote Mac, pull the updated `exo` branch.
+7. Enter the devshell with `nix develop`.
+8. Refresh the environment with `uv sync`.
+9. Run tests and benchmarks with `uv run ...`.
 
 Do not rely on ad-hoc per-host build environments when the flake / devshell can
 carry the needed toolchain.
+
+### Important Lockfile Note
+
+For these branch-based git dependencies, plain `uv lock` was not sufficient to
+advance the pinned SHAs in `uv.lock` during testing. The working command was:
+
+`uv lock --upgrade-package mlx --upgrade-package tinygrad`
 
 ## Known Nuances / Footguns
 

@@ -9,10 +9,17 @@ build dependencies or patch around them with one-off environment setups.
 
 1. Change code locally.
 2. Push the `mlx` and `tinygrad` fork changes.
-3. On the remote Mac, pull the updated repos.
-4. Enter the devshell with `nix develop`.
-5. Refresh dependencies with `uv lock && uv sync`.
-6. Run tests or benchmarks with `uv run ...`.
+3. In local `exo`, enter the devshell with `nix develop`.
+4. Refresh `uv.lock` against the new fork heads with:
+   `uv lock --upgrade-package mlx --upgrade-package tinygrad`
+5. Commit and push the updated `exo` branch.
+6. On the remote Mac, pull the updated repos.
+7. Enter the devshell with `nix develop`.
+8. Refresh the environment with `uv sync`.
+9. Run tests or benchmarks with `uv run ...`.
+
+Plain `uv lock` was not enough to move these git-based dependency SHAs during
+testing; the explicit `--upgrade-package` form was required.
 
 ## Benchmark
 
