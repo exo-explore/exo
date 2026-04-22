@@ -59,6 +59,20 @@ of shortcuts that should be revisited later.
   Follow-up:
   - Revisit the final lifecycle API once IPC is made real.
 
+- `ServiceState::On` currently means “the routing tasks were started”, not a
+  stronger readiness guarantee such as “babeld is healthy, has admitted
+  interfaces, and is actually usable for mesh forwarding”.
+  Files:
+  - `src/daemon.rs`
+  - `src/routing_stack.rs`
+  - `src/babel/runtime.rs`
+  Why this is a shortcut:
+  - The frontend may eventually want to distinguish process/task liveness from
+    actual routing readiness.
+  Follow-up:
+  - Add a separate readiness field or richer public state model instead of
+    overloading `ServiceState::On`.
+
 - The resident `utun` vs heavy routing-stack split is now in place, but the
   naming and abstractions are still transitional.
   Files:
@@ -98,15 +112,6 @@ of shortcuts that should be revisited later.
   - The Nix packaging is still not pinned to a specific revision.
   Follow-up:
   - Pin the fork revision and make the runtime use that exact binary.
-
-- The steady-state Babel monitor loop still treats control-socket EOF/error too
-  loosely.
-  Files:
-  - `src/babel/runtime.rs`
-  Why this is a shortcut:
-  - Unexpected live EOF/error can still collapse into a clean stop path.
-  Follow-up:
-  - Distinguish intentional shutdown from live control-path failure explicitly.
 
 ## Networking / Interface Admission
 

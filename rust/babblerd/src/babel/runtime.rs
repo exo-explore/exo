@@ -256,9 +256,9 @@ impl BabelRuntime {
             }
         };
 
-        self.line_send
-            .send(line)
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "babel listeners dropped"))?;
+        if self.line_send.send(line).is_err() {
+            tracing::debug!("dropping babel line because there are no active listeners");
+        }
         Ok(observed)
     }
 
@@ -359,8 +359,18 @@ impl BabelRuntime {
                     }
                 },
                 line = self.read.next_line() => {
-                    let Ok(Some(line)) = line else {
-                        break;
+                    let line = match line {
+                        Ok(Some(line)) => line,
+                        Ok(None) => {
+                            return Err(BabbleError::Other(
+                                "babeld control socket closed during live monitoring".into(),
+                            ));
+                        }
+                        Err(err) => {
+                            return Err(BabbleError::Other(format!(
+                                "failed to read babeld control socket during live monitoring: {err}"
+                            )));
+                        }
                     };
                     match self.observe_line(line)? {
                         Ok(parsed) => {
