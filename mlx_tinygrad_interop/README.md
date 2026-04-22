@@ -59,6 +59,13 @@ Observed `7168`-byte results on that run:
   - `mlx_to_tinygrad`: `290.448 us` min, `290.927 us` median
   - `tinygrad_to_mlx`: `13.637 us` min, `13.698 us` median
 
+Later remote microbench runs showed the split more clearly:
+
+- `MLX -> tinygrad` is dominated by tinygrad import / wrapper creation.
+- `tinygrad -> MLX` is dominated by tinygrad export in the unsafe helper path.
+- `tinygrad -> MLX memoryview_copy` is already the practical low-latency path
+  for small tensors.
+
 ## Current Scope
 
 - Private / unsafe helpers only.

@@ -38,7 +38,8 @@ This is asymmetric internally:
 - `tinygrad -> MLX` rebuilds an MLX array from a raw unified-memory pointer
 
 So the current bridge benchmark is not a symmetric measure of pure storage
-adoption cost.
+adoption cost. That is acceptable for now: the working goal is "good enough"
+bidirectional latency, not symmetry for its own sake.
 
 ## Implemented Helper Surface
 
@@ -168,20 +169,47 @@ Interpretation:
 - These numbers do not establish that "aliasing costs ~30-36 us". They
   establish that the current asymmetric Python helper stack costs that much.
 
+Additional remote microbench sweep on `e16` for `256`, `7168`, `65536`, and
+`1048576` bytes showed:
+
+- `MLX -> tinygrad`
+  - `unsafe_helper_bridge`: roughly `33-35 us`
+  - `memoryview_copy`: roughly `35-52 us`
+  - `export_helper_only`: roughly `0.55 us`
+  - `import_helper_only`: roughly `32-34 us`
+- `tinygrad -> MLX`
+  - `unsafe_helper_bridge`: roughly `28 us`
+  - `memoryview_copy`: roughly `2.4 us` at `256 B`, `2.6 us` at `7168 B`,
+    `3.6 us` at `64 KiB`, and `17.4 us` at `1 MiB`
+  - `export_helper_only`: roughly `23-24 us`
+  - `import_helper_only`: roughly `2.2 us`
+
+What this means:
+
+- The MLX exporter is already cheap. Replacing its Python dict with a tuple or
+  capsule is unlikely to change `MLX -> tinygrad` materially, because the
+  dominant cost is tinygrad import / wrapper creation.
+- The MLX importer from raw pointer is also already cheap.
+- The expensive pieces today are both on the tinygrad side:
+  - importing a borrowed `MTLBuffer*` into a new tinygrad `Tensor`
+  - exporting tinygrad storage metadata through the current Python helper
+- For `tinygrad -> MLX`, the native copy path is already in the desired latency
+  class for small tensors and remains competitive well past `7 kB`.
+- For `MLX -> tinygrad`, neither the current unsafe helper bridge nor the
+  current copy path is close to the desired `1-10 us` range at `7 kB`.
+
 ## Near-Term Plan
 
-1. Reduce Python wrapper overhead around the direct path before changing the
-   storage model again.
-2. Add narrower microbenchmarks that time export-only and import-only helper
-   costs, separate from end-to-end tensor wrapper creation.
-3. Decide whether the next iteration should make MLX import a foreign
-   `MTLBuffer*` directly instead of constructing from a raw pointer.
+1. Treat `tinygrad -> MLX memoryview_copy` as the current practical fast path.
+2. If `MLX -> tinygrad` must get materially faster, focus on a lower-level
+   tinygrad import constructor or wrapper reuse rather than MLX-side marshalling
+   changes.
+3. Avoid spending time on symmetry unless it becomes necessary for a specific
+   downstream use case.
 
 ## Open Questions
 
-- Whether MLX should eventually import foreign `MTLBuffer*` handles directly,
-  rather than only raw pointers, for a more symmetric bridge.
 - Whether the first fast path should support contiguous slices with byte
   offsets, or only base-contiguous tensors.
-- Whether a native-copy middle path should be benchmarked immediately, or only
-  the direct path and Python / NumPy fallback.
+- Whether a lower-level tinygrad import path can cut `MLX -> tinygrad` wrapper
+  creation overhead enough to matter at `~7 kB`.
