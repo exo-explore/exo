@@ -28,21 +28,14 @@ pub type HostKey = u128;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FibEntry {
     pub next_hop_ll: Ipv6Addr,
-    pub if_slot: u16,
-    pub mtu: u16,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InterfaceSlot {
-    pub if_slot: u16,
     pub ifname: Box<str>,
+    pub mtu: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FibSnapshot {
     pub locals: HashSet<HostKey, RandomState>,
     pub routes: HashMap<HostKey, FibEntry, RandomState>,
-    pub interfaces: Vec<InterfaceSlot>,
 }
 
 #[derive(Debug, Clone)]
@@ -71,8 +64,6 @@ impl FibBuilder {
 
         let mut routes = HashMap::with_hasher(RandomState::new());
         let mut route_scores = HashMap::with_hasher(RandomState::new());
-        let mut if_slots = HashMap::with_hasher(RandomState::new());
-        let mut interfaces = Vec::new();
 
         let mut candidates: Vec<&RouteState> = state.routes.values().collect();
         candidates.sort_by(|left, right| {
@@ -92,18 +83,9 @@ impl FibBuilder {
                 continue;
             }
 
-            let if_slot = interface_slot(&mut if_slots, &mut interfaces, route.ifname.as_ref());
-            let Some(if_slot) = if_slot else {
-                tracing::warn!(
-                    ifname = %route.ifname,
-                    "too many dataplane interface slots; dropping route"
-                );
-                continue;
-            };
-
             let candidate = FibEntry {
                 next_hop_ll,
-                if_slot,
+                ifname: route.ifname.clone(),
                 mtu: self.route_mtu,
             };
             let candidate_score = (route.metric, route.refmetric, route.handle);
@@ -128,11 +110,7 @@ impl FibBuilder {
             }
         }
 
-        FibSnapshot {
-            locals,
-            routes,
-            interfaces,
-        }
+        FibSnapshot { locals, routes }
     }
 }
 
@@ -141,7 +119,6 @@ impl FibSnapshot {
         Self {
             locals: HashSet::with_hasher(RandomState::new()),
             routes: HashMap::with_hasher(RandomState::new()),
-            interfaces: Vec::new(),
         }
     }
 
@@ -160,25 +137,6 @@ impl FibSnapshot {
 
 pub fn host_key(addr: Ipv6Addr) -> HostKey {
     u128::from(addr)
-}
-
-fn interface_slot(
-    if_slots: &mut HashMap<Box<str>, u16, RandomState>,
-    interfaces: &mut Vec<InterfaceSlot>,
-    ifname: &str,
-) -> Option<u16> {
-    match if_slots.entry(Box::<str>::from(ifname)) {
-        Entry::Occupied(slot) => Some(*slot.get()),
-        Entry::Vacant(slot) => {
-            let if_slot = u16::try_from(interfaces.len()).ok()?;
-            interfaces.push(InterfaceSlot {
-                if_slot,
-                ifname: Box::<str>::from(ifname),
-            });
-            slot.insert(if_slot);
-            Some(if_slot)
-        }
-    }
 }
 
 fn route_to_host(route: &RouteState) -> Option<(HostKey, Ipv6Addr)> {
@@ -263,9 +221,8 @@ mod tests {
         assert!(fib.is_local("fde0::1".parse().unwrap()));
         let entry = fib.lookup("fde0::1234".parse().unwrap()).unwrap();
         assert_eq!(entry.next_hop_ll, "fe80::1".parse::<Ipv6Addr>().unwrap());
-        assert_eq!(entry.if_slot, 0);
+        assert_eq!(entry.ifname.as_ref(), "en2");
         assert_eq!(entry.mtu, 1452);
-        assert_eq!(fib.interfaces[0].ifname.as_ref(), "en2");
     }
 
     #[test]
@@ -323,6 +280,6 @@ mod tests {
         let fib = FibBuilder::new(["fde0::1".parse().unwrap()], 1452).derive(&state);
         let entry = fib.lookup("fde0::beef".parse().unwrap()).unwrap();
         assert_eq!(entry.next_hop_ll, "fe80::2".parse::<Ipv6Addr>().unwrap());
-        assert_eq!(entry.if_slot, 1);
+        assert_eq!(entry.ifname.as_ref(), "en3");
     }
 }

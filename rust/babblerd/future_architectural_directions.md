@@ -25,7 +25,7 @@ It now has the beginnings of a real daemon architecture:
 - a heavy routing stack that can turn on and off,
 - a typed Babel control/runtime layer,
 - a derived FIB layer,
-- and a dedicated dataplane thread module scaffold,
+- a dedicated dataplane thread wired into the routing stack,
 - a persisted node identity,
 - and a central config module.
 
@@ -79,25 +79,27 @@ This does **not** require the final IPC architecture first.
 
 ## Recommended Next Phase
 
-### 1. Wire the UDP dataplane into the daemon
+### 1. Validate and harden the first UDP dataplane
 
 This should be the next major feature.
 
-The basic pieces now exist:
+The basic pieces are now in place:
 
 - `fib.rs` derives immutable forwarding snapshots from `BabelState`,
 - `dataplane.rs` provides a dedicated-thread hot-path module using `mio`,
   `socket2`, `crossbeam-channel`, `hashbrown`, `ahash`, `slab`, and
   `arrayvec`.
+- `routing_stack.rs` now starts the dataplane and publishes coalesced
+  `FibSnapshot` updates into it.
 
-So the next step is no longer “invent those modules”.
+So the next step is no longer “invent or wire the modules”.
 
 It is:
 
-- duplicate/expose the resident TUN fd for the dataplane thread,
-- derive `FibSnapshot`s from `watch<Arc<BabelState>>`,
-- start the dataplane thread from the routing stack,
-- and feed whole snapshots into it.
+- exercise the real packet path end-to-end,
+- confirm the interface-bound UDP socket model behaves correctly on the target
+  machines,
+- and fill the first obvious protocol gaps such as ICMPv6 error handling.
 
 The current tree now owns the kernel route that steers overlay traffic into the
 resident TUN interface:
@@ -108,7 +110,7 @@ resident TUN interface:
 - and `babeld` kernel installs remain disabled.
 
 That means local application traffic can now be steered into the overlay once
-the UDP dataplane exists.
+the UDP dataplane is active.
 
 The first version can stay simple:
 

@@ -54,4 +54,8 @@ impl TunDevice {
     pub fn device(&self) -> &SyncDevice {
         &self.dev
     }
+
+    pub fn try_clone_device(&self) -> std::io::Result<SyncDevice> {
+        self.dev.try_clone()
+    }
 }

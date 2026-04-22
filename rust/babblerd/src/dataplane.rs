@@ -5,16 +5,21 @@
 //!
 //! - immutable [`crate::fib::FibSnapshot`] swaps over `crossbeam-channel`,
 //! - `mio` for readiness polling,
-//! - `socket2` for UDP socket creation,
-//! - `slab` for token-indexed interface socket storage.
+//! - `socket2` for UDP socket creation and interface binding,
+//! - `slab` for token-indexed UDP socket storage.
 //!
-//! This module is intentionally not wired into the daemon yet. The goal of
-//! this step is to land the hot-path structure and data ownership model before
-//! threading it through the resident daemon shell.
+//! Unlike the first scaffold, interface identity here is stable across
+//! snapshots:
+//!
+//! - the FIB keys routes by interface name,
+//! - the dataplane owns a long-lived socket registry keyed by that name,
+//! - and snapshot application reconciles the registry rather than trusting
+//!   snapshot-local slot numbers.
 
 use std::io::{self, ErrorKind};
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6, UdpSocket};
-use std::os::fd::{AsRawFd, OwnedFd};
+use std::num::NonZeroU32;
+use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -22,13 +27,15 @@ use std::time::Duration;
 use arrayvec::ArrayVec;
 use color_eyre::eyre::{Result, WrapErr, eyre};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use mio::net::UdpSocket as MioUdpSocket;
 use mio::unix::SourceFd;
 use mio::{Events, Interest, Poll, Token};
 use nix::errno::Errno;
+use nix::net::if_::if_nametoindex;
 use slab::Slab;
 use socket2::{Domain, Protocol, Socket, Type};
+use tun_rs::SyncDevice;
 
 use crate::config::PHYSICAL_LINK_MTU;
 use crate::fib::{FibEntry, FibSnapshot};
@@ -37,25 +44,44 @@ const TOKEN_TUN: Token = Token(0);
 const MAX_SNAPSHOT_BACKLOG: usize = 8;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-#[derive(Debug, Clone)]
-pub struct InterfaceSocketConfig {
-    pub if_slot: u16,
-    pub ifname: Box<str>,
-    pub ifindex: u32,
-}
-
-#[derive(Debug)]
 pub struct DataplaneConfig {
-    pub tun_fd: OwnedFd,
+    pub tun_device: SyncDevice,
     pub udp_port: u16,
     pub initial_fib: Arc<FibSnapshot>,
-    pub interfaces: Vec<InterfaceSocketConfig>,
 }
 
 pub struct Dataplane {
-    fib_updates: Sender<Arc<FibSnapshot>>,
+    publisher: DataplanePublisher,
     stop_send: Sender<()>,
     thread: Option<JoinHandle<Result<()>>>,
+}
+
+#[derive(Clone)]
+pub struct DataplanePublisher {
+    fib_updates: Sender<Arc<FibSnapshot>>,
+}
+
+pub enum PublishSnapshotError {
+    Full(Arc<FibSnapshot>),
+    Stopped,
+}
+
+struct DataplaneWorker {
+    tun_device: SyncDevice,
+    udp_port: u16,
+    fib: Arc<FibSnapshot>,
+    fib_updates: Receiver<Arc<FibSnapshot>>,
+    stop_recv: Receiver<()>,
+    poll: Poll,
+    events: Events,
+    sockets: Slab<InterfaceSocket>,
+    ifname_to_slab: HashMap<Box<str>, usize>,
+}
+
+struct InterfaceSocket {
+    ifname: Box<str>,
+    ifindex: u32,
+    socket: MioUdpSocket,
 }
 
 impl Dataplane {
@@ -72,26 +98,16 @@ impl Dataplane {
             .wrap_err("spawning dataplane thread")?;
 
         Ok(Self {
-            fib_updates: fib_updates_send,
+            publisher: DataplanePublisher {
+                fib_updates: fib_updates_send,
+            },
             stop_send,
             thread: Some(thread),
         })
     }
 
-    pub fn snapshot_sender(&self) -> Sender<Arc<FibSnapshot>> {
-        self.fib_updates.clone()
-    }
-
-    pub fn replace_snapshot(&self, snapshot: Arc<FibSnapshot>) -> Result<()> {
-        match self.fib_updates.try_send(snapshot) {
-            Ok(()) => Ok(()),
-            Err(crossbeam_channel::TrySendError::Full(_)) => Err(eyre!(
-                "failed to publish dataplane snapshot: dataplane is still processing the previous update"
-            )),
-            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
-                Err(eyre!("dataplane thread stopped"))
-            }
-        }
+    pub fn publisher(&self) -> DataplanePublisher {
+        self.publisher.clone()
     }
 
     pub fn stop(mut self) -> Result<()> {
@@ -105,23 +121,21 @@ impl Dataplane {
     }
 }
 
-struct DataplaneWorker {
-    tun_fd: OwnedFd,
-    udp_port: u16,
-    fib: Arc<FibSnapshot>,
-    fib_updates: Receiver<Arc<FibSnapshot>>,
-    stop_recv: Receiver<()>,
-    poll: Poll,
-    events: Events,
-    sockets: Slab<InterfaceSocket>,
-    if_slot_to_slab: HashMap<u16, usize>,
-}
-
-struct InterfaceSocket {
-    if_slot: u16,
-    ifname: Box<str>,
-    ifindex: u32,
-    socket: MioUdpSocket,
+impl DataplanePublisher {
+    pub fn try_publish(
+        &self,
+        snapshot: Arc<FibSnapshot>,
+    ) -> std::result::Result<(), PublishSnapshotError> {
+        match self.fib_updates.try_send(snapshot) {
+            Ok(()) => Ok(()),
+            Err(crossbeam_channel::TrySendError::Full(snapshot)) => {
+                Err(PublishSnapshotError::Full(snapshot))
+            }
+            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                Err(PublishSnapshotError::Stopped)
+            }
+        }
+    }
 }
 
 impl DataplaneWorker {
@@ -133,44 +147,25 @@ impl DataplaneWorker {
         let poll = Poll::new().wrap_err("creating dataplane poller")?;
         let events = Events::with_capacity(128);
 
-        let tun_rawfd = config.tun_fd.as_raw_fd();
+        let tun_rawfd = config.tun_device.as_raw_fd();
         let mut tun_source = SourceFd(&tun_rawfd);
         poll.registry()
             .register(&mut tun_source, TOKEN_TUN, Interest::READABLE)
             .wrap_err("registering TUN fd with dataplane poller")?;
 
-        let mut sockets = Slab::with_capacity(config.interfaces.len());
-        let mut if_slot_to_slab = HashMap::with_capacity(config.interfaces.len());
-        for iface in config.interfaces {
-            let socket = open_udp_socket(config.udp_port)
-                .wrap_err_with(|| format!("opening UDP socket for {}", iface.ifname))?;
-            let slab_key = sockets.insert(InterfaceSocket {
-                if_slot: iface.if_slot,
-                ifname: iface.ifname,
-                ifindex: iface.ifindex,
-                socket,
-            });
-            let token = Token(slab_key + 1);
-            let iface_socket = sockets
-                .get_mut(slab_key)
-                .expect("slab entry should exist immediately after insert");
-            poll.registry()
-                .register(&mut iface_socket.socket, token, Interest::READABLE)
-                .wrap_err_with(|| format!("registering UDP socket for {}", iface_socket.ifname))?;
-            if_slot_to_slab.insert(iface_socket.if_slot, slab_key);
-        }
-
-        Ok(Self {
-            tun_fd: config.tun_fd,
+        let mut worker = Self {
+            tun_device: config.tun_device,
             udp_port: config.udp_port,
             fib: config.initial_fib,
             fib_updates,
             stop_recv,
             poll,
             events,
-            sockets,
-            if_slot_to_slab,
-        })
+            sockets: Slab::new(),
+            ifname_to_slab: HashMap::new(),
+        };
+        worker.reconcile_sockets()?;
+        Ok(worker)
     }
 
     fn run(&mut self) -> Result<()> {
@@ -179,7 +174,7 @@ impl DataplaneWorker {
                 return Ok(());
             }
 
-            self.drain_snapshot_updates();
+            self.drain_snapshot_updates()?;
 
             self.poll
                 .poll(&mut self.events, Some(POLL_INTERVAL))
@@ -208,7 +203,7 @@ impl DataplaneWorker {
         }
     }
 
-    fn drain_snapshot_updates(&mut self) {
+    fn drain_snapshot_updates(&mut self) -> Result<()> {
         let mut drained = ArrayVec::<Arc<FibSnapshot>, MAX_SNAPSHOT_BACKLOG>::new();
         loop {
             match self.fib_updates.try_recv() {
@@ -224,13 +219,14 @@ impl DataplaneWorker {
         }
 
         if let Some(snapshot) = drained.pop() {
-            self.fib = snapshot;
+            self.apply_snapshot(snapshot)?;
         }
+        Ok(())
     }
 
     fn handle_tun_ready(&mut self) -> Result<()> {
         let mut buf = [0u8; PHYSICAL_LINK_MTU as usize];
-        let packet_len = match nix::unistd::read(&self.tun_fd, &mut buf) {
+        let packet_len = match nix::unistd::read(&self.tun_device, &mut buf) {
             Ok(len) => len,
             Err(Errno::EAGAIN) => return Ok(()),
             Err(err) => return Err(err).wrap_err("reading inner packet from TUN"),
@@ -245,12 +241,12 @@ impl DataplaneWorker {
             return Ok(());
         };
         if self.fib.is_local(dst) {
-            tracing::debug!(destination=%dst, "dropping self-directed packet from TUN");
+            tracing::debug!(destination = %dst, "dropping self-directed packet from TUN");
             return Ok(());
         }
 
         let Some(route) = self.fib.lookup(dst).cloned() else {
-            tracing::debug!(destination=%dst, "no dataplane route for packet from TUN");
+            tracing::debug!(destination = %dst, "no dataplane route for packet from TUN");
             return Ok(());
         };
         self.send_via_route(packet, &route)
@@ -272,33 +268,30 @@ impl DataplaneWorker {
 
         let mut packet = buf[..packet_len].to_vec();
         let Some(dst) = ipv6_destination(&packet) else {
-            tracing::debug!(peer=%peer, "dropping invalid UDP payload");
+            tracing::debug!(peer = %peer, "dropping invalid UDP payload");
             return Ok(());
         };
 
         if self.fib.is_local(dst) {
-            write_tun(&self.tun_fd, &packet)?;
+            write_tun(&self.tun_device, &packet)?;
             return Ok(());
         }
 
         if !decrement_hop_limit(&mut packet) {
-            tracing::debug!(destination=%dst, "dropping packet with exhausted hop limit");
+            tracing::debug!(destination = %dst, "dropping packet with exhausted hop limit");
             return Ok(());
         }
 
         let Some(route) = self.fib.lookup(dst).cloned() else {
-            tracing::debug!(destination=%dst, "no dataplane route for forwarded packet");
+            tracing::debug!(destination = %dst, "no dataplane route for forwarded packet");
             return Ok(());
         };
         self.send_via_route(&packet, &route)
     }
 
     fn send_via_route(&mut self, packet: &[u8], route: &FibEntry) -> Result<()> {
-        let Some(&slab_key) = self.if_slot_to_slab.get(&route.if_slot) else {
-            return Err(eyre!(
-                "missing UDP socket for interface slot {}",
-                route.if_slot
-            ));
+        let Some(&slab_key) = self.ifname_to_slab.get(route.ifname.as_ref()) else {
+            return Err(eyre!("missing UDP socket for interface {}", route.ifname));
         };
         let Some(socket) = self.sockets.get_mut(slab_key) else {
             return Err(eyre!("stale UDP socket slot {}", slab_key));
@@ -313,17 +306,83 @@ impl DataplaneWorker {
         match socket.socket.send_to(packet, peer) {
             Ok(_) => Ok(()),
             Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(()),
-            Err(err) => Err(err).wrap_err_with(|| {
-                format!(
-                    "sending packet via {} (slot {})",
-                    socket.ifname, socket.if_slot
-                )
-            }),
+            Err(err) => Err(err).wrap_err_with(|| format!("sending packet via {}", socket.ifname)),
         }
+    }
+
+    fn apply_snapshot(&mut self, snapshot: Arc<FibSnapshot>) -> Result<()> {
+        self.fib = snapshot;
+        self.reconcile_sockets()
+    }
+
+    fn reconcile_sockets(&mut self) -> Result<()> {
+        let required: HashSet<Box<str>> = self
+            .fib
+            .routes
+            .values()
+            .map(|route| route.ifname.clone())
+            .collect();
+
+        let stale: Vec<Box<str>> = self
+            .ifname_to_slab
+            .keys()
+            .filter(|ifname| !required.contains(*ifname))
+            .cloned()
+            .collect();
+        for ifname in stale {
+            self.remove_socket(&ifname)?;
+        }
+
+        for ifname in required {
+            if self.ifname_to_slab.contains_key(ifname.as_ref()) {
+                continue;
+            }
+            self.add_socket(ifname)?;
+        }
+
+        Ok(())
+    }
+
+    fn add_socket(&mut self, ifname: Box<str>) -> Result<()> {
+        let ifindex = if_nametoindex(ifname.as_ref())
+            .wrap_err_with(|| format!("resolving ifindex for {}", ifname))?;
+        let socket = open_udp_socket(self.udp_port, ifname.as_ref(), ifindex)
+            .wrap_err_with(|| format!("opening UDP socket for {}", ifname))?;
+
+        let slab_key = self.sockets.insert(InterfaceSocket {
+            ifname: ifname.clone(),
+            ifindex,
+            socket,
+        });
+        let token = Token(slab_key + 1);
+        let socket_ref = self
+            .sockets
+            .get_mut(slab_key)
+            .expect("slab entry must exist immediately after insert");
+        self.poll
+            .registry()
+            .register(&mut socket_ref.socket, token, Interest::READABLE)
+            .wrap_err_with(|| format!("registering UDP socket for {}", ifname))?;
+        self.ifname_to_slab.insert(ifname, slab_key);
+        Ok(())
+    }
+
+    fn remove_socket(&mut self, ifname: &str) -> Result<()> {
+        let Some(slab_key) = self.ifname_to_slab.remove(ifname) else {
+            return Ok(());
+        };
+        let Some(mut socket) = self.sockets.try_remove(slab_key) else {
+            return Ok(());
+        };
+        self.poll
+            .registry()
+            .deregister(&mut socket.socket)
+            .wrap_err_with(|| format!("deregistering UDP socket for {}", ifname))?;
+        Ok(())
     }
 }
 
-fn open_udp_socket(port: u16) -> io::Result<MioUdpSocket> {
+fn open_udp_socket(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioUdpSocket> {
     let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_reuse_address(true)?;
     #[cfg(any(
@@ -335,14 +394,25 @@ fn open_udp_socket(port: u16) -> io::Result<MioUdpSocket> {
     socket.set_reuse_port(true)?;
     socket.set_only_v6(true)?;
     socket.set_nonblocking(true)?;
+
+    let Some(ifindex) = NonZeroU32::new(ifindex) else {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("invalid ifindex for {ifname}"),
+        ));
+    };
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    socket.bind_device(Some(ifname.as_bytes()))?;
+    socket.bind_device_by_index_v6(Some(ifindex))?;
     socket.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0).into())?;
 
     let udp: UdpSocket = socket.into();
     Ok(MioUdpSocket::from_std(udp))
 }
 
-fn write_tun(tun_fd: &OwnedFd, packet: &[u8]) -> Result<()> {
-    match nix::unistd::write(tun_fd, packet) {
+fn write_tun(tun_device: &SyncDevice, packet: &[u8]) -> Result<()> {
+    match nix::unistd::write(tun_device, packet) {
         Ok(_) => Ok(()),
         Err(Errno::EAGAIN) => Ok(()),
         Err(err) => Err(err).wrap_err("writing inner packet to TUN"),

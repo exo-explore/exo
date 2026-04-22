@@ -82,6 +82,7 @@ impl DaemonStatus {
 pub enum StackTaskKind {
     Babel,
     Watcher,
+    FibPublisher,
 }
 
 #[derive(Debug)]
@@ -134,6 +135,7 @@ impl DaemonHandle {
 pub struct DaemonCore {
     status: DaemonStatus,
     overlay_prefix: Ipv6Net,
+    router_udp_port: u16,
     _tun: TunDevice,
     routing_stack: Option<RoutingStack>,
     babel_state_send: watch::Sender<Arc<BabelState>>,
@@ -146,6 +148,7 @@ impl DaemonCore {
     pub fn spawn(
         node_id: u64,
         overlay_prefix: Ipv6Net,
+        router_udp_port: u16,
         node_addr: Ipv6Net,
         tun: TunDevice,
         babel_state_send: watch::Sender<Arc<BabelState>>,
@@ -157,6 +160,7 @@ impl DaemonCore {
         let core = Self {
             status,
             overlay_prefix,
+            router_udp_port,
             _tun: tun,
             routing_stack: None,
             babel_state_send,
@@ -255,6 +259,8 @@ impl DaemonCore {
         self.status.last_error = None;
         match RoutingStack::start(
             self.status.node_addr,
+            &self._tun,
+            self.router_udp_port,
             self.babel_state_send.clone(),
             self.event_send.clone(),
         )

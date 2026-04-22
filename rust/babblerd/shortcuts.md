@@ -132,42 +132,32 @@ of shortcuts that should be revisited later.
   - Replace the current heuristic with a stronger admission policy
     (neighbor proof, richer metadata, or both).
 
-- `router_udp_port` exists in config, but there is still no UDP dataplane using
-  it.
-  Files:
-  - `src/config.rs`
-  Follow-up:
-  - Either wire it into the real dataplane soon, or remove it until the
-    dataplane exists.
-
-- The first FIB/dataplane modules now exist, but they are not wired into the
-  resident daemon yet.
+- The dataplane now derives immutable FIB snapshots and runs on a dedicated
+  thread, but it still assumes interface names are the stable long-lived
+  identity for socket ownership.
   Files:
   - `src/fib.rs`
   - `src/dataplane.rs`
-  - `src/routing_stack.rs`
-  - `src/daemon.rs`
   Why this is a shortcut:
-  - The control plane still does not derive and publish immutable
-    `FibSnapshot`s into the dataplane thread.
-  - The resident TUN device does not yet hand a duplicated fd/handle to the
-    dataplane thread.
+  - Snapshot routes are keyed by `ifname`, and the dataplane reconciles sockets
+    by resolving those names to ifindexes at update time.
+  - That is much better than snapshot-local interface slots, but it still
+    assumes interface names are stable enough to be the control-plane identity.
   Follow-up:
-  - Start the dataplane from the routing stack,
-  - derive FIB snapshots from `watch<Arc<BabelState>>`,
-  - and feed those snapshots to the dataplane over the bounded update channel.
+  - Revisit whether the long-term identity should be richer than `ifname`,
+    especially if interface renames/hotplug churn become common during runtime.
 
-- The initial dataplane socket model is intentionally generic and not yet
-  interface-pinned.
+- The current dataplane is intentionally minimal and still drops several packet
+  classes silently.
   Files:
   - `src/dataplane.rs`
   Why this is a shortcut:
-  - The current socket scaffolding opens one UDP socket per interface config,
-    but it does not yet enforce per-interface binding semantics beyond storing
-    the interface index for link-local sends.
+  - There is no ICMPv6 Time Exceeded generation yet.
+  - There is no Packet Too Big handling yet.
+  - No-route and invalid-packet cases are mostly tracing-and-drop behavior.
   Follow-up:
-  - Tighten UDP socket/interface ownership as the dataplane gets wired into the
-    real interface set.
+  - Add proper ICMPv6 error generation and tighter packet-validation behavior
+    once the first end-to-end forwarding path is validated.
 
 - `TunDevice` is still a thin platform-specific wrapper with some rough edges.
   Files:

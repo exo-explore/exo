@@ -82,6 +82,7 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
     let (daemon, mut core_task) = daemon::DaemonCore::spawn(
         node_id,
         config.exo_ula_prefix,
+        config.router_udp_port,
         node_addr,
         tun,
         babel_state_send,
