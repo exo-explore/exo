@@ -410,8 +410,6 @@ class Master:
                         continue
 
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
-                    indexed = IndexedEvent(event=event, idx=len(self._event_log))
-                    self.state = apply(self.state, indexed)
 
                     event = event.model_copy(
                         update={"_master_time_stamp": datetime.now(tz=timezone.utc)}
@@ -420,6 +418,9 @@ class Master:
                         event = event.model_copy(
                             update={"when": str(datetime.now(tz=timezone.utc))}
                         )
+
+                    indexed = IndexedEvent(event=event, idx=len(self._event_log))
+                    self.state = apply(self.state, indexed)
 
                     self._event_log.append(event)
                     await self._send_event(indexed)
