@@ -26,7 +26,7 @@ members = [
 ]
 constraints = [{ name = "transformers", specifier = ">=5.0.0,<5.4.0" }]
 overrides = [
-    { name = "mlx", marker = "sys_platform == 'darwin'", git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks" },
+    { name = "mlx", marker = "sys_platform == 'darwin'", git = "https://github.com/AndreiCravtov/mlx.git?branch=andrei%2Fmlx-tinygrad-convert" },
     { name = "mlx", marker = "sys_platform == 'linux'", specifier = "==0.31.1" },
 ]
 
@@ -394,7 +394,7 @@ dependencies = [
     { name = "loguru", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "mflux", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx", version = "0.31.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/AndreiCravtov/mlx.git?branch=andrei%2Fmlx-tinygrad-convert#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx-lm", version = "0.31.3", source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Ffix-arrayscache-leak#62bbd5b2ef8d29d02dd08af303c22518341a46b0" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "msgspec", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
@@ -404,6 +404,7 @@ dependencies = [
     { name = "python-multipart", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "rustworkx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "tiktoken", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "tinygrad", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "tomlkit", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "transformers", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "types-aiofiles", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
@@ -416,19 +417,19 @@ build = [
 ]
 cpu = [
     { name = "mlx", version = "0.31.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'extra-3-exo-cpu') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "(sys_platform == 'darwin' and extra == 'extra-3-exo-cpu') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/AndreiCravtov/mlx.git?branch=andrei%2Fmlx-tinygrad-convert#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "(sys_platform == 'darwin' and extra == 'extra-3-exo-cpu') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx-cpu", marker = "sys_platform == 'linux'" },
     { name = "mlx-lm", version = "0.31.3", source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Ffix-arrayscache-leak#62bbd5b2ef8d29d02dd08af303c22518341a46b0" }, marker = "sys_platform == 'linux'" },
 ]
 cuda12 = [
     { name = "mlx", version = "0.31.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13')" },
-    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "(sys_platform == 'darwin' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13')" },
+    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/AndreiCravtov/mlx.git?branch=andrei%2Fmlx-tinygrad-convert#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "(sys_platform == 'darwin' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx-cuda-12", marker = "sys_platform == 'linux'" },
     { name = "mlx-lm", version = "0.31.3", source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Ffix-arrayscache-leak#62bbd5b2ef8d29d02dd08af303c22518341a46b0" }, marker = "sys_platform == 'linux'" },
 ]
 cuda13 = [
     { name = "mlx", version = "0.31.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13')" },
-    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "(sys_platform == 'darwin' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13')" },
+    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/AndreiCravtov/mlx.git?branch=andrei%2Fmlx-tinygrad-convert#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "(sys_platform == 'darwin' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx-cuda-13", marker = "sys_platform == 'linux'" },
     { name = "mlx-lm", version = "0.31.3", source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Ffix-arrayscache-leak#62bbd5b2ef8d29d02dd08af303c22518341a46b0" }, marker = "sys_platform == 'linux'" },
 ]
@@ -456,7 +457,7 @@ requires-dist = [
     { name = "hypercorn", specifier = ">=0.18.0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mflux", marker = "sys_platform == 'darwin'", specifier = "==0.17.2" },
-    { name = "mlx", marker = "sys_platform == 'darwin'", git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks" },
+    { name = "mlx", marker = "sys_platform == 'darwin'", git = "https://github.com/AndreiCravtov/mlx.git?branch=andrei%2Fmlx-tinygrad-convert" },
     { name = "mlx", marker = "sys_platform == 'linux' and extra == 'cpu'", specifier = "==0.31.1" },
     { name = "mlx", marker = "sys_platform == 'linux' and extra == 'cuda12'", specifier = "==0.31.1" },
     { name = "mlx", marker = "sys_platform == 'linux' and extra == 'cuda13'", specifier = "==0.31.1" },
@@ -476,6 +477,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.21" },
     { name = "rustworkx", specifier = ">=0.17.1" },
     { name = "tiktoken", specifier = ">=0.12.0" },
+    { name = "tinygrad", git = "https://github.com/AndreiCravtov/tinygrad.git?branch=andrei%2Ftinygrad-mlx-convert" },
     { name = "tomlkit", specifier = ">=0.14.0" },
     { name = "torch", marker = "sys_platform == 'linux' and extra != 'cpu' and extra != 'cuda12' and extra == 'cuda13'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torch", marker = "sys_platform == 'linux' and extra != 'cpu' and extra == 'cuda12' and extra != 'cuda13'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu120" },
@@ -1207,7 +1209,7 @@ dependencies = [
     { name = "hf-transfer", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "huggingface-hub", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "matplotlib", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/AndreiCravtov/mlx.git?branch=andrei%2Fmlx-tinygrad-convert#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "numpy", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "opencv-python", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "piexif", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
@@ -1258,7 +1260,7 @@ wheels = [
 [[package]]
 name = "mlx"
 version = "0.31.2.dev20260422+ec49d18e"
-source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }
+source = { git = "https://github.com/AndreiCravtov/mlx.git?branch=andrei%2Fmlx-tinygrad-convert#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }
 resolution-markers = [
     "sys_platform == 'darwin'",
 ]
@@ -1334,7 +1336,7 @@ resolution-markers = [
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or (sys_platform == 'linux' and extra == 'extra-3-exo-cpu') or (sys_platform == 'linux' and extra == 'extra-3-exo-cuda12') or (sys_platform == 'linux' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx", version = "0.31.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'extra-3-exo-cpu') or (sys_platform == 'linux' and extra == 'extra-3-exo-cuda12') or (sys_platform == 'linux' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/AndreiCravtov/mlx.git?branch=andrei%2Fmlx-tinygrad-convert#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "numpy", marker = "sys_platform == 'darwin' or (sys_platform == 'linux' and extra == 'extra-3-exo-cpu') or (sys_platform == 'linux' and extra == 'extra-3-exo-cuda12') or (sys_platform == 'linux' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "protobuf", marker = "sys_platform == 'darwin' or (sys_platform == 'linux' and extra == 'extra-3-exo-cpu') or (sys_platform == 'linux' and extra == 'extra-3-exo-cuda12') or (sys_platform == 'linux' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "pyyaml", marker = "sys_platform == 'darwin' or (sys_platform == 'linux' and extra == 'extra-3-exo-cpu') or (sys_platform == 'linux' and extra == 'extra-3-exo-cuda12') or (sys_platform == 'linux' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
@@ -1351,7 +1353,7 @@ dependencies = [
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "miniaudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx", version = "0.31.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/AndreiCravtov/mlx.git?branch=andrei%2Fmlx-tinygrad-convert#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx-lm", version = "0.31.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'extra-3-exo-cpu' and extra != 'extra-3-exo-cuda12' and extra != 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx-lm", version = "0.31.3", source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Ffix-arrayscache-leak#62bbd5b2ef8d29d02dd08af303c22518341a46b0" }, marker = "sys_platform == 'darwin' or (sys_platform == 'linux' and extra == 'extra-3-exo-cpu') or (sys_platform == 'linux' and extra == 'extra-3-exo-cuda12') or (sys_platform == 'linux' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
@@ -2551,6 +2553,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/78/a7/f8ead382fce0243cb625c4f266e66c27f65ae65ee9e77f59ea1653b6d730/tiktoken-0.12.0-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:0ee8f9ae00c41770b5f9b0bb1235474768884ae157de3beb5439ca0fd70f3e25", size = 1253794, upload-time = "2025-10-06T20:22:16.624Z" },
     { url = "https://files.pythonhosted.org/packages/93/e0/6cc82a562bc6365785a3ff0af27a2a092d57c47d7a81d9e2295d8c36f011/tiktoken-0.12.0-cp313-cp313t-win_amd64.whl", hash = "sha256:dc2dd125a62cb2b3d858484d6c614d136b5b848976794edfb63688d539b8b93f", size = 878777, upload-time = "2025-10-06T20:22:18.036Z" },
 ]
+
+[[package]]
+name = "tinygrad"
+version = "0.12.0"
+source = { git = "https://github.com/AndreiCravtov/tinygrad.git?branch=andrei%2Ftinygrad-mlx-convert#af93a677aeb1eae8f3977492d4badf6647b51bb7" }
 
 [[package]]
 name = "tokenizers"
