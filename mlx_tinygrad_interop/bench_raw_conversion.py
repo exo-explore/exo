@@ -44,9 +44,21 @@ def tinygrad_zero_copy_memoryview(t: Tensor) -> memoryview:
   return buf.as_memoryview(force_zero_copy=True).cast(t.dtype.base.fmt, t.shape)
 
 
-def tinygrad_from_mlx_direct(x: Any, tg_dtype: Any) -> Tensor:
+def tinygrad_from_mlx_legacy(x: Any, tg_dtype: Any) -> Tensor:
   storage = mx.metal._unsafe_export_storage(x)
   return Tensor._unsafe_from_metal_buffer(
+    int(storage["mtl_buffer_ptr"]),
+    tuple(storage["shape"]),
+    dtype=tg_dtype,
+    byte_offset=int(storage["offset_bytes"]),
+    buffer_nbytes=int(storage["nbytes"]),
+    owner=x,
+  )
+
+
+def tinygrad_from_mlx_fast(x: Any, tg_dtype: Any) -> Tensor:
+  storage = mx.metal._unsafe_export_storage(x)
+  return Tensor._unsafe_from_metal_buffer_fast(
     int(storage["mtl_buffer_ptr"]),
     tuple(storage["shape"]),
     dtype=tg_dtype,
@@ -93,6 +105,17 @@ def mlx_export_storage(x: Any) -> Any:
 
 def tinygrad_import_from_storage(storage: Any, tg_dtype: Any, owner: Any) -> Tensor:
   return Tensor._unsafe_from_metal_buffer(
+    int(storage["mtl_buffer_ptr"]),
+    tuple(storage["shape"]),
+    dtype=tg_dtype,
+    byte_offset=int(storage["offset_bytes"]),
+    buffer_nbytes=int(storage["nbytes"]),
+    owner=owner,
+  )
+
+
+def tinygrad_import_from_storage_fast(storage: Any, tg_dtype: Any, owner: Any) -> Tensor:
+  return Tensor._unsafe_from_metal_buffer_fast(
     int(storage["mtl_buffer_ptr"]),
     tuple(storage["shape"]),
     dtype=tg_dtype,
@@ -164,6 +187,7 @@ def main() -> None:
     ("mx.metal._unsafe_export_storage", getattr(mx.metal, "_unsafe_export_storage", None)),
     ("mx.metal._unsafe_array_from_ptr", getattr(mx.metal, "_unsafe_array_from_ptr", None)),
     ("Tensor._unsafe_from_metal_buffer", getattr(Tensor, "_unsafe_from_metal_buffer", None)),
+    ("Tensor._unsafe_from_metal_buffer_fast", getattr(Tensor, "_unsafe_from_metal_buffer_fast", None)),
     ("Tensor._unsafe_metal_storage", getattr(Tensor, "_unsafe_metal_storage", None)),
   ]
   missing = [name for name, value in required if value is None]
@@ -193,14 +217,16 @@ def main() -> None:
       tg_storage = tinygrad_export_storage(src_tg)
 
       benches: list[tuple[str, str, Callable[[], Any]]] = [
-        ("unsafe_helper_bridge", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_direct(s, tg_dtype)),
+        ("unsafe_helper_bridge", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_fast(s, tg_dtype)),
+        ("unsafe_helper_legacy", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_legacy(s, tg_dtype)),
         ("memoryview_copy", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_copy(s, tg_dtype)),
-        ("numpy_fallback", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_numpy(s)),
+        ("numpy_baseline", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_numpy(s)),
         ("unsafe_helper_bridge", "tinygrad_to_mlx", lambda s=src_tg: mlx_from_tinygrad_direct(s, mx_dtype)),
         ("memoryview_copy", "tinygrad_to_mlx", lambda s=src_tg: mlx_from_tinygrad_copy(s)),
-        ("numpy_fallback", "tinygrad_to_mlx", lambda s=src_tg: mlx_from_tinygrad_numpy(s)),
+        ("numpy_baseline", "tinygrad_to_mlx", lambda s=src_tg: mlx_from_tinygrad_numpy(s)),
         ("export_helper_only", "mlx_to_tinygrad", lambda s=src_mx: mlx_export_storage(s)),
-        ("import_helper_only", "mlx_to_tinygrad", lambda st=mx_storage, s=src_mx: tinygrad_import_from_storage(st, tg_dtype, s)),
+        ("import_helper_fast_only", "mlx_to_tinygrad", lambda st=mx_storage, s=src_mx: tinygrad_import_from_storage_fast(st, tg_dtype, s)),
+        ("import_helper_legacy_only", "mlx_to_tinygrad", lambda st=mx_storage, s=src_mx: tinygrad_import_from_storage(st, tg_dtype, s)),
         ("export_helper_only", "tinygrad_to_mlx", lambda s=src_tg: tinygrad_export_storage(s)),
         ("import_helper_only", "tinygrad_to_mlx", lambda st=tg_storage, s=src_tg: mlx_import_from_storage(st, mx_dtype, s)),
       ]
