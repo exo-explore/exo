@@ -9,10 +9,17 @@ futures-lite.workspace = true
 ipnet = "2.12.0"
 nix = { version = "0.31", features = ["signal", "process", "user", "net"] }
 netdev = "0.42"
+ahash = "0.8.12"
+arrayvec = "0.7.6"
+crossbeam-channel = "0.5.15"
+hashbrown = "0.16.0"
+mio = { version = "1.1.0", features = ["net", "os-ext", "os-poll"] }
 n0-watcher = "0.6"
 netwatch = "0.16"
 rand = "0.10"
 route_manager = "0.2.11"
+slab = "0.4.11"
+socket2 = "0.6.1"
 tokio = { workspace = true, features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }

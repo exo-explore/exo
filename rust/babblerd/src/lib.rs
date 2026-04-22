@@ -4,6 +4,8 @@ compile_error!("babblerd is mac/linux-only");
 pub mod babel;
 pub mod config;
 pub mod daemon;
+pub mod dataplane;
+pub mod fib;
 pub mod identity;
 pub(crate) mod route_ctl;
 pub mod routing_stack;

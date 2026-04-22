@@ -140,6 +140,35 @@ of shortcuts that should be revisited later.
   - Either wire it into the real dataplane soon, or remove it until the
     dataplane exists.
 
+- The first FIB/dataplane modules now exist, but they are not wired into the
+  resident daemon yet.
+  Files:
+  - `src/fib.rs`
+  - `src/dataplane.rs`
+  - `src/routing_stack.rs`
+  - `src/daemon.rs`
+  Why this is a shortcut:
+  - The control plane still does not derive and publish immutable
+    `FibSnapshot`s into the dataplane thread.
+  - The resident TUN device does not yet hand a duplicated fd/handle to the
+    dataplane thread.
+  Follow-up:
+  - Start the dataplane from the routing stack,
+  - derive FIB snapshots from `watch<Arc<BabelState>>`,
+  - and feed those snapshots to the dataplane over the bounded update channel.
+
+- The initial dataplane socket model is intentionally generic and not yet
+  interface-pinned.
+  Files:
+  - `src/dataplane.rs`
+  Why this is a shortcut:
+  - The current socket scaffolding opens one UDP socket per interface config,
+    but it does not yet enforce per-interface binding semantics beyond storing
+    the interface index for link-local sends.
+  Follow-up:
+  - Tighten UDP socket/interface ownership as the dataplane gets wired into the
+    real interface set.
+
 - `TunDevice` is still a thin platform-specific wrapper with some rough edges.
   Files:
   - `src/tun.rs`

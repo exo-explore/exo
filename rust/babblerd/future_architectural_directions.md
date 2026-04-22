@@ -24,6 +24,8 @@ It now has the beginnings of a real daemon architecture:
 - a keepalive-driven daemon core,
 - a heavy routing stack that can turn on and off,
 - a typed Babel control/runtime layer,
+- a derived FIB layer,
+- and a dedicated dataplane thread module scaffold,
 - a persisted node identity,
 - and a central config module.
 
@@ -77,9 +79,25 @@ This does **not** require the final IPC architecture first.
 
 ## Recommended Next Phase
 
-### 1. Build the UDP dataplane
+### 1. Wire the UDP dataplane into the daemon
 
 This should be the next major feature.
+
+The basic pieces now exist:
+
+- `fib.rs` derives immutable forwarding snapshots from `BabelState`,
+- `dataplane.rs` provides a dedicated-thread hot-path module using `mio`,
+  `socket2`, `crossbeam-channel`, `hashbrown`, `ahash`, `slab`, and
+  `arrayvec`.
+
+So the next step is no longer “invent those modules”.
+
+It is:
+
+- duplicate/expose the resident TUN fd for the dataplane thread,
+- derive `FibSnapshot`s from `watch<Arc<BabelState>>`,
+- start the dataplane thread from the routing stack,
+- and feed whole snapshots into it.
 
 The current tree now owns the kernel route that steers overlay traffic into the
 resident TUN interface:
@@ -129,11 +147,14 @@ The future direction should be:
 - and better support for environments where hop-to-hop links can use jumbo
   frames without exposing that complexity to user traffic.
 
-### 2. Add a derived forwarding table above `BabelState`
+### 2. Keep the derived forwarding table separate from `BabelState`
 
 `BabelState` should remain a mirror of what `babeld` says.
 
-But the dataplane should not consume raw `BabelState` directly forever.
+The current code now reflects that direction:
+
+- `BabelState` is still the protocol mirror,
+- `FibSnapshot` is the dataplane view.
 
 The next layer should be a derived forwarding table/FIB that:
 
