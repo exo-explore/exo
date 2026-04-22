@@ -50,18 +50,22 @@ uv run python mlx_tinygrad_interop/bench_raw_conversion.py --dtype float32 --siz
 Observed `7168`-byte results on that run:
 
 - `unsafe_helper_bridge`
-  - `mlx_to_tinygrad`: `35.875 us` min, `36.553 us` median
-  - `tinygrad_to_mlx`: `30.005 us` min, `30.197 us` median
+  - `mlx_to_tinygrad`: `20.241 us` min, `20.747 us` median
+  - `tinygrad_to_mlx`: `26.738 us` min, `27.130 us` median
+- `unsafe_helper_legacy`
+  - `mlx_to_tinygrad`: `33.001 us` min, `33.353 us` median
 - `memoryview_copy`
-  - `mlx_to_tinygrad`: `38.960 us` min, `39.242 us` median
-  - `tinygrad_to_mlx`: `2.719 us` min, `2.738 us` median
-- `numpy_fallback`
-  - `mlx_to_tinygrad`: `290.448 us` min, `290.927 us` median
-  - `tinygrad_to_mlx`: `13.637 us` min, `13.698 us` median
+  - `mlx_to_tinygrad`: `36.328 us` min, `36.490 us` median
+  - `tinygrad_to_mlx`: `2.535 us` min, `2.560 us` median
+- `numpy_baseline`
+  - `mlx_to_tinygrad`: `263.666 us` min, `265.771 us` median
+  - `tinygrad_to_mlx`: `12.457 us` min, `12.549 us` median
 
 Later remote microbench runs showed the split more clearly:
 
 - `MLX -> tinygrad` is dominated by tinygrad import / wrapper creation.
+- The lower-overhead tinygrad import helper cuts `MLX -> tinygrad` by about
+  `1.6x`, but still leaves it around `20 us`.
 - `tinygrad -> MLX` is dominated by tinygrad export in the unsafe helper path.
 - `tinygrad -> MLX memoryview_copy` is already the practical low-latency path
   for small tensors.
