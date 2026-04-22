@@ -168,6 +168,20 @@ of shortcuts that should be revisited later.
   - Replace the current fixed MTU model with route-aware MTU derivation once the
     UDP dataplane exists.
 
+- The overlay route controller currently claims the whole overlay prefix
+  aggressively.
+  Files:
+  - `src/route_ctl.rs`
+  Why this is a shortcut:
+  - It removes any existing route matching `EXO_ULA_PREFIX` before adding the
+    daemon's own interface route, and removes all matching routes again on
+    shutdown.
+  - That is acceptable only if babblerd is the sole owner of the overlay
+    prefix.
+  Follow-up:
+  - Narrow route deletion so it only removes routes that this daemon installed,
+    or otherwise encode route ownership more precisely.
+
 ## Identity / Security / Filesystem
 
 - The node-id file is created with `0600`, but existing files are only

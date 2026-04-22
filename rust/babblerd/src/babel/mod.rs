@@ -1,8 +1,6 @@
 use ipnet::Ipv6Net;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 
 use crate::Result;
 
@@ -16,30 +14,6 @@ use runtime::BabelRuntime;
 /// An EUI-64 type aliased to [`macaddr::MacAddr8`].
 pub type Eui64 = macaddr::MacAddr8;
 pub use state::BabelState;
-
-#[tracing::instrument(skip_all)]
-pub async fn handle_listener(sock: UnixStream, mut receiver: broadcast::Receiver<String>) {
-    tracing::info!("new socket conn");
-    let (reader, mut write) = sock.into_split();
-    let mut reader = BufReader::new(reader).lines();
-    loop {
-        tokio::select! {
-            read = reader.next_line() => {
-                let Ok(Some(_)) = read else { break; };
-            }
-            recv = receiver.recv() => {
-                let res = match recv {
-                    Err(broadcast::error::RecvError::Lagged(_)) => { tracing::warn!("receiver lagged"); continue; },
-                    Err(broadcast::error::RecvError::Closed) => { tracing::debug!("receiver closed, dropping connection"); break; },
-                    Ok(s) => write.write_all(format!("{s}\n").as_bytes()).await,
-                };
-                if let Err(e) = res { tracing::warn!(error=%e, "failed to write to socket"); break; }
-            }
-        };
-    }
-    tracing::info!("closing socket conn");
-    _ = write.shutdown().await;
-}
 
 #[derive(Debug)]
 pub enum Babble {

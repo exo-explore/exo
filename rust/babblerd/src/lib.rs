@@ -9,7 +9,7 @@ pub(crate) mod route_ctl;
 pub mod routing_stack;
 pub mod tun;
 
-pub use babel::{babel, handle_listener};
+pub use babel::babel;
 pub use config::EXO_ULA_PREFIX as PREFIX;
 pub use error::{BabbleError, Result};
 pub use if_watcher::watch;
@@ -45,7 +45,7 @@ pub mod if_watcher {
 
     use crate::config::{EXO_ULA_PREFIX, PHYSICAL_LINK_MTU};
     use crate::ip_manager::remove_ip;
-    use crate::{babel::Babble, BabbleError, Result};
+    use crate::{BabbleError, Result, babel::Babble};
 
     pub const LOCALHOST_INTERFACE_NAMES: [&'static str; 2] = ["lo", "lo0"];
 

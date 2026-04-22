@@ -7,7 +7,7 @@ compile_error!("babblerd is mac/linux-only");
 use std::{fs::Permissions, io, os::unix::fs::PermissionsExt, sync::Arc};
 
 use babblerd::{babel::BabelState, config::Config, daemon, identity, tun::TunDevice};
-use color_eyre::eyre::{self, eyre, WrapErr};
+use color_eyre::eyre::{self, WrapErr, eyre};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixListener,
@@ -15,7 +15,7 @@ use tokio::{
     signal,
     sync::watch,
     task::JoinSet,
-    time::{sleep, Duration},
+    time::{Duration, sleep},
 };
 
 const INTERNAL_KEEPALIVE_TTL_MS: u64 = 30_000;
