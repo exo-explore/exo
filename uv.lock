@@ -483,7 +483,7 @@ requires-dist = [
     { name = "torch", marker = "(sys_platform == 'linux' and extra == 'cpu' and extra == 'cuda12') or (sys_platform == 'linux' and extra == 'cpu' and extra == 'cuda13')", specifier = ">=2.10.0" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'cpu' and extra != 'cuda12' and extra != 'cuda13'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "(sys_platform == 'linux' and extra == 'cpu' and extra == 'cuda13') or (sys_platform == 'linux' and extra == 'cuda12' and extra == 'cuda13')", specifier = ">=2.10.0" },
-    { name = "transformers", specifier = ">=5.0.0,<5.3.0" },
+    { name = "transformers", specifier = ">=5.0.0,<5.4.0" },
     { name = "types-aiofiles", specifier = ">=24.1.0.20250708" },
     { name = "zstandard", specifier = ">=0.23.0" },
 ]
