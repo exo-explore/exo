@@ -71,6 +71,7 @@ class Qwen3NextAttention(nn.Module):
 class Qwen3NextSparseMoeBlock(nn.Module):
     norm_topk_prob: bool
     num_experts: int
+    num_experts_per_tok: int
     top_k: int
     gate: nn.Linear
     switch_mlp: SwitchGLU

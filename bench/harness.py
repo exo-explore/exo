@@ -564,7 +564,7 @@ def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument(
         "--settle-timeout",
         type=float,
-        default=0,
+        default=60.0,
         help="Max seconds to wait for the cluster to produce valid placements (0 = try once).",
     )
     ap.add_argument(
