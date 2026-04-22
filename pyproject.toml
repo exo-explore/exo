@@ -3,7 +3,7 @@ name = "exo"
 version = "0.3.70"
 description = "Exo"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = "==3.13.*"
 dependencies = [
   "aiofiles>=24.1.0",
   "aiohttp>=3.12.14",
@@ -17,7 +17,7 @@ dependencies = [
   "loguru>=0.7.3",
   "exo-pyo3-bindings",                       # rust bindings
   "anyio==4.11.0",
-  "mlx==0.31.1; sys_platform == 'darwin'",
+  "mlx==0.31.2; sys_platform == 'darwin'",
   "mlx-lm",
   "tiktoken>=0.12.0",                        # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
@@ -49,7 +49,7 @@ dev = [
 [project.optional-dependencies]
 build = ["nanobind"]
 cpu = [
-  "mlx-cpu==0.31.1; sys_platform == 'linux'",
+  "mlx-cpu==0.31.2; sys_platform == 'linux'",
   "torch>=2.10.0; sys_platform == 'linux'",
 ]
 cuda12 = [
@@ -76,6 +76,7 @@ torch = [
   { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'cuda13' and extra != 'cpu' and extra != 'cuda12'" },
   { index = "pytorch-cu120", marker = "sys_platform == 'linux' and extra == 'cuda12' and extra != 'cpu' and extra != 'cuda13'" },
   { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'cpu' and extra != 'cuda12' and extra != 'cuda13'" },
+  { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
 ]
 vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
 
@@ -149,6 +150,7 @@ prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }, { extra = "cpu" }]]
 constraint-dependencies = ["transformers>=5.0.0,<5.4.0"]
+override-dependencies = ["mlx", "torch"]
 
 [tool.uv.extra-build-dependencies]
 miniaudio = ["setuptools", "cffi", "pycparser"]
