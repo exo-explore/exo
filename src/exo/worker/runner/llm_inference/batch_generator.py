@@ -2,20 +2,20 @@ import itertools
 import time
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import Generator, Iterable
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 
 import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
-from exo.shared.types.chunks import ErrorChunk, PrefillProgressChunk
+from exo.shared.types.chunks import ErrorChunk, GenerationChunk, PrefillProgressChunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import ChunkGenerated, Event
 from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import CANCEL_ALL_TASKS, TaskId, TextGeneration
 from exo.shared.types.text_generation import TextGenerationTaskParams
-from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
+from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
@@ -32,7 +32,7 @@ from exo.worker.engines.mlx.utils_mlx import (
 from exo.worker.engines.mlx.vision import VisionProcessor
 from exo.worker.runner.bootstrap import logger
 
-from .model_output_parsers import apply_all_parsers
+from .model_output_parsers import apply_all_parsers, map_responses_to_chunks
 from .tool_parsers import ToolParser
 
 
@@ -80,9 +80,7 @@ class InferenceGenerator(ABC):
     @abstractmethod
     def step(
         self,
-    ) -> Iterable[
-        tuple[TaskId, ToolCallResponse | GenerationResponse | Cancelled | Finished]
-    ]: ...
+    ) -> Iterator[tuple[TaskId, GenerationChunk | Cancelled | Finished]]: ...
 
     @abstractmethod
     def close(self) -> None: ...
@@ -137,7 +135,7 @@ class SequentialGenerator(InferenceGenerator):
             # queue that the 1st generator should push to and 3rd generator should pull from
             GeneratorQueue[GenerationResponse],
             # generator to get parsed outputs
-            Generator[GenerationResponse | ToolCallResponse | None],
+            Iterator[GenerationChunk | None],
         ]
         | None
     ) = field(default=None, init=False)
@@ -183,9 +181,7 @@ class SequentialGenerator(InferenceGenerator):
 
     def step(
         self,
-    ) -> Iterable[
-        tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
-    ]:
+    ) -> Iterator[tuple[TaskId, GenerationChunk | Cancelled | Finished]]:
         if self._active is None:
             self.agree_on_tasks()
 
@@ -197,9 +193,7 @@ class SequentialGenerator(InferenceGenerator):
         assert self._active is not None
 
         task, mlx_gen, queue, output_generator = self._active
-        output: list[
-            tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
-        ] = []
+        output: list[tuple[TaskId, GenerationChunk | Cancelled | Finished]] = []
         try:
             response = next(mlx_gen)
             queue.push(response)
@@ -233,7 +227,9 @@ class SequentialGenerator(InferenceGenerator):
         queue = GeneratorQueue[GenerationResponse]()
 
         if task.task_params.bench:
-            output_generator = queue.gen()
+            output_generator: Iterator[GenerationChunk | None] = map(
+                lambda r: map_responses_to_chunks(r, self.model_id), queue.gen()
+            )
         else:
             output_generator = apply_all_parsers(
                 queue.gen(),
@@ -338,7 +334,7 @@ class BatchGenerator(InferenceGenerator):
         tuple[
             TextGeneration,
             GeneratorQueue[GenerationResponse],
-            Generator[GenerationResponse | ToolCallResponse | None],
+            Iterator[GenerationChunk | None],
         ],
     ] = field(default_factory=dict, init=False)
 
@@ -392,9 +388,7 @@ class BatchGenerator(InferenceGenerator):
 
     def step(
         self,
-    ) -> Iterable[
-        tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
-    ]:
+    ) -> Iterator[tuple[TaskId, GenerationChunk | Cancelled | Finished]]:
         if not self._queue:
             self.agree_on_tasks()
 
@@ -411,7 +405,9 @@ class BatchGenerator(InferenceGenerator):
 
             queue = GeneratorQueue[GenerationResponse]()
             if task.task_params.bench:
-                output_generator = queue.gen()
+                output_generator: Iterator[GenerationChunk | None] = map(
+                    lambda r: map_responses_to_chunks(r, self.model_id), queue.gen()
+                )
             else:
                 output_generator = apply_all_parsers(
                     queue.gen(),
@@ -429,9 +425,7 @@ class BatchGenerator(InferenceGenerator):
 
         results = self._mlx_gen.step()
 
-        output: list[
-            tuple[TaskId, GenerationResponse | ToolCallResponse | Cancelled | Finished]
-        ] = []
+        output: list[tuple[TaskId, GenerationChunk | Cancelled | Finished]] = []
         for uid, response in results:
             if uid not in self._active_tasks:
                 # should we error here?
@@ -453,9 +447,9 @@ class BatchGenerator(InferenceGenerator):
 
     def _apply_cancellations(
         self,
-    ) -> list[tuple[TaskId, Cancelled]]:
+    ) -> Iterator[tuple[TaskId, Cancelled]]:
         if not self._cancelled_tasks:
-            return []
+            return iter([])
 
         cancel_all = CANCEL_ALL_TASKS in self._cancelled_tasks
 
@@ -477,7 +471,7 @@ class BatchGenerator(InferenceGenerator):
                 results.append((tid, Cancelled()))
 
         self._cancelled_tasks.clear()
-        return results
+        return iter(results)
 
     def _send_error(self, task: TextGeneration, e: Exception) -> None:
         if self.device_rank == 0:
