@@ -1,0 +1,35 @@
+model_id = "mlx-community/Qwen3.6-35B-A3B-5bit"
+n_layers = 40
+hidden_size = 2048
+num_key_value_heads = 2
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "5bit"
+base_model = "Qwen3.6 35B A3B"
+capabilities = ["text", "thinking", "thinking_toggle", "vision"]
+
+context_length = 262144
+
+[storage_size]
+in_bytes = 24731729632
+
+# Source: https://huggingface.co/Qwen/Qwen3.6-35B-A3B#best-practices
+# Source: https://unsloth.ai/docs/models/qwen3.5
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0
+presence_penalty = 1.5
+
+# Source: https://huggingface.co/Qwen/Qwen3.6-35B-A3B#best-practices
+# Source: https://unsloth.ai/docs/models/qwen3.5
+[sampling_defaults.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0
+presence_penalty = 1.5

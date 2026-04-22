@@ -28,7 +28,7 @@ from exo.shared.constants import (
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 
 # kinda ugly...
 # TODO: load search path from config.toml
@@ -41,7 +41,7 @@ _BUILTIN_CARD_DIRS = [
 _card_cache: dict[ModelId, "ModelCard"] = {}
 
 
-def _detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
+def detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
     normalized = model_id.normalize()
     for model_dir in [d / normalized for d in EXO_MODELS_DIRS]:
         config_path = model_dir / "config.json"
@@ -65,10 +65,6 @@ async def _load_cards_from_dir(directory: Path, *, is_custom: bool) -> None:
             card = await ModelCard.load_from_path(toml_file)
             if is_custom:
                 card = card.model_copy(update={"is_custom": True})
-            if card.vision is None:
-                vision = _detect_vision_from_config(card.model_id)
-                if vision is not None:
-                    card = card.model_copy(update={"vision": vision})
             if card.model_id not in _card_cache:
                 _card_cache[card.model_id] = card
         except (ValidationError, TOMLKitError):
@@ -104,7 +100,7 @@ class ModelTask(str, Enum):
     ImageToImage = "ImageToImage"
 
 
-class ComponentInfo(CamelCaseModel):
+class ComponentInfo(FrozenModel):
     component_name: str
     component_path: str
     storage_size: Memory
@@ -113,7 +109,7 @@ class ComponentInfo(CamelCaseModel):
     safetensors_index_filename: str | None = None
 
 
-class VisionCardConfig(CamelCaseModel):
+class VisionCardConfig(FrozenModel):
     image_token_id: int
     model_type: str
     weights_repo: str = ""
@@ -121,7 +117,22 @@ class VisionCardConfig(CamelCaseModel):
     processor_repo: str | None = None
 
 
-class ModelCard(CamelCaseModel):
+class SamplingValues(FrozenModel):
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    repetition_penalty: float | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+
+
+class SamplingDefaults(SamplingValues):
+    thinking: SamplingValues | None = None
+    non_thinking: SamplingValues | None = None
+
+
+class ModelCard(FrozenModel):
     model_id: ModelId
     storage_size: Memory
     n_layers: PositiveInt
@@ -139,6 +150,15 @@ class ModelCard(CamelCaseModel):
     trust_remote_code: bool = True
     is_custom: bool = False
     vision: VisionCardConfig | None = None
+    sampling_defaults: SamplingDefaults = Field(default_factory=SamplingDefaults)
+
+    @model_validator(mode="after")
+    def _autodetect_vision(self) -> "ModelCard":
+        if self.vision is None:
+            detected = detect_vision_from_config(self.model_id)
+            if detected is not None:
+                object.__setattr__(self, "vision", detected)
+        return self
 
     @model_validator(mode="after")
     def _fill_vision_weights_repo(self) -> "ModelCard":
@@ -256,6 +276,7 @@ class ConfigData(BaseModel):
             ["Qwen3MoeForCausalLM"],
             ["Qwen3_5MoeForConditionalGeneration"],
             ["Qwen3_5ForConditionalGeneration"],
+            ["Qwen3VLForConditionalGeneration"],
             ["MiniMaxM2ForCausalLM"],
             ["LlamaForCausalLM"],
             ["GptOssForCausalLM"],
@@ -346,7 +367,7 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
         index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
 
     metadata = index_data.metadata
-    if metadata is not None:
+    if metadata is not None and metadata.total_size is not None:
         return Memory.from_bytes(metadata.total_size)
 
     info = model_info(model_id)

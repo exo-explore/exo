@@ -824,13 +824,18 @@ async def download_shard(
             if "/" in f.path or not f.path.endswith(".safetensors")
         ]
 
-    # Pick a writable directory with enough free space
+    # Pick a writable directory with enough free space.
     total_size = sum(f.size or 0 for f in filtered_file_list)
-    models_dir = (
-        select_download_dir(total_size) if not skip_download else EXO_DEFAULT_MODELS_DIR
-    )
-    target_dir = models_dir / model_id.normalize()
-    if not skip_download:
+    if skip_download:
+        existing = resolve_existing_model(model_id)
+        target_dir = (
+            existing
+            if existing is not None
+            else EXO_DEFAULT_MODELS_DIR / model_id.normalize()
+        )
+    else:
+        models_dir = select_download_dir(total_size)
+        target_dir = models_dir / model_id.normalize()
         await aios.makedirs(target_dir, exist_ok=True)
     file_progress: dict[str, RepoFileDownloadProgress] = {}
 

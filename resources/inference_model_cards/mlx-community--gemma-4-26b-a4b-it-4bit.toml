@@ -2,7 +2,7 @@ model_id = "mlx-community/gemma-4-26b-a4b-it-4bit"
 n_layers = 30
 hidden_size = 2816
 num_key_value_heads = 8
-supports_tensor = true
+supports_tensor = false
 tasks = ["TextGeneration"]
 family = "gemma"
 quantization = "4bit"
@@ -13,3 +13,10 @@ context_length = 262144
 
 [storage_size]
 in_bytes = 15608614044
+
+# Source: https://ai.google.dev/gemma/docs/core/model_card_4
+# Source: https://huggingface.co/google/gemma-4-26b-a4b-it/blob/main/generation_config.json
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
+top_k = 64

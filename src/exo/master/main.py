@@ -413,9 +413,13 @@ class Master:
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
 
-                    event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
+                    event = event.model_copy(
+                        update={"_master_time_stamp": datetime.now(tz=timezone.utc)}
+                    )
                     if isinstance(event, NodeGatheredInfo):
-                        event.when = str(datetime.now(tz=timezone.utc))
+                        event = event.model_copy(
+                            update={"when": str(datetime.now(tz=timezone.utc))}
+                        )
 
                     self._event_log.append(event)
                     await self._send_event(indexed)

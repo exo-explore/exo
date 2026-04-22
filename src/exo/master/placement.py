@@ -153,6 +153,17 @@ def place_instance(
         raise ValueError(
             "Pipeline parallelism is not supported for DeepSeek V3.1 (8-bit)"
         )
+    if (
+        command.sharding == Sharding.Pipeline
+        and command.model_card.base_model.startswith("Gemma 4")
+    ):
+        cycles_with_sufficient_memory = [
+            cycle for cycle in cycles_with_sufficient_memory if len(cycle) == 1
+        ]
+        if not cycles_with_sufficient_memory:
+            raise ValueError(
+                "Pipeline parallelism is not supported for Gemma 4; use tensor parallelism instead."
+            )
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
 
@@ -193,8 +204,12 @@ def place_instance(
 
     # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
     if len(selected_cycle) == 1:
-        command.instance_meta = InstanceMeta.MlxRing
-        command.sharding = Sharding.Pipeline
+        command = command.model_copy(
+            update={
+                "instance_meta": InstanceMeta.MlxRing,
+                "sharding": Sharding.Pipeline,
+            }
+        )
 
     shard_assignments = get_shard_assignments(
         command.model_card, selected_cycle, command.sharding, node_memory

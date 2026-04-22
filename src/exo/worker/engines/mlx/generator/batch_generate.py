@@ -1,7 +1,7 @@
 import contextlib
 import time
 from dataclasses import dataclass, field
-from typing import Callable, cast
+from typing import Callable, Literal, cast
 
 import mlx.core as mx
 from mlx_lm.generate import (
@@ -74,7 +74,6 @@ class _EngineTask:
     all_prompt_tokens: mx.array
     prefix_hit_length: int
     matched_index: int | None
-    cache_snapshots: list[CacheSnapshot] | None
     detokenizer: StreamingDetokenizer
     on_generation_token: Callable[[], None] | None = None
     generated_text_parts: list[str] = field(default_factory=list)
@@ -82,6 +81,7 @@ class _EngineTask:
     completion_tokens: int = 0
     generation_start_time: float = 0.0
     prefill_tps: float = 0.0
+    prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
     media_regions: list[MediaRegion] = field(default_factory=list)
     first_gen_token_time: float | None = None
     last_gen_token_time: float | None = None
@@ -155,11 +155,16 @@ class ExoBatchGenerator:
 
         prefix_hit_length = 0
         matched_index: int | None = None
+        is_exact_hit = False
         prompt_tokens = all_prompt_tokens
 
-        if self.kv_prefix_cache is not None and not is_bench:
-            cache, remaining_tokens, matched_index = self.kv_prefix_cache.get_kv_cache(
-                self.model, all_prompt_tokens, media_regions=media_regions
+        if self.kv_prefix_cache is not None and (
+            not is_bench or task_params.use_prefix_cache
+        ):
+            cache, remaining_tokens, matched_index, is_exact_hit = (
+                self.kv_prefix_cache.get_kv_cache(
+                    self.model, all_prompt_tokens, media_regions=media_regions
+                )
             )
             prefix_hit_length = len(all_prompt_tokens) - len(remaining_tokens)
             if prefix_hit_length > 0:
@@ -168,8 +173,6 @@ class ExoBatchGenerator:
                     f"cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
                 )
                 prompt_tokens = remaining_tokens
-            else:
-                cache = make_kv_cache(self.model)
         else:
             cache = make_kv_cache(self.model)
 
@@ -208,6 +211,15 @@ class ExoBatchGenerator:
                 distributed_prompt_progress_callback,
             )
 
+        prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
+        if matched_index is not None and prefix_hit_length > 0:
+            assert self.kv_prefix_cache is not None
+            if is_exact_hit:
+                prefix_cache_hit = "exact"
+                _prefill_tps = self.kv_prefix_cache.prefill_tps[matched_index]
+            else:
+                prefix_cache_hit = "partial"
+
         # We need to clamp rotating kv caches to max size so that mlx lm's _merge_caches behaves
         for c in cache:
             if (
@@ -221,7 +233,7 @@ class ExoBatchGenerator:
                 c.values = c._trim(trim_size, c.values)
                 c._idx = c.max_size
 
-        if not is_bench:
+        if not is_bench or task_params.use_prefix_cache:
             min_prefix_hit_length = max(
                 1000, system_prompt_token_count(task_params, self.tokenizer)
             )
@@ -233,6 +245,7 @@ class ExoBatchGenerator:
                 matched_index,
                 min_prefix_hit_length,
                 media_regions,
+                prefill_tps=_prefill_tps,
             )
 
         last_tokens = prompt_tokens[-2:]
@@ -240,7 +253,11 @@ class ExoBatchGenerator:
         logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
             make_logits_processors(
                 repetition_penalty=task_params.repetition_penalty,
-                repetition_context_size=task_params.repetition_context_size,
+                repetition_context_size=task_params.repetition_context_size
+                if task_params.repetition_context_size is not None
+                else 20,
+                presence_penalty=task_params.presence_penalty,
+                frequency_penalty=task_params.frequency_penalty,
             )
         )
         if is_bench:
@@ -268,11 +285,11 @@ class ExoBatchGenerator:
             all_prompt_tokens=all_prompt_tokens,
             prefix_hit_length=prefix_hit_length,
             matched_index=matched_index,
-            cache_snapshots=cache_snapshots or None,
             detokenizer=self.tokenizer.detokenizer,
             on_generation_token=on_generation_token,
             generation_start_time=time.perf_counter(),
             prefill_tps=_prefill_tps,
+            prefix_cache_hit=prefix_cache_hit,
             media_regions=media_regions,
         )
 
@@ -383,6 +400,7 @@ class ExoBatchGenerator:
                     prompt_tokens=len(state.all_prompt_tokens),
                     generation_tokens=state.completion_tokens,
                     peak_memory_usage=Memory.from_gb(mx.get_peak_memory() / 1e9),
+                    prefix_cache_hit=state.prefix_cache_hit,
                 )
                 total_prompt_tokens = len(state.all_prompt_tokens)
                 usage = Usage(
@@ -449,6 +467,7 @@ class ExoBatchGenerator:
         matched_index: int | None,
         min_prefix_hit_length: int = 1000,
         media_regions: list[MediaRegion] | None = None,
+        prefill_tps: float = 0.0,
     ) -> None:
         if self.kv_prefix_cache is None:
             return
@@ -470,6 +489,7 @@ class ExoBatchGenerator:
                     cache_snapshots,
                     restore_pos=prefix_hit_length,
                     media_regions=media_regions,
+                    prefill_tps=prefill_tps,
                 )
             else:
                 self.kv_prefix_cache.add_kv_cache(
@@ -477,6 +497,7 @@ class ExoBatchGenerator:
                     cache,
                     cache_snapshots,
                     media_regions=media_regions,
+                    prefill_tps=prefill_tps,
                 )
         except Exception:
             logger.warning("Failed to save prefix cache", exc_info=True)

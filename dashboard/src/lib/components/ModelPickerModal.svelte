@@ -457,6 +457,7 @@
       "deepseek",
       "gpt-oss",
       "llama",
+      "gemma",
       "flux",
       "qwen-image",
       "nemotron",

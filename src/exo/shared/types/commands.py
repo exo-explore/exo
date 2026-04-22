@@ -10,7 +10,7 @@ from exo.shared.types.common import CommandId, NodeId, SystemId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
-from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
+from exo.utils.pydantic_ext import FrozenModel, TaggedModel
 
 
 class BaseCommand(TaggedModel):
@@ -109,11 +109,11 @@ Command = (
 )
 
 
-class ForwarderCommand(CamelCaseModel):
+class ForwarderCommand(FrozenModel):
     origin: SystemId
     command: Command
 
 
-class ForwarderDownloadCommand(CamelCaseModel):
+class ForwarderDownloadCommand(FrozenModel):
     origin: SystemId
     command: DownloadCommand

@@ -12,3 +12,9 @@ context_length = 262144
 
 [storage_size]
 in_bytes = 33559880448
+
+# Source: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B
+# Source: https://unsloth.ai/docs/models/nemotron-3
+[sampling_defaults]
+temperature = 1.0
+top_p = 1.0

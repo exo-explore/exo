@@ -12,3 +12,14 @@ context_length = 131072
 
 [storage_size]
 in_bytes = 7224298496
+
+# Source: https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-9B-v2
+# Source: https://build.nvidia.com/nvidia/nvidia-nemotron-nano-9b-v2/modelcard
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95
+
+# Source: https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-9B-v2
+# Source: https://build.nvidia.com/nvidia/nvidia-nemotron-nano-9b-v2/modelcard
+[sampling_defaults.non_thinking]
+temperature = 0.0

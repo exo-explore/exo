@@ -1,0 +1,23 @@
+model_id = "mlx-community/MiniMax-M2.7-4bit"
+n_layers = 62
+hidden_size = 3072
+num_key_value_heads = 8
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "minimax"
+quantization = "4bit"
+base_model = "MiniMax M2.7"
+capabilities = ["text", "thinking"]
+
+context_length = 196608
+
+[storage_size]
+in_bytes = 128682598717
+
+# Source: https://huggingface.co/MiniMaxAI/MiniMax-M2.7
+# Source: https://github.com/MiniMax-AI/MiniMax-M2.7
+# Source: https://unsloth.ai/docs/models/minimax-m27
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
+top_k = 40

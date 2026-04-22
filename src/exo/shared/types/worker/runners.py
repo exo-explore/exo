@@ -5,7 +5,7 @@ from pydantic import model_validator
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import Id, NodeId
 from exo.shared.types.worker.shards import ShardMetadata
-from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
+from exo.utils.pydantic_ext import FrozenModel, TaggedModel
 
 
 class RunnerId(Id):
@@ -81,7 +81,7 @@ RunnerStatus = (
 )
 
 
-class ShardAssignments(CamelCaseModel):
+class ShardAssignments(FrozenModel):
     model_id: ModelId
     runner_to_shard: Mapping[RunnerId, ShardMetadata]
     node_to_runner: Mapping[NodeId, RunnerId]

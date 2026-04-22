@@ -22,7 +22,7 @@ from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
 
@@ -40,6 +40,7 @@ class Node:
 
     node_id: NodeId
     offline: bool
+    _api_port: int
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
@@ -98,6 +99,7 @@ class Node:
                 event_sender=event_router.sender(),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
+                api_port=args.api_port,
             )
         else:
             worker = None
@@ -138,6 +140,7 @@ class Node:
             api,
             node_id,
             args.offline,
+            args.api_port,
         )
 
     async def run(self):
@@ -189,7 +192,6 @@ class Node:
                         self.router.receiver(topics.GLOBAL_EVENTS),
                         self.router.sender(topics.LOCAL_EVENTS),
                     )
-                    self._tg.start_soon(self.event_router.run)
 
                 if (
                     result.session_id.master_node_id == self.node_id
@@ -250,10 +252,12 @@ class Node:
                             download_command_sender=self.router.sender(
                                 topics.DOWNLOAD_COMMANDS
                             ),
+                            api_port=self._api_port,
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:
                         self.api.reset(result.won_clock, self.event_router.receiver())
+                    self._tg.start_soon(self.event_router.run)
                 else:
                     if self.api:
                         self.api.unpause(result.won_clock)
@@ -304,7 +308,7 @@ def main():
         logger_cleanup()
 
 
-class Args(CamelCaseModel):
+class Args(FrozenModel):
     verbosity: int = 0
     force_master: bool = False
     spawn_api: bool = False

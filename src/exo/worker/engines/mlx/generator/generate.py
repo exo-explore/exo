@@ -568,18 +568,21 @@ def mlx_generate(
 
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench
-    if is_bench:
+    if is_bench and not task.use_prefix_cache:
         kv_prefix_cache = None
 
     # Use prefix cache if available, otherwise create fresh cache
     prefix_hit_length = 0
     matched_index: int | None = None
+    is_exact_hit = False
     if kv_prefix_cache is None:
         caches = make_kv_cache(model=model)
         prompt_tokens = all_prompt_tokens
     else:
-        caches, prompt_tokens, matched_index = kv_prefix_cache.get_kv_cache(
-            model, all_prompt_tokens, media_regions=media_regions
+        caches, prompt_tokens, matched_index, is_exact_hit = (
+            kv_prefix_cache.get_kv_cache(
+                model, all_prompt_tokens, media_regions=media_regions
+            )
         )
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
         if prefix_hit_length > 0:
@@ -590,7 +593,11 @@ def mlx_generate(
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
         make_logits_processors(
             repetition_penalty=task.repetition_penalty,
-            repetition_context_size=task.repetition_context_size,
+            repetition_context_size=task.repetition_context_size
+            if task.repetition_context_size is not None
+            else 20,
+            presence_penalty=task.presence_penalty,
+            frequency_penalty=task.frequency_penalty,
         )
     )
     if is_bench:
@@ -636,6 +643,37 @@ def mlx_generate(
             distributed_prompt_progress_callback,
         )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
+
+    if kv_prefix_cache is not None and matched_index is not None and is_exact_hit:
+        prefill_tps = kv_prefix_cache.prefill_tps[matched_index]
+
+    if kv_prefix_cache is not None:
+        hit_ratio = (
+            prefix_hit_length / len(all_prompt_tokens)
+            if len(all_prompt_tokens) > 0
+            else 0.0
+        )
+        if matched_index is not None and (
+            prefix_hit_length >= min_prefix_hit_length
+            and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
+        ):
+            kv_prefix_cache.update_kv_cache(
+                matched_index,
+                all_prompt_tokens,
+                caches,
+                cache_snapshots,
+                restore_pos=prefix_hit_length,
+                media_regions=media_regions,
+                prefill_tps=prefill_tps,
+            )
+        else:
+            kv_prefix_cache.add_kv_cache(
+                all_prompt_tokens,
+                caches,
+                cache_snapshots,
+                media_regions=media_regions,
+                prefill_tps=prefill_tps,
+            )
 
     # stream_generate starts from the last token
     last_token = prompt_tokens[-2:]
@@ -736,40 +774,6 @@ def mlx_generate(
                 f"{prefill_tps:.1f} tok/s, generated {generated_tokens} tokens @ "
                 f"{generation_tps:.1f} tok/s"
             )
-            if kv_prefix_cache is not None:
-                generated_tokens_array = mx.array(
-                    tokenizer.encode(
-                        "".join(generated_text_parts), add_special_tokens=False
-                    )
-                )
-                full_prompt_tokens = mx.concatenate(
-                    [all_prompt_tokens, generated_tokens_array]
-                )
-                hit_ratio = (
-                    prefix_hit_length / len(all_prompt_tokens)
-                    if len(all_prompt_tokens) > 0
-                    else 0.0
-                )
-                if matched_index is not None and (
-                    prefix_hit_length >= min_prefix_hit_length
-                    and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
-                ):
-                    kv_prefix_cache.update_kv_cache(
-                        matched_index,
-                        full_prompt_tokens,
-                        caches,
-                        cache_snapshots,
-                        restore_pos=prefix_hit_length,
-                        media_regions=media_regions,
-                    )
-                else:
-                    kv_prefix_cache.add_kv_cache(
-                        full_prompt_tokens,
-                        caches,
-                        cache_snapshots,
-                        media_regions=media_regions,
-                    )
-
         if on_generation_token is not None:
             on_generation_token()
 

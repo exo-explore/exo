@@ -240,6 +240,80 @@ jobs:
           echo "BUILD_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
 
       # ============================================================
+      # Pre-flight credential / profile validation
+      # Runs BEFORE the ~16 min build so auth/expiry failures surface in <1 min.
+      # ============================================================
+
+      - name: Validate Apple notarization credentials
+        env:
+          APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
+          APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
+          APPLE_NOTARIZATION_TEAM: ${{ secrets.APPLE_NOTARIZATION_TEAM }}
+        run: |
+          # All-or-nothing: either all three creds are set, or none are.
+          CRED_COUNT=0
+          for v in "$APPLE_NOTARIZATION_USERNAME" "$APPLE_NOTARIZATION_PASSWORD" "$APPLE_NOTARIZATION_TEAM"; do
+            [[ -n "$v" ]] && CRED_COUNT=$((CRED_COUNT + 1))
+          done
+          if [[ "$CRED_COUNT" -eq 0 ]]; then
+            echo "No notarization credentials configured — skipping notarization for this build."
+            exit 0
+          fi
+          if [[ "$CRED_COUNT" -ne 3 ]]; then
+            echo "ERROR: partial notarization credentials set ($CRED_COUNT/3). Aborting before build."
+            exit 1
+          fi
+          # Cheap, ~5s, auth-only call. Fails instantly with a clear message if
+          # the app-specific password is stale, wrong team-id, etc.
+          echo "Verifying Apple notarization credentials via notarytool history..."
+          if ! xcrun notarytool history \
+            --apple-id "$APPLE_NOTARIZATION_USERNAME" \
+            --password "$APPLE_NOTARIZATION_PASSWORD" \
+            --team-id "$APPLE_NOTARIZATION_TEAM" >/dev/null; then
+            echo "ERROR: notarytool rejected the provided credentials. Fix before rerunning."
+            echo "Common causes: app-specific password expired/revoked, wrong team-id,"
+            echo "Apple ID not on the team, or 2FA not configured for this Apple ID."
+            exit 1
+          fi
+          echo "Apple notarization credentials OK."
+
+      - name: Validate provisioning profile expiry
+        run: |
+          PROFILE="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/EXO.provisionprofile"
+          if [[ ! -f "$PROFILE" ]]; then
+            echo "ERROR: provisioning profile not found at $PROFILE"
+            exit 1
+          fi
+          EXPIRY=$(security cms -D -i "$PROFILE" | plutil -extract ExpirationDate raw -o - - 2>/dev/null || true)
+          if [[ -z "$EXPIRY" ]]; then
+            echo "WARNING: could not read ExpirationDate from provisioning profile; skipping expiry check."
+            exit 0
+          fi
+          # Try a couple of known plutil date formats. If none parse, skip the check rather
+          # than risk a false-positive "expired" block on a format we didn't anticipate.
+          EXPIRY_EPOCH=""
+          for fmt in "%Y-%m-%dT%H:%M:%SZ" "%Y-%m-%d %H:%M:%S %z" "%Y-%m-%d %H:%M:%S +0000"; do
+            if parsed=$(date -j -f "$fmt" "$EXPIRY" +%s 2>/dev/null); then
+              EXPIRY_EPOCH="$parsed"
+              break
+            fi
+          done
+          if [[ -z "$EXPIRY_EPOCH" ]]; then
+            echo "WARNING: could not parse ExpirationDate '$EXPIRY'; skipping expiry check."
+            exit 0
+          fi
+          NOW_EPOCH=$(date +%s)
+          if [[ "$EXPIRY_EPOCH" -le "$NOW_EPOCH" ]]; then
+            echo "ERROR: provisioning profile expired on $EXPIRY. Regenerate it before rerunning."
+            exit 1
+          fi
+          DAYS_LEFT=$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ))
+          echo "Provisioning profile valid until $EXPIRY ($DAYS_LEFT days remaining)."
+          if [[ "$DAYS_LEFT" -lt 14 ]]; then
+            echo "WARNING: profile expires in under 14 days — regenerate soon."
+          fi
+
+      # ============================================================
       # Build the bundle
       # ============================================================
 
@@ -306,11 +380,41 @@ jobs:
           APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
           APPLE_NOTARIZATION_TEAM: ${{ secrets.APPLE_NOTARIZATION_TEAM }}
         run: |
+          set -o pipefail
           cd output
           security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$BUILD_KEYCHAIN_PATH"
           SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$BUILD_KEYCHAIN_PATH" | awk -F '"' '{print $2}')
+
+          # Fail fast if notarization creds are partial. All-or-nothing.
+          CRED_COUNT=0
+          for v in "$APPLE_NOTARIZATION_USERNAME" "$APPLE_NOTARIZATION_PASSWORD" "$APPLE_NOTARIZATION_TEAM"; do
+            [[ -n "$v" ]] && CRED_COUNT=$((CRED_COUNT + 1))
+          done
+          if [[ "$CRED_COUNT" -ne 0 && "$CRED_COUNT" -ne 3 ]]; then
+            echo "ERROR: partial Apple notarization credentials set ($CRED_COUNT/3). Aborting."
+            exit 1
+          fi
+
           /usr/bin/codesign --deep --force --timestamp --options runtime \
             --sign "$SIGNING_IDENTITY" EXO.app
+
+          # Pre-flight: verify the signed app BEFORE building DMG and submitting to Apple.
+          # If this fails, notarization will fail too — cheap way to fail in seconds, not 15 minutes.
+          echo "===== codesign --verify EXO.app ====="
+          if ! /usr/bin/codesign --verify --deep --strict --verbose=2 EXO.app; then
+            echo "ERROR: EXO.app failed codesign verification. Dumping signing status of every executable:"
+            find EXO.app -type f \( -perm -111 -o -name "*.dylib" -o -name "*.so" -o -name "*.framework" \) -print0 |
+              while IFS= read -r -d '' f; do
+                printf -- '--- %s\n' "$f"
+                /usr/bin/codesign -dv --verbose=2 "$f" 2>&1 | sed 's/^/    /' || true
+              done
+            exit 1
+          fi
+
+          # Gatekeeper assessment. A failure here strongly predicts notarization rejection.
+          echo "===== spctl assessment (predicts notarization outcome) ====="
+          /usr/bin/spctl -a -vvv -t install EXO.app || echo "WARNING: spctl assessment failed — notarization is likely to fail too."
+
           mkdir -p dmg-root
           cp -R EXO.app dmg-root/
           ln -s /Applications dmg-root/Applications
@@ -318,12 +422,22 @@ jobs:
           hdiutil create -volname "EXO" -srcfolder dmg-root -ov -format UDZO "$DMG_NAME"
           /usr/bin/codesign --force --timestamp --options runtime \
             --sign "$SIGNING_IDENTITY" "$DMG_NAME"
+
+          echo "===== codesign --verify DMG ====="
+          if ! /usr/bin/codesign --verify --verbose=2 "$DMG_NAME"; then
+            echo "ERROR: DMG failed codesign verification."
+            exit 1
+          fi
+
           if [[ -n "$APPLE_NOTARIZATION_USERNAME" ]]; then
+            echo "===== notarytool submit ====="
+            # `|| true` so set -e doesn't abort before we can echo output / fetch the log.
+            # We rely on the parsed STATUS below to decide pass/fail.
             SUBMISSION_OUTPUT=$(xcrun notarytool submit "$DMG_NAME" \
               --apple-id "$APPLE_NOTARIZATION_USERNAME" \
               --password "$APPLE_NOTARIZATION_PASSWORD" \
               --team-id "$APPLE_NOTARIZATION_TEAM" \
-              --wait --timeout 15m 2>&1)
+              --wait --timeout 15m 2>&1) || true
             echo "$SUBMISSION_OUTPUT"
 
             SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | awk 'tolower($1)=="id:" && $2 ~ /^[0-9a-fA-F-]+$/ {print $2; exit}')
