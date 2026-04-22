@@ -51,7 +51,7 @@ def tinygrad_from_mlx_legacy(x: Any, tg_dtype: Any) -> Tensor:
     tuple(storage["shape"]),
     dtype=tg_dtype,
     byte_offset=int(storage["offset_bytes"]),
-    buffer_nbytes=int(storage["nbytes"]),
+    buffer_nbytes=int(storage["buffer_nbytes"]),
     owner=x,
   )
 
@@ -63,14 +63,24 @@ def tinygrad_from_mlx_fast(x: Any, tg_dtype: Any) -> Tensor:
     tuple(storage["shape"]),
     dtype=tg_dtype,
     byte_offset=int(storage["offset_bytes"]),
-    buffer_nbytes=int(storage["nbytes"]),
+    buffer_nbytes=int(storage["buffer_nbytes"]),
     owner=x,
   )
 
 
-def mlx_from_tinygrad_direct(t: Tensor, mx_dtype: Any) -> Any:
+def mlx_from_tinygrad_maybe_copy(t: Tensor, mx_dtype: Any) -> Any:
   storage = t._unsafe_metal_storage()
   return mx.metal._unsafe_array_from_ptr(
+    int(storage["raw_ptr"]),
+    tuple(storage["shape"]),
+    mx_dtype,
+    owner=t,
+  )
+
+
+def mlx_from_tinygrad_alias_only(t: Tensor, mx_dtype: Any) -> Any:
+  storage = t._unsafe_metal_storage()
+  return mx.metal._unsafe_array_from_ptr_alias_only(
     int(storage["raw_ptr"]),
     tuple(storage["shape"]),
     mx_dtype,
@@ -109,7 +119,7 @@ def tinygrad_import_from_storage(storage: Any, tg_dtype: Any, owner: Any) -> Ten
     tuple(storage["shape"]),
     dtype=tg_dtype,
     byte_offset=int(storage["offset_bytes"]),
-    buffer_nbytes=int(storage["nbytes"]),
+    buffer_nbytes=int(storage["buffer_nbytes"]),
     owner=owner,
   )
 
@@ -120,7 +130,7 @@ def tinygrad_import_from_storage_fast(storage: Any, tg_dtype: Any, owner: Any) -
     tuple(storage["shape"]),
     dtype=tg_dtype,
     byte_offset=int(storage["offset_bytes"]),
-    buffer_nbytes=int(storage["nbytes"]),
+    buffer_nbytes=int(storage["buffer_nbytes"]),
     owner=owner,
   )
 
@@ -131,6 +141,15 @@ def tinygrad_export_storage(t: Tensor) -> Any:
 
 def mlx_import_from_storage(storage: Any, mx_dtype: Any, owner: Any) -> Any:
   return mx.metal._unsafe_array_from_ptr(
+    int(storage["raw_ptr"]),
+    tuple(storage["shape"]),
+    mx_dtype,
+    owner=owner,
+  )
+
+
+def mlx_import_from_storage_alias_only(storage: Any, mx_dtype: Any, owner: Any) -> Any:
+  return mx.metal._unsafe_array_from_ptr_alias_only(
     int(storage["raw_ptr"]),
     tuple(storage["shape"]),
     mx_dtype,
@@ -186,6 +205,7 @@ def main() -> None:
   required = [
     ("mx.metal._unsafe_export_storage", getattr(mx.metal, "_unsafe_export_storage", None)),
     ("mx.metal._unsafe_array_from_ptr", getattr(mx.metal, "_unsafe_array_from_ptr", None)),
+    ("mx.metal._unsafe_array_from_ptr_alias_only", getattr(mx.metal, "_unsafe_array_from_ptr_alias_only", None)),
     ("Tensor._unsafe_from_metal_buffer", getattr(Tensor, "_unsafe_from_metal_buffer", None)),
     ("Tensor._unsafe_from_metal_buffer_fast", getattr(Tensor, "_unsafe_from_metal_buffer_fast", None)),
     ("Tensor._unsafe_metal_storage", getattr(Tensor, "_unsafe_metal_storage", None)),
@@ -221,17 +241,24 @@ def main() -> None:
         ("unsafe_helper_legacy", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_legacy(s, tg_dtype)),
         ("memoryview_copy", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_copy(s, tg_dtype)),
         ("numpy_baseline", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_numpy(s)),
-        ("unsafe_helper_bridge", "tinygrad_to_mlx", lambda s=src_tg: mlx_from_tinygrad_direct(s, mx_dtype)),
+        ("unsafe_helper_bridge", "tinygrad_to_mlx", lambda s=src_tg: mlx_from_tinygrad_alias_only(s, mx_dtype)),
+        ("unsafe_helper_maybe_copy", "tinygrad_to_mlx", lambda s=src_tg: mlx_from_tinygrad_maybe_copy(s, mx_dtype)),
         ("memoryview_copy", "tinygrad_to_mlx", lambda s=src_tg: mlx_from_tinygrad_copy(s)),
         ("numpy_baseline", "tinygrad_to_mlx", lambda s=src_tg: mlx_from_tinygrad_numpy(s)),
         ("export_helper_only", "mlx_to_tinygrad", lambda s=src_mx: mlx_export_storage(s)),
         ("import_helper_fast_only", "mlx_to_tinygrad", lambda st=mx_storage, s=src_mx: tinygrad_import_from_storage_fast(st, tg_dtype, s)),
         ("import_helper_legacy_only", "mlx_to_tinygrad", lambda st=mx_storage, s=src_mx: tinygrad_import_from_storage(st, tg_dtype, s)),
         ("export_helper_only", "tinygrad_to_mlx", lambda s=src_tg: tinygrad_export_storage(s)),
-        ("import_helper_only", "tinygrad_to_mlx", lambda st=tg_storage, s=src_tg: mlx_import_from_storage(st, mx_dtype, s)),
+        ("import_helper_only", "tinygrad_to_mlx", lambda st=tg_storage, s=src_tg: mlx_import_from_storage_alias_only(st, mx_dtype, s)),
+        ("import_helper_maybe_copy_only", "tinygrad_to_mlx", lambda st=tg_storage, s=src_tg: mlx_import_from_storage(st, mx_dtype, s)),
       ]
 
       for method, direction, fn in benches:
+        try:
+          blackhole = fn()
+        except Exception as exc:
+          print(f"# skipping {size_bytes},{method},{direction}: {exc}", file=sys.stderr)
+          continue
         stats = bench_callable(fn, warmup=args.warmup, samples=args.samples, min_batch_us=args.min_batch_us)
         print(
           f"{size_bytes},{method},{direction},"
