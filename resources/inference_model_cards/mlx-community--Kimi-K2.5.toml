@@ -17,6 +17,7 @@ in_bytes = 662498705408
 [vision]
 image_token_id = 163605
 model_type = "kimi_vl"
+weights_repo = "davehind/Kimi-K2.5-vision"
 processor_repo = "moonshotai/Kimi-K2.5"
 
 # Source: https://deepwiki.com/MoonshotAI/Kimi-K2.5/3.7-recommended-parameters

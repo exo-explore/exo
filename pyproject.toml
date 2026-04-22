@@ -75,8 +75,7 @@ mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/fix-arra
 torch = [
   { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'cuda13' and extra != 'cpu' and extra != 'cuda12'" },
   { index = "pytorch-cu120", marker = "sys_platform == 'linux' and extra == 'cuda12' and extra != 'cpu' and extra != 'cuda13'" },
-  { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'cpu' and extra != 'cuda12' and extra != 'cuda13'" },
-  { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
+  { index = "pytorch-cpu", marker = "(extra != 'cuda12' and extra != 'cuda13' and sys_platform == 'linux') or sys_platform == 'darwin'" },
 ]
 vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
 
@@ -150,7 +149,7 @@ prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }, { extra = "cpu" }]]
 constraint-dependencies = ["transformers>=5.0.0,<5.4.0"]
-override-dependencies = ["mlx", "torch"]
+override-dependencies = ["mlx; sys_platform == 'darwin'"]
 
 [tool.uv.extra-build-dependencies]
 miniaudio = ["setuptools", "cffi", "pycparser"]
