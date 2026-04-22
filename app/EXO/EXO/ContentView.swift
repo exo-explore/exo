@@ -584,9 +584,18 @@ struct ContentView: View {
 
             case .prompting:
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("What's the issue? (optional)")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Tell us what went wrong (optional)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text(
+                            "A quick description of what you were doing and what happened helps us track down the bug for you."
+                        )
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                        .opacity(0.8)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
                     TextEditor(text: $bugReportUserDescription)
                         .font(.caption2)
                         .frame(height: 60)
