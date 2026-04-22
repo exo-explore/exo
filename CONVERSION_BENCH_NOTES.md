@@ -32,8 +32,13 @@ The first direct benchmark path is intentionally narrow.
   - import into MLX by wrapping the underlying unified-memory pointer with a
     no-copy MLX array constructor path
 
-This is asymmetric internally, but both directions aim to avoid copying tensor
-bytes.
+This is asymmetric internally:
+
+- `MLX -> tinygrad` aliases an existing `MTLBuffer*`
+- `tinygrad -> MLX` rebuilds an MLX array from a raw unified-memory pointer
+
+So the current bridge benchmark is not a symmetric measure of pure storage
+adoption cost.
 
 ## Implemented Helper Surface
 
@@ -45,6 +50,9 @@ bytes.
   - `Tensor._unsafe_from_metal_buffer(mtl_buffer_ptr, shape, dtype=..., byte_offset=0, owner=None)`
 
 These helpers are intentionally private and unsafe.
+
+They also currently pay Python marshalling overhead because the exporters return
+Python dicts and the benchmark unpacks them before calling the import helper.
 
 ## Temporary Eligibility Rules
 
@@ -59,6 +67,11 @@ The current direct path should only accept tensors that are:
 
 Non-contiguous views, broadcasts, dtype casts, and multi-device tensors should
 fall back to slower paths.
+
+For the current MLX exporter, the array must also already be in MLX's
+`available` state. The benchmark currently satisfies that with
+`mx.array(np_array)`, which is a workaround for the current helper rather than a
+claim that arbitrary lazy MLX outputs are already supported by the same path.
 
 ## Workflow
 
@@ -101,7 +114,13 @@ advance the pinned SHAs in `uv.lock` during testing. The working command was:
   - MLX exports `MTLBuffer*` for the `MLX -> tinygrad` direction.
   - tinygrad exports raw unified-memory pointer for the `tinygrad -> MLX`
     direction.
+- `mx.array(memoryview(...))` is not an aliasing import path in current MLX.
+  It goes through MLX's native CPU ndarray conversion path and copies the
+  bytes.
 - The first tinygrad import helper supports byte offsets.
+- The first tinygrad import helper now optionally accepts `buffer_nbytes` for
+  a bounds check. If that metadata is omitted, the helper still cannot prove
+  the requested view fits inside the borrowed buffer.
 - The first MLX import helper is raw-pointer based rather than foreign
   `MTLBuffer*` based.
 - `mx.metal._unsafe_export_storage(...)` currently expects an MLX array that is
@@ -119,12 +138,12 @@ The unsafe bridge was validated through the repo-standard remote flow on `e16`:
 
 The direct helpers worked in both directions:
 
-- `MLX -> tinygrad` direct alias path returned correct values.
-- `tinygrad -> MLX` direct alias path returned correct values.
+- `MLX -> tinygrad` unsafe helper bridge returned correct values.
+- `tinygrad -> MLX` unsafe helper bridge returned correct values.
 
 Canonical remote latency measurements for `float32` and `7168` bytes were:
 
-- `direct_alias`
+- `unsafe_helper_bridge`
   - `mlx_to_tinygrad`: `35.875 us` min, `36.553 us` median
   - `tinygrad_to_mlx`: `30.005 us` min, `30.197 us` median
 - `memoryview_copy`
@@ -136,22 +155,25 @@ Canonical remote latency measurements for `float32` and `7168` bytes were:
 
 Interpretation:
 
-- The current Python-exposed direct alias path is functional, but still far
+- The current Python-exposed unsafe helper path is functional, but still far
   above the target `1-10 us` range for a `7 kB` tensor.
 - `MLX -> tinygrad` is dominated by fixed overhead even when aliasing, because
-  the direct path is only marginally faster than the `memoryview_copy` path.
+  the current unsafe helper path is only marginally faster than the
+  `memoryview_copy` path.
 - `tinygrad -> MLX` currently has a very cheap copy path because `mx.array()`
-  over a zero-copy tinygrad `memoryview` is much cheaper than the private
-  raw-pointer helper that constructs a new MLX wrapper object.
+  over a tinygrad `memoryview` is implemented efficiently in MLX's native C++
+  import path, even though it still copies.
 - At this tensor size, Python call overhead and wrapper construction matter
   much more than raw byte movement.
+- These numbers do not establish that "aliasing costs ~30-36 us". They
+  establish that the current asymmetric Python helper stack costs that much.
 
 ## Near-Term Plan
 
 1. Reduce Python wrapper overhead around the direct path before changing the
    storage model again.
-2. Add narrower microbenchmarks that time only the helper calls, separate from
-   end-to-end tensor wrapper creation.
+2. Add narrower microbenchmarks that time export-only and import-only helper
+   costs, separate from end-to-end tensor wrapper creation.
 3. Decide whether the next iteration should make MLX import a foreign
    `MTLBuffer*` directly instead of constructing from a raw pointer.
 

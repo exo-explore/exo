@@ -29,6 +29,11 @@ The current benchmark script isolates the raw transformation only.
 - Inputs are assumed to already be allocated.
 - Inputs are assumed to already be materialized / realized.
 - Setup stays outside the timed loop.
+- The current unsafe helper bridge is asymmetric:
+  - `MLX -> tinygrad` adopts an existing `MTLBuffer*`
+  - `tinygrad -> MLX` rebuilds an MLX array from a raw pointer
+- `mx.array(memoryview(...))` is a native copy path in current MLX, not an
+  aliasing import path.
 
 Example:
 
@@ -44,7 +49,7 @@ uv run python mlx_tinygrad_interop/bench_raw_conversion.py --dtype float32 --siz
 
 Observed `7168`-byte results on that run:
 
-- `direct_alias`
+- `unsafe_helper_bridge`
   - `mlx_to_tinygrad`: `35.875 us` min, `36.553 us` median
   - `tinygrad_to_mlx`: `30.005 us` min, `30.197 us` median
 - `memoryview_copy`
@@ -60,3 +65,5 @@ Observed `7168`-byte results on that run:
 - Metal / unified-memory path only.
 - Dense contiguous tensors only.
 - Same-dtype conversions only.
+- Current exporter/importer microbenchmarks are intended to separate helper
+  overhead from end-to-end bridge cost.
