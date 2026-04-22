@@ -17,6 +17,7 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_id_keypair
+from exo.routing.state_manager import state_manager_from_routers
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
@@ -64,6 +65,7 @@ class Node:
             command_sender=router.sender(topics.COMMANDS),
             external_outbound=router.sender(topics.LOCAL_EVENTS),
             external_inbound=router.receiver(topics.GLOBAL_EVENTS),
+            state_receiver=router.receiver(topics.STATE_SNAPSHOTS),
         )
 
         logger.info(f"Starting node {node_id}")
@@ -88,6 +90,7 @@ class Node:
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 election_receiver=router.receiver(topics.ELECTION_MESSAGES),
+                state_manager=state_manager_from_routers(router, event_router),
             )
         else:
             api = None
@@ -100,6 +103,7 @@ class Node:
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 api_port=args.api_port,
+                state_manager=state_manager_from_routers(router, event_router),
             )
         else:
             worker = None
@@ -113,6 +117,7 @@ class Node:
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
             download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
+            state_manager=state_manager_from_routers(router, event_router),
         )
 
         er_send, er_recv = channel[ElectionResult]()
@@ -191,6 +196,7 @@ class Node:
                         self.router.sender(topics.COMMANDS),
                         self.router.receiver(topics.GLOBAL_EVENTS),
                         self.router.sender(topics.LOCAL_EVENTS),
+                        self.router.receiver(topics.STATE_SNAPSHOTS),
                     )
 
                 if (
@@ -212,6 +218,9 @@ class Node:
                         command_receiver=self.router.receiver(topics.COMMANDS),
                         download_command_sender=self.router.sender(
                             topics.DOWNLOAD_COMMANDS
+                        ),
+                        state_manager=state_manager_from_routers(
+                            self.router, self.event_router
                         ),
                     )
                     self._tg.start_soon(self.master.run)
@@ -253,10 +262,19 @@ class Node:
                                 topics.DOWNLOAD_COMMANDS
                             ),
                             api_port=self._api_port,
+                            state_manager=state_manager_from_routers(
+                                self.router, self.event_router
+                            ),
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:
-                        self.api.reset(result.won_clock, self.event_router.receiver())
+                        self.api.reset(
+                            result.won_clock,
+                            self.event_router.receiver(),
+                            state_manager=state_manager_from_routers(
+                                self.router, self.event_router
+                            ),
+                        )
                     self._tg.start_soon(self.event_router.run)
                 else:
                     if self.api:

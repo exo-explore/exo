@@ -10,7 +10,7 @@ from exo.master.placement import (
     get_transition_events,
     place_instance,
 )
-from exo.shared.apply import apply
+from exo.routing.state_manager import StateManager
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
     AddCustomModelCard,
@@ -80,10 +80,11 @@ class Master:
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
         download_command_sender: Sender[ForwarderDownloadCommand],
+        state_manager: StateManager[State],
     ):
         self.node_id = node_id
         self.session_id = session_id
-        self.state = State()
+        self.state_manager = state_manager
         self._tg: TaskGroup = TaskGroup()
         self.command_task_mapping: dict[CommandId, TaskId] = {}
         self.command_receiver = command_receiver
@@ -118,6 +119,7 @@ class Master:
     async def _command_processor(self) -> None:
         with self.command_receiver as commands:
             async for forwarder_command in commands:
+                state = self.state_manager.get()
                 try:
                     logger.info(f"Executing command: {forwarder_command.command}")
 
@@ -128,14 +130,14 @@ class Master:
                         case TestCommand():
                             pass
                         case TextGeneration():
-                            for instance in self.state.instances.values():
+                            for instance in state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
-                                        for task in self.state.tasks.values()
+                                        for task in state.tasks.values()
                                         if task.instance_id == instance.instance_id
                                     )
                                     instance_task_counts[instance.instance_id] = (
@@ -170,14 +172,14 @@ class Master:
 
                             self.command_task_mapping[command.command_id] = task_id
                         case ImageGeneration():
-                            for instance in self.state.instances.values():
+                            for instance in state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
-                                        for task in self.state.tasks.values()
+                                        for task in state.tasks.values()
                                         if task.instance_id == instance.instance_id
                                     )
                                     instance_task_counts[instance.instance_id] = (
@@ -214,7 +216,7 @@ class Master:
                             self.command_task_mapping[command.command_id] = task_id
 
                             if EXO_TRACING_ENABLED:
-                                selected_instance = self.state.instances.get(
+                                selected_instance = state.instances.get(
                                     selected_instance_id
                                 )
                                 if selected_instance:
@@ -224,14 +226,14 @@ class Master:
                                     )
                                     self._expected_ranks[task_id] = ranks
                         case ImageEdits():
-                            for instance in self.state.instances.values():
+                            for instance in state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                 ):
                                     task_count = sum(
                                         1
-                                        for task in self.state.tasks.values()
+                                        for task in state.tasks.values()
                                         if task.instance_id == instance.instance_id
                                     )
                                     instance_task_counts[instance.instance_id] = (
@@ -268,7 +270,7 @@ class Master:
                             self.command_task_mapping[command.command_id] = task_id
 
                             if EXO_TRACING_ENABLED:
-                                selected_instance = self.state.instances.get(
+                                selected_instance = state.instances.get(
                                     selected_instance_id
                                 )
                                 if selected_instance:
@@ -278,12 +280,12 @@ class Master:
                                     )
                                     self._expected_ranks[task_id] = ranks
                         case DeleteInstance():
-                            placement = delete_instance(command, self.state.instances)
+                            placement = delete_instance(command, state.instances)
                             transition_events = get_transition_events(
-                                self.state.instances, placement, self.state.tasks
+                                state.instances, placement, state.tasks
                             )
                             for cmd in cancel_unnecessary_downloads(
-                                placement, self.state.downloads
+                                placement, state.downloads
                             ):
                                 await self.download_command_sender.send(
                                     ForwarderDownloadCommand(
@@ -294,24 +296,24 @@ class Master:
                         case PlaceInstance():
                             placement = place_instance(
                                 command,
-                                self.state.topology,
-                                self.state.instances,
-                                self.state.node_memory,
-                                self.state.node_network,
-                                download_status=self.state.downloads,
+                                state.topology,
+                                state.instances,
+                                state.node_memory,
+                                state.node_network,
+                                download_status=state.downloads,
                             )
                             transition_events = get_transition_events(
-                                self.state.instances, placement, self.state.tasks
+                                state.instances, placement, state.tasks
                             )
                             generated_events.extend(transition_events)
                         case CreateInstance():
                             placement = add_instance_to_placements(
                                 command,
-                                self.state.topology,
-                                self.state.instances,
+                                state.topology,
+                                state.instances,
                             )
                             transition_events = get_transition_events(
-                                self.state.instances, placement, self.state.tasks
+                                state.instances, placement, state.tasks
                             )
                             generated_events.extend(transition_events)
                         case SendInputChunk(chunk=chunk):
@@ -374,9 +376,10 @@ class Master:
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
         while True:
+            state = self.state_manager.get()
             # kill broken instances
-            connected_node_ids = set(self.state.topology.list_nodes())
-            for instance_id, instance in self.state.instances.items():
+            connected_node_ids = set(state.topology.list_nodes())
+            for instance_id, instance in state.instances.items():
                 for node_id in instance.shard_assignments.node_to_runner:
                     if node_id not in connected_node_ids:
                         await self.event_sender.send(
@@ -385,7 +388,7 @@ class Master:
                         break
 
             # time out dead nodes
-            for node_id, time in self.state.last_seen.items():
+            for node_id, time in state.last_seen.items():
                 now = datetime.now(tz=timezone.utc)
                 if now - time > timedelta(seconds=30):
                     logger.info(f"Manually removing node {node_id} due to inactivity")
@@ -411,7 +414,6 @@ class Master:
 
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
-                    self.state = apply(self.state, indexed)
 
                     event = event.model_copy(
                         update={"_master_time_stamp": datetime.now(tz=timezone.utc)}

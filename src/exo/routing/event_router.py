@@ -15,6 +15,7 @@ from exo.shared.types.events import (
     IndexedEvent,
     LocalForwarderEvent,
 )
+from exo.shared.types.state import ForwarderState
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
 from exo.utils.task_group import TaskGroup
@@ -26,6 +27,7 @@ class EventRouter:
     command_sender: Sender[ForwarderCommand]
     external_inbound: Receiver[GlobalForwarderEvent]
     external_outbound: Sender[LocalForwarderEvent]
+    state_receiver: Receiver[ForwarderState]
     _system_id: SystemId = field(init=False, default_factory=SystemId)
     internal_outbound: list[Sender[IndexedEvent]] = field(
         init=False, default_factory=list

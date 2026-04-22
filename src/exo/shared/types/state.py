@@ -1,12 +1,11 @@
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Any, cast
 
-from pydantic import ConfigDict, Field, field_serializer, field_validator
-from pydantic.alias_generators import to_camel
+from pydantic import Field, field_serializer, field_validator
 
 from exo.shared.topology import Topology, TopologySnapshot
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import NodeId, SessionId
 from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
@@ -24,7 +23,12 @@ from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.pydantic_ext import FrozenModel
 
 
-class State(FrozenModel):
+class BaseState(ABC):
+    @abstractmethod
+    def last_event_idx(self) -> int: ...
+
+
+class State(BaseState, FrozenModel, arbitrary_types_allowed=True):
     """Global system state.
 
     The :class:`Topology` instance is encoded/decoded via an immutable
@@ -32,14 +36,6 @@ class State(FrozenModel):
     standard JSON serialisation.
     """
 
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        validate_by_name=True,
-        extra="forbid",
-        # I want to reenable this ASAP, but it's causing an issue with TaskStatus
-        strict=True,
-        arbitrary_types_allowed=True,
-    )
     instances: Mapping[InstanceId, Instance] = {}
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
@@ -61,6 +57,9 @@ class State(FrozenModel):
     # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
     thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []
 
+    def last_event_idx(self) -> int:
+        return self.last_event_applied_idx
+
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:
         return value.to_snapshot()
@@ -78,7 +77,12 @@ class State(FrozenModel):
             return value
 
         if isinstance(value, Mapping):  # likely a snapshot-dict coming from JSON
-            snapshot = TopologySnapshot(**cast(dict[str, Any], value))  # type: ignore[arg-type]
+            snapshot = TopologySnapshot.model_validate(value)
             return Topology.from_snapshot(snapshot)
 
         raise TypeError("Invalid representation for Topology field in State")
+
+
+class ForwarderState(FrozenModel):
+    state: State
+    session_id: SessionId

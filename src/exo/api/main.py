@@ -119,7 +119,7 @@ from exo.api.types.openai_responses import (
 )
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
-from exo.shared.apply import apply
+from exo.routing.state_manager import StateManager
 from exo.shared.constants import (
     DASHBOARD_DIR,
     EXO_CACHE_HOME,
@@ -223,8 +223,9 @@ class API:
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
+        state_manager: StateManager[State],
     ) -> None:
-        self.state = State()
+        self.state_manager = state_manager
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self._system_id = SystemId()
         self.command_sender = command_sender
@@ -271,11 +272,16 @@ class API:
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
 
-    def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):
+    def reset(
+        self,
+        result_clock: int,
+        event_receiver: Receiver[IndexedEvent],
+        state_manager: StateManager[State],
+    ):
         logger.info("Resetting API State")
         self._event_log.close()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
-        self.state = State()
+        self.state_manager = state_manager
         self._system_id = SystemId()
         self._text_generation_queues = {}
         self._image_generation_queues = {}
@@ -372,11 +378,12 @@ class API:
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
 
-    def get_state(self, path: str = ""):
+    def get_state(self, path: str = "") -> Any:  # pyright: ignore[reportAny]
+        state = self.state_manager.get()
         if path == "":
-            return self.state
+            return state
         try:
-            x = self.state.model_dump(by_alias=True)
+            x = state.model_dump(by_alias=True)
             for attr in path.split("/"):
                 if attr != "":
                     if isinstance(x, dict):
@@ -438,6 +445,7 @@ class API:
         min_nodes: int = 1,
     ) -> Instance:
         model_card = await ModelCard.load(model_id)
+        state = self.state_manager.get()
 
         try:
             placements = get_instance_placements(
@@ -447,16 +455,16 @@ class API:
                     instance_meta=instance_meta,
                     min_nodes=min_nodes,
                 ),
-                node_memory=self.state.node_memory,
-                node_network=self.state.node_network,
-                topology=self.state.topology,
-                current_instances=self.state.instances,
-                download_status=self.state.downloads,
+                node_memory=state.node_memory,
+                node_network=state.node_network,
+                topology=state.topology,
+                current_instances=state.instances,
+                download_status=state.downloads,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        current_ids = set(self.state.instances.keys())
+        current_ids = set(state.instances.keys())
         new_ids = [
             instance_id for instance_id in placements if instance_id not in current_ids
         ]
@@ -476,8 +484,9 @@ class API:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
         required_nodes = set(node_ids) if node_ids else None
+        state = self.state_manager.get()
 
-        if len(list(self.state.topology.list_nodes())) == 0:
+        if len(list(state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
         try:
@@ -492,9 +501,7 @@ class API:
                 instance_combinations.extend(
                     [
                         (sharding, instance_meta, i)
-                        for i in range(
-                            1, len(list(self.state.topology.list_nodes())) + 1
-                        )
+                        for i in range(1, len(list(state.topology.list_nodes())) + 1)
                     ]
                 )
         # TODO: PDD
@@ -509,12 +516,12 @@ class API:
                         instance_meta=instance_meta,
                         min_nodes=min_nodes,
                     ),
-                    node_memory=self.state.node_memory,
-                    node_network=self.state.node_network,
-                    topology=self.state.topology,
-                    current_instances=self.state.instances,
+                    node_memory=state.node_memory,
+                    node_network=state.node_network,
+                    topology=state.topology,
+                    current_instances=state.instances,
                     required_nodes=required_nodes,
-                    download_status=self.state.downloads,
+                    download_status=state.downloads,
                 )
             except ValueError as exc:
                 if (model_card.model_id, sharding, instance_meta, 0) not in seen:
@@ -530,7 +537,7 @@ class API:
                 seen.add((model_card.model_id, sharding, instance_meta, 0))
                 continue
 
-            current_ids = set(self.state.instances.keys())
+            current_ids = set(state.instances.keys())
             new_instances = [
                 instance
                 for instance_id, instance in placements.items()
@@ -592,12 +599,14 @@ class API:
         return PlacementPreviewResponse(previews=previews)
 
     def get_instance(self, instance_id: InstanceId) -> Instance:
-        if instance_id not in self.state.instances:
+        state = self.state_manager.get()
+        if instance_id not in state.instances:
             raise HTTPException(status_code=404, detail="Instance not found")
-        return self.state.instances[instance_id]
+        return state.instances[instance_id]
 
     async def delete_instance(self, instance_id: InstanceId) -> DeleteInstanceResponse:
-        if instance_id not in self.state.instances:
+        state = self.state_manager.get()
+        if instance_id not in state.instances:
             raise HTTPException(status_code=404, detail="Instance not found")
 
         command = DeleteInstance(
@@ -666,7 +675,9 @@ class API:
     async def _collect_text_generation_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
-        sampler = PowerSampler(get_node_system=lambda: self.state.node_system)
+        sampler = PowerSampler(
+            get_node_system=lambda: self.state_manager.get().node_system
+        )
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         model: ModelId | None = None
@@ -864,9 +875,10 @@ class API:
 
         Raises HTTPException 404 if no instance is found for the model.
         """
+        state = self.state_manager.get()
         if not any(
             instance.shard_assignments.model_id == model_id
-            for instance in self.state.instances.values()
+            for instance in state.instances.values()
         ):
             await self._trigger_notify_user_to_download_model(model_id)
             raise HTTPException(
@@ -882,9 +894,10 @@ class API:
         """
         model_card = await ModelCard.load(model)
         resolved_model = model_card.model_id
+        state = self.state_manager.get()
         if not any(
             instance.shard_assignments.model_id == resolved_model
-            for instance in self.state.instances.values()
+            for instance in state.instances.values()
         ):
             await self._trigger_notify_user_to_download_model(resolved_model)
             raise HTTPException(
@@ -1194,7 +1207,9 @@ class API:
         num_images: int,
         response_format: str,
     ) -> BenchImageGenerationResponse:
-        sampler = PowerSampler(get_node_system=lambda: self.state.node_system)
+        sampler = PowerSampler(
+            get_node_system=lambda: self.state_manager.get().node_system
+        )
         images: list[ImageData] = []
         stats: ImageGenerationStats | None = None
         async with anyio.create_task_group() as tg:
@@ -1564,8 +1579,9 @@ class API:
         def none_if_empty(value: str) -> str | None:
             return value or None
 
+        state = self.state_manager.get()
         downloaded_model_ids: set[str] = set()
-        for node_downloads in self.state.downloads.values():
+        for node_downloads in state.downloads.values():
             for dl in node_downloads:
                 if isinstance(dl, DownloadCompleted):
                     downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
@@ -1619,7 +1635,8 @@ class API:
         """Returns list of running models (active instances)."""
         models: list[OllamaPsModel] = []
         seen: set[str] = set()
-        for instance in self.state.instances.values():
+        state = self.state_manager.get()
+        for instance in state.instances.values():
             model_id = str(instance.shard_assignments.model_id)
             if model_id in seen:
                 continue
@@ -1641,7 +1658,8 @@ class API:
         """Calculate total available memory across all nodes in bytes."""
         total_available = Memory()
 
-        for memory in self.state.node_memory.values():
+        state = self.state_manager.get()
+        for memory in state.node_memory.values():
             total_available += memory.ram_available
 
         return total_available
@@ -1649,10 +1667,11 @@ class API:
     async def get_models(self, status: str | None = Query(default=None)) -> ModelList:
         """Returns list of available models, optionally filtered by being downloaded."""
         cards = await get_model_cards()
+        state = self.state_manager.get()
 
         if status == "downloaded":
             downloaded_model_ids: set[str] = set()
-            for node_downloads in self.state.downloads.values():
+            for node_downloads in state.downloads.values():
                 for dl in node_downloads:
                     if isinstance(dl, DownloadCompleted):
                         downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
@@ -1808,7 +1827,6 @@ class API:
         with self.event_receiver as events:
             async for i_event in events:
                 self._event_log.append(i_event.event)
-                self.state = apply(self.state, i_event)
                 event = i_event.event
 
                 if isinstance(event, ChunkGenerated):
@@ -1835,7 +1853,8 @@ class API:
 
     def _close_streams_for_instance(self, instance_id: InstanceId) -> None:
         """Close any active generation streams for commands running on the given instance."""
-        for task in self.state.tasks.values():
+        state = self.state_manager.get()
+        for task in state.tasks.values():
             if task.instance_id != instance_id:
                 continue
             if not isinstance(
