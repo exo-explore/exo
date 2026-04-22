@@ -196,6 +196,8 @@ class MTPBatchGenerator(BatchGenerator):
                 else:
                     break
 
+        print(f"[MTP] n_accepted={n_accepted}/{gamma}", flush=True)
+
         # 5. Rollback cache
         rollback = gamma - n_accepted
         if rollback > 0:
