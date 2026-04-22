@@ -1,11 +1,11 @@
 #[cfg(not(unix))]
 compile_error!("babblerd is unix-only");
 
-extern crate core;
-
 pub mod babel;
 pub mod config;
+pub mod daemon;
 pub mod identity;
+pub mod routing_stack;
 pub mod tun;
 
 pub use babel::{babel, handle_listener};
