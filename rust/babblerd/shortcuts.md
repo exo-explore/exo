@@ -22,23 +22,29 @@ of shortcuts that should be revisited later.
   per-client leases.
   Files:
   - `src/daemon.rs`
+  - `src/main.rs`
   Why this is a shortcut:
   - It does not model multiple clients independently.
   - It cannot distinguish which client is keeping the service alive.
+  - The current tree also includes a temporary internal self-client in
+    `main.rs` that periodically issues keepalive commands just to keep the
+    daemon/routing stack alive during bring-up.
   Follow-up:
   - Introduce real lease ownership/tracking in the daemon core.
+  - Remove the temporary internal keepalive client once a real frontend or test
+    harness is driving the daemon.
 
-- The same public socket currently multiplexes:
-  - control requests,
-  - command responses,
-  - and a live stream of raw Babel lines.
+- Raw Babel debug output currently only goes to tracing logs.
   Files:
+  - `src/babel/runtime.rs`
   - `src/daemon.rs`
   Why this is a shortcut:
-  - It makes the protocol awkward to consume and is only tolerable as a
-    temporary compatibility/debug surface.
+  - There is no configurable or structured diagnostics stream anymore.
+  - That is fine for now, but eventually debugging should not require tailing
+    daemon logs.
   Follow-up:
-  - Separate IPC/state API from debug/event streaming, or make both structured.
+  - Add configurable debug output or a separate structured diagnostics stream
+    once the real IPC surface exists.
 
 - The daemon core exposes state only through `get-state` polling and inline
   command responses.

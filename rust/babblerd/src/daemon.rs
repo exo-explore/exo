@@ -302,11 +302,7 @@ async fn lease_timer(deadline: Option<Instant>) {
     }
 }
 
-pub async fn handle_client(
-    sock: UnixStream,
-    daemon: DaemonHandle,
-    mut lines: broadcast::Receiver<String>,
-) {
+pub async fn handle_client(sock: UnixStream, daemon: DaemonHandle) {
     tracing::info!("new socket conn");
     let (reader, mut write) = sock.into_split();
     let mut reader = BufReader::new(reader).lines();
@@ -318,41 +314,22 @@ pub async fn handle_client(
     }
 
     loop {
-        tokio::select! {
-            read = reader.next_line() => {
-                let Ok(Some(line)) = read else { break; };
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
+        let Ok(Some(line)) = reader.next_line().await else {
+            break;
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
 
-                let response = match handle_command_line(trimmed, &daemon).await {
-                    Ok(response) => response,
-                    Err(err) => format!("error {err}"),
-                };
+        let response = match handle_command_line(trimmed, &daemon).await {
+            Ok(response) => response,
+            Err(err) => format!("error {err}"),
+        };
 
-                if let Err(err) = write.write_all(format!("{response}\n").as_bytes()).await {
-                    tracing::warn!(error=%err, "failed to write command response");
-                    break;
-                }
-            }
-            recv = lines.recv() => {
-                let res = match recv {
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        tracing::warn!("receiver lagged");
-                        continue;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        tracing::debug!("receiver closed, dropping connection");
-                        break;
-                    }
-                    Ok(line) => write.write_all(format!("{line}\n").as_bytes()).await,
-                };
-                if let Err(err) = res {
-                    tracing::warn!(error=%err, "failed to write babel line to client");
-                    break;
-                }
-            }
+        if let Err(err) = write.write_all(format!("{response}\n").as_bytes()).await {
+            tracing::warn!(error=%err, "failed to write command response");
+            break;
         }
     }
 

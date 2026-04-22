@@ -9,11 +9,17 @@ use std::{fs::Permissions, io, os::unix::fs::PermissionsExt, sync::Arc};
 use babblerd::{babel::BabelState, config::Config, daemon, identity, tun::UtunDevice};
 use color_eyre::eyre::{self, WrapErr, eyre};
 use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixListener,
+    net::UnixStream,
     signal,
     sync::{broadcast, watch},
     task::JoinSet,
+    time::{Duration, sleep},
 };
+
+const INTERNAL_KEEPALIVE_TTL_MS: u64 = 30_000;
+const INTERNAL_KEEPALIVE_INTERVAL_MS: u64 = 10_000;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -81,12 +87,18 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
         line_send.clone(),
         babel_state_send,
     );
+    // TEMP: keep the daemon alive without an external client until the real
+    // frontend/test harness exists. This should be removed later.
+    let mut internal_keepalive =
+        tokio::spawn(internal_keepalive_client(config.public_socket_path.clone()));
     let mut listeners = JoinSet::new();
 
     loop {
         tokio::select! {
             sig = signal::ctrl_c() => {
                 sig?;
+                internal_keepalive.abort();
+                let _ = (&mut internal_keepalive).await;
                 listeners.abort_all();
                 while let Some(res) = listeners.join_next().await {
                     res.wrap_err("while ctrl-c")?;
@@ -97,15 +109,20 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
             }
             sock = public_socket.accept() => {
                 let sock = sock?.0;
-                listeners.spawn(daemon::handle_client(sock, daemon.clone(), line_send.subscribe()));
+                listeners.spawn(daemon::handle_client(sock, daemon.clone()));
             }
             res = &mut core_task => {
                 res??;
+                internal_keepalive.abort();
+                let _ = (&mut internal_keepalive).await;
                 listeners.abort_all();
                 while let Some(res2) = listeners.join_next().await {
                     res2.wrap_err("while closing daemon core")?;
                 }
                 break;
+            }
+            res = &mut internal_keepalive => {
+                return Err(eyre!("internal keepalive client exited unexpectedly: {res:?}"));
             }
             next_join_result = listeners.join_next(), if !listeners.is_empty() => {
                 next_join_result.expect("checked")?;
@@ -115,4 +132,64 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+async fn internal_keepalive_client(socket_path: std::path::PathBuf) {
+    loop {
+        match UnixStream::connect(&socket_path).await {
+            Ok(stream) => {
+                tracing::info!(
+                    socket=%socket_path.display(),
+                    "internal keepalive client connected"
+                );
+                let (reader, mut writer) = stream.into_split();
+                let mut reader = BufReader::new(reader).lines();
+
+                match reader.next_line().await {
+                    Ok(Some(line)) => {
+                        tracing::debug!(?line, "internal keepalive initial state");
+                    }
+                    Ok(None) => {
+                        tracing::warn!("internal keepalive connection closed before initial state");
+                        sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                    Err(err) => {
+                        tracing::warn!(error=%err, "internal keepalive failed to read initial state");
+                        sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                }
+
+                loop {
+                    let command = format!("keepalive {INTERNAL_KEEPALIVE_TTL_MS}\n");
+                    if let Err(err) = writer.write_all(command.as_bytes()).await {
+                        tracing::warn!(error=%err, "internal keepalive failed to send keepalive");
+                        break;
+                    }
+
+                    match reader.next_line().await {
+                        Ok(Some(line)) => {
+                            tracing::debug!(?line, "internal keepalive response");
+                        }
+                        Ok(None) => {
+                            tracing::warn!("internal keepalive connection closed");
+                            break;
+                        }
+                        Err(err) => {
+                            tracing::warn!(error=%err, "internal keepalive failed to read response");
+                            break;
+                        }
+                    }
+
+                    sleep(Duration::from_millis(INTERNAL_KEEPALIVE_INTERVAL_MS)).await;
+                }
+            }
+            Err(err) => {
+                tracing::warn!(error=%err, socket=%socket_path.display(), "internal keepalive failed to connect");
+            }
+        }
+
+        sleep(Duration::from_secs(1)).await;
+    }
 }
