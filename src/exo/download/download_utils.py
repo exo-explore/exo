@@ -281,9 +281,7 @@ def _scan_model_directory(
     return list(entries_by_path.values())
 
 
-def is_model_directory_complete(
-    model_dir: Path, card: ModelCard | None = None
-) -> bool:
+def is_model_directory_complete(model_dir: Path, card: ModelCard | None = None) -> bool:
     """Check if a model directory contains all required weight files.
     Also checks for sibling weights repo.
     """
