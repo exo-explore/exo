@@ -195,16 +195,20 @@ class ExoBatchGenerator:
     def _extract_mtp_from_hf(self, repo_id: str) -> str:
         """Download MTP tensors from HF repo and cache as a single safetensors file.
 
-        Optimization: read model.safetensors.index.json first to find which
-        shard files contain MTP tensors, then download only those shards via
-        snapshot_download(allow_patterns=...). For Qwen/Qwen3.5-27B the MTP
-        head lives in 4 of 11 shards (~20 GB instead of ~55 GB). Falls back
-        to pulling all safetensors if no index is present (single-shard repo)
-        or if reading the index fails.
+        Three-tier strategy, smallest download first:
+          1. Index-aware byte-range fetch: read the safetensors index, find
+             MTP-bearing shards, then for each shard read only its header
+             (small JSON describing tensor byte offsets) and range-fetch
+             just the bytes belonging to MTP tensors. For Qwen/Qwen3.5-27B
+             this is ~500 MB instead of 55 GB.
+          2. Shard download (fallback if byte-range fails): pull only
+             MTP-bearing shards (~20 GB).
+          3. Full download (fallback if no index): pull every safetensors
+             file (~55 GB).
 
         Both 'model.mtp.' and 'mtp.' tensor-key prefixes are accepted —
-        Qwen/Qwen3.5-27B's repo uses the bare 'mtp.' prefix; some MoE
-        variants may use 'model.mtp.'.
+        Qwen/Qwen3.5-27B's repo uses the bare 'mtp.' prefix; some variants
+        may use 'model.mtp.'.
         """
         import hashlib
         import json as _json
@@ -224,8 +228,17 @@ class ExoBatchGenerator:
         def _is_mtp_key(k: str) -> bool:
             return k.startswith("model.mtp.") or k.startswith("mtp.")
 
-        # Try sharded-index path first — lets us pull only the MTP-bearing shards.
-        allow_patterns = ["*.safetensors", "*.json"]
+        def _strip_mtp_prefix(k: str) -> str:
+            if k.startswith("model.mtp."):
+                return k[len("model.mtp."):]
+            return k[len("mtp."):]
+
+        def _save_and_return(mtp_tensors: dict) -> str:
+            save_file(mtp_tensors, str(cached_path))
+            logger.info(f"Cached {len(mtp_tensors)} MTP tensors to {cached_path}")
+            return str(cached_path)
+
+        # ── Tier 1: read index, identify MTP shards
         try:
             index_path = hf_hub_download(repo_id, "model.safetensors.index.json")
             with open(index_path) as f:
@@ -244,36 +257,98 @@ class ExoBatchGenerator:
                 f"MTP head spans {len(mtp_shards)}/{total_shards} shard(s) of "
                 f"{repo_id}: {mtp_shards}"
             )
-            allow_patterns = list(mtp_shards) + ["*.json"]
         except Exception as e:
             logger.warning(
-                f"Couldn't use sharded index from {repo_id} ({e}); "
-                f"downloading all safetensors as fallback"
+                f"Couldn't read sharded index from {repo_id} ({e}); "
+                f"falling back to full safetensors download"
+            )
+            model_dir = snapshot_download(
+                repo_id, allow_patterns=["*.safetensors", "*.json"]
+            )
+            mtp_tensors = {}
+            for sf_file in sorted(Path(model_dir).glob("*.safetensors")):
+                tensors = load_file(str(sf_file))
+                for k, v in tensors.items():
+                    if _is_mtp_key(k):
+                        mtp_tensors[_strip_mtp_prefix(k)] = v
+            if not mtp_tensors:
+                raise ValueError(f"No MTP tensors found in {repo_id}")
+            return _save_and_return(mtp_tensors)
+
+        # ── Tier 1 continued: byte-range fetch only the MTP tensors
+        try:
+            from huggingface_hub import HfFileSystem
+            import torch
+
+            ST_DTYPE_TO_TORCH = {
+                "BF16": torch.bfloat16,
+                "F16": torch.float16,
+                "F32": torch.float32,
+                "F64": torch.float64,
+                "I8": torch.int8,
+                "I16": torch.int16,
+                "I32": torch.int32,
+                "I64": torch.int64,
+                "U8": torch.uint8,
+                "BOOL": torch.bool,
+            }
+            fs = HfFileSystem()
+            mtp_tensors = {}
+            total_bytes = 0
+            for shard in mtp_shards:
+                with fs.open(f"{repo_id}/{shard}", mode="rb") as f:
+                    header_size = int.from_bytes(f.read(8), "little")
+                    header = _json.loads(f.read(header_size).decode("utf-8"))
+                    data_start = 8 + header_size
+                    in_shard = [
+                        (name, meta)
+                        for name, meta in header.items()
+                        if name != "__metadata__" and _is_mtp_key(name)
+                    ]
+                    logger.info(
+                        f"  {shard}: extracting {len(in_shard)} MTP tensor(s)"
+                    )
+                    for name, meta in in_shard:
+                        start, end = meta["data_offsets"]
+                        f.seek(data_start + start)
+                        raw = f.read(end - start)
+                        dtype = ST_DTYPE_TO_TORCH.get(meta["dtype"])
+                        if dtype is None:
+                            raise ValueError(
+                                f"Unsupported safetensors dtype {meta['dtype']} "
+                                f"for {name}"
+                            )
+                        t = torch.frombuffer(
+                            bytearray(raw), dtype=dtype
+                        ).reshape(meta["shape"])
+                        mtp_tensors[_strip_mtp_prefix(name)] = t
+                        total_bytes += len(raw)
+            if not mtp_tensors:
+                raise ValueError("Byte-range read returned no MTP tensors")
+            logger.info(
+                f"Byte-range fetched {len(mtp_tensors)} MTP tensors "
+                f"({total_bytes / 1e6:.1f} MB) from {len(mtp_shards)} shards"
+            )
+            return _save_and_return(mtp_tensors)
+        except Exception as e:
+            logger.warning(
+                f"Byte-range fetch failed ({e}); "
+                f"falling back to MTP-shard snapshot download"
             )
 
-        logger.info(f"Downloading from {repo_id} with patterns: {allow_patterns}")
-        model_dir = snapshot_download(repo_id, allow_patterns=allow_patterns)
-
+        # ── Tier 2: download just the MTP-bearing shards
+        model_dir = snapshot_download(
+            repo_id, allow_patterns=list(mtp_shards) + ["*.json"]
+        )
         mtp_tensors = {}
-        from pathlib import Path as P
-        model_path = P(model_dir)
-        for sf_file in sorted(model_path.glob("*.safetensors")):
+        for sf_file in sorted(Path(model_dir).glob("*.safetensors")):
             tensors = load_file(str(sf_file))
             for k, v in tensors.items():
-                if k.startswith("model.mtp."):
-                    mtp_tensors[k[len("model.mtp."):]] = v
-                elif k.startswith("mtp."):
-                    mtp_tensors[k[len("mtp."):]] = v
-
+                if _is_mtp_key(k):
+                    mtp_tensors[_strip_mtp_prefix(k)] = v
         if not mtp_tensors:
-            raise ValueError(
-                f"No MTP tensors found in {repo_id} "
-                f"(looked for 'model.mtp.' or 'mtp.' prefix)"
-            )
-
-        save_file(mtp_tensors, str(cached_path))
-        logger.info(f"Cached {len(mtp_tensors)} MTP tensors to {cached_path}")
-        return str(cached_path)
+            raise ValueError(f"No MTP tensors found in {repo_id} (shard fallback)")
+        return _save_and_return(mtp_tensors)
 
     def warmup_speculative(self, model, tokenizer) -> None:
         """Warm up the speculative decoding path (MTP draft + verify kernels)."""
