@@ -405,8 +405,6 @@ dependencies = [
     { name = "rustworkx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "tiktoken", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "tomlkit", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "torch", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "transformers", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "types-aiofiles", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "zstandard", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
@@ -1222,7 +1220,7 @@ dependencies = [
     { name = "sentencepiece", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "tokenizers", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "toml", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "torch", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "tqdm", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "transformers", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "twine", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
@@ -1244,8 +1242,8 @@ sdist = { url = "https://files.pythonhosted.org/packages/55/fa/96d4cc7ada2833571
 
 [[package]]
 name = "mlx"
-version = "0.31.2.dev20260422+ec49d18e"
-source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }
+version = "0.31.1"
+source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "sys_platform == 'linux'",
 ]
@@ -1267,11 +1265,11 @@ resolution-markers = [
 
 [[package]]
 name = "mlx-cpu"
-version = "0.31.2"
+version = "0.31.1"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bb/a3/5e62e9d4ebec89f1805b10dad74863815335f3048d5afd4b2640d474d809/mlx_cpu-0.31.2-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:0bfd8292d1d88ff1e5ea0a3202510a2cb61e0f212a69a364cee50aea4a175000", size = 8678191, upload-time = "2026-04-22T01:12:15.982Z" },
-    { url = "https://files.pythonhosted.org/packages/5c/5b/4a0cfe9f7e25bf4a9d7fee9d03be8f56d4aa5949deedda0d8e1437d8b6f2/mlx_cpu-0.31.2-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:32bd40b8e7351b64b15921db5c24305726f97673e2fc512b1d5dc6727bb2f414", size = 10252297, upload-time = "2026-04-22T01:12:18.478Z" },
+    { url = "https://files.pythonhosted.org/packages/01/e3/2f832234ede13002ee84088772c3a73ee6efd9bcbd6d7a7b243e8cef7e3b/mlx_cpu-0.31.1-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:8c5a1366efa6be47bec573a31bb224127d0e11c07fe789c3a11a0fc50ad595e3", size = 8696444, upload-time = "2026-03-11T23:20:56.259Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/1a/c17fad043443085578312efd05656246333ee3719ee94b69be43ebc77b23/mlx_cpu-0.31.1-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:27578a396f08431dd2cc089e755ef58f77d16261d9e91bd0f230157bc1662911", size = 10279829, upload-time = "2026-03-11T23:20:58.536Z" },
 ]
 
 [[package]]
