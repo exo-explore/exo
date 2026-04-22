@@ -208,9 +208,20 @@ def load_mlx_items(
     if vision_config is not None:
         from exo.worker.engines.mlx.vision import VisionProcessor
 
-        vision_processor: VisionProcessor | None = VisionProcessor(
-            vision_config, bound_instance.bound_shard.model_card.model_id
-        )
+        vision_start_time = time.perf_counter()
+        try:
+            vision_processor: VisionProcessor | None = VisionProcessor(
+                vision_config, bound_instance.bound_shard.model_card.model_id
+            )
+            vision_processor.load()
+            logger.info(
+                f"Time taken to load vision weights: {(time.perf_counter() - vision_start_time):.2f}s"
+            )
+        except Exception as e:
+            logger.opt(exception=e).error(
+                "Failed to load vision weights — disabling vision for this runner"
+            )
+            vision_processor = None
     else:
         vision_processor = None
 
