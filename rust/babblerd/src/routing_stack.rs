@@ -3,7 +3,7 @@ use std::sync::Arc;
 use color_eyre::eyre::{Result, WrapErr};
 use ipnet::Ipv6Net;
 use tokio::{
-    sync::{broadcast, mpsc, watch},
+    sync::{mpsc, watch},
     task::JoinHandle,
 };
 
@@ -19,7 +19,6 @@ pub struct RoutingStack {
 impl RoutingStack {
     pub async fn start(
         node_addr: Ipv6Net,
-        line_send: broadcast::Sender<String>,
         state_send: watch::Sender<Arc<BabelState>>,
         event_send: mpsc::Sender<RoutingStackEvent>,
     ) -> Result<Self> {
@@ -36,7 +35,7 @@ impl RoutingStack {
 
         let babel_events = event_send.clone();
         let babel = tokio::spawn(async move {
-            let res = crate::babel(node_addr, iface_recv, line_send, state_send).await;
+            let res = crate::babel(node_addr, iface_recv, state_send).await;
             let _ = babel_events
                 .send(RoutingStackEvent::Exited {
                     kind: StackTaskKind::Babel,

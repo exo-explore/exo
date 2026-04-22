@@ -1,10 +1,11 @@
-#[cfg(not(unix))]
-compile_error!("babblerd is unix-only");
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+compile_error!("babblerd is mac/linux-only");
 
 pub mod babel;
 pub mod config;
 pub mod daemon;
 pub mod identity;
+pub(crate) mod route_ctl;
 pub mod routing_stack;
 pub mod tun;
 
@@ -42,20 +43,24 @@ pub mod if_watcher {
     use netwatch::interfaces::{Interface, IpNet};
     use tokio::sync::mpsc;
 
-    use crate::config::EXO_ULA_PREFIX;
+    use crate::config::{EXO_ULA_PREFIX, PHYSICAL_LINK_MTU};
     use crate::ip_manager::remove_ip;
-    use crate::{BabbleError, Result, babel::Babble};
+    use crate::{babel::Babble, BabbleError, Result};
 
     pub const LOCALHOST_INTERFACE_NAMES: [&'static str; 2] = ["lo", "lo0"];
 
     trait IfaceExt {
         fn has_link_local_v6(&self) -> bool;
+        fn has_required_mtu(&self) -> bool;
         fn is_real_interface(&self) -> bool;
         fn will_babel(&self) -> bool;
     }
     impl IfaceExt for Interface {
         fn will_babel(&self) -> bool {
-            self.has_link_local_v6() && self.is_real_interface() && self.is_up()
+            self.has_link_local_v6()
+                && self.has_required_mtu()
+                && self.is_real_interface()
+                && self.is_up()
         }
 
         fn has_link_local_v6(&self) -> bool {
@@ -71,6 +76,27 @@ pub mod if_watcher {
             }
             has
         }
+
+        fn has_required_mtu(&self) -> bool {
+            let Some(mtu) = interface_mtu(self.name()) else {
+                tracing::debug!(
+                    "skipping interface {} because MTU could not be determined",
+                    self.name()
+                );
+                return false;
+            };
+            if mtu < u32::from(PHYSICAL_LINK_MTU) {
+                tracing::debug!(
+                    "skipping interface {} because mtu {} is below required {}",
+                    self.name(),
+                    mtu,
+                    PHYSICAL_LINK_MTU
+                );
+                return false;
+            }
+            true
+        }
+
         fn is_real_interface(&self) -> bool {
             // macos is weird. en0 & en1 are ethernet & wifi (varies which is which by device). en3+ is thunderbolt, but at some point becomes usb ethernet.
             if self.name().strip_prefix("en").is_none()
@@ -111,6 +137,13 @@ pub mod if_watcher {
             }
             true
         }
+    }
+
+    fn interface_mtu(name: &str) -> Option<u32> {
+        netdev::get_interfaces()
+            .into_iter()
+            .find(|iface| iface.name == name)
+            .and_then(|iface| iface.mtu)
     }
 
     #[tracing::instrument(skip(send))]

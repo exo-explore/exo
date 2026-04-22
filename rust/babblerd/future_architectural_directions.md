@@ -20,7 +20,7 @@ It should evolve as the architecture evolves.
 It now has the beginnings of a real daemon architecture:
 
 - a resident daemon process,
-- a resident `utun`,
+- a resident TUN interface,
 - a keepalive-driven daemon core,
 - a heavy routing stack that can turn on and off,
 - a typed Babel control/runtime layer,
@@ -81,16 +81,16 @@ This does **not** require the final IPC architecture first.
 
 This should be the next major feature.
 
-Before packets can move end-to-end, the daemon also needs to own the kernel
-route that steers overlay traffic into `utun`:
+The current tree now owns the kernel route that steers overlay traffic into the
+resident TUN interface:
 
-- keep the local node `/128` on `utun`,
-- add `EXO_ULA_PREFIX -> utunX` when the routing stack turns on,
-- remove that route when the routing stack turns off,
-- keep `babeld` kernel installs disabled.
+- the local node `/128` address is installed on the TUN device,
+- `EXO_ULA_PREFIX -> tunX` is added when the routing stack turns on,
+- that prefix route is removed when the routing stack turns off,
+- and `babeld` kernel installs remain disabled.
 
-Without that, local application traffic will not be redirected into the
-overlay, even if the UDP dataplane itself exists.
+That means local application traffic can now be steered into the overlay once
+the UDP dataplane exists.
 
 The first version can stay simple:
 
@@ -103,19 +103,31 @@ The first version can stay simple:
 
 The dataplane should:
 
-- read packets from `utun`,
+- read packets from TUN,
 - classify local-delivery vs forwarding,
 - look up next-hop information from a derived forwarding view,
 - send encapsulated packets to direct neighbors over UDP,
 - receive UDP packets from neighbors,
 - decapsulate them,
-- either inject them locally into `utun` or forward them onward.
+- either inject them locally into TUN or forward them onward.
 
 This gives the project a real “V” and “M” to go with the current daemon/control
 shell.
 
-The `utun` MTU should also be revisited at this stage so it reflects encapsulated
-IPv6-over-UDP overhead rather than staying at the current placeholder value.
+The current tree now hardcodes:
+
+- physical link MTU assumption: `1500`
+- outer overhead assumption: `40 bytes IPv6 + 8 bytes UDP`
+- derived TUN MTU: `1452`
+
+That is acceptable for bring-up, but it is still only a temporary model.
+
+The future direction should be:
+
+- route-aware MTU derivation,
+- PMTUD-aware behavior,
+- and better support for environments where hop-to-hop links can use jumbo
+  frames without exposing that complexity to user traffic.
 
 ### 2. Add a derived forwarding table above `BabelState`
 
@@ -216,7 +228,7 @@ The first version should prove the simplest useful thing:
 - stable node addresses,
 - UDP transport between neighbors,
 - Babel-driven next-hop selection,
-- utun injection/extraction,
+- TUN injection/extraction,
 - packet forwarding that actually works end-to-end.
 
 If that works, the rest can be improved incrementally.
@@ -232,7 +244,7 @@ Once the basic dataplane exists and works, the likely next path is:
 5. Pin and explicitly invoke the exact forked `babeld`.
 6. Harden node-id file mode checks and other local security edges.
 7. Revisit diagnostics streaming.
-8. Revisit platform abstractions around `utun` / transport / forwarding.
+8. Revisit platform abstractions around TUN / transport / forwarding.
 
 That ordering is intentional:
 

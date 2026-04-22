@@ -1,21 +1,21 @@
 // Major TODO: at some point don't call it "babbler" because that is a silly name that makes no sense
 //             but this is at the very bottom of my concerns right now :)
 
-#[cfg(not(unix))]
-compile_error!("babblerd is unix-only");
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+compile_error!("babblerd is mac/linux-only");
 
 use std::{fs::Permissions, io, os::unix::fs::PermissionsExt, sync::Arc};
 
-use babblerd::{babel::BabelState, config::Config, daemon, identity, tun::UtunDevice};
-use color_eyre::eyre::{self, WrapErr, eyre};
+use babblerd::{babel::BabelState, config::Config, daemon, identity, tun::TunDevice};
+use color_eyre::eyre::{self, eyre, WrapErr};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixListener,
     net::UnixStream,
     signal,
-    sync::{broadcast, watch},
+    sync::watch,
     task::JoinSet,
-    time::{Duration, sleep},
+    time::{sleep, Duration},
 };
 
 const INTERNAL_KEEPALIVE_TTL_MS: u64 = 30_000;
@@ -60,17 +60,17 @@ async fn main() -> eyre::Result<()> {
 async fn inner_main(config: &Config) -> eyre::Result<()> {
     let node_id = identity::load_or_create_node_id(&config.node_id_file)?;
     let node_addr = identity::node_addr(config.exo_ula_prefix, node_id)?;
-    let utun = UtunDevice::create(node_addr.addr()).wrap_err("creating utun for node address")?;
+    let tun = TunDevice::create(node_addr.addr()).wrap_err("creating tun for node address")?;
 
     tracing::info!("creating socket at {}", config.public_socket_path.display());
     tracing::info!(
-        "router defaults: udp_port={} node_id_file={} app_prefix={} node_id={:#018x} node_addr={} utun={}",
+        "router defaults: udp_port={} node_id_file={} app_prefix={} node_id={:#018x} node_addr={} tun={}",
         config.router_udp_port,
         config.node_id_file.display(),
         config.exo_ula_prefix,
         node_id,
         node_addr,
-        utun.ifname(),
+        tun.ifname(),
     );
 
     let public_socket = UnixListener::bind(&config.public_socket_path)?;
@@ -78,13 +78,12 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
     // make our socket world accessible
     std::fs::set_permissions(&config.public_socket_path, Permissions::from_mode(0o0666))?;
 
-    let (line_send, _) = broadcast::channel(1024);
     let (babel_state_send, _) = watch::channel(Arc::new(BabelState::new()));
     let (daemon, mut core_task) = daemon::DaemonCore::spawn(
         node_id,
+        config.exo_ula_prefix,
         node_addr,
-        utun,
-        line_send.clone(),
+        tun,
         babel_state_send,
     );
     // TEMP: keep the daemon alive without an external client until the real

@@ -5,13 +5,14 @@ use std::{future::pending, sync::Arc};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
-    sync::{broadcast, mpsc, oneshot, watch},
+    sync::{mpsc, oneshot, watch},
     task::JoinHandle,
     time::{Duration, Instant},
 };
 
+use crate::route_ctl;
 use crate::routing_stack::RoutingStack;
-use crate::{babel::BabelState, tun::UtunDevice};
+use crate::{babel::BabelState, tun::TunDevice};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceState {
@@ -37,19 +38,19 @@ pub struct DaemonStatus {
     pub service_state: ServiceState,
     pub node_id: u64,
     pub node_addr: Ipv6Net,
-    pub utun_ifname: Arc<str>,
+    pub tun_ifname: Arc<str>,
     // realistically should always have one?? right??
     pub keepalive_deadline: Option<Instant>,
     pub last_error: Option<Arc<str>>,
 }
 
 impl DaemonStatus {
-    fn new(node_id: u64, node_addr: Ipv6Net, utun_ifname: Arc<str>) -> Self {
+    fn new(node_id: u64, node_addr: Ipv6Net, tun_ifname: Arc<str>) -> Self {
         Self {
             service_state: ServiceState::Off,
             node_id,
             node_addr,
-            utun_ifname,
+            tun_ifname,
             keepalive_deadline: None,
             last_error: None,
         }
@@ -63,11 +64,11 @@ impl DaemonStatus {
             .unwrap_or_else(|| "none".to_owned());
 
         let mut line = format!(
-            "state {} node_id={:#018x} node_addr={} utun={} keepalive_remaining_ms={}",
+            "state {} node_id={:#018x} node_addr={} tun={} keepalive_remaining_ms={}",
             self.service_state,
             self.node_id,
             self.node_addr,
-            self.utun_ifname,
+            self.tun_ifname,
             keepalive_remaining_ms
         );
         if let Some(err) = &self.last_error {
@@ -132,9 +133,9 @@ impl DaemonHandle {
 
 pub struct DaemonCore {
     status: DaemonStatus,
-    _utun: UtunDevice,
+    overlay_prefix: Ipv6Net,
+    _tun: TunDevice,
     routing_stack: Option<RoutingStack>,
-    line_send: broadcast::Sender<String>,
     babel_state_send: watch::Sender<Arc<BabelState>>,
     command_recv: mpsc::Receiver<DaemonCommand>,
     event_send: mpsc::Sender<RoutingStackEvent>,
@@ -144,20 +145,20 @@ pub struct DaemonCore {
 impl DaemonCore {
     pub fn spawn(
         node_id: u64,
+        overlay_prefix: Ipv6Net,
         node_addr: Ipv6Net,
-        utun: UtunDevice,
-        line_send: broadcast::Sender<String>,
+        tun: TunDevice,
         babel_state_send: watch::Sender<Arc<BabelState>>,
     ) -> (DaemonHandle, JoinHandle<Result<()>>) {
         let (command_send, command_recv) = mpsc::channel(32);
         let (event_send, event_recv) = mpsc::channel(8);
-        let status = DaemonStatus::new(node_id, node_addr, Arc::from(utun.ifname().to_owned()));
+        let status = DaemonStatus::new(node_id, node_addr, Arc::from(tun.ifname().to_owned()));
 
         let core = Self {
             status,
-            _utun: utun,
+            overlay_prefix,
+            _tun: tun,
             routing_stack: None,
-            line_send,
             babel_state_send,
             command_recv,
             event_send,
@@ -254,7 +255,6 @@ impl DaemonCore {
         self.status.last_error = None;
         match RoutingStack::start(
             self.status.node_addr,
-            self.line_send.clone(),
             self.babel_state_send.clone(),
             self.event_send.clone(),
         )
@@ -262,6 +262,15 @@ impl DaemonCore {
         {
             Ok(stack) => {
                 self.routing_stack = Some(stack);
+                if let Err(err) = route_ctl::ensure_overlay_route(
+                    self.overlay_prefix,
+                    self.status.tun_ifname.as_ref(),
+                ) {
+                    let _ = self.stop_stack().await;
+                    self.status.service_state = ServiceState::Off;
+                    self.status.last_error = Some(Arc::from(err.to_string()));
+                    return Err(err.into());
+                }
                 self.status.service_state = ServiceState::On;
                 Ok(())
             }
@@ -274,6 +283,10 @@ impl DaemonCore {
     }
 
     async fn stop_stack(&mut self) -> Result<()> {
+        if let Err(err) = route_ctl::remove_overlay_route(self.overlay_prefix) {
+            tracing::warn!(error=%err, "failed to remove overlay route");
+        }
+
         let Some(stack) = self.routing_stack.take() else {
             self.status.service_state = ServiceState::Off;
             self.babel_state_send

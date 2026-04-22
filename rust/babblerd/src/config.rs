@@ -43,6 +43,11 @@ pub const DEFAULT_NODE_ID_FILE: &str = {
 //       to do this in the future :)
 pub const DEFAULT_ROUTER_UDP_PORT: u16 = 41897;
 
+pub const PHYSICAL_LINK_MTU: u16 = 1500;
+pub const OUTER_IPV6_HEADER_BYTES: u16 = 40;
+pub const OUTER_UDP_HEADER_BYTES: u16 = 8;
+pub const TUN_MTU: u16 = PHYSICAL_LINK_MTU - OUTER_IPV6_HEADER_BYTES - OUTER_UDP_HEADER_BYTES;
+
 pub const EXO_ULA_PREFIX: Ipv6Net = Ipv6Net::new_assert(
     // TODO: break out into "fd" for ULA
     //       e0_20c61fa7 for EXO address-space

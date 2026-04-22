@@ -79,7 +79,7 @@ of shortcuts that should be revisited later.
   - Add a separate readiness field or richer public state model instead of
     overloading `ServiceState::On`.
 
-- The resident `utun` vs heavy routing-stack split is now in place, but the
+- The resident TUN vs heavy routing-stack split is now in place, but the
   naming and abstractions are still transitional.
   Files:
   - `src/daemon.rs`
@@ -140,15 +140,33 @@ of shortcuts that should be revisited later.
   - Either wire it into the real dataplane soon, or remove it until the
     dataplane exists.
 
-- `UtunDevice` is still a thin platform-specific wrapper with some rough edges.
+- `TunDevice` is still a thin platform-specific wrapper with some rough edges.
   Files:
   - `src/tun.rs`
   Why this is a shortcut:
   - It still stores the address as `Ipv6Net` even though usage is `/128`-only.
+  - On macOS, the actual kernel interface name is still `utunN`; the daemon's
+    cross-platform naming has been cleaned up, but the OS-level interface name
+    is not under our control there.
   - It still has hard-coded MTU and other tun-rs builder assumptions.
   Follow-up:
   - Tighten the type and revisit the platform-specific tuning once the dataplane
     is implemented.
+
+- The current MTU model is still intentionally crude:
+  - assume physical links must support 1500-byte packets,
+  - derive TUN MTU as `1500 - 40 (IPv6) - 8 (UDP) = 1452`,
+  - reject candidate physical interfaces below 1500 MTU.
+  Files:
+  - `src/config.rs`
+  - `src/lib.rs`
+  - `src/tun.rs`
+  Why this is a shortcut:
+  - It does not handle PMTUD, VLAN overhead, per-route MTU variation, or
+    jumbo-frame opportunities.
+  Follow-up:
+  - Replace the current fixed MTU model with route-aware MTU derivation once the
+    UDP dataplane exists.
 
 ## Identity / Security / Filesystem
 

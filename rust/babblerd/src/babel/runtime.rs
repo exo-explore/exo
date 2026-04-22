@@ -25,7 +25,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::process::{Child, Command};
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 use tokio::time::Duration;
 
 use crate::babel::Babble;
@@ -48,7 +48,6 @@ pub(crate) struct BabelRuntime {
     proc: Child,
     read: Lines<BufReader<OwnedReadHalf>>,
     write: OwnedWriteHalf,
-    line_send: broadcast::Sender<String>,
     state_send: watch::Sender<Arc<BabelState>>,
     state: BabelState,
 }
@@ -98,11 +97,10 @@ impl Drop for BabelRuntime {
 }
 
 impl BabelRuntime {
-    #[tracing::instrument(skip(line_send, state_send))]
+    #[tracing::instrument(skip(state_send))]
     pub(crate) async fn spawn(
         advertised: Ipv6Net,
         iface: &str,
-        line_send: broadcast::Sender<String>,
         state_send: watch::Sender<Arc<BabelState>>,
     ) -> Result<Self> {
         tokio::fs::create_dir_all(PRIVATE_DIR).await?;
@@ -156,7 +154,6 @@ impl BabelRuntime {
             proc,
             read: BufReader::new(reader).lines(),
             write,
-            line_send,
             state_send,
             state: BabelState::new(),
         };
@@ -256,9 +253,6 @@ impl BabelRuntime {
             }
         };
 
-        if self.line_send.send(line).is_err() {
-            tracing::debug!("dropping babel line because there are no active listeners");
-        }
         Ok(observed)
     }
 
