@@ -209,7 +209,7 @@ class Worker:
                     self._download_backoff.record_attempt(model_id)
 
                     found_path = await to_thread.run_sync(
-                        resolve_existing_model, model_id
+                        resolve_existing_model, model_id, shard.model_card
                     )
                     if found_path is not None:
                         logger.info(f"Model {model_id} found at {found_path}")

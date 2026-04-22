@@ -35,7 +35,7 @@ from exo.shared.constants import (
     EXO_MODELS_DIRS,
     EXO_MODELS_READ_ONLY_DIRS,
 )
-from exo.shared.models.model_cards import ModelTask
+from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import (
@@ -118,7 +118,9 @@ class InsufficientDiskSpaceError(Exception):
     """Raised when no writable model directory has enough free space."""
 
 
-def resolve_existing_model(model_id: ModelId) -> Path | None:
+def resolve_existing_model(
+    model_id: ModelId, card: ModelCard | None = None
+) -> Path | None:
     """Search all model directories for a complete, pre-existing model.
 
     Checks read-only directories first, then writable directories.
@@ -128,7 +130,7 @@ def resolve_existing_model(model_id: ModelId) -> Path | None:
     normalized = model_id.normalize()
     for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
         candidate = search_dir / normalized
-        if candidate.is_dir() and is_model_directory_complete(candidate):
+        if candidate.is_dir() and is_model_directory_complete(candidate, card):
             return candidate
     return None
 
@@ -279,10 +281,26 @@ def _scan_model_directory(
     return list(entries_by_path.values())
 
 
-def is_model_directory_complete(model_dir: Path) -> bool:
-    """Check if a model directory contains all required weight files."""
+def is_model_directory_complete(model_dir: Path, card: ModelCard | None = None) -> bool:
+    """Check if a model directory contains all required weight files.
+    Also checks for sibling weights repo.
+    """
     file_list = _scan_model_directory(model_dir, recursive=True)
-    return file_list is not None and all(f.size is not None for f in file_list)
+    if file_list is None or not all(f.size is not None for f in file_list):
+        return False
+    if (
+        card is not None
+        and card.vision is not None
+        and card.vision.weights_repo != str(card.model_id)
+    ):
+        vision_id = ModelId(card.vision.weights_repo)
+        normalized = vision_id.normalize()
+        for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
+            candidate = search_dir / normalized
+            if candidate.is_dir() and is_model_directory_complete(candidate):
+                return True
+        return False
+    return True
 
 
 async def _build_file_list_from_local_directory(
