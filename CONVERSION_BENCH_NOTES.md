@@ -46,6 +46,7 @@ bidirectional latency, not symmetry for its own sake.
 - MLX
   - `mx.metal._unsafe_export_storage(array)`
   - `mx.metal._unsafe_array_from_ptr(raw_ptr, shape, dtype, owner=None)`
+  - `mx.metal._unsafe_array_from_ptr_alias_only(raw_ptr, shape, dtype, owner=None)`
 - tinygrad
   - `Tensor._unsafe_metal_storage()`
   - `Tensor._unsafe_from_metal_buffer(mtl_buffer_ptr, shape, dtype=..., byte_offset=0, owner=None)`
@@ -53,8 +54,9 @@ bidirectional latency, not symmetry for its own sake.
 
 These helpers are intentionally private and unsafe.
 
-They also currently pay Python marshalling overhead because the exporters return
-Python dicts and the benchmark unpacks them before calling the import helper.
+The current benchmark still pays Python and binding overhead because the
+exporters return Python dicts and the timed path unpacks them before calling
+the import helper.
 
 ## Temporary Eligibility Rules
 
@@ -123,11 +125,22 @@ advance the pinned SHAs in `uv.lock` during testing. The working command was:
 - The first tinygrad import helper now optionally accepts `buffer_nbytes` for
   a bounds check. If that metadata is omitted, the helper still cannot prove
   the requested view fits inside the borrowed buffer.
+- MLX export now distinguishes:
+  - `logical_nbytes`: the logical bytes in the exported array view
+  - `buffer_nbytes`: the backing buffer capacity
+- Offsetted MLX views must use `buffer_nbytes` semantics for bounds checks.
 - The first MLX import helper is raw-pointer based rather than foreign
   `MTLBuffer*` based.
+- `mx.metal._unsafe_array_from_ptr(...)` may still copy if MLX cannot alias the
+  pointer directly.
+- `mx.metal._unsafe_array_from_ptr_alias_only(...)` fails instead of silently
+  copying, so it is the right helper for proving aliasing in benchmarks.
 - `mx.metal._unsafe_export_storage(...)` currently expects an MLX array that is
   already in the C++ `available` state. In practice, `mx.array(np_array)` met
   that precondition for local smoke testing, while `mx.arange(...)` did not.
+- `tinygrad -> MLX memoryview_copy` also includes per-call runtime ceremony,
+  because tinygrad's zero-copy Metal memoryview export synchronizes before
+  exposing the buffer.
 
 ## Current Findings
 
@@ -146,60 +159,71 @@ The direct helpers worked in both directions:
 Updated remote latency measurements for `float32` and `7168` bytes were:
 
 - `unsafe_helper_bridge`
-  - `mlx_to_tinygrad`: `20.241 us` min, `20.747 us` median
-  - `tinygrad_to_mlx`: `26.738 us` min, `27.130 us` median
+  - `mlx_to_tinygrad`: `22.212 us` min, `22.372 us` median
+  - `tinygrad_to_mlx`: `28.437 us` min, `28.548 us` median
 - `unsafe_helper_legacy`
-  - `mlx_to_tinygrad`: `33.001 us` min, `33.353 us` median
+  - `mlx_to_tinygrad`: `35.296 us` min, `35.483 us` median
+- `unsafe_helper_maybe_copy`
+  - `tinygrad_to_mlx`: `28.500 us` min, `28.723 us` median
 - `memoryview_copy`
-  - `mlx_to_tinygrad`: `36.328 us` min, `36.490 us` median
-  - `tinygrad_to_mlx`: `2.535 us` min, `2.560 us` median
+  - `mlx_to_tinygrad`: `38.712 us` min, `39.033 us` median
+  - `tinygrad_to_mlx`: `2.603 us` min, `2.615 us` median
 - `numpy_baseline`
-  - `mlx_to_tinygrad`: `263.666 us` min, `265.771 us` median
-  - `tinygrad_to_mlx`: `12.457 us` min, `12.549 us` median
+  - `mlx_to_tinygrad`: `285.083 us` min, `286.635 us` median
+  - `tinygrad_to_mlx`: `13.249 us` min, `13.265 us` median
 
 Interpretation:
 
 - The lower-overhead tinygrad import helper cut `MLX -> tinygrad` from about
-  `33 us` to about `20 us` at `7 kB`, so the old `Tensor.empty(...)` based
+  `35 us` to about `22 us` at `7 kB`, so the old `Tensor.empty(...)` based
   helper was a real source of overhead.
 - The current `MLX -> tinygrad` path is still above the target `1-10 us`
   range for a `7 kB` tensor.
 - `MLX -> tinygrad` is now dominated by the remaining tinygrad import / wrapper
   creation cost, not by MLX export or Python dict marshalling.
+- On `e16`, the strict alias-only `tinygrad -> MLX` helper succeeded. Its
+  timings were effectively the same as the maybe-copy helper, so the benchmark
+  can now report a proven aliasing path in that direction on this host.
 - `tinygrad -> MLX` currently has a very cheap copy path because `mx.array()`
   over a tinygrad `memoryview` is implemented efficiently in MLX's native C++
   import path, even though it still copies.
 - At this tensor size, Python call overhead and wrapper construction matter
   much more than raw byte movement.
-- These numbers do not establish that "aliasing costs ~20 us". They establish
-  that the current lower-overhead asymmetric helper stack costs that much.
+- These numbers do not establish that "aliasing costs ~22-28 us". They
+  establish that the current Python-exposed helper stack costs that much.
+- An offsetted MLX slice was also validated through the new export semantics:
+  `offset_bytes=64`, `logical_nbytes=7168`, `buffer_nbytes=16384`, and the
+  borrowed tinygrad tensor matched the expected values.
 
 Additional remote microbench sweep on `e16` for `256`, `7168`, `65536`, and
 `1048576` bytes showed:
 
 - `MLX -> tinygrad`
-  - `unsafe_helper_bridge`: roughly `20-21 us`
-  - `unsafe_helper_legacy`: roughly `32-34 us`
-  - `memoryview_copy`: roughly `35-52 us`
-  - `numpy_baseline`: roughly `264-298 us`
-  - `export_helper_only`: roughly `0.55 us`
-  - `import_helper_fast_only`: roughly `20-21 us`
-  - `import_helper_legacy_only`: roughly `32-33 us`
+  - `unsafe_helper_bridge`: roughly `21-22 us`
+  - `unsafe_helper_legacy`: roughly `34-36 us`
+  - `memoryview_copy`: roughly `37-52 us`
+  - `numpy_baseline`: roughly `278-309 us`
+  - `export_helper_only`: roughly `0.67-0.70 us`
+  - `import_helper_fast_only`: roughly `20.9-21.7 us`
+  - `import_helper_legacy_only`: roughly `34-35 us`
 - `tinygrad -> MLX`
-  - `unsafe_helper_bridge`: roughly `27 us`
-  - `memoryview_copy`: roughly `2.4 us` at `256 B`, `2.6 us` at `7168 B`,
+  - `unsafe_helper_bridge`: roughly `28.4-29.2 us`
+  - `unsafe_helper_maybe_copy`: roughly `28.4-29.4 us`
+  - `memoryview_copy`: roughly `2.5 us` at `256 B`, `2.6 us` at `7168 B`,
     `3.6 us` at `64 KiB`, and `17.4 us` at `1 MiB`
-  - `numpy_baseline`: roughly `12.1 us` at `256 B`, `12.5 us` at `7168 B`,
-    `16.4 us` at `64 KiB`, and `55.1 us` at `1 MiB`
-  - `export_helper_only`: roughly `23-24 us`
-  - `import_helper_only`: roughly `2.2 us`
+  - `numpy_baseline`: roughly `12.7 us` at `256 B`, `12.8 us` at `7168 B`,
+    `17.1 us` at `64 KiB`, and `56.0 us` at `1 MiB`
+  - `export_helper_only`: roughly `23.9-24.7 us`
+  - `import_helper_only`: roughly `2.20-2.24 us`
+  - `import_helper_maybe_copy_only`: roughly `2.23-2.34 us`
 
 What this means:
 
 - The MLX exporter is already cheap. Replacing its Python dict with a tuple or
   capsule is unlikely to change `MLX -> tinygrad` materially, because the
   dominant cost is tinygrad import / wrapper creation.
-- The MLX importer from raw pointer is also already cheap.
+- The MLX importer from raw pointer is also already cheap, whether measured in
+  strict alias-only mode or maybe-copy mode on this host.
 - The lower-overhead tinygrad import helper bought a real speedup, but the
   expensive pieces are still both on the tinygrad side:
   - importing a borrowed `MTLBuffer*` into a new tinygrad `Tensor`
@@ -216,7 +240,10 @@ What this means:
 2. If `MLX -> tinygrad` must get materially faster, focus on a lower-level
    tinygrad import constructor, wrapper reuse, or non-standard reusable wrapper
    design rather than MLX-side marshalling changes.
-3. Avoid spending time on symmetry unless it becomes necessary for a specific
+3. The next benchmark shape should be a single native bridge call per direction
+   with no Python dict marshalling, ideally with a native loop benchmark so
+   Python only enters once. That is planned, but not implemented yet.
+4. Avoid spending time on symmetry unless it becomes necessary for a specific
    downstream use case.
 
 ## Open Questions

@@ -23,7 +23,9 @@ testing; the explicit `--upgrade-package` form was required.
 
 ## Benchmark
 
-The current benchmark script isolates the raw transformation only.
+The current benchmark excludes source tensor construction and explicit pre-sync
+from the timed loop, but it still includes per-call helper, binding, owner
+pinning, and wrapper-construction overhead.
 
 - Inputs are assumed to already be synchronized.
 - Inputs are assumed to already be allocated.
@@ -50,25 +52,31 @@ uv run python mlx_tinygrad_interop/bench_raw_conversion.py --dtype float32 --siz
 Observed `7168`-byte results on that run:
 
 - `unsafe_helper_bridge`
-  - `mlx_to_tinygrad`: `20.241 us` min, `20.747 us` median
-  - `tinygrad_to_mlx`: `26.738 us` min, `27.130 us` median
+  - `mlx_to_tinygrad`: `22.212 us` min, `22.372 us` median
+  - `tinygrad_to_mlx`: `28.437 us` min, `28.548 us` median
 - `unsafe_helper_legacy`
-  - `mlx_to_tinygrad`: `33.001 us` min, `33.353 us` median
+  - `mlx_to_tinygrad`: `35.296 us` min, `35.483 us` median
+- `unsafe_helper_maybe_copy`
+  - `tinygrad_to_mlx`: `28.500 us` min, `28.723 us` median
 - `memoryview_copy`
-  - `mlx_to_tinygrad`: `36.328 us` min, `36.490 us` median
-  - `tinygrad_to_mlx`: `2.535 us` min, `2.560 us` median
+  - `mlx_to_tinygrad`: `38.712 us` min, `39.033 us` median
+  - `tinygrad_to_mlx`: `2.603 us` min, `2.615 us` median
 - `numpy_baseline`
-  - `mlx_to_tinygrad`: `263.666 us` min, `265.771 us` median
-  - `tinygrad_to_mlx`: `12.457 us` min, `12.549 us` median
+  - `mlx_to_tinygrad`: `285.083 us` min, `286.635 us` median
+  - `tinygrad_to_mlx`: `13.249 us` min, `13.265 us` median
 
 Later remote microbench runs showed the split more clearly:
 
 - `MLX -> tinygrad` is dominated by tinygrad import / wrapper creation.
 - The lower-overhead tinygrad import helper cuts `MLX -> tinygrad` by about
-  `1.6x`, but still leaves it around `20 us`.
+  `1.6x`, but still leaves it around `22 us`.
+- The strict alias-only `tinygrad -> MLX` helper succeeds on `e16`; its timing
+  is effectively the same as the maybe-copy helper on that host.
 - `tinygrad -> MLX` is dominated by tinygrad export in the unsafe helper path.
 - `tinygrad -> MLX memoryview_copy` is already the practical low-latency path
   for small tensors.
+- Offsetted MLX slices now export both logical bytes and backing-buffer bytes,
+  and a nonzero-offset slice was validated successfully into tinygrad.
 
 ## Current Scope
 

@@ -194,6 +194,7 @@ def print_header(dtype_name: str) -> None:
   print(f"# python={platform.python_version()} platform={platform.platform()}")
   print(f"# dtype={dtype_name} mlx_metal_available={mx.metal.is_available()} tinygrad_device=METAL")
   print("# sizes are source tensor sizes in bytes")
+  print("# timed loop excludes source tensor construction and explicit pre-sync, but still includes per-call helper, binding, and wrapper overhead")
   print("size_bytes,method,direction,min_us,median_us,mean_us,stdev_us,iters")
 
 
@@ -226,8 +227,9 @@ def main() -> None:
 
       numel = size_bytes // np_dtype.itemsize
 
-      # Build one realized source tensor on each side. The timed region measures
-      # only the transformation, not creation / synchronization.
+      # Build one realized source tensor on each side. Source creation and the
+      # explicit pre-sync stay outside the timed loop, but per-call helper,
+      # binding, owner-pinning, and wrapper construction still remain inside it.
       src_mx = mx.array(np.arange(numel, dtype=np_dtype), dtype=mx_dtype)
 
       src_tg = Tensor(np.arange(numel, dtype=np_dtype), device="METAL").realize()
