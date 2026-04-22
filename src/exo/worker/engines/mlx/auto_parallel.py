@@ -1370,9 +1370,11 @@ class Gemma4ShardingStrategy(TensorParallelShardingStrategy):
 
             attn = layer.self_attn
             attn.q_proj = self.all_to_sharded_linear(attn.q_proj)
-            attn.k_proj = self.all_to_sharded_linear(attn.k_proj)
-            if not attn.use_k_eq_v:
-                attn.v_proj = self.all_to_sharded_linear(attn.v_proj)
+            has_kv: bool = cast(bool, attn.has_kv)
+            if has_kv:
+                attn.k_proj = self.all_to_sharded_linear(attn.k_proj)
+                if not attn.use_k_eq_v:
+                    attn.v_proj = self.all_to_sharded_linear(attn.v_proj)
             attn.o_proj = self.sharded_to_all_linear(attn.o_proj)
             attn.n_heads //= self.N
             attn.n_kv_heads //= self.N

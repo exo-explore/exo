@@ -380,6 +380,110 @@ class TestGenericToolCallsFinishReason:
 # ── Double parser chain (parse_thinking_models → parse_deepseek_v32) ──
 
 
+class TestDeepSeekV32StartsInThinking:
+    """Regression tests for deepseek v3.2 where the chat template appends
+    <think> to the prompt so the model starts already inside a thinking block.
+    """
+
+    def test_reasoning_tagged_when_starts_in_thinking(self):
+        tokens = [
+            _make_response("let me", 0),
+            _make_response(" think", 1),
+            _make_response(THINKING_END, 2),
+            _make_response("\n", 3),
+            _make_response("42", 4, finish_reason="stop"),
+        ]
+        thinking = parse_thinking_models(
+            _queue_source(tokens),
+            think_start=THINKING_START,
+            think_end=THINKING_END,
+            starts_in_thinking=True,
+        )
+        results = _step_until_finish(parse_deepseek_v32(thinking))
+        gens = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse) and r.finish_reason is None
+        ]
+        texts = [(r.text, r.is_thinking) for r in gens]
+        assert texts == [("let me", True), (" think", True), ("\n", False)]
+        final = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse) and r.finish_reason is not None
+        ]
+        assert len(final) == 1
+        assert final[0].text == "42"
+        assert final[0].is_thinking is False
+
+    def test_starts_in_thinking_then_tool_call(self):
+        tokens = [
+            _make_response("need weather", 0),
+            _make_response(THINKING_END, 1),
+            _make_response("\n\n", 2),
+            _make_response(TOOL_CALLS_START, 3),
+            _make_response("\n", 4),
+            _make_response(f'<{DSML_TOKEN}invoke name="get_weather">\n', 5),
+            _make_response(
+                f'<{DSML_TOKEN}parameter name="city" string="true">NYC</{DSML_TOKEN}parameter>\n',
+                6,
+            ),
+            _make_response(f"</{DSML_TOKEN}invoke>\n", 7),
+            _make_response(TOOL_CALLS_END, 8, finish_reason="stop"),
+        ]
+        thinking = parse_thinking_models(
+            _queue_source(tokens),
+            think_start=THINKING_START,
+            think_end=THINKING_END,
+            starts_in_thinking=True,
+        )
+        results = _step_until_finish(parse_deepseek_v32(thinking))
+        reasoning_gens = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse)
+            and r.finish_reason is None
+            and r.is_thinking
+        ]
+        assert [r.text for r in reasoning_gens] == ["need weather"]
+        tool_results = [r for r in results if isinstance(r, ToolCallResponse)]
+        assert len(tool_results) == 1
+        assert tool_results[0].tool_calls[0].name == "get_weather"
+
+    def test_reasoning_tokens_counted_starts_in_thinking(self):
+        usage = Usage(
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=0),
+            completion_tokens_details=CompletionTokensDetails(reasoning_tokens=0),
+        )
+        tokens = [
+            _make_response("reasoning", 0),
+            _make_response(" more", 1),
+            _make_response(THINKING_END, 2),
+            _make_response("\n", 3),
+            GenerationResponse(text="42", token=4, finish_reason="stop", usage=usage),
+        ]
+        thinking = parse_thinking_models(
+            _queue_source(tokens),
+            think_start=THINKING_START,
+            think_end=THINKING_END,
+            starts_in_thinking=True,
+        )
+        results = _step_until_finish(
+            count_reasoning_tokens(parse_deepseek_v32(thinking))
+        )
+        final = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse) and r.finish_reason is not None
+        ]
+        assert len(final) == 1
+        assert final[0].usage is not None
+        assert final[0].usage.completion_tokens_details.reasoning_tokens == 2
+
+
 class TestBatchGeneratorSingleNext:
     def test_finish_reason_with_buffered_tokens_drain_loop(self):
         from exo.worker.runner.llm_inference.batch_generator import GeneratorQueue
