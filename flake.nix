@@ -74,7 +74,14 @@
 
       debug = true; # Enable options autocompletion
 
-      perSystem = { config, self', pkgs, lib, system, ... }:
+      perSystem =
+        { config
+        , self'
+        , pkgs
+        , lib
+        , system
+        , ...
+        }:
         let
           pkgsArgs = {
             inherit system;
@@ -130,53 +137,56 @@
             };
           };
 
-          packages = {
-            default = self'.packages.exo;
-          } //
-          lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-            metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
-          };
+          packages =
+            {
+              default = self'.packages.exo;
+            }
+            // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+              metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
+            };
 
-          devShells.default = with pkgs; pkgs.mkShell {
-            inputsFrom = [ self'.checks.cargo-build ];
+          devShells.default = with pkgs;
+            pkgs.mkShell {
+              inputsFrom = [ self'.checks.cargo-build ];
 
-            packages =
-              [
-                # FORMATTING
-                config.treefmt.build.wrapper
+              packages =
+                [
+                  # FORMATTING
+                  config.treefmt.build.wrapper
 
-                # PYTHON
-                self'.packages.editableVenv
-                uv
+                  # PYTHON
+                  self'.packages.editableVenv
+                  uv
 
-                # RUST
-                config.rust.toolchain
-                maturin
+                  # RUST
+                  config.rust.toolchain
+                  maturin
 
-                # NIX
-                nixd
-                nixpkgs-fmt
+                  # NIX
+                  nixd
+                  nixpkgs-fmt
 
-                # SVELTE
-                nodejs
+                  # SVELTE
+                  nodejs
 
-                # MISC
-                just
-                jq
-              ]
-              ++ lib.optionals stdenv.isDarwin [
-                macmon
-              ];
+                  # MISC
+                  just
+                  jq
+                ]
+                ++ lib.optionals stdenv.isDarwin [
+                  macmon
+                  self'.packages.metal-toolchain
+                ];
 
-            OPENSSL_NO_VENDOR = "1";
+              OPENSSL_NO_VENDOR = "1";
 
-            shellHook = ''
-              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${python313}/lib"
-              ${lib.optionalString stdenv.isLinux ''
-                export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
-              ''}
-            '';
-          };
+              shellHook = ''
+                export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${python313}/lib"
+                ${lib.optionalString stdenv.isLinux ''
+                  export LD_LIBRARY_PATH="${openssl.out}/lib:$LD_LIBRARY_PATH"
+                ''}
+              '';
+            };
         };
     };
 }
