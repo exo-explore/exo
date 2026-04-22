@@ -110,31 +110,50 @@ advance the pinned SHAs in `uv.lock` during testing. The working command was:
 
 ## Current Findings
 
-The unsafe bridge was smoke-tested successfully on a remote Mac:
+The unsafe bridge was validated through the repo-standard remote flow on `e16`:
+
+1. `git pull --ff-only`
+2. `nix develop`
+3. `uv sync`
+4. `uv run python mlx_tinygrad_interop/bench_raw_conversion.py ...`
+
+The direct helpers worked in both directions:
 
 - `MLX -> tinygrad` direct alias path returned correct values.
 - `tinygrad -> MLX` direct alias path returned correct values.
 
-Preliminary latency measurements for `float32` and `7168` bytes were:
+Canonical remote latency measurements for `float32` and `7168` bytes were:
 
 - `direct_alias`
-  - `mlx_to_tinygrad`: about `33.5 us`
-  - `tinygrad_to_mlx`: about `28.0 us`
+  - `mlx_to_tinygrad`: `35.875 us` min, `36.553 us` median
+  - `tinygrad_to_mlx`: `30.005 us` min, `30.197 us` median
+- `memoryview_copy`
+  - `mlx_to_tinygrad`: `38.960 us` min, `39.242 us` median
+  - `tinygrad_to_mlx`: `2.719 us` min, `2.738 us` median
 - `numpy_fallback`
-  - `mlx_to_tinygrad`: about `269 us`
-  - `tinygrad_to_mlx`: about `12.9 us`
+  - `mlx_to_tinygrad`: `290.448 us` min, `290.927 us` median
+  - `tinygrad_to_mlx`: `13.637 us` min, `13.698 us` median
 
-These numbers were gathered before switching fully to the repo-standard
-`nix develop` + `uv run` flow, so they should be treated as provisional rather
-than canonical benchmark results.
+Interpretation:
+
+- The current Python-exposed direct alias path is functional, but still far
+  above the target `1-10 us` range for a `7 kB` tensor.
+- `MLX -> tinygrad` is dominated by fixed overhead even when aliasing, because
+  the direct path is only marginally faster than the `memoryview_copy` path.
+- `tinygrad -> MLX` currently has a very cheap copy path because `mx.array()`
+  over a zero-copy tinygrad `memoryview` is much cheaper than the private
+  raw-pointer helper that constructs a new MLX wrapper object.
+- At this tensor size, Python call overhead and wrapper construction matter
+  much more than raw byte movement.
 
 ## Near-Term Plan
 
-1. Push the current helper changes in `mlx` and `tinygrad`.
-2. Re-run the benchmark from `mlx_tinygrad_interop/` using the repo-standard
-   remote flow.
-3. Separate true alias-path cost from Python wrapper overhead more aggressively
-   if the current numbers remain too high.
+1. Reduce Python wrapper overhead around the direct path before changing the
+   storage model again.
+2. Add narrower microbenchmarks that time only the helper calls, separate from
+   end-to-end tensor wrapper creation.
+3. Decide whether the next iteration should make MLX import a foreign
+   `MTLBuffer*` directly instead of constructing from a raw pointer.
 
 ## Open Questions
 

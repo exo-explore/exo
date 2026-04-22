@@ -36,6 +36,24 @@ Example:
 uv run python mlx_tinygrad_interop/bench_raw_conversion.py --dtype float32 --sizes 256,512,1024,2048,4096,7168
 ```
 
+Validated remote command on `e16`:
+
+```bash
+uv run python mlx_tinygrad_interop/bench_raw_conversion.py --dtype float32 --sizes 7168 --warmup 32 --samples 5 --min-batch-us 1000
+```
+
+Observed `7168`-byte results on that run:
+
+- `direct_alias`
+  - `mlx_to_tinygrad`: `35.875 us` min, `36.553 us` median
+  - `tinygrad_to_mlx`: `30.005 us` min, `30.197 us` median
+- `memoryview_copy`
+  - `mlx_to_tinygrad`: `38.960 us` min, `39.242 us` median
+  - `tinygrad_to_mlx`: `2.719 us` min, `2.738 us` median
+- `numpy_fallback`
+  - `mlx_to_tinygrad`: `290.448 us` min, `290.927 us` median
+  - `tinygrad_to_mlx`: `13.637 us` min, `13.698 us` median
+
 ## Current Scope
 
 - Private / unsafe helpers only.
