@@ -95,10 +95,14 @@ def test_get_instance_placements_create_instance(
     model_card: ModelCard,
 ):
     # arrange
-    model_card.n_layers = total_layers
-    model_card.storage_size = Memory.from_bytes(
-        sum(available_memory)
-    )  # make it exactly fit across all nodes
+    model_card = model_card.model_copy(
+        update={
+            "n_layers": total_layers,
+            "storage_size": Memory.from_bytes(
+                sum(available_memory)
+            ),  # make it exactly fit across all nodes
+        }
+    )
     topology = Topology()
 
     cic = place_instance_command(model_card)
@@ -296,7 +300,7 @@ def test_placement_selects_leaf_nodes(
     # arrange
     topology = Topology()
 
-    model_card.storage_size = Memory.from_bytes(1000)
+    model_card = model_card.model_copy(update={"storage_size": Memory.from_bytes(1000)})
 
     node_id_a = NodeId()
     node_id_b = NodeId()
@@ -364,8 +368,12 @@ def test_tensor_rdma_backend_connectivity_matrix(
 ):
     # arrange
     topology = Topology()
-    model_card.n_layers = 12
-    model_card.storage_size = Memory.from_bytes(1500)
+    model_card = model_card.model_copy(
+        update={
+            "n_layers": 12,
+            "storage_size": Memory.from_bytes(1500),
+        }
+    )
 
     node_a = NodeId()
     node_b = NodeId()
@@ -605,7 +613,7 @@ def test_placement_prefers_cycle_with_downloaded_model(
     """When two cycles are otherwise equal, prefer the one with the model already downloaded."""
     topology = Topology()
 
-    model_card.storage_size = Memory.from_bytes(500)
+    model_card = model_card.model_copy(update={"storage_size": Memory.from_bytes(500)})
 
     node_a = NodeId()
     node_b = NodeId()
@@ -653,7 +661,7 @@ def test_placement_prefers_cycle_with_higher_download_progress(
     """When two cycles are otherwise equal, prefer the one with more download progress."""
     topology = Topology()
 
-    model_card.storage_size = Memory.from_bytes(1000)
+    model_card = model_card.model_copy(update={"storage_size": Memory.from_bytes(1000)})
 
     node_a = NodeId()
     node_b = NodeId()
@@ -725,7 +733,7 @@ def test_placement_does_not_prefer_cycle_with_failed_download(
     """A failed download should count as 0% — not preferred over a node with no download history."""
     topology = Topology()
 
-    model_card.storage_size = Memory.from_bytes(500)
+    model_card = model_card.model_copy(update={"storage_size": Memory.from_bytes(500)})
 
     node_a = NodeId()
     node_b = NodeId()

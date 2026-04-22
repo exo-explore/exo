@@ -21,10 +21,10 @@ from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 
 
-class State(CamelCaseModel):
+class State(FrozenModel):
     """Global system state.
 
     The :class:`Topology` instance is encoded/decoded via an immutable
