@@ -29,7 +29,8 @@ dependencies = [
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
   "mlx-vlm>=0.3.11",
-  "transformers>=5.0.0,<5.4.0",
+  # Transformers v5.3.0 has breaking changes for DSV32 parsing
+  "transformers>=5.0.0,<5.3.0",
 ]
 
 [project.scripts]
