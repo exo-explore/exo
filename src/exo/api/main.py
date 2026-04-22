@@ -15,7 +15,7 @@ import anyio
 from anyio import BrokenResourceError, ClosedResourceError
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
@@ -119,6 +119,20 @@ from exo.api.types.openai_responses import (
 )
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
+from exo.metrics import (
+    CONTENT_TYPE_LATEST as _METRICS_CONTENT_TYPE,
+)
+from exo.metrics import (
+    record_chunk_generated,
+    record_generation_complete,
+    record_node_gathered_info,
+    refresh_cluster_gauges,
+    set_is_master,
+)
+from exo.metrics import (
+    render_latest as _render_metrics,
+)
+from exo.metrics.metrics import set_up as _metrics_set_up
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
@@ -172,6 +186,7 @@ from exo.shared.types.events import (
     Event,
     IndexedEvent,
     InstanceDeleted,
+    NodeGatheredInfo,
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
@@ -238,9 +253,13 @@ class API:
         self.last_completed_election: int = 0
         self.port = port
         self._sent_image_hashes: set[str] = set()
+        self._master_node_id: NodeId | None = None
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
+
+        _metrics_set_up(self.node_id)
+        set_is_master(self.node_id, False)
 
         self.app = FastAPI()
 
@@ -295,6 +314,17 @@ class API:
         self.paused = False
         self.paused_ev.set()
         self.paused_ev = anyio.Event()
+
+    def set_master(self, master_node_id: NodeId) -> None:
+        """Called by the Node after each election so `/metrics` can tell whether
+        this node is the authoritative observer for cluster-wide counters.
+        """
+        self._master_node_id = master_node_id
+        set_is_master(self.node_id, self.is_master)
+
+    @property
+    def is_master(self) -> bool:
+        return self._master_node_id == self.node_id
 
     def _setup_exception_handlers(self) -> None:
         self.app.exception_handler(HTTPException)(self.http_exception_handler)
@@ -363,6 +393,7 @@ class API:
         self.app.get("/ollama/api/ps")(self.ollama_ps)
         self.app.get("/ollama/api/version")(self.ollama_version)
 
+        self.app.get("/metrics")(self.get_metrics)
         self.app.get("/state")(self.get_state)
         self.app.get("/state/{path:path}")(self.get_state)
         self.app.get("/events")(self.stream_events)
@@ -376,6 +407,11 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
+
+    def get_metrics(self) -> Response:
+        if self.is_master:
+            refresh_cluster_gauges(self.state.instances, self.state.runners)
+        return Response(content=_render_metrics(), media_type=_METRICS_CONTENT_TYPE)
 
     def get_state(self, path: str = ""):
         if path == "":
@@ -1801,6 +1837,8 @@ class API:
                 event = i_event.event
 
                 if isinstance(event, ChunkGenerated):
+                    if self.is_master:
+                        self._record_chunk_metrics(event)
                     if queue := self._image_generation_queues.get(
                         event.command_id, None
                     ):
@@ -1817,10 +1855,43 @@ class API:
                             await queue.send(event.chunk)
                         except (BrokenResourceError, ClosedResourceError):
                             self._text_generation_queues.pop(event.command_id, None)
+                if (
+                    isinstance(event, NodeGatheredInfo)
+                    and event.node_id == self.node_id
+                ):
+                    record_node_gathered_info(event.node_id, event.info)
                 if isinstance(event, InstanceDeleted):
                     self._close_streams_for_instance(event.instance_id)
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
+
+    def _record_chunk_metrics(self, event: ChunkGenerated) -> None:
+        chunk = event.chunk
+        record_chunk_generated(chunk)
+        if not isinstance(chunk, (TokenChunk, ToolCallChunk)):
+            return
+        if chunk.stats is None or chunk.finish_reason is None:
+            return
+        instance_id = self._find_instance_for_command(event.command_id)
+        if instance_id is None:
+            return
+        record_generation_complete(
+            instance_id=instance_id,
+            model_id=str(chunk.model),
+            stats=chunk.stats,
+            finish_reason=chunk.finish_reason,
+        )
+
+    def _find_instance_for_command(self, command_id: CommandId) -> InstanceId | None:
+        for task in self.state.tasks.values():
+            if (
+                isinstance(
+                    task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
+                )
+                and task.command_id == command_id
+            ):
+                return task.instance_id
+        return None
 
     def _close_streams_for_instance(self, instance_id: InstanceId) -> None:
         """Close any active generation streams for commands running on the given instance."""
