@@ -165,7 +165,8 @@ of shortcuts that should be revisited later.
   Files:
   - `src/main.rs`
   Why this is a shortcut:
-  - Any local user can connect, issue keepalives, and observe raw Babel output.
+  - Any local user can connect, issue keepalives, and drive the daemon's public
+    control surface.
   Follow-up:
   - Revisit permissions/authz once the IPC surface is finalized.
 

@@ -81,6 +81,17 @@ This does **not** require the final IPC architecture first.
 
 This should be the next major feature.
 
+Before packets can move end-to-end, the daemon also needs to own the kernel
+route that steers overlay traffic into `utun`:
+
+- keep the local node `/128` on `utun`,
+- add `EXO_ULA_PREFIX -> utunX` when the routing stack turns on,
+- remove that route when the routing stack turns off,
+- keep `babeld` kernel installs disabled.
+
+Without that, local application traffic will not be redirected into the
+overlay, even if the UDP dataplane itself exists.
+
 The first version can stay simple:
 
 - one UDP datagram carries exactly one inner IPv6 packet,
@@ -102,6 +113,9 @@ The dataplane should:
 
 This gives the project a real “V” and “M” to go with the current daemon/control
 shell.
+
+The `utun` MTU should also be revisited at this stage so it reflects encapsulated
+IPv6-over-UDP overhead rather than staying at the current placeholder value.
 
 ### 2. Add a derived forwarding table above `BabelState`
 
