@@ -18,7 +18,7 @@ dependencies = [
   "exo-pyo3-bindings",                       # rust bindings
   "anyio==4.11.0",
   "mlx==0.31.2; sys_platform == 'darwin'",
-  "mlx-lm",
+  "mlx-lm; sys_platform=='darwin'",
   "tiktoken>=0.12.0",                        # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
   "openai-harmony>=0.0.8",
@@ -49,15 +49,21 @@ dev = [
 [project.optional-dependencies]
 build = ["nanobind"]
 cpu = [
-  "mlx-cpu==0.31.2; sys_platform == 'linux'",
+  "mlx==0.31.1; sys_platform == 'linux'",
+  "mlx-cpu==0.31.1; sys_platform == 'linux'",
+  "mlx-lm; sys_platform == 'linux'",
   "torch>=2.10.0; sys_platform == 'linux'",
 ]
 cuda12 = [
+  "mlx==0.31.1; sys_platform == 'linux'",
   "mlx-cuda-12==0.31.1; sys_platform == 'linux'",
+  "mlx-lm; sys_platform == 'linux'",
   "torch>=2.10.0; sys_platform == 'linux'",
 ]
 cuda13 = [
+  "mlx==0.31.1; sys_platform == 'linux'",
   "mlx-cuda-13==0.31.1; sys_platform == 'linux'",
+  "mlx-lm; sys_platform == 'linux'",
   "torch>=2.10.0; sys_platform == 'linux'",
 ]
 
@@ -149,7 +155,10 @@ prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }, { extra = "cpu" }]]
 constraint-dependencies = ["transformers>=5.0.0,<5.4.0"]
-override-dependencies = ["mlx", "torch"]
+override-dependencies = [
+  "mlx==0.31.1; sys_platform=='linux'",
+  "mlx; sys_platform=='darwin'",
+]
 
 [tool.uv.extra-build-dependencies]
 miniaudio = ["setuptools", "cffi", "pycparser"]
