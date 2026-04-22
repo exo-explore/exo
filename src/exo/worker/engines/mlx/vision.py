@@ -36,6 +36,19 @@ from exo.worker.runner.bootstrap import logger
 
 _video_processor_patched = False
 
+_MLX_VLM_MODEL_TYPE_ALIASES: dict[str, str] = {
+    "kimi_k25": "kimi_vl",
+    "kimi_k26": "kimi_vl",
+}
+
+
+def _torch_tensor_to_mx(
+    tensor: Any,  # pyright: ignore[reportAny]
+) -> mx.array:
+    if str(tensor.dtype) == "torch.bfloat16":  # type: ignore
+        return mx.array(tensor.float().numpy(), dtype=mx.bfloat16)  # type: ignore
+    return mx.array(tensor.numpy())  # type: ignore
+
 
 def _filter_config(cls: type, d: dict[str, Any]) -> dict[str, Any]:
     valid = set(inspect.signature(cls.__init__).parameters.keys()) - {"self"}
@@ -207,7 +220,9 @@ class VisionEncoder:
         return {}
 
     def _import_mlx_vlm(self, *submodules: str) -> Any:  # type: ignore
-        mt = self._config.model_type
+        mt = _MLX_VLM_MODEL_TYPE_ALIASES.get(
+            self._config.model_type, self._config.model_type
+        )
         results: list[Any] = []
         for sub in submodules:
             name = f"mlx_vlm.models.{mt}.{sub}"
@@ -240,7 +255,7 @@ class VisionEncoder:
     def _load_image_processor_from_module(self, repo: str) -> "ImageProcessor | None":
         # mlx_vlm.utils.load_image_processor only works for models that set
         # `Model.ImageProcessor = <cls>`, but Gemma4 just uses
-        # `Gemma4ImageProcessor` from the package `__init__.py`
+        # `Gemma4ImageProcessor` from the package `__init__.py`.
         try:
             pkg: Any = importlib.import_module(
                 f"mlx_vlm.models.{self._config.model_type}"
@@ -321,10 +336,16 @@ class VisionEncoder:
         else:
             self._load_weights_from_model_repo()
 
-        repo = processor_repo or str(self._model_path)
-        image_proc = load_image_processor(
-            repo
-        ) or self._load_image_processor_from_module(repo)
+        if processor_repo:
+            repo = str(build_model_path(ModelId(processor_repo)))
+        else:
+            repo = str(self._model_path)
+        try:
+            image_proc = load_image_processor(repo)
+        except ValueError:
+            image_proc = None
+        if image_proc is None:
+            image_proc = self._load_image_processor_from_module(repo)
         if image_proc is not None:
             self._processor = image_proc
         else:
@@ -341,39 +362,42 @@ class VisionEncoder:
         if not safetensors_files:
             raise FileNotFoundError(f"No safetensors files found in {self._model_path}")
 
-        weights: dict[str, mx.array] = {}
-        for sf_path in safetensors_files:
-            with safe_open(str(sf_path), framework="pt") as f:
-                keys = f.keys()
-                for key in keys:
-                    tensor = f.get_tensor(key)  # type: ignore
-                    np_tensor = tensor.float().numpy()  # type: ignore
-                    weights[key] = mx.array(np_tensor, dtype=mx.bfloat16)  # type: ignore
-
         vision_weights: dict[str, mx.array] = {}
         projector_weights: dict[str, mx.array] = {}
-        for key, val in weights.items():
-            if key.startswith("vision_tower."):
-                short_key = key[len("vision_tower.") :]
-                if short_key.startswith("encoder."):
-                    short_key = short_key[len("encoder.") :]
-                m = re.match(r"^(blocks\.\d+)\.(wqkv|wo)\.(weight|bias)$", short_key)
-                if m:
-                    short_key = f"{m.group(1)}.attn.{m.group(2)}.{m.group(3)}"
-                if short_key == "patch_embed.proj.weight" and val.ndim == 4:
-                    val = val.transpose(0, 2, 3, 1)
-                vision_weights[short_key] = val
-            elif key.startswith(("mm_projector.", "multi_modal_projector.")):
-                if key.startswith("multi_modal_projector."):
-                    short_key = key[len("multi_modal_projector.") :]
-                    if short_key.startswith("mm_projector."):
-                        short_key = short_key[len("mm_projector.") :]
-                else:
-                    short_key = key[len("mm_projector.") :]
-                short_key = short_key.replace("proj.0.", "linear_1.").replace(
-                    "proj.2.", "linear_2."
-                )
-                projector_weights[short_key] = val
+
+        for sf_path in safetensors_files:
+            with safe_open(str(sf_path), framework="pt") as f:
+                keys = cast(list[str], list(f.keys()))  # type: ignore
+                for key in keys:
+                    if key.startswith("vision_tower."):
+                        short_key = key[len("vision_tower.") :]
+                        if short_key.startswith("encoder."):
+                            short_key = short_key[len("encoder.") :]
+                        m = re.match(
+                            r"^(blocks\.\d+)\.(wqkv|wo)\.(weight|bias)$", short_key
+                        )
+                        if m:
+                            short_key = f"{m.group(1)}.attn.{m.group(2)}.{m.group(3)}"
+                        tensor = f.get_tensor(key)  # type: ignore
+                        val = mx.array(tensor.float().numpy(), dtype=mx.bfloat16)  # type: ignore
+                        if short_key == "patch_embed.proj.weight" and val.ndim == 4:
+                            val = val.transpose(0, 2, 3, 1)
+                        vision_weights[short_key] = val
+                    elif key.startswith(("mm_projector.", "multi_modal_projector.")):
+                        if key.startswith("multi_modal_projector."):
+                            short_key = key[len("multi_modal_projector.") :]
+                            if short_key.startswith("mm_projector."):
+                                short_key = short_key[len("mm_projector.") :]
+                        else:
+                            short_key = key[len("mm_projector.") :]
+                        short_key = short_key.replace("proj.0.", "linear_1.").replace(
+                            "proj.2.", "linear_2."
+                        )
+                        tensor = f.get_tensor(key)  # type: ignore
+                        projector_weights[short_key] = mx.array(
+                            tensor.float().numpy(),  # type: ignore
+                            dtype=mx.bfloat16,
+                        )
 
         assert self._vision_tower is not None
         self._vision_tower.load_weights(list(vision_weights.items()))
@@ -409,18 +433,26 @@ class VisionEncoder:
         needs_sanitize = False
 
         for sf_path in safetensors_files:
-            file_weights: dict[str, mx.array] = mx.load(str(sf_path))  # type: ignore
-            for key, val in file_weights.items():
-                for prefix in vision_prefixes:
-                    if key.startswith(prefix):
-                        vision_weights[key[len(prefix) :]] = val
-                        if prefix == "model.visual.":
-                            needs_sanitize = True
-                        break
-                else:
+            with safe_open(str(sf_path), framework="pt") as f:
+                keys = cast(list[str], list(f.keys()))  # type: ignore
+                for key in keys:
+                    matched = False
+                    for prefix in vision_prefixes:
+                        if key.startswith(prefix):
+                            vision_weights[key[len(prefix) :]] = _torch_tensor_to_mx(
+                                f.get_tensor(key)
+                            )
+                            if prefix == "model.visual.":
+                                needs_sanitize = True
+                            matched = True
+                            break
+                    if matched:
+                        continue
                     for prefix in projector_prefixes:
                         if key.startswith(prefix):
-                            projector_weights[key[len(prefix) :]] = val
+                            projector_weights[key[len(prefix) :]] = _torch_tensor_to_mx(
+                                f.get_tensor(key)
+                            )
                             break
 
         if not vision_weights:
@@ -465,7 +497,12 @@ class VisionEncoder:
         grid_thw: mx.array | None
         n_tokens_per_image: list[int]
 
-        if self._config.processor_repo:
+        is_kimi_vl_processor = any(
+            "mlx_vlm.models.kimi_vl" in cls.__module__
+            for cls in type(self._processor).__mro__
+        )
+
+        if self._config.processor_repo and not is_kimi_vl_processor:
             processed = self._processor.preprocess(
                 [{"type": "image", "image": img} for img in pil_images],
                 return_tensors="np",
@@ -479,6 +516,24 @@ class VisionEncoder:
             grid_thw = mx.array(processed["grid_thws"])  # type: ignore
             assert self._merge_kernel_size is not None
             merge_length = int(np.prod(self._merge_kernel_size))
+            n_tokens_per_image = [
+                int(mx.prod(grid_thw[i]).item()) // merge_length
+                for i in range(grid_thw.shape[0])
+            ]
+        elif is_kimi_vl_processor:
+            proc: Any = self._processor
+            raw_processed = proc.preprocess(pil_images, return_tensors="np")  # type: ignore
+            stacked_pixels = mx.array(raw_processed["pixel_values"])  # type: ignore
+            if stacked_pixels.ndim == 3:
+                stacked_pixels = stacked_pixels[None]
+            per_image_pixels = [
+                stacked_pixels[i : i + 1] for i in range(stacked_pixels.shape[0])
+            ]
+            grid_raw = raw_processed.get("image_grid_hws")  # type: ignore
+            if grid_raw is None:
+                grid_raw = raw_processed["grid_thws"]  # type: ignore
+            grid_thw = mx.array(grid_raw)  # type: ignore
+            merge_length = int(np.prod(self._merge_kernel_size or [2, 2]))
             n_tokens_per_image = [
                 int(mx.prod(grid_thw[i]).item()) // merge_length
                 for i in range(grid_thw.shape[0])
