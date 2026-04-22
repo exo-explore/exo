@@ -191,18 +191,18 @@ in
     { self', pkgs, unfreePkgs, lib, ... }:
     let
       inherit (pkgs.stdenv.hostPlatform) isLinux;
-      inherit (mkPythonSet { inherit self' pkgs lib; members = { exo = lib.optionals isLinux [ "dev" "cpu" ]; }; }) editablePythonSet mkExo;
+      inherit (mkPythonSet { inherit self' pkgs lib; members = { exo = [ "cpu" ]; }; }) editablePythonSet mkExo;
 
       # Virtual environment with dev dependencies for testing
       testVenv = (mkPythonSet {
         inherit self' pkgs lib; members = {
-        exo = [ "dev" ] ++ lib.optionals isLinux [ "cpu" ]; # Include pytest, pytest-asyncio, pytest-env
+        exo = [ "dev" "cpu" ]; # Include pytest, pytest-asyncio, pytest-env
       };
       }).venv "exo-test";
 
       mkBenchScript = (mkPythonSet {
         inherit self' pkgs lib; members = {
-        exo = lib.optionals isLinux [ "cpu" ];
+        exo = [ "cpu" ];
         exo-bench = [ ]; # Include pytest, pytest-asyncio, pytest-env
       };
       }).mkPythonScript;

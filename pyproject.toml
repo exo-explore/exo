@@ -50,7 +50,7 @@ dev = [
 build = ["nanobind"]
 cpu = [
   "mlx==0.31.1; sys_platform == 'linux'",
-  "mlx-cpu==0.31.2; sys_platform == 'linux'",
+  "mlx-cpu==0.31.1; sys_platform == 'linux'",
   "mlx-lm; sys_platform == 'linux'",
   "torch>=2.10.0; sys_platform == 'linux'",
 ]
@@ -155,7 +155,10 @@ prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }, { extra = "cpu" }]]
 constraint-dependencies = ["transformers>=5.0.0,<5.4.0"]
-override-dependencies = ["mlx"]
+override-dependencies = [
+  "mlx==0.31.1; sys_platform=='linux'",
+  "mlx; sys_platform=='darwin'",
+]
 
 [tool.uv.extra-build-dependencies]
 miniaudio = ["setuptools", "cffi", "pycparser"]
