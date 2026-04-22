@@ -234,6 +234,7 @@ class API:
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
+        self._sent_image_hashes: set[str] = set()
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -283,6 +284,7 @@ class API:
         self.event_receiver.close()
         self.event_receiver = event_receiver
         self._tg.start_soon(self._apply_state)
+        self._sent_image_hashes = set()
 
     def unpause(self, result_clock: int):
         logger.info("Unpausing API")
@@ -736,8 +738,6 @@ class API:
         logger.warning(
             "TODO: we should send a notification to the user to download the model"
         )
-
-    _sent_image_hashes: set[str] = set()
 
     async def _send_text_generation_with_images(
         self, task_params: TextGenerationTaskParams
