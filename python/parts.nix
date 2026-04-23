@@ -113,36 +113,38 @@ let
               });
           } // lib.optionalAttrs isLinux {
           mlx = prev.mlx.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ lib.optionals cudaSupport [ pkgs.autoAddDriverRunpath ];
             buildInputs = old.buildInputs ++ lib.optionals cudaSupport cudaLibs;
-            autoPatchelfIgnoreMissingDeps = lib.optionals cudaSupport [ "libcuda.so.1" ];
             postInstall = ''
               cp -r "${final.${libmlx_source}}/${final.python.sitePackages}/mlx" "$out/${final.python.sitePackages}/mlx/"
             '';
+            autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
           });
         } // lib.optionalAttrs cudaSupport {
           "${libmlx_source}" = prev."${libmlx_source}".overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
             buildInputs = old.buildInputs ++ cudaLibs;
             autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
           });
           nvidia-cufile = prev.nvidia-cufile.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
             buildInputs = old.buildInputs ++ [ pkgs.rdma-core ];
-            autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
           });
           nvidia-cusolver = prev.nvidia-cusolver.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
             buildInputs = old.buildInputs ++ cudaLibs;
-            autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
           });
           nvidia-nvshmem-cu13 = prev.nvidia-nvshmem-cu13.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
             buildInputs = old.buildInputs ++ [ pkgs.rdma-core pkgs.pmix pkgs.libfabric pkgs.ucx pkgs.openmpi ];
-            autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
           });
           nvidia-cusparse = prev.nvidia-cusparse.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
             buildInputs = old.buildInputs ++ [ cudaLibs ];
-            autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
           });
           torch = prev.torch.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
             buildInputs = old.buildInputs ++ cudaLibs;
-            autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
           });
         };
       pyprojectOverlay = workspace.mkPyprojectOverlay {
@@ -165,8 +167,8 @@ let
         ]
       );
       venv = name: (pythonSet.mkVirtualEnv "${name}-env" members).overrideAttrs (_: { venvSkip = [ "lib/python${python.pythonVersion}/site-packages/mlx/share/cmake/*" ]; });
-      mkApp = cmd: name: pkgs.writeShellApplication {
-        inherit name;
+      mkApp = text: name: pkgs.writeShellApplication {
+        inherit name text;
         runtimeEnv = {
           EXO_DASHBOARD_DIR = self'.packages.dashboard;
           EXO_RESOURCES_DIR = inputs.self + /resources;
@@ -176,14 +178,13 @@ let
           (venv name)
         ]
         ++ lib.optionals isDarwin [ pkgs.macmon ];
-        text = "exec " + lib.optionalString cudaSupport "${lib.getExe pkgs.nix-gl-host} " + cmd;
       };
     in
     {
       inherit venv;
       editablePythonSet = pythonSet.overrideScope editableOverlay;
-      mkPythonScript = path: mkApp ''python ${path} "$@"'';
-      mkExo = mkApp ''exo "$@"'';
+      mkPythonScript = path: mkApp ''exec python ${path} "$@"'';
+      mkExo = mkApp ''exec exo "$@"'';
     };
 in
 {

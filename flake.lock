@@ -96,26 +96,6 @@
         "type": "github"
       }
     },
-    "nixglhost": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1732211616,
-        "narHash": "sha256-QZCKJoypcwgS3tDNSWMjlxEBZtOYPW3eXV24rMzKsac=",
-        "owner": "numtide",
-        "repo": "nix-gl-host",
-        "rev": "5269b233f83880a0b433eafe026f0bc0d8f1a4a9",
-        "type": "github"
-      },
-      "original": {
-        "owner": "numtide",
-        "repo": "nix-gl-host",
-        "type": "github"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1775595990,
@@ -207,7 +187,6 @@
         "dream2nix": "dream2nix",
         "fenix": "fenix",
         "flake-parts": "flake-parts",
-        "nixglhost": "nixglhost",
         "nixpkgs": "nixpkgs",
         "pyproject-build-systems": "pyproject-build-systems",
         "pyproject-nix": "pyproject-nix",

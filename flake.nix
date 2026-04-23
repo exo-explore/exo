@@ -45,11 +45,6 @@
       inputs.uv2nix.follows = "uv2nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-
-    nixglhost = {
-      url = "github:numtide/nix-gl-host";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   nixConfig = {
@@ -80,7 +75,6 @@
             inherit system;
             config.allowUnfreePredicate = pkg: (pkg.pname or "") == "metal-toolchain";
             overlays = [
-              inputs.nixglhost.overlays.default
               (import ./nix/apple-sdk-overlay.nix)
               (final: _: {
                 macmon = final.rustPlatform.buildRustPackage {
