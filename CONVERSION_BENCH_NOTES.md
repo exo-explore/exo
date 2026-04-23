@@ -145,16 +145,24 @@ advance the pinned SHAs in `uv.lock` during testing. The working command was:
   copying, so it is the right helper for proving aliasing in benchmarks.
 - `mx.metal._unsafe_to_tinygrad_fast(...)` is a single MLX binding entrypoint
   for `MLX -> tinygrad`, but it still includes tinygrad-side tensor creation.
-- `Tensor._unsafe_metal_borrower(...)` reuses the same tinygrad tensor wrapper
-  and rebinds its borrowed `MTLBuffer*`. That is narrower than ordinary tensor
-  construction, but it is the right experiment for isolating wrapper-creation
-  cost.
+- `Tensor._unsafe_metal_borrower(...)` is a mutable slot primitive. It reuses
+  the same tinygrad tensor wrapper and rebinds its borrowed `MTLBuffer*`.
+  Older references to that tensor are not snapshots.
+- The borrower now updates its internal `external_ptr` metadata on rebind so
+  the stored buffer metadata matches the live Metal handle.
 - `mx.metal._unsafe_export_storage(...)` currently expects an MLX array that is
   already in the C++ `available` state. In practice, `mx.array(np_array)` met
   that precondition for local smoke testing, while `mx.arange(...)` did not.
 - `tinygrad -> MLX memoryview_copy` also includes per-call runtime ceremony,
   because tinygrad's zero-copy Metal memoryview export synchronizes before
   exposing the buffer.
+- Bench rows named `rebindable_slot_*` measure rebindable-slot cost, not fresh
+  conversion cost.
+- Bench rows named `borrower_ring*` rotate through multiple independent slots.
+  They are intended to approximate a practical pool/ring design with fewer
+  footguns than a single slot.
+- Bench rows named `*_then_use_sum` measure rebinding or conversion followed by
+  immediate tinygrad consumption through a realized reduction kernel.
 
 ## Current Findings
 

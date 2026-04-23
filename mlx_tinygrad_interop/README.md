@@ -37,7 +37,11 @@ owner pinning, and wrapper-construction overhead.
 - Newer `MLX -> tinygrad` rows also cover:
   - a single MLX-side entrypoint that calls into tinygrad without the exporter
     dict round-trip
-  - a reusable tinygrad borrower that rebinds the borrowed `MTLBuffer*`
+  - a rebindable tinygrad slot that reuses one wrapper and rebinds the
+    borrowed `MTLBuffer*`
+  - a small ring of such slots
+  - `*_then_use_sum` rows that immediately consume the converted tensor through
+    a realized tinygrad reduction
 - `mx.array(memoryview(...))` is a native copy path in current MLX, not an
   aliasing import path.
 
@@ -85,7 +89,7 @@ Later remote microbench runs showed the split more clearly:
   so exporter dict marshalling was never the main problem.
 - `MLX -> tinygrad` is dominated by tinygrad import / wrapper construction when
   a fresh tensor is created each time.
-- The reusable tinygrad borrower drops `MLX -> tinygrad` into the sub-microsecond
+- The rebindable tinygrad slot drops `MLX -> tinygrad` into the sub-microsecond
   range across the measured sizes, which means wrapper reuse is the decisive
   optimization on this host.
 - The strict alias-only `tinygrad -> MLX` helper succeeds on `e16`; its timing
@@ -95,8 +99,8 @@ Later remote microbench runs showed the split more clearly:
   for small tensors.
 - Offsetted MLX slices now export both logical bytes and backing-buffer bytes,
   and a nonzero-offset slice was validated successfully into tinygrad.
-- The reusable borrower returns the same tinygrad `Tensor` object rebound to
-  new Metal storage, so it is narrower than an ordinary "new tensor each call"
+- The rebindable slot returns the same tinygrad `Tensor` object rebound to new
+  Metal storage, so it is narrower than an ordinary "new tensor each call"
   conversion helper.
 
 ## Current Scope

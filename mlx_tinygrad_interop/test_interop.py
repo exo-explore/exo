@@ -35,7 +35,7 @@ class TestMlxTinygradInterop(unittest.TestCase):
     tensor = mx.metal._unsafe_to_tinygrad_fast(array, dtypes.float32, owner=array)
     np.testing.assert_array_equal(tensor.numpy(), values)
 
-  def test_reusable_borrower_rebinds_between_sources(self):
+  def test_rebindable_slot_mutates_previous_reference(self):
     first = np.arange(64, dtype=np.float32)
     second = first + np.float32(1)
     array_a = mx.array(first, dtype=mx.float32)
@@ -55,6 +55,61 @@ class TestMlxTinygradInterop(unittest.TestCase):
 
     self.assertIs(tensor_a, tensor_b)
     np.testing.assert_array_equal(tensor_a.numpy(), second)
+    np.testing.assert_array_equal(tensor_b.numpy(), second)
+
+  def test_rebindable_slot_updates_external_ptr_metadata(self):
+    first = np.arange(32, dtype=np.float32)
+    second = first + np.float32(2)
+    array_a = mx.array(first, dtype=mx.float32)
+    array_b = mx.array(second, dtype=mx.float32)
+    storage_a = mx.metal._unsafe_export_storage(array_a)
+    storage_b = mx.metal._unsafe_export_storage(array_b)
+    borrower = Tensor._unsafe_metal_borrower(
+      int(storage_a["mtl_buffer_ptr"]),
+      tuple(storage_a["shape"]),
+      dtype=dtypes.float32,
+      byte_offset=int(storage_a["offset_bytes"]),
+      buffer_nbytes=int(storage_a["buffer_nbytes"]),
+      owner=array_a,
+    )
+
+    mx.metal._unsafe_rebind_tinygrad(array_b, borrower, owner=array_b)
+
+    self.assertIsNotNone(borrower._base_buf.options)
+    self.assertEqual(borrower._base_buf.options.external_ptr, int(storage_b["mtl_buffer_ptr"]))
+
+  def test_two_slots_hold_two_distinct_snapshots_until_reused(self):
+    first = np.arange(16, dtype=np.float32)
+    second = first + np.float32(1)
+    third = first + np.float32(2)
+    array_a = mx.array(first, dtype=mx.float32)
+    array_b = mx.array(second, dtype=mx.float32)
+    array_c = mx.array(third, dtype=mx.float32)
+    storage_a = mx.metal._unsafe_export_storage(array_a)
+    storage_b = mx.metal._unsafe_export_storage(array_b)
+    slot_a = Tensor._unsafe_metal_borrower(
+      int(storage_a["mtl_buffer_ptr"]),
+      tuple(storage_a["shape"]),
+      dtype=dtypes.float32,
+      byte_offset=int(storage_a["offset_bytes"]),
+      buffer_nbytes=int(storage_a["buffer_nbytes"]),
+      owner=array_a,
+    )
+    slot_b = Tensor._unsafe_metal_borrower(
+      int(storage_b["mtl_buffer_ptr"]),
+      tuple(storage_b["shape"]),
+      dtype=dtypes.float32,
+      byte_offset=int(storage_b["offset_bytes"]),
+      buffer_nbytes=int(storage_b["buffer_nbytes"]),
+      owner=array_b,
+    )
+
+    tensor_a = mx.metal._unsafe_rebind_tinygrad(array_a, slot_a, owner=array_a)
+    tensor_b = mx.metal._unsafe_rebind_tinygrad(array_b, slot_b, owner=array_b)
+    mx.metal._unsafe_rebind_tinygrad(array_c, slot_a, owner=array_c)
+
+    self.assertIsNot(tensor_a, tensor_b)
+    np.testing.assert_array_equal(tensor_a.numpy(), third)
     np.testing.assert_array_equal(tensor_b.numpy(), second)
 
 
