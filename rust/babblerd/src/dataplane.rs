@@ -26,8 +26,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use arrayvec::ArrayVec;
-use color_eyre::eyre::{eyre, Result, WrapErr};
-use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError};
+use color_eyre::eyre::{Result, WrapErr, eyre};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use hashbrown::{HashMap, HashSet};
 use mio::net::UdpSocket as MioUdpSocket;
 use mio::unix::SourceFd;
@@ -90,6 +90,18 @@ enum SocketAction {
     Add { ifname: Box<str>, ifindex: u32 },
     Refresh { ifname: Box<str>, ifindex: u32 },
     Remove { ifname: Box<str> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SkippedInterface {
+    ifname: Box<str>,
+    reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SocketPlan {
+    actions: Vec<SocketAction>,
+    skipped: Vec<SkippedInterface>,
 }
 
 impl Dataplane {
@@ -331,16 +343,47 @@ impl DataplaneWorker {
             |ifname| {
                 if_nametoindex(ifname).wrap_err_with(|| format!("resolving ifindex for {}", ifname))
             },
-        )?;
+        );
 
-        for action in actions {
+        for skipped in actions.skipped {
+            tracing::warn!(
+                interface = %skipped.ifname,
+                reason = %skipped.reason,
+                "skipping dataplane socket reconcile for interface"
+            );
+        }
+
+        for action in actions.actions {
             match action {
-                SocketAction::Add { ifname, ifindex } => self.add_socket(ifname, ifindex)?,
-                SocketAction::Refresh { ifname, ifindex } => {
-                    self.remove_socket(&ifname)?;
-                    self.add_socket(ifname, ifindex)?;
+                SocketAction::Add { ifname, ifindex } => {
+                    if let Err(err) = self.add_socket(ifname.clone(), ifindex) {
+                        tracing::warn!(
+                            interface = %ifname,
+                            ifindex,
+                            error = %err,
+                            "failed to add dataplane socket for interface"
+                        );
+                    }
                 }
-                SocketAction::Remove { ifname } => self.remove_socket(&ifname)?,
+                SocketAction::Refresh { ifname, ifindex } => {
+                    if let Err(err) = self.refresh_socket(&ifname, ifindex) {
+                        tracing::warn!(
+                            interface = %ifname,
+                            ifindex,
+                            error = %err,
+                            "failed to refresh dataplane socket for interface"
+                        );
+                    }
+                }
+                SocketAction::Remove { ifname } => {
+                    if let Err(err) = self.remove_socket(&ifname) {
+                        tracing::warn!(
+                            interface = %ifname,
+                            error = %err,
+                            "failed to remove dataplane socket for interface"
+                        );
+                    }
+                }
             }
         }
 
@@ -361,23 +404,56 @@ impl DataplaneWorker {
     fn add_socket(&mut self, ifname: Box<str>, ifindex: u32) -> Result<()> {
         let socket = open_udp_socket(self.udp_port, ifname.as_ref(), ifindex)
             .wrap_err_with(|| format!("opening UDP socket for {}", ifname))?;
+        let slab_key = self.insert_registered_socket(ifname.clone(), ifindex, socket)?;
+        self.ifname_to_slab.insert(ifname, slab_key);
+        Ok(())
+    }
 
-        let slab_key = self.sockets.insert(InterfaceSocket {
-            ifname: ifname.clone(),
+    fn refresh_socket(&mut self, ifname: &str, ifindex: u32) -> Result<()> {
+        let Some(old_slab_key) = self.ifname_to_slab.get(ifname).copied() else {
+            return self.add_socket(ifname.into(), ifindex);
+        };
+
+        let new_ifname: Box<str> = ifname.into();
+        let new_socket = open_udp_socket(self.udp_port, ifname, ifindex)
+            .wrap_err_with(|| format!("opening replacement UDP socket for {}", ifname))?;
+        let new_slab_key =
+            self.insert_registered_socket(new_ifname.clone(), ifindex, new_socket)?;
+        let previous = self.ifname_to_slab.insert(new_ifname.clone(), new_slab_key);
+        debug_assert_eq!(previous, Some(old_slab_key));
+
+        let Some(mut old_socket) = self.sockets.try_remove(old_slab_key) else {
+            return Ok(());
+        };
+        if let Err(err) = self.poll.registry().deregister(&mut old_socket.socket) {
+            tracing::warn!(
+                interface = %ifname,
+                error = %err,
+                "failed to deregister old dataplane socket after refresh"
+            );
+        }
+        Ok(())
+    }
+
+    fn insert_registered_socket(
+        &mut self,
+        ifname: Box<str>,
+        ifindex: u32,
+        mut socket: MioUdpSocket,
+    ) -> Result<usize> {
+        let entry = self.sockets.vacant_entry();
+        let slab_key = entry.key();
+        let token = Token(slab_key + 1);
+        self.poll
+            .registry()
+            .register(&mut socket, token, Interest::READABLE)
+            .wrap_err_with(|| format!("registering UDP socket for {}", ifname))?;
+        entry.insert(InterfaceSocket {
+            ifname,
             ifindex,
             socket,
         });
-        let token = Token(slab_key + 1);
-        let socket_ref = self
-            .sockets
-            .get_mut(slab_key)
-            .expect("slab entry must exist immediately after insert");
-        self.poll
-            .registry()
-            .register(&mut socket_ref.socket, token, Interest::READABLE)
-            .wrap_err_with(|| format!("registering UDP socket for {}", ifname))?;
-        self.ifname_to_slab.insert(ifname, slab_key);
-        Ok(())
+        Ok(slab_key)
     }
 
     fn remove_socket(&mut self, ifname: &str) -> Result<()> {
@@ -395,17 +471,19 @@ impl DataplaneWorker {
     }
 }
 
-fn plan_socket_actions<F, S1, S2>(
+fn plan_socket_actions<F, S1, S2, E>(
     current_ifindices: &HashMap<Box<str>, u32, S1>,
     admitted_interfaces: &HashSet<Box<str>, S2>,
     mut resolve_ifindex: F,
-) -> Result<Vec<SocketAction>>
+) -> SocketPlan
 where
-    F: FnMut(&str) -> Result<u32>,
+    F: FnMut(&str) -> std::result::Result<u32, E>,
     S1: BuildHasher,
     S2: BuildHasher,
+    E: std::fmt::Display,
 {
     let mut actions = Vec::new();
+    let mut skipped = Vec::new();
 
     let mut stale: Vec<Box<str>> = current_ifindices
         .keys()
@@ -420,7 +498,16 @@ where
     let mut required: Vec<Box<str>> = admitted_interfaces.iter().cloned().collect();
     required.sort();
     for ifname in required {
-        let ifindex = resolve_ifindex(ifname.as_ref())?;
+        let ifindex = match resolve_ifindex(ifname.as_ref()) {
+            Ok(ifindex) => ifindex,
+            Err(err) => {
+                skipped.push(SkippedInterface {
+                    ifname,
+                    reason: err.to_string(),
+                });
+                continue;
+            }
+        };
         match current_ifindices.get(ifname.as_ref()).copied() {
             None => actions.push(SocketAction::Add { ifname, ifindex }),
             Some(existing_ifindex) if existing_ifindex != ifindex => {
@@ -430,7 +517,7 @@ where
         }
     }
 
-    Ok(actions)
+    SocketPlan { actions, skipped }
 }
 
 fn open_udp_socket(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioUdpSocket> {
@@ -494,7 +581,7 @@ mod tests {
     use ahash::RandomState;
     use hashbrown::{HashMap, HashSet};
 
-    use super::{decrement_hop_limit, ipv6_destination, plan_socket_actions, SocketAction};
+    use super::{SocketAction, decrement_hop_limit, ipv6_destination, plan_socket_actions};
 
     fn sample_ipv6_packet(dst: Ipv6Addr, hop_limit: u8) -> Vec<u8> {
         let mut packet = vec![0u8; 40];
@@ -527,16 +614,16 @@ mod tests {
         let current_ifindices = HashMap::with_hasher(RandomState::new());
         let admitted_interfaces: HashSet<Box<str>> = ["mesh0".into()].into_iter().collect();
 
-        let actions = plan_socket_actions(&current_ifindices, &admitted_interfaces, |ifname| {
-            Ok(match ifname {
+        let plan = plan_socket_actions(&current_ifindices, &admitted_interfaces, |ifname| {
+            Ok::<_, &'static str>(match ifname {
                 "mesh0" => 7,
                 _ => unreachable!(),
             })
-        })
-        .unwrap();
+        });
 
+        assert!(plan.skipped.is_empty());
         assert_eq!(
-            actions,
+            plan.actions,
             vec![SocketAction::Add {
                 ifname: "mesh0".into(),
                 ifindex: 7,
@@ -551,16 +638,16 @@ mod tests {
         current_ifindices.insert("mesh0".into(), 99);
 
         let admitted_interfaces: HashSet<Box<str>> = ["mesh0".into()].into_iter().collect();
-        let actions = plan_socket_actions(&current_ifindices, &admitted_interfaces, |ifname| {
-            Ok(match ifname {
+        let plan = plan_socket_actions(&current_ifindices, &admitted_interfaces, |ifname| {
+            Ok::<_, &'static str>(match ifname {
                 "mesh0" => 7,
                 _ => unreachable!(),
             })
-        })
-        .unwrap();
+        });
 
+        assert!(plan.skipped.is_empty());
         assert_eq!(
-            actions,
+            plan.actions,
             vec![
                 SocketAction::Remove {
                     ifname: "stale0".into(),
@@ -571,5 +658,34 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn socket_plan_skips_temporarily_unresolved_interfaces() {
+        let current_ifindices = HashMap::with_hasher(RandomState::new());
+        let admitted_interfaces: HashSet<Box<str>> =
+            ["mesh0".into(), "mesh1".into()].into_iter().collect();
+
+        let plan =
+            plan_socket_actions(
+                &current_ifindices,
+                &admitted_interfaces,
+                |ifname| match ifname {
+                    "mesh0" => Ok(7),
+                    "mesh1" => Err("temporary resolution failure"),
+                    _ => unreachable!(),
+                },
+            );
+
+        assert_eq!(
+            plan.actions,
+            vec![SocketAction::Add {
+                ifname: "mesh0".into(),
+                ifindex: 7,
+            }]
+        );
+        assert_eq!(plan.skipped.len(), 1);
+        assert_eq!(plan.skipped[0].ifname.as_ref(), "mesh1");
+        assert_eq!(plan.skipped[0].reason, "temporary resolution failure");
     }
 }

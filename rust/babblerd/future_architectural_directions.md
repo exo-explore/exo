@@ -95,6 +95,9 @@ The basic pieces are now in place:
 - dataplane socket ownership is now driven by admitted interfaces rather than
   only by currently selected routes, and retained sockets are refreshed when an
   `ifname` resolves to a new ifindex.
+- socket reconcile is now best-effort under interface churn: transient
+  resolution/open failures are logged and retried on later updates rather than
+  killing the dataplane.
 
 So the next step is no longer “invent or wire the modules”.
 
