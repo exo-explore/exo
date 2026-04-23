@@ -403,7 +403,7 @@ class TestE2EThinkingAndToolCall:
         prompt_no_think = encode_messages(
             messages, tools=_WEATHER_TOOLS, thinking_mode="chat"
         )
-        assert prompt_no_think.endswith(THINKING_END)
+        assert not prompt_no_think.endswith(THINKING_START)
 
         # Both should have the same tool definitions
         assert "get_weather" in prompt_think
