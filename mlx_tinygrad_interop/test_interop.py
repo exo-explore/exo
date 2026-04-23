@@ -35,6 +35,25 @@ class TestMlxTinygradInterop(unittest.TestCase):
     tensor = mx.metal._unsafe_to_tinygrad_fast(array, dtypes.float32, owner=array)
     np.testing.assert_array_equal(tensor.numpy(), values)
 
+  def test_fast_import_handles_zero_offset_oversized_backing_buffer(self):
+    backing = np.arange(2048, dtype=np.float32)
+    view = mx.array(backing, dtype=mx.float32)[:1792].reshape(7, 256)
+    mx.eval(view)
+
+    storage = mx.metal._unsafe_export_storage(view)
+    self.assertEqual(int(storage["offset_bytes"]), 0)
+    self.assertGreater(int(storage["buffer_nbytes"]), int(storage["logical_nbytes"]))
+
+    tensor = Tensor._unsafe_from_metal_buffer_fast(
+      int(storage["mtl_buffer_ptr"]),
+      tuple(storage["shape"]),
+      dtype=dtypes.float32,
+      byte_offset=int(storage["offset_bytes"]),
+      buffer_nbytes=int(storage["buffer_nbytes"]),
+      owner=view,
+    )
+    np.testing.assert_array_equal(tensor.numpy(), backing[:1792].reshape(7, 256))
+
   def test_rebindable_slot_mutates_previous_reference(self):
     first = np.arange(64, dtype=np.float32)
     second = first + np.float32(1)

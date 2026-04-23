@@ -129,6 +129,9 @@ Later remote microbench runs showed the split more clearly:
   for small tensors.
 - Offsetted MLX slices now export both logical bytes and backing-buffer bytes,
   and a nonzero-offset slice was validated successfully into tinygrad.
+- The randomized stress suite also caught and fixed the zero-offset variant of
+  that problem: oversized backing buffers now import through a logical tinygrad
+  buffer view instead of reshaping the entire backing allocation.
 - The rebindable slot returns the same tinygrad `Tensor` object rebound to new
   Metal storage, so it is narrower than an ordinary "new tensor each call"
   conversion helper.

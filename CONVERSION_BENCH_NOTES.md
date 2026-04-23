@@ -142,6 +142,9 @@ alone still left a stale git revision in a later pass. The working command was:
 - Offsetted MLX views must use `buffer_nbytes` semantics for bounds checks.
 - The legacy MLX export field `nbytes` was removed to avoid accidental use of
   logical-size semantics where backing-buffer-size semantics are required.
+- tinygrad's fast Metal import helper must also treat zero-offset logical views
+  over oversized backing buffers as `BUFFER_VIEW`s. Stress testing caught a bug
+  where it tried to reshape the whole backing buffer instead.
 - The first MLX import helper is raw-pointer based rather than foreign
   `MTLBuffer*` based.
 - `mx.metal._unsafe_array_from_ptr(...)` may still copy if MLX cannot alias the
