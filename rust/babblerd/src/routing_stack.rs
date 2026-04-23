@@ -20,6 +20,7 @@ pub struct RoutingStack {
     watcher: JoinHandle<crate::Result<()>>,
     state_logger: JoinHandle<()>,
     fib_publisher: JoinHandle<crate::Result<()>>,
+    dataplane_monitor: JoinHandle<()>,
     dataplane: Dataplane,
 }
 
@@ -35,7 +36,7 @@ impl RoutingStack {
         let mut state_recv = state_send.subscribe();
         let fib_state_recv = state_send.subscribe();
         let initial_state = state_send.borrow().clone();
-        let dataplane = Dataplane::spawn(DataplaneConfig {
+        let mut dataplane = Dataplane::spawn(DataplaneConfig {
             tun_device: tun
                 .try_clone_device()
                 .wrap_err("cloning TUN device for dataplane")?,
@@ -44,6 +45,9 @@ impl RoutingStack {
                 FibBuilder::new([node_addr.addr()], TUN_MTU).derive(initial_state.as_ref()),
             ),
         })?;
+        let dataplane_exit = dataplane
+            .take_exit_receiver()
+            .expect("dataplane exit receiver must exist immediately after spawn");
 
         let state_logger = tokio::spawn(async move {
             while state_recv.changed().await.is_ok() {
@@ -91,11 +95,28 @@ impl RoutingStack {
             res
         });
 
+        let dataplane_events = event_send.clone();
+        let dataplane_monitor = tokio::spawn(async move {
+            let exit = dataplane_exit.await;
+            let (kind, error) = match exit {
+                Ok(Ok(())) => (StackTaskKind::Dataplane, None),
+                Ok(Err(err)) => (StackTaskKind::Dataplane, Some(err)),
+                Err(err) => (
+                    StackTaskKind::Dataplane,
+                    Some(format!("dataplane exit receiver dropped: {err}")),
+                ),
+            };
+            let _ = dataplane_events
+                .send(RoutingStackEvent::Exited { kind, error })
+                .await;
+        });
+
         Ok(Self {
             babel,
             watcher,
             state_logger,
             fib_publisher,
+            dataplane_monitor,
             dataplane,
         })
     }
@@ -106,6 +127,7 @@ impl RoutingStack {
             watcher,
             state_logger,
             fib_publisher,
+            dataplane_monitor,
             dataplane,
         } = self;
 
@@ -119,6 +141,9 @@ impl RoutingStack {
 
         fib_publisher.abort();
         let _ = fib_publisher.await;
+
+        dataplane_monitor.abort();
+        let _ = dataplane_monitor.await;
 
         dataplane.stop().wrap_err("stopping dataplane thread")?;
 

@@ -36,6 +36,7 @@ use nix::errno::Errno;
 use nix::net::if_::if_nametoindex;
 use slab::Slab;
 use socket2::{Domain, Protocol, Socket, Type};
+use tokio::sync::oneshot;
 use tun_rs::SyncDevice;
 
 use crate::config::PHYSICAL_LINK_MTU;
@@ -54,6 +55,7 @@ pub struct DataplaneConfig {
 pub struct Dataplane {
     publisher: DataplanePublisher,
     stop_send: Sender<()>,
+    exit_recv: Option<oneshot::Receiver<std::result::Result<(), String>>>,
     thread: Option<JoinHandle<Result<()>>>,
 }
 
@@ -108,12 +110,20 @@ impl Dataplane {
     pub fn spawn(config: DataplaneConfig) -> Result<Self> {
         let (fib_updates_send, fib_updates_recv) = bounded(1);
         let (stop_send, stop_recv) = bounded(1);
+        let (exit_send, exit_recv) = oneshot::channel();
 
         let thread = thread::Builder::new()
             .name("babblerd-dataplane".into())
             .spawn(move || {
                 let mut worker = DataplaneWorker::new(config, fib_updates_recv, stop_recv)?;
-                worker.run()
+                let result = worker.run();
+                let _ = exit_send.send(
+                    result
+                        .as_ref()
+                        .map(|_| ())
+                        .map_err(std::string::ToString::to_string),
+                );
+                result
             })
             .wrap_err("spawning dataplane thread")?;
 
@@ -122,12 +132,19 @@ impl Dataplane {
                 fib_updates: fib_updates_send,
             },
             stop_send,
+            exit_recv: Some(exit_recv),
             thread: Some(thread),
         })
     }
 
     pub fn publisher(&self) -> DataplanePublisher {
         self.publisher.clone()
+    }
+
+    pub fn take_exit_receiver(
+        &mut self,
+    ) -> Option<oneshot::Receiver<std::result::Result<(), String>>> {
+        self.exit_recv.take()
     }
 
     pub fn stop(mut self) -> Result<()> {
@@ -269,7 +286,7 @@ impl DataplaneWorker {
             tracing::debug!(destination = %dst, "no dataplane route for packet from TUN");
             return Ok(());
         };
-        self.send_via_route(packet, &route)
+        self.try_send_via_route(packet, &route, "sending packet from TUN")
     }
 
     fn handle_udp_ready(&mut self, slab_key: usize) -> Result<()> {
@@ -278,11 +295,19 @@ impl DataplaneWorker {
         };
 
         let mut buf = [0u8; PHYSICAL_LINK_MTU as usize];
-        let (packet_len, peer) = match socket.socket.recv_from(&mut buf) {
+        let recv_result = socket.socket.recv_from(&mut buf);
+        let ifname = socket.ifname.clone();
+        let (packet_len, peer) = match recv_result {
             Ok(res) => res,
             Err(err) if err.kind() == ErrorKind::WouldBlock => return Ok(()),
             Err(err) => {
-                return Err(err).wrap_err_with(|| format!("receiving on {}", socket.ifname));
+                tracing::warn!(
+                    interface = %ifname,
+                    error = %err,
+                    "failed to receive UDP packet on dataplane socket"
+                );
+                self.best_effort_reconcile();
+                return Ok(());
             }
         };
 
@@ -306,7 +331,7 @@ impl DataplaneWorker {
             tracing::debug!(destination = %dst, "no dataplane route for forwarded packet");
             return Ok(());
         };
-        self.send_via_route(&packet, &route)
+        self.try_send_via_route(&packet, &route, "forwarding UDP packet")
     }
 
     fn send_via_route(&mut self, packet: &[u8], route: &FibEntry) -> Result<()> {
@@ -328,6 +353,20 @@ impl DataplaneWorker {
             Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(()),
             Err(err) => Err(err).wrap_err_with(|| format!("sending packet via {}", socket.ifname)),
         }
+    }
+
+    fn try_send_via_route(&mut self, packet: &[u8], route: &FibEntry, context: &str) -> Result<()> {
+        if let Err(err) = self.send_via_route(packet, route) {
+            tracing::warn!(
+                interface = %route.ifname,
+                next_hop = %route.next_hop_ll,
+                context,
+                error = %err,
+                "failed to send dataplane packet via route"
+            );
+            self.best_effort_reconcile();
+        }
+        Ok(())
     }
 
     fn apply_snapshot(&mut self, snapshot: Arc<FibSnapshot>) -> Result<()> {
@@ -388,6 +427,12 @@ impl DataplaneWorker {
         }
 
         Ok(())
+    }
+
+    fn best_effort_reconcile(&mut self) {
+        if let Err(err) = self.reconcile_sockets() {
+            tracing::warn!(error = %err, "dataplane socket reconcile failed");
+        }
     }
 
     fn current_ifindices(&self) -> HashMap<Box<str>, u32> {

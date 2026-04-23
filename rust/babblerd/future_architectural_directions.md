@@ -97,7 +97,10 @@ The basic pieces are now in place:
   `ifname` resolves to a new ifindex.
 - socket reconcile is now best-effort under interface churn: transient
   resolution/open failures are logged and retried on later updates rather than
-  killing the dataplane.
+  killing the dataplane during reconcile.
+- packet-path socket/interface failures are now warn-and-drop rather than
+  immediately crashing the dataplane thread, and dataplane exit is reported back
+  into the routing stack directly.
 
 So the next step is no longer “invent or wire the modules”.
 

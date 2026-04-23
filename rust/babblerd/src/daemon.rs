@@ -83,6 +83,7 @@ pub enum StackTaskKind {
     Babel,
     Watcher,
     FibPublisher,
+    Dataplane,
 }
 
 #[derive(Debug)]
