@@ -152,6 +152,26 @@ class Worker:
                         event.chunk
                     )
 
+                    if (
+                        len(self.input_chunk_buffer[cmd_id])
+                        == self.input_chunk_counts[cmd_id]
+                    ):
+                        per_image: defaultdict[int, list[InputImageChunk]] = (
+                            defaultdict(list)
+                        )
+                        for chunk in self.input_chunk_buffer[cmd_id].values():
+                            per_image[chunk.image_index].append(chunk)
+                        for chunks_for_image in per_image.values():
+                            sorted_chunks = sorted(
+                                chunks_for_image, key=lambda c: c.chunk_index
+                            )
+                            img = Base64Image("".join(c.data for c in sorted_chunks))
+                            self.image_cache[
+                                Base64ImageHash(
+                                    hashlib.sha256(img.encode("ascii")).hexdigest()
+                                )
+                            ] = img
+
                 if isinstance(event, CustomModelCardAdded):
                     await event.model_card.save_to_custom_dir()
                     add_to_card_cache(event.model_card)
@@ -170,6 +190,7 @@ class Worker:
                 self.state.runners,
                 self.state.tasks,
                 self.input_chunk_buffer,
+                self.image_cache,
                 self._instance_backoff,
                 self._download_backoff,
             )
@@ -307,42 +328,11 @@ class Worker:
                         del self.input_chunk_counts[cmd_id]
                     await self._start_runner_task(modified_task)
 
-                case TextGeneration() if (
-                    task.task_params.image_hashes
-                    or task.task_params.total_input_chunks > 0
-                ):
+                case TextGeneration() if task.task_params.image_hashes:
                     cmd_id = task.command_id
-                    by_index: dict[int, Base64Image] = {}
-
-                    for idx, h in task.task_params.image_hashes.items():
-                        assert h in self.image_cache
-                        by_index[idx] = self.image_cache[h]
-
-                    if task.task_params.total_input_chunks > 0:
-                        chunk_buffer = self.input_chunk_buffer.get(cmd_id, {})
-                        per_image: defaultdict[int, list[InputImageChunk]] = (
-                            defaultdict(list)
-                        )
-                        for chunk in chunk_buffer.values():
-                            per_image[chunk.image_index].append(chunk)
-                        for img_idx in sorted(per_image):
-                            sorted_chunks = sorted(
-                                per_image[img_idx], key=lambda c: c.chunk_index
-                            )
-                            img = Base64Image("".join(c.data for c in sorted_chunks))
-                            self.image_cache[
-                                Base64ImageHash(
-                                    hashlib.sha256(img.encode("ascii")).hexdigest()
-                                )
-                            ] = img
-                            by_index[img_idx] = img
-                        logger.info(
-                            f"Assembled {len(per_image)} VLM image(s) "
-                            f"from {len(chunk_buffer)} chunks"
-                        )
-
                     resolved_images = [
-                        Base64Image(by_index[i]) for i in sorted(by_index)
+                        self.image_cache[h]
+                        for _, h in sorted(task.task_params.image_hashes.items())
                     ]
                     modified_task = task.model_copy(
                         update={

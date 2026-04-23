@@ -19,6 +19,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
+from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadFailed,
@@ -52,6 +53,7 @@ def plan(
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
     tasks: Mapping[TaskId, Task],
     input_chunk_buffer: Mapping[CommandId, Mapping[int, InputImageChunk]],
+    image_cache: Mapping[Base64ImageHash, Base64Image],
     instance_backoff: KeyedBackoff[InstanceId],
     download_backoff: KeyedBackoff[ModelId],
 ) -> Task | None:
@@ -66,7 +68,7 @@ def plan(
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
-        or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer)
+        or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer, image_cache)
     )
 
 
@@ -300,6 +302,7 @@ def _pending_tasks(
     tasks: Mapping[TaskId, Task],
     all_runners: Mapping[RunnerId, RunnerStatus],
     input_chunk_buffer: Mapping[CommandId, Mapping[int, InputImageChunk]],
+    image_cache: Mapping[Base64ImageHash, Base64Image],
 ) -> Task | None:
     for task in tasks.values():
         # for now, just forward chat completions
@@ -309,15 +312,19 @@ def _pending_tasks(
         if task.task_status not in (TaskStatus.Pending, TaskStatus.Running):
             continue
 
-        # For tasks with images, verify all input chunks have been received
-        expected_image_chunks = 0
-        if isinstance(task, (ImageEdits, TextGeneration)):
-            expected_image_chunks = task.task_params.total_input_chunks
-        if expected_image_chunks > 0:
-            cmd_id = task.command_id
-            received = len(input_chunk_buffer.get(cmd_id, {}))
-            if received < expected_image_chunks:
+        if isinstance(task, ImageEdits) and task.task_params.total_input_chunks > 0:
+            received = len(input_chunk_buffer.get(task.command_id, {}))
+            if received < task.task_params.total_input_chunks:
                 continue  # Wait for all chunks to arrive
+
+        if (
+            isinstance(task, TextGeneration)
+            and task.task_params.image_hashes
+            and not all(
+                h in image_cache for h in task.task_params.image_hashes.values()
+            )
+        ):
+            continue  # Wait for all images to be assembled into the cache
 
         for runner in runners.values():
             if task.instance_id != runner.bound_instance.instance.instance_id:

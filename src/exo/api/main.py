@@ -185,7 +185,10 @@ from exo.shared.types.tasks import (
 from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
-from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    Base64ImageHash,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
@@ -234,6 +237,7 @@ class API:
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
+        self._sent_image_hashes: set[str] = set()
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -283,6 +287,7 @@ class API:
         self.event_receiver.close()
         self.event_receiver = event_receiver
         self._tg.start_soon(self._apply_state)
+        self._sent_image_hashes = set()
 
     def unpause(self, result_clock: int):
         logger.info("Unpausing API")
@@ -737,8 +742,6 @@ class API:
             "TODO: we should send a notification to the user to download the model"
         )
 
-    _sent_image_hashes: set[str] = set()
-
     async def _send_text_generation_with_images(
         self, task_params: TextGenerationTaskParams
     ) -> TextGeneration:
@@ -750,23 +753,19 @@ class API:
             return command
 
         hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
+        all_hashes = {idx: Base64ImageHash(h) for idx, h in enumerate(hashes)}
+        task_params = task_params.model_copy(
+            update={"images": [], "image_hashes": all_hashes}
+        )
+        command = TextGeneration(task_params=task_params)
 
-        cached_hashes: dict[int, str] = {}
         new_images: list[tuple[int, str]] = []
         for idx, (img, h) in enumerate(zip(images, hashes, strict=True)):
-            if h in self._sent_image_hashes:
-                cached_hashes[idx] = h
-            else:
+            if h not in self._sent_image_hashes:
                 self._sent_image_hashes.add(h)
                 new_images.append((idx, img))
 
-        wrapped_hashes = {idx: Base64Image(h) for idx, h in cached_hashes.items()}
-
         if not new_images:
-            task_params = task_params.model_copy(
-                update={"images": [], "image_hashes": wrapped_hashes}
-            )
-            command = TextGeneration(task_params=task_params)
             await self._send(command)
             return command
 
@@ -774,16 +773,6 @@ class API:
         for img_idx, img_data in new_images:
             for i in range(0, len(img_data), EXO_MAX_CHUNK_SIZE):
                 all_chunks.append((img_idx, img_data[i : i + EXO_MAX_CHUNK_SIZE]))
-
-        task_params = task_params.model_copy(
-            update={
-                "images": [],
-                "image_hashes": wrapped_hashes,
-                "total_input_chunks": len(all_chunks),
-                "image_count": len(new_images),
-            }
-        )
-        command = TextGeneration(task_params=task_params)
 
         for global_idx, (img_idx, chunk_data) in enumerate(all_chunks):
             await self._send(
