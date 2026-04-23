@@ -190,6 +190,14 @@ The direct helpers worked in both directions:
   - shape/dtype mismatch rejection on rebind
   - slot metadata update on rebind
   - two-slot independence until a slot is reused
+- After adding shape/dtype contract checks, a spot-check rerun at `7168` bytes
+  showed:
+  - `rebindable_slot_bridge`: `2.458 us` min, `2.494 us` median
+  - `borrower_ring4_bridge`: `2.545 us` min, `2.566 us` median
+  - `rebindable_slot_import_only`: `2.395 us` min, `2.400 us` median
+  - `borrower_ring4_import_only`: `2.449 us` min, `2.477 us` median
+- So the contract hardening added roughly `~1 us`, but the slot/ring path still
+  remains comfortably inside the target latency class.
 
 Updated remote latency measurements for `float32` and `7168` bytes were:
 

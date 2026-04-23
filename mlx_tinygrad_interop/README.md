@@ -104,6 +104,9 @@ Later remote microbench runs showed the split more clearly:
   a ring of four slots stays at essentially the same latency. That means
   wrapper reuse, not exporter marshalling, is the decisive optimization on this
   host.
+- After adding hardened shape/dtype contract checks, a spot-check at `7168`
+  bytes moved those rows to about `2.46 us` for the single slot and `2.55 us`
+  for the ring. That is still comfortably inside the target latency range.
 - The strict alias-only `tinygrad -> MLX` helper succeeds on `e16`; its timing
   is effectively the same as the maybe-copy helper on that host.
 - `tinygrad -> MLX` is dominated by tinygrad export in the unsafe helper path.
