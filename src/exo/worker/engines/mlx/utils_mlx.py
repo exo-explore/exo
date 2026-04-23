@@ -547,7 +547,6 @@ def render_chat_template(
         )
         if partial_assistant_content:
             prompt += partial_assistant_content
-        logger.info(prompt)
         return prompt
 
     for msg in formatted_messages:

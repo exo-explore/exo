@@ -79,6 +79,13 @@ def apply_all_parsers(
         issubclass(model_type, DeepseekV32Model)
         and "deepseek" in model_id.normalize().lower()
     ):
+        if tokenizer.has_thinking:
+            generator = parse_thinking_models(
+                generator,
+                tokenizer.think_start,
+                tokenizer.think_end,
+                starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
+            )
         generator = parse_deepseek_v32(generator)
     else:
         if tokenizer.has_thinking:
@@ -210,11 +217,10 @@ def parse_deepseek_v32(
 
     Uses accumulated-text matching (not per-token marker checks) because
     DSML markers like <｜DSML｜function_calls> may span multiple tokens.
-    Also handles <think>...</think> blocks for thinking mode.
+    Thinking tag handling is delegated to parse_thinking_models, which
+    wraps this parser in apply_all_parsers.
     """
     from exo.worker.engines.mlx.dsml_encoding import (
-        THINKING_END,
-        THINKING_START,
         TOOL_CALLS_END,
         TOOL_CALLS_START,
         parse_dsml_output,
@@ -222,7 +228,6 @@ def parse_deepseek_v32(
 
     accumulated = ""
     in_tool_call = False
-    thinking = False
     # Tokens buffered while we detect the start of a DSML block
     pending_buffer: list[GenerationResponse] = []
     # Text accumulated during a tool call block
@@ -263,29 +268,6 @@ def parse_deepseek_v32(
             else:
                 yield response
             break
-
-        # ── Handle thinking tags ──
-        if not thinking and THINKING_START in response.text:
-            thinking = True
-            # Yield any text before the <think> tag
-            before = response.text[: response.text.index(THINKING_START)]
-            if before:
-                yield response.model_copy(update={"text": before})
-            continue
-
-        if thinking and THINKING_END in response.text:
-            thinking = False
-            # Yield any text after the </think> tag
-            after = response.text[
-                response.text.index(THINKING_END) + len(THINKING_END) :
-            ]
-            if after:
-                yield response.model_copy(update={"text": after, "is_thinking": False})
-            continue
-
-        if thinking:
-            yield response.model_copy(update={"is_thinking": True})
-            continue
 
         # ── Handle tool call accumulation ──
         if in_tool_call:

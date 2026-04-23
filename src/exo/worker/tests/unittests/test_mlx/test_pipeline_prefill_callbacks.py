@@ -174,7 +174,12 @@ def _run_pipeline_device(
             n_layers=TOTAL_LAYERS,
         )
 
-        model, tokenizer = shard_and_load(shard_meta, group, on_layer_loaded=None)
+        gen = shard_and_load(shard_meta, group)
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            model, tokenizer = stop.value
         model = cast(Any, model)
 
         prompt, task = _build_prompt(tokenizer, prompt_tokens)

@@ -20,7 +20,25 @@ from exo.worker.engines.mlx.dsml_encoding import (
     encode_messages,
     parse_dsml_output,
 )
-from exo.worker.runner.llm_inference.model_output_parsers import parse_deepseek_v32
+from exo.worker.runner.llm_inference.model_output_parsers import (
+    parse_deepseek_v32,
+    parse_thinking_models,
+)
+
+
+def _parse_deepseek_with_thinking(
+    source: Generator[GenerationResponse | None],
+    starts_in_thinking: bool = False,
+) -> Generator[GenerationResponse | ToolCallResponse | None]:
+    return parse_deepseek_v32(
+        parse_thinking_models(
+            source,
+            think_start=THINKING_START,
+            think_end=THINKING_END,
+            starts_in_thinking=starts_in_thinking,
+        )
+    )
+
 
 # ── Shared fixtures ──────────────────────────────────────────────
 
@@ -333,9 +351,7 @@ class TestE2EThinkingAndToolCall:
         assert prompt.endswith(THINKING_START)
 
         # Simulate: model outputs <think>, thinks, closes thinking, then tool call.
-        # In the full pipeline, parse_thinking_models handles the case where
-        # <think> is in the prompt. Here we test parse_deepseek_v32 directly,
-        # which detects <think>/<think> markers in the stream.
+        # Use the full production chain (parse_thinking_models → parse_deepseek_v32).
         model_tokens = [
             THINKING_START,
             "The user wants weather",
@@ -353,7 +369,7 @@ class TestE2EThinkingAndToolCall:
             TOOL_CALLS_END,
         ]
 
-        results = list(parse_deepseek_v32(_simulate_tokens(model_tokens)))
+        results = list(_parse_deepseek_with_thinking(_simulate_tokens(model_tokens)))
 
         gen_results = [r for r in results if isinstance(r, GenerationResponse)]
         tool_results = [r for r in results if isinstance(r, ToolCallResponse)]
@@ -387,7 +403,7 @@ class TestE2EThinkingAndToolCall:
         prompt_no_think = encode_messages(
             messages, tools=_WEATHER_TOOLS, thinking_mode="chat"
         )
-        assert prompt_no_think.endswith(THINKING_END)
+        assert not prompt_no_think.endswith(THINKING_START)
 
         # Both should have the same tool definitions
         assert "get_weather" in prompt_think
@@ -597,7 +613,9 @@ class TestE2EFullRoundTrip:
             f"</{DSML_TOKEN}invoke>\n",
             TOOL_CALLS_END,
         ]
-        results_1 = list(parse_deepseek_v32(_simulate_tokens(model_tokens_1)))
+        results_1 = list(
+            _parse_deepseek_with_thinking(_simulate_tokens(model_tokens_1))
+        )
 
         # Verify: thinking tokens + tool call
         gen_1 = [r for r in results_1 if isinstance(r, GenerationResponse)]
@@ -660,7 +678,9 @@ class TestE2EFullRoundTrip:
             THINKING_END,
             "The weather in Hangzhou is currently cloudy with temperatures between 7°C and 13°C.",
         ]
-        results_2 = list(parse_deepseek_v32(_simulate_tokens(model_tokens_2)))
+        results_2 = list(
+            _parse_deepseek_with_thinking(_simulate_tokens(model_tokens_2))
+        )
 
         gen_2 = [r for r in results_2 if isinstance(r, GenerationResponse)]
         tool_2 = [r for r in results_2 if isinstance(r, ToolCallResponse)]
