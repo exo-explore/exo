@@ -32,7 +32,6 @@ use hashbrown::{HashMap, HashSet};
 use mio::net::UdpSocket as MioUdpSocket;
 use mio::unix::SourceFd;
 use mio::{Events, Interest, Poll, Token};
-use nix::errno::Errno;
 use nix::net::if_::if_nametoindex;
 use slab::Slab;
 use socket2::{Domain, Protocol, Socket, Type};
@@ -266,9 +265,9 @@ impl DataplaneWorker {
 
     fn handle_tun_ready(&mut self) -> Result<()> {
         let mut buf = [0u8; PHYSICAL_LINK_MTU as usize];
-        let packet_len = match nix::unistd::read(self.tun_device.as_ref(), &mut buf) {
+        let packet_len = match self.tun_device.recv(&mut buf) {
             Ok(len) => len,
-            Err(Errno::EAGAIN) => return Ok(()),
+            Err(err) if err.kind() == ErrorKind::WouldBlock => return Ok(()),
             Err(err) => return Err(err).wrap_err("reading inner packet from TUN"),
         };
         if packet_len == 0 {
@@ -652,9 +651,9 @@ fn open_udp_socket(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioUdpSo
 }
 
 fn write_tun(tun_device: &SyncDevice, packet: &[u8]) -> Result<()> {
-    match nix::unistd::write(tun_device, packet) {
+    match tun_device.send(packet) {
         Ok(_) => Ok(()),
-        Err(Errno::EAGAIN) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(()),
         Err(err) => Err(err).wrap_err("writing inner packet to TUN"),
     }
 }
