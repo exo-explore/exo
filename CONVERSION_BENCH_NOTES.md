@@ -191,6 +191,9 @@ alone still left a stale git revision in a later pass. The working command was:
   - it scopes acquire/use/release together, realizes returned tensors before
     release, and rejects returning the borrowed tensor object directly
   - the callback still must not stash the borrowed tensor into outer state
+- Safe scoped release no longer calls the global `Device["METAL"].synchronize()`
+  barrier. It snapshots the callback's newly enqueued Metal command buffers and
+  waits only for the callback-local tail buffer before clearing the slot owner.
 - Lease pools are keyed by `(shape, dtype, byte_offset)` so variable inference
   shapes can be bucketed explicitly instead of silently reusing an
   incompatible slot.

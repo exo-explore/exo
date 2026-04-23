@@ -63,6 +63,9 @@ owner pinning, and wrapper-construction overhead.
   - these scope acquire/use/release together and reject returning the borrowed
     tensor object directly
   - the callback must still not stash the borrowed tensor into outer state
+- Safe scoped release no longer calls `Device["METAL"].synchronize()`. It
+  snapshots the callback's newly enqueued Metal command buffers and waits only
+  for the callback-local tail buffer before clearing the slot owner.
 - This fast path is only valid for same-process, same-address-space Apple
   Silicon unified-memory handoff. It does not cross process or machine
   boundaries, and it does not remove any later Metal/host -> CUDA transfer.

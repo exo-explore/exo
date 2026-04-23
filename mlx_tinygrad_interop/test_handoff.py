@@ -1,8 +1,9 @@
 import unittest
+from unittest import mock
 
 import mlx.core as mx
 import numpy as np
-from tinygrad import Tensor, dtypes
+from tinygrad import Device, Tensor, dtypes
 
 from mlx_tinygrad_interop.lease_pool import MlxToTinygradLeaseKey, MlxToTinygradLeasePool, MlxToTinygradLeasePools
 
@@ -101,6 +102,15 @@ class TestMlxTinygradLeasePool(unittest.TestCase):
 
     np.testing.assert_allclose(result_first.numpy(), np.array((np.arange(16, dtype=np.float32) + 1).sum(), dtype=np.float32))
     np.testing.assert_allclose(result_second.numpy(), np.array((np.arange(16, dtype=np.float32) + 6).sum(), dtype=np.float32))
+
+  def test_scoped_handoff_avoids_global_device_synchronize(self):
+    array = mx.array(np.arange(16, dtype=np.float32), dtype=mx.float32)
+    pools = MlxToTinygradLeasePools(capacity_per_key=1, synchronize_on_release=True)
+
+    with mock.patch.object(Device["METAL"], "synchronize", side_effect=AssertionError("global sync should not be used")):
+      result = pools.run_with_mlx_tensor(array, tg_dtype=dtypes.float32, fn=lambda t: (t + 1).sum())
+
+    np.testing.assert_allclose(result.numpy(), np.array((np.arange(16, dtype=np.float32) + 1).sum(), dtype=np.float32))
 
   def test_scoped_handoff_rejects_returning_borrowed_tensor(self):
     array = mx.array(np.arange(8, dtype=np.float32), dtype=mx.float32)

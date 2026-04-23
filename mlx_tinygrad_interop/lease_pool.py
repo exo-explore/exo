@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from typing import Any
 
 import mlx.core as mx
 from tinygrad import Device, Tensor
 from tinygrad.dtype import DTypeLike, to_dtype
+from tinygrad.runtime.ops_metal import wait_check
 
 
 def _export_realized_storage(array: Any) -> dict[str, Any]:
@@ -33,6 +35,23 @@ def _iter_tensors(obj: Any, seen: set[int] | None = None):
   if isinstance(obj, (list, tuple, set, frozenset)):
     for value in obj:
       yield from _iter_tensors(value, seen)
+
+
+def _capture_new_metal_command_buffers(start_idx: int):
+  metal_dev = Device["METAL"]
+  inflight = getattr(metal_dev, "mtl_buffers_in_flight", None)
+  if inflight is None: return metal_dev, ()
+  return metal_dev, tuple(inflight[start_idx:])
+
+
+def _wait_for_scoped_metal_work(metal_dev: Any, command_buffers: tuple[Any, ...]) -> None:
+  if not command_buffers: return
+  wait_check(command_buffers[-1])
+  inflight = getattr(metal_dev, "mtl_buffers_in_flight", None)
+  if inflight is None: return
+  for cbuf in command_buffers:
+    with contextlib.suppress(ValueError):
+      inflight.remove(cbuf)
 
 
 @dataclass(frozen=True)
@@ -164,6 +183,8 @@ class MlxToTinygradLeasePool:
   def run_with_mlx_tensor(self, array: Any, fn, *, owner: Any | None = None,
                           synchronize_on_release: bool | None = None):
     lease = self.acquire_from_mlx(array, owner=owner)
+    metal_dev = Device["METAL"]
+    start_idx = len(getattr(metal_dev, "mtl_buffers_in_flight", ()))
     try:
       result = fn(lease.tensor)
       returned_tensors = tuple(_iter_tensors(result))
@@ -174,7 +195,18 @@ class MlxToTinygradLeasePool:
       return result
     finally:
       if not lease._released:
-        lease.release(synchronize=synchronize_on_release)
+        if synchronize_on_release is False:
+          lease.release(synchronize=False)
+        else:
+          _, command_buffers = _capture_new_metal_command_buffers(start_idx)
+          _wait_for_scoped_metal_work(metal_dev, command_buffers)
+          slot = self._slots[lease._slot_index]
+          if not slot.in_use: raise RuntimeError(f"slot {lease._slot_index} is not currently leased")
+          if slot.generation != lease._generation:
+            raise RuntimeError(f"stale lease generation for slot {lease._slot_index}: expected {slot.generation}, got {lease._generation}")
+          slot.borrower.clear_owner()
+          slot.in_use = False
+          lease._released = True
 
   def _release(self, slot_index: int, generation: int, *, synchronize: bool | None = None) -> None:
     slot = self._slots[slot_index]
@@ -230,6 +262,8 @@ class MlxToTinygradLeasePools:
       )
     pool = self._pools[key]
     lease = pool.acquire_from_storage(storage, owner=owner_obj)
+    metal_dev = Device["METAL"]
+    start_idx = len(getattr(metal_dev, "mtl_buffers_in_flight", ()))
     try:
       result = fn(lease.tensor)
       returned_tensors = tuple(_iter_tensors(result))
@@ -240,7 +274,18 @@ class MlxToTinygradLeasePools:
       return result
     finally:
       if not lease._released:
-        lease.release(synchronize=synchronize_on_release)
+        if synchronize_on_release is False:
+          lease.release(synchronize=False)
+        else:
+          _, command_buffers = _capture_new_metal_command_buffers(start_idx)
+          _wait_for_scoped_metal_work(metal_dev, command_buffers)
+          slot = pool._slots[lease._slot_index]
+          if not slot.in_use: raise RuntimeError(f"slot {lease._slot_index} is not currently leased")
+          if slot.generation != lease._generation:
+            raise RuntimeError(f"stale lease generation for slot {lease._slot_index}: expected {slot.generation}, got {lease._generation}")
+          slot.borrower.clear_owner()
+          slot.in_use = False
+          lease._released = True
 
   @property
   def pool_count(self) -> int: return len(self._pools)
