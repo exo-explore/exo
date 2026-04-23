@@ -113,6 +113,10 @@ baseline instead of NumPy `@`. On the current macOS validation host, a valid
 contiguous float32 matmul case through `@` returned an incorrect all-zero
 result while MLX, tinygrad, and `np.einsum` agreed on the nonzero output.
 
+Float32 stress comparisons also allow a small `rtol=5e-5, atol=1e-5` tolerance
+so mixed matmul/reduction chains are not failed for a few-ulps backend
+accumulation-order drift.
+
 Example:
 
 ```bash

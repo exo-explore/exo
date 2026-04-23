@@ -257,6 +257,11 @@ Note: the `matmul_lastdim` stress baseline uses `np.einsum(...)` instead of
 NumPy `@` because the current macOS NumPy build produced a demonstrably wrong
 all-zero result on one of the randomized float32 cases.
 
+The stress comparator is still strict, but float32 rows now use a slightly
+looser `rtol=5e-5, atol=1e-5` budget to absorb backend accumulation-order
+differences across long matmul/reduction chains without treating a few-ulps
+drift as conversion corruption.
+
 ## Current Findings
 
 The unsafe bridge was validated through the repo-standard remote flow on `e16`:
