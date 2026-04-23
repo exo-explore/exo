@@ -44,6 +44,9 @@ owner pinning, and wrapper-construction overhead.
     a realized tinygrad reduction
 - `mx.array(memoryview(...))` is a native copy path in current MLX, not an
   aliasing import path.
+- Rebindable slots enforce fixed shape/dtype contracts on rebind.
+- Do not rebind a slot until all work derived from its previous contents has
+  been realized and synchronized.
 
 Test command:
 
@@ -111,6 +114,10 @@ Later remote microbench runs showed the split more clearly:
 - The rebindable slot returns the same tinygrad `Tensor` object rebound to new
   Metal storage, so it is narrower than an ordinary "new tensor each call"
   conversion helper.
+- The current ring rows are still benchmark primitives, not a production lease
+  API. If this path is used in the real disaggregated MLX/tinygrad runtime, it
+  should grow into an explicit pool/lease abstraction with generation
+  semantics.
 - The `*_then_use_sum` rows are dominated by the realized tinygrad reduction.
   They should be read as end-to-end "convert then immediately consume" probes.
   They still show the same relative story: slot/ring rebinding saves about

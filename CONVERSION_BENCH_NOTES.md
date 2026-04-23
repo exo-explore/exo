@@ -148,6 +148,9 @@ advance the pinned SHAs in `uv.lock` during testing. The working command was:
 - `Tensor._unsafe_metal_borrower(...)` is a mutable slot primitive. It reuses
   the same tinygrad tensor wrapper and rebinds its borrowed `MTLBuffer*`.
   Older references to that tensor are not snapshots.
+- Rebinding now enforces the borrower's fixed shape and dtype contract. An
+  incoming MLX array with mismatched shape or dtype fails instead of being
+  silently reinterpreted through the old tinygrad wrapper.
 - The borrower now updates its internal `external_ptr` metadata on rebind so
   the stored buffer metadata matches the live Metal handle.
 - `mx.metal._unsafe_export_storage(...)` currently expects an MLX array that is
@@ -163,6 +166,9 @@ advance the pinned SHAs in `uv.lock` during testing. The working command was:
   footguns than a single slot.
 - Bench rows named `*_then_use_sum` measure rebinding or conversion followed by
   immediate tinygrad consumption through a realized reduction kernel.
+- Do not rebind a slot until all work derived from its previous contents has
+  been realized and synchronized. Otherwise later rebinds can change what
+  older lazy graphs or in-flight kernels observe.
 
 ## Current Findings
 
@@ -181,6 +187,7 @@ The direct helpers worked in both directions:
   - nonzero-offset MLX slice import
   - single-entry `MLX -> tinygrad`
   - mutable-slot rebinding semantics
+  - shape/dtype mismatch rejection on rebind
   - slot metadata update on rebind
   - two-slot independence until a slot is reused
 
@@ -253,6 +260,8 @@ Interpretation:
   - it returns the same tinygrad `Tensor` object each time
   - it assumes fixed shape / dtype / byte-offset semantics
   - older references are not snapshots
+  - safe reuse requires that all work from the previous lease has already been
+    realized and synchronized
   - it is therefore best understood as a dangerous but very informative lower
     bound and a candidate building block for a specialized converter API
 - A ring of multiple slots is the more practical extension of that idea because
@@ -322,6 +331,9 @@ What this means:
    construction path.
 5. Avoid spending time on symmetry unless it becomes necessary for a specific
    downstream use case.
+6. If this moves into the real MLX/tinygrad disaggregated runtime, the next API
+   shape should be an explicit pool/lease abstraction with generation tracking,
+   not bare mutable-slot rebinding.
 
 ## Open Questions
 

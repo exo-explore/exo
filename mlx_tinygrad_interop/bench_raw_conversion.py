@@ -61,6 +61,10 @@ def bytes_view(mv: memoryview) -> memoryview:
   return mv if mv.format == "B" and mv.ndim == 1 else mv.cast("B")
 
 
+def mlx_dtype_name(dtype: Any) -> str:
+  return repr(dtype).removeprefix("mlx.core.")
+
+
 def tinygrad_zero_copy_memoryview(t: Tensor) -> memoryview:
   assert t.device == "METAL", f"expected METAL tensor, got {t.device}"
   buf = cast(Buffer, t.uop.buffer).ensure_allocated()
@@ -178,6 +182,8 @@ def tinygrad_import_from_storage_reuse(storage: Any, owner: Any, borrower: Any) 
   return borrower.rebind(
     int(storage["mtl_buffer_ptr"]),
     owner=owner,
+    shape=tuple(storage["shape"]),
+    dtype_name=mlx_dtype_name(storage["dtype"]),
     byte_offset=int(storage["offset_bytes"]),
     buffer_nbytes=int(storage["buffer_nbytes"]),
   )

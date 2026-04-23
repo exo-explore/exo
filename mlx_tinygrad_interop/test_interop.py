@@ -112,6 +112,40 @@ class TestMlxTinygradInterop(unittest.TestCase):
     np.testing.assert_array_equal(tensor_a.numpy(), third)
     np.testing.assert_array_equal(tensor_b.numpy(), second)
 
+  def test_rebindable_slot_rejects_shape_mismatch(self):
+    base = np.arange(32, dtype=np.float32)
+    array_ok = mx.array(base, dtype=mx.float32)
+    array_bad = mx.array(base.reshape(8, 4), dtype=mx.float32)
+    storage = mx.metal._unsafe_export_storage(array_ok)
+    borrower = Tensor._unsafe_metal_borrower(
+      int(storage["mtl_buffer_ptr"]),
+      tuple(storage["shape"]),
+      dtype=dtypes.float32,
+      byte_offset=int(storage["offset_bytes"]),
+      buffer_nbytes=int(storage["buffer_nbytes"]),
+      owner=array_ok,
+    )
+
+    with self.assertRaisesRegex(ValueError, "shape="):
+      mx.metal._unsafe_rebind_tinygrad(array_bad, borrower, owner=array_bad)
+
+  def test_rebindable_slot_rejects_dtype_mismatch(self):
+    base = np.arange(32, dtype=np.float32)
+    array_ok = mx.array(base, dtype=mx.float32)
+    array_bad = mx.array(base.view(np.int32), dtype=mx.int32)
+    storage = mx.metal._unsafe_export_storage(array_ok)
+    borrower = Tensor._unsafe_metal_borrower(
+      int(storage["mtl_buffer_ptr"]),
+      tuple(storage["shape"]),
+      dtype=dtypes.float32,
+      byte_offset=int(storage["offset_bytes"]),
+      buffer_nbytes=int(storage["buffer_nbytes"]),
+      owner=array_ok,
+    )
+
+    with self.assertRaisesRegex(ValueError, "dtype="):
+      mx.metal._unsafe_rebind_tinygrad(array_bad, borrower, owner=array_bad)
+
 
 if __name__ == "__main__":
   unittest.main()
