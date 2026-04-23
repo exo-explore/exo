@@ -11,6 +11,8 @@ import numpy as np
 from tinygrad import Device, Tensor, dtypes
 from tinygrad.device import Buffer
 
+from mlx_tinygrad_interop.lease_pool import MlxToTinygradLeasePool
+
 blackhole: Any = None
 
 DTYPES: dict[str, tuple[Any, Any, np.dtype[Any]]] = {
@@ -102,6 +104,21 @@ def tinygrad_from_mlx_single_entry(x: Any, tg_dtype: Any) -> Tensor:
 
 def tinygrad_from_mlx_reuse(x: Any, borrower: Any) -> Tensor:
   return mx.metal._unsafe_rebind_tinygrad(x, borrower, owner=x)
+
+
+def tinygrad_from_mlx_lease_acquire_release(x: Any, pool: MlxToTinygradLeasePool) -> int:
+  lease = pool.acquire_from_mlx(x)
+  generation = lease.generation
+  lease.release(synchronize=False)
+  return generation
+
+
+def tinygrad_from_mlx_lease_then_use_sum(x: Any, pool: MlxToTinygradLeasePool) -> Tensor:
+  lease = pool.acquire_from_mlx(x)
+  try:
+    return tinygrad_consume_sum(lease.tensor)
+  finally:
+    lease.release(synchronize=False)
 
 
 def tinygrad_consume_sum(t: Tensor) -> Tensor:
@@ -317,6 +334,7 @@ def main() -> None:
           owner=src_mx,
         ) for _ in range(4)
       ])
+      lease_pool = MlxToTinygradLeasePool.from_mlx(src_mx, tg_dtype=tg_dtype, capacity=4, synchronize_on_release=True)
 
       benches: list[tuple[str, str, Callable[[], Any]]] = [
         ("unsafe_helper_bridge", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_fast(s, tg_dtype)),
@@ -329,6 +347,10 @@ def main() -> None:
          lambda alt=mx_slot_sources, ring=mx_ring: tinygrad_from_mlx_reuse(alt.next(), ring.next())),
         ("borrower_ring4_then_use_sum", "mlx_to_tinygrad",
          lambda alt=mx_slot_sources, ring=mx_ring: tinygrad_consume_sum(tinygrad_from_mlx_reuse(alt.next(), ring.next()))),
+        ("lease_pool_acquire_release", "mlx_to_tinygrad",
+         lambda alt=mx_slot_sources, pool=lease_pool: tinygrad_from_mlx_lease_acquire_release(alt.next(), pool)),
+        ("lease_pool_then_use_sum", "mlx_to_tinygrad",
+         lambda alt=mx_slot_sources, pool=lease_pool: tinygrad_from_mlx_lease_then_use_sum(alt.next(), pool)),
         ("unsafe_helper_legacy", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_legacy(s, tg_dtype)),
         ("memoryview_copy", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_copy(s, tg_dtype)),
         ("numpy_baseline", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_numpy(s)),

@@ -11,7 +11,7 @@ build dependencies or patch around them with one-off environment setups.
 2. Push the `mlx` and `tinygrad` fork changes.
 3. In local `exo`, enter the devshell with `nix develop`.
 4. Refresh `uv.lock` against the new fork heads with:
-   `uv lock --upgrade-package mlx --upgrade-package tinygrad`
+   `uv lock --upgrade-package mlx --refresh-package mlx --upgrade-package tinygrad --refresh-package tinygrad`
 5. Commit and push the updated `exo` branch.
 6. On the remote Mac, pull the updated repos.
 7. Enter the devshell with `nix develop`.
@@ -19,7 +19,9 @@ build dependencies or patch around them with one-off environment setups.
 9. Run tests or benchmarks with `uv run ...`.
 
 Plain `uv lock` was not enough to move these git-based dependency SHAs during
-testing; the explicit `--upgrade-package` form was required.
+testing, and `--upgrade-package` alone still left one stale git revision in a
+later pass. The working command was the explicit `--upgrade-package` plus
+`--refresh-package` form above.
 
 ## Benchmark
 
@@ -40,6 +42,8 @@ owner pinning, and wrapper-construction overhead.
   - a rebindable tinygrad slot that reuses one wrapper and rebinds the
     borrowed `MTLBuffer*`
   - a small ring of such slots
+  - a keyed lease pool that owns `mx.eval(...)` on acquire and explicit lease
+    release on the tinygrad side
   - `*_then_use_sum` rows that immediately consume the converted tensor through
     a realized tinygrad reduction
 - `mx.array(memoryview(...))` is a native copy path in current MLX, not an
@@ -47,11 +51,22 @@ owner pinning, and wrapper-construction overhead.
 - Rebindable slots enforce fixed shape/dtype contracts on rebind.
 - Do not rebind a slot until all work derived from its previous contents has
   been realized and synchronized.
+- The practical `MLX -> tinygrad` path is now a lease-managed pool keyed by
+  `(shape, dtype, byte_offset)`, not a bare mutable borrower.
+- This fast path is only valid for same-process, same-address-space Apple
+  Silicon unified-memory handoff. It does not cross process or machine
+  boundaries, and it does not remove any later Metal/host -> CUDA transfer.
 
 Test command:
 
 ```bash
-uv run python -m unittest mlx_tinygrad_interop.test_interop
+uv run python -m unittest mlx_tinygrad_interop.test_interop mlx_tinygrad_interop.test_handoff
+```
+
+Stress command:
+
+```bash
+uv run python mlx_tinygrad_interop/stress_interop.py --cases 64 --soak-iterations 512
 ```
 
 Example:

@@ -56,6 +56,10 @@ bidirectional latency, not symmetry for its own sake.
   - `Tensor._unsafe_from_metal_buffer(mtl_buffer_ptr, shape, dtype=..., byte_offset=0, owner=None)`
   - `Tensor._unsafe_from_metal_buffer_fast(mtl_buffer_ptr, shape, dtype=..., byte_offset=0, owner=None)`
   - `Tensor._unsafe_metal_borrower(mtl_buffer_ptr, shape, dtype=..., byte_offset=0, owner=None)`
+- exo handoff layer
+  - `mlx_tinygrad_interop.lease_pool.MlxToTinygradLeasePool`
+  - `mlx_tinygrad_interop.lease_pool.MlxToTinygradLeasePools`
+  - `mlx_tinygrad_interop.stress_interop`
 
 These helpers are intentionally private and unsafe.
 
@@ -91,7 +95,7 @@ Use the `exo` devshell and `uv` workflow.
 2. Push the updated `mlx` and `tinygrad` fork branches.
 3. In local `exo`, enter the devshell with `nix develop`.
 4. Regenerate the lockfile against the new fork heads with:
-   `uv lock --upgrade-package mlx --upgrade-package tinygrad`
+   `uv lock --upgrade-package mlx --refresh-package mlx --upgrade-package tinygrad --refresh-package tinygrad`
 5. Commit and push the updated `exo` branch, including the regenerated
    `uv.lock`.
 6. On the remote Mac, pull the updated `exo` branch.
@@ -105,9 +109,10 @@ carry the needed toolchain.
 ### Important Lockfile Note
 
 For these branch-based git dependencies, plain `uv lock` was not sufficient to
-advance the pinned SHAs in `uv.lock` during testing. The working command was:
+advance the pinned SHAs in `uv.lock` during testing, and `--upgrade-package`
+alone still left a stale git revision in a later pass. The working command was:
 
-`uv lock --upgrade-package mlx --upgrade-package tinygrad`
+`uv lock --upgrade-package mlx --refresh-package mlx --upgrade-package tinygrad --refresh-package tinygrad`
 
 ## Known Nuances / Footguns
 
@@ -148,14 +153,16 @@ advance the pinned SHAs in `uv.lock` during testing. The working command was:
 - `Tensor._unsafe_metal_borrower(...)` is a mutable slot primitive. It reuses
   the same tinygrad tensor wrapper and rebinds its borrowed `MTLBuffer*`.
   Older references to that tensor are not snapshots.
-- Rebinding now enforces the borrower's fixed shape and dtype contract. An
-  incoming MLX array with mismatched shape or dtype fails instead of being
-  silently reinterpreted through the old tinygrad wrapper.
+- `borrower.rebind(...)` is now the checked path and requires explicit
+  `shape=` and `dtype_name=` compatibility. The only bypass is the private
+  `borrower._raw_rebind(...)` escape hatch kept for benchmark internals.
 - The borrower now updates its internal `external_ptr` metadata on rebind so
   the stored buffer metadata matches the live Metal handle.
 - `mx.metal._unsafe_export_storage(...)` currently expects an MLX array that is
   already in the C++ `available` state. In practice, `mx.array(np_array)` met
   that precondition for local smoke testing, while `mx.arange(...)` did not.
+- The lease-pool handoff layer now owns that MLX-side availability barrier by
+  calling `mx.eval(...)` on acquire.
 - `tinygrad -> MLX memoryview_copy` also includes per-call runtime ceremony,
   because tinygrad's zero-copy Metal memoryview export synchronizes before
   exposing the buffer.
@@ -164,11 +171,39 @@ advance the pinned SHAs in `uv.lock` during testing. The working command was:
 - Bench rows named `borrower_ring*` rotate through multiple independent slots.
   They are intended to approximate a practical pool/ring design with fewer
   footguns than a single slot.
+- The practical `MLX -> tinygrad` API shape is now a keyed lease pool:
+  - acquire from an MLX array
+  - use `lease.tensor`
+  - release the lease only after downstream work is realized / synchronized
+- Lease pools are keyed by `(shape, dtype, byte_offset)` so variable inference
+  shapes can be bucketed explicitly instead of silently reusing an
+  incompatible slot.
 - Bench rows named `*_then_use_sum` measure rebinding or conversion followed by
   immediate tinygrad consumption through a realized reduction kernel.
 - Do not rebind a slot until all work derived from its previous contents has
   been realized and synchronized. Otherwise later rebinds can change what
   older lazy graphs or in-flight kernels observe.
+- This optimization is same-process and same-address-space only. It does not
+  survive a process boundary or a machine boundary, and it does not remove any
+  later Metal/host -> CUDA transfer when the downstream stage runs on the RTX.
+
+## Stress Suite
+
+There is now a separate randomized stress/soak script:
+
+- `uv run python mlx_tinygrad_interop/stress_interop.py --cases 64 --soak-iterations 512`
+
+It exercises:
+
+- random shapes and dtypes
+- offsetted MLX views
+- raw conversion correctness against NumPy baselines
+- randomized downstream op chains after conversion
+- repeated lease-pool acquire/use/release soak loops
+
+This is intended to catch value corruption, stale-slot mistakes, obvious
+crashes, and gross leak regressions before the interop path is integrated more
+deeply into the runtime.
 
 ## Current Findings
 
