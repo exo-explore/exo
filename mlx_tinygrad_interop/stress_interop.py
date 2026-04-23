@@ -259,7 +259,7 @@ def run_soak(rng: np.random.Generator, dtype_names: list[str], iterations: int, 
     Device["METAL"].synchronize()
 
     with pools.acquire_from_mlx(mx_source, tg_dtype=tg_dtype) as lease:
-      checksum += float(apply_tinygrad_ops(lease.tensor.cast(dtypes.float32), [("add", np.float32(1))]).sum().item())
+      checksum += float(apply_tinygrad_ops(lease.tensor.cast(dtypes.float32), [("add", 1.0)]).sum().item())
     checksum += float(np.array(mlx_from_tinygrad_copy(tg_source)).astype(np.float64).sum())
     if (iteration + 1) % 64 == 0:
       gc.collect()
