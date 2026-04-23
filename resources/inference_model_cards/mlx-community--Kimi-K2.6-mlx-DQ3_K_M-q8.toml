@@ -17,8 +17,7 @@ in_bytes = 470628683776
 [vision]
 image_token_id = 163605
 model_type = "kimi_vl"
-# TODO: This sort of works but we'd want to upload the Kimi K2.6 vision weights ourselves.
-weights_repo = "davehind/Kimi-K2.5-vision"
+weights_repo = "exolabs/Kimi-K2.6-vision"
 processor_repo = "moonshotai/Kimi-K2.6"
 
 # Source: https://huggingface.co/moonshotai/Kimi-K2.6
