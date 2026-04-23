@@ -2557,7 +2557,7 @@ wheels = [
 [[package]]
 name = "tinygrad"
 version = "0.12.0"
-source = { git = "https://github.com/AndreiCravtov/tinygrad.git?branch=andrei%2Ftinygrad-mlx-convert#e5253e3baa8568cd227ea06fa8f38e50ddf6d7fe" }
+source = { git = "https://github.com/AndreiCravtov/tinygrad.git?branch=andrei%2Ftinygrad-mlx-convert#ed95ad4548d7bebdc2b909f5dc276457cd4ccf59" }
 
 [[package]]
 name = "tokenizers"
