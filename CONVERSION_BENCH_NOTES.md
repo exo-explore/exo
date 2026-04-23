@@ -177,40 +177,57 @@ The direct helpers worked in both directions:
 
 - `MLX -> tinygrad` unsafe helper bridge returned correct values.
 - `tinygrad -> MLX` unsafe helper bridge returned correct values.
+- The expanded slot / ring tests passed on `e16`:
+  - nonzero-offset MLX slice import
+  - single-entry `MLX -> tinygrad`
+  - mutable-slot rebinding semantics
+  - slot metadata update on rebind
+  - two-slot independence until a slot is reused
 
 Updated remote latency measurements for `float32` and `7168` bytes were:
 
 - `unsafe_helper_bridge`
-  - `mlx_to_tinygrad`: `22.795 us` min, `22.864 us` median
-  - `tinygrad_to_mlx`: `29.982 us` min, `30.078 us` median
+  - `mlx_to_tinygrad`: `21.202 us` min, `21.532 us` median
+  - `tinygrad_to_mlx`: `28.109 us` min, `28.372 us` median
 - `single_entry_bridge`
-  - `mlx_to_tinygrad`: `22.507 us` min, `22.577 us` median
-- `reused_wrapper_bridge`
-  - `mlx_to_tinygrad`: `0.606 us` min, `0.608 us` median
+  - `mlx_to_tinygrad`: `21.388 us` min, `21.542 us` median
+- `fresh_wrapper_then_use_sum`
+  - `mlx_to_tinygrad`: `601.812 us` min, `611.458 us` median
+- `rebindable_slot_bridge`
+  - `mlx_to_tinygrad`: `1.505 us` min, `1.542 us` median
+- `rebindable_slot_then_use_sum`
+  - `mlx_to_tinygrad`: `579.583 us` min, `581.833 us` median
+- `borrower_ring4_bridge`
+  - `mlx_to_tinygrad`: `1.531 us` min, `1.573 us` median
+- `borrower_ring4_then_use_sum`
+  - `mlx_to_tinygrad`: `577.730 us` min, `581.000 us` median
 - `unsafe_helper_legacy`
-  - `mlx_to_tinygrad`: `35.724 us` min, `35.859 us` median
+  - `mlx_to_tinygrad`: `31.938 us` min, `32.214 us` median
 - `unsafe_helper_maybe_copy`
-  - `tinygrad_to_mlx`: `29.969 us` min, `30.036 us` median
+  - `tinygrad_to_mlx`: `28.153 us` min, `28.277 us` median
 - `memoryview_copy`
-  - `mlx_to_tinygrad`: `39.382 us` min, `39.878 us` median
-  - `tinygrad_to_mlx`: `2.648 us` min, `2.686 us` median
+  - `mlx_to_tinygrad`: `35.191 us` min, `35.668 us` median
+  - `tinygrad_to_mlx`: `2.596 us` min, `2.662 us` median
 - `numpy_baseline`
-  - `mlx_to_tinygrad`: `290.083 us` min, `291.323 us` median
-  - `tinygrad_to_mlx`: `13.754 us` min, `13.780 us` median
+  - `mlx_to_tinygrad`: `272.323 us` min, `275.104 us` median
+  - `tinygrad_to_mlx`: `12.817 us` min, `13.005 us` median
 
 Interpretation:
 
 - The lower-overhead tinygrad import helper cut `MLX -> tinygrad` from about
-  `35 us` to about `22 us` at `7 kB`, so the old `Tensor.empty(...)` based
+  `32 us` to about `21 us` at `7 kB`, so the old `Tensor.empty(...)` based
   helper was a real source of overhead.
 - Replacing the exporter dict/unpack stack with a single MLX binding entrypoint
-  barely moved `MLX -> tinygrad`: about `22.8 us -> 22.5 us` at `7 kB`.
+  still barely moved `MLX -> tinygrad`: about `21.2 us -> 21.4 us` at `7 kB`.
 - That means the remaining fixed cost was not materially in MLX export or
-  Python dict marshalling. It was overwhelmingly on the tinygrad side.
-- Reusing the same tinygrad wrapper and only rebinding its borrowed
-  `MTLBuffer*` dropped `MLX -> tinygrad` to about `0.6 us` at `7 kB`.
-- That is inside the target range and strongly indicates that tinygrad wrapper
-  construction, not storage adoption itself, was the dominant cost.
+  Python exporter marshalling. It was overwhelmingly on the tinygrad side.
+- Rebinding a single mutable slot dropped `MLX -> tinygrad` to about `1.5 us`
+  at `7 kB`. Rotating through a ring of four slots landed at about `1.53 us`,
+  so the ring preserved essentially all of the latency win.
+- Those slot / ring rows are not fresh conversion results. They are
+  rebind-and-return-slot results.
+- That is still inside the target range and strongly indicates that tinygrad
+  wrapper construction, not storage adoption itself, was the dominant cost.
 - On `e16`, the strict alias-only `tinygrad -> MLX` helper succeeded. Its
   timings were effectively the same as the maybe-copy helper, so the benchmark
   can now report a proven aliasing path in that direction on this host.
@@ -219,42 +236,58 @@ Interpretation:
   import path, even though it still copies.
 - At this tensor size, Python call overhead and wrapper construction matter
   much more than raw byte movement.
-- These numbers do not establish that "aliasing costs ~22-30 us". They
+- The `*_then_use_sum` rows are dominated by the tinygrad reduction kernel
+  itself. They are useful as end-to-end "convert then immediately consume"
+  probes, not as pure conversion timings.
+- Those end-to-end rows still show the same direction: at `7 kB`, slot / ring
+  rebinding saves roughly `20-25 us` versus the fresh-wrapper path, but the
+  absolute runtime is around `580-600 us` because the reduction dominates.
+- These numbers do not establish that "aliasing costs ~21-28 us". They
   establish that creating a fresh tinygrad wrapper through the current helper
-  stack costs that much.
+  stack costs that much, while rebinding a pre-existing slot costs about
+  `1.5 us` on this host.
 - An offsetted MLX slice was also validated through the new export semantics:
   `offset_bytes=64`, `logical_nbytes=7168`, `buffer_nbytes=16384`, and the
   borrowed tinygrad tensor matched the expected values.
-- The reusable borrower is narrower than a normal conversion helper:
+- The rebindable slot is narrower than a normal conversion helper:
   - it returns the same tinygrad `Tensor` object each time
   - it assumes fixed shape / dtype / byte-offset semantics
+  - older references are not snapshots
   - it is therefore best understood as a dangerous but very informative lower
     bound and a candidate building block for a specialized converter API
+- A ring of multiple slots is the more practical extension of that idea because
+  it preserves most of the latency win while reducing the worst single-slot
+  footgun.
 
 Additional remote microbench sweep on `e16` for `256`, `7168`, `65536`, and
 `1048576` bytes showed:
 
 - `MLX -> tinygrad`
-  - `unsafe_helper_bridge`: roughly `22-23 us`
-  - `single_entry_bridge`: roughly `22-23 us`
-  - `reused_wrapper_bridge`: roughly `0.57-0.59 us`
-  - `unsafe_helper_legacy`: roughly `34-36 us`
-  - `memoryview_copy`: roughly `39-54 us`
-  - `numpy_baseline`: roughly `289-316 us`
-  - `export_helper_only`: roughly `0.62-0.63 us`
-  - `import_helper_fast_only`: roughly `21.7-22.4 us`
-  - `import_helper_reuse_only`: roughly `0.41-0.44 us`
-  - `import_helper_legacy_only`: roughly `34-35 us`
+  - `unsafe_helper_bridge`: roughly `21-23 us`
+  - `single_entry_bridge`: roughly `21-22 us`
+  - `fresh_wrapper_then_use_sum`: roughly `601-693 us`
+  - `rebindable_slot_bridge`: roughly `1.49-1.53 us`
+  - `rebindable_slot_then_use_sum`: roughly `573-670 us`
+  - `borrower_ring4_bridge`: roughly `1.53-1.62 us`
+  - `borrower_ring4_then_use_sum`: roughly `566-669 us`
+  - `unsafe_helper_legacy`: roughly `31-33 us`
+  - `memoryview_copy`: roughly `34-51 us`
+  - `numpy_baseline`: roughly `269-309 us`
+  - `export_helper_only`: roughly `0.58-0.63 us`
+  - `import_helper_fast_only`: roughly `20.2-21.4 us`
+  - `rebindable_slot_import_only`: roughly `1.40-1.47 us`
+  - `borrower_ring4_import_only`: roughly `1.45-1.49 us`
+  - `import_helper_legacy_only`: roughly `31-33 us`
 - `tinygrad -> MLX`
-  - `unsafe_helper_bridge`: roughly `29-30 us`
-  - `unsafe_helper_maybe_copy`: roughly `29-30 us`
-  - `memoryview_copy`: roughly `2.6 us` at `256 B`, `2.7 us` at `7168 B`,
-    `3.7 us` at `64 KiB`, and `17.5 us` at `1 MiB`
-  - `numpy_baseline`: roughly `13.2 us` at `256 B`, `13.4 us` at `7168 B`,
-    `17.6 us` at `64 KiB`, and `47.1 us` at `1 MiB`
-  - `export_helper_only`: roughly `24.5-25.4 us`
-  - `import_helper_only`: roughly `2.24-2.36 us`
-  - `import_helper_maybe_copy_only`: roughly `2.32-2.38 us`
+  - `unsafe_helper_bridge`: roughly `27-29 us`
+  - `unsafe_helper_maybe_copy`: roughly `27-29 us`
+  - `memoryview_copy`: roughly `2.5 us` at `256 B`, `2.5 us` at `7168 B`,
+    `3.5 us` at `64 KiB`, and `17.4 us` at `1 MiB`
+  - `numpy_baseline`: roughly `12.7 us` at `256 B`, `12.7 us` at `7168 B`,
+    `16.6 us` at `64 KiB`, and `56.7 us` at `1 MiB`
+  - `export_helper_only`: roughly `23.1-24.4 us`
+  - `import_helper_only`: roughly `2.12-2.22 us`
+  - `import_helper_maybe_copy_only`: roughly `2.16-2.29 us`
 
 What this means:
 
@@ -266,29 +299,33 @@ What this means:
 - The lower-overhead tinygrad import helper bought a real speedup, but the
   expensive piece for `MLX -> tinygrad` was still constructing a fresh tinygrad
   wrapper around the borrowed storage.
-- Reusing that wrapper changes the latency class completely. The "raw
-  transformation" lower bound is sub-microsecond on this host for the measured
-  sizes.
+- Rebinding a slot or rotating through a ring changes the latency class
+  completely. The "rebind one pre-existing slot" lower bound is about
+  `1.5 us` on this host for the measured sizes, and a ring of four slots keeps
+  essentially the same latency.
 - For `tinygrad -> MLX`, the native copy path is already in the desired latency
   class for small tensors and remains competitive well past `7 kB`.
 - For `MLX -> tinygrad`, a fresh-wrapper helper is still not close to the
-  desired `1-10 us` range at `7 kB`, but a reusable-wrapper helper is.
+  desired `1-10 us` range at `7 kB`, but a slot / ring helper is.
+- For end-to-end "convert then immediately use" measurements, the tinygrad
+  compute dominates. The relevant signal is the delta versus the fresh-wrapper
+  path, not the absolute `~580-700 us` number.
 
 ## Near-Term Plan
 
 1. Treat `tinygrad -> MLX memoryview_copy` as the current practical fast path.
-2. Treat `MLX -> tinygrad` reusable-wrapper rebinding as the current latency
-   floor and likely practical fast path when returning the same tinygrad object
-   repeatedly is acceptable.
-3. If `MLX -> tinygrad` must return a fresh tinygrad tensor each time and still
+2. Treat `MLX -> tinygrad` slot/ring rebinding as the current latency floor and
+   likely practical fast path when rebindable slot semantics are acceptable.
+3. Prefer a ring/pool of slots over a single slot for any practical design.
+4. If `MLX -> tinygrad` must return a fresh tinygrad tensor each time and still
    stay under `10 us`, the remaining work is entirely on the tinygrad-side
    construction path.
-4. Avoid spending time on symmetry unless it becomes necessary for a specific
+5. Avoid spending time on symmetry unless it becomes necessary for a specific
    downstream use case.
 
 ## Open Questions
 
 - Whether the first fast path should support contiguous slices with byte
   offsets, or only base-contiguous tensors.
-- Whether the reusable tinygrad borrower should stay benchmark-only or be
-  surfaced as a deliberate specialized converter API.
+- Whether the slot/ring primitive should stay benchmark-only or be surfaced as
+  a deliberate specialized converter API.

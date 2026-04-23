@@ -66,22 +66,30 @@ uv run python mlx_tinygrad_interop/bench_raw_conversion.py --dtype float32 --siz
 Observed `7168`-byte results on that run:
 
 - `unsafe_helper_bridge`
-  - `mlx_to_tinygrad`: `22.795 us` min, `22.864 us` median
-  - `tinygrad_to_mlx`: `29.982 us` min, `30.078 us` median
+  - `mlx_to_tinygrad`: `21.202 us` min, `21.532 us` median
+  - `tinygrad_to_mlx`: `28.109 us` min, `28.372 us` median
 - `single_entry_bridge`
-  - `mlx_to_tinygrad`: `22.507 us` min, `22.577 us` median
-- `reused_wrapper_bridge`
-  - `mlx_to_tinygrad`: `0.606 us` min, `0.608 us` median
+  - `mlx_to_tinygrad`: `21.388 us` min, `21.542 us` median
+- `fresh_wrapper_then_use_sum`
+  - `mlx_to_tinygrad`: `601.812 us` min, `611.458 us` median
+- `rebindable_slot_bridge`
+  - `mlx_to_tinygrad`: `1.505 us` min, `1.542 us` median
+- `rebindable_slot_then_use_sum`
+  - `mlx_to_tinygrad`: `579.583 us` min, `581.833 us` median
+- `borrower_ring4_bridge`
+  - `mlx_to_tinygrad`: `1.531 us` min, `1.573 us` median
+- `borrower_ring4_then_use_sum`
+  - `mlx_to_tinygrad`: `577.730 us` min, `581.000 us` median
 - `unsafe_helper_legacy`
-  - `mlx_to_tinygrad`: `35.724 us` min, `35.859 us` median
+  - `mlx_to_tinygrad`: `31.938 us` min, `32.214 us` median
 - `unsafe_helper_maybe_copy`
-  - `tinygrad_to_mlx`: `29.969 us` min, `30.036 us` median
+  - `tinygrad_to_mlx`: `28.153 us` min, `28.277 us` median
 - `memoryview_copy`
-  - `mlx_to_tinygrad`: `39.382 us` min, `39.878 us` median
-  - `tinygrad_to_mlx`: `2.648 us` min, `2.686 us` median
+  - `mlx_to_tinygrad`: `35.191 us` min, `35.668 us` median
+  - `tinygrad_to_mlx`: `2.596 us` min, `2.662 us` median
 - `numpy_baseline`
-  - `mlx_to_tinygrad`: `290.083 us` min, `291.323 us` median
-  - `tinygrad_to_mlx`: `13.754 us` min, `13.780 us` median
+  - `mlx_to_tinygrad`: `272.323 us` min, `275.104 us` median
+  - `tinygrad_to_mlx`: `12.817 us` min, `13.005 us` median
 
 Later remote microbench runs showed the split more clearly:
 
@@ -89,9 +97,10 @@ Later remote microbench runs showed the split more clearly:
   so exporter dict marshalling was never the main problem.
 - `MLX -> tinygrad` is dominated by tinygrad import / wrapper construction when
   a fresh tensor is created each time.
-- The rebindable tinygrad slot drops `MLX -> tinygrad` into the sub-microsecond
-  range across the measured sizes, which means wrapper reuse is the decisive
-  optimization on this host.
+- The rebindable tinygrad slot drops `MLX -> tinygrad` to about `1.5 us`, and
+  a ring of four slots stays at essentially the same latency. That means
+  wrapper reuse, not exporter marshalling, is the decisive optimization on this
+  host.
 - The strict alias-only `tinygrad -> MLX` helper succeeds on `e16`; its timing
   is effectively the same as the maybe-copy helper on that host.
 - `tinygrad -> MLX` is dominated by tinygrad export in the unsafe helper path.
@@ -102,6 +111,10 @@ Later remote microbench runs showed the split more clearly:
 - The rebindable slot returns the same tinygrad `Tensor` object rebound to new
   Metal storage, so it is narrower than an ordinary "new tensor each call"
   conversion helper.
+- The `*_then_use_sum` rows are dominated by the realized tinygrad reduction.
+  They should be read as end-to-end "convert then immediately consume" probes.
+  They still show the same relative story: slot/ring rebinding saves about
+  `20-25 us` versus the fresh-wrapper path at `7 kB`.
 
 ## Current Scope
 
