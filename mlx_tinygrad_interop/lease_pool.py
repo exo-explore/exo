@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import contextlib
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import mlx.core as mx
 from tinygrad import Device, Tensor
+from tinygrad.device import Buffer
 from tinygrad.dtype import DTypeLike, to_dtype
-from tinygrad.runtime.ops_metal import wait_check
+from tinygrad.tensor import all_tensors
 
 
 def _export_realized_storage(array: Any) -> dict[str, Any]:
@@ -17,6 +18,10 @@ def _export_realized_storage(array: Any) -> dict[str, Any]:
 
 def _mlx_dtype_name(dtype: Any) -> str:
   return repr(dtype).removeprefix("mlx.core.")
+
+
+def _bytes_view(mv: memoryview) -> memoryview:
+  return mv if mv.format == "B" and mv.ndim == 1 else mv.cast("B")
 
 
 def _iter_tensors(obj: Any, seen: set[int] | None = None):
@@ -37,21 +42,77 @@ def _iter_tensors(obj: Any, seen: set[int] | None = None):
       yield from _iter_tensors(value, seen)
 
 
-def _capture_new_metal_command_buffers(start_idx: int):
-  metal_dev = Device["METAL"]
-  inflight = getattr(metal_dev, "mtl_buffers_in_flight", None)
-  if inflight is None: return metal_dev, ()
-  return metal_dev, tuple(inflight[start_idx:])
+def _snapshot_live_tensors() -> dict[int, Tensor]:
+  return {id(t): t for tref in list(all_tensors) if (t := tref()) is not None}
 
 
-def _wait_for_scoped_metal_work(metal_dev: Any, command_buffers: tuple[Any, ...]) -> None:
-  if not command_buffers: return
-  wait_check(command_buffers[-1])
-  inflight = getattr(metal_dev, "mtl_buffers_in_flight", None)
-  if inflight is None: return
-  for cbuf in command_buffers:
-    with contextlib.suppress(ValueError):
-      inflight.remove(cbuf)
+def _tensor_base_buffer(t: Tensor) -> Buffer | None:
+  if not t.uop.has_buffer_identity(): return None
+  try:
+    return cast(Buffer, t.uop.buffer).base
+  except Exception:
+    return None
+
+
+def _uop_depends_on(uop: Any, target: Any) -> bool:
+  seen: set[Any] = set()
+  stack = [uop]
+  while stack:
+    cur = stack.pop()
+    if cur is target: return True
+    if cur in seen: continue
+    seen.add(cur)
+    stack.extend(cur.src)
+  return False
+
+
+def _reject_scoped_tensor_escapes(borrowed: Tensor, returned_tensors: tuple[Tensor, ...], pre_live_ids: set[int]) -> None:
+  borrowed_base = _tensor_base_buffer(borrowed)
+
+  if any(t is borrowed for t in returned_tensors):
+    raise RuntimeError("callback returned the borrowed tensor directly; return a copied or independently realized result instead")
+  if borrowed_base is not None and any(_tensor_base_buffer(t) is borrowed_base for t in returned_tensors):
+    raise RuntimeError("callback returned tensor(s) that still alias the borrowed slot; copy or realize independent storage before returning")
+
+  for tensor in returned_tensors:
+    tensor.realize()
+
+  returned_ids = {id(t) for t in returned_tensors}
+  escaped: list[Tensor] = []
+  for tensor_id, tensor in _snapshot_live_tensors().items():
+    if tensor_id in pre_live_ids or tensor_id in returned_ids or tensor is borrowed:
+      continue
+    if borrowed_base is not None and _tensor_base_buffer(tensor) is borrowed_base:
+      escaped.append(tensor)
+      continue
+    if _uop_depends_on(tensor.uop, borrowed.uop):
+      escaped.append(tensor)
+  if escaped:
+    raise RuntimeError(
+      "callback leaked tensor(s) derived from the borrowed tensor; only independent realized outputs may escape the callback"
+    )
+
+
+def _run_with_scoped_lease(lease: "MlxToTinygradLease", fn, *, synchronize_on_release: bool | None = None):
+  borrowed = lease.tensor
+  pre_live_ids = set(_snapshot_live_tensors())
+  try:
+    result = fn(borrowed)
+    returned_tensors = tuple(_iter_tensors(result))
+    _reject_scoped_tensor_escapes(borrowed, returned_tensors, pre_live_ids)
+    return result
+  finally:
+    if not lease._released:
+      lease.release(synchronize=synchronize_on_release)
+
+
+def _evict_lru_idle_pool(pools: "OrderedDict[Any, Any]", *, max_pools: int | None) -> None:
+  if max_pools is None or len(pools) < max_pools: return
+  for key, pool in list(pools.items()):
+    if pool.in_flight == 0:
+      del pools[key]
+      return
+  raise RuntimeError(f"pool cache is full ({max_pools} keys) and every pool is still in use")
 
 
 @dataclass(frozen=True)
@@ -71,9 +132,32 @@ class MlxToTinygradLeaseKey:
     )
 
 
+@dataclass(frozen=True)
+class MlxToTinygradCopyKey:
+  shape: tuple[int, ...]
+  mlx_dtype_name: str
+  tinygrad_dtype_name: str
+
+  @staticmethod
+  def from_storage(storage: dict[str, Any], *, tg_dtype: DTypeLike) -> "MlxToTinygradCopyKey":
+    return MlxToTinygradCopyKey(
+      shape=tuple(int(dim) for dim in storage["shape"]),
+      mlx_dtype_name=_mlx_dtype_name(storage["dtype"]),
+      tinygrad_dtype_name=to_dtype(tg_dtype).base.name,
+    )
+
+
 @dataclass
-class _LeaseSlot:
+class _AliasLeaseSlot:
   borrower: Any
+  tensor: Tensor
+  generation: int = 0
+  in_use: bool = False
+
+
+@dataclass
+class _CopyLeaseSlot:
+  tensor: Tensor
   generation: int = 0
   in_use: bool = False
 
@@ -81,7 +165,7 @@ class _LeaseSlot:
 class MlxToTinygradLease:
   __slots__ = ("_pool", "_slot_index", "_generation", "_tensor", "_released")
 
-  def __init__(self, pool: "MlxToTinygradLeasePool", slot_index: int, generation: int, tensor: Tensor):
+  def __init__(self, pool: Any, slot_index: int, generation: int, tensor: Tensor):
     self._pool, self._slot_index, self._generation = pool, slot_index, generation
     self._tensor, self._released = tensor, False
 
@@ -89,7 +173,7 @@ class MlxToTinygradLease:
   def generation(self) -> int: return self._generation
 
   @property
-  def key(self) -> MlxToTinygradLeaseKey: return self._pool.key
+  def key(self) -> Any: return self._pool.key
 
   @property
   def tensor(self) -> Tensor:
@@ -119,15 +203,16 @@ class MlxToTinygradLeasePool:
     self.key, self.tg_dtype, self.capacity = key, to_dtype(tg_dtype), capacity
     self._next_slot, self._synchronize_on_release = 0, synchronize_on_release
     self._slots = [
-      _LeaseSlot(
-        Tensor._unsafe_metal_borrower(
+      _AliasLeaseSlot(
+        borrower := Tensor._unsafe_metal_borrower(
           int(template_storage["mtl_buffer_ptr"]),
           tuple(template_storage["shape"]),
           dtype=self.tg_dtype,
           byte_offset=int(template_storage["offset_bytes"]),
           buffer_nbytes=int(template_storage["buffer_nbytes"]),
           owner=template_owner,
-        )
+        ),
+        borrower.tensor,
       ) for _ in range(capacity)
     ]
 
@@ -145,7 +230,7 @@ class MlxToTinygradLeasePool:
       synchronize_on_release=synchronize_on_release,
     )
 
-  def _next_available_slot(self) -> tuple[int, _LeaseSlot]:
+  def _next_available_slot(self) -> tuple[int, _AliasLeaseSlot]:
     for _ in range(self.capacity):
       slot_index = self._next_slot
       self._next_slot = (self._next_slot + 1) % self.capacity
@@ -172,6 +257,7 @@ class MlxToTinygradLeasePool:
       byte_offset=int(storage["offset_bytes"]),
       buffer_nbytes=int(storage["buffer_nbytes"]),
     )
+    slot.tensor = tensor
     slot.generation += 1
     slot.in_use = True
     return MlxToTinygradLease(self, slot_index, slot.generation, tensor)
@@ -182,31 +268,11 @@ class MlxToTinygradLeasePool:
 
   def run_with_mlx_tensor(self, array: Any, fn, *, owner: Any | None = None,
                           synchronize_on_release: bool | None = None):
-    lease = self.acquire_from_mlx(array, owner=owner)
-    metal_dev = Device["METAL"]
-    start_idx = len(getattr(metal_dev, "mtl_buffers_in_flight", ()))
-    try:
-      result = fn(lease.tensor)
-      returned_tensors = tuple(_iter_tensors(result))
-      if any(t is lease.tensor for t in returned_tensors):
-        raise RuntimeError("callback returned the borrowed tensor directly; return a realized copy or downstream result instead")
-      for tensor in returned_tensors:
-        tensor.realize()
-      return result
-    finally:
-      if not lease._released:
-        if synchronize_on_release is False:
-          lease.release(synchronize=False)
-        else:
-          _, command_buffers = _capture_new_metal_command_buffers(start_idx)
-          _wait_for_scoped_metal_work(metal_dev, command_buffers)
-          slot = self._slots[lease._slot_index]
-          if not slot.in_use: raise RuntimeError(f"slot {lease._slot_index} is not currently leased")
-          if slot.generation != lease._generation:
-            raise RuntimeError(f"stale lease generation for slot {lease._slot_index}: expected {slot.generation}, got {lease._generation}")
-          slot.borrower.clear_owner()
-          slot.in_use = False
-          lease._released = True
+    return _run_with_scoped_lease(
+      self.acquire_from_mlx(array, owner=owner),
+      fn,
+      synchronize_on_release=synchronize_on_release,
+    )
 
   def _release(self, slot_index: int, generation: int, *, synchronize: bool | None = None) -> None:
     slot = self._slots[slot_index]
@@ -224,71 +290,158 @@ class MlxToTinygradLeasePool:
 
 
 class MlxToTinygradLeasePools:
-  __slots__ = ("capacity_per_key", "_synchronize_on_release", "_pools")
+  __slots__ = ("capacity_per_key", "max_pools", "_synchronize_on_release", "_pools")
 
-  def __init__(self, *, capacity_per_key: int = 4, synchronize_on_release: bool = True):
+  def __init__(self, *, capacity_per_key: int = 4, max_pools: int | None = 64, synchronize_on_release: bool = True):
     if capacity_per_key <= 0: raise ValueError(f"capacity_per_key must be positive, got {capacity_per_key}")
-    self.capacity_per_key, self._synchronize_on_release = capacity_per_key, synchronize_on_release
-    self._pools: dict[MlxToTinygradLeaseKey, MlxToTinygradLeasePool] = {}
+    if max_pools is not None and max_pools <= 0: raise ValueError(f"max_pools must be positive, got {max_pools}")
+    self.capacity_per_key, self.max_pools, self._synchronize_on_release = capacity_per_key, max_pools, synchronize_on_release
+    self._pools: OrderedDict[MlxToTinygradLeaseKey, MlxToTinygradLeasePool] = OrderedDict()
+
+  def _get_or_create_pool(self, storage: dict[str, Any], *, tg_dtype: DTypeLike, owner_obj: Any) -> MlxToTinygradLeasePool:
+    key = MlxToTinygradLeaseKey.from_storage(storage, tg_dtype=tg_dtype)
+    pool = self._pools.get(key)
+    if pool is not None:
+      self._pools.move_to_end(key)
+      return pool
+    _evict_lru_idle_pool(self._pools, max_pools=self.max_pools)
+    pool = MlxToTinygradLeasePool(
+      key=key,
+      tg_dtype=tg_dtype,
+      template_storage=storage,
+      template_owner=owner_obj,
+      capacity=self.capacity_per_key,
+      synchronize_on_release=self._synchronize_on_release,
+    )
+    self._pools[key] = pool
+    return pool
 
   def acquire_from_mlx(self, array: Any, *, tg_dtype: DTypeLike, owner: Any | None = None) -> MlxToTinygradLease:
     storage = _export_realized_storage(array)
     owner_obj = array if owner is None else owner
-    key = MlxToTinygradLeaseKey.from_storage(storage, tg_dtype=tg_dtype)
-    if key not in self._pools:
-      self._pools[key] = MlxToTinygradLeasePool(
-        key=key,
-        tg_dtype=tg_dtype,
-        template_storage=storage,
-        template_owner=owner_obj,
-        capacity=self.capacity_per_key,
-        synchronize_on_release=self._synchronize_on_release,
-      )
-    return self._pools[key].acquire_from_storage(storage, owner=owner_obj)
+    pool = self._get_or_create_pool(storage, tg_dtype=tg_dtype, owner_obj=owner_obj)
+    return pool.acquire_from_storage(storage, owner=owner_obj)
 
   def run_with_mlx_tensor(self, array: Any, *, tg_dtype: DTypeLike, fn, owner: Any | None = None,
                           synchronize_on_release: bool | None = None):
-    storage = _export_realized_storage(array)
-    owner_obj = array if owner is None else owner
-    key = MlxToTinygradLeaseKey.from_storage(storage, tg_dtype=tg_dtype)
-    if key not in self._pools:
-      self._pools[key] = MlxToTinygradLeasePool(
-        key=key,
-        tg_dtype=tg_dtype,
-        template_storage=storage,
-        template_owner=owner_obj,
-        capacity=self.capacity_per_key,
-        synchronize_on_release=self._synchronize_on_release,
-      )
-    pool = self._pools[key]
-    lease = pool.acquire_from_storage(storage, owner=owner_obj)
-    metal_dev = Device["METAL"]
-    start_idx = len(getattr(metal_dev, "mtl_buffers_in_flight", ()))
-    try:
-      result = fn(lease.tensor)
-      returned_tensors = tuple(_iter_tensors(result))
-      if any(t is lease.tensor for t in returned_tensors):
-        raise RuntimeError("callback returned the borrowed tensor directly; return a realized copy or downstream result instead")
-      for tensor in returned_tensors:
-        tensor.realize()
-      return result
-    finally:
-      if not lease._released:
-        if synchronize_on_release is False:
-          lease.release(synchronize=False)
-        else:
-          _, command_buffers = _capture_new_metal_command_buffers(start_idx)
-          _wait_for_scoped_metal_work(metal_dev, command_buffers)
-          slot = pool._slots[lease._slot_index]
-          if not slot.in_use: raise RuntimeError(f"slot {lease._slot_index} is not currently leased")
-          if slot.generation != lease._generation:
-            raise RuntimeError(f"stale lease generation for slot {lease._slot_index}: expected {slot.generation}, got {lease._generation}")
-          slot.borrower.clear_owner()
-          slot.in_use = False
-          lease._released = True
+    return _run_with_scoped_lease(
+      self.acquire_from_mlx(array, tg_dtype=tg_dtype, owner=owner),
+      fn,
+      synchronize_on_release=synchronize_on_release,
+    )
 
   @property
   def pool_count(self) -> int: return len(self._pools)
 
   def get_pool(self, key: MlxToTinygradLeaseKey) -> MlxToTinygradLeasePool | None:
+    return self._pools.get(key)
+
+
+class MlxToTinygradCopyLeasePool:
+  __slots__ = ("key", "tg_dtype", "capacity", "_slots", "_next_slot", "_synchronize_on_release")
+
+  def __init__(self, *, key: MlxToTinygradCopyKey, tg_dtype: DTypeLike, capacity: int = 4,
+               synchronize_on_release: bool = True):
+    if capacity <= 0: raise ValueError(f"capacity must be positive, got {capacity}")
+    self.key, self.tg_dtype, self.capacity = key, to_dtype(tg_dtype), capacity
+    self._next_slot, self._synchronize_on_release = 0, synchronize_on_release
+    self._slots = [_CopyLeaseSlot(Tensor.empty(*key.shape, dtype=self.tg_dtype, device="METAL").realize()) for _ in range(capacity)]
+
+  @classmethod
+  def from_mlx(cls, array: Any, *, tg_dtype: DTypeLike, capacity: int = 4,
+               synchronize_on_release: bool = True) -> "MlxToTinygradCopyLeasePool":
+    storage = _export_realized_storage(array)
+    return cls(
+      key=MlxToTinygradCopyKey.from_storage(storage, tg_dtype=tg_dtype),
+      tg_dtype=tg_dtype,
+      capacity=capacity,
+      synchronize_on_release=synchronize_on_release,
+    )
+
+  def _next_available_slot(self) -> tuple[int, _CopyLeaseSlot]:
+    for _ in range(self.capacity):
+      slot_index = self._next_slot
+      self._next_slot = (self._next_slot + 1) % self.capacity
+      slot = self._slots[slot_index]
+      if not slot.in_use: return slot_index, slot
+    raise RuntimeError(
+      f"all {self.capacity} copy slots for key={self.key} are still in use; "
+      "release leases or increase pool capacity"
+    )
+
+  def _validate_storage(self, storage: dict[str, Any]) -> None:
+    incoming = MlxToTinygradCopyKey.from_storage(storage, tg_dtype=self.tg_dtype)
+    if incoming != self.key:
+      raise ValueError(f"copy pool key mismatch: expected {self.key}, got {incoming}")
+
+  def acquire_from_mlx(self, array: Any) -> MlxToTinygradLease:
+    storage = _export_realized_storage(array)
+    self._validate_storage(storage)
+    slot_index, slot = self._next_available_slot()
+    cast(Buffer, slot.tensor.uop.buffer).ensure_allocated().copyin(_bytes_view(memoryview(array)))
+    slot.generation += 1
+    slot.in_use = True
+    return MlxToTinygradLease(self, slot_index, slot.generation, slot.tensor)
+
+  def run_with_mlx_tensor(self, array: Any, fn, *, synchronize_on_release: bool | None = None):
+    return _run_with_scoped_lease(
+      self.acquire_from_mlx(array),
+      fn,
+      synchronize_on_release=synchronize_on_release,
+    )
+
+  def _release(self, slot_index: int, generation: int, *, synchronize: bool | None = None) -> None:
+    slot = self._slots[slot_index]
+    if not slot.in_use: raise RuntimeError(f"slot {slot_index} is not currently leased")
+    if slot.generation != generation:
+      raise RuntimeError(f"stale lease generation for slot {slot_index}: expected {slot.generation}, got {generation}")
+    do_synchronize = synchronize if synchronize is not None else self._synchronize_on_release
+    if do_synchronize:
+      Device["METAL"].synchronize()
+    slot.in_use = False
+
+  @property
+  def in_flight(self) -> int: return sum(int(slot.in_use) for slot in self._slots)
+
+
+class MlxToTinygradCopyLeasePools:
+  __slots__ = ("capacity_per_key", "max_pools", "_synchronize_on_release", "_pools")
+
+  def __init__(self, *, capacity_per_key: int = 4, max_pools: int | None = 64, synchronize_on_release: bool = True):
+    if capacity_per_key <= 0: raise ValueError(f"capacity_per_key must be positive, got {capacity_per_key}")
+    if max_pools is not None and max_pools <= 0: raise ValueError(f"max_pools must be positive, got {max_pools}")
+    self.capacity_per_key, self.max_pools, self._synchronize_on_release = capacity_per_key, max_pools, synchronize_on_release
+    self._pools: OrderedDict[MlxToTinygradCopyKey, MlxToTinygradCopyLeasePool] = OrderedDict()
+
+  def _get_or_create_pool(self, storage: dict[str, Any], *, tg_dtype: DTypeLike) -> MlxToTinygradCopyLeasePool:
+    key = MlxToTinygradCopyKey.from_storage(storage, tg_dtype=tg_dtype)
+    pool = self._pools.get(key)
+    if pool is not None:
+      self._pools.move_to_end(key)
+      return pool
+    _evict_lru_idle_pool(self._pools, max_pools=self.max_pools)
+    pool = MlxToTinygradCopyLeasePool(
+      key=key,
+      tg_dtype=tg_dtype,
+      capacity=self.capacity_per_key,
+      synchronize_on_release=self._synchronize_on_release,
+    )
+    self._pools[key] = pool
+    return pool
+
+  def acquire_from_mlx(self, array: Any, *, tg_dtype: DTypeLike) -> MlxToTinygradLease:
+    storage = _export_realized_storage(array)
+    return self._get_or_create_pool(storage, tg_dtype=tg_dtype).acquire_from_mlx(array)
+
+  def run_with_mlx_tensor(self, array: Any, *, tg_dtype: DTypeLike, fn, synchronize_on_release: bool | None = None):
+    return _run_with_scoped_lease(
+      self.acquire_from_mlx(array, tg_dtype=tg_dtype),
+      fn,
+      synchronize_on_release=synchronize_on_release,
+    )
+
+  @property
+  def pool_count(self) -> int: return len(self._pools)
+
+  def get_pool(self, key: MlxToTinygradCopyKey) -> MlxToTinygradCopyLeasePool | None:
     return self._pools.get(key)
