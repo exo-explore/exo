@@ -10,7 +10,10 @@ import numpy as np
 from tinygrad import Device, Tensor, dtypes
 from tinygrad.device import Buffer
 
-from mlx_tinygrad_interop.lease_pool import MlxToTinygradLeasePools
+try:
+  from mlx_tinygrad_interop.lease_pool import MlxToTinygradLeasePools
+except ModuleNotFoundError:
+  from lease_pool import MlxToTinygradLeasePools
 
 DTYPES: dict[str, tuple[Any, Any, np.dtype[Any]]] = {
   "float16": (mx.float16, dtypes.float16, np.dtype(np.float16)),

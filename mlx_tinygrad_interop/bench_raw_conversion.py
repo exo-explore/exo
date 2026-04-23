@@ -11,7 +11,10 @@ import numpy as np
 from tinygrad import Device, Tensor, dtypes
 from tinygrad.device import Buffer
 
-from mlx_tinygrad_interop.lease_pool import MlxToTinygradLeasePool
+try:
+  from mlx_tinygrad_interop.lease_pool import MlxToTinygradLeasePool
+except ModuleNotFoundError:
+  from lease_pool import MlxToTinygradLeasePool
 
 blackhole: Any = None
 
