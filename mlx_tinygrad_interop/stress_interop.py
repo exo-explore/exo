@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import gc
+import resource
+import sys
 import tracemalloc
 from typing import Any, cast
 
@@ -84,6 +86,19 @@ def assert_array_close(name: str, actual: np.ndarray, expected: np.ndarray) -> N
     np.testing.assert_allclose(actual, expected, rtol=5e-3 if expected.dtype == np.float16 else 1e-5, atol=5e-3 if expected.dtype == np.float16 else 1e-6, err_msg=name)
   else:
     np.testing.assert_array_equal(actual, expected, err_msg=name)
+
+
+def rss_max_bytes() -> int:
+  rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+  return int(rss if sys.platform == "darwin" else rss * 1024)
+
+
+def mlx_memory_snapshot() -> dict[str, int]:
+  stats: dict[str, int] = {}
+  for name in ("get_active_memory", "get_cache_memory", "get_peak_memory"):
+    fn = getattr(mx, name, None)
+    if callable(fn): stats[name] = int(fn())
+  return stats
 
 
 def random_shape(rng: np.random.Generator, max_elements: int) -> tuple[int, ...]:
@@ -201,14 +216,15 @@ def run_case(case_index: int, rng: np.random.Generator, mx_dtype: Any, tg_dtype:
 
   tg_fast = tinygrad_from_mlx_fast(mx_source, tg_dtype)
   tg_single = tinygrad_from_mlx_single_entry(mx_source, tg_dtype)
-  with pools.acquire_from_mlx(mx_source, tg_dtype=tg_dtype) as lease:
-    tg_lease = lease.tensor
-    assert_array_close(f"case {case_index} mlx->tinygrad lease raw", tg_lease.numpy(), values)
-    assert_array_close(
-      f"case {case_index} mlx->tinygrad lease ops",
-      apply_tinygrad_ops(tg_lease.cast(dtypes.float32), ops).numpy(),
-      expected_after_ops,
-    )
+  lease_result = pools.run_with_mlx_tensor(
+    mx_source,
+    tg_dtype=tg_dtype,
+    fn=lambda tg: (
+      assert_array_close(f"case {case_index} mlx->tinygrad lease raw", tg.numpy(), values),
+      apply_tinygrad_ops(tg.cast(dtypes.float32), ops),
+    )[1],
+  )
+  assert_array_close(f"case {case_index} mlx->tinygrad lease ops", lease_result.numpy(), expected_after_ops)
 
   assert_array_close(f"case {case_index} mlx->tinygrad fast raw", tg_fast.numpy(), expected_tg_raw.numpy())
   assert_array_close(
@@ -246,9 +262,10 @@ def run_case(case_index: int, rng: np.random.Generator, mx_dtype: Any, tg_dtype:
   )
 
 
-def run_soak(rng: np.random.Generator, dtype_names: list[str], iterations: int, max_elements: int) -> None:
+def run_soak(rng: np.random.Generator, dtype_names: list[str], iterations: int, max_elements: int) -> tuple[float, list[tuple[int, dict[str, int], int]]]:
   pools = MlxToTinygradLeasePools(capacity_per_key=8, synchronize_on_release=False)
   checksum = 0.0
+  native_checkpoints: list[tuple[int, dict[str, int], int]] = []
   for iteration in range(iterations):
     dtype_name = dtype_names[iteration % len(dtype_names)]
     mx_dtype, tg_dtype, np_dtype = DTYPES[dtype_name]
@@ -258,12 +275,18 @@ def run_soak(rng: np.random.Generator, dtype_names: list[str], iterations: int, 
     tg_source = Tensor(values, device="METAL", dtype=tg_dtype).realize()
     Device["METAL"].synchronize()
 
-    with pools.acquire_from_mlx(mx_source, tg_dtype=tg_dtype) as lease:
-      checksum += float(apply_tinygrad_ops(lease.tensor.cast(dtypes.float32), [("add", 1.0)]).sum().item())
+    checksum += float(pools.run_with_mlx_tensor(
+      mx_source,
+      tg_dtype=tg_dtype,
+      synchronize_on_release=True,
+      fn=lambda tg: apply_tinygrad_ops(tg.cast(dtypes.float32), [("add", 1.0)]).sum(),
+    ).item())
     checksum += float(np.array(mlx_from_tinygrad_copy(tg_source)).astype(np.float64).sum())
     if (iteration + 1) % 64 == 0:
       gc.collect()
+      native_checkpoints.append((iteration + 1, mlx_memory_snapshot(), rss_max_bytes()))
   print(f"# soak_checksum={checksum:.6f} pool_count={pools.pool_count}")
+  return checksum, native_checkpoints
 
 
 def main() -> None:
@@ -279,15 +302,39 @@ def main() -> None:
   rng = np.random.default_rng(args.seed)
   tracemalloc.start()
   before_cur, before_peak = tracemalloc.get_traced_memory()
+  reset_peak = getattr(mx, "reset_peak_memory", None)
+  if callable(reset_peak): reset_peak()
+  native_before = mlx_memory_snapshot()
+  rss_before = rss_max_bytes()
   pools = MlxToTinygradLeasePools(capacity_per_key=8, synchronize_on_release=True)
 
   for case_index in range(args.cases):
     dtype_name = dtype_names[case_index % len(dtype_names)]
     run_case(case_index, rng, *DTYPES[dtype_name], max_elements=args.max_elements, pools=pools)
 
-  run_soak(rng, dtype_names, iterations=args.soak_iterations, max_elements=args.max_elements)
+  _, native_checkpoints = run_soak(rng, dtype_names, iterations=args.soak_iterations, max_elements=args.max_elements)
   gc.collect()
   after_cur, after_peak = tracemalloc.get_traced_memory()
+  native_after = mlx_memory_snapshot()
+  rss_after = rss_max_bytes()
+  active_peak = max([native_before.get("get_active_memory", 0), native_after.get("get_active_memory", 0),
+                     *[stats.get("get_active_memory", 0) for _, stats, _ in native_checkpoints]], default=0)
+  cache_peak = max([native_before.get("get_cache_memory", 0), native_after.get("get_cache_memory", 0),
+                    *[stats.get("get_cache_memory", 0) for _, stats, _ in native_checkpoints]], default=0)
+  rss_peak = max([rss_before, rss_after, *[rss for _, _, rss in native_checkpoints]], default=0)
+  print(
+    "# native_memory"
+    f" mlx_active_start={native_before.get('get_active_memory', -1)}"
+    f" mlx_active_end={native_after.get('get_active_memory', -1)}"
+    f" mlx_active_peak={active_peak}"
+    f" mlx_cache_start={native_before.get('get_cache_memory', -1)}"
+    f" mlx_cache_end={native_after.get('get_cache_memory', -1)}"
+    f" mlx_cache_peak={cache_peak}"
+    f" mlx_reported_peak={native_after.get('get_peak_memory', -1)}"
+    f" rss_max_start={rss_before}"
+    f" rss_max_end={rss_after}"
+    f" rss_max_peak={rss_peak}"
+  )
   print(
     "# stress_ok"
     f" cases={args.cases}"

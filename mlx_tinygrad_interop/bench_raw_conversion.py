@@ -12,9 +12,9 @@ from tinygrad import Device, Tensor, dtypes
 from tinygrad.device import Buffer
 
 try:
-  from mlx_tinygrad_interop.lease_pool import MlxToTinygradLeasePool
+  from mlx_tinygrad_interop.lease_pool import MlxToTinygradLeasePool, MlxToTinygradLeasePools
 except ModuleNotFoundError:
-  from lease_pool import MlxToTinygradLeasePool
+  from lease_pool import MlxToTinygradLeasePool, MlxToTinygradLeasePools
 
 blackhole: Any = None
 
@@ -122,6 +122,14 @@ def tinygrad_from_mlx_lease_then_use_sum(x: Any, pool: MlxToTinygradLeasePool) -
     return tinygrad_consume_sum(lease.tensor)
   finally:
     lease.release(synchronize=False)
+
+
+def tinygrad_from_mlx_scoped_handoff_noop(x: Any, pools: MlxToTinygradLeasePools, tg_dtype: Any) -> int:
+  return pools.run_with_mlx_tensor(x, tg_dtype=tg_dtype, fn=lambda _: 0)
+
+
+def tinygrad_from_mlx_scoped_handoff_then_use_sum(x: Any, pools: MlxToTinygradLeasePools, tg_dtype: Any) -> Tensor:
+  return pools.run_with_mlx_tensor(x, tg_dtype=tg_dtype, fn=lambda t: tinygrad_consume_sum(t))
 
 
 def tinygrad_consume_sum(t: Tensor) -> Tensor:
@@ -338,6 +346,7 @@ def main() -> None:
         ) for _ in range(4)
       ])
       lease_pool = MlxToTinygradLeasePool.from_mlx(src_mx, tg_dtype=tg_dtype, capacity=4, synchronize_on_release=True)
+      scoped_handoff_pools = MlxToTinygradLeasePools(capacity_per_key=4, synchronize_on_release=True)
 
       benches: list[tuple[str, str, Callable[[], Any]]] = [
         ("unsafe_helper_bridge", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_fast(s, tg_dtype)),
@@ -354,6 +363,10 @@ def main() -> None:
          lambda alt=mx_slot_sources, pool=lease_pool: tinygrad_from_mlx_lease_acquire_release(alt.next(), pool)),
         ("lease_pool_then_use_sum", "mlx_to_tinygrad",
          lambda alt=mx_slot_sources, pool=lease_pool: tinygrad_from_mlx_lease_then_use_sum(alt.next(), pool)),
+        ("scoped_handoff_noop", "mlx_to_tinygrad",
+         lambda alt=mx_slot_sources, pools=scoped_handoff_pools, dtype=tg_dtype: tinygrad_from_mlx_scoped_handoff_noop(alt.next(), pools, dtype)),
+        ("scoped_handoff_then_use_sum", "mlx_to_tinygrad",
+         lambda alt=mx_slot_sources, pools=scoped_handoff_pools, dtype=tg_dtype: tinygrad_from_mlx_scoped_handoff_then_use_sum(alt.next(), pools, dtype)),
         ("unsafe_helper_legacy", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_legacy(s, tg_dtype)),
         ("memoryview_copy", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_copy(s, tg_dtype)),
         ("numpy_baseline", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_numpy(s)),

@@ -182,6 +182,15 @@ alone still left a stale git revision in a later pass. The working command was:
   - acquire from an MLX array
   - use `lease.tensor`
   - release the lease only after downstream work is realized / synchronized
+- That raw lease surface is still intentionally unsafe. A saved `lease.tensor`
+  reference is not a snapshot and can observe new contents if the slot is
+  later reused.
+- The preferred production-shaped handoff is now the scoped callback API:
+  - `pool.run_with_mlx_tensor(array, fn=...)`
+  - `pools.run_with_mlx_tensor(array, tg_dtype=..., fn=...)`
+  - it scopes acquire/use/release together, realizes returned tensors before
+    release, and rejects returning the borrowed tensor object directly
+  - the callback still must not stash the borrowed tensor into outer state
 - Lease pools are keyed by `(shape, dtype, byte_offset)` so variable inference
   shapes can be bucketed explicitly instead of silently reusing an
   incompatible slot.
@@ -190,6 +199,9 @@ alone still left a stale git revision in a later pass. The working command was:
 - Do not rebind a slot until all work derived from its previous contents has
   been realized and synchronized. Otherwise later rebinds can change what
   older lazy graphs or in-flight kernels observe.
+- Safe release now clears the slot's pinned `_external_owner` after the Metal
+  barrier. Unsafe `synchronize_on_release=False` flows still require the caller
+  to provide the fence discipline.
 - This optimization is same-process and same-address-space only. It does not
   survive a process boundary or a machine boundary, and it does not remove any
   later Metal/host -> CUDA transfer when the downstream stage runs on the RTX.
@@ -206,7 +218,12 @@ It exercises:
 - offsetted MLX views
 - raw conversion correctness against NumPy baselines
 - randomized downstream op chains after conversion
-- repeated lease-pool acquire/use/release soak loops
+- repeated scoped-handoff soak loops through the keyed pool
+- native memory reporting via:
+  - `mx.get_active_memory()`
+  - `mx.get_cache_memory()`
+  - `mx.get_peak_memory()`
+  - process `ru_maxrss`
 
 This is intended to catch value corruption, stale-slot mistakes, obvious
 crashes, and gross leak regressions before the interop path is integrated more

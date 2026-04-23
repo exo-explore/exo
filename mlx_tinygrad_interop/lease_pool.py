@@ -17,6 +17,24 @@ def _mlx_dtype_name(dtype: Any) -> str:
   return repr(dtype).removeprefix("mlx.core.")
 
 
+def _iter_tensors(obj: Any, seen: set[int] | None = None):
+  if seen is None: seen = set()
+  obj_id = id(obj)
+  if obj_id in seen: return
+  seen.add(obj_id)
+
+  if isinstance(obj, Tensor):
+    yield obj
+    return
+  if isinstance(obj, dict):
+    for value in obj.values():
+      yield from _iter_tensors(value, seen)
+    return
+  if isinstance(obj, (list, tuple, set, frozenset)):
+    for value in obj:
+      yield from _iter_tensors(value, seen)
+
+
 @dataclass(frozen=True)
 class MlxToTinygradLeaseKey:
   shape: tuple[int, ...]
@@ -56,6 +74,8 @@ class MlxToTinygradLease:
 
   @property
   def tensor(self) -> Tensor:
+    # This is the unsafe low-level lease surface. The preferred production API
+    # is `run_with_mlx_tensor(...)`, which scopes use and release together.
     if self._released: raise RuntimeError("lease already released")
     return self._tensor
 
@@ -141,13 +161,30 @@ class MlxToTinygradLeasePool:
     storage = _export_realized_storage(array)
     return self.acquire_from_storage(storage, owner=array if owner is None else owner)
 
+  def run_with_mlx_tensor(self, array: Any, fn, *, owner: Any | None = None,
+                          synchronize_on_release: bool | None = None):
+    lease = self.acquire_from_mlx(array, owner=owner)
+    try:
+      result = fn(lease.tensor)
+      returned_tensors = tuple(_iter_tensors(result))
+      if any(t is lease.tensor for t in returned_tensors):
+        raise RuntimeError("callback returned the borrowed tensor directly; return a realized copy or downstream result instead")
+      for tensor in returned_tensors:
+        tensor.realize()
+      return result
+    finally:
+      if not lease._released:
+        lease.release(synchronize=synchronize_on_release)
+
   def _release(self, slot_index: int, generation: int, *, synchronize: bool | None = None) -> None:
     slot = self._slots[slot_index]
     if not slot.in_use: raise RuntimeError(f"slot {slot_index} is not currently leased")
     if slot.generation != generation:
       raise RuntimeError(f"stale lease generation for slot {slot_index}: expected {slot.generation}, got {generation}")
-    if synchronize if synchronize is not None else self._synchronize_on_release:
+    do_synchronize = synchronize if synchronize is not None else self._synchronize_on_release
+    if do_synchronize:
       Device["METAL"].synchronize()
+      slot.borrower.clear_owner()
     slot.in_use = False
 
   @property
@@ -176,6 +213,34 @@ class MlxToTinygradLeasePools:
         synchronize_on_release=self._synchronize_on_release,
       )
     return self._pools[key].acquire_from_storage(storage, owner=owner_obj)
+
+  def run_with_mlx_tensor(self, array: Any, *, tg_dtype: DTypeLike, fn, owner: Any | None = None,
+                          synchronize_on_release: bool | None = None):
+    storage = _export_realized_storage(array)
+    owner_obj = array if owner is None else owner
+    key = MlxToTinygradLeaseKey.from_storage(storage, tg_dtype=tg_dtype)
+    if key not in self._pools:
+      self._pools[key] = MlxToTinygradLeasePool(
+        key=key,
+        tg_dtype=tg_dtype,
+        template_storage=storage,
+        template_owner=owner_obj,
+        capacity=self.capacity_per_key,
+        synchronize_on_release=self._synchronize_on_release,
+      )
+    pool = self._pools[key]
+    lease = pool.acquire_from_storage(storage, owner=owner_obj)
+    try:
+      result = fn(lease.tensor)
+      returned_tensors = tuple(_iter_tensors(result))
+      if any(t is lease.tensor for t in returned_tensors):
+        raise RuntimeError("callback returned the borrowed tensor directly; return a realized copy or downstream result instead")
+      for tensor in returned_tensors:
+        tensor.realize()
+      return result
+    finally:
+      if not lease._released:
+        lease.release(synchronize=synchronize_on_release)
 
   @property
   def pool_count(self) -> int: return len(self._pools)
