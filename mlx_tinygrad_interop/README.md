@@ -132,6 +132,9 @@ Later remote microbench runs showed the split more clearly:
 - The randomized stress suite also caught and fixed the zero-offset variant of
   that problem: oversized backing buffers now import through a logical tinygrad
   buffer view instead of reshaping the entire backing allocation.
+- The same stress suite also found that MLX backing-buffer capacity is a raw
+  byte count, not necessarily a dtype-aligned element count. The fast tinygrad
+  path now handles that with byte-level bounds checks and `ceildiv`.
 - The rebindable slot returns the same tinygrad `Tensor` object rebound to new
   Metal storage, so it is narrower than an ordinary "new tensor each call"
   conversion helper.

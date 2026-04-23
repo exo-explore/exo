@@ -145,6 +145,10 @@ alone still left a stale git revision in a later pass. The working command was:
 - tinygrad's fast Metal import helper must also treat zero-offset logical views
   over oversized backing buffers as `BUFFER_VIEW`s. Stress testing caught a bug
   where it tried to reshape the whole backing buffer instead.
+- MLX `buffer_nbytes` is a raw byte-capacity field, not a promise that the
+  backing buffer size is a multiple of the tensor dtype itemsize. The fast
+  tinygrad helper and borrower now use byte-level bounds checks and `ceildiv`
+  for backing-buffer sizing instead of rejecting those cases.
 - The first MLX import helper is raw-pointer based rather than foreign
   `MTLBuffer*` based.
 - `mx.metal._unsafe_array_from_ptr(...)` may still copy if MLX cannot alias the
