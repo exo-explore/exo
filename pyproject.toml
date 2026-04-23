@@ -50,7 +50,7 @@ cuda = [
   "torch>=2.10.0; sys_platform == 'linux'",
   "vllm>=0.13.0; sys_platform == 'linux'",
   "mlx-cuda-13==0.30.6; sys_platform == 'linux'",
-  "fastsafetensors>=0.1.10; sys_platform == 'linux'",
+  "fastsafetensors>=0.3; sys_platform == 'linux'",
 ]
 
 ###
