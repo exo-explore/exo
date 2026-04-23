@@ -229,19 +229,19 @@ def run_case(case_index: int, rng: np.random.Generator, mx_dtype: Any, tg_dtype:
   assert_array_close(f"case {case_index} tinygrad->mlx alias raw", np.array(mx_alias), np.array(expected_mx_raw))
   assert_array_close(
     f"case {case_index} tinygrad->mlx alias ops",
-    np.array(apply_mlx_ops(mx.astype(mx_alias, mx.float32), ops)),
+    np.array(apply_mlx_ops(mx_alias.astype(mx.float32), ops)),
     expected_after_ops,
   )
   assert_array_close(f"case {case_index} tinygrad->mlx maybe_copy raw", np.array(mx_maybe_copy), np.array(expected_mx_raw))
   assert_array_close(
     f"case {case_index} tinygrad->mlx maybe_copy ops",
-    np.array(apply_mlx_ops(mx.astype(mx_maybe_copy, mx.float32), ops)),
+    np.array(apply_mlx_ops(mx_maybe_copy.astype(mx.float32), ops)),
     expected_after_ops,
   )
   assert_array_close(f"case {case_index} tinygrad->mlx copy raw", np.array(mx_copy), np.array(expected_mx_raw))
   assert_array_close(
     f"case {case_index} tinygrad->mlx copy ops",
-    np.array(apply_mlx_ops(mx.astype(mx_copy, mx.float32), ops)),
+    np.array(apply_mlx_ops(mx_copy.astype(mx.float32), ops)),
     expected_after_ops,
   )
 
