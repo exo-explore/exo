@@ -128,10 +128,10 @@ def make_mlx_source(values: np.ndarray, mx_dtype: Any, rng: np.random.Generator)
 
 def random_scalar(rng: np.random.Generator, np_dtype: np.dtype[Any]) -> Any:
   if np.issubdtype(np_dtype, np.floating):
-    return np_dtype.type(rng.uniform(-2.0, 2.0))
+    return float(rng.uniform(-2.0, 2.0))
   if np.issubdtype(np_dtype, np.unsignedinteger):
-    return np_dtype.type(int(rng.integers(0, 4)))
-  return np_dtype.type(int(rng.integers(-3, 4)))
+    return int(rng.integers(0, 4))
+  return int(rng.integers(-3, 4))
 
 
 def random_ops(rng: np.random.Generator, shape: tuple[int, ...], np_dtype: np.dtype[Any]) -> list[tuple[str, Any]]:
