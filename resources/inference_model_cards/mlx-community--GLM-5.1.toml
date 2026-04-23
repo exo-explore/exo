@@ -1,0 +1,21 @@
+model_id = "mlx-community/GLM-5.1"
+n_layers = 78
+hidden_size = 6144
+num_key_value_heads = 64
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "glm"
+quantization = "bf16"
+base_model = "GLM-5.1"
+capabilities = ["text", "thinking"]
+
+context_length = 202752
+
+[storage_size]
+in_bytes = 1487822475264
+
+# Source: https://huggingface.co/zai-org/GLM-5.1
+# Source: https://docs.z.ai/api-reference/llm/chat-completion
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
