@@ -4,7 +4,6 @@ from collections.abc import Mapping, Sequence
 
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, ModelId, NodeId
-from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.tasks import (
     CancelTask,
     ConnectToGroup,
@@ -20,6 +19,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
+from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadFailed,
@@ -317,11 +317,14 @@ def _pending_tasks(
             if received < task.task_params.total_input_chunks:
                 continue  # Wait for all chunks to arrive
 
-        if isinstance(task, TextGeneration) and task.task_params.image_hashes:
-            if not all(
+        if (
+            isinstance(task, TextGeneration)
+            and task.task_params.image_hashes
+            and not all(
                 h in image_cache for h in task.task_params.image_hashes.values()
-            ):
-                continue  # Wait for all images to be assembled into the cache
+            )
+        ):
+            continue  # Wait for all images to be assembled into the cache
 
         for runner in runners.values():
             if task.instance_id != runner.bound_instance.instance.instance_id:

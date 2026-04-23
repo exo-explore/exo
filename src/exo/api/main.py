@@ -753,8 +753,12 @@ class API:
             return command
 
         hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
-
         all_hashes = {idx: Base64ImageHash(h) for idx, h in enumerate(hashes)}
+        task_params = task_params.model_copy(
+            update={"images": [], "image_hashes": all_hashes}
+        )
+        command = TextGeneration(task_params=task_params)
+
         new_images: list[tuple[int, str]] = []
         for idx, (img, h) in enumerate(zip(images, hashes, strict=True)):
             if h not in self._sent_image_hashes:
@@ -762,10 +766,6 @@ class API:
                 new_images.append((idx, img))
 
         if not new_images:
-            task_params = task_params.model_copy(
-                update={"images": [], "image_hashes": all_hashes}
-            )
-            command = TextGeneration(task_params=task_params)
             await self._send(command)
             return command
 
@@ -773,11 +773,6 @@ class API:
         for img_idx, img_data in new_images:
             for i in range(0, len(img_data), EXO_MAX_CHUNK_SIZE):
                 all_chunks.append((img_idx, img_data[i : i + EXO_MAX_CHUNK_SIZE]))
-
-        task_params = task_params.model_copy(
-            update={"images": [], "image_hashes": all_hashes}
-        )
-        command = TextGeneration(task_params=task_params)
 
         for global_idx, (img_idx, chunk_data) in enumerate(all_chunks):
             await self._send(

@@ -165,9 +165,7 @@ class Worker:
                             sorted_chunks = sorted(
                                 chunks_for_image, key=lambda c: c.chunk_index
                             )
-                            img = Base64Image(
-                                "".join(c.data for c in sorted_chunks)
-                            )
+                            img = Base64Image("".join(c.data for c in sorted_chunks))
                             self.image_cache[
                                 Base64ImageHash(
                                     hashlib.sha256(img.encode("ascii")).hexdigest()
