@@ -35,6 +35,7 @@ from harness import (
     ExoHttpError,
     add_common_instance_args,
     capture_cluster_snapshot,
+    find_existing_instance,
     instance_id_from_instance,
     node_ids_from_instance,
     nodes_used_in_instance,
@@ -79,7 +80,7 @@ def load_tokenizer_for_bench(model_id: str) -> Any:
         model_path = Path(
             snapshot_download(
                 model_id,
-                allow_patterns=["*.json", "*.py", "*.tiktoken", "*.model"],
+                allow_patterns=["*.json", "*.py", "*.tiktoken", "*.model", "*.jinja"],
             )
         )
 
@@ -237,28 +238,72 @@ def run_one_completion(
     prompt_sizer: PromptSizer,
     *,
     use_prefix_cache: bool = False,
+    stream: bool = False,
 ) -> tuple[dict[str, Any], int]:
     content, pp_tokens = prompt_sizer.build(pp_hint)
     payload: dict[str, Any] = {
         "model": model_id,
         "messages": [{"role": "user", "content": content}],
-        "stream": False,
         "max_tokens": tg,
         "logprobs": False,
         "use_prefix_cache": use_prefix_cache,
     }
 
-    t0 = time.perf_counter()
-    out = client.post_bench_chat_completions(payload)
-    elapsed = time.perf_counter() - t0
+    if not stream:
+        payload["stream"] = False
+        t0 = time.perf_counter()
+        out = client.post_bench_chat_completions(payload)
+        elapsed = time.perf_counter() - t0
 
-    stats = out.get("generation_stats")
+        stats = out.get("generation_stats")
+        choices = out.get("choices") or [{}]
+        message = choices[0].get("message", {}) if choices else {}
+        content = message.get("content") or ""
+        preview = content[:200] if content else ""
+    else:
+        tokens = 0
+        first_token_time = None
+        t0 = time.perf_counter()
+        text_parts: list[str] = []
+        stats = None
 
-    # Extract preview, handling None content (common for thinking models)
-    choices = out.get("choices") or [{}]
-    message = choices[0].get("message", {}) if choices else {}
-    content = message.get("content") or ""
-    preview = content[:200] if content else ""
+        for raw_line in client.stream_bench_chat_completions(payload):
+            line = raw_line.strip()
+            if line.startswith(": generation_stats "):
+                with contextlib.suppress(json.JSONDecodeError):
+                    stats = json.loads(line[len(": generation_stats ") :])
+                continue
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                if delta.get("content"):
+                    if first_token_time is None:
+                        first_token_time = time.perf_counter()
+                    tokens += 1
+                    text_parts.append(delta["content"])
+            except json.JSONDecodeError:
+                pass
+
+        elapsed = time.perf_counter() - t0
+        preview = "".join(text_parts)[:200]
+
+        if not stats:
+            ttft = (first_token_time - t0) if first_token_time else elapsed
+            gen_time = elapsed - ttft if tokens > 1 else elapsed
+            gen_tps = (tokens - 1) / gen_time if tokens > 1 and gen_time > 0 else 0.0
+            prompt_tps = pp_tokens / ttft if ttft > 0 else 0.0
+            stats = {
+                "prompt_tokens": pp_tokens,
+                "generation_tokens": tokens,
+                "prompt_tps": round(prompt_tps, 2),
+                "generation_tps": round(gen_tps, 2),
+                "peak_memory_usage": {"inBytes": 0},
+            }
 
     return {
         "elapsed_s": elapsed,
@@ -376,6 +421,11 @@ def main() -> int:
         help="Force all pp×tg combinations (cartesian product) even when lists have equal length.",
     )
     ap.add_argument(
+        "--stream",
+        action="store_true",
+        help="Use /bench/chat/completions with streaming SSE response (bench=True still applies: no EOS detection, no KV cache).",
+    )
+    ap.add_argument(
         "--no-system-metrics",
         action="store_true",
         help="Disable GPU utilization, temperature, and power collection during inference.",
@@ -440,81 +490,120 @@ def main() -> int:
         logger.error("[exo-bench] tokenizer usable but prompt sizing failed")
         raise
 
-    selected = settle_and_fetch_placements(
-        client, full_model_id, args, settle_timeout=args.settle_timeout
-    )
+    # Auto-detect a running instance for this model
+    reused_instance_id: str | None = None
+    if not args.fresh_instance:
+        existing = find_existing_instance(client, full_model_id)
+        if existing:
+            reused_instance_id = existing
+            logger.info(f"Reusing existing instance {reused_instance_id}")
 
-    if not selected:
-        logger.error("No valid placements matched your filters.")
-        return 1
-
-    selected.sort(
-        key=lambda p: (
-            str(p.get("instance_meta", "")),
-            str(p.get("sharding", "")),
-            -nodes_used_in_instance(p["instance"]),
-        ),
-        reverse=True,
-    )
-
-    logger.debug(f"exo-bench model: short_id={short_id} full_id={full_model_id}")
-    logger.info(f"placements: {len(selected)}")
-    for p in selected:
-        logger.info(
-            f"  - {p['sharding']} / {p['instance_meta']} / nodes={nodes_used_in_instance(p['instance'])}"
+    if reused_instance_id is not None:
+        # Use the existing instance directly — skip placement iteration
+        selected = []
+        download_duration_s = None
+    else:
+        selected = settle_and_fetch_placements(
+            client, full_model_id, args, settle_timeout=args.settle_timeout
         )
 
-    if args.dry_run:
-        return 0
+        if not selected:
+            logger.error("No valid placements matched your filters.")
+            return 1
 
-    settle_deadline = (
-        time.monotonic() + args.settle_timeout if args.settle_timeout > 0 else None
-    )
+        selected.sort(
+            key=lambda p: (
+                str(p.get("instance_meta", "")),
+                str(p.get("sharding", "")),
+                nodes_used_in_instance(p["instance"]),
+            ),
+            reverse=True,
+        )
 
-    logger.info("Planning phase: checking downloads...")
-    download_duration_s = run_planning_phase(
-        client,
-        full_model_id,
-        selected[0],
-        args.danger_delete_downloads,
-        args.timeout,
-        settle_deadline,
-    )
-    if download_duration_s is not None:
-        logger.info(f"Download: {download_duration_s:.1f}s (freshly downloaded)")
-    else:
-        logger.info("Download: model already cached")
+        logger.debug(f"exo-bench model: short_id={short_id} full_id={full_model_id}")
+        logger.info(f"placements: {len(selected)}")
+        for p in selected:
+            logger.info(
+                f"  - {p['sharding']} / {p['instance_meta']} / nodes={nodes_used_in_instance(p['instance'])}"
+            )
+
+        if args.dry_run:
+            return 0
+
+        settle_deadline = (
+            time.monotonic() + args.settle_timeout if args.settle_timeout > 0 else None
+        )
+
+        logger.info("Planning phase: checking downloads...")
+        download_duration_s = run_planning_phase(
+            client,
+            full_model_id,
+            selected[0],
+            args.danger_delete_downloads,
+            args.timeout,
+            settle_deadline,
+        )
+        if download_duration_s is not None:
+            logger.info(f"Download: {download_duration_s:.1f}s (freshly downloaded)")
+        else:
+            logger.info("Download: model already cached")
 
     cluster_snapshot = capture_cluster_snapshot(client)
     all_rows: list[dict[str, Any]] = []
     all_system_metrics: dict[str, dict[str, dict[str, float]]] = {}
 
+    # If reusing an existing instance, run a single benchmark pass against it
+    if reused_instance_id is not None:
+        selected = [None]
+
     for preview in selected:
-        instance = preview["instance"]
-        instance_id = instance_id_from_instance(instance)
+        created_instance = False
+        if preview is not None:
+            instance = preview["instance"]
+            instance_id = instance_id_from_instance(instance)
 
-        sharding = str(preview["sharding"])
-        instance_meta = str(preview["instance_meta"])
-        n_nodes = nodes_used_in_instance(instance)
+            sharding = str(preview["sharding"])
+            instance_meta = str(preview["instance_meta"])
+            n_nodes = nodes_used_in_instance(instance)
 
-        logger.info("=" * 80)
-        logger.info(
-            f"PLACEMENT: {sharding} / {instance_meta} / nodes={n_nodes} / instance_id={instance_id}"
-        )
+            logger.info("=" * 80)
+            logger.info(
+                f"PLACEMENT: {sharding} / {instance_meta} / nodes={n_nodes} / instance_id={instance_id}"
+            )
 
-        client.request_json("POST", "/instance", body={"instance": instance})
-        try:
-            wait_for_instance_ready(client, instance_id)
-        except (RuntimeError, TimeoutError) as e:
-            logger.error(f"Failed to initialize placement: {e}")
-            with contextlib.suppress(ExoHttpError):
-                client.request_json("DELETE", f"/instance/{instance_id}")
-            continue
+            # Delete any existing instances to free resources before placing
+            try:
+                state = client.request_json("GET", "/state")
+                for old_id in list(state.get("instances", {}).keys()):
+                    logger.info(f"Deleting stale instance {old_id}")
+                    with contextlib.suppress(ExoHttpError):
+                        client.request_json("DELETE", f"/instance/{old_id}")
+                if state.get("instances"):
+                    time.sleep(2)
+            except Exception as e:
+                logger.warning(f"Failed to clean up stale instances: {e}")
 
-        time.sleep(1)
+            client.request_json("POST", "/instance", body={"instance": instance})
+            try:
+                wait_for_instance_ready(client, instance_id)
+            except (RuntimeError, TimeoutError) as e:
+                logger.error(f"Failed to initialize placement: {e}")
+                with contextlib.suppress(ExoHttpError):
+                    client.request_json("DELETE", f"/instance/{instance_id}")
+                continue
+
+            time.sleep(1)
+            created_instance = True
+        else:
+            instance_id = reused_instance_id
+            sharding = "reused"
+            instance_meta = "reused"
+            n_nodes = 0
+            logger.info("=" * 80)
+            logger.info(f"Using existing instance {instance_id}")
 
         sampler: SystemMetricsSampler | None = None
-        if not args.no_system_metrics:
+        if not args.no_system_metrics and preview is not None:
             nids = node_ids_from_instance(instance)
             sampler = SystemMetricsSampler(
                 ExoClient(args.host, args.port, timeout_s=30),
@@ -523,16 +612,20 @@ def main() -> int:
             )
             sampler.start()
 
+        def _do_one(c: ExoClient, pp: int, tg: int) -> tuple[dict[str, Any], int]:
+            return run_one_completion(
+                c,
+                full_model_id,
+                pp,
+                tg,
+                prompt_sizer,
+                use_prefix_cache=args.use_prefix_cache,
+                stream=args.stream,
+            )
+
         try:
             for i in range(args.warmup):
-                run_one_completion(
-                    client,
-                    full_model_id,
-                    pp_list[0],
-                    tg_list[0],
-                    prompt_sizer,
-                    use_prefix_cache=args.use_prefix_cache,
-                )
+                _do_one(client, pp_list[0], tg_list[0])
                 logger.debug(f"  warmup {i + 1}/{args.warmup} done")
 
             # If pp and tg lists have same length, run in tandem (zip)
@@ -554,14 +647,7 @@ def main() -> int:
                             # Sequential: single request
                             try:
                                 inf_t0 = time.monotonic()
-                                row, actual_pp_tokens = run_one_completion(
-                                    client,
-                                    full_model_id,
-                                    pp,
-                                    tg,
-                                    prompt_sizer,
-                                    use_prefix_cache=args.use_prefix_cache,
-                                )
+                                row, actual_pp_tokens = _do_one(client, pp, tg)
                                 inference_windows.append((inf_t0, time.monotonic()))
                             except Exception as e:
                                 logger.error(e)
@@ -710,10 +796,12 @@ def main() -> int:
                         gen_tps = per_req_tps * concurrency
                         ptok = mean(x["stats"]["prompt_tokens"] for x in runs)
                         gtok = mean(x["stats"]["generation_tokens"] for x in runs)
-                        peak = mean(
-                            x["stats"]["peak_memory_usage"]["inBytes"] for x in runs
-                        )
 
+                        def _peak_bytes(s: dict[str, Any]) -> float:
+                            pm = s["peak_memory_usage"]
+                            return pm.get("inBytes") or pm.get("in_bytes", 0)
+
+                        peak = mean(_peak_bytes(x["stats"]) for x in runs)
                         summary = (
                             f"prompt_tps={prompt_tps:.2f} gen_tps={gen_tps:.2f}    "
                             f"prompt_tokens={ptok} gen_tokens={gtok}    "
@@ -738,15 +826,16 @@ def main() -> int:
                 if placement_metrics:
                     all_system_metrics.update(placement_metrics)
 
-            try:
-                client.request_json("DELETE", f"/instance/{instance_id}")
-            except ExoHttpError as e:
-                if e.status != 404:
-                    raise
-            wait_for_instance_gone(client, instance_id)
-            logger.debug(f"Deleted instance {instance_id}")
+            if created_instance and instance_id is not None:
+                try:
+                    client.request_json("DELETE", f"/instance/{instance_id}")
+                except ExoHttpError as e:
+                    if e.status != 404:
+                        raise
+                wait_for_instance_gone(client, instance_id)
+                logger.debug(f"Deleted instance {instance_id}")
 
-            time.sleep(5)
+                time.sleep(5)
 
     output: dict[str, Any] = {"runs": all_rows}
     if cluster_snapshot:
