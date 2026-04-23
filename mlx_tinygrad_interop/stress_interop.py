@@ -302,8 +302,9 @@ def run_case(case_index: int, rng: np.random.Generator, mx_dtype: Any, tg_dtype:
 
   expected_raw = values
   expected_after_ops = apply_numpy_ops(values, ops)
-  post_ops = [] if expected_after_ops.shape == () else random_ops(rng, expected_after_ops.shape, expected_after_ops.dtype)
-  expected_roundtrip = apply_numpy_ops(np.array(expected_after_ops, copy=True), post_ops)
+  roundtrip_seed = np.array(expected_after_ops, copy=True).astype(np_dtype, copy=False)
+  post_ops = [] if roundtrip_seed.shape == () else random_ops(rng, roundtrip_seed.shape, np_dtype)
+  expected_roundtrip = apply_numpy_ops(roundtrip_seed, post_ops)
 
   tg_fast = tinygrad_from_mlx_fast(mx_source, tg_dtype)
   tg_single = tinygrad_from_mlx_single_entry(mx_source, tg_dtype)
@@ -333,8 +334,8 @@ def run_case(case_index: int, rng: np.random.Generator, mx_dtype: Any, tg_dtype:
   assert_array_close(f"case {case_index} alias scoped ops", alias_result.numpy(), expected_after_ops)
   assert_array_close(f"case {case_index} copy scoped ops", copy_result.numpy(), expected_after_ops)
 
-  alias_roundtrip = np.array(apply_mlx_ops(mlx_from_tinygrad_copy(alias_result), post_ops))
-  copy_roundtrip = np.array(apply_mlx_ops(mlx_from_tinygrad_copy(copy_result), post_ops))
+  alias_roundtrip = np.array(apply_mlx_ops(mlx_from_tinygrad_copy(alias_result.cast(tg_dtype).realize()), post_ops))
+  copy_roundtrip = np.array(apply_mlx_ops(mlx_from_tinygrad_copy(copy_result.cast(tg_dtype).realize()), post_ops))
   assert_array_close(f"case {case_index} alias roundtrip ops", alias_roundtrip, expected_roundtrip)
   assert_array_close(f"case {case_index} copy roundtrip ops", copy_roundtrip, expected_roundtrip)
 
