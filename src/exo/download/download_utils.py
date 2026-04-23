@@ -167,6 +167,29 @@ def select_download_dir(required_bytes: int) -> Path:
     )
 
 
+async def select_download_dir_for_shard(
+    model_id: ModelId,
+    filtered_file_list: list[FileListEntry],
+    total_size: int,
+) -> Path:
+    for candidate_dir in EXO_MODELS_DIRS:
+        if not candidate_dir.exists():
+            continue
+        sub = candidate_dir / model_id.normalize()
+        if not await aios.path.isdir(sub):
+            continue
+        existing_bytes = 0
+        for file_entry in filtered_file_list:
+            existing_bytes += await get_downloaded_size(sub / file_entry.path)
+        remaining = max(total_size - existing_bytes, 0)
+        try:
+            if shutil.disk_usage(candidate_dir).free >= remaining:
+                return candidate_dir
+        except OSError:
+            continue
+    return select_download_dir(total_size)
+
+
 async def resolve_model_dir(model_id: ModelId) -> Path:
     """Return the directory for a model's files, creating it if needed.
 
@@ -852,7 +875,9 @@ async def download_shard(
             else EXO_DEFAULT_MODELS_DIR / model_id.normalize()
         )
     else:
-        models_dir = select_download_dir(total_size)
+        models_dir = await select_download_dir_for_shard(
+            model_id, filtered_file_list, total_size
+        )
         target_dir = models_dir / model_id.normalize()
         await aios.makedirs(target_dir, exist_ok=True)
     file_progress: dict[str, RepoFileDownloadProgress] = {}
