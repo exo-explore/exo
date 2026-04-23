@@ -37,9 +37,7 @@ impl RoutingStack {
         let fib_state_recv = state_send.subscribe();
         let initial_state = state_send.borrow().clone();
         let mut dataplane = Dataplane::spawn(DataplaneConfig {
-            tun_device: tun
-                .try_clone_device()
-                .wrap_err("cloning TUN device for dataplane")?,
+            tun_device: tun.shared_device(),
             udp_port,
             initial_fib: Arc::new(
                 FibBuilder::new([node_addr.addr()], TUN_MTU).derive(initial_state.as_ref()),

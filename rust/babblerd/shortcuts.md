@@ -168,15 +168,23 @@ of shortcuts that should be revisited later.
 - `TunDevice` is still a thin platform-specific wrapper with some rough edges.
   Files:
   - `src/tun.rs`
+  - `src/dataplane.rs`
   Why this is a shortcut:
   - It still stores the address as `Ipv6Net` even though usage is `/128`-only.
   - On macOS, the actual kernel interface name is still `utunN`; the daemon's
     cross-platform naming has been cleaned up, but the OS-level interface name
     is not under our control there.
   - It still has hard-coded MTU and other tun-rs builder assumptions.
+  - The dataplane still relies on `mio::unix::SourceFd` and `AsRawFd` to poll
+    the TUN fd on Unix.
+  - That low-level fd borrowing is smaller and safer than the old
+    `unsafe`/owned-fd handoff, but it still keeps raw-fd details in the
+    dataplane hot path.
   Follow-up:
   - Tighten the type and revisit the platform-specific tuning once the dataplane
     is implemented.
+  - Revisit whether a future dataplane/eventing design can remove the direct
+    `mio`/raw-fd dependency entirely.
 
 - The current MTU model is still intentionally crude:
   - assume physical links must support 1500-byte packets,

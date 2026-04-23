@@ -47,7 +47,7 @@ const MAX_SNAPSHOT_BACKLOG: usize = 8;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 pub struct DataplaneConfig {
-    pub tun_device: SyncDevice,
+    pub tun_device: Arc<SyncDevice>,
     pub udp_port: u16,
     pub initial_fib: Arc<FibSnapshot>,
 }
@@ -70,7 +70,7 @@ pub enum PublishSnapshotError {
 }
 
 struct DataplaneWorker {
-    tun_device: SyncDevice,
+    tun_device: Arc<SyncDevice>,
     udp_port: u16,
     fib: Arc<FibSnapshot>,
     fib_updates: Receiver<Arc<FibSnapshot>>,
@@ -263,7 +263,7 @@ impl DataplaneWorker {
 
     fn handle_tun_ready(&mut self) -> Result<()> {
         let mut buf = [0u8; PHYSICAL_LINK_MTU as usize];
-        let packet_len = match nix::unistd::read(&self.tun_device, &mut buf) {
+        let packet_len = match nix::unistd::read(self.tun_device.as_ref(), &mut buf) {
             Ok(len) => len,
             Err(Errno::EAGAIN) => return Ok(()),
             Err(err) => return Err(err).wrap_err("reading inner packet from TUN"),
@@ -318,7 +318,7 @@ impl DataplaneWorker {
         };
 
         if self.fib.is_local(dst) {
-            write_tun(&self.tun_device, &packet)?;
+            write_tun(self.tun_device.as_ref(), &packet)?;
             return Ok(());
         }
 
