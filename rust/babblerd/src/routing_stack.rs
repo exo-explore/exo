@@ -157,11 +157,15 @@ async fn publish_fib_updates(
 ) -> crate::Result<()> {
     let builder = FibBuilder::new([node_addr.addr()], TUN_MTU);
     let mut pending = Some(Arc::new(builder.derive(state_recv.borrow().as_ref())));
+    let mut published: Option<Arc<crate::fib::FibSnapshot>> = None;
 
     loop {
         if let Some(snapshot) = pending.take() {
+            let published_snapshot = snapshot.clone();
             match publisher.try_publish(snapshot) {
-                Ok(()) => {}
+                Ok(()) => {
+                    published = Some(published_snapshot);
+                }
                 Err(PublishSnapshotError::Full(snapshot)) => {
                     pending = Some(snapshot);
                 }
@@ -181,7 +185,15 @@ async fn publish_fib_updates(
                             let state = state_recv.borrow_and_update();
                             Arc::new(builder.derive(state.as_ref()))
                         };
-                        pending = Some(snapshot);
+                        let matches_published = published
+                            .as_ref()
+                            .is_some_and(|current| current.as_ref() == snapshot.as_ref());
+                        let matches_pending = pending
+                            .as_ref()
+                            .is_some_and(|current| current.as_ref() == snapshot.as_ref());
+                        if !matches_published && !matches_pending {
+                            pending = Some(snapshot);
+                        }
                     }
                     Err(_) => return Ok(()),
                 }
