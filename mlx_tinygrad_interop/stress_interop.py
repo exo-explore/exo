@@ -309,10 +309,12 @@ def run_case(case_index: int, rng: np.random.Generator, mx_dtype: Any, tg_dtype:
 
   mx_source = make_mlx_source(values, mx_dtype, rng)
   tg_source = Tensor(values, device="METAL", dtype=tg_dtype).realize()
+  mx_baseline_source = mx.array(values, dtype=mx_dtype)
   Device["METAL"].synchronize()
 
   expected_raw = values
-  expected_after_ops = apply_numpy_ops(values, ops)
+  tg_expected_after_ops = apply_tinygrad_ops(tg_source, ops).numpy()
+  mlx_expected_after_ops = np.array(apply_mlx_ops(mx_baseline_source, ops))
   tg_fast = tinygrad_from_mlx_fast(mx_source, tg_dtype)
   tg_single = tinygrad_from_mlx_single_entry(mx_source, tg_dtype)
   assert_array_close(f"case {case_index} mlx->tinygrad fast raw", tg_fast.numpy(), expected_raw)
@@ -320,12 +322,12 @@ def run_case(case_index: int, rng: np.random.Generator, mx_dtype: Any, tg_dtype:
   assert_array_close(
     f"case {case_index} mlx->tinygrad fast ops",
     apply_tinygrad_ops(tg_fast, ops).numpy(),
-    expected_after_ops,
+    tg_expected_after_ops,
   )
   assert_array_close(
     f"case {case_index} mlx->tinygrad single ops",
     apply_tinygrad_ops(tg_single, ops).numpy(),
-    expected_after_ops,
+    tg_expected_after_ops,
   )
 
   alias_result = alias_pools.run_with_mlx_tensor(
@@ -338,8 +340,8 @@ def run_case(case_index: int, rng: np.random.Generator, mx_dtype: Any, tg_dtype:
     tg_dtype=tg_dtype,
     fn=lambda tg: apply_tinygrad_ops(tg, ops),
   )
-  assert_array_close(f"case {case_index} alias scoped ops", alias_result.numpy(), expected_after_ops)
-  assert_array_close(f"case {case_index} copy scoped ops", copy_result.numpy(), expected_after_ops)
+  assert_array_close(f"case {case_index} alias scoped ops", alias_result.numpy(), tg_expected_after_ops)
+  assert_array_close(f"case {case_index} copy scoped ops", copy_result.numpy(), tg_expected_after_ops)
 
   alias_roundtrip = np.array(mlx_from_tinygrad_copy(alias_result.cast(tg_dtype).realize()))
   copy_roundtrip = np.array(mlx_from_tinygrad_copy(copy_result.cast(tg_dtype).realize()))
@@ -355,17 +357,17 @@ def run_case(case_index: int, rng: np.random.Generator, mx_dtype: Any, tg_dtype:
   assert_array_close(
     f"case {case_index} tinygrad->mlx alias ops",
     np.array(apply_mlx_ops(mx_alias, ops)),
-    expected_after_ops,
+    mlx_expected_after_ops,
   )
   assert_array_close(
     f"case {case_index} tinygrad->mlx maybe_copy ops",
     np.array(apply_mlx_ops(mx_maybe_copy, ops)),
-    expected_after_ops,
+    mlx_expected_after_ops,
   )
   assert_array_close(
     f"case {case_index} tinygrad->mlx copy ops",
     np.array(apply_mlx_ops(mx_copy, ops)),
-    expected_after_ops,
+    mlx_expected_after_ops,
   )
 
 

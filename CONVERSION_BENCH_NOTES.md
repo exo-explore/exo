@@ -262,6 +262,19 @@ looser `rtol=5e-5, atol=1e-5` budget to absorb backend accumulation-order
 differences across long matmul/reduction chains without treating a few-ulps
 drift as conversion corruption.
 
+For downstream op-chain checks, the stress suite now compares against the
+native destination-framework baseline rather than NumPy directly:
+
+- `MLX -> tinygrad` post-conversion op chains are compared to a native tinygrad
+  tensor built from the same logical values
+- `tinygrad -> MLX` post-conversion op chains are compared to a native MLX
+  array built from the same logical values
+
+That split is intentional. Raw conversion is still checked against NumPy, but
+some downstream integer-promotion and reduction semantics differ between NumPy,
+MLX, and tinygrad, so the destination-framework baseline is the right
+conversion-integrity check.
+
 ## Current Findings
 
 The unsafe bridge was validated through the repo-standard remote flow on `e16`:

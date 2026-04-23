@@ -117,6 +117,15 @@ Float32 stress comparisons also allow a small `rtol=5e-5, atol=1e-5` tolerance
 so mixed matmul/reduction chains are not failed for a few-ulps backend
 accumulation-order drift.
 
+Raw conversions are still checked against NumPy values directly, but the
+downstream op-chain checks now use the native destination-framework baseline:
+
+- `MLX -> tinygrad` op chains are compared to native tinygrad results
+- `tinygrad -> MLX` op chains are compared to native MLX results
+
+That avoids treating real framework semantic differences, such as integer
+promotion behavior, as interop failures.
+
 Example:
 
 ```bash
