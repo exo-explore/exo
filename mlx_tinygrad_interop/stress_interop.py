@@ -13,9 +13,9 @@ from tinygrad import Device, Tensor, dtypes
 from tinygrad.device import Buffer
 
 try:
-  from mlx_tinygrad_interop.lease_pool import MlxToTinygradLeasePools
+  from mlx_tinygrad_interop.lease_pool import MlxToTinygradCopyLeasePools, MlxToTinygradLeasePools
 except ModuleNotFoundError:
-  from lease_pool import MlxToTinygradLeasePools
+  from lease_pool import MlxToTinygradCopyLeasePools, MlxToTinygradLeasePools
 
 DTYPES: dict[str, tuple[Any, Any, np.dtype[Any]]] = {
   "float16": (mx.float16, dtypes.float16, np.dtype(np.float16)),
@@ -31,6 +31,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--cases", type=int, default=64, help="Number of randomized correctness cases.")
   parser.add_argument("--soak-iterations", type=int, default=512, help="Number of repeated pool/copy iterations after correctness checks.")
   parser.add_argument("--max-elements", type=int, default=4096, help="Upper bound on random tensor element count.")
+  parser.add_argument("--max-pools", type=int, default=16, help="Maximum keyed pools to retain for alias and copy handoff managers.")
   parser.add_argument("--dtypes", default="float16,float32,int32,uint8", help="Comma-separated dtype names to exercise.")
   return parser.parse_args()
 
@@ -143,10 +144,16 @@ def make_mlx_source(values: np.ndarray, mx_dtype: Any, rng: np.random.Generator)
 
 def random_scalar(rng: np.random.Generator, np_dtype: np.dtype[Any]) -> Any:
   if np.issubdtype(np_dtype, np.floating):
-    return float(rng.uniform(-2.0, 2.0))
+    return np_dtype.type(rng.uniform(-2.0, 2.0)).item()
   if np.issubdtype(np_dtype, np.unsignedinteger):
     return int(rng.integers(0, 4))
   return int(rng.integers(-3, 4))
+
+
+def random_slice(axis_size: int, rng: np.random.Generator) -> tuple[int, int]:
+  start = int(rng.integers(0, axis_size))
+  end = int(rng.integers(start + 1, axis_size + 1))
+  return start, end
 
 
 def random_ops(rng: np.random.Generator, shape: tuple[int, ...], np_dtype: np.dtype[Any]) -> list[tuple[str, Any]]:
@@ -156,52 +163,135 @@ def random_ops(rng: np.random.Generator, shape: tuple[int, ...], np_dtype: np.dt
     perm = tuple(int(x) for x in rng.permutation(len(cur_shape)))
     ops.append(("transpose", perm))
     cur_shape = tuple(cur_shape[i] for i in perm)
-  if len(cur_shape) > 1 and rng.random() < 0.7:
-    ops.append(("reshape", tuple(reversed(cur_shape))))
-    cur_shape = tuple(reversed(cur_shape))
+  if len(cur_shape) > 1 and rng.random() < 0.6:
+    reshaped = tuple(reversed(cur_shape))
+    ops.append(("reshape", reshaped))
+    cur_shape = reshaped
+  if any(dim > 1 for dim in cur_shape) and rng.random() < 0.5:
+    axis = int(rng.choice([i for i, dim in enumerate(cur_shape) if dim > 1]))
+    start, end = random_slice(cur_shape[axis], rng)
+    ops.append(("slice", (axis, start, end)))
+    cur_shape = cur_shape[:axis] + (end - start,) + cur_shape[axis + 1:]
   ops.append(("add", random_scalar(rng, np_dtype)))
   ops.append(("mul", random_scalar(rng, np_dtype)))
+  if cur_shape and rng.random() < 0.7:
+    bshape = tuple(dim if rng.random() < 0.5 else 1 for dim in cur_shape)
+    ops.append(("broadcast_add", random_values(rng, np_dtype, bshape)))
   if rng.random() < 0.5:
-    ops.append(("add", random_scalar(rng, np_dtype)))
+    ops.append(("relu", None))
+  if np.issubdtype(np_dtype, np.floating) and cur_shape and rng.random() < 0.35:
+    out_cols = int(rng.integers(1, min(8, cur_shape[-1]) + 1))
+    weight = random_values(rng, np_dtype, (cur_shape[-1], out_cols))
+    ops.append(("matmul_lastdim", weight))
+    cur_shape = (int(np.prod(cur_shape[:-1], dtype=np.int64)), out_cols)
+  if cur_shape and rng.random() < 0.5:
+    axis = int(rng.integers(0, len(cur_shape)))
+    keepdim = bool(rng.integers(0, 2))
+    ops.append(("sum", (axis, keepdim)))
+    cur_shape = cur_shape[:axis] + ((1,) if keepdim else ()) + cur_shape[axis + 1:]
+  if cur_shape and rng.random() < 0.35:
+    axis = int(rng.integers(0, len(cur_shape)))
+    ops.append(("concat_self", axis))
   return ops
+
+
+def _slice_spec(shape: tuple[int, ...], axis: int, start: int, end: int) -> tuple[slice, ...]:
+  return tuple(slice(start, end) if i == axis else slice(None) for i in range(len(shape)))
 
 
 def apply_numpy_ops(x: np.ndarray, ops: list[tuple[str, Any]]) -> np.ndarray:
   out = x.copy()
   for op, arg in ops:
-    if op == "transpose": out = np.transpose(out, arg)
-    elif op == "reshape": out = out.reshape(arg)
-    elif op == "add": out = out + arg
-    elif op == "mul": out = out * arg
-    else: raise RuntimeError(f"unknown op {op}")
+    if op == "transpose":
+      out = np.transpose(out, arg)
+    elif op == "reshape":
+      out = out.reshape(arg)
+    elif op == "slice":
+      axis, start, end = arg
+      out = out[_slice_spec(out.shape, axis, start, end)]
+    elif op == "add":
+      out = out + arg
+    elif op == "mul":
+      out = out * arg
+    elif op == "broadcast_add":
+      out = out + arg
+    elif op == "relu":
+      out = np.maximum(out, 0)
+    elif op == "matmul_lastdim":
+      out = out.reshape(-1, out.shape[-1]) @ arg
+    elif op == "sum":
+      axis, keepdim = arg
+      out = out.sum(axis=axis, keepdims=keepdim)
+    elif op == "concat_self":
+      out = np.concatenate([out, out], axis=arg)
+    else:
+      raise RuntimeError(f"unknown op {op}")
   return out
 
 
 def apply_tinygrad_ops(x: Tensor, ops: list[tuple[str, Any]]) -> Tensor:
   out = x
   for op, arg in ops:
-    if op == "transpose": out = out.permute(arg)
-    elif op == "reshape": out = out.reshape(arg)
-    elif op == "add": out = out + arg
-    elif op == "mul": out = out * arg
-    else: raise RuntimeError(f"unknown op {op}")
+    if op == "transpose":
+      out = out.permute(arg)
+    elif op == "reshape":
+      out = out.reshape(arg)
+    elif op == "slice":
+      axis, start, end = arg
+      out = out[_slice_spec(out.shape, axis, start, end)]
+    elif op == "add":
+      out = out + arg
+    elif op == "mul":
+      out = out * arg
+    elif op == "broadcast_add":
+      out = out + Tensor(arg, device=out.device, dtype=out.dtype)
+    elif op == "relu":
+      out = out.relu()
+    elif op == "matmul_lastdim":
+      out = out.reshape(-1, out.shape[-1]) @ Tensor(arg, device=out.device, dtype=out.dtype)
+    elif op == "sum":
+      axis, keepdim = arg
+      out = out.sum(axis=axis, keepdim=keepdim)
+    elif op == "concat_self":
+      out = out.cat(out, dim=arg)
+    else:
+      raise RuntimeError(f"unknown op {op}")
   return out.realize()
 
 
 def apply_mlx_ops(x: Any, ops: list[tuple[str, Any]]) -> Any:
   out = x
   for op, arg in ops:
-    if op == "transpose": out = mx.transpose(out, arg)
-    elif op == "reshape": out = mx.reshape(out, arg)
-    elif op == "add": out = out + arg
-    elif op == "mul": out = out * arg
-    else: raise RuntimeError(f"unknown op {op}")
+    if op == "transpose":
+      out = mx.transpose(out, arg)
+    elif op == "reshape":
+      out = mx.reshape(out, arg)
+    elif op == "slice":
+      axis, start, end = arg
+      out = out[_slice_spec(out.shape, axis, start, end)]
+    elif op == "add":
+      out = out + arg
+    elif op == "mul":
+      out = out * arg
+    elif op == "broadcast_add":
+      out = out + mx.array(arg, dtype=out.dtype)
+    elif op == "relu":
+      out = mx.maximum(out, 0)
+    elif op == "matmul_lastdim":
+      out = mx.reshape(out, (-1, out.shape[-1])) @ mx.array(arg, dtype=out.dtype)
+    elif op == "sum":
+      axis, keepdim = arg
+      out = mx.sum(out, axis=axis, keepdims=keepdim)
+    elif op == "concat_self":
+      out = mx.concatenate([out, out], axis=arg)
+    else:
+      raise RuntimeError(f"unknown op {op}")
   mx.eval(out)
   return out
 
 
 def run_case(case_index: int, rng: np.random.Generator, mx_dtype: Any, tg_dtype: Any, np_dtype: np.dtype[Any],
-             max_elements: int, pools: MlxToTinygradLeasePools) -> None:
+             max_elements: int, alias_pools: MlxToTinygradLeasePools, copy_pools: MlxToTinygradCopyLeasePools) -> None:
   shape = random_shape(rng, max_elements)
   values = random_values(rng, np_dtype, shape)
   ops = random_ops(rng, shape, np_dtype)
@@ -210,62 +300,73 @@ def run_case(case_index: int, rng: np.random.Generator, mx_dtype: Any, tg_dtype:
   tg_source = Tensor(values, device="METAL", dtype=tg_dtype).realize()
   Device["METAL"].synchronize()
 
-  expected_tg_raw = Tensor(np.array(mx_source, copy=True), device="METAL", dtype=tg_dtype).realize()
-  expected_mx_raw = mx.array(tg_source.numpy())
-  expected_after_ops = apply_numpy_ops(values.astype(np.float32), ops)
+  expected_raw = values
+  expected_after_ops = apply_numpy_ops(values, ops)
+  roundtrip_seed = np.array(expected_after_ops, copy=True).astype(np_dtype, copy=False)
+  post_ops = [] if roundtrip_seed.shape == () else random_ops(rng, roundtrip_seed.shape, np_dtype)
+  expected_roundtrip = apply_numpy_ops(roundtrip_seed, post_ops)
 
   tg_fast = tinygrad_from_mlx_fast(mx_source, tg_dtype)
   tg_single = tinygrad_from_mlx_single_entry(mx_source, tg_dtype)
-  lease_result = pools.run_with_mlx_tensor(
-    mx_source,
-    tg_dtype=tg_dtype,
-    fn=lambda tg: (
-      assert_array_close(f"case {case_index} mlx->tinygrad lease raw", tg.numpy(), values),
-      apply_tinygrad_ops(tg.cast(dtypes.float32), ops),
-    )[1],
-  )
-  assert_array_close(f"case {case_index} mlx->tinygrad lease ops", lease_result.numpy(), expected_after_ops)
-
-  assert_array_close(f"case {case_index} mlx->tinygrad fast raw", tg_fast.numpy(), expected_tg_raw.numpy())
+  assert_array_close(f"case {case_index} mlx->tinygrad fast raw", tg_fast.numpy(), expected_raw)
+  assert_array_close(f"case {case_index} mlx->tinygrad single raw", tg_single.numpy(), expected_raw)
   assert_array_close(
     f"case {case_index} mlx->tinygrad fast ops",
-    apply_tinygrad_ops(tg_fast.cast(dtypes.float32), ops).numpy(),
+    apply_tinygrad_ops(tg_fast, ops).numpy(),
     expected_after_ops,
   )
-  assert_array_close(f"case {case_index} mlx->tinygrad single raw", tg_single.numpy(), expected_tg_raw.numpy())
   assert_array_close(
     f"case {case_index} mlx->tinygrad single ops",
-    apply_tinygrad_ops(tg_single.cast(dtypes.float32), ops).numpy(),
+    apply_tinygrad_ops(tg_single, ops).numpy(),
     expected_after_ops,
   )
+
+  alias_result = alias_pools.run_with_mlx_tensor(
+    mx_source,
+    tg_dtype=tg_dtype,
+    fn=lambda tg: apply_tinygrad_ops(tg, ops),
+  )
+  copy_result = copy_pools.run_with_mlx_tensor(
+    mx_source,
+    tg_dtype=tg_dtype,
+    fn=lambda tg: apply_tinygrad_ops(tg, ops),
+  )
+  assert_array_close(f"case {case_index} alias scoped ops", alias_result.numpy(), expected_after_ops)
+  assert_array_close(f"case {case_index} copy scoped ops", copy_result.numpy(), expected_after_ops)
+
+  alias_roundtrip = np.array(apply_mlx_ops(mlx_from_tinygrad_copy(alias_result.cast(tg_dtype).realize()), post_ops))
+  copy_roundtrip = np.array(apply_mlx_ops(mlx_from_tinygrad_copy(copy_result.cast(tg_dtype).realize()), post_ops))
+  assert_array_close(f"case {case_index} alias roundtrip ops", alias_roundtrip, expected_roundtrip)
+  assert_array_close(f"case {case_index} copy roundtrip ops", copy_roundtrip, expected_roundtrip)
 
   mx_alias = mlx_from_tinygrad_alias_only(tg_source, mx_dtype)
   mx_maybe_copy = mlx_from_tinygrad_maybe_copy(tg_source, mx_dtype)
   mx_copy = mlx_from_tinygrad_copy(tg_source)
-  assert_array_close(f"case {case_index} tinygrad->mlx alias raw", np.array(mx_alias), np.array(expected_mx_raw))
+  assert_array_close(f"case {case_index} tinygrad->mlx alias raw", np.array(mx_alias), expected_raw)
+  assert_array_close(f"case {case_index} tinygrad->mlx maybe_copy raw", np.array(mx_maybe_copy), expected_raw)
+  assert_array_close(f"case {case_index} tinygrad->mlx copy raw", np.array(mx_copy), expected_raw)
   assert_array_close(
     f"case {case_index} tinygrad->mlx alias ops",
-    np.array(apply_mlx_ops(mx_alias.astype(mx.float32), ops)),
+    np.array(apply_mlx_ops(mx_alias, ops)),
     expected_after_ops,
   )
-  assert_array_close(f"case {case_index} tinygrad->mlx maybe_copy raw", np.array(mx_maybe_copy), np.array(expected_mx_raw))
   assert_array_close(
     f"case {case_index} tinygrad->mlx maybe_copy ops",
-    np.array(apply_mlx_ops(mx_maybe_copy.astype(mx.float32), ops)),
+    np.array(apply_mlx_ops(mx_maybe_copy, ops)),
     expected_after_ops,
   )
-  assert_array_close(f"case {case_index} tinygrad->mlx copy raw", np.array(mx_copy), np.array(expected_mx_raw))
   assert_array_close(
     f"case {case_index} tinygrad->mlx copy ops",
-    np.array(apply_mlx_ops(mx_copy.astype(mx.float32), ops)),
+    np.array(apply_mlx_ops(mx_copy, ops)),
     expected_after_ops,
   )
 
 
-def run_soak(rng: np.random.Generator, dtype_names: list[str], iterations: int, max_elements: int) -> tuple[float, list[tuple[int, dict[str, int], int]]]:
-  pools = MlxToTinygradLeasePools(capacity_per_key=8, synchronize_on_release=False)
+def run_soak(rng: np.random.Generator, dtype_names: list[str], iterations: int, max_elements: int, max_pools: int) -> tuple[float, list[tuple[int, dict[str, int], int, int, int]]]:
+  alias_pools = MlxToTinygradLeasePools(capacity_per_key=8, max_pools=max_pools, synchronize_on_release=True)
+  copy_pools = MlxToTinygradCopyLeasePools(capacity_per_key=8, max_pools=max_pools, synchronize_on_release=True)
   checksum = 0.0
-  native_checkpoints: list[tuple[int, dict[str, int], int]] = []
+  native_checkpoints: list[tuple[int, dict[str, int], int, int, int]] = []
   for iteration in range(iterations):
     dtype_name = dtype_names[iteration % len(dtype_names)]
     mx_dtype, tg_dtype, np_dtype = DTYPES[dtype_name]
@@ -275,17 +376,26 @@ def run_soak(rng: np.random.Generator, dtype_names: list[str], iterations: int, 
     tg_source = Tensor(values, device="METAL", dtype=tg_dtype).realize()
     Device["METAL"].synchronize()
 
-    checksum += float(pools.run_with_mlx_tensor(
+    checksum += float(alias_pools.run_with_mlx_tensor(
       mx_source,
       tg_dtype=tg_dtype,
-      synchronize_on_release=True,
-      fn=lambda tg: apply_tinygrad_ops(tg.cast(dtypes.float32), [("add", 1.0)]).sum(),
+      fn=lambda tg: apply_tinygrad_ops(tg, [("add", 1.0 if np.issubdtype(np_dtype, np.floating) else 1)]).sum(),
+    ).item())
+    checksum += float(copy_pools.run_with_mlx_tensor(
+      mx_source,
+      tg_dtype=tg_dtype,
+      fn=lambda tg: apply_tinygrad_ops(tg, [("mul", 1.0 if np.issubdtype(np_dtype, np.floating) else 1)]).sum(),
     ).item())
     checksum += float(np.array(mlx_from_tinygrad_copy(tg_source)).astype(np.float64).sum())
     if (iteration + 1) % 64 == 0:
       gc.collect()
-      native_checkpoints.append((iteration + 1, mlx_memory_snapshot(), rss_max_bytes()))
-  print(f"# soak_checksum={checksum:.6f} pool_count={pools.pool_count}")
+      native_checkpoints.append((iteration + 1, mlx_memory_snapshot(), rss_max_bytes(), alias_pools.pool_count, copy_pools.pool_count))
+
+  if alias_pools.pool_count > max_pools:
+    raise AssertionError(f"alias pool registry exceeded cap: {alias_pools.pool_count} > {max_pools}")
+  if copy_pools.pool_count > max_pools:
+    raise AssertionError(f"copy pool registry exceeded cap: {copy_pools.pool_count} > {max_pools}")
+  print(f"# soak_checksum={checksum:.6f} alias_pool_count={alias_pools.pool_count} copy_pool_count={copy_pools.pool_count}")
   return checksum, native_checkpoints
 
 
@@ -306,22 +416,25 @@ def main() -> None:
   if callable(reset_peak): reset_peak()
   native_before = mlx_memory_snapshot()
   rss_before = rss_max_bytes()
-  pools = MlxToTinygradLeasePools(capacity_per_key=8, synchronize_on_release=True)
+  alias_pools = MlxToTinygradLeasePools(capacity_per_key=8, max_pools=args.max_pools, synchronize_on_release=True)
+  copy_pools = MlxToTinygradCopyLeasePools(capacity_per_key=8, max_pools=args.max_pools, synchronize_on_release=True)
 
   for case_index in range(args.cases):
     dtype_name = dtype_names[case_index % len(dtype_names)]
-    run_case(case_index, rng, *DTYPES[dtype_name], max_elements=args.max_elements, pools=pools)
+    run_case(case_index, rng, *DTYPES[dtype_name], max_elements=args.max_elements, alias_pools=alias_pools, copy_pools=copy_pools)
 
-  _, native_checkpoints = run_soak(rng, dtype_names, iterations=args.soak_iterations, max_elements=args.max_elements)
+  _, native_checkpoints = run_soak(rng, dtype_names, iterations=args.soak_iterations, max_elements=args.max_elements, max_pools=args.max_pools)
   gc.collect()
   after_cur, after_peak = tracemalloc.get_traced_memory()
   native_after = mlx_memory_snapshot()
   rss_after = rss_max_bytes()
   active_peak = max([native_before.get("get_active_memory", 0), native_after.get("get_active_memory", 0),
-                     *[stats.get("get_active_memory", 0) for _, stats, _ in native_checkpoints]], default=0)
+                     *[stats.get("get_active_memory", 0) for _, stats, _, _, _ in native_checkpoints]], default=0)
   cache_peak = max([native_before.get("get_cache_memory", 0), native_after.get("get_cache_memory", 0),
-                    *[stats.get("get_cache_memory", 0) for _, stats, _ in native_checkpoints]], default=0)
-  rss_peak = max([rss_before, rss_after, *[rss for _, _, rss in native_checkpoints]], default=0)
+                    *[stats.get("get_cache_memory", 0) for _, stats, _, _, _ in native_checkpoints]], default=0)
+  rss_peak = max([rss_before, rss_after, *[rss for _, _, rss, _, _ in native_checkpoints]], default=0)
+  alias_pool_peak = max([alias_pools.pool_count, *[alias_pool_count for _, _, _, alias_pool_count, _ in native_checkpoints]], default=0)
+  copy_pool_peak = max([copy_pools.pool_count, *[copy_pool_count for _, _, _, _, copy_pool_count in native_checkpoints]], default=0)
   print(
     "# native_memory"
     f" mlx_active_start={native_before.get('get_active_memory', -1)}"
@@ -334,11 +447,14 @@ def main() -> None:
     f" rss_max_start={rss_before}"
     f" rss_max_end={rss_after}"
     f" rss_max_peak={rss_peak}"
+    f" alias_pool_peak={alias_pool_peak}"
+    f" copy_pool_peak={copy_pool_peak}"
   )
   print(
     "# stress_ok"
     f" cases={args.cases}"
     f" soak_iterations={args.soak_iterations}"
+    f" max_pools={args.max_pools}"
     f" tracemalloc_current={after_cur - before_cur}"
     f" tracemalloc_peak={after_peak - before_peak}"
   )

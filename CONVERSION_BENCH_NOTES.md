@@ -59,6 +59,8 @@ bidirectional latency, not symmetry for its own sake.
 - exo handoff layer
   - `mlx_tinygrad_interop.lease_pool.MlxToTinygradLeasePool`
   - `mlx_tinygrad_interop.lease_pool.MlxToTinygradLeasePools`
+  - `mlx_tinygrad_interop.lease_pool.MlxToTinygradCopyLeasePool`
+  - `mlx_tinygrad_interop.lease_pool.MlxToTinygradCopyLeasePools`
   - `mlx_tinygrad_interop.stress_interop`
 
 These helpers are intentionally private and unsafe.
@@ -178,6 +180,9 @@ alone still left a stale git revision in a later pass. The working command was:
 - Bench rows named `borrower_ring*` rotate through multiple independent slots.
   They are intended to approximate a practical pool/ring design with fewer
   footguns than a single slot.
+- Bench rows named `copy_pool_*` reuse tinygrad-owned destination tensors and
+  copy MLX bytes into them before release. They avoid foreign-buffer aliasing
+  but still rely on slot/pool reuse rather than fresh independent tensors.
 - The practical `MLX -> tinygrad` API shape is now a keyed lease pool:
   - acquire from an MLX array
   - use `lease.tensor`
@@ -189,14 +194,22 @@ alone still left a stale git revision in a later pass. The working command was:
   - `pool.run_with_mlx_tensor(array, fn=...)`
   - `pools.run_with_mlx_tensor(array, tg_dtype=..., fn=...)`
   - it scopes acquire/use/release together, realizes returned tensors before
-    release, and rejects returning the borrowed tensor object directly
-  - the callback still must not stash the borrowed tensor into outer state
-- Safe scoped release no longer calls the global `Device["METAL"].synchronize()`
-  barrier. It snapshots the callback's newly enqueued Metal command buffers and
-  waits only for the callback-local tail buffer before clearing the slot owner.
+    release, rejects returning alias views of the borrowed slot, and rejects
+    leaked live tensors whose graphs still depend on the borrowed tensor
+  - only independently realized outputs may escape the callback
+  - the callback still must not stash the raw borrowed tensor object itself;
+    that remains a contract rule rather than something the current runtime can
+    prove mechanically
+- Safe scoped release intentionally uses the global `Device["METAL"].synchronize()`
+  barrier again. The narrower callback-local command-buffer wait experiment was
+  not robust under concurrent Metal enqueue and did not show a meaningful
+  latency win in the local microbenchmarks.
 - Lease pools are keyed by `(shape, dtype, byte_offset)` so variable inference
   shapes can be bucketed explicitly instead of silently reusing an
   incompatible slot.
+- Both alias and copy pool registries are now bounded LRU caches with
+  `max_pools`. If the registry is full and all pools are in flight, acquire
+  fails instead of growing unbounded.
 - Bench rows named `*_then_use_sum` measure rebinding or conversion followed by
   immediate tinygrad consumption through a realized reduction kernel.
 - Do not rebind a slot until all work derived from its previous contents has
@@ -220,13 +233,16 @@ It exercises:
 - random shapes and dtypes
 - offsetted MLX views
 - raw conversion correctness against NumPy baselines
-- randomized downstream op chains after conversion
-- repeated scoped-handoff soak loops through the keyed pool
+- randomized downstream movement / elementwise / broadcast / reduction /
+  matmul op chains after conversion
+- roundtrip `MLX -> tinygrad -> MLX` pipeline checks after those op chains
+- repeated scoped-handoff soak loops through both alias and copy keyed pools
 - native memory reporting via:
   - `mx.get_active_memory()`
   - `mx.get_cache_memory()`
   - `mx.get_peak_memory()`
   - process `ru_maxrss`
+- bounded pool-count assertions for both alias and copy pool registries
 
 This is intended to catch value corruption, stale-slot mistakes, obvious
 crashes, and gross leak regressions before the interop path is integrated more

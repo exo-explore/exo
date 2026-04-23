@@ -53,6 +53,11 @@ owner pinning, and wrapper-construction overhead.
   been realized and synchronized.
 - The practical `MLX -> tinygrad` path is now a lease-managed pool keyed by
   `(shape, dtype, byte_offset)`, not a bare mutable borrower.
+- There is now also a copy-based `MLX -> tinygrad` pool family:
+  - `MlxToTinygradCopyLeasePool`
+  - `MlxToTinygradCopyLeasePools`
+  - these reuse tinygrad-owned destination tensors and copy MLX bytes into
+    them instead of aliasing a foreign `MTLBuffer*`
 - The raw lease path remains intentionally unsafe:
   - `lease.tensor` is not a snapshot
   - if that raw tensor escapes beyond the lease and the slot is reused, it can
@@ -60,12 +65,20 @@ owner pinning, and wrapper-construction overhead.
 - The preferred production-shaped API is the scoped callback form:
   - `pool.run_with_mlx_tensor(array, fn=...)`
   - `pools.run_with_mlx_tensor(array, tg_dtype=..., fn=...)`
-  - these scope acquire/use/release together and reject returning the borrowed
-    tensor object directly
-  - the callback must still not stash the borrowed tensor into outer state
-- Safe scoped release no longer calls `Device["METAL"].synchronize()`. It
-  snapshots the callback's newly enqueued Metal command buffers and waits only
-  for the callback-local tail buffer before clearing the slot owner.
+  - these scope acquire/use/release together and only allow independently
+    realized outputs to escape
+  - they reject returning the borrowed tensor directly
+  - they reject returning alias views of the borrowed slot
+  - they reject leaked live tensors whose graphs still depend on the borrowed
+    tensor
+  - the callback still must not stash the raw borrowed tensor object itself;
+    that remains a contract rule rather than something the current runtime can
+    prove mechanically
+- Safe scoped release uses `Device["METAL"].synchronize()` again. The narrower
+  callback-local command-buffer wait experiment was not concurrency-safe enough
+  to keep as the default runtime behavior.
+- Alias and copy pool registries are bounded keyed caches with `max_pools`, so
+  variable-shape inference can be bucketed without unbounded registry growth.
 - This fast path is only valid for same-process, same-address-space Apple
   Silicon unified-memory handoff. It does not cross process or machine
   boundaries, and it does not remove any later Metal/host -> CUDA transfer.
@@ -88,6 +101,12 @@ The stress suite now also reports native memory signals:
 - `mx.get_cache_memory()`
 - `mx.get_peak_memory()`
 - process `ru_maxrss`
+
+It also now checks:
+
+- more complex movement / broadcast / reduction / matmul chains
+- roundtrip `MLX -> tinygrad -> MLX` correctness after those chains
+- bounded alias/copy pool-count behavior during soak runs
 
 Example:
 
