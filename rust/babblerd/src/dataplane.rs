@@ -220,7 +220,10 @@ impl DataplaneWorker {
             let ready: Vec<Token> = self.events.iter().map(|event| event.token()).collect();
             for token in ready {
                 match token {
-                    TOKEN_TUN => self.handle_tun_ready()?,
+                    TOKEN_TUN => {
+                        tracing::info!("dataplane poll signaled TUN readable");
+                        self.handle_tun_ready()?
+                    }
                     Token(n) => {
                         let slab_key = n
                             .checked_sub(1)
@@ -272,20 +275,30 @@ impl DataplaneWorker {
             return Err(eyre!("TUN device closed"));
         }
 
+        tracing::info!(bytes = packet_len, "dataplane read inner packet from TUN");
+
         let packet = &buf[..packet_len];
         let Some(dst) = ipv6_destination(packet) else {
             tracing::debug!("dropping invalid inner packet from TUN");
             return Ok(());
         };
+        tracing::info!(bytes = packet_len, destination = %dst, "dataplane parsed TUN packet destination");
         if self.fib.is_local(dst) {
-            tracing::debug!(destination = %dst, "dropping self-directed packet from TUN");
+            tracing::info!(destination = %dst, "dataplane dropping self-directed packet from TUN");
             return Ok(());
         }
 
         let Some(route) = self.fib.lookup(dst).cloned() else {
-            tracing::debug!(destination = %dst, "no dataplane route for packet from TUN");
+            tracing::info!(destination = %dst, "dataplane has no route for packet from TUN");
             return Ok(());
         };
+        tracing::info!(
+            destination = %dst,
+            interface = %route.ifname,
+            next_hop = %route.next_hop_ll,
+            mtu = route.mtu,
+            "dataplane resolved route for TUN packet"
+        );
         self.try_send_via_route(packet, &route, "sending packet from TUN")
     }
 
@@ -311,13 +324,34 @@ impl DataplaneWorker {
             }
         };
 
+        tracing::info!(
+            interface = %ifname,
+            peer = %peer,
+            bytes = packet_len,
+            "dataplane received UDP packet"
+        );
+
         let mut packet = buf[..packet_len].to_vec();
         let Some(dst) = ipv6_destination(&packet) else {
             tracing::debug!(peer = %peer, "dropping invalid UDP payload");
             return Ok(());
         };
+        tracing::info!(
+            interface = %ifname,
+            peer = %peer,
+            destination = %dst,
+            bytes = packet_len,
+            "dataplane parsed UDP payload destination"
+        );
 
         if self.fib.is_local(dst) {
+            tracing::info!(
+                interface = %ifname,
+                peer = %peer,
+                destination = %dst,
+                bytes = packet_len,
+                "dataplane delivering UDP payload to TUN"
+            );
             write_tun(self.tun_device.as_ref(), &packet)?;
             return Ok(());
         }
@@ -328,9 +362,16 @@ impl DataplaneWorker {
         }
 
         let Some(route) = self.fib.lookup(dst).cloned() else {
-            tracing::debug!(destination = %dst, "no dataplane route for forwarded packet");
+            tracing::info!(destination = %dst, "dataplane has no route for forwarded UDP packet");
             return Ok(());
         };
+        tracing::info!(
+            destination = %dst,
+            interface = %route.ifname,
+            next_hop = %route.next_hop_ll,
+            mtu = route.mtu,
+            "dataplane resolved route for forwarded UDP packet"
+        );
         self.try_send_via_route(&packet, &route, "forwarding UDP packet")
     }
 
@@ -348,8 +389,24 @@ impl DataplaneWorker {
             0,
             socket.ifindex,
         ));
+        tracing::info!(
+            interface = %socket.ifname,
+            ifindex = socket.ifindex,
+            peer = %peer,
+            bytes = packet.len(),
+            "dataplane sending UDP packet"
+        );
         match socket.socket.send_to(packet, peer) {
-            Ok(_) => Ok(()),
+            Ok(sent) => {
+                tracing::info!(
+                    interface = %socket.ifname,
+                    ifindex = socket.ifindex,
+                    peer = %peer,
+                    bytes = sent,
+                    "dataplane sent UDP packet"
+                );
+                Ok(())
+            }
             Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(()),
             Err(err) => Err(err).wrap_err_with(|| format!("sending packet via {}", socket.ifname)),
         }
@@ -371,6 +428,12 @@ impl DataplaneWorker {
 
     fn apply_snapshot(&mut self, snapshot: Arc<FibSnapshot>) -> Result<()> {
         self.fib = snapshot;
+        tracing::info!(
+            locals = self.fib.locals.len(),
+            admitted_interfaces = self.fib.admitted_interfaces.len(),
+            routes = self.fib.routes.len(),
+            "dataplane applied FIB snapshot"
+        );
         self.reconcile_sockets()
     }
 
