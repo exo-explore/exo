@@ -11,7 +11,7 @@
 //! The v1 forwarding model is intentionally narrow:
 //!
 //! - local addresses are explicit inputs, not inferred from every xroute,
-//! - only admitted/up interfaces are exposed to the dataplane,
+//! - only interfaces with a live Babel neighbour are exposed to the dataplane,
 //! - only installed IPv6 `/128` routes are considered,
 //! - only destination-based forwarding is modeled,
 //! - routes with non-link-local next hops are ignored.
@@ -65,10 +65,17 @@ impl FibBuilder {
             locals.insert(host_key(*addr));
         }
 
+        let up_interfaces: HashSet<&str, RandomState> = state
+            .interfaces
+            .values()
+            .filter(|interface| interface.up)
+            .map(|interface| interface.ifname.as_ref())
+            .collect::<HashSet<_, _>>();
+
         let mut admitted_interfaces = HashSet::with_hasher(RandomState::new());
-        for interface in state.interfaces.values() {
-            if interface.up {
-                admitted_interfaces.insert(interface.ifname.clone());
+        for neighbour in state.neighbours.values() {
+            if up_interfaces.contains(neighbour.ifname.as_ref()) {
+                admitted_interfaces.insert(neighbour.ifname.clone());
             }
         }
 
@@ -191,7 +198,7 @@ mod tests {
     use std::net::{IpAddr, Ipv6Addr};
 
     use crate::babel::Eui64;
-    use crate::babel::line::{Event, EventKind, InterfaceEvent, RouteEvent};
+    use crate::babel::line::{Event, EventKind, InterfaceEvent, NeighbourEvent, RouteEvent};
     use crate::babel::state::BabelState;
 
     use super::FibBuilder;
@@ -230,10 +237,27 @@ mod tests {
         })
     }
 
+    fn neighbour(handle: u64, ifname: &str, address: &str) -> Event {
+        Event::Neighbour(NeighbourEvent {
+            kind: EventKind::Add,
+            handle,
+            address: IpAddr::V6(address.parse().unwrap()),
+            ifname: ifname.into(),
+            reach: 0xffff,
+            ureach: 0xffff,
+            rxcost: 96,
+            txcost: 96,
+            rtt_millis: Some(1),
+            rttcost: Some(0),
+            cost: 96,
+        })
+    }
+
     #[test]
     fn derives_local_and_host_routes() {
         let mut state = BabelState::new();
         state.apply(interface("en2", true));
+        state.apply(neighbour(1, "en2", "fe80::1"));
         state.apply(route(
             1,
             "fde0::1234/128",
@@ -260,6 +284,8 @@ mod tests {
         let mut state = BabelState::new();
         state.apply(interface("en2", true));
         state.apply(interface("en3", true));
+        state.apply(neighbour(1, "en2", "fe80::1"));
+        state.apply(neighbour(2, "en3", "fe80::2"));
         state.apply(route(
             1,
             "fde0::abcd/128",
@@ -290,6 +316,8 @@ mod tests {
         let mut state = BabelState::new();
         state.apply(interface("en2", true));
         state.apply(interface("en3", true));
+        state.apply(neighbour(1, "en2", "fe80::1"));
+        state.apply(neighbour(2, "en3", "fe80::2"));
         state.apply(route(
             1,
             "fde0::beef/128",
@@ -318,9 +346,31 @@ mod tests {
     }
 
     #[test]
-    fn skips_routes_for_non_admitted_interfaces() {
+    fn skips_routes_for_interfaces_without_live_neighbours() {
+        let mut state = BabelState::new();
+        state.apply(interface("en2", true));
+        state.apply(route(
+            1,
+            "fde0::cafe/128",
+            "::/0",
+            true,
+            "fe80::1".parse().unwrap(),
+            "en2",
+            96,
+            32,
+        ));
+
+        let fib = FibBuilder::new(["fde0::1".parse().unwrap()], 1452).derive(&state);
+
+        assert!(fib.admitted_interfaces.is_empty());
+        assert!(fib.lookup("fde0::cafe".parse().unwrap()).is_none());
+    }
+
+    #[test]
+    fn skips_neighbour_interfaces_that_are_not_up() {
         let mut state = BabelState::new();
         state.apply(interface("en2", false));
+        state.apply(neighbour(1, "en2", "fe80::1"));
         state.apply(route(
             1,
             "fde0::cafe/128",

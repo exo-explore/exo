@@ -125,16 +125,21 @@ of shortcuts that should be revisited later.
   Files:
   - `src/lib.rs` (`if_watcher`)
   - `src/config.rs`
+  - `src/fib.rs`
   Why this is a shortcut:
   - Any `en*` interface with link-local IPv6 and `is_up()` can still get pulled
-    into Babel.
+    into Babel during bootstrap.
   - This can include unrelated Wi‑Fi, built-in Ethernet, USB Ethernet, etc.
-  - The current lab is working around this with
-    `BABBLER_INTERFACE_ALLOWLIST=en2,en3`, which is a useful bring-up escape
-    hatch but not the long-term admission policy.
+  - The dataplane now narrows that broad bootstrap set back down to interfaces
+    that actually have live Babel neighbours, which is much closer to the real
+    transport set.
+  - But the watcher/bootstrap side is still using the coarse `en*` heuristic,
+    and the env allowlist is still just a bring-up escape hatch rather than the
+    long-term admission policy.
   Follow-up:
-  - Replace the current heuristic with a stronger admission policy
-    (neighbor proof, richer metadata, or both).
+  - Replace the watcher-side bootstrap heuristic with a stronger admission
+    policy (neighbor proof, richer metadata, or both), so Babel does not need
+    broad speculative interface admission just to discover the right links.
 
 - The dataplane now derives immutable FIB snapshots and runs on a dedicated
   thread, but it still assumes interface names are the stable long-lived

@@ -96,9 +96,9 @@ The basic pieces are now in place:
   `arrayvec`.
 - `routing_stack.rs` now starts the dataplane and publishes coalesced
   `FibSnapshot` updates into it.
-- dataplane socket ownership is now driven by admitted interfaces rather than
-  only by currently selected routes, and retained sockets are refreshed when an
-  `ifname` resolves to a new ifindex.
+- dataplane socket ownership is now driven by interfaces that currently have
+  live Babel neighbours rather than only by currently selected routes, and
+  retained sockets are refreshed when an `ifname` resolves to a new ifindex.
 - socket reconcile is now best-effort under interface churn: transient
   resolution/open failures are logged and retried on later updates rather than
   killing the dataplane during reconcile.
@@ -116,10 +116,12 @@ It is:
   machines,
 - and then fill the first obvious protocol gaps such as ICMPv6 error handling.
 
-For the current four-Mac Thunderbolt lab, the broad macOS `en*` admission
-heuristic has proven too permissive in practice. The current bring-up path is
-using `BABBLER_INTERFACE_ALLOWLIST=en2,en3` so only the known Thunderbolt links
-participate while the long-term admission policy is still being refined.
+For the current four-Mac Thunderbolt lab, the broad macOS `en*` watcher
+heuristic has proven too permissive in practice. The dataplane now corrects
+that somewhat by only owning sockets on interfaces that Babel has actually
+formed neighbour adjacencies on, but the watcher/bootstrap side is still broad
+and may still need a per-host allowlist during bring-up while the long-term
+admission policy is refined.
 
 The current tree now owns the kernel route that steers overlay traffic into the
 resident TUN interface:
