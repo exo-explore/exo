@@ -23,9 +23,9 @@ testing; the explicit `--upgrade-package` form was required.
 
 ## Benchmark
 
-The current benchmark excludes source tensor construction and explicit pre-sync
-from the timed loop, but it still includes per-call helper, binding, owner
-pinning, and wrapper-construction overhead.
+The current benchmark keeps source tensor construction and explicit pre-sync
+outside the timed loop, but many rows still include per-call helper, binding,
+owner pinning, and wrapper-construction overhead.
 
 - Inputs are assumed to already be synchronized.
 - Inputs are assumed to already be allocated.
@@ -34,8 +34,18 @@ pinning, and wrapper-construction overhead.
 - The current unsafe helper bridge is asymmetric:
   - `MLX -> tinygrad` adopts an existing `MTLBuffer*`
   - `tinygrad -> MLX` rebuilds an MLX array from a raw pointer
+- Newer `MLX -> tinygrad` rows also cover:
+  - a single MLX-side entrypoint that calls into tinygrad without the exporter
+    dict round-trip
+  - a reusable tinygrad borrower that rebinds the borrowed `MTLBuffer*`
 - `mx.array(memoryview(...))` is a native copy path in current MLX, not an
   aliasing import path.
+
+Test command:
+
+```bash
+uv run python -m unittest mlx_tinygrad_interop.test_interop
+```
 
 Example:
 

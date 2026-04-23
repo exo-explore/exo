@@ -21,6 +21,18 @@ DTYPES: dict[str, tuple[Any, Any, np.dtype[Any]]] = {
 }
 
 
+class Alternator:
+  def __init__(self, *items: Any):
+    assert items, "Alternator needs at least one item"
+    self.items = items
+    self.index = 0
+
+  def next(self) -> Any:
+    item = self.items[self.index]
+    self.index = (self.index + 1) % len(self.items)
+    return item
+
+
 def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description="Benchmark raw tinygrad <-> MLX tensor conversion overhead.")
   parser.add_argument("--dtype", choices=sorted(DTYPES), default="float32")
@@ -66,6 +78,14 @@ def tinygrad_from_mlx_fast(x: Any, tg_dtype: Any) -> Tensor:
     buffer_nbytes=int(storage["buffer_nbytes"]),
     owner=x,
   )
+
+
+def tinygrad_from_mlx_single_entry(x: Any, tg_dtype: Any) -> Tensor:
+  return mx.metal._unsafe_to_tinygrad_fast(x, tg_dtype, owner=x)
+
+
+def tinygrad_from_mlx_reuse(x: Any, borrower: Any) -> Tensor:
+  return mx.metal._unsafe_rebind_tinygrad(x, borrower, owner=x)
 
 
 def mlx_from_tinygrad_maybe_copy(t: Tensor, mx_dtype: Any) -> Any:
@@ -132,6 +152,15 @@ def tinygrad_import_from_storage_fast(storage: Any, tg_dtype: Any, owner: Any) -
     byte_offset=int(storage["offset_bytes"]),
     buffer_nbytes=int(storage["buffer_nbytes"]),
     owner=owner,
+  )
+
+
+def tinygrad_import_from_storage_reuse(storage: Any, owner: Any, borrower: Any) -> Tensor:
+  return borrower.rebind(
+    int(storage["mtl_buffer_ptr"]),
+    owner=owner,
+    byte_offset=int(storage["offset_bytes"]),
+    buffer_nbytes=int(storage["buffer_nbytes"]),
   )
 
 
@@ -205,10 +234,13 @@ def main() -> None:
 
   required = [
     ("mx.metal._unsafe_export_storage", getattr(mx.metal, "_unsafe_export_storage", None)),
+    ("mx.metal._unsafe_to_tinygrad_fast", getattr(mx.metal, "_unsafe_to_tinygrad_fast", None)),
+    ("mx.metal._unsafe_rebind_tinygrad", getattr(mx.metal, "_unsafe_rebind_tinygrad", None)),
     ("mx.metal._unsafe_array_from_ptr", getattr(mx.metal, "_unsafe_array_from_ptr", None)),
     ("mx.metal._unsafe_array_from_ptr_alias_only", getattr(mx.metal, "_unsafe_array_from_ptr_alias_only", None)),
     ("Tensor._unsafe_from_metal_buffer", getattr(Tensor, "_unsafe_from_metal_buffer", None)),
     ("Tensor._unsafe_from_metal_buffer_fast", getattr(Tensor, "_unsafe_from_metal_buffer_fast", None)),
+    ("Tensor._unsafe_metal_borrower", getattr(Tensor, "_unsafe_metal_borrower", None)),
     ("Tensor._unsafe_metal_storage", getattr(Tensor, "_unsafe_metal_storage", None)),
   ]
   missing = [name for name, value in required if value is None]
@@ -231,15 +263,29 @@ def main() -> None:
       # explicit pre-sync stay outside the timed loop, but per-call helper,
       # binding, owner-pinning, and wrapper construction still remain inside it.
       src_mx = mx.array(np.arange(numel, dtype=np_dtype), dtype=mx_dtype)
+      src_mx_alt = mx.array(np.arange(numel, dtype=np_dtype) + np.array(1, dtype=np_dtype), dtype=mx_dtype)
 
       src_tg = Tensor(np.arange(numel, dtype=np_dtype), device="METAL").realize()
       Device["METAL"].synchronize()
 
       mx_storage = mlx_export_storage(src_mx)
+      mx_storage_alt = mlx_export_storage(src_mx_alt)
       tg_storage = tinygrad_export_storage(src_tg)
+      mx_reuse_borrower = Tensor._unsafe_metal_borrower(
+        int(mx_storage["mtl_buffer_ptr"]),
+        tuple(mx_storage["shape"]),
+        dtype=tg_dtype,
+        byte_offset=int(mx_storage["offset_bytes"]),
+        buffer_nbytes=int(mx_storage["buffer_nbytes"]),
+        owner=src_mx,
+      )
+      mx_source_alternator = Alternator(src_mx, src_mx_alt)
+      mx_storage_alternator = Alternator((mx_storage, src_mx), (mx_storage_alt, src_mx_alt))
 
       benches: list[tuple[str, str, Callable[[], Any]]] = [
         ("unsafe_helper_bridge", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_fast(s, tg_dtype)),
+        ("single_entry_bridge", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_single_entry(s, tg_dtype)),
+        ("reused_wrapper_bridge", "mlx_to_tinygrad", lambda alt=mx_source_alternator, b=mx_reuse_borrower: tinygrad_from_mlx_reuse(alt.next(), b)),
         ("unsafe_helper_legacy", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_legacy(s, tg_dtype)),
         ("memoryview_copy", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_copy(s, tg_dtype)),
         ("numpy_baseline", "mlx_to_tinygrad", lambda s=src_mx: tinygrad_from_mlx_numpy(s)),
@@ -249,6 +295,8 @@ def main() -> None:
         ("numpy_baseline", "tinygrad_to_mlx", lambda s=src_tg: mlx_from_tinygrad_numpy(s)),
         ("export_helper_only", "mlx_to_tinygrad", lambda s=src_mx: mlx_export_storage(s)),
         ("import_helper_fast_only", "mlx_to_tinygrad", lambda st=mx_storage, s=src_mx: tinygrad_import_from_storage_fast(st, tg_dtype, s)),
+        ("import_helper_reuse_only", "mlx_to_tinygrad",
+         lambda alt=mx_storage_alternator, b=mx_reuse_borrower: tinygrad_import_from_storage_reuse(*alt.next(), borrower=b)),
         ("import_helper_legacy_only", "mlx_to_tinygrad", lambda st=mx_storage, s=src_mx: tinygrad_import_from_storage(st, tg_dtype, s)),
         ("export_helper_only", "tinygrad_to_mlx", lambda s=src_tg: tinygrad_export_storage(s)),
         ("import_helper_only", "tinygrad_to_mlx", lambda st=tg_storage, s=src_tg: mlx_import_from_storage_alias_only(st, mx_dtype, s)),

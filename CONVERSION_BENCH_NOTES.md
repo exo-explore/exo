@@ -9,7 +9,9 @@ for tensors that are already:
 - allocated
 - materialized / realized
 
-The timed region should measure only the transformation itself.
+The timed region should keep source creation and explicit synchronization
+outside the loop, while making it clear when helper, binding, owner-pinning,
+and wrapper-construction overhead are still inside it.
 
 ## Repo Layout
 
@@ -45,18 +47,22 @@ bidirectional latency, not symmetry for its own sake.
 
 - MLX
   - `mx.metal._unsafe_export_storage(array)`
+  - `mx.metal._unsafe_to_tinygrad_fast(array, tg_dtype, owner=None)`
+  - `mx.metal._unsafe_rebind_tinygrad(array, borrower, owner=None)`
   - `mx.metal._unsafe_array_from_ptr(raw_ptr, shape, dtype, owner=None)`
   - `mx.metal._unsafe_array_from_ptr_alias_only(raw_ptr, shape, dtype, owner=None)`
 - tinygrad
   - `Tensor._unsafe_metal_storage()`
   - `Tensor._unsafe_from_metal_buffer(mtl_buffer_ptr, shape, dtype=..., byte_offset=0, owner=None)`
   - `Tensor._unsafe_from_metal_buffer_fast(mtl_buffer_ptr, shape, dtype=..., byte_offset=0, owner=None)`
+  - `Tensor._unsafe_metal_borrower(mtl_buffer_ptr, shape, dtype=..., byte_offset=0, owner=None)`
 
 These helpers are intentionally private and unsafe.
 
-The current benchmark still pays Python and binding overhead because the
-exporters return Python dicts and the timed path unpacks them before calling
-the import helper.
+The current benchmark still pays Python and binding overhead in several rows.
+The older helper rows return Python dicts and unpack them before calling the
+import helper, while the newer MLX-side single-entry rows still include the
+tinygrad-side wrapper construction they trigger.
 
 ## Temporary Eligibility Rules
 
@@ -129,12 +135,20 @@ advance the pinned SHAs in `uv.lock` during testing. The working command was:
   - `logical_nbytes`: the logical bytes in the exported array view
   - `buffer_nbytes`: the backing buffer capacity
 - Offsetted MLX views must use `buffer_nbytes` semantics for bounds checks.
+- The legacy MLX export field `nbytes` was removed to avoid accidental use of
+  logical-size semantics where backing-buffer-size semantics are required.
 - The first MLX import helper is raw-pointer based rather than foreign
   `MTLBuffer*` based.
 - `mx.metal._unsafe_array_from_ptr(...)` may still copy if MLX cannot alias the
   pointer directly.
 - `mx.metal._unsafe_array_from_ptr_alias_only(...)` fails instead of silently
   copying, so it is the right helper for proving aliasing in benchmarks.
+- `mx.metal._unsafe_to_tinygrad_fast(...)` is a single MLX binding entrypoint
+  for `MLX -> tinygrad`, but it still includes tinygrad-side tensor creation.
+- `Tensor._unsafe_metal_borrower(...)` reuses the same tinygrad tensor wrapper
+  and rebinds its borrowed `MTLBuffer*`. That is narrower than ordinary tensor
+  construction, but it is the right experiment for isolating wrapper-creation
+  cost.
 - `mx.metal._unsafe_export_storage(...)` currently expects an MLX array that is
   already in the C++ `available` state. In practice, `mx.array(np_array)` met
   that precondition for local smoke testing, while `mx.arange(...)` did not.
