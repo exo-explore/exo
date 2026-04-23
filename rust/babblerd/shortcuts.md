@@ -163,16 +163,38 @@ of shortcuts that should be revisited later.
   Follow-up:
   - Revisit whether the long-term identity should be richer than `ifname`,
     especially if interface renames/hotplug churn become common during runtime.
+  - On macOS in particular, the current "one socket per interface" receive
+    model is not trustworthy enough to identify the real ingress interface:
+    live testing shows packets sent directly over one Thunderbolt link can be
+    received on a different `MioUdpSocket` while the peer scope-id still
+    reflects the actual physical ingress interface.
+  - Revisit receive-side interface attribution on macOS, likely using ancillary
+    packet-info / receive-interface metadata instead of assuming the receiving
+    socket tells the truth.
 
 - The current dataplane is intentionally minimal and still drops several packet
   classes silently.
   Files:
   - `src/dataplane.rs`
   Why this is a shortcut:
+  - The current lab state has reliable ICMPv6 reachability and now also basic
+    generic TCP correctness after convergence: a direct `nc` TCP send across
+    the overlay succeeds and the server receives the payload.
+  - But sustained throughput is still not healthy. In live `iperf3` testing, a
+    TCP flow transfers an initial burst and then stalls with heavy retransmits
+    and near-zero receive-side throughput.
+  - The current code also still treats `WouldBlock` on UDP send and TUN
+    reinjection as drop-on-backpressure behavior. That is now visible in logs,
+    but it is not yet a proper queued/backpressured forwarding model.
+  - So the remaining blocker is no longer "can non-ICMP traffic work at all",
+    but "why does sustained transport performance collapse under load".
   - There is no ICMPv6 Time Exceeded generation yet.
   - There is no Packet Too Big handling yet.
   - No-route and invalid-packet cases are mostly tracing-and-drop behavior.
   Follow-up:
+  - Characterize the throughput collapse under load, starting with route churn,
+    multi-interface path selection, and loss/retransmit behavior on the direct
+    lab edge.
   - Add proper ICMPv6 error generation and tighter packet-validation behavior
     once the first end-to-end forwarding path is validated.
 

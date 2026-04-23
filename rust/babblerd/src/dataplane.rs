@@ -44,6 +44,7 @@ use crate::fib::{FibEntry, FibSnapshot};
 const TOKEN_TUN: Token = Token(0);
 const MAX_SNAPSHOT_BACKLOG: usize = 8;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+const UDP_SOCKET_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
 pub struct DataplaneConfig {
     pub tun_device: Arc<SyncDevice>,
@@ -406,7 +407,16 @@ impl DataplaneWorker {
                 );
                 Ok(())
             }
-            Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(()),
+            Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                tracing::debug!(
+                    interface = %socket.ifname,
+                    ifindex = socket.ifindex,
+                    peer = %peer,
+                    bytes = packet.len(),
+                    "dropping dataplane packet because UDP socket send would block"
+                );
+                Ok(())
+            }
             Err(err) => Err(err).wrap_err_with(|| format!("sending packet via {}", socket.ifname)),
         }
     }
@@ -633,6 +643,8 @@ fn open_udp_socket(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioUdpSo
     socket.set_reuse_port(true)?;
     socket.set_only_v6(true)?;
     socket.set_nonblocking(true)?;
+    socket.set_recv_buffer_size(UDP_SOCKET_BUFFER_BYTES)?;
+    socket.set_send_buffer_size(UDP_SOCKET_BUFFER_BYTES)?;
 
     let Some(ifindex) = NonZeroU32::new(ifindex) else {
         return Err(io::Error::new(
@@ -653,7 +665,13 @@ fn open_udp_socket(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioUdpSo
 fn write_tun(tun_device: &SyncDevice, packet: &[u8]) -> Result<()> {
     match tun_device.send(packet) {
         Ok(_) => Ok(()),
-        Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(()),
+        Err(err) if err.kind() == ErrorKind::WouldBlock => {
+            tracing::debug!(
+                bytes = packet.len(),
+                "dropping dataplane packet because TUN reinjection would block"
+            );
+            Ok(())
+        }
         Err(err) => Err(err).wrap_err("writing inner packet to TUN"),
     }
 }

@@ -44,6 +44,17 @@ Stable one-hop forwarding is now proven on the four-Mac Thunderbolt lab for an
 adjacent pair after switching dataplane TUN I/O on macOS to `tun-rs`
 `SyncDevice::recv`/`send` instead of raw fd `read`/`write`.
 
+Steady-state ICMPv6 reachability is also now green across the full four-node
+lab ring, and small generic TCP application payloads now work too once the
+mesh has converged. The current remaining gap is no longer basic correctness of
+non-ICMP transport traffic, but sustained throughput under load: current
+`iperf3` testing transfers an initial burst and then collapses into heavy
+retransmits and near-zero receive-side throughput.
+
+So the current architecture is good enough for continued correctness and
+reliability bring-up, but serious performance work should wait until that
+throughput-collapse behavior is understood.
+
 ## The Most Important Architectural Decision
 
 The current codebase is already good enough to serve as the shell around a
@@ -116,6 +127,18 @@ It is:
   machines,
 - and then fill the first obvious protocol gaps such as ICMPv6 error handling.
 
+One caveat that is now proven on the lab Macs: the current macOS receive path
+cannot treat "which UDP socket got the packet" as trustworthy interface
+attribution. In live tests, packets sent directly over one Thunderbolt
+interface are still being received by a different reuseport socket while the
+peer scope-id reflects the real physical ingress interface. That means the
+current multi-socket receive model is acceptable for basic forwarding bring-up,
+but it is not yet a reliable source of receive-side interface truth on macOS.
+
+The likely long-term fix is to move receive-side interface attribution onto
+ancillary packet metadata (`IPV6_PKTINFO` / receive-interface data) rather than
+inferring it from which socket woke up.
+
 For the current four-Mac Thunderbolt lab, the broad macOS `en*` watcher
 heuristic has proven too permissive in practice. The dataplane now corrects
 that somewhat by only owning sockets on interfaces that Babel has actually
@@ -146,6 +169,14 @@ That future link-scoring direction likely requires:
 
 That is explicitly post-v1 work. For the first version, correctness and
 reliability of the multihop mesh matter more than optimal link preference.
+
+The current sustained-throughput investigation is therefore focused on two
+nearer-term issues before any serious performance tuning:
+
+- understanding whether load-induced loss is primarily backpressure on UDP
+  socket send / TUN reinjection,
+- and separating that from the now-proven macOS receive-side interface
+  attribution oddities.
 
 The current tree now owns the kernel route that steers overlay traffic into the
 resident TUN interface:
