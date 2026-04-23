@@ -175,6 +175,11 @@ alone still left a stale git revision in a later pass. The working command was:
 - `tinygrad -> MLX memoryview_copy` also includes per-call runtime ceremony,
   because tinygrad's zero-copy Metal memoryview export synchronizes before
   exposing the buffer.
+- The randomized stress harness now uses `np.einsum(...)` rather than NumPy's
+  `@` operator for the `matmul_lastdim` baseline. On the current macOS
+  validation host, a valid contiguous float32 `(16,31) @ (31,7)` case through
+  NumPy `@` returned an incorrect all-zero result while MLX, tinygrad, and
+  `np.einsum` agreed on the nonzero result.
 - Bench rows named `rebindable_slot_*` measure rebindable-slot cost, not fresh
   conversion cost.
 - Bench rows named `borrower_ring*` rotate through multiple independent slots.
@@ -247,6 +252,10 @@ It exercises:
 This is intended to catch value corruption, stale-slot mistakes, obvious
 crashes, and gross leak regressions before the interop path is integrated more
 deeply into the runtime.
+
+Note: the `matmul_lastdim` stress baseline uses `np.einsum(...)` instead of
+NumPy `@` because the current macOS NumPy build produced a demonstrably wrong
+all-zero result on one of the randomized float32 cases.
 
 ## Current Findings
 

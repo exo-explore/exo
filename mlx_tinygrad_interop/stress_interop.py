@@ -218,7 +218,11 @@ def apply_numpy_ops(x: np.ndarray, ops: list[tuple[str, Any]]) -> np.ndarray:
     elif op == "relu":
       out = np.maximum(out, 0)
     elif op == "matmul_lastdim":
-      out = out.reshape(-1, out.shape[-1]) @ arg
+      # NumPy's `@` path on the current macOS validation host produced an
+      # incorrect all-zero result for a valid contiguous float32 case that MLX,
+      # tinygrad, and `np.einsum` all agreed on. Use einsum here so the stress
+      # harness keeps a trustworthy numerical baseline.
+      out = np.einsum("ik,kj->ij", out.reshape(-1, out.shape[-1]), arg, optimize=True)
     elif op == "sum":
       axis, keepdim = arg
       out = out.sum(axis=axis, keepdims=keepdim)

@@ -4,6 +4,20 @@ import mlx.core as mx
 import numpy as np
 from tinygrad import Tensor, dtypes
 
+from mlx_tinygrad_interop.stress_interop import apply_numpy_ops
+
+
+class TestStressHarnessNumerics(unittest.TestCase):
+  def test_numpy_matmul_lastdim_uses_reliable_baseline(self):
+    lhs = np.arange(2 * 2 * 4 * 31, dtype=np.float32).reshape(2, 2, 4, 31)
+    lhs = np.transpose(lhs, (3, 0, 2, 1)).reshape(2, 2, 4, 31)
+    weight = np.arange(31 * 7, dtype=np.float32).reshape(31, 7) / np.float32(17)
+
+    actual = apply_numpy_ops(lhs, [("matmul_lastdim", weight)])
+    expected = np.einsum("ik,kj->ij", lhs.reshape(-1, lhs.shape[-1]), weight, optimize=True)
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
+
 
 @unittest.skipUnless(mx.metal.is_available(), "Metal is not available")
 class TestMlxTinygradInterop(unittest.TestCase):

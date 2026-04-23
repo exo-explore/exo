@@ -108,6 +108,11 @@ It also now checks:
 - roundtrip `MLX -> tinygrad -> MLX` correctness after those chains
 - bounded alias/copy pool-count behavior during soak runs
 
+For `matmul_lastdim`, the stress harness uses `np.einsum(...)` for the NumPy
+baseline instead of NumPy `@`. On the current macOS validation host, a valid
+contiguous float32 matmul case through `@` returned an incorrect all-zero
+result while MLX, tinygrad, and `np.einsum` agreed on the nonzero output.
+
 Example:
 
 ```bash
