@@ -30,7 +30,7 @@ class TestMlxTinygradLeasePool(unittest.TestCase):
       )
 
   def test_lease_pool_evaluates_lazy_array_on_acquire(self):
-    lazy = mx.arange(32, dtype=mx.float32) + mx.float32(3)
+    lazy = mx.arange(32, dtype=mx.float32) + 3
     pool = MlxToTinygradLeasePool.from_mlx(lazy, tg_dtype=dtypes.float32, capacity=1)
 
     with pool.acquire_from_mlx(lazy) as lease:
