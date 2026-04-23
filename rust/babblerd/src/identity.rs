@@ -139,7 +139,10 @@ mod tests {
     #[test]
     fn node_addr_uses_full_low_64_bits() {
         let addr = node_addr(
-            Ipv6Net::new_assert(Ipv6Addr::from_bits(0xfd_e0_20c61fa7_ffff << 80), 64),
+            Ipv6Net::new_assert(
+                Ipv6Addr::new(0xfde0, 0x20c6, 0x1fa7, 0xffff, 0, 0, 0, 0),
+                64,
+            ),
             0x1234_5678_9abc_def0,
         )
         .expect("node address should be constructed");
@@ -147,7 +150,9 @@ mod tests {
         assert_eq!(addr.prefix_len(), 128);
         assert_eq!(
             addr.addr(),
-            Ipv6Addr::from_bits((0xfd_e0_20c61fa7_ffffu128 << 80) | 0x1234_5678_9abc_def0u128)
+            Ipv6Addr::new(
+                0xfde0, 0x20c6, 0x1fa7, 0xffff, 0x1234, 0x5678, 0x9abc, 0xdef0,
+            )
         );
     }
 }

@@ -54,7 +54,11 @@ pub const EXO_ULA_PREFIX: Ipv6Net = Ipv6Net::new_assert(
     // TODO: break out into "fd" for ULA
     //       e0_20c61fa7 for EXO address-space
     //       ffff for anything else we want, like maybe versioning and so on (but for now its not used)
-    Ipv6Addr::from_bits(0xfd_e0_20c61fa7_ffff << 80),
+    //
+    // NOTE: spell the hextets explicitly here. A previous `u128` bit-shift
+    // construction accidentally truncated the leading `fde0` and produced
+    // `20c6:1fa7:ffff::/64`, which is not ULA.
+    Ipv6Addr::new(0xfde0, 0x20c6, 0x1fa7, 0xffff, 0, 0, 0, 0),
     64,
 );
 
@@ -119,4 +123,19 @@ pub fn interface_allowlist_from_env() -> eyre::Result<Option<HashSet<Box<str>>>>
     }
 
     Ok(Some(allowlist))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EXO_ULA_PREFIX;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn exo_ula_prefix_keeps_fde0_high_bits() {
+        assert_eq!(
+            EXO_ULA_PREFIX.addr(),
+            Ipv6Addr::new(0xfde0, 0x20c6, 0x1fa7, 0xffff, 0, 0, 0, 0)
+        );
+        assert_eq!(EXO_ULA_PREFIX.prefix_len(), 64);
+    }
 }
