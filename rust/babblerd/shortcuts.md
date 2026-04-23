@@ -157,6 +157,9 @@ of shortcuts that should be revisited later.
   - The dataplane now owns sockets from the admitted interface set rather than
     inferring them only from current routes, and it refreshes retained sockets
     when a name resolves to a new ifindex.
+  - The dataplane now also has a lightweight timer-driven reconcile retry for
+    admitted interfaces whose socket setup was skipped or failed, so unchanged
+    FIB snapshots no longer suppress retries completely.
   - That fixes the earlier route-derived and stale-ifindex bugs, but the design
     still assumes interface names are stable enough to be the long-lived
     control-plane identity.

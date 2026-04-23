@@ -111,8 +111,11 @@ The basic pieces are now in place:
   live Babel neighbours rather than only by currently selected routes, and
   retained sockets are refreshed when an `ifname` resolves to a new ifindex.
 - socket reconcile is now best-effort under interface churn: transient
-  resolution/open failures are logged and retried on later updates rather than
-  killing the dataplane during reconcile.
+  resolution/open failures are logged and retried without killing the
+  dataplane during reconcile.
+- unchanged FIB snapshots are now deduplicated in the control plane, so the
+  dataplane also carries its own lightweight timer-driven reconcile retry for
+  admitted interfaces that still do not have usable sockets.
 - the stable-link packet path is now working on the lab ring for adjacent
   one-hop traffic.
 

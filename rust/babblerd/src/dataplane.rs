@@ -23,7 +23,7 @@ use std::num::NonZeroU32;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use arrayvec::ArrayVec;
 use color_eyre::eyre::{Result, WrapErr, eyre};
@@ -44,6 +44,7 @@ use crate::fib::{FibEntry, FibSnapshot};
 const TOKEN_TUN: Token = Token(0);
 const MAX_SNAPSHOT_BACKLOG: usize = 8;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+const RECONCILE_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 const UDP_SOCKET_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
 pub struct DataplaneConfig {
@@ -79,6 +80,8 @@ struct DataplaneWorker {
     events: Events,
     sockets: Slab<InterfaceSocket>,
     ifname_to_slab: HashMap<Box<str>, usize>,
+    needs_reconcile_retry: bool,
+    last_reconcile_attempt: Instant,
 }
 
 struct InterfaceSocket {
@@ -200,6 +203,8 @@ impl DataplaneWorker {
             events,
             sockets: Slab::new(),
             ifname_to_slab: HashMap::new(),
+            needs_reconcile_retry: false,
+            last_reconcile_attempt: Instant::now(),
         };
         worker.reconcile_sockets()?;
         Ok(worker)
@@ -212,6 +217,7 @@ impl DataplaneWorker {
             }
 
             self.drain_snapshot_updates()?;
+            self.maybe_retry_reconcile();
 
             self.poll
                 .poll(&mut self.events, Some(POLL_INTERVAL))
@@ -447,6 +453,7 @@ impl DataplaneWorker {
     }
 
     fn reconcile_sockets(&mut self) -> Result<()> {
+        self.last_reconcile_attempt = Instant::now();
         let current_ifindices = self.current_ifindices();
         let actions = plan_socket_actions(
             &current_ifindices,
@@ -455,6 +462,7 @@ impl DataplaneWorker {
                 if_nametoindex(ifname).wrap_err_with(|| format!("resolving ifindex for {}", ifname))
             },
         );
+        let mut retry_needed = !actions.skipped.is_empty();
 
         for skipped in actions.skipped {
             tracing::warn!(
@@ -468,6 +476,7 @@ impl DataplaneWorker {
             match action {
                 SocketAction::Add { ifname, ifindex } => {
                     if let Err(err) = self.add_socket(ifname.clone(), ifindex) {
+                        retry_needed = true;
                         tracing::warn!(
                             interface = %ifname,
                             ifindex,
@@ -478,6 +487,7 @@ impl DataplaneWorker {
                 }
                 SocketAction::Refresh { ifname, ifindex } => {
                     if let Err(err) = self.refresh_socket(&ifname, ifindex) {
+                        retry_needed = true;
                         tracing::warn!(
                             interface = %ifname,
                             ifindex,
@@ -498,6 +508,9 @@ impl DataplaneWorker {
             }
         }
 
+        retry_needed |=
+            has_missing_admitted_sockets(&self.ifname_to_slab, &self.fib.admitted_interfaces);
+        self.needs_reconcile_retry = retry_needed;
         Ok(())
     }
 
@@ -505,6 +518,21 @@ impl DataplaneWorker {
         if let Err(err) = self.reconcile_sockets() {
             tracing::warn!(error = %err, "dataplane socket reconcile failed");
         }
+    }
+
+    fn maybe_retry_reconcile(&mut self) {
+        if !self.needs_reconcile_retry {
+            return;
+        }
+        if self.last_reconcile_attempt.elapsed() < RECONCILE_RETRY_INTERVAL {
+            return;
+        }
+        tracing::debug!(
+            admitted_interfaces = self.fib.admitted_interfaces.len(),
+            current_sockets = self.ifname_to_slab.len(),
+            "retrying dataplane socket reconcile after earlier skip/failure"
+        );
+        self.best_effort_reconcile();
     }
 
     fn current_ifindices(&self) -> HashMap<Box<str>, u32> {
@@ -637,6 +665,19 @@ where
     SocketPlan { actions, skipped }
 }
 
+fn has_missing_admitted_sockets<S1, S2>(
+    current_ifnames: &HashMap<Box<str>, usize, S1>,
+    admitted_interfaces: &HashSet<Box<str>, S2>,
+) -> bool
+where
+    S1: BuildHasher,
+    S2: BuildHasher,
+{
+    admitted_interfaces
+        .iter()
+        .any(|ifname| !current_ifnames.contains_key(ifname.as_ref()))
+}
+
 fn open_udp_socket(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioUdpSocket> {
     let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_reuse_address(true)?;
@@ -706,7 +747,10 @@ mod tests {
     use ahash::RandomState;
     use hashbrown::{HashMap, HashSet};
 
-    use super::{SocketAction, decrement_hop_limit, ipv6_destination, plan_socket_actions};
+    use super::{
+        SocketAction, decrement_hop_limit, has_missing_admitted_sockets, ipv6_destination,
+        plan_socket_actions,
+    };
 
     fn sample_ipv6_packet(dst: Ipv6Addr, hop_limit: u8) -> Vec<u8> {
         let mut packet = vec![0u8; 40];
@@ -812,5 +856,24 @@ mod tests {
         assert_eq!(plan.skipped.len(), 1);
         assert_eq!(plan.skipped[0].ifname.as_ref(), "mesh1");
         assert_eq!(plan.skipped[0].reason, "temporary resolution failure");
+    }
+
+    #[test]
+    fn detects_missing_admitted_socket_entries() {
+        let mut current_ifnames = HashMap::with_hasher(RandomState::new());
+        current_ifnames.insert("mesh0".into(), 1usize);
+
+        let admitted_interfaces: HashSet<Box<str>> =
+            ["mesh0".into(), "mesh1".into()].into_iter().collect();
+        assert!(has_missing_admitted_sockets(
+            &current_ifnames,
+            &admitted_interfaces
+        ));
+
+        current_ifnames.insert("mesh1".into(), 2usize);
+        assert!(!has_missing_admitted_sockets(
+            &current_ifnames,
+            &admitted_interfaces
+        ));
     }
 }
