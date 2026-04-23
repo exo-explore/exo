@@ -40,6 +40,10 @@ frontend process yet. It should be removed once a real controller exists.
 It is also enough structure to begin building the actual dataplane without
 needing to perfect every IPC and control-plane detail first.
 
+Stable one-hop forwarding is now proven on the four-Mac Thunderbolt lab for an
+adjacent pair after switching dataplane TUN I/O on macOS to `tun-rs`
+`SyncDevice::recv`/`send` instead of raw fd `read`/`write`.
+
 ## The Most Important Architectural Decision
 
 The current codebase is already good enough to serve as the shell around a
@@ -98,18 +102,19 @@ The basic pieces are now in place:
 - socket reconcile is now best-effort under interface churn: transient
   resolution/open failures are logged and retried on later updates rather than
   killing the dataplane during reconcile.
-- packet-path socket/interface failures are now warn-and-drop rather than
-  immediately crashing the dataplane thread, and dataplane exit is reported back
-  into the routing stack directly.
+- the stable-link packet path is now working on the lab ring for adjacent
+  one-hop traffic.
 
 So the next step is no longer “invent or wire the modules”.
 
 It is:
 
-- exercise the real packet path end-to-end,
+- extend live validation from adjacent one-hop traffic to multi-hop and churn,
+- harden the remaining dataplane failure/reporting behavior under interface
+  churn,
 - confirm the interface-bound UDP socket model behaves correctly on the target
   machines,
-- and fill the first obvious protocol gaps such as ICMPv6 error handling.
+- and then fill the first obvious protocol gaps such as ICMPv6 error handling.
 
 For the current four-Mac Thunderbolt lab, the broad macOS `en*` admission
 heuristic has proven too permissive in practice. The current bring-up path is

@@ -177,6 +177,9 @@ of shortcuts that should be revisited later.
   - It still has hard-coded MTU and other tun-rs builder assumptions.
   - The dataplane still relies on `mio::unix::SourceFd` and `AsRawFd` to poll
     the TUN fd on Unix.
+  - On macOS, packet I/O must still go through `tun-rs`'s `SyncDevice::recv`
+    and `SyncDevice::send`; bypassing those with raw fd `read`/`write` breaks
+    utun packet-information handling even if `mio` polling itself is correct.
   - That low-level fd borrowing is smaller and safer than the old
     `unsafe`/owned-fd handoff, but it still keeps raw-fd details in the
     dataplane hot path.
