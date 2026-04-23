@@ -124,10 +124,14 @@ of shortcuts that should be revisited later.
 - Interface admission is still heuristic and too broad on macOS.
   Files:
   - `src/lib.rs` (`if_watcher`)
+  - `src/config.rs`
   Why this is a shortcut:
   - Any `en*` interface with link-local IPv6 and `is_up()` can still get pulled
     into Babel.
   - This can include unrelated Wi‑Fi, built-in Ethernet, USB Ethernet, etc.
+  - The current lab is working around this with
+    `BABBLER_INTERFACE_ALLOWLIST=en2,en3`, which is a useful bring-up escape
+    hatch but not the long-term admission policy.
   Follow-up:
   - Replace the current heuristic with a stronger admission policy
     (neighbor proof, richer metadata, or both).

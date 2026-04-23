@@ -9,6 +9,7 @@
 
 use color_eyre::eyre::{self, eyre};
 use ipnet::Ipv6Net;
+use std::collections::HashSet;
 use std::env;
 use std::net::Ipv6Addr;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,7 @@ use std::path::{Path, PathBuf};
 pub const PUBLIC_SOCKET_PATH_ENV: &str = "BABBLER_SOCKET_PATH";
 pub const NODE_ID_FILE_ENV: &str = "BABBLER_NODE_ID_FILE";
 pub const ROUTER_UDP_PORT_ENV: &str = "BABBLER_ROUTER_UDP_PORT";
+pub const INTERFACE_ALLOWLIST_ENV: &str = "BABBLER_INTERFACE_ALLOWLIST";
 
 pub const DEFAULT_PUBLIC_SOCKET_PATH: &str = {
     #[cfg(target_os = "macos")]
@@ -96,4 +98,25 @@ impl Config {
             exo_ula_prefix: EXO_ULA_PREFIX,
         })
     }
+}
+
+pub fn interface_allowlist_from_env() -> eyre::Result<Option<HashSet<Box<str>>>> {
+    let Ok(raw) = env::var(INTERFACE_ALLOWLIST_ENV) else {
+        return Ok(None);
+    };
+
+    let allowlist = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| name.into())
+        .collect::<HashSet<Box<str>>>();
+
+    if allowlist.is_empty() {
+        return Err(eyre!(
+            "{INTERFACE_ALLOWLIST_ENV} was set but contained no interface names"
+        ));
+    }
+
+    Ok(Some(allowlist))
 }

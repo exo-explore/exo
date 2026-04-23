@@ -35,7 +35,7 @@ then start `babblerd`:
 ```sh
 cd ~/babeld-exo
 git pull
-RUST_LOG=info sudo -E nix run .#babblerd --impure
+BABBLER_INTERFACE_ALLOWLIST=en2,en3 RUST_LOG=info sudo -E nix run .#babblerd --impure
 ```
 
 ## Important Current Note

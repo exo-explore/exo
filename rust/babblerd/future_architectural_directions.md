@@ -111,6 +111,11 @@ It is:
   machines,
 - and fill the first obvious protocol gaps such as ICMPv6 error handling.
 
+For the current four-Mac Thunderbolt lab, the broad macOS `en*` admission
+heuristic has proven too permissive in practice. The current bring-up path is
+using `BABBLER_INTERFACE_ALLOWLIST=en2,en3` so only the known Thunderbolt links
+participate while the long-term admission policy is still being refined.
+
 The current tree now owns the kernel route that steers overlay traffic into the
 resident TUN interface:
 

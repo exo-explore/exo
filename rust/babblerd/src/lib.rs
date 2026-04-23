@@ -45,7 +45,7 @@ pub mod if_watcher {
     use netwatch::interfaces::{Interface, IpNet};
     use tokio::sync::mpsc;
 
-    use crate::config::{EXO_ULA_PREFIX, PHYSICAL_LINK_MTU};
+    use crate::config::{EXO_ULA_PREFIX, PHYSICAL_LINK_MTU, interface_allowlist_from_env};
     use crate::ip_manager::remove_ip;
     use crate::{BabbleError, Result, babel::Babble};
 
@@ -151,6 +151,12 @@ pub mod if_watcher {
     #[tracing::instrument(skip(send))]
     pub async fn watch(send: mpsc::Sender<Babble>) -> Result<()> {
         let mut ready_ifaces = HashSet::new();
+        let interface_allowlist = interface_allowlist_from_env()
+            .map_err(|e| BabbleError::Other(format!("invalid interface allowlist: {e}")))?;
+
+        if let Some(allowlist) = &interface_allowlist {
+            tracing::info!(?allowlist, "interface allowlist active");
+        }
 
         tracing::info!("starting interface monitor");
         let mon = netwatch::netmon::Monitor::new()
@@ -190,6 +196,17 @@ pub mod if_watcher {
         let mut mon_stream = mon.interface_state().stream();
         while let Some(s) = mon_stream.next().await {
             for iface in s.interfaces.values() {
+                if let Some(allowlist) = &interface_allowlist
+                    && !allowlist.contains(iface.name())
+                {
+                    tracing::debug!(
+                        "skipping interface {} because it is not in {}",
+                        iface.name(),
+                        crate::config::INTERFACE_ALLOWLIST_ENV
+                    );
+                    continue;
+                }
+
                 if !iface.is_real_interface() {
                     continue;
                 }
