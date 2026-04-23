@@ -56,30 +56,38 @@ uv run python mlx_tinygrad_interop/bench_raw_conversion.py --dtype float32 --siz
 Validated remote command on `e16`:
 
 ```bash
-uv run python mlx_tinygrad_interop/bench_raw_conversion.py --dtype float32 --sizes 7168 --warmup 32 --samples 5 --min-batch-us 1000
+uv run python mlx_tinygrad_interop/bench_raw_conversion.py --dtype float32 --sizes 7168 --warmup 64 --samples 7 --min-batch-us 1000
 ```
 
 Observed `7168`-byte results on that run:
 
 - `unsafe_helper_bridge`
-  - `mlx_to_tinygrad`: `22.212 us` min, `22.372 us` median
-  - `tinygrad_to_mlx`: `28.437 us` min, `28.548 us` median
+  - `mlx_to_tinygrad`: `22.795 us` min, `22.864 us` median
+  - `tinygrad_to_mlx`: `29.982 us` min, `30.078 us` median
+- `single_entry_bridge`
+  - `mlx_to_tinygrad`: `22.507 us` min, `22.577 us` median
+- `reused_wrapper_bridge`
+  - `mlx_to_tinygrad`: `0.606 us` min, `0.608 us` median
 - `unsafe_helper_legacy`
-  - `mlx_to_tinygrad`: `35.296 us` min, `35.483 us` median
+  - `mlx_to_tinygrad`: `35.724 us` min, `35.859 us` median
 - `unsafe_helper_maybe_copy`
-  - `tinygrad_to_mlx`: `28.500 us` min, `28.723 us` median
+  - `tinygrad_to_mlx`: `29.969 us` min, `30.036 us` median
 - `memoryview_copy`
-  - `mlx_to_tinygrad`: `38.712 us` min, `39.033 us` median
-  - `tinygrad_to_mlx`: `2.603 us` min, `2.615 us` median
+  - `mlx_to_tinygrad`: `39.382 us` min, `39.878 us` median
+  - `tinygrad_to_mlx`: `2.648 us` min, `2.686 us` median
 - `numpy_baseline`
-  - `mlx_to_tinygrad`: `285.083 us` min, `286.635 us` median
-  - `tinygrad_to_mlx`: `13.249 us` min, `13.265 us` median
+  - `mlx_to_tinygrad`: `290.083 us` min, `291.323 us` median
+  - `tinygrad_to_mlx`: `13.754 us` min, `13.780 us` median
 
 Later remote microbench runs showed the split more clearly:
 
-- `MLX -> tinygrad` is dominated by tinygrad import / wrapper creation.
-- The lower-overhead tinygrad import helper cuts `MLX -> tinygrad` by about
-  `1.6x`, but still leaves it around `22 us`.
+- `MLX -> tinygrad single_entry_bridge` barely changes the fresh-wrapper cost,
+  so exporter dict marshalling was never the main problem.
+- `MLX -> tinygrad` is dominated by tinygrad import / wrapper construction when
+  a fresh tensor is created each time.
+- The reusable tinygrad borrower drops `MLX -> tinygrad` into the sub-microsecond
+  range across the measured sizes, which means wrapper reuse is the decisive
+  optimization on this host.
 - The strict alias-only `tinygrad -> MLX` helper succeeds on `e16`; its timing
   is effectively the same as the maybe-copy helper on that host.
 - `tinygrad -> MLX` is dominated by tinygrad export in the unsafe helper path.
@@ -87,6 +95,9 @@ Later remote microbench runs showed the split more clearly:
   for small tensors.
 - Offsetted MLX slices now export both logical bytes and backing-buffer bytes,
   and a nonzero-offset slice was validated successfully into tinygrad.
+- The reusable borrower returns the same tinygrad `Tensor` object rebound to
+  new Metal storage, so it is narrower than an ordinary "new tensor each call"
+  conversion helper.
 
 ## Current Scope
 
