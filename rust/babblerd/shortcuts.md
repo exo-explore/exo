@@ -139,10 +139,12 @@ of shortcuts that should be revisited later.
   - `src/fib.rs`
   - `src/dataplane.rs`
   Why this is a shortcut:
-  - Snapshot routes are keyed by `ifname`, and the dataplane reconciles sockets
-    by resolving those names to ifindexes at update time.
-  - That is much better than snapshot-local interface slots, but it still
-    assumes interface names are stable enough to be the control-plane identity.
+  - The dataplane now owns sockets from the admitted interface set rather than
+    inferring them only from current routes, and it refreshes retained sockets
+    when a name resolves to a new ifindex.
+  - That fixes the earlier route-derived and stale-ifindex bugs, but the design
+    still assumes interface names are stable enough to be the long-lived
+    control-plane identity.
   Follow-up:
   - Revisit whether the long-term identity should be richer than `ifname`,
     especially if interface renames/hotplug churn become common during runtime.

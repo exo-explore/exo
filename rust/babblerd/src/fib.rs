@@ -4,12 +4,14 @@
 //! `FibSnapshot` is the reduced dataplane view:
 //!
 //! - exact-match IPv6 host routes only for now,
+//! - admitted interface ownership alongside those routes,
 //! - one immutable snapshot swapped wholesale into the dataplane,
 //! - keyed for fast lookup rather than protocol fidelity.
 //!
 //! The v1 forwarding model is intentionally narrow:
 //!
 //! - local addresses are explicit inputs, not inferred from every xroute,
+//! - only admitted/up interfaces are exposed to the dataplane,
 //! - only installed IPv6 `/128` routes are considered,
 //! - only destination-based forwarding is modeled,
 //! - routes with non-link-local next hops are ignored.
@@ -35,6 +37,7 @@ pub struct FibEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FibSnapshot {
     pub locals: HashSet<HostKey, RandomState>,
+    pub admitted_interfaces: HashSet<Box<str>, RandomState>,
     pub routes: HashMap<HostKey, FibEntry, RandomState>,
 }
 
@@ -62,6 +65,13 @@ impl FibBuilder {
             locals.insert(host_key(*addr));
         }
 
+        let mut admitted_interfaces = HashSet::with_hasher(RandomState::new());
+        for interface in state.interfaces.values() {
+            if interface.up {
+                admitted_interfaces.insert(interface.ifname.clone());
+            }
+        }
+
         let mut routes = HashMap::with_hasher(RandomState::new());
         let mut route_scores = HashMap::with_hasher(RandomState::new());
 
@@ -79,6 +89,9 @@ impl FibBuilder {
             let Some((dst, next_hop_ll)) = route_to_host(route) else {
                 continue;
             };
+            if !admitted_interfaces.contains(route.ifname.as_ref()) {
+                continue;
+            }
             if locals.contains(&dst) {
                 continue;
             }
@@ -110,7 +123,11 @@ impl FibBuilder {
             }
         }
 
-        FibSnapshot { locals, routes }
+        FibSnapshot {
+            locals,
+            admitted_interfaces,
+            routes,
+        }
     }
 }
 
@@ -118,6 +135,7 @@ impl FibSnapshot {
     pub fn empty() -> Self {
         Self {
             locals: HashSet::with_hasher(RandomState::new()),
+            admitted_interfaces: HashSet::with_hasher(RandomState::new()),
             routes: HashMap::with_hasher(RandomState::new()),
         }
     }
@@ -173,7 +191,7 @@ mod tests {
     use std::net::{IpAddr, Ipv6Addr};
 
     use crate::babel::Eui64;
-    use crate::babel::line::{Event, EventKind, RouteEvent};
+    use crate::babel::line::{Event, EventKind, InterfaceEvent, RouteEvent};
     use crate::babel::state::BabelState;
 
     use super::FibBuilder;
@@ -202,9 +220,20 @@ mod tests {
         })
     }
 
+    fn interface(ifname: &str, up: bool) -> Event {
+        Event::Interface(InterfaceEvent {
+            kind: EventKind::Add,
+            ifname: ifname.into(),
+            up,
+            ipv6: None,
+            ipv4: None,
+        })
+    }
+
     #[test]
     fn derives_local_and_host_routes() {
         let mut state = BabelState::new();
+        state.apply(interface("en2", true));
         state.apply(route(
             1,
             "fde0::1234/128",
@@ -219,6 +248,7 @@ mod tests {
         let fib = FibBuilder::new(["fde0::1".parse().unwrap()], 1452).derive(&state);
 
         assert!(fib.is_local("fde0::1".parse().unwrap()));
+        assert!(fib.admitted_interfaces.contains("en2"));
         let entry = fib.lookup("fde0::1234".parse().unwrap()).unwrap();
         assert_eq!(entry.next_hop_ll, "fe80::1".parse::<Ipv6Addr>().unwrap());
         assert_eq!(entry.ifname.as_ref(), "en2");
@@ -228,6 +258,8 @@ mod tests {
     #[test]
     fn skips_non_installed_or_non_host_routes() {
         let mut state = BabelState::new();
+        state.apply(interface("en2", true));
+        state.apply(interface("en3", true));
         state.apply(route(
             1,
             "fde0::abcd/128",
@@ -256,6 +288,8 @@ mod tests {
     #[test]
     fn prefers_lower_metric_when_multiple_installed_routes_exist() {
         let mut state = BabelState::new();
+        state.apply(interface("en2", true));
+        state.apply(interface("en3", true));
         state.apply(route(
             1,
             "fde0::beef/128",
@@ -281,5 +315,26 @@ mod tests {
         let entry = fib.lookup("fde0::beef".parse().unwrap()).unwrap();
         assert_eq!(entry.next_hop_ll, "fe80::2".parse::<Ipv6Addr>().unwrap());
         assert_eq!(entry.ifname.as_ref(), "en3");
+    }
+
+    #[test]
+    fn skips_routes_for_non_admitted_interfaces() {
+        let mut state = BabelState::new();
+        state.apply(interface("en2", false));
+        state.apply(route(
+            1,
+            "fde0::cafe/128",
+            "::/0",
+            true,
+            "fe80::1".parse().unwrap(),
+            "en2",
+            96,
+            32,
+        ));
+
+        let fib = FibBuilder::new(["fde0::1".parse().unwrap()], 1452).derive(&state);
+
+        assert!(fib.admitted_interfaces.is_empty());
+        assert!(fib.lookup("fde0::cafe".parse().unwrap()).is_none());
     }
 }

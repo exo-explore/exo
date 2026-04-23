@@ -16,6 +16,7 @@
 //! - and snapshot application reconciles the registry rather than trusting
 //!   snapshot-local slot numbers.
 
+use std::hash::BuildHasher;
 use std::io::{self, ErrorKind};
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6, UdpSocket};
 use std::num::NonZeroU32;
@@ -25,8 +26,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use arrayvec::ArrayVec;
-use color_eyre::eyre::{Result, WrapErr, eyre};
-use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
+use color_eyre::eyre::{eyre, Result, WrapErr};
+use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError};
 use hashbrown::{HashMap, HashSet};
 use mio::net::UdpSocket as MioUdpSocket;
 use mio::unix::SourceFd;
@@ -82,6 +83,13 @@ struct InterfaceSocket {
     ifname: Box<str>,
     ifindex: u32,
     socket: MioUdpSocket,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SocketAction {
+    Add { ifname: Box<str>, ifindex: u32 },
+    Refresh { ifname: Box<str>, ifindex: u32 },
+    Remove { ifname: Box<str> },
 }
 
 impl Dataplane {
@@ -316,36 +324,41 @@ impl DataplaneWorker {
     }
 
     fn reconcile_sockets(&mut self) -> Result<()> {
-        let required: HashSet<Box<str>> = self
-            .fib
-            .routes
-            .values()
-            .map(|route| route.ifname.clone())
-            .collect();
+        let current_ifindices = self.current_ifindices();
+        let actions = plan_socket_actions(
+            &current_ifindices,
+            &self.fib.admitted_interfaces,
+            |ifname| {
+                if_nametoindex(ifname).wrap_err_with(|| format!("resolving ifindex for {}", ifname))
+            },
+        )?;
 
-        let stale: Vec<Box<str>> = self
-            .ifname_to_slab
-            .keys()
-            .filter(|ifname| !required.contains(*ifname))
-            .cloned()
-            .collect();
-        for ifname in stale {
-            self.remove_socket(&ifname)?;
-        }
-
-        for ifname in required {
-            if self.ifname_to_slab.contains_key(ifname.as_ref()) {
-                continue;
+        for action in actions {
+            match action {
+                SocketAction::Add { ifname, ifindex } => self.add_socket(ifname, ifindex)?,
+                SocketAction::Refresh { ifname, ifindex } => {
+                    self.remove_socket(&ifname)?;
+                    self.add_socket(ifname, ifindex)?;
+                }
+                SocketAction::Remove { ifname } => self.remove_socket(&ifname)?,
             }
-            self.add_socket(ifname)?;
         }
 
         Ok(())
     }
 
-    fn add_socket(&mut self, ifname: Box<str>) -> Result<()> {
-        let ifindex = if_nametoindex(ifname.as_ref())
-            .wrap_err_with(|| format!("resolving ifindex for {}", ifname))?;
+    fn current_ifindices(&self) -> HashMap<Box<str>, u32> {
+        self.ifname_to_slab
+            .iter()
+            .filter_map(|(ifname, slab_key)| {
+                self.sockets
+                    .get(*slab_key)
+                    .map(|socket| (ifname.clone(), socket.ifindex))
+            })
+            .collect()
+    }
+
+    fn add_socket(&mut self, ifname: Box<str>, ifindex: u32) -> Result<()> {
         let socket = open_udp_socket(self.udp_port, ifname.as_ref(), ifindex)
             .wrap_err_with(|| format!("opening UDP socket for {}", ifname))?;
 
@@ -382,15 +395,47 @@ impl DataplaneWorker {
     }
 }
 
+fn plan_socket_actions<F, S1, S2>(
+    current_ifindices: &HashMap<Box<str>, u32, S1>,
+    admitted_interfaces: &HashSet<Box<str>, S2>,
+    mut resolve_ifindex: F,
+) -> Result<Vec<SocketAction>>
+where
+    F: FnMut(&str) -> Result<u32>,
+    S1: BuildHasher,
+    S2: BuildHasher,
+{
+    let mut actions = Vec::new();
+
+    let mut stale: Vec<Box<str>> = current_ifindices
+        .keys()
+        .filter(|ifname| !admitted_interfaces.contains(*ifname))
+        .cloned()
+        .collect();
+    stale.sort();
+    for ifname in stale {
+        actions.push(SocketAction::Remove { ifname });
+    }
+
+    let mut required: Vec<Box<str>> = admitted_interfaces.iter().cloned().collect();
+    required.sort();
+    for ifname in required {
+        let ifindex = resolve_ifindex(ifname.as_ref())?;
+        match current_ifindices.get(ifname.as_ref()).copied() {
+            None => actions.push(SocketAction::Add { ifname, ifindex }),
+            Some(existing_ifindex) if existing_ifindex != ifindex => {
+                actions.push(SocketAction::Refresh { ifname, ifindex });
+            }
+            Some(_) => {}
+        }
+    }
+
+    Ok(actions)
+}
+
 fn open_udp_socket(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioUdpSocket> {
     let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_reuse_address(true)?;
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios"
-    ))]
     socket.set_reuse_port(true)?;
     socket.set_only_v6(true)?;
     socket.set_nonblocking(true)?;
@@ -402,7 +447,7 @@ fn open_udp_socket(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioUdpSo
         ));
     };
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(target_os = "linux")]
     socket.bind_device(Some(ifname.as_bytes()))?;
     socket.bind_device_by_index_v6(Some(ifindex))?;
     socket.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0).into())?;
@@ -446,7 +491,10 @@ fn decrement_hop_limit(packet: &mut [u8]) -> bool {
 mod tests {
     use std::net::Ipv6Addr;
 
-    use super::{decrement_hop_limit, ipv6_destination};
+    use ahash::RandomState;
+    use hashbrown::{HashMap, HashSet};
+
+    use super::{decrement_hop_limit, ipv6_destination, plan_socket_actions, SocketAction};
 
     fn sample_ipv6_packet(dst: Ipv6Addr, hop_limit: u8) -> Vec<u8> {
         let mut packet = vec![0u8; 40];
@@ -472,5 +520,56 @@ mod tests {
         assert!(decrement_hop_limit(&mut packet));
         assert_eq!(packet[7], 1);
         assert!(!decrement_hop_limit(&mut packet));
+    }
+
+    #[test]
+    fn socket_plan_uses_admitted_interfaces_not_routes() {
+        let current_ifindices = HashMap::with_hasher(RandomState::new());
+        let admitted_interfaces: HashSet<Box<str>> = ["mesh0".into()].into_iter().collect();
+
+        let actions = plan_socket_actions(&current_ifindices, &admitted_interfaces, |ifname| {
+            Ok(match ifname {
+                "mesh0" => 7,
+                _ => unreachable!(),
+            })
+        })
+        .unwrap();
+
+        assert_eq!(
+            actions,
+            vec![SocketAction::Add {
+                ifname: "mesh0".into(),
+                ifindex: 7,
+            }]
+        );
+    }
+
+    #[test]
+    fn socket_plan_refreshes_ifindex_changes_and_removes_stale() {
+        let mut current_ifindices = HashMap::with_hasher(RandomState::new());
+        current_ifindices.insert("stale0".into(), 1);
+        current_ifindices.insert("mesh0".into(), 99);
+
+        let admitted_interfaces: HashSet<Box<str>> = ["mesh0".into()].into_iter().collect();
+        let actions = plan_socket_actions(&current_ifindices, &admitted_interfaces, |ifname| {
+            Ok(match ifname {
+                "mesh0" => 7,
+                _ => unreachable!(),
+            })
+        })
+        .unwrap();
+
+        assert_eq!(
+            actions,
+            vec![
+                SocketAction::Remove {
+                    ifname: "stale0".into(),
+                },
+                SocketAction::Refresh {
+                    ifname: "mesh0".into(),
+                    ifindex: 7,
+                },
+            ]
+        );
     }
 }

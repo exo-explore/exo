@@ -86,11 +86,15 @@ This should be the next major feature.
 The basic pieces are now in place:
 
 - `fib.rs` derives immutable forwarding snapshots from `BabelState`,
+- those snapshots now carry the admitted interface set as well as routes,
 - `dataplane.rs` provides a dedicated-thread hot-path module using `mio`,
   `socket2`, `crossbeam-channel`, `hashbrown`, `ahash`, `slab`, and
   `arrayvec`.
 - `routing_stack.rs` now starts the dataplane and publishes coalesced
   `FibSnapshot` updates into it.
+- dataplane socket ownership is now driven by admitted interfaces rather than
+  only by currently selected routes, and retained sockets are refreshed when an
+  `ifname` resolves to a new ifindex.
 
 So the next step is no longer “invent or wire the modules”.
 
