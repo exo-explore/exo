@@ -120,7 +120,6 @@ impl BabelRuntime {
             .arg("-C")
             .arg("redistribute local deny")
             .arg(iface)
-            .arg(iface)
             .spawn()
         {
             Ok(proc) => proc,

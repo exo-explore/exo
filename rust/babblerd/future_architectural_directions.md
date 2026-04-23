@@ -123,6 +123,30 @@ formed neighbour adjacencies on, but the watcher/bootstrap side is still broad
 and may still need a per-host allowlist during bring-up while the long-term
 admission policy is refined.
 
+The current broad-admission behavior is acceptable for v1 as long as point to
+point and multihop forwarding remain reliable, but it does mean that multiple
+wired interfaces can become equally admissible at once.
+
+The desired longer-term policy is:
+
+- admit any interface that Babel can actually form a live neighbour adjacency
+  on, regardless of naming convention,
+- keep that broad admissibility for reachability,
+- but rank competing links by measured quality rather than treating all wired
+  links as equivalent.
+
+That future link-scoring direction likely requires:
+
+- computing local link metrics such as latency, loss, and possibly sustainable
+  throughput without generating excessive probe traffic,
+- sharing or projecting those metrics into the distributed routing view in a
+  way Babel can actually consume,
+- and then teaching the Babel path-selection logic to prefer the better direct
+  link when multiple usable adjacencies exist.
+
+That is explicitly post-v1 work. For the first version, correctness and
+reliability of the multihop mesh matter more than optimal link preference.
+
 The current tree now owns the kernel route that steers overlay traffic into the
 resident TUN interface:
 

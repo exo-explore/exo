@@ -136,10 +136,16 @@ of shortcuts that should be revisited later.
   - But the watcher/bootstrap side is still using the coarse `en*` heuristic,
     and the env allowlist is still just a bring-up escape hatch rather than the
     long-term admission policy.
+  - When multiple admissible wired links exist, Babel's current wired scoring
+    still treats them essentially flatly, so path selection is based on Babel's
+    existing costs rather than measured latency/throughput differences between
+    those direct links.
   Follow-up:
   - Replace the watcher-side bootstrap heuristic with a stronger admission
     policy (neighbor proof, richer metadata, or both), so Babel does not need
     broad speculative interface admission just to discover the right links.
+  - Add a future link-quality scoring path so broadly admissible direct links
+    can still be ranked by actual observed quality rather than flat wired cost.
 
 - The dataplane now derives immutable FIB snapshots and runs on a dedicated
   thread, but it still assumes interface names are the stable long-lived

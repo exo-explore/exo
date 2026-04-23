@@ -220,7 +220,7 @@ impl DataplaneWorker {
             for token in ready {
                 match token {
                     TOKEN_TUN => {
-                        tracing::info!("dataplane poll signaled TUN readable");
+                        tracing::trace!("dataplane poll signaled TUN readable");
                         self.handle_tun_ready()?
                     }
                     Token(n) => {
@@ -274,24 +274,24 @@ impl DataplaneWorker {
             return Err(eyre!("TUN device closed"));
         }
 
-        tracing::info!(bytes = packet_len, "dataplane read inner packet from TUN");
+        tracing::debug!(bytes = packet_len, "dataplane read inner packet from TUN");
 
         let packet = &buf[..packet_len];
         let Some(dst) = ipv6_destination(packet) else {
             tracing::debug!("dropping invalid inner packet from TUN");
             return Ok(());
         };
-        tracing::info!(bytes = packet_len, destination = %dst, "dataplane parsed TUN packet destination");
+        tracing::debug!(bytes = packet_len, destination = %dst, "dataplane parsed TUN packet destination");
         if self.fib.is_local(dst) {
-            tracing::info!(destination = %dst, "dataplane dropping self-directed packet from TUN");
+            tracing::debug!(destination = %dst, "dataplane dropping self-directed packet from TUN");
             return Ok(());
         }
 
         let Some(route) = self.fib.lookup(dst).cloned() else {
-            tracing::info!(destination = %dst, "dataplane has no route for packet from TUN");
+            tracing::debug!(destination = %dst, "dataplane has no route for packet from TUN");
             return Ok(());
         };
-        tracing::info!(
+        tracing::debug!(
             destination = %dst,
             interface = %route.ifname,
             next_hop = %route.next_hop_ll,
@@ -323,7 +323,7 @@ impl DataplaneWorker {
             }
         };
 
-        tracing::info!(
+        tracing::debug!(
             interface = %ifname,
             peer = %peer,
             bytes = packet_len,
@@ -335,7 +335,7 @@ impl DataplaneWorker {
             tracing::debug!(peer = %peer, "dropping invalid UDP payload");
             return Ok(());
         };
-        tracing::info!(
+        tracing::debug!(
             interface = %ifname,
             peer = %peer,
             destination = %dst,
@@ -344,7 +344,7 @@ impl DataplaneWorker {
         );
 
         if self.fib.is_local(dst) {
-            tracing::info!(
+            tracing::debug!(
                 interface = %ifname,
                 peer = %peer,
                 destination = %dst,
@@ -361,10 +361,10 @@ impl DataplaneWorker {
         }
 
         let Some(route) = self.fib.lookup(dst).cloned() else {
-            tracing::info!(destination = %dst, "dataplane has no route for forwarded UDP packet");
+            tracing::debug!(destination = %dst, "dataplane has no route for forwarded UDP packet");
             return Ok(());
         };
-        tracing::info!(
+        tracing::debug!(
             destination = %dst,
             interface = %route.ifname,
             next_hop = %route.next_hop_ll,
@@ -388,7 +388,7 @@ impl DataplaneWorker {
             0,
             socket.ifindex,
         ));
-        tracing::info!(
+        tracing::debug!(
             interface = %socket.ifname,
             ifindex = socket.ifindex,
             peer = %peer,
@@ -397,7 +397,7 @@ impl DataplaneWorker {
         );
         match socket.socket.send_to(packet, peer) {
             Ok(sent) => {
-                tracing::info!(
+                tracing::debug!(
                     interface = %socket.ifname,
                     ifindex = socket.ifindex,
                     peer = %peer,
