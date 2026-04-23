@@ -431,6 +431,7 @@ cuda13 = [
     { name = "mlx", version = "0.31.2.dev20260422+ec49d18e", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#ec49d18ec4cfba0e0c7a37f20d1cf4d75fe56731" }, marker = "(sys_platform == 'darwin' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx-cuda-13", marker = "sys_platform == 'linux'" },
     { name = "mlx-lm", version = "0.31.3", source = { git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Ffix-arrayscache-leak#c7010341e1f41ac15815feb5dc55134f44e3b044" }, marker = "sys_platform == 'linux'" },
+    { name = "torch", marker = "sys_platform == 'linux'" },
 ]
 
 [package.dev-dependencies]
