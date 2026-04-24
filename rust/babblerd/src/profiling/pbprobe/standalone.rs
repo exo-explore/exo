@@ -400,9 +400,12 @@ fn receive_bulk_sample(
     let mut bufs = vec![vec![0_u8; recv_buffer_bytes]; BATCH_SIZE];
     let mut metas = vec![RecvMeta::default(); BATCH_SIZE];
     let mut tracker = BulkSampleTracker::new(sample_id, bulk_len, started);
+    socket
+        .set_read_timeout(Some(config.rts_timeout))
+        .wrap_err("setting PBProbe bulk receive timeout")?;
 
     loop {
-        if !set_timeout_until(socket, deadline)? {
+        if Instant::now() >= deadline {
             return Ok(tracker.finish());
         }
 
