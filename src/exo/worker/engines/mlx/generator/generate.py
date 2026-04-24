@@ -2,7 +2,6 @@ import contextlib
 import functools
 import math
 import time
-from copy import deepcopy
 from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
@@ -10,7 +9,7 @@ from mlx_lm.generate import (
     maybe_quantize_kv_cache,
     stream_generate,
 )
-from mlx_lm.models.cache import ArraysCache, RotatingKVCache
+from mlx_lm.models.cache import ArraysCache, CacheList, RotatingKVCache
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
@@ -47,6 +46,7 @@ from exo.worker.engines.mlx.cache import (
     encode_prompt,
     has_non_kv_caches,
     make_kv_cache,
+    restore_snapshot_entry,
     snapshot_ssm_states,
 )
 from exo.worker.engines.mlx.constants import (
@@ -370,14 +370,18 @@ def prefill(
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
-    pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
+    pre_gen = snapshots[-2] if has_ssm else None
     for i, c in enumerate(cache):
-        if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
+        non_trimmable = isinstance(c, (ArraysCache, RotatingKVCache)) or (
+            isinstance(c, CacheList) and not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
+        )
+        if has_ssm and non_trimmable:
             assert pre_gen is not None
-            if pre_gen.states[i] is not None:
-                cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
+            restored = restore_snapshot_entry(pre_gen.states[i])
+            if restored is not None:
+                cache[i] = restored  # type: ignore
         else:
-            assert not isinstance(c, (ArraysCache, RotatingKVCache))
+            assert not non_trimmable
             c.trim(2)
 
     elapsed = time.perf_counter() - start_time

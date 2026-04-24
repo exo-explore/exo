@@ -9,7 +9,7 @@ quantization = "8bit"
 base_model = "DeepSeek V4 Flash"
 capabilities = ["text", "thinking", "thinking_toggle"]
 
-context_length = 131072
+context_length = 1048576
 
 [storage_size]
 in_bytes = 155095760030

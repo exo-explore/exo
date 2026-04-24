@@ -122,8 +122,50 @@ def load_tokenizer_for_bench(model_id: str) -> Any:
 
         return hf_tokenizer
 
-    # Default: use AutoTokenizer
-    return AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    # Default: use AutoTokenizer, with a fallback for model types Transformers
+    # doesn't recognize yet (e.g. deepseek_v4 until HF transformers merges the
+    # registration). Mirrors mlx_lm.tokenizer_utils' fallback path.
+    try:
+        return AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    except (AttributeError, ValueError):
+        from huggingface_hub import snapshot_download
+        from transformers import PretrainedConfig
+
+        model_path = Path(
+            snapshot_download(
+                model_id,
+                allow_patterns=[
+                    "*.json",
+                    "*.py",
+                    "tokenizer.model",
+                    "*.tiktoken",
+                    "tiktoken.model",
+                    "*.txt",
+                    "*.jsonl",
+                    "*.jinja",
+                ],
+            )
+        )
+        stub_kwargs: dict[str, Any] = {}
+        config_file = model_path / "config.json"
+        if config_file.exists():
+            with open(config_file) as f:
+                raw = json.load(f)
+            for key in (
+                "model_type",
+                "max_position_embeddings",
+                "vocab_size",
+                "bos_token_id",
+                "eos_token_id",
+                "pad_token_id",
+            ):
+                if key in raw:
+                    stub_kwargs[key] = raw[key]
+        return AutoTokenizer.from_pretrained(
+            str(model_path),
+            config=PretrainedConfig(**stub_kwargs),
+            trust_remote_code=True,
+        )
 
 
 def format_peak_memory(b: float) -> str:
@@ -278,9 +320,19 @@ class PromptSizer:
     def _make_counter(tokenizer: Any) -> Callable[[str], int]:
         def count_fn(user_content: str) -> int:
             messages = [{"role": "user", "content": user_content}]
-            ids = tokenizer.apply_chat_template(
-                messages, tokenize=True, add_generation_prompt=True
-            )
+            try:
+                ids = tokenizer.apply_chat_template(
+                    messages, tokenize=True, add_generation_prompt=True
+                )
+            except ValueError:
+                # Models without a Jinja chat template (e.g. DeepSeek V4 which
+                # ships its own Python encoder). Use the exo-side V4 encoder.
+                from exo.worker.engines.mlx.deepseek_v4_encoding import (
+                    encode_messages as encode_v4,
+                )
+
+                prompt = encode_v4(messages, thinking_mode="thinking")
+                ids = tokenizer.encode(prompt, add_special_tokens=False)
             # Fix for transformers 5.x
             if hasattr(ids, "input_ids"):
                 ids = ids.input_ids
