@@ -372,35 +372,17 @@ fn receive_bulk_sample(
 ) -> Result<Option<AcceptedSample>> {
     let deadline = started + config.rts_timeout;
     let mut buf = vec![0_u8; MAX_UDP_PACKET_BYTES];
-    let mut seen = vec![false; usize::try_from(bulk_len.saturating_add(1)).unwrap_or(0)];
-    let mut seen_count = 0_usize;
-    let mut first_rx = None;
-    let mut last_rx = None;
-    let mut server_issue_duration = None;
+    let mut tracker = BulkSampleTracker::new(sample_id, bulk_len, started);
 
     loop {
         if !set_timeout_until(socket, deadline)? {
-            return Ok(finish_sample(
-                sample_id,
-                bulk_len,
-                started,
-                first_rx,
-                last_rx,
-                server_issue_duration,
-            ));
+            return Ok(tracker.finish());
         }
 
         let (packet_len, _from) = match socket.recv_from(&mut buf) {
             Ok(received) => received,
             Err(err) if is_timeout(&err) => {
-                return Ok(finish_sample(
-                    sample_id,
-                    bulk_len,
-                    started,
-                    first_rx,
-                    last_rx,
-                    server_issue_duration,
-                ));
+                return Ok(tracker.finish());
             }
             Err(err) if err.kind() == ErrorKind::Interrupted => continue,
             Err(err) => return Err(err).wrap_err("receiving PBProbe bulk packet"),
@@ -420,69 +402,84 @@ fn receive_bulk_sample(
             continue;
         }
 
-        let now = Instant::now();
-        if mark_seen(&mut seen, header.seq) {
-            seen_count = seen_count.saturating_add(1);
-        }
-        if header.seq == 0 {
-            first_rx = Some(now);
-        }
-        if header.seq == bulk_len {
-            last_rx = Some(now);
-            if aux != 0 {
-                server_issue_duration = Some(Duration::from_nanos(u64::from(aux)));
-            }
-        }
-
-        if seen_count == seen.len() {
-            return Ok(finish_sample(
-                sample_id,
-                bulk_len,
-                started,
-                first_rx,
-                last_rx,
-                server_issue_duration,
-            ));
+        tracker.record(header.seq, Instant::now(), aux);
+        if tracker.is_complete() {
+            return Ok(tracker.finish());
         }
     }
 }
 
-fn finish_sample(
+#[derive(Debug)]
+struct BulkSampleTracker {
     sample_id: u32,
     bulk_len: u32,
     started: Instant,
+    next_seq: u32,
     first_rx: Option<Instant>,
     last_rx: Option<Instant>,
     server_issue_duration: Option<Duration>,
-) -> Option<AcceptedSample> {
-    let first = first_rx?;
-    let last = last_rx?;
-    if last < first {
-        return None;
-    }
-
-    Some(AcceptedSample {
-        sample_id,
-        bulk_len,
-        delay_first: first.saturating_duration_since(started),
-        delay_last: last.saturating_duration_since(started),
-        dispersion: last.saturating_duration_since(first),
-        server_issue_duration,
-    })
+    valid: bool,
 }
 
-fn mark_seen(seen: &mut [bool], seq: u32) -> bool {
-    let Ok(index) = usize::try_from(seq) else {
-        return false;
-    };
-    let Some(slot) = seen.get_mut(index) else {
-        return false;
-    };
-    if *slot {
-        return false;
+impl BulkSampleTracker {
+    fn new(sample_id: u32, bulk_len: u32, started: Instant) -> Self {
+        Self {
+            sample_id,
+            bulk_len,
+            started,
+            next_seq: 0,
+            first_rx: None,
+            last_rx: None,
+            server_issue_duration: None,
+            valid: true,
+        }
     }
-    *slot = true;
-    true
+
+    fn record(&mut self, seq: u32, received: Instant, server_issue_nanos: u32) {
+        if !self.valid || seq < self.next_seq {
+            return;
+        }
+        if seq != self.next_seq {
+            self.valid = false;
+            return;
+        }
+
+        if seq == 0 {
+            self.first_rx = Some(received);
+        }
+        if seq == self.bulk_len {
+            self.last_rx = Some(received);
+            if server_issue_nanos != 0 {
+                self.server_issue_duration =
+                    Some(Duration::from_nanos(u64::from(server_issue_nanos)));
+            }
+        }
+        self.next_seq = self.next_seq.saturating_add(1);
+    }
+
+    fn is_complete(&self) -> bool {
+        self.valid && self.next_seq == self.bulk_len.saturating_add(1)
+    }
+
+    fn finish(&self) -> Option<AcceptedSample> {
+        if !self.is_complete() {
+            return None;
+        }
+        let first = self.first_rx?;
+        let last = self.last_rx?;
+        if last < first {
+            return None;
+        }
+
+        Some(AcceptedSample {
+            sample_id: self.sample_id,
+            bulk_len: self.bulk_len,
+            delay_first: first.saturating_duration_since(self.started),
+            delay_last: last.saturating_duration_since(self.started),
+            dispersion: last.saturating_duration_since(first),
+            server_issue_duration: self.server_issue_duration,
+        })
+    }
 }
 
 fn start_session(
@@ -756,10 +753,11 @@ fn format_optional_mbps(mbps: Option<f64>) -> String {
 #[cfg(test)]
 mod tests {
     use std::net::Ipv6Addr;
+    use std::time::{Duration, Instant};
 
     use clap::Parser;
 
-    use super::{Cli, Command, mark_seen};
+    use super::{BulkSampleTracker, Cli, Command};
 
     #[test]
     fn parses_server_options() {
@@ -814,12 +812,43 @@ mod tests {
     }
 
     #[test]
-    fn mark_seen_accepts_each_sequence_once() {
-        let mut seen = vec![false; 2];
+    fn bulk_tracker_accepts_complete_ordered_bulk() {
+        let started = Instant::now();
+        let mut tracker = BulkSampleTracker::new(7, 2, started);
 
-        assert!(mark_seen(&mut seen, 0));
-        assert!(!mark_seen(&mut seen, 0));
-        assert!(mark_seen(&mut seen, 1));
-        assert!(!mark_seen(&mut seen, 2));
+        tracker.record(0, started + Duration::from_millis(1), 0);
+        tracker.record(1, started + Duration::from_millis(2), 0);
+        tracker.record(2, started + Duration::from_millis(3), 1000);
+
+        let sample = tracker.finish().expect("complete bulk should be accepted");
+        assert_eq!(sample.sample_id, 7);
+        assert_eq!(sample.bulk_len, 2);
+        assert_eq!(sample.delay_first, Duration::from_millis(1));
+        assert_eq!(sample.delay_last, Duration::from_millis(3));
+        assert_eq!(sample.dispersion, Duration::from_millis(2));
+        assert_eq!(sample.server_issue_duration, Some(Duration::from_micros(1)));
+    }
+
+    #[test]
+    fn bulk_tracker_rejects_incomplete_bulk() {
+        let started = Instant::now();
+        let mut tracker = BulkSampleTracker::new(7, 2, started);
+
+        tracker.record(0, started + Duration::from_millis(1), 0);
+        tracker.record(2, started + Duration::from_millis(3), 1000);
+
+        assert!(tracker.finish().is_none());
+    }
+
+    #[test]
+    fn bulk_tracker_rejects_out_of_order_bulk() {
+        let started = Instant::now();
+        let mut tracker = BulkSampleTracker::new(7, 2, started);
+
+        tracker.record(1, started + Duration::from_millis(2), 0);
+        tracker.record(0, started + Duration::from_millis(1), 0);
+        tracker.record(2, started + Duration::from_millis(3), 1000);
+
+        assert!(tracker.finish().is_none());
     }
 }
