@@ -18,7 +18,6 @@ dependencies = [
   "exo_pyo3_bindings",                       # rust bindings
   "anyio==4.11.0",
   "mlx",
-  "mlx[cpu]; sys_platform == 'linux'",
   "mlx-lm",
   "tiktoken>=0.12.0",                        # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
@@ -50,7 +49,7 @@ build = ["nanobind"]
 cuda = [
   "torch>=2.10.0; sys_platform == 'linux'",
   "vllm>=0.13.0; sys_platform == 'linux'",
-  "mlx-cuda-13==0.30.6; sys_platform == 'linux'",
+  "mlx-cuda-13==0.31.1; sys_platform == 'linux'",
   "fastsafetensors>=0.3; sys_platform == 'linux'",
 ]
 
@@ -66,7 +65,7 @@ exo_pyo3_bindings = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/eval-left-padding-in-batched-rotation" }
 torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
-vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
+vllm = { git = "https://github.com/vllm-project/vllm.git", tag = "v0.19.1" }
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
@@ -130,8 +129,6 @@ required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ package = "exo", extra = "cuda" }, { package = "exo-bench" }]]
-override-dependencies = ["compressed-tensors==0.13.0", "torch==2.10.0"]
-constraint-dependencies = ["transformers>=5.0.0,<5.4.0"]
 
 [tool.uv.extra-build-dependencies]
 mlx = [
