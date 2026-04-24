@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::io::{self, ErrorKind, IoSliceMut};
+#[cfg(not(target_vendor = "apple"))]
+use std::io::IoSliceMut;
+use std::io::{self, ErrorKind};
 use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
 #[cfg(target_vendor = "apple")]
 use std::os::fd::AsRawFd;
@@ -986,11 +988,10 @@ fn apple_recvmsg_x(
     };
 
     for index in 0..received {
-        metas[index] = RecvMeta {
-            len: hdrs[index].msg_datalen,
-            stride: hdrs[index].msg_datalen,
-            ..RecvMeta::default()
-        };
+        let mut meta = RecvMeta::default();
+        meta.len = hdrs[index].msg_datalen;
+        meta.stride = hdrs[index].msg_datalen;
+        metas[index] = meta;
     }
 
     Ok(received)
