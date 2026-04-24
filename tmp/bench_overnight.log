@@ -1,0 +1,82 @@
+=== Starting overnight bench runs at Tue Mar 10 22:27:20 GMT 2026 ===
+--- [1/8] Qwen3.5-27B-GPTQ-Int4 ---
+2026-03-10 22:27:22.370 | INFO     | __main__:main:300 - pp/tg mode: combinations (product) - 2 pairs
+You are using a model of type qwen3_5 to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
+2026-03-10 22:27:23.659 | DEBUG    | __main__:main:317 - [exo-bench] loaded tokenizer: mlx-community/Qwen3.5-27B-GPTQ-Int4 for prompt sizer
+2026-03-10 22:27:23.661 | DEBUG    | __main__:main:339 - exo-bench model: short_id=Qwen3.5-27B-GPTQ-Int4 full_id=mlx-community/Qwen3.5-27B-GPTQ-Int4
+2026-03-10 22:27:23.661 | INFO     | __main__:main:340 - placements: 1
+2026-03-10 22:27:23.661 | INFO     | __main__:main:342 -   - Pipeline / MlxRing / nodes=1
+2026-03-10 22:27:23.661 | INFO     | __main__:main:353 - Planning phase: checking downloads...
+2026-03-10 22:27:23.670 | INFO     | harness:run_planning_phase:415 - Started download on 12D3KooWGXXhpS3kzjfDVuBGX8AeARLjVdAFaDouYJtXDVXkyq7f
+2026-03-10 22:27:23.674 | INFO     | __main__:main:365 - Download: model already cached
+2026-03-10 22:27:23.675 | INFO     | __main__:main:377 - ================================================================================
+2026-03-10 22:27:23.675 | INFO     | __main__:main:378 - PLACEMENT: Pipeline / MlxRing / nodes=1 / instance_id=725d8b5f-cc83-4dd9-8a4e-c6e2bc5b0607
+2026-03-10 22:27:31.871 | INFO     | __main__:main:409 - --- pp=700 tg=32067 concurrency=1 ---
+2026-03-10 22:27:34.896 | INFO     | __main__:build:224 - tok=700
+2026-03-10 23:00:45.925 | INFO     | __main__:main:519 - prompt_tps=11.76 gen_tps=16.13    prompt_tokens=700 gen_tokens=32067    peak_memory=31.81GB
+
+2026-03-10 23:00:47.935 | INFO     | __main__:main:409 - --- pp=700 tg=33085 concurrency=1 ---
+2026-03-10 23:00:50.948 | INFO     | __main__:build:224 - tok=700
+2026-03-10 23:35:06.460 | INFO     | __main__:main:519 - prompt_tps=11.87 gen_tps=16.12    prompt_tokens=700 gen_tokens=33085    peak_memory=31.89GB
+
+2026-03-10 23:35:08.978 | DEBUG    | __main__:main:532 - Deleted instance 725d8b5f-cc83-4dd9-8a4e-c6e2bc5b0607
+2026-03-10 23:35:13.985 | DEBUG    | __main__:main:541 - 
+Wrote results JSON: bench/results.json
+--- [2/8] NVIDIA-Nemotron-3-Nano-30B-A3B (1120,1330,23100) ---
+2026-03-10 23:35:17.156 | INFO     | __main__:main:300 - pp/tg mode: combinations (product) - 3 pairs
+2026-03-10 23:35:18.698 | DEBUG    | __main__:main:317 - [exo-bench] loaded tokenizer: mlx-community/NVIDIA-Nemotron-3-Nano-30B-A3B-MLX-BF16 for prompt sizer
+2026-03-10 23:35:18.701 | DEBUG    | __main__:main:339 - exo-bench model: short_id=NVIDIA-Nemotron-3-Nano-30B-A3B-MLX-BF16 full_id=mlx-community/NVIDIA-Nemotron-3-Nano-30B-A3B-MLX-BF16
+2026-03-10 23:35:18.701 | INFO     | __main__:main:340 - placements: 1
+2026-03-10 23:35:18.701 | INFO     | __main__:main:342 -   - Pipeline / MlxRing / nodes=1
+2026-03-10 23:35:18.701 | INFO     | __main__:main:353 - Planning phase: checking downloads...
+2026-03-10 23:35:18.710 | INFO     | harness:run_planning_phase:415 - Started download on 12D3KooWGXXhpS3kzjfDVuBGX8AeARLjVdAFaDouYJtXDVXkyq7f
+2026-03-10 23:35:18.716 | INFO     | __main__:main:365 - Download: model already cached
+2026-03-10 23:35:18.716 | INFO     | __main__:main:377 - ================================================================================
+2026-03-10 23:35:18.716 | INFO     | __main__:main:378 - PLACEMENT: Pipeline / MlxRing / nodes=1 / instance_id=fb4d3883-2570-42e9-b3ee-aa1e4a1f8121
+2026-03-10 23:35:43.422 | INFO     | __main__:main:409 - --- pp=700 tg=1120 concurrency=1 ---
+2026-03-10 23:35:46.449 | INFO     | __main__:build:224 - tok=700
+2026-03-10 23:36:05.631 | INFO     | __main__:main:519 - prompt_tps=42.56 gen_tps=62.91    prompt_tokens=700 gen_tokens=1120    peak_memory=64.47GB
+
+2026-03-10 23:36:07.636 | INFO     | __main__:main:409 - --- pp=700 tg=1330 concurrency=1 ---
+2026-03-10 23:36:10.654 | INFO     | __main__:build:224 - tok=700
+2026-03-10 23:36:33.088 | INFO     | __main__:main:519 - prompt_tps=42.28 gen_tps=62.93    prompt_tokens=700 gen_tokens=1330    peak_memory=64.47GB
+
+2026-03-10 23:36:35.097 | INFO     | __main__:main:409 - --- pp=700 tg=23100 concurrency=1 ---
+2026-03-10 23:36:38.107 | INFO     | __main__:build:224 - tok=700
+2026-03-10 23:43:00.943 | INFO     | __main__:main:519 - prompt_tps=42.50 gen_tps=60.57    prompt_tokens=700 gen_tokens=23100    peak_memory=64.47GB
+
+2026-03-10 23:43:03.952 | DEBUG    | __main__:main:532 - Deleted instance fb4d3883-2570-42e9-b3ee-aa1e4a1f8121
+2026-03-10 23:43:08.954 | DEBUG    | __main__:main:541 - 
+Wrote results JSON: bench/results.json
+--- [3/8] Qwen3.5-35B-A3B-bf16 ---
+2026-03-11 10:33:18.576 | INFO     | __main__:main:300 - pp/tg mode: combinations (product) - 4 pairs
+2026-03-11 10:33:18.581 | INFO     | harness:resolve_model_short_id:187 - Model not in /models, adding from HuggingFace: mlx-community/Qwen3.5-35B-A3B-bf16
+You are using a model of type qwen3_5_moe to instantiate a model of type . This is not supported for all configurations of models and can yield errors.
+2026-03-11 10:33:22.909 | DEBUG    | __main__:main:317 - [exo-bench] loaded tokenizer: mlx-community/Qwen3.5-35B-A3B-bf16 for prompt sizer
+2026-03-11 10:33:22.913 | DEBUG    | __main__:main:339 - exo-bench model: short_id=Qwen3.5-35B-A3B-bf16 full_id=mlx-community/Qwen3.5-35B-A3B-bf16
+2026-03-11 10:33:22.913 | INFO     | __main__:main:340 - placements: 1
+2026-03-11 10:33:22.913 | INFO     | __main__:main:342 -   - Pipeline / MlxRing / nodes=1
+2026-03-11 10:33:22.913 | INFO     | __main__:main:353 - Planning phase: checking downloads...
+2026-03-11 10:33:22.923 | INFO     | harness:run_planning_phase:415 - Started download on 12D3KooWGXXhpS3kzjfDVuBGX8AeARLjVdAFaDouYJtXDVXkyq7f
+2026-03-11 10:44:01.613 | INFO     | __main__:main:363 - Download: 638.7s (freshly downloaded)
+2026-03-11 10:44:01.613 | INFO     | __main__:main:377 - ================================================================================
+2026-03-11 10:44:01.613 | INFO     | __main__:main:378 - PLACEMENT: Pipeline / MlxRing / nodes=1 / instance_id=3a5aa42f-a0e1-4273-b61e-56b4e34e0c1d
+2026-03-11 10:44:27.758 | INFO     | __main__:main:409 - --- pp=700 tg=6200 concurrency=1 ---
+2026-03-11 10:44:30.785 | INFO     | __main__:build:224 - tok=700
+2026-03-11 10:46:16.814 | INFO     | __main__:main:519 - prompt_tps=39.17 gen_tps=59.35    prompt_tokens=700 gen_tokens=6200    peak_memory=70.10GB
+
+2026-03-11 10:46:18.816 | INFO     | __main__:main:409 - --- pp=700 tg=6450 concurrency=1 ---
+2026-03-11 10:46:21.834 | INFO     | __main__:build:224 - tok=700
+2026-03-11 10:48:11.923 | INFO     | __main__:main:519 - prompt_tps=38.95 gen_tps=59.50    prompt_tokens=700 gen_tokens=6450    peak_memory=70.10GB
+
+2026-03-11 10:48:13.927 | INFO     | __main__:main:409 - --- pp=700 tg=25600 concurrency=1 ---
+2026-03-11 10:48:16.940 | INFO     | __main__:build:224 - tok=700
+2026-03-11 10:55:53.583 | INFO     | __main__:main:519 - prompt_tps=39.36 gen_tps=56.27    prompt_tokens=700 gen_tokens=25600    peak_memory=70.34GB
+
+2026-03-11 10:55:55.585 | INFO     | __main__:main:409 - --- pp=700 tg=38000 concurrency=1 ---
+2026-03-11 10:55:58.608 | INFO     | __main__:build:224 - tok=700
+2026-03-11 11:07:35.629 | INFO     | __main__:main:519 - prompt_tps=39.43 gen_tps=54.66    prompt_tokens=700 gen_tokens=38000    peak_memory=70.61GB
+
+2026-03-11 11:07:38.598 | DEBUG    | __main__:main:532 - Deleted instance 3a5aa42f-a0e1-4273-b61e-56b4e34e0c1d
+2026-03-11 11:07:43.607 | DEBUG    | __main__:main:541 -
+Wrote results JSON: bench/results.json

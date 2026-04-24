@@ -293,7 +293,10 @@ class SequentialGenerator(InferenceGenerator):
         )
 
     def close(self) -> None:
-        del self.tokenizer, self.group
+        if hasattr(self, "tokenizer"):
+            del self.tokenizer
+        if hasattr(self, "group"):
+            del self.group
 
 
 @dataclass(eq=False)
@@ -507,4 +510,7 @@ class BatchGenerator(InferenceGenerator):
 
     def close(self) -> None:
         self._gen.close()
-        del self.tokenizer, self.group
+        if hasattr(self, "tokenizer"):
+            del self.tokenizer
+        if hasattr(self, "group"):
+            del self.group

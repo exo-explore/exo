@@ -221,10 +221,11 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool | None = None
     user: str | None = None
+    prefill_endpoints: list[str] | None = None
 
 
 class BenchChatCompletionRequest(ChatCompletionRequest):
-    pass
+    disaggregated: bool = False
 
 
 class AddCustomModelParams(BaseModel):

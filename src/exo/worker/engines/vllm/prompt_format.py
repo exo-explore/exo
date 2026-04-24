@@ -54,4 +54,8 @@ def make_vllm_sampling_params(
         if extra_stop:
             kwargs["stop_token_ids"] = extra_stop
 
+    if params.bench:
+        kwargs["ignore_eos"] = True
+        kwargs["min_tokens"] = kwargs["max_tokens"]
+
     return SamplingParams(**kwargs)

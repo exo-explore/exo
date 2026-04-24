@@ -295,7 +295,7 @@
     const seen = new Set<string>();
     const deduped: typeof candidates = [];
     for (const m of candidates) {
-      const key = m.base_model || m.family || m.id;
+      const key = (m.base_model || m.family || m.id).toLowerCase().replace(/[-_]/g, " ");
       if (seen.has(key)) continue;
       seen.add(key);
       deduped.push(m);

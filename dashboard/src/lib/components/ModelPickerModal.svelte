@@ -379,12 +379,16 @@
     return hfTrendingModels;
   });
 
+  function normalizeBaseModel(s: string): string {
+    return s.toLowerCase().replace(/[-_]/g, " ").trim();
+  }
+
   // Group models by base_model
   const groupedModels = $derived.by((): ModelGroup[] => {
     const groups = new Map<string, ModelGroup>();
 
     for (const model of models) {
-      const groupId = model.base_model || model.id;
+      const groupId = normalizeBaseModel(model.base_model || model.id);
       const groupName = model.base_model || model.name || model.id;
 
       if (!groups.has(groupId)) {
@@ -578,7 +582,7 @@
       const model = models.find((m) => m.id === id);
       if (model) {
         result.push({
-          id: model.base_model || model.id,
+          id: normalizeBaseModel(model.base_model || model.id),
           name: model.name || model.id,
           capabilities: model.capabilities || ["text"],
           family: model.family || "",

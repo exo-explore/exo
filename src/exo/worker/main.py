@@ -1,3 +1,4 @@
+import json
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -7,7 +8,7 @@ from loguru import logger
 
 from exo.download.download_utils import resolve_model_in_path
 from exo.shared.apply import apply
-from exo.shared.models.model_cards import ModelId
+from exo.shared.models.model_cards import ModelId, derive_base_model
 from exo.shared.types.api import ImageEditsTaskParams
 from exo.shared.types.commands import (
     ForwarderCommand,
@@ -92,6 +93,7 @@ class Worker:
                 tg.start_soon(self.plan_step)
                 tg.start_soon(self._event_applier)
                 tg.start_soon(self._poll_connection_updates)
+                tg.start_soon(self._update_prefill_endpoints)
         finally:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")
@@ -129,6 +131,57 @@ class Worker:
                     self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
                         event.chunk.data
                     )
+
+    _IFACE_PRIORITY = {"ethernet": 0, "maybe_ethernet": 1, "wifi": 2, "unknown": 3, "thunderbolt": 4}
+
+    def _best_ip_for_node(self, node_id: NodeId) -> str | None:
+        net = self.state.node_network.get(node_id)
+        if not net or not net.interfaces:
+            return None
+        candidates = [
+            iface for iface in net.interfaces
+            if iface.ip_address not in ("127.0.0.1", "::1") and not iface.ip_address.startswith("fe80:")
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda i: self._IFACE_PRIORITY.get(i.interface_type, 3))
+        return candidates[0].ip_address
+
+    async def _update_prefill_endpoints(self) -> None:
+        while True:
+            await anyio.sleep(5)
+            try:
+                for runner_sup in self.runners.values():
+                    instance = runner_sup.bound_instance.instance
+                    my_model_id = instance.shard_assignments.model_id
+                    my_runner_id = runner_sup.bound_instance.bound_runner_id
+
+                    endpoints: list[dict[str, object]] = []
+                    for rid, status in self.state.runners.items():
+                        if rid == my_runner_id:
+                            continue
+                        port = getattr(status, "prefill_server_port", None)
+                        if not port:
+                            continue
+                        for other_inst in self.state.instances.values():
+                            if rid not in other_inst.shard_assignments.runner_to_shard:
+                                continue
+                            other_base = derive_base_model(other_inst.shard_assignments.model_id)
+                            my_base = derive_base_model(my_model_id)
+                            if other_base != my_base:
+                                continue
+                            for node_id in other_inst.shard_assignments.node_to_runner:
+                                ip = self._best_ip_for_node(node_id)
+                                if ip:
+                                    endpoints.append({"host": ip, "port": port})
+
+                    safe_model = str(my_model_id).replace("/", "--")
+                    # TODO: Change this to be in the task with a list of optional prefill endpoints.
+                    path = f"/tmp/exo_prefill_endpoints_{safe_model}.json"
+                    with open(path, "w") as f:
+                        json.dump(endpoints, f)
+            except:
+                logger.warning("Updating prefill endpoints failed")
 
     async def plan_step(self):
         while True:

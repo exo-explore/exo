@@ -3,6 +3,7 @@ import math
 import os
 import re
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
@@ -206,15 +207,16 @@ def vllm_generate(
     on_generation_token: Callable[[], None] | None = None,
 ) -> Generator[GenerationResponse, None, None]:
     token_ids, prompt_text, prompt_token_count = format_vllm_prompt(engine, task)
-    logger.info(prompt_text)
+    logger.debug(prompt_text)
     request_id = f"vllm-seq-{time.monotonic_ns()}"
     sampling_params = make_vllm_sampling_params(engine, task, model_id)
     engine.add_request(request_id, {"prompt_token_ids": token_ids}, sampling_params)
 
     tokenizer = engine.get_tokenizer()
     stop_ids = _stop_token_ids(tokenizer, model_id)
+    DEFAULT_PREFILL_STEP_SIZE = 8192
     max_batch_tokens: int = (
-        getattr(engine.model_config, "max_num_batched_tokens", 2048) or 2048
+        getattr(engine.model_config, "max_num_batched_tokens", DEFAULT_PREFILL_STEP_SIZE) or DEFAULT_PREFILL_STEP_SIZE
     )  # type: ignore[reportUnknownMemberType]
     start_time = time.perf_counter()
     first_token_time: float | None = None
@@ -334,7 +336,7 @@ class VllmBatchEngine:
         token_ids, prompt_text, prompt_token_count = format_vllm_prompt(
             self.engine, task_params
         )
-        logger.info(prompt_text)
+        logger.debug(prompt_text)
         sampling_params = make_vllm_sampling_params(
             self.engine, task_params, self.model_id
         )
@@ -554,9 +556,15 @@ def load_vllm_engine(
     trust_remote_code: bool,
     n_layers: int = 1,
     on_layer_loaded: Callable[[int, int], None] | None = None,
+    kv_connector_cls: type[object] | None = None,
 ) -> tuple[LLMEngine, ToolParser | None, KVPrefixCache]:
     patch_vllm()
     _patch_weight_loading_progress()
+
+    if kv_connector_cls is not None:
+        from exo.disaggregated.prefill_server import _patch_vllm_for_connector
+
+        _patch_vllm_for_connector(kv_connector_cls)
 
     os.environ.setdefault("FASTSAFETENSORS_NOGDS", "1")
 
@@ -564,20 +572,65 @@ def load_vllm_engine(
     set_prefix_cache(prefix_cache)
     set_n_layers(n_layers)
 
-    engine_args = EngineArgs(
-        model=model_path,
-        served_model_name=str(model_id),
-        gpu_memory_utilization=0.05,
-        trust_remote_code=trust_remote_code,
-        load_format="fastsafetensors",
-        enable_prefix_caching=False,
-        attention_backend="TRITON_ATTN",
-        enforce_eager=True,
-        disable_log_stats=True,
-    )
+    kv_transfer_config: dict[str, str] | None = None
+    if kv_connector_cls is not None:
+        kv_transfer_config = {
+            "kv_connector": f"{kv_connector_cls.__module__}:{kv_connector_cls.__name__}",
+            "kv_role": "kv_both",
+        }
 
-    set_weight_loading_callback(on_layer_loaded)
-    engine = LLMEngine.from_engine_args(engine_args)
+    import json
+    from pathlib import Path
+
+    is_nvfp4 = "nvfp4" in model_path.lower() or "nvfp4" in str(model_id).lower()
+    has_mamba = False
+    is_mxfp4 = False
+    config_path = Path(model_path) / "config.json"
+    if config_path.exists():
+        with open(config_path) as f:
+            model_config = json.load(f)
+        text_config = model_config.get("text_config", model_config)
+        has_mamba = "mamba_ssm_dtype" in text_config or "linear_attention" in (text_config.get("layer_types") or [])
+        quant_config = model_config.get("quantization_config") or text_config.get("quantization_config")
+        if quant_config and quant_config.get("quant_method") == "mxfp4":
+            is_mxfp4 = True
+    if has_mamba:
+        backends = ["FLASH_ATTN", "TRITON_ATTN"]
+    else:
+        backends = ["FLASHINFER", "FLASH_ATTN", "TRITON_ATTN"]
+
+    engine: LLMEngine | None = None
+    for backend in backends:
+        try:
+            engine_args = EngineArgs(
+                model=model_path,
+                served_model_name=str(model_id),
+                gpu_memory_utilization=0.05,
+                trust_remote_code=trust_remote_code,
+                load_format="fastsafetensors",
+                enable_prefix_caching=False,
+                attention_backend=backend,
+                compilation_config={"cudagraph_mode": "none"},
+                disable_log_stats=True,
+                max_num_batched_tokens=4096,
+                kv_transfer_config=kv_transfer_config,  # type: ignore
+                disable_hybrid_kv_cache_manager=False,
+            )
+
+            set_weight_loading_callback(on_layer_loaded)
+            engine = LLMEngine.from_engine_args(engine_args)
+            logger.info(f"vLLM engine using attention backend: {backend}")
+            break
+        except (ValueError, RuntimeError, NotImplementedError) as e:
+            logger.warning(f"Attention backend {backend} failed: {e}, trying next")
+            engine = None
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+            continue
+
+    if engine is None:
+        raise RuntimeError(f"No attention backend worked for {model_id}")
 
     tool_parser: ToolParser | None = None
     tokenizer = engine.get_tokenizer()
