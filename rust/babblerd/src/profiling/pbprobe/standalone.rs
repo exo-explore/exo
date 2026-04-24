@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::io::{self, ErrorKind};
+use std::io::{self, ErrorKind, IoSliceMut};
 use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{Result, WrapErr, eyre};
-use iroh_quinn_udp::{BATCH_SIZE, Transmit, UdpSockRef, UdpSocketState};
+use iroh_quinn_udp::{BATCH_SIZE, RecvMeta, Transmit, UdpSockRef, UdpSocketState};
 
 use crate::config::{OUTER_IPV6_HEADER_BYTES, OUTER_UDP_HEADER_BYTES};
 
@@ -260,6 +260,8 @@ fn run_client(options: ClientOptions) -> Result<()> {
 
 fn run_probe(socket: &UdpSocket, peer: SocketAddr, config: &PbProbeConfig) -> Result<Estimate> {
     let mut bulk_len = config.initial_bulk_len;
+    let bulk_receiver =
+        BulkReceiver::new(socket).wrap_err("initializing PBProbe batched UDP receiver")?;
 
     loop {
         let run_id = make_run_id();
@@ -268,7 +270,7 @@ fn run_probe(socket: &UdpSocket, peer: SocketAddr, config: &PbProbeConfig) -> Re
             config.sample_count, config.utilization
         );
         start_session(socket, peer, run_id, bulk_len, config)?;
-        let outcome = collect_estimate(socket, peer, run_id, bulk_len, config)?;
+        let outcome = collect_estimate(socket, &bulk_receiver, peer, run_id, bulk_len, config)?;
         send_end(socket, peer, run_id, bulk_len, config)?;
 
         match outcome {
@@ -291,6 +293,7 @@ fn run_probe(socket: &UdpSocket, peer: SocketAddr, config: &PbProbeConfig) -> Re
 
 fn collect_estimate(
     socket: &UdpSocket,
+    bulk_receiver: &BulkReceiver,
     peer: SocketAddr,
     run_id: u64,
     bulk_len: u32,
@@ -318,8 +321,15 @@ fn collect_estimate(
         let started = Instant::now();
         send_rts(socket, peer, run_id, sample_id, bulk_len, config)?;
 
-        let Some(sample) =
-            receive_bulk_sample(socket, run_id, sample_id, bulk_len, started, config)?
+        let Some(sample) = receive_bulk_sample(
+            socket,
+            bulk_receiver,
+            run_id,
+            sample_id,
+            bulk_len,
+            started,
+            config,
+        )?
         else {
             lost_samples = lost_samples.saturating_add(1);
             continue;
@@ -378,6 +388,7 @@ fn collect_estimate(
 
 fn receive_bulk_sample(
     socket: &UdpSocket,
+    bulk_receiver: &BulkReceiver,
     run_id: u64,
     sample_id: u32,
     bulk_len: u32,
@@ -385,7 +396,9 @@ fn receive_bulk_sample(
     config: &PbProbeConfig,
 ) -> Result<Option<AcceptedSample>> {
     let deadline = started + config.rts_timeout;
-    let mut buf = vec![0_u8; MAX_UDP_PACKET_BYTES];
+    let recv_buffer_bytes = bulk_receiver.recv_buffer_bytes(config.udp_payload_bytes());
+    let mut bufs = vec![vec![0_u8; recv_buffer_bytes]; BATCH_SIZE];
+    let mut metas = vec![RecvMeta::default(); BATCH_SIZE];
     let mut tracker = BulkSampleTracker::new(sample_id, bulk_len, started);
 
     loop {
@@ -393,7 +406,7 @@ fn receive_bulk_sample(
             return Ok(tracker.finish());
         }
 
-        let (packet_len, _from) = match socket.recv_from(&mut buf) {
+        let packet_count = match bulk_receiver.recv(socket, &mut bufs, &mut metas) {
             Ok(received) => received,
             Err(err) if is_timeout(&err) => {
                 return Ok(tracker.finish());
@@ -401,26 +414,35 @@ fn receive_bulk_sample(
             Err(err) if err.kind() == ErrorKind::Interrupted => continue,
             Err(err) => return Err(err).wrap_err("receiving PBProbe bulk packet"),
         };
-        let Some(packet) = buf.get(..packet_len) else {
-            continue;
-        };
-        let Ok((header, aux)) = decode_header_with_aux(packet) else {
-            continue;
-        };
-        if header.kind != PacketKind::Bulk
-            || header.run_id != run_id
-            || header.sample_id != sample_id
-            || header.bulk_len != bulk_len
-            || header.seq > bulk_len
-        {
-            continue;
-        }
+        let received = Instant::now();
+        for (buf, meta) in bufs.iter().zip(metas.iter()).take(packet_count) {
+            for packet in recv_meta_packets(buf, *meta) {
+                let Ok((header, aux)) = decode_header_with_aux(packet) else {
+                    continue;
+                };
+                if header.kind != PacketKind::Bulk
+                    || header.run_id != run_id
+                    || header.sample_id != sample_id
+                    || header.bulk_len != bulk_len
+                    || header.seq > bulk_len
+                {
+                    continue;
+                }
 
-        tracker.record(header.seq, Instant::now(), aux);
-        if tracker.is_complete() {
-            return Ok(tracker.finish());
+                tracker.record(header.seq, received, aux);
+                if tracker.is_complete() {
+                    return Ok(tracker.finish());
+                }
+            }
         }
     }
+}
+
+fn recv_meta_packets(buf: &[u8], meta: RecvMeta) -> impl Iterator<Item = &[u8]> {
+    let len = meta.len.min(buf.len());
+    let stride = if meta.stride == 0 { len } else { meta.stride };
+    let stride = stride.max(1);
+    buf[..len].chunks(stride)
 }
 
 #[derive(Debug)]
@@ -493,6 +515,39 @@ impl BulkSampleTracker {
             dispersion: last.saturating_duration_since(first),
             server_issue_duration: self.server_issue_duration,
         })
+    }
+}
+
+struct BulkReceiver {
+    state: UdpSocketState,
+}
+
+impl BulkReceiver {
+    fn new(socket: &UdpSocket) -> io::Result<Self> {
+        let state = UdpSocketState::new(UdpSockRef::from(socket))?;
+        socket.set_nonblocking(false)?;
+        Ok(Self { state })
+    }
+
+    fn recv_buffer_bytes(&self, udp_payload_bytes: usize) -> usize {
+        udp_payload_bytes
+            .max(HEADER_LEN)
+            .checked_mul(self.state.gro_segments().get())
+            .unwrap_or(MAX_UDP_PACKET_BYTES)
+    }
+
+    fn recv(
+        &self,
+        socket: &UdpSocket,
+        bufs: &mut [Vec<u8>],
+        metas: &mut [RecvMeta],
+    ) -> io::Result<usize> {
+        let mut slices = bufs
+            .iter_mut()
+            .map(|buf| IoSliceMut::new(buf.as_mut_slice()))
+            .collect::<Vec<_>>();
+        self.state
+            .recv(UdpSockRef::from(socket), &mut slices, metas)
     }
 }
 
