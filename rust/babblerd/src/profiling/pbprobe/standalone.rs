@@ -272,6 +272,17 @@ fn collect_estimate(
     let selected = select_capacity_sample(&samples, config.ip_packet_bytes)
         .ok_or_else(|| eyre!("PBProbe collected no usable samples"))?;
     let sample_count = u32::try_from(samples.len()).unwrap_or(u32::MAX);
+    let server_issue_samples = u32::try_from(
+        samples
+            .iter()
+            .filter(|sample| sample.server_issue_duration.is_some())
+            .count(),
+    )
+    .unwrap_or(u32::MAX);
+    let min_server_issue_duration = samples
+        .iter()
+        .filter_map(|sample| sample.server_issue_duration)
+        .min();
     Ok(EstimateOutcome::Complete(Estimate {
         bulk_len,
         sample_count,
@@ -280,6 +291,8 @@ fn collect_estimate(
         ip_packet_bytes: config.ip_packet_bytes,
         selected,
         min_dispersion: min_dispersion.unwrap_or(selected.sample.dispersion),
+        server_issue_samples,
+        min_server_issue_duration,
     }))
 }
 
@@ -612,8 +625,15 @@ fn print_estimate(estimate: &Estimate) {
             duration,
         )
     });
+    let min_server_issue_rate = estimate.min_server_issue_duration.and_then(|duration| {
+        issue_rate_mbps(
+            estimate.bulk_len.saturating_add(1),
+            estimate.ip_packet_bytes,
+            duration,
+        )
+    });
     println!(
-        "PBProbe estimate: {:.1} Mbps bulk_len={} samples={} attempts={} lost_samples={} selected_sample={} delay_sum={} dispersion={} min_dispersion={} server_issue={} server_issue_rate={}",
+        "PBProbe estimate: {:.1} Mbps bulk_len={} samples={} attempts={} lost_samples={} selected_sample={} delay_sum={} dispersion={} min_dispersion={} selected_server_issue={} selected_server_issue_rate={} server_issue_samples={} min_server_issue={} min_server_issue_rate={}",
         estimate.selected.capacity_mbps,
         estimate.bulk_len,
         estimate.sample_count,
@@ -624,7 +644,10 @@ fn print_estimate(estimate: &Estimate) {
         format_duration(estimate.selected.sample.dispersion),
         format_duration(estimate.min_dispersion),
         format_optional_duration(server_issue),
-        format_optional_mbps(server_issue_rate)
+        format_optional_mbps(server_issue_rate),
+        estimate.server_issue_samples,
+        format_optional_duration(estimate.min_server_issue_duration),
+        format_optional_mbps(min_server_issue_rate)
     );
 }
 

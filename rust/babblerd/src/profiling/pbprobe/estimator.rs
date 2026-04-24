@@ -80,6 +80,8 @@ pub struct Estimate {
     pub ip_packet_bytes: usize,
     pub selected: SelectedSample,
     pub min_dispersion: Duration,
+    pub server_issue_samples: u32,
+    pub min_server_issue_duration: Option<Duration>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
