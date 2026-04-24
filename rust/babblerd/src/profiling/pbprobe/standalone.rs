@@ -547,12 +547,20 @@ impl BulkReceiver {
         bufs: &mut [Vec<u8>],
         metas: &mut [RecvMeta],
     ) -> io::Result<usize> {
-        let mut slices = bufs
-            .iter_mut()
-            .map(|buf| IoSliceMut::new(buf.as_mut_slice()))
-            .collect::<Vec<_>>();
-        self.state
-            .recv(UdpSockRef::from(socket), &mut slices, metas)
+        #[cfg(target_vendor = "apple")]
+        {
+            return apple_recvmsg_x(socket, bufs, metas);
+        }
+
+        #[cfg(not(target_vendor = "apple"))]
+        {
+            let mut slices = bufs
+                .iter_mut()
+                .map(|buf| IoSliceMut::new(buf.as_mut_slice()))
+                .collect::<Vec<_>>();
+            self.state
+                .recv(UdpSockRef::from(socket), &mut slices, metas)
+        }
     }
 }
 
@@ -925,12 +933,67 @@ struct msghdr_x {
 
 #[cfg(target_vendor = "apple")]
 unsafe extern "C" {
+    fn recvmsg_x(
+        s: libc::c_int,
+        msgp: *const msghdr_x,
+        cnt: libc::c_uint,
+        flags: libc::c_int,
+    ) -> isize;
+
     fn sendmsg_x(
         s: libc::c_int,
         msgp: *const msghdr_x,
         cnt: libc::c_uint,
         flags: libc::c_int,
     ) -> isize;
+}
+
+#[cfg(target_vendor = "apple")]
+fn apple_recvmsg_x(
+    socket: &UdpSocket,
+    bufs: &mut [Vec<u8>],
+    metas: &mut [RecvMeta],
+) -> io::Result<usize> {
+    let mut hdrs = unsafe { std::mem::zeroed::<[msghdr_x; BATCH_SIZE]>() };
+    let mut iovs = unsafe { std::mem::zeroed::<[libc::iovec; BATCH_SIZE]>() };
+    let count = bufs.len().min(metas.len()).min(BATCH_SIZE);
+
+    for index in 0..count {
+        let buf = bufs[index].as_mut_slice();
+        iovs[index].iov_base = buf.as_mut_ptr().cast();
+        iovs[index].iov_len = buf.len();
+        hdrs[index].msg_name = std::ptr::null_mut();
+        hdrs[index].msg_namelen = 0;
+        hdrs[index].msg_iov = &mut iovs[index];
+        hdrs[index].msg_iovlen = 1;
+        hdrs[index].msg_control = std::ptr::null_mut();
+        hdrs[index].msg_controllen = 0;
+        hdrs[index].msg_flags = 0;
+        hdrs[index].msg_datalen = buf.len();
+    }
+
+    let received = loop {
+        let result = unsafe { recvmsg_x(socket.as_raw_fd(), hdrs.as_mut_ptr(), count as _, 0) };
+        if result >= 0 {
+            break usize::try_from(result).unwrap_or(count).min(count);
+        }
+
+        let err = io::Error::last_os_error();
+        if err.kind() == ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(err);
+    };
+
+    for index in 0..received {
+        metas[index] = RecvMeta {
+            len: hdrs[index].msg_datalen,
+            stride: hdrs[index].msg_datalen,
+            ..RecvMeta::default()
+        };
+    }
+
+    Ok(received)
 }
 
 #[cfg(target_vendor = "apple")]
