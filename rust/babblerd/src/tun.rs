@@ -35,6 +35,7 @@ impl TunDevice {
             })
             .build_sync()?;
 
+        dev.set_nonblocking(true)?;
         let ifname = dev.name()?;
 
         Ok(Self {
