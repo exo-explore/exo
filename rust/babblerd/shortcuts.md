@@ -179,6 +179,8 @@ of shortcuts that should be revisited later.
   classes silently.
   Files:
   - `src/dataplane.rs`
+  - `src/fib.rs`
+  - `src/routing_stack.rs`
   Why this is a shortcut:
   - The current lab state has reliable ICMPv6 reachability and now also basic
     generic TCP correctness after convergence: a direct `nc` TCP send across
@@ -191,6 +193,15 @@ of shortcuts that should be revisited later.
     but it is not yet a proper queued/backpressured forwarding model.
   - So the remaining blocker is no longer "can non-ICMP traffic work at all",
     but "why does sustained transport performance collapse under load".
+  - Restart-sensitive failures are now narrowed further than "the dataplane is
+    broken". In live `e11 -> e16` debugging, `e11` emitted the encapsulated
+    packet on the expected direct link, `e16` received it, delivered it into
+    the TUN, and the local stack generated a reply. The failure happened on the
+    return path because `e16`'s current FIB resolved the reply toward `en1`
+    instead of the direct link back to `e11`.
+  - That means the current post-restart blackholes are now dominated by
+    control-plane / FIB route selection under broad admissibility, not by the
+    dataplane failing to decapsulate or reinject packets.
   - There is no ICMPv6 Time Exceeded generation yet.
   - There is no Packet Too Big handling yet.
   - No-route and invalid-packet cases are mostly tracing-and-drop behavior.
@@ -198,6 +209,10 @@ of shortcuts that should be revisited later.
   - Characterize the throughput collapse under load, starting with route churn,
     multi-interface path selection, and loss/retransmit behavior on the direct
     lab edge.
+  - Investigate why the current Babel-selected installed routes can prefer
+    higher-cost `en1` return paths over direct Thunderbolt neighbours after
+    restart, and how that should interact with the eventual measured link
+    scoring policy.
   - Add proper ICMPv6 error generation and tighter packet-validation behavior
     once the first end-to-end forwarding path is validated.
 

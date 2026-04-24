@@ -181,6 +181,26 @@ nearer-term issues before any serious performance tuning:
 - and separating that from the now-proven macOS receive-side interface
   attribution oddities.
 
+The live restart-sensitive failures are now narrowed more precisely than that.
+On the four-Mac lab, a restarted node can receive an encapsulated packet, push
+it through local TUN delivery successfully, and still blackhole the exchange
+because the generated return packet is resolved onto a worse broad-admission
+path (for example `en1`) instead of the direct Thunderbolt neighbour that just
+delivered the request.
+
+So the current main blocker for reliable restart/churn behavior is not "the
+dataplane cannot receive or decapsulate packets". It is "the control plane can
+still choose an asymmetric installed route that is valid enough for Babel to
+advertise, but poor enough to break or destabilize the actual return path".
+
+That strengthens the case for the planned future link-quality policy:
+
+- broad admissibility is still the right v1 reachability rule,
+- but equally admissible wired links need a better ranking signal than today's
+  flat wired costs,
+- otherwise restart-time route selection can still land on a functionally worse
+  path even when a direct high-quality neighbour exists.
+
 The current tree now owns the kernel route that steers overlay traffic into the
 resident TUN interface:
 

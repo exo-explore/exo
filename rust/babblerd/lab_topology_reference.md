@@ -17,9 +17,12 @@ context for `babblerd`.
 
 - The machines are connected in a Thunderbolt ring:
   - `e4 -> e2 -> e11 -> e16 -> e4`
-- On each machine, the Thunderbolt-facing interfaces are:
-  - `en2`
-  - `en3`
+- The Thunderbolt-facing interface names are not fixed to `en2` and `en3`.
+  macOS can expose additional Thunderbolt links as other `en*` interfaces such
+  as `en5`, `en6`, or host-specific names after reconfiguration.
+- Treat `en2,en3` as an old bring-up heuristic only. For normal lab testing,
+  run without `BABBLER_INTERFACE_ALLOWLIST` and let `babblerd`/Babel discover
+  the live interfaces.
 
 ## Repository Location On The Macs
 
@@ -35,8 +38,12 @@ then start `babblerd`:
 ```sh
 cd ~/babeld-exo
 git pull
-BABBLER_INTERFACE_ALLOWLIST=en2,en3 RUST_LOG=info sudo -E nix run .#babblerd --impure
+RUST_LOG=info sudo -E nix run .#babblerd --impure
 ```
+
+If broad interface discovery causes unrelated links to interfere with a
+specific debug run, `BABBLER_INTERFACE_ALLOWLIST` is still available as a
+temporary escape hatch. Do not use it as the default lab topology description.
 
 ## Important Current Note
 

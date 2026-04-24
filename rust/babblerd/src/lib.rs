@@ -7,6 +7,7 @@ pub mod daemon;
 pub mod dataplane;
 pub mod fib;
 pub mod identity;
+pub mod profiling;
 pub(crate) mod route_ctl;
 pub mod routing_stack;
 pub mod tun;
