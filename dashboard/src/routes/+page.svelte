@@ -3435,6 +3435,7 @@
             >
               <li>Connect nodes with TB5 cables</li>
               <li>Boot to Recovery (hold power 10s → Options)</li>
+              <li>Open Terminal from the Utilities menu</li>
               <li>
                 Run
                 <code class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
@@ -4822,6 +4823,7 @@
                 >
                   <li>Connect nodes with TB5 cables</li>
                   <li>Boot to Recovery (hold power 10s → Options)</li>
+                  <li>Open Terminal from the Utilities menu</li>
                   <li>
                     Run
                     <code class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
@@ -4968,6 +4970,7 @@
                   >
                     <li>Connect nodes with TB5 cables</li>
                     <li>Boot to Recovery (hold power 10s → Options)</li>
+                    <li>Open Terminal from the Utilities menu</li>
                     <li>
                       Run
                       <code
