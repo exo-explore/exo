@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
-#[cfg(not(target_vendor = "apple"))]
 use std::io::IoSliceMut;
 use std::io::{self, ErrorKind};
 use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
@@ -12,6 +11,10 @@ use std::time::{Duration, Instant};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{Result, WrapErr, eyre};
 use iroh_quinn_udp::{BATCH_SIZE, RecvMeta, Transmit, UdpSockRef, UdpSocketState};
+#[cfg(target_vendor = "apple")]
+use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg, setsockopt, sockopt};
+#[cfg(target_vendor = "apple")]
+use nix::sys::time::{TimeVal, TimeValLike};
 
 use crate::config::{OUTER_IPV6_HEADER_BYTES, OUTER_UDP_HEADER_BYTES};
 
@@ -403,7 +406,9 @@ fn receive_bulk_sample(
     let recv_buffer_bytes = bulk_receiver.recv_buffer_bytes(config.udp_payload_bytes());
     let mut bufs = vec![vec![0_u8; recv_buffer_bytes]; BATCH_SIZE];
     let mut metas = vec![RecvMeta::default(); BATCH_SIZE];
+    let mut kernel_timestamps = vec![None; BATCH_SIZE];
     let mut tracker = BulkSampleTracker::new(sample_id, bulk_len, started);
+    let mut timestamp_anchor = TimestampAnchor::default();
     socket
         .set_read_timeout(Some(config.rts_timeout))
         .wrap_err("setting PBProbe bulk receive timeout")?;
@@ -413,16 +418,25 @@ fn receive_bulk_sample(
             return Ok(tracker.finish());
         }
 
-        let packet_count = match bulk_receiver.recv(socket, &mut bufs, &mut metas) {
-            Ok(received) => received,
-            Err(err) if is_timeout(&err) => {
-                return Ok(tracker.finish());
-            }
-            Err(err) if err.kind() == ErrorKind::Interrupted => continue,
-            Err(err) => return Err(err).wrap_err("receiving PBProbe bulk packet"),
-        };
+        let packet_count =
+            match bulk_receiver.recv(socket, &mut bufs, &mut metas, &mut kernel_timestamps) {
+                Ok(received) => received,
+                Err(err) if is_timeout(&err) => {
+                    return Ok(tracker.finish());
+                }
+                Err(err) if err.kind() == ErrorKind::Interrupted => continue,
+                Err(err) => return Err(err).wrap_err("receiving PBProbe bulk packet"),
+            };
         let received = Instant::now();
-        for (buf, meta) in bufs.iter().zip(metas.iter()).take(packet_count) {
+        for ((buf, meta), kernel_timestamp) in bufs
+            .iter()
+            .zip(metas.iter())
+            .zip(kernel_timestamps.iter())
+            .take(packet_count)
+        {
+            let packet_received = kernel_timestamp
+                .and_then(|timestamp| timestamp_anchor.to_instant(timestamp, received))
+                .unwrap_or(received);
             for packet in recv_meta_packets(buf, *meta) {
                 let Ok((header, aux)) = decode_header_with_aux(packet) else {
                     continue;
@@ -436,7 +450,7 @@ fn receive_bulk_sample(
                     continue;
                 }
 
-                tracker.record(header.seq, received, aux);
+                tracker.record(header.seq, packet_received, aux);
                 if tracker.is_complete() {
                     return Ok(tracker.finish());
                 }
@@ -450,6 +464,32 @@ fn recv_meta_packets(buf: &[u8], meta: RecvMeta) -> impl Iterator<Item = &[u8]> 
     let stride = if meta.stride == 0 { len } else { meta.stride };
     let stride = stride.max(1);
     buf[..len].chunks(stride)
+}
+
+#[derive(Debug, Default)]
+struct TimestampAnchor {
+    base_timestamp: Option<Duration>,
+    base_instant: Option<Instant>,
+}
+
+impl TimestampAnchor {
+    fn to_instant(&mut self, timestamp: Duration, observed: Instant) -> Option<Instant> {
+        let base_timestamp = match self.base_timestamp {
+            Some(base) => base,
+            None => {
+                self.base_timestamp = Some(timestamp);
+                self.base_instant = Some(observed);
+                return Some(observed);
+            }
+        };
+        let base_instant = self.base_instant?;
+
+        if timestamp >= base_timestamp {
+            base_instant.checked_add(timestamp - base_timestamp)
+        } else {
+            base_instant.checked_sub(base_timestamp - timestamp)
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -532,6 +572,8 @@ struct BulkReceiver {
 impl BulkReceiver {
     fn new(socket: &UdpSocket) -> io::Result<Self> {
         let state = UdpSocketState::new(UdpSockRef::from(socket))?;
+        #[cfg(target_vendor = "apple")]
+        setsockopt(socket, sockopt::ReceiveTimestamp, &true).map_err(io::Error::from)?;
         socket.set_nonblocking(false)?;
         Ok(Self { state })
     }
@@ -548,14 +590,16 @@ impl BulkReceiver {
         socket: &UdpSocket,
         bufs: &mut [Vec<u8>],
         metas: &mut [RecvMeta],
+        kernel_timestamps: &mut [Option<Duration>],
     ) -> io::Result<usize> {
         #[cfg(target_vendor = "apple")]
         {
-            return apple_recvmsg_x(socket, bufs, metas);
+            return apple_recvmsg_timestamp(socket, bufs, metas, kernel_timestamps);
         }
 
         #[cfg(not(target_vendor = "apple"))]
         {
+            kernel_timestamps.fill(None);
             let mut slices = bufs
                 .iter_mut()
                 .map(|buf| IoSliceMut::new(buf.as_mut_slice()))
@@ -935,13 +979,6 @@ struct msghdr_x {
 
 #[cfg(target_vendor = "apple")]
 unsafe extern "C" {
-    fn recvmsg_x(
-        s: libc::c_int,
-        msgp: *const msghdr_x,
-        cnt: libc::c_uint,
-        flags: libc::c_int,
-    ) -> isize;
-
     fn sendmsg_x(
         s: libc::c_int,
         msgp: *const msghdr_x,
@@ -951,50 +988,44 @@ unsafe extern "C" {
 }
 
 #[cfg(target_vendor = "apple")]
-fn apple_recvmsg_x(
+fn apple_recvmsg_timestamp(
     socket: &UdpSocket,
     bufs: &mut [Vec<u8>],
     metas: &mut [RecvMeta],
+    kernel_timestamps: &mut [Option<Duration>],
 ) -> io::Result<usize> {
-    let mut hdrs = unsafe { std::mem::zeroed::<[msghdr_x; BATCH_SIZE]>() };
-    let mut iovs = unsafe { std::mem::zeroed::<[libc::iovec; BATCH_SIZE]>() };
-    let count = bufs.len().min(metas.len()).min(BATCH_SIZE);
-
-    for index in 0..count {
-        let buf = bufs[index].as_mut_slice();
-        iovs[index].iov_base = buf.as_mut_ptr().cast();
-        iovs[index].iov_len = buf.len();
-        hdrs[index].msg_name = std::ptr::null_mut();
-        hdrs[index].msg_namelen = 0;
-        hdrs[index].msg_iov = &mut iovs[index];
-        hdrs[index].msg_iovlen = 1;
-        hdrs[index].msg_control = std::ptr::null_mut();
-        hdrs[index].msg_controllen = 0;
-        hdrs[index].msg_flags = 0;
-        hdrs[index].msg_datalen = buf.len();
+    if bufs.is_empty() || metas.is_empty() || kernel_timestamps.is_empty() {
+        return Ok(0);
     }
 
-    let received = loop {
-        let result = unsafe { recvmsg_x(socket.as_raw_fd(), hdrs.as_mut_ptr(), count as _, 0) };
-        if result >= 0 {
-            break usize::try_from(result).unwrap_or(count).min(count);
-        }
+    kernel_timestamps.fill(None);
+    let mut cmsgspace = nix::cmsg_space!(TimeVal);
+    let mut iov = [IoSliceMut::new(bufs[0].as_mut_slice())];
+    let msg = recvmsg::<()>(
+        socket.as_raw_fd(),
+        &mut iov,
+        Some(&mut cmsgspace),
+        MsgFlags::empty(),
+    )
+    .map_err(io::Error::from)?;
 
-        let err = io::Error::last_os_error();
-        if err.kind() == ErrorKind::Interrupted {
-            continue;
-        }
-        return Err(err);
-    };
+    let mut meta = RecvMeta::default();
+    meta.len = msg.bytes;
+    meta.stride = msg.bytes;
+    metas[0] = meta;
+    kernel_timestamps[0] = msg.cmsgs().ok().and_then(|cmsgs| {
+        cmsgs.into_iter().find_map(|cmsg| match cmsg {
+            ControlMessageOwned::ScmTimestamp(timestamp) => Some(Duration::new(
+                u64::try_from(timestamp.tv_sec()).ok()?,
+                u32::try_from(timestamp.tv_usec())
+                    .ok()?
+                    .saturating_mul(1_000),
+            )),
+            _ => None,
+        })
+    });
 
-    for index in 0..received {
-        let mut meta = RecvMeta::default();
-        meta.len = hdrs[index].msg_datalen;
-        meta.stride = hdrs[index].msg_datalen;
-        metas[index] = meta;
-    }
-
-    Ok(received)
+    Ok(1)
 }
 
 #[cfg(target_vendor = "apple")]
