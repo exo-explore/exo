@@ -26,12 +26,9 @@ pub async fn babel(
     mut recv: mpsc::Receiver<Babble>,
     state_send: watch::Sender<Arc<BabelState>>,
 ) -> Result<()> {
-    // cannot spawn babel without interface first, so this spins until an interface found
-    let iface = loop {
-        match recv.recv().await {
-            Some(Babble::AddIface(iface)) => break iface,
-            None => return Ok(()),
-        }
+    // Cannot spawn babeld without at least one interface to monitor.
+    let Some(Babble::AddIface(iface)) = recv.recv().await else {
+        return Ok(());
     };
 
     let mut runtime = BabelRuntime::spawn(advertised, &iface, state_send).await?;
