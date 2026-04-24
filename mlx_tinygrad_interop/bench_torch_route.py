@@ -260,10 +260,8 @@ def bench_callable(fn: Callable[[], Any], warmup: int, samples: int, min_batch_u
 
   return {
     "iters": float(iters),
-    "min_us": min(vals_us),
-    "median_us": statistics.median(vals_us),
-    "mean_us": statistics.mean(vals_us),
-    "stdev_us": statistics.stdev(vals_us) if len(vals_us) > 1 else 0.0,
+    "avg_us": statistics.mean(vals_us),
+    "stddev_us": statistics.stdev(vals_us) if len(vals_us) > 1 else 0.0,
   }
 
 
@@ -279,8 +277,9 @@ def print_header(dtype_name: str, torch_device: torch.device) -> None:
   print(f"# dtype={dtype_name} mlx_metal_available={mx.metal.is_available()} tinygrad_device=METAL torch_device={torch_device}")
   print("# sizes are source tensor sizes in bytes")
   print("# timed loop excludes source tensor construction and explicit pre-sync, but still includes helper and wrapper overhead")
+  print("# reported latency is average per-call time with sample standard deviation")
   print("# via_torch_route rows use pre-existing tinygrad<->torch and mlx<->torch bridges without framework patches")
-  print("size_bytes,method,direction,min_us,median_us,mean_us,stdev_us,iters")
+  print("size_bytes,method,direction,avg_us,stddev_us,iters")
 
 
 def main() -> None:
@@ -332,7 +331,7 @@ def main() -> None:
         stats = bench_callable(fn, warmup=args.warmup, samples=args.samples, min_batch_us=args.min_batch_us)
         print(
           f"{size_bytes},{method},{direction},"
-          f"{stats['min_us']:.3f},{stats['median_us']:.3f},{stats['mean_us']:.3f},{stats['stdev_us']:.3f},{int(stats['iters'])}"
+          f"{stats['avg_us']:.3f},{stats['stddev_us']:.3f},{int(stats['iters'])}"
         )
   finally:
     gc.enable()

@@ -293,10 +293,8 @@ def bench_callable(fn: Callable[[], Any], warmup: int, samples: int, min_batch_u
 
   return {
     "iters": float(iters),
-    "min_us": min(vals_us),
-    "median_us": statistics.median(vals_us),
-    "mean_us": statistics.mean(vals_us),
-    "stdev_us": statistics.stdev(vals_us) if len(vals_us) > 1 else 0.0,
+    "avg_us": statistics.mean(vals_us),
+    "stddev_us": statistics.stdev(vals_us) if len(vals_us) > 1 else 0.0,
   }
 
 
@@ -305,9 +303,10 @@ def print_header(dtype_name: str) -> None:
   print(f"# dtype={dtype_name} mlx_metal_available={mx.metal.is_available()} tinygrad_device=METAL")
   print("# sizes are source tensor sizes in bytes")
   print("# timed loop excludes source tensor construction and explicit pre-sync, but still includes per-call helper, binding, and wrapper overhead")
+  print("# reported latency is average per-call time with sample standard deviation")
   print("# rebindable_slot_* rows rebind and return the same tinygrad Tensor object each time; ring rows rotate through multiple such slots")
   print("# copy_pool_* rows reuse tinygrad-owned destination tensors and copy source bytes into them before release")
-  print("size_bytes,method,direction,min_us,median_us,mean_us,stdev_us,iters")
+  print("size_bytes,method,direction,avg_us,stddev_us,iters")
 
 
 def main() -> None:
@@ -434,7 +433,7 @@ def main() -> None:
         stats = bench_callable(fn, warmup=args.warmup, samples=args.samples, min_batch_us=args.min_batch_us)
         print(
           f"{size_bytes},{method},{direction},"
-          f"{stats['min_us']:.3f},{stats['median_us']:.3f},{stats['mean_us']:.3f},{stats['stdev_us']:.3f},{int(stats['iters'])}"
+          f"{stats['avg_us']:.3f},{stats['stddev_us']:.3f},{int(stats['iters'])}"
         )
   finally:
     gc.enable()

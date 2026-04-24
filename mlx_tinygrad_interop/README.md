@@ -51,6 +51,14 @@ The current benchmark keeps source tensor construction and explicit pre-sync
 outside the timed loop, but many rows still include per-call helper, binding,
 owner pinning, and wrapper-construction overhead.
 
+Current benchmark CSV output reports:
+
+- `avg_us`
+- `stddev_us`
+
+Older notes in this file that mention min/median refer to earlier runs before
+the reporting format was changed.
+
 - Inputs are assumed to already be synchronized.
 - Inputs are assumed to already be allocated.
 - Inputs are assumed to already be materialized / realized.

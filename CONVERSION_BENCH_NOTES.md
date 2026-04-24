@@ -13,6 +13,15 @@ The timed region should keep source creation and explicit synchronization
 outside the loop, while making it clear when helper, binding, owner-pinning,
 and wrapper-construction overhead are still inside it.
 
+Current benchmark CSV output reports average per-call latency plus sample
+standard deviation:
+
+- `avg_us`
+- `stddev_us`
+
+Older notes below that quote min/median values refer to earlier benchmark runs
+before the reporting format was changed.
+
 ## Repo Layout
 
 - Root notes file:
