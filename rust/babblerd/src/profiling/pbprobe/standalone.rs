@@ -492,6 +492,18 @@ fn send_bulk(
         )?;
         send_datagram(socket, &out, peer)?;
     }
+    let server_issue_duration = burst_started.elapsed();
+    println!(
+        "PBProbe server bulk: sample={} bulk_len={} issue={} issue_rate={}",
+        request.sample_id,
+        session.bulk_len,
+        format_duration(server_issue_duration),
+        format_optional_mbps(issue_rate_mbps(
+            session.bulk_len.saturating_add(1),
+            usize::try_from(session.ip_packet_bytes)?,
+            server_issue_duration,
+        ))
+    );
     Ok(())
 }
 
