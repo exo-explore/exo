@@ -6,6 +6,7 @@
 //! in.
 
 pub mod estimator;
+pub mod pbprobe;
 pub mod protocol;
 pub mod socket;
 pub mod standalone;
