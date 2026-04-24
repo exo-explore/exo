@@ -15,6 +15,7 @@ arrayvec = "0.7.6"
 crossbeam-channel = "0.5.15"
 hashbrown = "0.16.0"
 iroh-quinn-udp = { version = "0.8.0", default-features = false, features = ["fast-apple-datapath"] }
+libc = "0.2"
 mio = { version = "1.1.0", features = ["net", "os-ext", "os-poll"] }
 n0-watcher = "0.6"
 netwatch = "0.16"

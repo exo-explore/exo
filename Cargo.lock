@@ -321,6 +321,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "ipnet",
  "iroh-quinn-udp",
+ "libc",
  "macaddr",
  "memchr",
  "mio",

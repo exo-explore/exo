@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{self, ErrorKind, IoSliceMut};
 use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
+#[cfg(target_vendor = "apple")]
+use std::os::fd::AsRawFd;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -821,7 +823,7 @@ fn send_bulk_connected<F>(
     peer: SocketAddr,
     buf: &mut [u8],
     datagram_bytes: usize,
-    mut before_final_packet: F,
+    before_final_packet: F,
 ) -> Result<()>
 where
     F: FnMut(&mut [u8]) -> std::result::Result<usize, ProtocolError>,
@@ -833,6 +835,28 @@ where
         *connected_peer = Some(peer);
     }
 
+    #[cfg(target_vendor = "apple")]
+    {
+        return send_bulk_connected_apple(socket, peer, buf, datagram_bytes, before_final_packet);
+    }
+
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        send_bulk_connected_std(socket, peer, buf, datagram_bytes, before_final_packet)
+    }
+}
+
+#[cfg(not(target_vendor = "apple"))]
+fn send_bulk_connected_std<F>(
+    socket: &UdpSocket,
+    peer: SocketAddr,
+    buf: &mut [u8],
+    datagram_bytes: usize,
+    mut before_final_packet: F,
+) -> Result<()>
+where
+    F: FnMut(&mut [u8]) -> std::result::Result<usize, ProtocolError>,
+{
     let total_bytes = buf.len();
     let mut sent_bytes = 0_usize;
     for packet in buf.chunks_mut(datagram_bytes) {
@@ -852,6 +876,111 @@ where
             ));
         }
         sent_bytes = next_sent_bytes;
+    }
+
+    Ok(())
+}
+
+#[cfg(target_vendor = "apple")]
+fn send_bulk_connected_apple<F>(
+    socket: &UdpSocket,
+    peer: SocketAddr,
+    buf: &mut [u8],
+    datagram_bytes: usize,
+    mut before_final_packet: F,
+) -> Result<()>
+where
+    F: FnMut(&mut [u8]) -> std::result::Result<usize, ProtocolError>,
+{
+    let total_bytes = buf.len();
+    let mut sent_bytes = 0_usize;
+    for chunk in buf.chunks_mut(datagram_bytes.saturating_mul(BATCH_SIZE)) {
+        let next_sent_bytes = sent_bytes
+            .checked_add(chunk.len())
+            .ok_or_else(|| eyre!("PBProbe sent byte count overflow"))?;
+        if next_sent_bytes == total_bytes {
+            encode_final_packet(chunk, datagram_bytes, &mut before_final_packet)?;
+        }
+        apple_sendmsg_x(socket, chunk, datagram_bytes)
+            .wrap_err_with(|| format!("sending PBProbe connected batch to {peer}"))?;
+        sent_bytes = next_sent_bytes;
+    }
+
+    Ok(())
+}
+
+#[cfg(target_vendor = "apple")]
+#[repr(C)]
+#[allow(non_camel_case_types)]
+struct msghdr_x {
+    msg_name: *mut libc::c_void,
+    msg_namelen: libc::socklen_t,
+    msg_iov: *mut libc::iovec,
+    msg_iovlen: libc::c_int,
+    msg_control: *mut libc::c_void,
+    msg_controllen: libc::socklen_t,
+    msg_flags: libc::c_int,
+    msg_datalen: usize,
+}
+
+#[cfg(target_vendor = "apple")]
+unsafe extern "C" {
+    fn sendmsg_x(
+        s: libc::c_int,
+        msgp: *const msghdr_x,
+        cnt: libc::c_uint,
+        flags: libc::c_int,
+    ) -> isize;
+}
+
+#[cfg(target_vendor = "apple")]
+fn apple_sendmsg_x(socket: &UdpSocket, chunk: &[u8], datagram_bytes: usize) -> io::Result<()> {
+    if datagram_bytes == 0 {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            "datagram size must be non-zero",
+        ));
+    }
+
+    let mut hdrs = unsafe { std::mem::zeroed::<[msghdr_x; BATCH_SIZE]>() };
+    let mut iovs = unsafe { std::mem::zeroed::<[libc::iovec; BATCH_SIZE]>() };
+    let mut count = 0_usize;
+
+    for (index, packet) in chunk.chunks(datagram_bytes).take(BATCH_SIZE).enumerate() {
+        iovs[index].iov_base = packet.as_ptr().cast_mut().cast();
+        iovs[index].iov_len = packet.len();
+        hdrs[index].msg_name = std::ptr::null_mut();
+        hdrs[index].msg_namelen = 0;
+        hdrs[index].msg_iov = &mut iovs[index];
+        hdrs[index].msg_iovlen = 1;
+        hdrs[index].msg_control = std::ptr::null_mut();
+        hdrs[index].msg_controllen = 0;
+        hdrs[index].msg_flags = 0;
+        hdrs[index].msg_datalen = packet.len();
+        count = index + 1;
+    }
+
+    let mut sent = 0_usize;
+    while sent < count {
+        let remaining = count - sent;
+        let result =
+            unsafe { sendmsg_x(socket.as_raw_fd(), hdrs[sent..].as_ptr(), remaining as _, 0) };
+        if result > 0 {
+            sent = sent.saturating_add(usize::try_from(result).unwrap_or(remaining));
+            continue;
+        }
+        if result == 0 {
+            return Err(io::Error::new(
+                ErrorKind::WriteZero,
+                "sendmsg_x sent zero datagrams",
+            ));
+        }
+
+        let err = io::Error::last_os_error();
+        if err.kind() == ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(err);
     }
 
     Ok(())
