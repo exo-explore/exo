@@ -12,8 +12,6 @@ type U64Be = U64<NetworkEndian>;
 pub const HEADER_LEN: usize = size_of::<WireHeader>();
 pub const RESULT_BODY_LEN: usize = size_of::<WireResultBody>();
 pub const RESULT_PACKET_LEN: usize = HEADER_LEN + RESULT_BODY_LEN;
-pub const BULK_STATS_BODY_LEN: usize = size_of::<WireBulkStatsBody>();
-pub const BULK_STATS_PACKET_LEN: usize = HEADER_LEN + BULK_STATS_BODY_LEN;
 
 const MAGIC: &[u8; 4] = b"BBPB";
 const VERSION: u8 = 1;
@@ -28,7 +26,6 @@ pub enum PacketKind {
     Result = 5,
     End = 6,
     ErrorMessage = 7,
-    BulkStats = 8,
 }
 
 impl TryFrom<u8> for PacketKind {
@@ -43,7 +40,6 @@ impl TryFrom<u8> for PacketKind {
             5 => Ok(Self::Result),
             6 => Ok(Self::End),
             7 => Ok(Self::ErrorMessage),
-            8 => Ok(Self::BulkStats),
             other => Err(ProtocolError::UnknownKind(other)),
         }
     }
@@ -70,11 +66,6 @@ pub struct ResultBody {
     pub dispersion: Duration,
     pub min_dispersion: Duration,
     pub capacity_mbps: f64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BulkStatsBody {
-    pub server_issue_duration: Duration,
 }
 
 #[repr(C)]
@@ -106,12 +97,6 @@ struct WireResultBody {
     capacity_mbps_bits: U64Be,
 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, FromBytes, Immutable, IntoBytes, KnownLayout)]
-struct WireBulkStatsBody {
-    server_issue_nanos: U64Be,
-}
-
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ProtocolError {
     #[error("packet is too short")]
@@ -127,12 +112,24 @@ pub enum ProtocolError {
 }
 
 pub fn encode_header(dst: &mut [u8], header: Header) -> Result<usize, ProtocolError> {
-    write_bytes(dst, WireHeader::from(header).as_bytes())
+    encode_header_with_aux(dst, header, 0)
+}
+
+pub fn encode_header_with_aux(
+    dst: &mut [u8],
+    header: Header,
+    aux: u32,
+) -> Result<usize, ProtocolError> {
+    write_bytes(dst, WireHeader::from_header(header, aux).as_bytes())
 }
 
 pub fn decode_header(src: &[u8]) -> Result<Header, ProtocolError> {
+    decode_header_with_aux(src).map(|(header, _aux)| header)
+}
+
+pub fn decode_header_with_aux(src: &[u8]) -> Result<(Header, u32), ProtocolError> {
     let (wire, _) = WireHeader::read_from_prefix(src).map_err(|_| ProtocolError::TooShort)?;
-    Header::try_from(wire)
+    wire.decode()
 }
 
 pub fn encode_result(
@@ -156,33 +153,12 @@ pub fn decode_result_body(src: &[u8]) -> Result<ResultBody, ProtocolError> {
     Ok(ResultBody::from(wire))
 }
 
-pub fn encode_bulk_stats(
-    dst: &mut [u8],
-    header: Header,
-    body: BulkStatsBody,
-) -> Result<usize, ProtocolError> {
-    if dst.len() < BULK_STATS_PACKET_LEN {
-        return Err(ProtocolError::BufferTooSmall);
-    }
-
-    let cursor = encode_header(dst, header)?;
-    write_bytes(&mut dst[cursor..], WireBulkStatsBody::from(body).as_bytes())?;
-    Ok(BULK_STATS_PACKET_LEN)
-}
-
-pub fn decode_bulk_stats_body(src: &[u8]) -> Result<BulkStatsBody, ProtocolError> {
-    let body_src = src.get(HEADER_LEN..).ok_or(ProtocolError::TooShort)?;
-    let (wire, _) =
-        WireBulkStatsBody::read_from_prefix(body_src).map_err(|_| ProtocolError::TooShort)?;
-    Ok(BulkStatsBody::from(wire))
-}
-
 pub fn duration_nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
-impl From<Header> for WireHeader {
-    fn from(header: Header) -> Self {
+impl WireHeader {
+    fn from_header(header: Header, aux: u32) -> Self {
         Self {
             magic: *MAGIC,
             version: VERSION,
@@ -194,31 +170,30 @@ impl From<Header> for WireHeader {
             bulk_len: U32Be::new(header.bulk_len),
             sample_count: U32Be::new(header.sample_count),
             ip_packet_bytes: U32Be::new(header.ip_packet_bytes),
-            reserved: U32Be::ZERO,
+            reserved: U32Be::new(aux),
         }
     }
-}
 
-impl TryFrom<WireHeader> for Header {
-    type Error = ProtocolError;
-
-    fn try_from(wire: WireHeader) -> Result<Self, Self::Error> {
-        if wire.magic != *MAGIC {
+    fn decode(self) -> Result<(Header, u32), ProtocolError> {
+        if self.magic != *MAGIC {
             return Err(ProtocolError::BadMagic);
         }
-        if wire.version != VERSION {
-            return Err(ProtocolError::BadVersion(wire.version));
+        if self.version != VERSION {
+            return Err(ProtocolError::BadVersion(self.version));
         }
 
-        Ok(Self {
-            kind: PacketKind::try_from(wire.kind)?,
-            run_id: wire.run_id.get(),
-            sample_id: wire.sample_id.get(),
-            seq: wire.seq.get(),
-            bulk_len: wire.bulk_len.get(),
-            sample_count: wire.sample_count.get(),
-            ip_packet_bytes: wire.ip_packet_bytes.get(),
-        })
+        Ok((
+            Header {
+                kind: PacketKind::try_from(self.kind)?,
+                run_id: self.run_id.get(),
+                sample_id: self.sample_id.get(),
+                seq: self.seq.get(),
+                bulk_len: self.bulk_len.get(),
+                sample_count: self.sample_count.get(),
+                ip_packet_bytes: self.ip_packet_bytes.get(),
+            },
+            self.reserved.get(),
+        ))
     }
 }
 
@@ -252,22 +227,6 @@ impl From<WireResultBody> for ResultBody {
     }
 }
 
-impl From<BulkStatsBody> for WireBulkStatsBody {
-    fn from(body: BulkStatsBody) -> Self {
-        Self {
-            server_issue_nanos: U64Be::new(duration_nanos(body.server_issue_duration)),
-        }
-    }
-}
-
-impl From<WireBulkStatsBody> for BulkStatsBody {
-    fn from(wire: WireBulkStatsBody) -> Self {
-        Self {
-            server_issue_duration: Duration::from_nanos(wire.server_issue_nanos.get()),
-        }
-    }
-}
-
 fn write_bytes(dst: &mut [u8], src: &[u8]) -> Result<usize, ProtocolError> {
     let Some(slot) = dst.get_mut(..src.len()) else {
         return Err(ProtocolError::BufferTooSmall);
@@ -281,9 +240,9 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        BULK_STATS_PACKET_LEN, BulkStatsBody, HEADER_LEN, Header, PacketKind, RESULT_PACKET_LEN,
-        ResultBody, decode_bulk_stats_body, decode_header, decode_result_body, encode_bulk_stats,
-        encode_header, encode_result,
+        HEADER_LEN, Header, PacketKind, RESULT_PACKET_LEN, ResultBody, decode_header,
+        decode_header_with_aux, decode_result_body, encode_header, encode_header_with_aux,
+        encode_result,
     };
 
     #[test]
@@ -306,6 +265,26 @@ mod tests {
 
         assert_eq!(encode_header(&mut buf, header), Ok(HEADER_LEN));
         assert_eq!(decode_header(&buf), Ok(header));
+    }
+
+    #[test]
+    fn header_aux_round_trips() {
+        let header = Header {
+            kind: PacketKind::Bulk,
+            run_id: 7,
+            sample_id: 11,
+            seq: 100,
+            bulk_len: 100,
+            sample_count: 200,
+            ip_packet_bytes: 1500,
+        };
+        let mut buf = [0_u8; HEADER_LEN];
+
+        assert_eq!(
+            encode_header_with_aux(&mut buf, header, 12_345),
+            Ok(HEADER_LEN)
+        );
+        assert_eq!(decode_header_with_aux(&buf), Ok((header, 12_345)));
     }
 
     #[test]
@@ -334,29 +313,5 @@ mod tests {
         assert_eq!(encode_result(&mut buf, header, body), Ok(RESULT_PACKET_LEN));
         assert_eq!(decode_header(&buf), Ok(header));
         assert_eq!(decode_result_body(&buf), Ok(body));
-    }
-
-    #[test]
-    fn bulk_stats_round_trips() {
-        let header = Header {
-            kind: PacketKind::BulkStats,
-            run_id: 9,
-            sample_id: 41,
-            seq: 0,
-            bulk_len: 100,
-            sample_count: 200,
-            ip_packet_bytes: 1500,
-        };
-        let body = BulkStatsBody {
-            server_issue_duration: Duration::from_micros(900),
-        };
-        let mut buf = [0_u8; BULK_STATS_PACKET_LEN];
-
-        assert_eq!(
-            encode_bulk_stats(&mut buf, header, body),
-            Ok(BULK_STATS_PACKET_LEN)
-        );
-        assert_eq!(decode_header(&buf), Ok(header));
-        assert_eq!(decode_bulk_stats_body(&buf), Ok(body));
     }
 }

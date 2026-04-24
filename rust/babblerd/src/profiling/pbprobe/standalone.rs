@@ -14,14 +14,13 @@ use super::estimator::{
     select_capacity_sample,
 };
 use super::protocol::{
-    BULK_STATS_PACKET_LEN, BulkStatsBody, HEADER_LEN, Header, PacketKind, decode_bulk_stats_body,
-    decode_header, duration_nanos, encode_bulk_stats, encode_header,
+    HEADER_LEN, Header, PacketKind, decode_header, decode_header_with_aux, duration_nanos,
+    encode_header, encode_header_with_aux,
 };
 use crate::profiling::socket::{open_link_local_udp, parse_link_local_addr, scoped_peer_addr};
 
 const MAX_UDP_PACKET_BYTES: usize = 65_535;
 const SERVER_RECV_TIMEOUT: Duration = Duration::from_secs(1);
-const BULK_STATS_GRACE: Duration = Duration::from_millis(10);
 const MIN_ATTEMPT_MULTIPLIER: u32 = 3;
 
 pub fn run_from_env() -> Result<()> {
@@ -137,7 +136,6 @@ fn run_server(options: ServerOptions) -> Result<()> {
             }
             PacketKind::StartAck
             | PacketKind::Bulk
-            | PacketKind::BulkStats
             | PacketKind::Result
             | PacketKind::ErrorMessage => {}
         }
@@ -309,14 +307,10 @@ fn receive_bulk_sample(
     let mut seen = HashSet::with_capacity(usize::try_from(bulk_len.saturating_add(1)).unwrap_or(0));
     let mut first_rx = None;
     let mut last_rx = None;
-    let mut bulk_complete_at = None;
     let mut server_issue_duration = None;
 
     loop {
-        let effective_deadline = bulk_complete_at
-            .map(|complete_at| deadline.min(complete_at + BULK_STATS_GRACE))
-            .unwrap_or(deadline);
-        if !set_timeout_until(socket, effective_deadline)? {
+        if !set_timeout_until(socket, deadline)? {
             return Ok(finish_sample(
                 sample_id,
                 bulk_len,
@@ -345,46 +339,39 @@ fn receive_bulk_sample(
         let Some(packet) = buf.get(..packet_len) else {
             continue;
         };
-        let Ok(header) = decode_header(packet) else {
+        let Ok((header, aux)) = decode_header_with_aux(packet) else {
             continue;
         };
-        if header.run_id != run_id || header.sample_id != sample_id || header.bulk_len != bulk_len {
+        if header.kind != PacketKind::Bulk
+            || header.run_id != run_id
+            || header.sample_id != sample_id
+            || header.bulk_len != bulk_len
+            || header.seq > bulk_len
+        {
             continue;
         }
 
         let now = Instant::now();
-
-        match header.kind {
-            PacketKind::Bulk if header.seq <= bulk_len => {
-                seen.insert(header.seq);
-                if header.seq == 0 {
-                    first_rx = Some(now);
-                }
-                if header.seq == bulk_len {
-                    last_rx = Some(now);
-                }
+        seen.insert(header.seq);
+        if header.seq == 0 {
+            first_rx = Some(now);
+        }
+        if header.seq == bulk_len {
+            last_rx = Some(now);
+            if aux != 0 {
+                server_issue_duration = Some(Duration::from_nanos(u64::from(aux)));
             }
-            PacketKind::BulkStats => {
-                let Ok(body) = decode_bulk_stats_body(packet) else {
-                    continue;
-                };
-                server_issue_duration = Some(body.server_issue_duration);
-            }
-            _ => continue,
         }
 
         if seen.len() == usize::try_from(bulk_len.saturating_add(1)).unwrap_or(usize::MAX) {
-            if server_issue_duration.is_some() {
-                return Ok(finish_sample(
-                    sample_id,
-                    bulk_len,
-                    started,
-                    first_rx,
-                    last_rx,
-                    server_issue_duration,
-                ));
-            }
-            bulk_complete_at.get_or_insert(now);
+            return Ok(finish_sample(
+                sample_id,
+                bulk_len,
+                started,
+                first_rx,
+                last_rx,
+                server_issue_duration,
+            ));
         }
     }
 }
@@ -485,7 +472,12 @@ fn send_bulk(
     let mut out = vec![0_u8; payload_bytes];
     let burst_started = Instant::now();
     for seq in 0..=session.bulk_len {
-        encode_header(
+        let server_issue_nanos = if seq == session.bulk_len {
+            duration_nanos(burst_started.elapsed()).min(u64::from(u32::MAX)) as u32
+        } else {
+            0
+        };
+        encode_header_with_aux(
             &mut out,
             Header {
                 kind: PacketKind::Bulk,
@@ -496,38 +488,11 @@ fn send_bulk(
                 sample_count: session.sample_count,
                 ip_packet_bytes: session.ip_packet_bytes,
             },
+            server_issue_nanos,
         )?;
         send_datagram(socket, &out, peer)?;
     }
-    let server_issue_duration = burst_started.elapsed();
-    send_bulk_stats(socket, peer, request, session, server_issue_duration)?;
     Ok(())
-}
-
-fn send_bulk_stats(
-    socket: &UdpSocket,
-    peer: SocketAddr,
-    request: Header,
-    session: ActiveSession,
-    server_issue_duration: Duration,
-) -> Result<()> {
-    let mut out = [0_u8; BULK_STATS_PACKET_LEN];
-    encode_bulk_stats(
-        &mut out,
-        Header {
-            kind: PacketKind::BulkStats,
-            run_id: request.run_id,
-            sample_id: request.sample_id,
-            seq: 0,
-            bulk_len: session.bulk_len,
-            sample_count: session.sample_count,
-            ip_packet_bytes: session.ip_packet_bytes,
-        },
-        BulkStatsBody {
-            server_issue_duration,
-        },
-    )?;
-    send_datagram(socket, &out, peer)
 }
 
 fn session_header(
