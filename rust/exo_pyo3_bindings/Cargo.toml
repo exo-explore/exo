@@ -59,7 +59,9 @@ util = { workspace = true }
 
 # Tracing
 log = { workspace = true }
+tracing = "0.1"
 env_logger = "0.11"
+tracing-subscriber = { version = "0.3.19", features = ["default", "env-filter"] }
 
 # Networking
 libp2p = { workspace = true, features = ["full"] }
