@@ -38,7 +38,6 @@ import contextlib
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.utils import load_model
 from pydantic import RootModel
 
 from exo.download.download_utils import build_model_path
@@ -65,6 +64,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.convert_in_memory import load_model
 from exo.worker.runner.bootstrap import logger
 
 
