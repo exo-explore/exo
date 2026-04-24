@@ -56,6 +56,7 @@ pub struct AcceptedSample {
     pub delay_first: Duration,
     pub delay_last: Duration,
     pub dispersion: Duration,
+    pub server_issue_duration: Option<Duration>,
 }
 
 impl AcceptedSample {
@@ -76,6 +77,7 @@ pub struct Estimate {
     pub sample_count: u32,
     pub attempts: u32,
     pub lost_samples: u32,
+    pub ip_packet_bytes: usize,
     pub selected: SelectedSample,
     pub min_dispersion: Duration,
 }
@@ -156,6 +158,7 @@ mod tests {
                 delay_first: Duration::from_millis(3),
                 delay_last: Duration::from_millis(4),
                 dispersion: Duration::from_micros(900),
+                server_issue_duration: None,
             },
             AcceptedSample {
                 sample_id: 2,
@@ -163,6 +166,7 @@ mod tests {
                 delay_first: Duration::from_millis(1),
                 delay_last: Duration::from_millis(2),
                 dispersion: Duration::from_micros(1200),
+                server_issue_duration: None,
             },
         ];
 

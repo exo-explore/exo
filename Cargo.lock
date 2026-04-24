@@ -336,6 +336,7 @@ dependencies = [
  "tracing-subscriber",
  "tun-rs",
  "winnow 1.0.1",
+ "zerocopy",
 ]
 
 [[package]]

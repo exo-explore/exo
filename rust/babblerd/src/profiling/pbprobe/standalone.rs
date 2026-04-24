@@ -14,12 +14,14 @@ use super::estimator::{
     select_capacity_sample,
 };
 use super::protocol::{
-    HEADER_LEN, Header, PacketKind, decode_header, duration_nanos, encode_header,
+    BULK_STATS_PACKET_LEN, BulkStatsBody, HEADER_LEN, Header, PacketKind, decode_bulk_stats_body,
+    decode_header, duration_nanos, encode_bulk_stats, encode_header,
 };
 use crate::profiling::socket::{open_link_local_udp, parse_link_local_addr, scoped_peer_addr};
 
 const MAX_UDP_PACKET_BYTES: usize = 65_535;
 const SERVER_RECV_TIMEOUT: Duration = Duration::from_secs(1);
+const BULK_STATS_GRACE: Duration = Duration::from_millis(10);
 const MIN_ATTEMPT_MULTIPLIER: u32 = 3;
 
 pub fn run_from_env() -> Result<()> {
@@ -135,6 +137,7 @@ fn run_server(options: ServerOptions) -> Result<()> {
             }
             PacketKind::StartAck
             | PacketKind::Bulk
+            | PacketKind::BulkStats
             | PacketKind::Result
             | PacketKind::ErrorMessage => {}
         }
@@ -274,6 +277,7 @@ fn collect_estimate(
         sample_count,
         attempts,
         lost_samples,
+        ip_packet_bytes: config.ip_packet_bytes,
         selected,
         min_dispersion: min_dispersion.unwrap_or(selected.sample.dispersion),
     }))
@@ -292,15 +296,36 @@ fn receive_bulk_sample(
     let mut seen = HashSet::with_capacity(usize::try_from(bulk_len.saturating_add(1)).unwrap_or(0));
     let mut first_rx = None;
     let mut last_rx = None;
+    let mut bulk_complete_at = None;
+    let mut server_issue_duration = None;
 
     loop {
-        if !set_timeout_until(socket, deadline)? {
-            return Ok(None);
+        let effective_deadline = bulk_complete_at
+            .map(|complete_at| deadline.min(complete_at + BULK_STATS_GRACE))
+            .unwrap_or(deadline);
+        if !set_timeout_until(socket, effective_deadline)? {
+            return Ok(finish_sample(
+                sample_id,
+                bulk_len,
+                started,
+                first_rx,
+                last_rx,
+                server_issue_duration,
+            ));
         }
 
         let (packet_len, _from) = match socket.recv_from(&mut buf) {
             Ok(received) => received,
-            Err(err) if is_timeout(&err) => return Ok(None),
+            Err(err) if is_timeout(&err) => {
+                return Ok(finish_sample(
+                    sample_id,
+                    bulk_len,
+                    started,
+                    first_rx,
+                    last_rx,
+                    server_issue_duration,
+                ));
+            }
             Err(err) if err.kind() == ErrorKind::Interrupted => continue,
             Err(err) => return Err(err).wrap_err("receiving PBProbe bulk packet"),
         };
@@ -310,44 +335,69 @@ fn receive_bulk_sample(
         let Ok(header) = decode_header(packet) else {
             continue;
         };
-        if header.kind != PacketKind::Bulk
-            || header.run_id != run_id
-            || header.sample_id != sample_id
-            || header.bulk_len != bulk_len
-            || header.seq > bulk_len
-        {
+        if header.run_id != run_id || header.sample_id != sample_id || header.bulk_len != bulk_len {
             continue;
         }
 
         let now = Instant::now();
-        seen.insert(header.seq);
-        if header.seq == 0 {
-            first_rx = Some(now);
-        }
-        if header.seq == bulk_len {
-            last_rx = Some(now);
+
+        match header.kind {
+            PacketKind::Bulk if header.seq <= bulk_len => {
+                seen.insert(header.seq);
+                if header.seq == 0 {
+                    first_rx = Some(now);
+                }
+                if header.seq == bulk_len {
+                    last_rx = Some(now);
+                }
+            }
+            PacketKind::BulkStats => {
+                let Ok(body) = decode_bulk_stats_body(packet) else {
+                    continue;
+                };
+                server_issue_duration = Some(body.server_issue_duration);
+            }
+            _ => continue,
         }
 
         if seen.len() == usize::try_from(bulk_len.saturating_add(1)).unwrap_or(usize::MAX) {
-            let Some(first) = first_rx else {
-                return Ok(None);
-            };
-            let Some(last) = last_rx else {
-                return Ok(None);
-            };
-            if last < first {
-                return Ok(None);
+            if server_issue_duration.is_some() {
+                return Ok(finish_sample(
+                    sample_id,
+                    bulk_len,
+                    started,
+                    first_rx,
+                    last_rx,
+                    server_issue_duration,
+                ));
             }
-
-            return Ok(Some(AcceptedSample {
-                sample_id,
-                bulk_len,
-                delay_first: first.saturating_duration_since(started),
-                delay_last: last.saturating_duration_since(started),
-                dispersion: last.saturating_duration_since(first),
-            }));
+            bulk_complete_at.get_or_insert(now);
         }
     }
+}
+
+fn finish_sample(
+    sample_id: u32,
+    bulk_len: u32,
+    started: Instant,
+    first_rx: Option<Instant>,
+    last_rx: Option<Instant>,
+    server_issue_duration: Option<Duration>,
+) -> Option<AcceptedSample> {
+    let first = first_rx?;
+    let last = last_rx?;
+    if last < first {
+        return None;
+    }
+
+    Some(AcceptedSample {
+        sample_id,
+        bulk_len,
+        delay_first: first.saturating_duration_since(started),
+        delay_last: last.saturating_duration_since(started),
+        dispersion: last.saturating_duration_since(first),
+        server_issue_duration,
+    })
 }
 
 fn start_session(
@@ -420,6 +470,7 @@ fn send_bulk(
     }
 
     let mut out = vec![0_u8; payload_bytes];
+    let burst_started = Instant::now();
     for seq in 0..=session.bulk_len {
         encode_header(
             &mut out,
@@ -435,7 +486,35 @@ fn send_bulk(
         )?;
         send_datagram(socket, &out, peer)?;
     }
+    let server_issue_duration = burst_started.elapsed();
+    send_bulk_stats(socket, peer, request, session, server_issue_duration)?;
     Ok(())
+}
+
+fn send_bulk_stats(
+    socket: &UdpSocket,
+    peer: SocketAddr,
+    request: Header,
+    session: ActiveSession,
+    server_issue_duration: Duration,
+) -> Result<()> {
+    let mut out = [0_u8; BULK_STATS_PACKET_LEN];
+    encode_bulk_stats(
+        &mut out,
+        Header {
+            kind: PacketKind::BulkStats,
+            run_id: request.run_id,
+            sample_id: request.sample_id,
+            seq: 0,
+            bulk_len: session.bulk_len,
+            sample_count: session.sample_count,
+            ip_packet_bytes: session.ip_packet_bytes,
+        },
+        BulkStatsBody {
+            server_issue_duration,
+        },
+    )?;
+    send_datagram(socket, &out, peer)
 }
 
 fn session_header(
@@ -525,8 +604,16 @@ fn udp_payload_bytes_from_ip(ip_packet_bytes: usize) -> usize {
 }
 
 fn print_estimate(estimate: &Estimate) {
+    let server_issue = estimate.selected.sample.server_issue_duration;
+    let server_issue_rate = server_issue.and_then(|duration| {
+        issue_rate_mbps(
+            estimate.bulk_len.saturating_add(1),
+            estimate.ip_packet_bytes,
+            duration,
+        )
+    });
     println!(
-        "PBProbe estimate: {:.1} Mbps bulk_len={} samples={} attempts={} lost_samples={} selected_sample={} delay_sum={} dispersion={} min_dispersion={}",
+        "PBProbe estimate: {:.1} Mbps bulk_len={} samples={} attempts={} lost_samples={} selected_sample={} delay_sum={} dispersion={} min_dispersion={} server_issue={} server_issue_rate={}",
         estimate.selected.capacity_mbps,
         estimate.bulk_len,
         estimate.sample_count,
@@ -535,8 +622,20 @@ fn print_estimate(estimate: &Estimate) {
         estimate.selected.sample.sample_id,
         format_duration(estimate.selected.sample.delay_sum()),
         format_duration(estimate.selected.sample.dispersion),
-        format_duration(estimate.min_dispersion)
+        format_duration(estimate.min_dispersion),
+        format_optional_duration(server_issue),
+        format_optional_mbps(server_issue_rate)
     );
+}
+
+fn issue_rate_mbps(packet_count: u32, ip_packet_bytes: usize, duration: Duration) -> Option<f64> {
+    let nanos = duration.as_nanos();
+    if packet_count == 0 || ip_packet_bytes == 0 || nanos == 0 {
+        return None;
+    }
+
+    let bits = f64::from(packet_count) * (ip_packet_bytes as f64) * 8.0;
+    Some(bits * 1_000.0 / (nanos as f64))
 }
 
 fn parse_server_options(args: &[String]) -> Result<ServerOptions> {
@@ -686,6 +785,17 @@ fn format_duration(duration: Duration) -> String {
         return format!("{:.3} us", duration.as_secs_f64() * 1_000_000.0);
     }
     format!("{:.3} ms", duration.as_secs_f64() * 1_000.0)
+}
+
+fn format_optional_duration(duration: Option<Duration>) -> String {
+    duration
+        .map(format_duration)
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn format_optional_mbps(mbps: Option<f64>) -> String {
+    mbps.map(|value| format!("{value:.1} Mbps"))
+        .unwrap_or_else(|| "n/a".to_owned())
 }
 
 fn print_usage() {

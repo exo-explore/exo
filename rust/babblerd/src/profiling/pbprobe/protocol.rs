@@ -1,10 +1,19 @@
+use std::mem::size_of;
 use std::time::Duration;
 
 use thiserror::Error;
+use zerocopy::byteorder::{NetworkEndian, U16, U32, U64};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
-pub const HEADER_LEN: usize = 40;
-pub const RESULT_BODY_LEN: usize = 48;
+type U16Be = U16<NetworkEndian>;
+type U32Be = U32<NetworkEndian>;
+type U64Be = U64<NetworkEndian>;
+
+pub const HEADER_LEN: usize = size_of::<WireHeader>();
+pub const RESULT_BODY_LEN: usize = size_of::<WireResultBody>();
 pub const RESULT_PACKET_LEN: usize = HEADER_LEN + RESULT_BODY_LEN;
+pub const BULK_STATS_BODY_LEN: usize = size_of::<WireBulkStatsBody>();
+pub const BULK_STATS_PACKET_LEN: usize = HEADER_LEN + BULK_STATS_BODY_LEN;
 
 const MAGIC: &[u8; 4] = b"BBPB";
 const VERSION: u8 = 1;
@@ -19,6 +28,7 @@ pub enum PacketKind {
     Result = 5,
     End = 6,
     ErrorMessage = 7,
+    BulkStats = 8,
 }
 
 impl TryFrom<u8> for PacketKind {
@@ -33,6 +43,7 @@ impl TryFrom<u8> for PacketKind {
             5 => Ok(Self::Result),
             6 => Ok(Self::End),
             7 => Ok(Self::ErrorMessage),
+            8 => Ok(Self::BulkStats),
             other => Err(ProtocolError::UnknownKind(other)),
         }
     }
@@ -61,6 +72,46 @@ pub struct ResultBody {
     pub capacity_mbps: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BulkStatsBody {
+    pub server_issue_duration: Duration,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, FromBytes, Immutable, IntoBytes, KnownLayout)]
+struct WireHeader {
+    magic: [u8; 4],
+    version: u8,
+    kind: u8,
+    flags: U16Be,
+    run_id: U64Be,
+    sample_id: U32Be,
+    seq: U32Be,
+    bulk_len: U32Be,
+    sample_count: U32Be,
+    ip_packet_bytes: U32Be,
+    reserved: U32Be,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, FromBytes, Immutable, IntoBytes, KnownLayout)]
+struct WireResultBody {
+    attempts: U32Be,
+    lost_samples: U32Be,
+    selected_sample_id: U32Be,
+    accepted_samples: U32Be,
+    delay_sum_nanos: U64Be,
+    dispersion_nanos: U64Be,
+    min_dispersion_nanos: U64Be,
+    capacity_mbps_bits: U64Be,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, FromBytes, Immutable, IntoBytes, KnownLayout)]
+struct WireBulkStatsBody {
+    server_issue_nanos: U64Be,
+}
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ProtocolError {
     #[error("packet is too short")]
@@ -76,56 +127,12 @@ pub enum ProtocolError {
 }
 
 pub fn encode_header(dst: &mut [u8], header: Header) -> Result<usize, ProtocolError> {
-    if dst.len() < HEADER_LEN {
-        return Err(ProtocolError::BufferTooSmall);
-    }
-
-    let mut cursor = 0;
-    put_slice(dst, &mut cursor, MAGIC.as_slice())?;
-    put_slice(dst, &mut cursor, &[VERSION])?;
-    put_slice(dst, &mut cursor, &[header.kind as u8])?;
-    put_slice(dst, &mut cursor, &0_u16.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &header.run_id.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &header.sample_id.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &header.seq.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &header.bulk_len.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &header.sample_count.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &header.ip_packet_bytes.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &0_u32.to_be_bytes())?;
-    Ok(cursor)
+    write_bytes(dst, WireHeader::from(header).as_bytes())
 }
 
 pub fn decode_header(src: &[u8]) -> Result<Header, ProtocolError> {
-    let mut cursor = 0;
-    let magic = take(src, &mut cursor, MAGIC.len())?;
-    if magic != MAGIC.as_slice() {
-        return Err(ProtocolError::BadMagic);
-    }
-
-    let version = read_u8(src, &mut cursor)?;
-    if version != VERSION {
-        return Err(ProtocolError::BadVersion(version));
-    }
-
-    let kind = PacketKind::try_from(read_u8(src, &mut cursor)?)?;
-    let _flags = read_u16(src, &mut cursor)?;
-    let run_id = read_u64(src, &mut cursor)?;
-    let sample_id = read_u32(src, &mut cursor)?;
-    let seq = read_u32(src, &mut cursor)?;
-    let bulk_len = read_u32(src, &mut cursor)?;
-    let sample_count = read_u32(src, &mut cursor)?;
-    let ip_packet_bytes = read_u32(src, &mut cursor)?;
-    let _reserved = read_u32(src, &mut cursor)?;
-
-    Ok(Header {
-        kind,
-        run_id,
-        sample_id,
-        seq,
-        bulk_len,
-        sample_count,
-        ip_packet_bytes,
-    })
+    let (wire, _) = WireHeader::read_from_prefix(src).map_err(|_| ProtocolError::TooShort)?;
+    Header::try_from(wire)
 }
 
 pub fn encode_result(
@@ -137,108 +144,136 @@ pub fn encode_result(
         return Err(ProtocolError::BufferTooSmall);
     }
 
-    let mut cursor = encode_header(dst, header)?;
-    put_slice(dst, &mut cursor, &body.attempts.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &body.lost_samples.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &body.selected_sample_id.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &body.accepted_samples.to_be_bytes())?;
-    put_slice(
-        dst,
-        &mut cursor,
-        &duration_nanos(body.delay_sum).to_be_bytes(),
-    )?;
-    put_slice(
-        dst,
-        &mut cursor,
-        &duration_nanos(body.dispersion).to_be_bytes(),
-    )?;
-    put_slice(
-        dst,
-        &mut cursor,
-        &duration_nanos(body.min_dispersion).to_be_bytes(),
-    )?;
-    put_slice(
-        dst,
-        &mut cursor,
-        &body.capacity_mbps.to_bits().to_be_bytes(),
-    )?;
-    Ok(cursor)
+    let cursor = encode_header(dst, header)?;
+    write_bytes(&mut dst[cursor..], WireResultBody::from(body).as_bytes())?;
+    Ok(RESULT_PACKET_LEN)
 }
 
 pub fn decode_result_body(src: &[u8]) -> Result<ResultBody, ProtocolError> {
-    let mut cursor = HEADER_LEN;
-    let attempts = read_u32(src, &mut cursor)?;
-    let lost_samples = read_u32(src, &mut cursor)?;
-    let selected_sample_id = read_u32(src, &mut cursor)?;
-    let accepted_samples = read_u32(src, &mut cursor)?;
-    let delay_sum = Duration::from_nanos(read_u64(src, &mut cursor)?);
-    let dispersion = Duration::from_nanos(read_u64(src, &mut cursor)?);
-    let min_dispersion = Duration::from_nanos(read_u64(src, &mut cursor)?);
-    let capacity_mbps = f64::from_bits(read_u64(src, &mut cursor)?);
+    let body_src = src.get(HEADER_LEN..).ok_or(ProtocolError::TooShort)?;
+    let (wire, _) =
+        WireResultBody::read_from_prefix(body_src).map_err(|_| ProtocolError::TooShort)?;
+    Ok(ResultBody::from(wire))
+}
 
-    Ok(ResultBody {
-        attempts,
-        lost_samples,
-        selected_sample_id,
-        accepted_samples,
-        delay_sum,
-        dispersion,
-        min_dispersion,
-        capacity_mbps,
-    })
+pub fn encode_bulk_stats(
+    dst: &mut [u8],
+    header: Header,
+    body: BulkStatsBody,
+) -> Result<usize, ProtocolError> {
+    if dst.len() < BULK_STATS_PACKET_LEN {
+        return Err(ProtocolError::BufferTooSmall);
+    }
+
+    let cursor = encode_header(dst, header)?;
+    write_bytes(&mut dst[cursor..], WireBulkStatsBody::from(body).as_bytes())?;
+    Ok(BULK_STATS_PACKET_LEN)
+}
+
+pub fn decode_bulk_stats_body(src: &[u8]) -> Result<BulkStatsBody, ProtocolError> {
+    let body_src = src.get(HEADER_LEN..).ok_or(ProtocolError::TooShort)?;
+    let (wire, _) =
+        WireBulkStatsBody::read_from_prefix(body_src).map_err(|_| ProtocolError::TooShort)?;
+    Ok(BulkStatsBody::from(wire))
 }
 
 pub fn duration_nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
-fn put_slice(dst: &mut [u8], cursor: &mut usize, src: &[u8]) -> Result<(), ProtocolError> {
-    let Some(end) = cursor.checked_add(src.len()) else {
-        return Err(ProtocolError::BufferTooSmall);
-    };
-    let Some(slot) = dst.get_mut(*cursor..end) else {
+impl From<Header> for WireHeader {
+    fn from(header: Header) -> Self {
+        Self {
+            magic: *MAGIC,
+            version: VERSION,
+            kind: header.kind as u8,
+            flags: U16Be::ZERO,
+            run_id: U64Be::new(header.run_id),
+            sample_id: U32Be::new(header.sample_id),
+            seq: U32Be::new(header.seq),
+            bulk_len: U32Be::new(header.bulk_len),
+            sample_count: U32Be::new(header.sample_count),
+            ip_packet_bytes: U32Be::new(header.ip_packet_bytes),
+            reserved: U32Be::ZERO,
+        }
+    }
+}
+
+impl TryFrom<WireHeader> for Header {
+    type Error = ProtocolError;
+
+    fn try_from(wire: WireHeader) -> Result<Self, Self::Error> {
+        if wire.magic != *MAGIC {
+            return Err(ProtocolError::BadMagic);
+        }
+        if wire.version != VERSION {
+            return Err(ProtocolError::BadVersion(wire.version));
+        }
+
+        Ok(Self {
+            kind: PacketKind::try_from(wire.kind)?,
+            run_id: wire.run_id.get(),
+            sample_id: wire.sample_id.get(),
+            seq: wire.seq.get(),
+            bulk_len: wire.bulk_len.get(),
+            sample_count: wire.sample_count.get(),
+            ip_packet_bytes: wire.ip_packet_bytes.get(),
+        })
+    }
+}
+
+impl From<ResultBody> for WireResultBody {
+    fn from(body: ResultBody) -> Self {
+        Self {
+            attempts: U32Be::new(body.attempts),
+            lost_samples: U32Be::new(body.lost_samples),
+            selected_sample_id: U32Be::new(body.selected_sample_id),
+            accepted_samples: U32Be::new(body.accepted_samples),
+            delay_sum_nanos: U64Be::new(duration_nanos(body.delay_sum)),
+            dispersion_nanos: U64Be::new(duration_nanos(body.dispersion)),
+            min_dispersion_nanos: U64Be::new(duration_nanos(body.min_dispersion)),
+            capacity_mbps_bits: U64Be::new(body.capacity_mbps.to_bits()),
+        }
+    }
+}
+
+impl From<WireResultBody> for ResultBody {
+    fn from(wire: WireResultBody) -> Self {
+        Self {
+            attempts: wire.attempts.get(),
+            lost_samples: wire.lost_samples.get(),
+            selected_sample_id: wire.selected_sample_id.get(),
+            accepted_samples: wire.accepted_samples.get(),
+            delay_sum: Duration::from_nanos(wire.delay_sum_nanos.get()),
+            dispersion: Duration::from_nanos(wire.dispersion_nanos.get()),
+            min_dispersion: Duration::from_nanos(wire.min_dispersion_nanos.get()),
+            capacity_mbps: f64::from_bits(wire.capacity_mbps_bits.get()),
+        }
+    }
+}
+
+impl From<BulkStatsBody> for WireBulkStatsBody {
+    fn from(body: BulkStatsBody) -> Self {
+        Self {
+            server_issue_nanos: U64Be::new(duration_nanos(body.server_issue_duration)),
+        }
+    }
+}
+
+impl From<WireBulkStatsBody> for BulkStatsBody {
+    fn from(wire: WireBulkStatsBody) -> Self {
+        Self {
+            server_issue_duration: Duration::from_nanos(wire.server_issue_nanos.get()),
+        }
+    }
+}
+
+fn write_bytes(dst: &mut [u8], src: &[u8]) -> Result<usize, ProtocolError> {
+    let Some(slot) = dst.get_mut(..src.len()) else {
         return Err(ProtocolError::BufferTooSmall);
     };
     slot.copy_from_slice(src);
-    *cursor = end;
-    Ok(())
-}
-
-fn take<'a>(src: &'a [u8], cursor: &mut usize, len: usize) -> Result<&'a [u8], ProtocolError> {
-    let Some(end) = cursor.checked_add(len) else {
-        return Err(ProtocolError::TooShort);
-    };
-    let Some(chunk) = src.get(*cursor..end) else {
-        return Err(ProtocolError::TooShort);
-    };
-    *cursor = end;
-    Ok(chunk)
-}
-
-fn read_u8(src: &[u8], cursor: &mut usize) -> Result<u8, ProtocolError> {
-    let chunk = take(src, cursor, 1)?;
-    chunk.first().copied().ok_or(ProtocolError::TooShort)
-}
-
-fn read_u16(src: &[u8], cursor: &mut usize) -> Result<u16, ProtocolError> {
-    let mut bytes = [0_u8; 2];
-    let len = bytes.len();
-    bytes.copy_from_slice(take(src, cursor, len)?);
-    Ok(u16::from_be_bytes(bytes))
-}
-
-fn read_u32(src: &[u8], cursor: &mut usize) -> Result<u32, ProtocolError> {
-    let mut bytes = [0_u8; 4];
-    let len = bytes.len();
-    bytes.copy_from_slice(take(src, cursor, len)?);
-    Ok(u32::from_be_bytes(bytes))
-}
-
-fn read_u64(src: &[u8], cursor: &mut usize) -> Result<u64, ProtocolError> {
-    let mut bytes = [0_u8; 8];
-    let len = bytes.len();
-    bytes.copy_from_slice(take(src, cursor, len)?);
-    Ok(u64::from_be_bytes(bytes))
+    Ok(src.len())
 }
 
 #[cfg(test)]
@@ -246,9 +281,15 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        HEADER_LEN, Header, PacketKind, RESULT_PACKET_LEN, ResultBody, decode_header,
-        decode_result_body, encode_header, encode_result,
+        BULK_STATS_PACKET_LEN, BulkStatsBody, HEADER_LEN, Header, PacketKind, RESULT_PACKET_LEN,
+        ResultBody, decode_bulk_stats_body, decode_header, decode_result_body, encode_bulk_stats,
+        encode_header, encode_result,
     };
+
+    #[test]
+    fn header_layout_is_stable() {
+        assert_eq!(HEADER_LEN, 40);
+    }
 
     #[test]
     fn header_round_trips() {
@@ -293,5 +334,29 @@ mod tests {
         assert_eq!(encode_result(&mut buf, header, body), Ok(RESULT_PACKET_LEN));
         assert_eq!(decode_header(&buf), Ok(header));
         assert_eq!(decode_result_body(&buf), Ok(body));
+    }
+
+    #[test]
+    fn bulk_stats_round_trips() {
+        let header = Header {
+            kind: PacketKind::BulkStats,
+            run_id: 9,
+            sample_id: 41,
+            seq: 0,
+            bulk_len: 100,
+            sample_count: 200,
+            ip_packet_bytes: 1500,
+        };
+        let body = BulkStatsBody {
+            server_issue_duration: Duration::from_micros(900),
+        };
+        let mut buf = [0_u8; BULK_STATS_PACKET_LEN];
+
+        assert_eq!(
+            encode_bulk_stats(&mut buf, header, body),
+            Ok(BULK_STATS_PACKET_LEN)
+        );
+        assert_eq!(decode_header(&buf), Ok(header));
+        assert_eq!(decode_bulk_stats_body(&buf), Ok(body));
     }
 }

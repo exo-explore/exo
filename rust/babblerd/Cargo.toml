@@ -30,6 +30,7 @@ memchr = "2.8"
 winnow = "1.0"
 thiserror = "2.0"
 macaddr = "1.0"
+zerocopy = { version = "0.8.31", features = ["derive"] }
 
 [lints]
 workspace = true
