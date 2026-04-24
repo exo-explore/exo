@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--warmup", type=int, default=64)
   parser.add_argument("--samples", type=int, default=8)
   parser.add_argument("--min-batch-us", type=float, default=2000.0)
-  parser.add_argument("--torch-device", choices=("cpu", "mps", "auto"), default="auto",
+  parser.add_argument("--torch-device", choices=("cpu", "mps", "auto"), default="cpu",
                       help="Intermediate torch device to use for the route.")
   return parser.parse_args()
 

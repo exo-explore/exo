@@ -117,6 +117,12 @@ carry the needed toolchain.
 For the PyTorch-route benchmark, `torch` must also be present in the normal
 Darwin project dependencies, not only in Linux extras.
 
+The current fully pre-existing PyTorch route is only usable with a CPU
+intermediate tensor on `e16`. An `mps` intermediate made the documented
+`Tensor.from_blob(..., device="METAL")` path fail when tinygrad later tried to
+use the imported object as a Metal buffer, so the route benchmark now defaults
+to `--torch-device cpu`.
+
 ### Important Lockfile Note
 
 For these branch-based git dependencies, plain `uv lock` was not sufficient to

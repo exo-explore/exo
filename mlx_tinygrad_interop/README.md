@@ -19,6 +19,10 @@ patches:
 - `mlx_tinygrad_interop/bench_torch_route.py`
 
 That route requires `torch` in the normal macOS `exo` environment.
+The currently working fully pre-existing route is the CPU-intermediate one.
+Using an intermediate PyTorch `mps` tensor caused the documented
+`Tensor.from_blob(..., device="METAL")` path to fail at runtime on `e16`, so
+the benchmark defaults to `--torch-device cpu`.
 
 ## Workflow
 
