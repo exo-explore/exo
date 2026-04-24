@@ -482,6 +482,14 @@ class TraceListResponse(FrozenModel):
     traces: list[TraceListItem]
 
 
+class ServerStatsResponse(FrozenModel):
+    uptime_seconds: float
+    total_requests: int
+    instance_count: int
+    node_count: int
+    active_commands: int
+
+
 class DeleteTracesRequest(FrozenModel):
     task_ids: list[str]
 

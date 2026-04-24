@@ -84,6 +84,7 @@ from exo.api.types import (
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
+    ServerStatsResponse,
     StartDownloadParams,
     StartDownloadResponse,
     ToolCall,
@@ -238,6 +239,7 @@ class API:
         self.last_completed_election: int = 0
         self.port = port
         self._sent_image_hashes: set[str] = set()
+        self._started_at_monotonic: float = time.monotonic()
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -376,6 +378,7 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
+        self.app.get("/v1/stats")(self.get_server_stats)
 
     def get_state(self, path: str = ""):
         if path == "":
@@ -1915,6 +1918,23 @@ class API:
         if not trace_path.resolve().is_relative_to(EXO_TRACING_CACHE_DIR.resolve()):
             raise HTTPException(status_code=400, detail=f"Invalid task ID: {task_id}")
         return trace_path
+
+    async def get_server_stats(self) -> ServerStatsResponse:
+        uptime_seconds = time.monotonic() - self._started_at_monotonic
+        try:
+            total_requests = sum(
+                1 for _ in EXO_TRACING_CACHE_DIR.glob("trace_*.json")
+            )
+        except OSError:
+            total_requests = 0
+        return ServerStatsResponse(
+            uptime_seconds=uptime_seconds,
+            total_requests=total_requests,
+            instance_count=len(self.state.instances),
+            node_count=len(self.state.node_identities),
+            active_commands=len(self._text_generation_queues)
+            + len(self._image_generation_queues),
+        )
 
     async def list_traces(self) -> TraceListResponse:
         traces: list[TraceListItem] = []

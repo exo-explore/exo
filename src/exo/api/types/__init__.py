@@ -44,6 +44,7 @@ from .api import PlacementPreview as PlacementPreview
 from .api import PlacementPreviewResponse as PlacementPreviewResponse
 from .api import PowerUsage as PowerUsage
 from .api import PromptTokensDetails as PromptTokensDetails
+from .api import ServerStatsResponse as ServerStatsResponse
 from .api import StartDownloadParams as StartDownloadParams
 from .api import StartDownloadResponse as StartDownloadResponse
 from .api import StreamingChoiceResponse as StreamingChoiceResponse
