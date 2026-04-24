@@ -320,6 +320,7 @@ dependencies = [
  "futures-lite",
  "hashbrown 0.16.1",
  "ipnet",
+ "iroh-quinn-udp",
  "macaddr",
  "memchr",
  "mio",
@@ -2027,6 +2028,18 @@ name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
+
+[[package]]
+name = "iroh-quinn-udp"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f981dadd5a072a9e0efcd24bdcc388e570073f7e51b33505ceb1ef4668c80c86"
+dependencies = [
+ "cfg_aliases",
+ "libc",
+ "socket2 0.6.1",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "is-macro"

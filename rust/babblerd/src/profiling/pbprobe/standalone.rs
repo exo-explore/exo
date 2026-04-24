@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
 use color_eyre::eyre::{Result, WrapErr, eyre};
+use iroh_quinn_udp::{BATCH_SIZE, Transmit, UdpSockRef, UdpSocketState};
 
 use crate::config::{OUTER_IPV6_HEADER_BYTES, OUTER_UDP_HEADER_BYTES};
 
@@ -17,8 +18,8 @@ use super::estimator::{
     select_capacity_sample,
 };
 use super::protocol::{
-    HEADER_LEN, Header, PacketKind, decode_header, decode_header_with_aux, duration_nanos,
-    encode_header, encode_header_with_aux,
+    HEADER_LEN, Header, PacketKind, ProtocolError, decode_header, decode_header_with_aux,
+    duration_nanos, encode_header, encode_header_with_aux,
 };
 use crate::profiling::socket::{open_link_local_udp, parse_link_local_addr, scoped_peer_addr};
 
@@ -147,6 +148,8 @@ fn run_server(options: ServerOptions) -> Result<()> {
     let (socket, ifindex) =
         open_link_local_udp(&options.ifname, options.port, Some(SERVER_RECV_TIMEOUT))
             .wrap_err_with(|| format!("opening PBProbe server on {}", options.ifname))?;
+    let burst_sender =
+        BurstSender::new(&socket).wrap_err("initializing PBProbe batched UDP sender")?;
     let local_addr = socket
         .local_addr()
         .wrap_err("reading PBProbe server local address")?;
@@ -199,7 +202,7 @@ fn run_server(options: ServerOptions) -> Result<()> {
                 {
                     continue;
                 }
-                send_bulk(&socket, from, header, session)?;
+                send_bulk(&socket, &burst_sender, from, header, session)?;
             }
             PacketKind::End => {
                 active.remove(&header.run_id);
@@ -539,6 +542,7 @@ fn send_end(
 
 fn send_bulk(
     socket: &UdpSocket,
+    burst_sender: &BurstSender,
     peer: SocketAddr,
     request: Header,
     session: ActiveSession,
@@ -551,16 +555,25 @@ fn send_bulk(
         ));
     }
 
-    let mut out = vec![0_u8; payload_bytes];
-    let burst_started = Instant::now();
+    let packet_count = usize::try_from(session.bulk_len.saturating_add(1))
+        .wrap_err("PBProbe bulk packet count exceeds usize")?;
+    let burst_bytes = payload_bytes
+        .checked_mul(packet_count)
+        .ok_or_else(|| eyre!("PBProbe bulk buffer size overflow"))?;
+    let mut out = vec![0_u8; burst_bytes];
     for seq in 0..=session.bulk_len {
-        let server_issue_nanos = if seq == session.bulk_len {
-            duration_nanos(burst_started.elapsed()).clamp(1, u64::from(u32::MAX)) as u32
-        } else {
-            0
+        let seq_index = usize::try_from(seq).wrap_err("PBProbe sequence exceeds usize")?;
+        let start = seq_index
+            .checked_mul(payload_bytes)
+            .ok_or_else(|| eyre!("PBProbe packet offset overflow"))?;
+        let end = start
+            .checked_add(payload_bytes)
+            .ok_or_else(|| eyre!("PBProbe packet end overflow"))?;
+        let Some(packet) = out.get_mut(start..end) else {
+            return Err(eyre!("PBProbe packet slice out of bounds"));
         };
         encode_header_with_aux(
-            &mut out,
+            packet,
             Header {
                 kind: PacketKind::Bulk,
                 run_id: request.run_id,
@@ -570,10 +583,29 @@ fn send_bulk(
                 sample_count: session.sample_count,
                 ip_packet_bytes: session.ip_packet_bytes,
             },
-            server_issue_nanos,
+            0,
         )?;
-        send_datagram(socket, &out, peer)?;
     }
+
+    let burst_started = Instant::now();
+    burst_sender.send_bulk(socket, peer, &mut out, payload_bytes, |packet| {
+        let clamped_issue_nanos =
+            duration_nanos(burst_started.elapsed()).clamp(1, u64::from(u32::MAX));
+        let server_issue_nanos = u32::try_from(clamped_issue_nanos).unwrap_or(u32::MAX);
+        encode_header_with_aux(
+            packet,
+            Header {
+                kind: PacketKind::Bulk,
+                run_id: request.run_id,
+                sample_id: request.sample_id,
+                seq: session.bulk_len,
+                bulk_len: session.bulk_len,
+                sample_count: session.sample_count,
+                ip_packet_bytes: session.ip_packet_bytes,
+            },
+            server_issue_nanos,
+        )
+    })?;
     let server_issue_duration = burst_started.elapsed();
     println!(
         "PBProbe server bulk: sample={} bulk_len={} issue={} issue_rate={}",
@@ -587,6 +619,68 @@ fn send_bulk(
         ))
     );
     Ok(())
+}
+
+struct BurstSender {
+    state: UdpSocketState,
+}
+
+impl BurstSender {
+    fn new(socket: &UdpSocket) -> io::Result<Self> {
+        let state = UdpSocketState::new(UdpSockRef::from(socket))?;
+        socket.set_nonblocking(false)?;
+        Ok(Self { state })
+    }
+
+    fn send_bulk<F>(
+        &self,
+        socket: &UdpSocket,
+        peer: SocketAddr,
+        buf: &mut [u8],
+        datagram_bytes: usize,
+        mut before_final_packet: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&mut [u8]) -> std::result::Result<usize, ProtocolError>,
+    {
+        if datagram_bytes == 0 {
+            return Err(eyre!("PBProbe datagram size must be non-zero"));
+        }
+
+        let chunk_bytes = datagram_bytes
+            .checked_mul(BATCH_SIZE)
+            .ok_or_else(|| eyre!("PBProbe bulk chunk size overflow"))?;
+        let total_bytes = buf.len();
+        let mut sent_bytes = 0_usize;
+        for chunk in buf.chunks_mut(chunk_bytes) {
+            let next_sent_bytes = sent_bytes
+                .checked_add(chunk.len())
+                .ok_or_else(|| eyre!("PBProbe sent byte count overflow"))?;
+            if next_sent_bytes == total_bytes {
+                let final_packet_start = chunk
+                    .len()
+                    .checked_sub(datagram_bytes)
+                    .ok_or_else(|| eyre!("PBProbe final packet chunk underflow"))?;
+                let Some(final_packet) = chunk.get_mut(final_packet_start..) else {
+                    return Err(eyre!("PBProbe final packet slice out of bounds"));
+                };
+                before_final_packet(final_packet)?;
+            }
+            let transmit = Transmit {
+                destination: peer,
+                ecn: None,
+                contents: chunk,
+                segment_size: Some(datagram_bytes),
+                src_ip: None,
+            };
+            self.state
+                .try_send(UdpSockRef::from(socket), &transmit)
+                .wrap_err_with(|| format!("sending PBProbe bulk to {peer}"))?;
+            sent_bytes = next_sent_bytes;
+        }
+
+        Ok(())
+    }
 }
 
 fn session_header(
