@@ -6,7 +6,7 @@ from exo.api.types import (
     ImageEditsTaskParams,
     ImageGenerationTaskParams,
 )
-from exo.shared.types.common import CommandId, Id
+from exo.shared.types.common import CommandId, Id, ModelId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerId
@@ -89,6 +89,21 @@ class Shutdown(BaseTask):  # emitted by Worker
     runner_id: RunnerId
 
 
+class RemotePrefill(BaseTask):  # emitted by Master
+    command_id: CommandId
+    model_id: ModelId
+    task_params: TextGenerationTaskParams
+    paired_task_id: TaskId
+    start_pos: int = 0
+
+    ready_endpoint: str | None = Field(default=None)
+    ready_request_id: str | None = Field(default=None)
+    ready_num_tokens: int = Field(default=0)
+
+    error_type: str | None = Field(default=None)
+    error_message: str | None = Field(default=None)
+
+
 Task = (
     CreateRunner
     | DownloadModel
@@ -100,4 +115,5 @@ Task = (
     | ImageGeneration
     | ImageEdits
     | Shutdown
+    | RemotePrefill
 )

@@ -17,6 +17,7 @@ from exo.shared.types.events import (
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
+    RemotePrefillReady,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskCreated,
@@ -37,7 +38,7 @@ from exo.shared.types.profiling import (
     ThunderboltBridgeStatus,
 )
 from exo.shared.types.state import State
-from exo.shared.types.tasks import Task, TaskId, TaskStatus
+from exo.shared.types.tasks import RemotePrefill, Task, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -95,6 +96,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_topology_edge_created(event, state)
         case TopologyEdgeDeleted():
             return apply_topology_edge_deleted(event, state)
+        case RemotePrefillReady():
+            return apply_remote_prefill_ready(event, state)
 
 
 def apply(state: State, event: IndexedEvent) -> State:
@@ -388,3 +391,18 @@ def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> Sta
     topology.remove_connection(event.conn)
     # TODO: Clean up removing the reverse connection
     return state.model_copy(update={"topology": topology})
+
+
+def apply_remote_prefill_ready(event: RemotePrefillReady, state: State) -> State:
+    task = state.tasks.get(event.task_id)
+    if not isinstance(task, RemotePrefill):
+        return state
+    updated = task.model_copy(
+        update={
+            "ready_endpoint": event.endpoint,
+            "ready_request_id": event.request_id,
+            "ready_num_tokens": event.num_tokens,
+        }
+    )
+    new_tasks: Mapping[TaskId, Task] = {**state.tasks, event.task_id: updated}
+    return state.model_copy(update={"tasks": new_tasks})

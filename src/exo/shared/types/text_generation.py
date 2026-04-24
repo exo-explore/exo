@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, WrapValidator
 
 from exo.shared.logging import logger
 from exo.shared.types.common import ModelId, TruncatingString
+from exo.shared.types.worker.instances import InstanceId
 
 MessageRole = Literal["user", "assistant", "system", "developer", "tool"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
@@ -114,6 +115,11 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     frequency_penalty: float | None = None
     images: list[Base64Image] = Field(default_factory=list)
     image_hashes: dict[int, Base64ImageHash] = Field(default_factory=dict)
+
+    remote_prefill_task_id: str | None = None
+    remote_prefill_endpoint: str | None = None
+    remote_prefill_request_id: str | None = None
+    prefill_at_instance_id: InstanceId | None = None
 
     def with_card_sampling_defaults(self) -> "TextGenerationTaskParams":
         from exo.shared.models.model_cards import get_card

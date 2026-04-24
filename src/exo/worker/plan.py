@@ -12,6 +12,7 @@ from exo.shared.types.tasks import (
     ImageEdits,
     ImageGeneration,
     LoadModel,
+    RemotePrefill,
     Shutdown,
     StartWarmup,
     Task,
@@ -68,7 +69,13 @@ def plan(
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
-        or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer, image_cache)
+        or _pending_tasks(
+            runners,
+            tasks,
+            all_runners,
+            input_chunk_buffer,
+            image_cache,
+        )
     )
 
 
@@ -307,7 +314,9 @@ def _pending_tasks(
     for task in tasks.values():
         # for now, just forward chat completions
         # TODO(ciaran): do this better!
-        if not isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
+        if not isinstance(
+            task, (TextGeneration, ImageGeneration, ImageEdits, RemotePrefill)
+        ):
             continue
         if task.task_status not in (TaskStatus.Pending, TaskStatus.Running):
             continue
@@ -325,6 +334,14 @@ def _pending_tasks(
             )
         ):
             continue  # Wait for all images to be assembled into the cache
+
+        if (
+            isinstance(task, TextGeneration)
+            and task.task_params.remote_prefill_task_id is not None
+        ):
+            paired = tasks.get(TaskId(task.task_params.remote_prefill_task_id))
+            if not isinstance(paired, RemotePrefill) or paired.ready_endpoint is None:
+                continue
 
         for runner in runners.values():
             if task.instance_id != runner.bound_instance.instance.instance_id:

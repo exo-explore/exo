@@ -41,8 +41,10 @@ from exo.shared.types.tasks import (
     DownloadModel,
     ImageEdits,
     LoadModel,
+    RemotePrefill,
     Shutdown,
     Task,
+    TaskId,
     TaskStatus,
     TextGeneration,
 )
@@ -327,6 +329,32 @@ class Worker:
                     if cmd_id in self.input_chunk_counts:
                         del self.input_chunk_counts[cmd_id]
                     await self._start_runner_task(modified_task)
+
+                case TextGeneration() if (
+                    task.task_params.remote_prefill_task_id is not None
+                    and task.task_params.remote_prefill_endpoint is None
+                ):
+                    paired_id = TaskId(task.task_params.remote_prefill_task_id)
+                    paired = self.state.tasks.get(paired_id)
+                    if not isinstance(paired, RemotePrefill) or paired.ready_endpoint is None:
+                        await self.event_sender.send(
+                            TaskStatusUpdated(
+                                task_id=task.task_id,
+                                task_status=TaskStatus.Pending,
+                            )
+                        )
+                        continue
+                    resolved = task.model_copy(
+                        update={
+                            "task_params": task.task_params.model_copy(
+                                update={
+                                    "remote_prefill_endpoint": paired.ready_endpoint,
+                                    "remote_prefill_request_id": paired.ready_request_id,
+                                }
+                            )
+                        }
+                    )
+                    await self._start_runner_task(resolved)
 
                 case TextGeneration() if task.task_params.image_hashes:
                     cmd_id = task.command_id

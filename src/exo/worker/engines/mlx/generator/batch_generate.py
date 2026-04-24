@@ -40,6 +40,7 @@ from exo.worker.engines.mlx.generator.generate import (
     patch_embed_tokens,
     prefill,
 )
+from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
 from exo.worker.engines.mlx.patches.opt_batch_gen import (
     set_needs_topk,
     take_ready_topk,
@@ -200,16 +201,35 @@ class ExoBatchGenerator:
             else contextlib.nullcontext()
         )
         with vision_ctx:
-            _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
-                self.model,
-                self.tokenizer,
-                sampler,
-                prompt_tokens[:-1],
-                cache,
-                self.group,
-                on_prefill_progress,
-                distributed_prompt_progress_callback,
-            )
+            if (
+                task_params.remote_prefill_endpoint is not None
+                and task_params.remote_prefill_request_id is not None
+            ):
+                _prefill_tps, _prefill_tokens, cache_snapshots = remote_prefill(
+                    self.model,
+                    self.tokenizer,
+                    sampler,
+                    prompt_tokens[:-1],
+                    cache,
+                    self.group,
+                    on_prefill_progress,
+                    distributed_prompt_progress_callback,
+                    endpoint=task_params.remote_prefill_endpoint,
+                    request_id=task_params.remote_prefill_request_id,
+                    model_id=str(task_params.model),
+                    start_pos=prefix_hit_length,
+                )
+            else:
+                _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
+                    self.model,
+                    self.tokenizer,
+                    sampler,
+                    prompt_tokens[:-1],
+                    cache,
+                    self.group,
+                    on_prefill_progress,
+                    distributed_prompt_progress_callback,
+                )
 
         prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
         if matched_index is not None and prefix_hit_length > 0:

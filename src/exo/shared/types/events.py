@@ -137,6 +137,13 @@ class TracesMerged(BaseEvent):
     traces: list[TraceEventData]
 
 
+class RemotePrefillReady(BaseEvent):
+    task_id: TaskId
+    endpoint: str
+    request_id: str
+    num_tokens: int
+
+
 Event = (
     TestEvent
     | TaskCreated
@@ -158,6 +165,7 @@ Event = (
     | TracesMerged
     | CustomModelCardAdded
     | CustomModelCardDeleted
+    | RemotePrefillReady
 )
 
 

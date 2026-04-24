@@ -56,6 +56,9 @@ from exo.shared.types.tasks import (
     ImageGeneration as ImageGenerationTask,
 )
 from exo.shared.types.tasks import (
+    RemotePrefill as RemotePrefillTask,
+)
+from exo.shared.types.tasks import (
     TaskId,
     TaskStatus,
 )
@@ -154,21 +157,75 @@ class Master:
                                 ],
                             )
 
-                            task_id = TaskId()
-                            generated_events.append(
-                                TaskCreated(
-                                    task_id=task_id,
-                                    task=TextGenerationTask(
-                                        task_id=task_id,
-                                        command_id=command.command_id,
-                                        instance_id=available_instance_ids[0],
-                                        task_status=TaskStatus.Pending,
-                                        task_params=command.task_params,
-                                    ),
-                                )
-                            )
+                            decode_instance_id = available_instance_ids[0]
+                            decode_task_id = TaskId()
 
-                            self.command_task_mapping[command.command_id] = task_id
+                            prefill_at = command.task_params.prefill_at_instance_id
+                            prefill_instance_id: InstanceId | None = prefill_at
+                            if prefill_at is not None and (
+                                prefill_at not in self.state.instances
+                                or prefill_at == decode_instance_id
+                            ):
+                                logger.warning(
+                                    f"prefill_at_instance_id={prefill_at} not usable; "
+                                    f"falling back to local prefill"
+                                )
+                                prefill_instance_id = None
+
+                            if prefill_instance_id is not None:
+                                prefill_task_id = TaskId()
+                                decode_params = command.task_params.model_copy(
+                                    update={
+                                        "remote_prefill_task_id": str(prefill_task_id),
+                                        "prefill_at_instance_id": None,
+                                    }
+                                )
+                                prefill_params = command.task_params.model_copy(
+                                    update={"prefill_at_instance_id": None}
+                                )
+                                generated_events.append(
+                                    TaskCreated(
+                                        task_id=prefill_task_id,
+                                        task=RemotePrefillTask(
+                                            task_id=prefill_task_id,
+                                            command_id=command.command_id,
+                                            instance_id=prefill_instance_id,
+                                            task_status=TaskStatus.Pending,
+                                            model_id=command.task_params.model,
+                                            task_params=prefill_params,
+                                            paired_task_id=decode_task_id,
+                                        ),
+                                    )
+                                )
+                                generated_events.append(
+                                    TaskCreated(
+                                        task_id=decode_task_id,
+                                        task=TextGenerationTask(
+                                            task_id=decode_task_id,
+                                            command_id=command.command_id,
+                                            instance_id=decode_instance_id,
+                                            task_status=TaskStatus.Pending,
+                                            task_params=decode_params,
+                                        ),
+                                    )
+                                )
+                            else:
+                                generated_events.append(
+                                    TaskCreated(
+                                        task_id=decode_task_id,
+                                        task=TextGenerationTask(
+                                            task_id=decode_task_id,
+                                            command_id=command.command_id,
+                                            instance_id=decode_instance_id,
+                                            task_status=TaskStatus.Pending,
+                                            task_params=command.task_params,
+                                        ),
+                                    )
+                                )
+
+                            self.command_task_mapping[command.command_id] = (
+                                decode_task_id
+                            )
                         case ImageGeneration():
                             for instance in self.state.instances.values():
                                 if (

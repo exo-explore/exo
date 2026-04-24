@@ -1,4 +1,5 @@
 import os
+import socket
 import time
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -8,6 +9,11 @@ import mlx.core as mx
 from anyio import WouldBlock
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.disaggregated.server import (
+    PrefillJob,
+    PrefillPayloadLookup,
+    PrefillServer,
+)
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.chunks import GenerationChunk
 from exo.shared.types.common import CommandId, ModelId
@@ -22,6 +28,7 @@ from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import (
     ConnectToGroup,
     LoadModel,
+    RemotePrefill,
     Shutdown,
     StartWarmup,
     Task,
@@ -47,6 +54,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
+from exo.utils.ports import random_ephemeral_port
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
@@ -59,6 +67,7 @@ from exo.worker.runner.llm_inference.batch_generator import (
     InferenceGenerator,
     SequentialGenerator,
 )
+from exo.worker.runner.llm_inference.remote_prefill import serve_remote_prefill
 
 from .batch_generator import Cancelled, Finished
 from .tool_parsers import make_mlx_parser
@@ -110,8 +119,26 @@ class Runner:
             TextGeneration,
         ] = {}
 
+        self._prefill_payloads: PrefillPayloadLookup = PrefillPayloadLookup()
+        self._prefill_server: PrefillServer | None = None
+
         logger.info("runner created")
         self.update_status(RunnerIdle())
+
+    def _ensure_prefill_server(self) -> str:
+        if self._prefill_server is None:
+            lookup = self._prefill_payloads
+
+            def resolve(job: PrefillJob) -> bytes | None:
+                return lookup.pop(job.request_id)
+
+            self._prefill_server = PrefillServer(
+                resolve=resolve, host="0.0.0.0", port=random_ephemeral_port()
+            )
+            self._prefill_server.start()
+
+        hostname = socket.gethostname()
+        return f"{hostname}:{self._prefill_server.port}"
 
     def update_status(self, status: RunnerStatus):
         self.current_status = status
@@ -228,6 +255,9 @@ class Runner:
                 if return_code == ExitCode.Shutdown:
                     return
 
+            case RemotePrefill() if isinstance(self.current_status, RunnerReady):
+                self.handle_remote_prefill(task)
+
             case Shutdown():
                 self.shutdown(task)
                 return
@@ -296,6 +326,8 @@ class Runner:
                     case TextGeneration():
                         self.acknowledge_task(task)
                         self.submit_text_generation(task)
+                    case RemotePrefill():
+                        self.handle_remote_prefill(task)
                     case Shutdown():
                         self.shutdown(task)
                         return ExitCode.Shutdown
@@ -319,6 +351,31 @@ class Runner:
     ):
         if self.device_rank == 0:
             self.event_sender.send(ChunkGenerated(command_id=command_id, chunk=chunk))
+
+    def handle_remote_prefill(self, task: RemotePrefill) -> None:
+        assert isinstance(self.generator, InferenceGenerator)
+        self.acknowledge_task(task)
+        self.seen.add(task.task_id)
+        try:
+            endpoint = self._ensure_prefill_server()
+            ready = serve_remote_prefill(
+                task,
+                model=self.generator.model,
+                tokenizer=self.generator.tokenizer,
+                group=self.generator.group,
+                payload_lookup=self._prefill_payloads,
+                endpoint=endpoint,
+            )
+            if self.device_rank == 0:
+                self.event_sender.send(ready)
+            self.send_task_status(task.task_id, TaskStatus.Complete)
+        except Exception:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                f"RemotePrefill failed for task_id={task.task_id}"
+            )
+            self.event_sender.send(
+                TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Failed)
+            )
 
 
 @dataclass
