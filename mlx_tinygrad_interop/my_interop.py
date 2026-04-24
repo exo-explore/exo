@@ -6,9 +6,6 @@ import torch
 import time
 import statistics
 
-def pytorch_to_tinygrad(tensor: torch.Tensor) -> Tensor:
-    return Tensor.from_blob(tensor.data_ptr(), tensor.shape, dtype=_from_torch_dtype(tensor.dtype), device="METAL")
-
 def main() -> None:
     for i in range(8):
         N = 256 * (4 ** i)
@@ -20,7 +17,10 @@ def main() -> None:
             torch.mps.synchronize()
 
             old = time.perf_counter_ns()
-            pytorch_to_tinygrad(x)
+            Tensor.from_blob(x.data_ptr(), x.shape, dtype=_from_torch_dtype(x.dtype), device="METAL")
+            Tensor.from_blob(x.data_ptr(), x.shape, dtype=_from_torch_dtype(x.dtype), device="METAL")
+            Tensor.from_blob(x.data_ptr(), x.shape, dtype=_from_torch_dtype(x.dtype), device="METAL")
+            Tensor.from_blob(x.data_ptr(), x.shape, dtype=_from_torch_dtype(x.dtype), device="METAL")
             new = time.perf_counter_ns()
             vals.append(new - old)
         print( f"result: {N*4:8d} pytorch to tinygrad in {statistics.mean(vals):.2f}ns with stddev {statistics.stdev(vals):.2f}ns" )
