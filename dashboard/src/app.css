@@ -1,7 +1,71 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @custom-variant dark (&:is(.dark *));
+
+/* === oMLX-feel design tokens (used by new shell + pages) === */
+:root {
+	--ux-bg: #0a0a0a;
+	--ux-bg-raised: #121212;
+	--ux-bg-hover: #181818;
+	--ux-card: #111111;
+	--ux-border: #212121;
+	--ux-border-strong: #2a2a2a;
+	--ux-text: #ededed;
+	--ux-text-dim: #9a9a9a;
+	--ux-text-faint: #5a5a5a;
+	--ux-accent: #f5a623;
+	--ux-accent-strong: #ffb84d;
+	--ux-green: #4ade80;
+	--ux-red: #ef4444;
+	--ux-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+	--ux-sans: 'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+	--ux-radius: 10px;
+	--ux-radius-sm: 6px;
+}
+
+/* Apply the new sans font + grain to the body when the new shell is active */
+body.ux-new-shell {
+	font-family: var(--ux-sans);
+	background: var(--ux-bg);
+	color: var(--ux-text);
+	font-feature-settings: 'ss01', 'ss02', 'cv11';
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+body.ux-new-shell::before {
+	content: '';
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+	z-index: 1;
+	opacity: 0.035;
+	background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence baseFrequency='0.9' numOctaves='2' seed='3'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+	mix-blend-mode: overlay;
+}
+
+@keyframes uxPulse {
+	0%, 100% { box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.15); }
+	50% { box-shadow: 0 0 0 5px rgba(74, 222, 128, 0.07); }
+}
+@keyframes uxAmberPulse {
+	0%, 100% { box-shadow: 0 0 0 2px rgba(245, 166, 35, 0.2); }
+	50% { box-shadow: 0 0 0 4px rgba(245, 166, 35, 0.1); }
+}
+@keyframes uxNodeGlow {
+	0%, 100% { opacity: 0.18; r: 40; }
+	50% { opacity: 0; r: 64; }
+}
+@keyframes uxDash {
+	to { stroke-dashoffset: -16; }
+}
+@keyframes uxTicker {
+	0% { transform: translateX(0); }
+	100% { transform: translateX(-50%); }
+}
+
 
 :root {
 	/* EXO Brand Colors - Command Center Theme (neutral dark greys) */
