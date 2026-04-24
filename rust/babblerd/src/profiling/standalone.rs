@@ -1,10 +1,11 @@
-use std::collections::{HashMap, HashSet};
-use std::env;
+use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{self, ErrorKind};
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use clap::{Args, Parser, Subcommand};
 use color_eyre::eyre::{Result, WrapErr, eyre};
 
 use super::estimator::{CapacitySample, duration_nanos_u64, latency_stats};
@@ -15,7 +16,11 @@ use super::protocol::{
 use super::socket::{
     open_link_local_udp, parse_link_local_addr, scoped_peer_addr, with_default_scope,
 };
-use super::types::{DEFAULT_PROFILE_PORT, ProbeConfig};
+use super::types::{
+    DEFAULT_CAPACITY_ROUNDS, DEFAULT_ECHO_COUNT, DEFAULT_ECHO_INTERVAL_MS, DEFAULT_ECHO_TIMEOUT_MS,
+    DEFAULT_PROFILE_PORT, DEFAULT_TRAIN_INTERVAL_MS, DEFAULT_TRAIN_PACKETS,
+    DEFAULT_TRAIN_SETTLE_MS, ProbeConfig,
+};
 
 const MAX_UDP_PACKET_BYTES: usize = 65_535;
 const REFLECT_RECV_TIMEOUT: Duration = Duration::from_secs(1);
@@ -23,46 +28,109 @@ const STALE_TRAIN_AFTER: Duration = Duration::from_secs(60);
 const SUMMARY_REQUEST_ATTEMPTS: u32 = 3;
 
 pub fn run_from_env() -> Result<()> {
-    run(env::args())
+    run_cli(Cli::parse())
 }
 
 pub fn run<I, S>(args: I) -> Result<()>
 where
     I: IntoIterator<Item = S>,
-    S: Into<String>,
+    S: Into<OsString> + Clone,
 {
-    let args = args.into_iter().map(Into::into).collect::<Vec<String>>();
-    if wants_help(&args) {
-        print_usage();
-        return Ok(());
-    }
+    run_cli(Cli::try_parse_from(args)?)
+}
 
-    let command = args
-        .get(1)
-        .map(String::as_str)
-        .ok_or_else(|| eyre!("missing command; expected `probe` or `reflect`"))?;
-    let rest = args.get(2..).unwrap_or_default();
-
-    match command {
-        "probe" => run_probe(parse_probe_options(rest)?),
-        "reflect" => run_reflect(parse_reflect_options(rest)?),
-        other => Err(eyre!(
-            "unknown command {other:?}; expected `probe` or `reflect`"
-        )),
+fn run_cli(cli: Cli) -> Result<()> {
+    match cli.command {
+        Command::Probe(args) => run_probe(args.into_probe_options()),
+        Command::Reflect(options) => run_reflect(options),
     }
+}
+
+#[derive(Debug, Parser)]
+#[command(name = "link_profile")]
+#[command(about = "Run standalone link-local latency and packet-train probes")]
+#[command(arg_required_else_help = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    Probe(ProbeArgs),
+    Reflect(ReflectOptions),
 }
 
 #[derive(Debug, Clone)]
 struct ProbeOptions {
     ifname: String,
-    peer: std::net::Ipv6Addr,
+    peer: Ipv6Addr,
     config: ProbeConfig,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Args, Clone)]
 struct ReflectOptions {
+    #[arg(long)]
     ifname: String,
+
+    #[arg(long, default_value_t = DEFAULT_PROFILE_PORT)]
     port: u16,
+}
+
+#[derive(Debug, Args, Clone)]
+struct ProbeArgs {
+    #[arg(long)]
+    ifname: String,
+
+    #[arg(long, value_parser = parse_link_local_addr_arg)]
+    peer: Ipv6Addr,
+
+    #[arg(long, default_value_t = DEFAULT_PROFILE_PORT)]
+    port: u16,
+
+    #[arg(long = "echo-count", default_value_t = DEFAULT_ECHO_COUNT)]
+    echo_count: u32,
+
+    #[arg(long = "echo-interval-ms", default_value_t = DEFAULT_ECHO_INTERVAL_MS)]
+    echo_interval_ms: u64,
+
+    #[arg(long = "timeout-ms", default_value_t = DEFAULT_ECHO_TIMEOUT_MS)]
+    timeout_ms: u64,
+
+    #[arg(long = "capacity-rounds", default_value_t = DEFAULT_CAPACITY_ROUNDS)]
+    capacity_rounds: u32,
+
+    #[arg(long = "train-packets", default_value_t = DEFAULT_TRAIN_PACKETS)]
+    train_packets: u32,
+
+    #[arg(long = "payload-bytes", default_value_t = usize::from(crate::config::TUN_MTU))]
+    payload_bytes: usize,
+
+    #[arg(long = "train-interval-ms", default_value_t = DEFAULT_TRAIN_INTERVAL_MS)]
+    train_interval_ms: u64,
+
+    #[arg(long = "settle-ms", default_value_t = DEFAULT_TRAIN_SETTLE_MS)]
+    settle_ms: u64,
+}
+
+impl ProbeArgs {
+    fn into_probe_options(self) -> ProbeOptions {
+        ProbeOptions {
+            ifname: self.ifname,
+            peer: self.peer,
+            config: ProbeConfig {
+                port: self.port,
+                echo_count: self.echo_count,
+                echo_interval: Duration::from_millis(self.echo_interval_ms),
+                echo_timeout: Duration::from_millis(self.timeout_ms),
+                capacity_rounds: self.capacity_rounds,
+                train_packets: self.train_packets,
+                train_payload_bytes: self.payload_bytes,
+                train_interval: Duration::from_millis(self.train_interval_ms),
+                train_settle: Duration::from_millis(self.settle_ms),
+            },
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -72,7 +140,7 @@ struct TrainAccumulator {
     first_rx: Option<Instant>,
     last_rx: Option<Instant>,
     last_update: Instant,
-    seen: HashSet<u32>,
+    seen: Vec<bool>,
 }
 
 impl TrainAccumulator {
@@ -83,13 +151,13 @@ impl TrainAccumulator {
             first_rx: None,
             last_rx: None,
             last_update: now,
-            seen: HashSet::with_capacity(usize::try_from(expected_packets).unwrap_or(0)),
+            seen: vec![false; usize::try_from(expected_packets).unwrap_or(0)],
         }
     }
 
     fn record(&mut self, seq: u32, packet_len: usize, now: Instant) {
         self.last_update = now;
-        if !self.seen.insert(seq) {
+        if !mark_seen(&mut self.seen, seq) {
             return;
         }
 
@@ -115,6 +183,20 @@ impl TrainAccumulator {
             span_nanos,
         }
     }
+}
+
+fn mark_seen(seen: &mut [bool], seq: u32) -> bool {
+    let Ok(index) = usize::try_from(seq) else {
+        return false;
+    };
+    let Some(slot) = seen.get_mut(index) else {
+        return false;
+    };
+    if *slot {
+        return false;
+    }
+    *slot = true;
+    true
 }
 
 fn run_reflect(options: ReflectOptions) -> Result<()> {
@@ -545,130 +627,8 @@ fn print_capacity_summary(samples: &[CapacitySample]) {
     );
 }
 
-fn parse_probe_options(args: &[String]) -> Result<ProbeOptions> {
-    let mut flags = parse_flags(args)?;
-    let ifname = take_required(&mut flags, "ifname")?;
-    let peer_raw = take_required(&mut flags, "peer")?;
-    let peer = parse_link_local_addr(&peer_raw)
-        .wrap_err_with(|| format!("parsing peer IPv6 address {peer_raw:?}"))?;
-
-    let mut config = ProbeConfig::default();
-    config.port = take_u16(&mut flags, "port")?.unwrap_or(DEFAULT_PROFILE_PORT);
-    config.echo_count = take_u32(&mut flags, "echo-count")?.unwrap_or(config.echo_count);
-    config.echo_interval =
-        take_duration_ms(&mut flags, "echo-interval-ms")?.unwrap_or(config.echo_interval);
-    config.echo_timeout =
-        take_duration_ms(&mut flags, "timeout-ms")?.unwrap_or(config.echo_timeout);
-    config.capacity_rounds =
-        take_u32(&mut flags, "capacity-rounds")?.unwrap_or(config.capacity_rounds);
-    config.train_packets = take_u32(&mut flags, "train-packets")?.unwrap_or(config.train_packets);
-    config.train_payload_bytes =
-        take_usize(&mut flags, "payload-bytes")?.unwrap_or(config.train_payload_bytes);
-    config.train_interval =
-        take_duration_ms(&mut flags, "train-interval-ms")?.unwrap_or(config.train_interval);
-    config.train_settle = take_duration_ms(&mut flags, "settle-ms")?.unwrap_or(config.train_settle);
-
-    reject_unknown_flags(flags)?;
-
-    Ok(ProbeOptions {
-        ifname,
-        peer,
-        config,
-    })
-}
-
-fn parse_reflect_options(args: &[String]) -> Result<ReflectOptions> {
-    let mut flags = parse_flags(args)?;
-    let ifname = take_required(&mut flags, "ifname")?;
-    let port = take_u16(&mut flags, "port")?.unwrap_or(DEFAULT_PROFILE_PORT);
-    reject_unknown_flags(flags)?;
-    Ok(ReflectOptions { ifname, port })
-}
-
-fn parse_flags(args: &[String]) -> Result<HashMap<String, String>> {
-    let mut flags = HashMap::new();
-    let mut index = 0;
-
-    while let Some(raw) = args.get(index) {
-        let Some(without_prefix) = raw.strip_prefix("--") else {
-            return Err(eyre!("expected --flag value, got {raw:?}"));
-        };
-
-        if let Some((key, value)) = without_prefix.split_once('=') {
-            flags.insert(key.to_owned(), value.to_owned());
-            index += 1;
-            continue;
-        }
-
-        let Some(value) = args.get(index + 1) else {
-            return Err(eyre!("missing value for --{without_prefix}"));
-        };
-        if value.starts_with("--") {
-            return Err(eyre!("missing value for --{without_prefix}"));
-        }
-        flags.insert(without_prefix.to_owned(), value.to_owned());
-        index += 2;
-    }
-
-    Ok(flags)
-}
-
-fn take_required(flags: &mut HashMap<String, String>, name: &str) -> Result<String> {
-    flags
-        .remove(name)
-        .ok_or_else(|| eyre!("missing required --{name}"))
-}
-
-fn take_u16(flags: &mut HashMap<String, String>, name: &str) -> Result<Option<u16>> {
-    take_parse(flags, name)
-}
-
-fn take_u32(flags: &mut HashMap<String, String>, name: &str) -> Result<Option<u32>> {
-    take_parse(flags, name)
-}
-
-fn take_usize(flags: &mut HashMap<String, String>, name: &str) -> Result<Option<usize>> {
-    take_parse(flags, name)
-}
-
-fn take_duration_ms(flags: &mut HashMap<String, String>, name: &str) -> Result<Option<Duration>> {
-    let Some(raw) = flags.remove(name) else {
-        return Ok(None);
-    };
-    let millis = raw
-        .parse::<u64>()
-        .wrap_err_with(|| format!("parsing --{name} value {raw:?} as milliseconds"))?;
-    Ok(Some(Duration::from_millis(millis)))
-}
-
-fn take_parse<T>(flags: &mut HashMap<String, String>, name: &str) -> Result<Option<T>>
-where
-    T: std::str::FromStr,
-    T::Err: std::error::Error + Send + Sync + 'static,
-{
-    let Some(raw) = flags.remove(name) else {
-        return Ok(None);
-    };
-    raw.parse::<T>()
-        .map(Some)
-        .wrap_err_with(|| format!("parsing --{name} value {raw:?}"))
-}
-
-fn reject_unknown_flags(flags: HashMap<String, String>) -> Result<()> {
-    if flags.is_empty() {
-        return Ok(());
-    }
-
-    let mut names = flags.keys().map(String::as_str).collect::<Vec<&str>>();
-    names.sort_unstable();
-    Err(eyre!("unknown option(s): --{}", names.join(", --")))
-}
-
-fn wants_help(args: &[String]) -> bool {
-    args.len() <= 1
-        || args
-            .iter()
-            .any(|arg| arg.as_str() == "--help" || arg.as_str() == "-h")
+fn parse_link_local_addr_arg(raw: &str) -> std::result::Result<Ipv6Addr, String> {
+    parse_link_local_addr(raw).map_err(|err| err.to_string())
 }
 
 fn is_timeout(err: &io::Error) -> bool {
@@ -696,64 +656,70 @@ fn make_base_run_id() -> u64 {
     now ^ (u64::from(std::process::id()) << 32)
 }
 
-fn print_usage() {
-    println!(
-        "\
-Usage:
-  cargo run -p babblerd --example link_profile -- reflect --ifname IFACE [--port PORT]
-  cargo run -p babblerd --example link_profile -- probe --ifname IFACE --peer FE80::ADDR [options]
-
-Probe options:
-  --port PORT                 reflector UDP port, default {DEFAULT_PROFILE_PORT}
-  --echo-count N              latency probes, default 10
-  --echo-interval-ms MS       delay between latency probes, default 250
-  --timeout-ms MS             receive timeout, default 500
-  --capacity-rounds N         packet-train rounds, default 5
-  --train-packets N           MTU-sized packets per round, default 64
-  --payload-bytes N           UDP payload bytes per train packet, default 1452
-  --train-interval-ms MS      delay between train rounds, default 1000
-  --settle-ms MS              delay before summary request, default 25
-"
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use std::net::Ipv6Addr;
 
-    use super::{parse_probe_options, parse_reflect_options};
+    use clap::Parser;
+
+    use super::{Cli, Command, mark_seen};
 
     #[test]
     fn parses_probe_options() {
-        let args = vec![
-            "--ifname".to_owned(),
-            "en3".to_owned(),
-            "--peer".to_owned(),
-            "fe80::1%en3".to_owned(),
-            "--train-packets".to_owned(),
-            "32".to_owned(),
-        ];
+        let cli = Cli::try_parse_from([
+            "link_profile",
+            "probe",
+            "--ifname",
+            "en3",
+            "--peer",
+            "fe80::1%en3",
+            "--train-packets",
+            "32",
+        ])
+        .expect("probe options should parse");
 
-        let options = parse_probe_options(&args).expect("probe options should parse");
-        assert_eq!(options.ifname, "en3");
-        assert_eq!(
-            options.peer,
-            "fe80::1".parse::<Ipv6Addr>().expect("valid IPv6")
-        );
-        assert_eq!(options.config.train_packets, 32);
+        match cli.command {
+            Command::Probe(args) => {
+                let options = args.into_probe_options();
+                assert_eq!(options.ifname, "en3");
+                assert_eq!(
+                    options.peer,
+                    "fe80::1".parse::<Ipv6Addr>().expect("valid IPv6")
+                );
+                assert_eq!(options.config.train_packets, 32);
+            }
+            Command::Reflect(_) => panic!("expected probe command"),
+        }
     }
 
     #[test]
     fn parses_reflect_options() {
-        let args = vec![
-            "--ifname".to_owned(),
-            "en2".to_owned(),
-            "--port".to_owned(),
-            "42000".to_owned(),
-        ];
+        let cli = Cli::try_parse_from([
+            "link_profile",
+            "reflect",
+            "--ifname",
+            "en2",
+            "--port",
+            "42000",
+        ])
+        .expect("reflect options should parse");
 
-        let options = parse_reflect_options(&args).expect("reflect options should parse");
-        assert_eq!(options.ifname, "en2");
-        assert_eq!(options.port, 42_000);
+        match cli.command {
+            Command::Reflect(options) => {
+                assert_eq!(options.ifname, "en2");
+                assert_eq!(options.port, 42_000);
+            }
+            Command::Probe(_) => panic!("expected reflect command"),
+        }
+    }
+
+    #[test]
+    fn mark_seen_accepts_each_sequence_once() {
+        let mut seen = vec![false; 2];
+
+        assert!(mark_seen(&mut seen, 0));
+        assert!(!mark_seen(&mut seen, 0));
+        assert!(mark_seen(&mut seen, 1));
+        assert!(!mark_seen(&mut seen, 2));
     }
 }

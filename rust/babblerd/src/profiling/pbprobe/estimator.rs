@@ -5,10 +5,14 @@ use crate::config::{OUTER_IPV6_HEADER_BYTES, OUTER_UDP_HEADER_BYTES, PHYSICAL_LI
 pub const DEFAULT_PBPROBE_PORT: u16 = 41_902;
 pub const DEFAULT_SAMPLE_COUNT: u32 = 200;
 pub const DEFAULT_UTILIZATION: f64 = 0.01;
-pub const DEFAULT_DISPERSION_THRESHOLD: Duration = Duration::from_millis(1);
+pub const DEFAULT_DISPERSION_THRESHOLD_MS: u64 = 1;
+pub const DEFAULT_DISPERSION_THRESHOLD: Duration =
+    Duration::from_millis(DEFAULT_DISPERSION_THRESHOLD_MS);
 pub const DEFAULT_MAX_BULK_LEN: u32 = 10_000;
-pub const DEFAULT_RTS_TIMEOUT: Duration = Duration::from_millis(750);
-pub const DEFAULT_START_TIMEOUT: Duration = Duration::from_millis(750);
+pub const DEFAULT_RTS_TIMEOUT_MS: u64 = 750;
+pub const DEFAULT_RTS_TIMEOUT: Duration = Duration::from_millis(DEFAULT_RTS_TIMEOUT_MS);
+pub const DEFAULT_START_TIMEOUT_MS: u64 = 750;
+pub const DEFAULT_START_TIMEOUT: Duration = Duration::from_millis(DEFAULT_START_TIMEOUT_MS);
 pub const DEFAULT_CONTROL_RETRIES: u32 = 5;
 
 #[derive(Debug, Clone)]

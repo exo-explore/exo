@@ -1,7 +1,15 @@
-use thiserror::Error;
+use std::mem::size_of;
 
-pub const HEADER_LEN: usize = 24;
-pub const SUMMARY_BODY_LEN: usize = 20;
+use thiserror::Error;
+use zerocopy::byteorder::{NetworkEndian, U16, U32, U64};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+
+type U16Be = U16<NetworkEndian>;
+type U32Be = U32<NetworkEndian>;
+type U64Be = U64<NetworkEndian>;
+
+pub const HEADER_LEN: usize = size_of::<WireHeader>();
+pub const SUMMARY_BODY_LEN: usize = size_of::<WireSummaryBody>();
 pub const SUMMARY_PACKET_LEN: usize = HEADER_LEN + SUMMARY_BODY_LEN;
 
 const MAGIC: &[u8; 4] = b"BBLP";
@@ -47,6 +55,26 @@ pub struct SummaryBody {
     pub span_nanos: u64,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, FromBytes, Immutable, IntoBytes, KnownLayout)]
+struct WireHeader {
+    magic: [u8; 4],
+    version: u8,
+    kind: u8,
+    flags: U16Be,
+    run_id: U64Be,
+    seq: U32Be,
+    count: U32Be,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, FromBytes, Immutable, IntoBytes, KnownLayout)]
+struct WireSummaryBody {
+    received_packets: U32Be,
+    received_bytes: U64Be,
+    span_nanos: U64Be,
+}
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ProtocolError {
     #[error("packet is too short")]
@@ -62,45 +90,12 @@ pub enum ProtocolError {
 }
 
 pub fn encode_header(dst: &mut [u8], header: Header) -> Result<usize, ProtocolError> {
-    if dst.len() < HEADER_LEN {
-        return Err(ProtocolError::BufferTooSmall);
-    }
-
-    let mut cursor = 0;
-    put_slice(dst, &mut cursor, MAGIC.as_slice())?;
-    put_slice(dst, &mut cursor, &[VERSION])?;
-    put_slice(dst, &mut cursor, &[header.kind as u8])?;
-    put_slice(dst, &mut cursor, &0_u16.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &header.run_id.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &header.seq.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &header.count.to_be_bytes())?;
-    Ok(cursor)
+    write_bytes(dst, WireHeader::from_header(header).as_bytes())
 }
 
 pub fn decode_header(src: &[u8]) -> Result<Header, ProtocolError> {
-    let mut cursor = 0;
-    let magic = take(src, &mut cursor, MAGIC.len())?;
-    if magic != MAGIC.as_slice() {
-        return Err(ProtocolError::BadMagic);
-    }
-
-    let version = read_u8(src, &mut cursor)?;
-    if version != VERSION {
-        return Err(ProtocolError::BadVersion(version));
-    }
-
-    let kind = PacketKind::try_from(read_u8(src, &mut cursor)?)?;
-    let _flags = read_u16(src, &mut cursor)?;
-    let run_id = read_u64(src, &mut cursor)?;
-    let seq = read_u32(src, &mut cursor)?;
-    let count = read_u32(src, &mut cursor)?;
-
-    Ok(Header {
-        kind,
-        run_id,
-        seq,
-        count,
-    })
+    let (wire, _) = WireHeader::read_from_prefix(src).map_err(|_| ProtocolError::TooShort)?;
+    wire.decode()
 }
 
 pub fn encode_summary(
@@ -112,73 +107,74 @@ pub fn encode_summary(
         return Err(ProtocolError::BufferTooSmall);
     }
 
-    let mut cursor = encode_header(dst, header)?;
-    put_slice(dst, &mut cursor, &body.received_packets.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &body.received_bytes.to_be_bytes())?;
-    put_slice(dst, &mut cursor, &body.span_nanos.to_be_bytes())?;
-    Ok(cursor)
+    let cursor = encode_header(dst, header)?;
+    write_bytes(&mut dst[cursor..], WireSummaryBody::from(body).as_bytes())?;
+    Ok(SUMMARY_PACKET_LEN)
 }
 
 pub fn decode_summary_body(src: &[u8]) -> Result<SummaryBody, ProtocolError> {
-    let mut cursor = HEADER_LEN;
-    let received_packets = read_u32(src, &mut cursor)?;
-    let received_bytes = read_u64(src, &mut cursor)?;
-    let span_nanos = read_u64(src, &mut cursor)?;
-
-    Ok(SummaryBody {
-        received_packets,
-        received_bytes,
-        span_nanos,
-    })
+    let body_src = src.get(HEADER_LEN..).ok_or(ProtocolError::TooShort)?;
+    let (wire, _) =
+        WireSummaryBody::read_from_prefix(body_src).map_err(|_| ProtocolError::TooShort)?;
+    Ok(SummaryBody::from(wire))
 }
 
-fn put_slice(dst: &mut [u8], cursor: &mut usize, src: &[u8]) -> Result<(), ProtocolError> {
-    let Some(end) = cursor.checked_add(src.len()) else {
-        return Err(ProtocolError::BufferTooSmall);
-    };
-    let Some(slot) = dst.get_mut(*cursor..end) else {
+impl WireHeader {
+    fn from_header(header: Header) -> Self {
+        Self {
+            magic: *MAGIC,
+            version: VERSION,
+            kind: header.kind as u8,
+            flags: U16Be::ZERO,
+            run_id: U64Be::new(header.run_id),
+            seq: U32Be::new(header.seq),
+            count: U32Be::new(header.count),
+        }
+    }
+
+    fn decode(self) -> Result<Header, ProtocolError> {
+        if self.magic != *MAGIC {
+            return Err(ProtocolError::BadMagic);
+        }
+        if self.version != VERSION {
+            return Err(ProtocolError::BadVersion(self.version));
+        }
+
+        Ok(Header {
+            kind: PacketKind::try_from(self.kind)?,
+            run_id: self.run_id.get(),
+            seq: self.seq.get(),
+            count: self.count.get(),
+        })
+    }
+}
+
+impl From<SummaryBody> for WireSummaryBody {
+    fn from(body: SummaryBody) -> Self {
+        Self {
+            received_packets: U32Be::new(body.received_packets),
+            received_bytes: U64Be::new(body.received_bytes),
+            span_nanos: U64Be::new(body.span_nanos),
+        }
+    }
+}
+
+impl From<WireSummaryBody> for SummaryBody {
+    fn from(wire: WireSummaryBody) -> Self {
+        Self {
+            received_packets: wire.received_packets.get(),
+            received_bytes: wire.received_bytes.get(),
+            span_nanos: wire.span_nanos.get(),
+        }
+    }
+}
+
+fn write_bytes(dst: &mut [u8], src: &[u8]) -> Result<usize, ProtocolError> {
+    let Some(slot) = dst.get_mut(..src.len()) else {
         return Err(ProtocolError::BufferTooSmall);
     };
     slot.copy_from_slice(src);
-    *cursor = end;
-    Ok(())
-}
-
-fn take<'a>(src: &'a [u8], cursor: &mut usize, len: usize) -> Result<&'a [u8], ProtocolError> {
-    let Some(end) = cursor.checked_add(len) else {
-        return Err(ProtocolError::TooShort);
-    };
-    let Some(chunk) = src.get(*cursor..end) else {
-        return Err(ProtocolError::TooShort);
-    };
-    *cursor = end;
-    Ok(chunk)
-}
-
-fn read_u8(src: &[u8], cursor: &mut usize) -> Result<u8, ProtocolError> {
-    let chunk = take(src, cursor, 1)?;
-    chunk.first().copied().ok_or(ProtocolError::TooShort)
-}
-
-fn read_u16(src: &[u8], cursor: &mut usize) -> Result<u16, ProtocolError> {
-    let mut bytes = [0_u8; 2];
-    let len = bytes.len();
-    bytes.copy_from_slice(take(src, cursor, len)?);
-    Ok(u16::from_be_bytes(bytes))
-}
-
-fn read_u32(src: &[u8], cursor: &mut usize) -> Result<u32, ProtocolError> {
-    let mut bytes = [0_u8; 4];
-    let len = bytes.len();
-    bytes.copy_from_slice(take(src, cursor, len)?);
-    Ok(u32::from_be_bytes(bytes))
-}
-
-fn read_u64(src: &[u8], cursor: &mut usize) -> Result<u64, ProtocolError> {
-    let mut bytes = [0_u8; 8];
-    let len = bytes.len();
-    bytes.copy_from_slice(take(src, cursor, len)?);
-    Ok(u64::from_be_bytes(bytes))
+    Ok(src.len())
 }
 
 #[cfg(test)]
@@ -187,6 +183,12 @@ mod tests {
         HEADER_LEN, Header, PacketKind, SUMMARY_PACKET_LEN, SummaryBody, decode_header,
         decode_summary_body, encode_header, encode_summary,
     };
+
+    #[test]
+    fn layouts_are_stable() {
+        assert_eq!(HEADER_LEN, 24);
+        assert_eq!(SUMMARY_PACKET_LEN, 44);
+    }
 
     #[test]
     fn header_round_trips() {

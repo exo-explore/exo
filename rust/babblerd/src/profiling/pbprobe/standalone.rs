@@ -1,16 +1,19 @@
-use std::collections::{HashMap, HashSet};
-use std::env;
+use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{self, ErrorKind};
 use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use clap::{Args, Parser, Subcommand};
 use color_eyre::eyre::{Result, WrapErr, eyre};
 
 use crate::config::{OUTER_IPV6_HEADER_BYTES, OUTER_UDP_HEADER_BYTES};
 
 use super::estimator::{
-    AcceptedSample, Estimate, EstimateOutcome, PbProbeConfig, next_bulk_len, pacing_interval,
+    AcceptedSample, DEFAULT_CONTROL_RETRIES, DEFAULT_DISPERSION_THRESHOLD_MS, DEFAULT_MAX_BULK_LEN,
+    DEFAULT_PBPROBE_PORT, DEFAULT_RTS_TIMEOUT_MS, DEFAULT_SAMPLE_COUNT, DEFAULT_START_TIMEOUT_MS,
+    DEFAULT_UTILIZATION, Estimate, EstimateOutcome, PbProbeConfig, next_bulk_len, pacing_interval,
     select_capacity_sample,
 };
 use super::protocol::{
@@ -24,38 +27,45 @@ const SERVER_RECV_TIMEOUT: Duration = Duration::from_secs(1);
 const MIN_ATTEMPT_MULTIPLIER: u32 = 3;
 
 pub fn run_from_env() -> Result<()> {
-    run(env::args())
+    run_cli(Cli::parse())
 }
 
 pub fn run<I, S>(args: I) -> Result<()>
 where
     I: IntoIterator<Item = S>,
-    S: Into<String>,
+    S: Into<OsString> + Clone,
 {
-    let args = args.into_iter().map(Into::into).collect::<Vec<String>>();
-    if wants_help(&args) {
-        print_usage();
-        return Ok(());
-    }
+    run_cli(Cli::try_parse_from(args)?)
+}
 
-    let command = args
-        .get(1)
-        .map(String::as_str)
-        .ok_or_else(|| eyre!("missing command; expected `server` or `client`"))?;
-    let rest = args.get(2..).unwrap_or_default();
-
-    match command {
-        "server" => run_server(parse_server_options(rest)?),
-        "client" => run_client(parse_client_options(rest)?),
-        other => Err(eyre!(
-            "unknown command {other:?}; expected `server` or `client`"
-        )),
+fn run_cli(cli: Cli) -> Result<()> {
+    match cli.command {
+        Command::Server(options) => run_server(options),
+        Command::Client(options) => run_client(options.into_client_options()),
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Parser)]
+#[command(name = "pbprobe_link")]
+#[command(about = "Run standalone PBProbe link-local capacity probes")]
+#[command(arg_required_else_help = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    Server(ServerOptions),
+    Client(ClientArgs),
+}
+
+#[derive(Debug, Args, Clone)]
 struct ServerOptions {
+    #[arg(long)]
     ifname: String,
+
+    #[arg(long, default_value_t = DEFAULT_PBPROBE_PORT)]
     port: u16,
 }
 
@@ -64,6 +74,66 @@ struct ClientOptions {
     ifname: String,
     peer: Ipv6Addr,
     config: PbProbeConfig,
+}
+
+#[derive(Debug, Args, Clone)]
+struct ClientArgs {
+    #[arg(long)]
+    ifname: String,
+
+    #[arg(long, value_parser = parse_link_local_addr_arg)]
+    peer: Ipv6Addr,
+
+    #[arg(long, default_value_t = DEFAULT_PBPROBE_PORT)]
+    port: u16,
+
+    #[arg(long = "samples", default_value_t = DEFAULT_SAMPLE_COUNT)]
+    sample_count: u32,
+
+    #[arg(long, default_value_t = DEFAULT_UTILIZATION)]
+    utilization: f64,
+
+    #[arg(long = "dispersion-threshold-ms", default_value_t = DEFAULT_DISPERSION_THRESHOLD_MS)]
+    dispersion_threshold_ms: u64,
+
+    #[arg(long = "initial-bulk-len", default_value_t = 1)]
+    initial_bulk_len: u32,
+
+    #[arg(long = "max-bulk-len", default_value_t = DEFAULT_MAX_BULK_LEN)]
+    max_bulk_len: u32,
+
+    #[arg(long = "ip-packet-bytes", default_value_t = usize::from(crate::config::PHYSICAL_LINK_MTU))]
+    ip_packet_bytes: usize,
+
+    #[arg(long = "start-timeout-ms", default_value_t = DEFAULT_START_TIMEOUT_MS)]
+    start_timeout_ms: u64,
+
+    #[arg(long = "rts-timeout-ms", default_value_t = DEFAULT_RTS_TIMEOUT_MS)]
+    rts_timeout_ms: u64,
+
+    #[arg(long = "control-retries", default_value_t = DEFAULT_CONTROL_RETRIES)]
+    control_retries: u32,
+}
+
+impl ClientArgs {
+    fn into_client_options(self) -> ClientOptions {
+        ClientOptions {
+            ifname: self.ifname,
+            peer: self.peer,
+            config: PbProbeConfig {
+                port: self.port,
+                sample_count: self.sample_count,
+                utilization: self.utilization,
+                dispersion_threshold: Duration::from_millis(self.dispersion_threshold_ms),
+                initial_bulk_len: self.initial_bulk_len,
+                max_bulk_len: self.max_bulk_len,
+                ip_packet_bytes: self.ip_packet_bytes,
+                start_timeout: Duration::from_millis(self.start_timeout_ms),
+                rts_timeout: Duration::from_millis(self.rts_timeout_ms),
+                control_retries: self.control_retries,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -304,7 +374,8 @@ fn receive_bulk_sample(
 ) -> Result<Option<AcceptedSample>> {
     let deadline = started + config.rts_timeout;
     let mut buf = vec![0_u8; MAX_UDP_PACKET_BYTES];
-    let mut seen = HashSet::with_capacity(usize::try_from(bulk_len.saturating_add(1)).unwrap_or(0));
+    let mut seen = vec![false; usize::try_from(bulk_len.saturating_add(1)).unwrap_or(0)];
+    let mut seen_count = 0_usize;
     let mut first_rx = None;
     let mut last_rx = None;
     let mut server_issue_duration = None;
@@ -352,7 +423,9 @@ fn receive_bulk_sample(
         }
 
         let now = Instant::now();
-        seen.insert(header.seq);
+        if mark_seen(&mut seen, header.seq) {
+            seen_count = seen_count.saturating_add(1);
+        }
         if header.seq == 0 {
             first_rx = Some(now);
         }
@@ -363,7 +436,7 @@ fn receive_bulk_sample(
             }
         }
 
-        if seen.len() == usize::try_from(bulk_len.saturating_add(1)).unwrap_or(usize::MAX) {
+        if seen_count == seen.len() {
             return Ok(finish_sample(
                 sample_id,
                 bulk_len,
@@ -398,6 +471,20 @@ fn finish_sample(
         dispersion: last.saturating_duration_since(first),
         server_issue_duration,
     })
+}
+
+fn mark_seen(seen: &mut [bool], seq: u32) -> bool {
+    let Ok(index) = usize::try_from(seq) else {
+        return false;
+    };
+    let Some(slot) = seen.get_mut(index) else {
+        return false;
+    };
+    if *slot {
+        return false;
+    }
+    *slot = true;
+    true
 }
 
 fn start_session(
@@ -638,135 +725,8 @@ fn issue_rate_mbps(packet_count: u32, ip_packet_bytes: usize, duration: Duration
     Some(bits * 1_000.0 / (nanos as f64))
 }
 
-fn parse_server_options(args: &[String]) -> Result<ServerOptions> {
-    let mut flags = parse_flags(args)?;
-    let ifname = take_required(&mut flags, "ifname")?;
-    let port = take_u16(&mut flags, "port")?.unwrap_or(super::estimator::DEFAULT_PBPROBE_PORT);
-    reject_unknown_flags(flags)?;
-    Ok(ServerOptions { ifname, port })
-}
-
-fn parse_client_options(args: &[String]) -> Result<ClientOptions> {
-    let mut flags = parse_flags(args)?;
-    let ifname = take_required(&mut flags, "ifname")?;
-    let peer_raw = take_required(&mut flags, "peer")?;
-    let peer = parse_link_local_addr(&peer_raw)
-        .wrap_err_with(|| format!("parsing peer IPv6 address {peer_raw:?}"))?;
-
-    let mut config = PbProbeConfig::default();
-    config.port = take_u16(&mut flags, "port")?.unwrap_or(config.port);
-    config.sample_count = take_u32(&mut flags, "samples")?.unwrap_or(config.sample_count);
-    config.utilization = take_f64(&mut flags, "utilization")?.unwrap_or(config.utilization);
-    config.dispersion_threshold = take_duration_ms(&mut flags, "dispersion-threshold-ms")?
-        .unwrap_or(config.dispersion_threshold);
-    config.initial_bulk_len =
-        take_u32(&mut flags, "initial-bulk-len")?.unwrap_or(config.initial_bulk_len);
-    config.max_bulk_len = take_u32(&mut flags, "max-bulk-len")?.unwrap_or(config.max_bulk_len);
-    config.ip_packet_bytes =
-        take_usize(&mut flags, "ip-packet-bytes")?.unwrap_or(config.ip_packet_bytes);
-    config.start_timeout =
-        take_duration_ms(&mut flags, "start-timeout-ms")?.unwrap_or(config.start_timeout);
-    config.rts_timeout =
-        take_duration_ms(&mut flags, "rts-timeout-ms")?.unwrap_or(config.rts_timeout);
-    config.control_retries =
-        take_u32(&mut flags, "control-retries")?.unwrap_or(config.control_retries);
-
-    reject_unknown_flags(flags)?;
-    Ok(ClientOptions {
-        ifname,
-        peer,
-        config,
-    })
-}
-
-fn parse_flags(args: &[String]) -> Result<HashMap<String, String>> {
-    let mut flags = HashMap::new();
-    let mut index = 0;
-
-    while let Some(raw) = args.get(index) {
-        let Some(without_prefix) = raw.strip_prefix("--") else {
-            return Err(eyre!("expected --flag value, got {raw:?}"));
-        };
-
-        if let Some((key, value)) = without_prefix.split_once('=') {
-            flags.insert(key.to_owned(), value.to_owned());
-            index += 1;
-            continue;
-        }
-
-        let Some(value) = args.get(index + 1) else {
-            return Err(eyre!("missing value for --{without_prefix}"));
-        };
-        if value.starts_with("--") {
-            return Err(eyre!("missing value for --{without_prefix}"));
-        }
-        flags.insert(without_prefix.to_owned(), value.to_owned());
-        index += 2;
-    }
-
-    Ok(flags)
-}
-
-fn take_required(flags: &mut HashMap<String, String>, name: &str) -> Result<String> {
-    flags
-        .remove(name)
-        .ok_or_else(|| eyre!("missing required --{name}"))
-}
-
-fn take_u16(flags: &mut HashMap<String, String>, name: &str) -> Result<Option<u16>> {
-    take_parse(flags, name)
-}
-
-fn take_u32(flags: &mut HashMap<String, String>, name: &str) -> Result<Option<u32>> {
-    take_parse(flags, name)
-}
-
-fn take_usize(flags: &mut HashMap<String, String>, name: &str) -> Result<Option<usize>> {
-    take_parse(flags, name)
-}
-
-fn take_f64(flags: &mut HashMap<String, String>, name: &str) -> Result<Option<f64>> {
-    take_parse(flags, name)
-}
-
-fn take_duration_ms(flags: &mut HashMap<String, String>, name: &str) -> Result<Option<Duration>> {
-    let Some(raw) = flags.remove(name) else {
-        return Ok(None);
-    };
-    let millis = raw
-        .parse::<u64>()
-        .wrap_err_with(|| format!("parsing --{name} value {raw:?} as milliseconds"))?;
-    Ok(Some(Duration::from_millis(millis)))
-}
-
-fn take_parse<T>(flags: &mut HashMap<String, String>, name: &str) -> Result<Option<T>>
-where
-    T: std::str::FromStr,
-    T::Err: std::error::Error + Send + Sync + 'static,
-{
-    let Some(raw) = flags.remove(name) else {
-        return Ok(None);
-    };
-    raw.parse::<T>()
-        .map(Some)
-        .wrap_err_with(|| format!("parsing --{name} value {raw:?}"))
-}
-
-fn reject_unknown_flags(flags: HashMap<String, String>) -> Result<()> {
-    if flags.is_empty() {
-        return Ok(());
-    }
-
-    let mut names = flags.keys().map(String::as_str).collect::<Vec<&str>>();
-    names.sort_unstable();
-    Err(eyre!("unknown option(s): --{}", names.join(", --")))
-}
-
-fn wants_help(args: &[String]) -> bool {
-    args.len() <= 1
-        || args
-            .iter()
-            .any(|arg| arg.as_str() == "--help" || arg.as_str() == "-h")
+fn parse_link_local_addr_arg(raw: &str) -> std::result::Result<Ipv6Addr, String> {
+    parse_link_local_addr(raw).map_err(|err| err.to_string())
 }
 
 fn is_timeout(err: &io::Error) -> bool {
@@ -798,68 +758,73 @@ fn format_optional_mbps(mbps: Option<f64>) -> String {
         .unwrap_or_else(|| "n/a".to_owned())
 }
 
-fn print_usage() {
-    println!(
-        "\
-Usage:
-  cargo run -p babblerd --example pbprobe_link -- server --ifname IFACE [--port PORT]
-  cargo run -p babblerd --example pbprobe_link -- client --ifname IFACE --peer FE80::ADDR [options]
-
-Client options:
-  --port PORT                       server UDP port, default 41902
-  --samples N                       fixed accepted sample count, default 200
-  --utilization FLOAT               PBProbe utilization cap U, default 0.01
-  --dispersion-threshold-ms MS      D_thresh for bulk growth, default 1
-  --initial-bulk-len K              starting k, default 1
-  --max-bulk-len K                  maximum k, default 10000
-  --ip-packet-bytes N               modeled IPv6 packet size, default 1500
-  --start-timeout-ms MS             START/ACK timeout, default 750
-  --rts-timeout-ms MS               per-bulk timeout, default 750
-  --control-retries N               START retries, default 5
-"
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use std::net::Ipv6Addr;
 
-    use super::{parse_client_options, parse_server_options};
+    use clap::Parser;
+
+    use super::{Cli, Command, mark_seen};
 
     #[test]
     fn parses_server_options() {
-        let args = vec![
-            "--ifname".to_owned(),
-            "en3".to_owned(),
-            "--port".to_owned(),
-            "42001".to_owned(),
-        ];
+        let cli = Cli::try_parse_from([
+            "pbprobe_link",
+            "server",
+            "--ifname",
+            "en3",
+            "--port",
+            "42001",
+        ])
+        .expect("server options should parse");
 
-        let options = parse_server_options(&args).expect("server options should parse");
-        assert_eq!(options.ifname, "en3");
-        assert_eq!(options.port, 42_001);
+        match cli.command {
+            Command::Server(options) => {
+                assert_eq!(options.ifname, "en3");
+                assert_eq!(options.port, 42_001);
+            }
+            Command::Client(_) => panic!("expected server command"),
+        }
     }
 
     #[test]
     fn parses_client_options() {
-        let args = vec![
-            "--ifname".to_owned(),
-            "en2".to_owned(),
-            "--peer".to_owned(),
-            "fe80::1%en2".to_owned(),
-            "--samples".to_owned(),
-            "50".to_owned(),
-            "--initial-bulk-len".to_owned(),
-            "100".to_owned(),
-        ];
+        let cli = Cli::try_parse_from([
+            "pbprobe_link",
+            "client",
+            "--ifname",
+            "en2",
+            "--peer",
+            "fe80::1%en2",
+            "--samples",
+            "50",
+            "--initial-bulk-len",
+            "100",
+        ])
+        .expect("client options should parse");
 
-        let options = parse_client_options(&args).expect("client options should parse");
-        assert_eq!(options.ifname, "en2");
-        assert_eq!(
-            options.peer,
-            "fe80::1".parse::<Ipv6Addr>().expect("valid IPv6")
-        );
-        assert_eq!(options.config.sample_count, 50);
-        assert_eq!(options.config.initial_bulk_len, 100);
+        match cli.command {
+            Command::Client(args) => {
+                let options = args.into_client_options();
+                assert_eq!(options.ifname, "en2");
+                assert_eq!(
+                    options.peer,
+                    "fe80::1".parse::<Ipv6Addr>().expect("valid IPv6")
+                );
+                assert_eq!(options.config.sample_count, 50);
+                assert_eq!(options.config.initial_bulk_len, 100);
+            }
+            Command::Server(_) => panic!("expected client command"),
+        }
+    }
+
+    #[test]
+    fn mark_seen_accepts_each_sequence_once() {
+        let mut seen = vec![false; 2];
+
+        assert!(mark_seen(&mut seen, 0));
+        assert!(!mark_seen(&mut seen, 0));
+        assert!(mark_seen(&mut seen, 1));
+        assert!(!mark_seen(&mut seen, 2));
     }
 }
