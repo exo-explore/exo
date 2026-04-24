@@ -473,7 +473,7 @@ fn send_bulk(
     let burst_started = Instant::now();
     for seq in 0..=session.bulk_len {
         let server_issue_nanos = if seq == session.bulk_len {
-            duration_nanos(burst_started.elapsed()).min(u64::from(u32::MAX)) as u32
+            duration_nanos(burst_started.elapsed()).clamp(1, u64::from(u32::MAX)) as u32
         } else {
             0
         };
