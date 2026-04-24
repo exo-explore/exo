@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import os
 import shutil
 import ssl
@@ -673,6 +674,9 @@ async def _download_file(
             ) as f:
                 while chunk := await r.content.read(8 * 1024 * 1024):
                     n_read = n_read + (await f.write(chunk))
+                    await f.flush()
+                    # Write companion metadata for peer download streaming
+                    await _write_partial_meta(partial_path, n_read, length, remote_hash)
                     on_progress(n_read, length, False)
 
     final_hash = await calc_hash(
@@ -688,8 +692,29 @@ async def _download_file(
             f"Downloaded file {target_dir / path} has hash {final_hash} but remote hash is {remote_hash}"
         )
     await aios.rename(partial_path, target_dir / path)
+    # Clean up companion metadata file
+    meta_path = Path(f"{partial_path}.meta")
+    if await aios.path.exists(meta_path):
+        await aios.remove(meta_path)
     on_progress(length, length, True)
     return target_dir / path
+
+
+async def _write_partial_meta(
+    partial_path: Path, safe_bytes: int, total: int, etag: str
+) -> None:
+    """Write companion .partial.meta file for peer download streaming.
+
+    This small JSON file tells the peer file server how many bytes of the
+    .partial file have been safely flushed to disk and are safe to serve.
+    """
+    meta_path = Path(f"{partial_path}.meta")
+    meta = json.dumps({"safe_bytes": safe_bytes, "total": total, "etag": etag})
+    # Write to temp then rename for atomicity
+    tmp_path = Path(f"{partial_path}.meta.tmp")
+    async with aiofiles.open(tmp_path, "w") as f:
+        await f.write(meta)
+    await aios.rename(tmp_path, meta_path)
 
 
 def calculate_repo_progress(
