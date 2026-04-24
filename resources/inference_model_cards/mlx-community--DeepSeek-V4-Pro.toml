@@ -1,0 +1,21 @@
+model_id = "mlx-community/DeepSeek-V4-Pro"
+n_layers = 61
+hidden_size = 7168
+num_key_value_heads = 1
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "deepseek"
+quantization = "8bit"
+base_model = "DeepSeek V4 Pro"
+capabilities = ["text", "thinking", "thinking_toggle"]
+
+context_length = 1048576
+
+[storage_size]
+in_bytes = 849681803879
+
+# Source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/generation_config.json
+# Source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro (README — Pro supports three reasoning effort modes)
+[sampling_defaults]
+temperature = 1.0
+top_p = 1.0

@@ -1,8 +1,27 @@
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Protocol, cast
 
 import mlx.core as mx
 from mlx_lm.generate import GenerationBatch
+
+
+class _ExtendableCache(Protocol):
+    def extend(self, other: object) -> None: ...
+
+
+def _extend_cache_inplace(
+    cache_a: list[object], cache_b: list[object]
+) -> list[object]:
+    """Inline of mlx_lm.generate._extend_cache (private API, reimplemented).
+    In-place appends entries of cache_b into entries of cache_a when both are
+    non-empty; returns whichever list holds the merged result."""
+    if not cache_a:
+        return cache_b
+    if not cache_b:
+        return cache_a
+    for ca, cb in zip(cache_a, cache_b, strict=True):
+        cast(_ExtendableCache, ca).extend(cb)
+    return cache_a
 
 _PRECOMPUTE_TOP_K = 20
 
@@ -58,6 +77,7 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     self._current_tokens = self._next_tokens
     self._current_logprobs = self._next_logprobs
     inputs = self._current_tokens
+    assert inputs is not None, "_step requires initialized _next_tokens"
 
     buf = _get_buffer(self)
     buf.ready = buf.pending
@@ -87,7 +107,7 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
         sampled = self.fallback_sampler(logprobs)
 
     self._next_tokens = sampled
-    self._next_logprobs = list(logprobs)
+    self._next_logprobs = logprobs
 
     if buf.needs_topk:
         batch_size = len(self.uids)
@@ -106,20 +126,90 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
         )
         mx.async_eval(
             self._next_tokens,
-            *self._next_logprobs,
+            self._next_logprobs,
             pending_indices,
             pending_values,
             pending_selected,
         )
     else:
-        mx.async_eval(self._next_tokens, *self._next_logprobs)
+        mx.async_eval(self._next_tokens, self._next_logprobs)
 
-    mx.eval(inputs, *self._current_logprobs)
+    current_lp = self._current_logprobs
+    if isinstance(current_lp, mx.array):
+        mx.eval(inputs, current_lp)
+    elif current_lp:
+        mx.eval(inputs, *current_lp)
+    else:
+        mx.eval(inputs)
+
     token_list = cast(list[int], inputs.tolist())
     for sti, ti in zip(self.tokens, token_list, strict=True):
         sti.append(ti)
-    return token_list, self._current_logprobs
+
+    if isinstance(current_lp, mx.array):
+        current_lp = list(current_lp)
+    return token_list, current_lp
+
+
+def _as_array(lp: object) -> mx.array | None:
+    if isinstance(lp, mx.array):
+        return lp
+    if isinstance(lp, list) and lp:
+        return mx.stack(cast(list[mx.array], lp))
+    return None
+
+
+def _patched_extend(self: GenerationBatch, batch: GenerationBatch) -> None:
+    """Upstream ``GenerationBatch.extend`` assumes ``_current_logprobs`` is
+    always a list once a step has run, but ``_step`` sets it to the mx.array
+    from the previous step's ``_next_logprobs``. When a new request's batch
+    gets merged into an already-running one, ``list.extend`` is called on an
+    mx.array and crashes. Normalize both sides before concatenating."""
+    self.uids.extend(batch.uids)
+    self.prompt_cache = _extend_cache_inplace(self.prompt_cache, batch.prompt_cache)
+    self.tokens.extend(batch.tokens)
+    if self.samplers is not None and batch.samplers is not None:
+        self.samplers.extend(batch.samplers)
+    if self.logits_processors is not None and batch.logits_processors is not None:
+        self.logits_processors.extend(batch.logits_processors)
+    self.max_tokens.extend(batch.max_tokens)
+    self.state_machines.extend(batch.state_machines)
+
+    if self._current_tokens is None:
+        self._current_tokens = batch._current_tokens
+        self._current_logprobs = batch._current_logprobs
+    elif batch._current_tokens is not None:
+        self._current_tokens = mx.concatenate(
+            [self._current_tokens, batch._current_tokens]
+        )
+        a = _as_array(self._current_logprobs)
+        b = _as_array(batch._current_logprobs)
+        if a is None:
+            self._current_logprobs = b if b is not None else []
+        elif b is None:
+            self._current_logprobs = a
+        else:
+            self._current_logprobs = mx.concatenate([a, b], axis=0)
+
+    if self._next_tokens is None:
+        self._next_tokens = batch._next_tokens
+        self._next_logprobs = batch._next_logprobs
+    elif batch._next_tokens is not None:
+        self._next_tokens = mx.concatenate([self._next_tokens, batch._next_tokens])
+        a = _as_array(self._next_logprobs)
+        b = _as_array(batch._next_logprobs)
+        if a is None:
+            self._next_logprobs = b if b is not None else []
+        elif b is None:
+            self._next_logprobs = a
+        else:
+            self._next_logprobs = mx.concatenate([a, b], axis=0)
+
+    self._token_context.extend(batch._token_context)
+    self._num_tokens.extend(batch._num_tokens)
+    self._matcher_states.extend(batch._matcher_states)
 
 
 def apply_batch_gen_patch() -> None:
     GenerationBatch._step = _patched_step
+    GenerationBatch.extend = _patched_extend

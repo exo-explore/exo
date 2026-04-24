@@ -46,7 +46,9 @@ class CacheSnapshot:
     """Snapshot of states at a known token position."""
 
     def __init__(
-        self, states: list[RotatingKVCache | ArraysCache | None], token_count: int
+        self,
+        states: list[RotatingKVCache | ArraysCache | CacheList | None],
+        token_count: int,
     ):
         self.states = states
         self.token_count = token_count
@@ -83,13 +85,55 @@ def copy_rotating_kv_cache(cache: RotatingKVCache) -> RotatingKVCache | None:
     return snap
 
 
+def _copy_arrays_cache(ac: ArraysCache) -> ArraysCache:
+    entries: list[mx.array | None] = []
+    for entry in ac.cache:  # type: ignore[reportUnknownMemberType]
+        if entry is None:
+            entries.append(None)
+            continue
+        assert isinstance(entry, mx.array)
+        entries.append(_detached_copy(entry))
+    copy = ArraysCache(len(entries))
+    copy.cache = entries  # type: ignore[reportUnknownMemberType]
+    return copy
+
+
+def _copy_cache_list(cl: CacheList) -> CacheList:
+    inners: list[object] = list(cl)  # type: ignore[reportUnknownArgumentType]
+    copied: list[object] = []
+    for inner in inners:
+        if isinstance(inner, RotatingKVCache):
+            snap = copy_rotating_kv_cache(inner)
+            copied.append(snap if snap is not None else deepcopy(inner))
+        elif isinstance(inner, ArraysCache):
+            copied.append(_copy_arrays_cache(inner))
+        else:
+            copied.append(deepcopy(inner))
+    return CacheList(*copied)
+
+
+def restore_snapshot_entry(
+    entry: ArraysCache | RotatingKVCache | CacheList | None,
+) -> ArraysCache | RotatingKVCache | CacheList | None:
+    if entry is None:
+        return None
+    if isinstance(entry, RotatingKVCache):
+        snap = copy_rotating_kv_cache(entry)
+        return snap if snap is not None else deepcopy(entry)
+    if isinstance(entry, ArraysCache):
+        return _copy_arrays_cache(entry)
+    return _copy_cache_list(entry)
+
+
 def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
-    states: list[ArraysCache | RotatingKVCache | None] = []
+    states: list[ArraysCache | RotatingKVCache | CacheList | None] = []
     for c in cache:
         if isinstance(c, ArraysCache):
-            states.append(deepcopy(c))
+            states.append(_copy_arrays_cache(c))
         elif isinstance(c, RotatingKVCache):
             states.append(copy_rotating_kv_cache(c))
+        elif isinstance(c, CacheList) and not bool(c.is_trimmable()):  # type: ignore[reportUnknownMemberType]
+            states.append(_copy_cache_list(c))
         else:
             states.append(None)
     token_count = cache_length(cache)
@@ -111,7 +155,12 @@ def _find_nearest_snapshot(
 
 def has_non_kv_caches(cache: KVCacheType) -> bool:
     """Check if a cache contains any ArraysCache (SSM) entries."""
-    return any(isinstance(c, (ArraysCache, RotatingKVCache)) for c in cache)
+    for c in cache:
+        if isinstance(c, CacheList):
+            return any(isinstance(_c, (ArraysCache, RotatingKVCache)) for _c in c)  # type: ignore[reportUnknownVariableType]
+        elif isinstance(c, (ArraysCache, RotatingKVCache)):
+            return True
+    return False
 
 
 class KVPrefixCache:
@@ -357,11 +406,21 @@ def trim_cache(
     snapshot: CacheSnapshot | None = None,
 ) -> None:
     for i, c in enumerate(cache):
-        if isinstance(c, (ArraysCache, RotatingKVCache)):
+        non_trimmable = isinstance(c, (ArraysCache, RotatingKVCache)) or (
+            isinstance(c, CacheList) and not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
+        )
+        if non_trimmable:
             if snapshot is not None and snapshot.states[i] is not None:
-                cache[i] = deepcopy(snapshot.states[i])  # type: ignore
-            else:
+                restored = restore_snapshot_entry(snapshot.states[i])
+                if restored is not None:
+                    cache[i] = restored  # type: ignore
+            elif isinstance(c, (ArraysCache, RotatingKVCache)):
                 c.state = [None] * len(c.state)
+            else:
+                # CacheList without a snapshot — zero each inner cache's state
+                for inner in c:  # type: ignore[reportUnknownVariableType]
+                    if isinstance(inner, (ArraysCache, RotatingKVCache)):
+                        inner.state = [None] * len(inner.state)
         else:
             c.trim(num_tokens)
 

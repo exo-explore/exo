@@ -383,11 +383,12 @@ class GenerationBatch:
     state_machines: List[SequenceStateMachine]
     max_tokens: List[int]
     _current_tokens: Optional[mx.array]
-    _current_logprobs: List[mx.array]
-    _next_tokens: mx.array
-    _next_logprobs: List[mx.array]
-    _token_context: List[mx.array]
+    _current_logprobs: mx.array | List[mx.array]
+    _next_tokens: Optional[mx.array]
+    _next_logprobs: mx.array | List[mx.array]
+    _token_context: List[Any]
     _num_tokens: List[int]
+    _matcher_states: List[Any]
 
     def __init__(
         self,
