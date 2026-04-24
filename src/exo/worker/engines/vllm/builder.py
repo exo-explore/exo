@@ -12,6 +12,7 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.disaggregated.streaming_connector import StreamingConnector
 from exo.disaggregated.batch_connector import BatchConnector
 
+
 @dataclass
 class VllmBuilder(Builder):
     model_id: ModelId
@@ -29,7 +30,6 @@ class VllmBuilder(Builder):
         self,
         bound_instance: BoundInstance,
     ) -> Generator[ModelLoadingResponse]:
-
         kv_connector_cls: type[object] | None = None
         overlapping = not os.environ.get("EXO_NO_OVERLAPPING_PREFILL_SENDS")
         if overlapping:
@@ -75,9 +75,19 @@ class VllmBuilder(Builder):
             def _on_prefill_status(running: bool) -> None:
                 port = prefill_port
                 if running:
-                    self.event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerRunning(prefill_server_port=port)))
+                    self.event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id,
+                            runner_status=RunnerRunning(prefill_server_port=port),
+                        )
+                    )
                 else:
-                    self.event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerReady(prefill_server_port=port)))
+                    self.event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id,
+                            runner_status=RunnerReady(prefill_server_port=port),
+                        )
+                    )
 
             self._prefill_server = start_prefill_server(
                 engine=self._engine,
@@ -112,4 +122,3 @@ class VllmBuilder(Builder):
             if hasattr(self, "_prefill_server") and self._prefill_server is not None:
                 self._prefill_server.shutdown()
             del self._engine, self._prefix_cache, self._tool_parser
-

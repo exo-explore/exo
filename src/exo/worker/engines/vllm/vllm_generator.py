@@ -217,7 +217,10 @@ def vllm_generate(
     stop_ids = _stop_token_ids(tokenizer, model_id)
     DEFAULT_PREFILL_STEP_SIZE = 8192
     max_batch_tokens: int = (
-        getattr(engine.model_config, "max_num_batched_tokens", DEFAULT_PREFILL_STEP_SIZE) or DEFAULT_PREFILL_STEP_SIZE
+        getattr(
+            engine.model_config, "max_num_batched_tokens", DEFAULT_PREFILL_STEP_SIZE
+        )
+        or DEFAULT_PREFILL_STEP_SIZE
     )  # type: ignore[reportUnknownMemberType]
     start_time = time.perf_counter()
     first_token_time: float | None = None
@@ -579,7 +582,6 @@ def load_vllm_engine(
             "kv_role": "kv_both",
         }
 
-
     is_nvfp4 = "nvfp4" in model_path.lower() or "nvfp4" in str(model_id).lower()
     has_mamba = False
     is_mxfp4 = False
@@ -588,8 +590,12 @@ def load_vllm_engine(
         with open(config_path) as f:
             model_config = json.load(f)
         text_config = model_config.get("text_config", model_config)
-        has_mamba = "mamba_ssm_dtype" in text_config or "linear_attention" in (text_config.get("layer_types") or [])
-        quant_config = model_config.get("quantization_config") or text_config.get("quantization_config")
+        has_mamba = "mamba_ssm_dtype" in text_config or "linear_attention" in (
+            text_config.get("layer_types") or []
+        )
+        quant_config = model_config.get("quantization_config") or text_config.get(
+            "quantization_config"
+        )
         if quant_config and quant_config.get("quant_method") == "mxfp4":
             is_mxfp4 = True
     if has_mamba:
@@ -640,5 +646,6 @@ def load_vllm_engine(
             )
 
     logger.info(f"vLLM engine loaded for {model_id}")
+
 
 return engine, tool_parser, prefix_cache

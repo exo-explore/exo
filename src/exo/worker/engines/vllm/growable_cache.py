@@ -120,7 +120,9 @@ def _patch_initialize_from_config() -> None:
     original = Worker.initialize_from_config
     original_init_attn = GPUModelRunner.initialize_attn_backend
 
-    def clear_and_reinit_attn(self: "GPUModelRunner", *args: object, **kwargs: object) -> None:
+    def clear_and_reinit_attn(
+        self: "GPUModelRunner", *args: object, **kwargs: object
+    ) -> None:
         self.attn_groups.clear()
         original_init_attn(self, *args, **kwargs)
 
@@ -169,7 +171,9 @@ def _patch_allocate_slots() -> None:
     if hasattr(KVCacheManager, "can_fit_full_sequence"):
         original_can_fit = KVCacheManager.can_fit_full_sequence
 
-        def patched_can_fit(self: "KVCacheManager", *args: "object", **kwargs: "object") -> bool:
+        def patched_can_fit(
+            self: "KVCacheManager", *args: "object", **kwargs: "object"
+        ) -> bool:
             result = original_can_fit(self, *args, **kwargs)
             while not result and _try_grow_cache(self):
                 result = original_can_fit(self, *args, **kwargs)
@@ -219,8 +223,6 @@ def _try_grow_cache(kv_cache_manager: "object") -> bool:
     except Exception:
         logger.opt(exception=True).error("Failed to grow KV cache")
         return False
-
-
 
 
 def _grow_tensors(
@@ -285,9 +287,19 @@ def _grow_tensors(
             old_kv = runner_kv_caches[i]
             if isinstance(old_kv, list) and isinstance(new_kv, list):
                 for j, (old_t, new_t) in enumerate(zip(old_kv, new_kv)):
-                    old_t.set_(new_t.storage(), new_t.storage_offset(), new_t.shape, new_t.stride())  # type: ignore
+                    old_t.set_(
+                        new_t.storage(),
+                        new_t.storage_offset(),
+                        new_t.shape,
+                        new_t.stride(),
+                    )  # type: ignore
             elif isinstance(old_kv, torch.Tensor) and isinstance(new_kv, torch.Tensor):
-                old_kv.set_(new_kv.storage(), new_kv.storage_offset(), new_kv.shape, new_kv.stride())  # type: ignore
+                old_kv.set_(
+                    new_kv.storage(),
+                    new_kv.storage_offset(),
+                    new_kv.shape,
+                    new_kv.stride(),
+                )  # type: ignore
             else:
                 runner_kv_caches[i] = new_kv
         else:
@@ -295,13 +307,27 @@ def _grow_tensors(
 
     for layer_name, new_kv in new_kv_caches.items():
         old_kv_list = forward_context[layer_name].kv_cache  # type: ignore
-        if old_kv_list is not None and (not isinstance(old_kv_list, torch.Tensor) or old_kv_list.numel() > 0):
+        if old_kv_list is not None and (
+            not isinstance(old_kv_list, torch.Tensor) or old_kv_list.numel() > 0
+        ):
             old_entry = old_kv_list[0]
             if isinstance(old_entry, list) and isinstance(new_kv, list):
                 for j, (old_t, new_t) in enumerate(zip(old_entry, new_kv)):
-                    old_t.set_(new_t.storage(), new_t.storage_offset(), new_t.shape, new_t.stride())  # type: ignore
-            elif isinstance(old_entry, torch.Tensor) and isinstance(new_kv, torch.Tensor):
-                old_entry.set_(new_kv.storage(), new_kv.storage_offset(), new_kv.shape, new_kv.stride())  # type: ignore
+                    old_t.set_(
+                        new_t.storage(),
+                        new_t.storage_offset(),
+                        new_t.shape,
+                        new_t.stride(),
+                    )  # type: ignore
+            elif isinstance(old_entry, torch.Tensor) and isinstance(
+                new_kv, torch.Tensor
+            ):
+                old_entry.set_(
+                    new_kv.storage(),
+                    new_kv.storage_offset(),
+                    new_kv.shape,
+                    new_kv.stride(),
+                )  # type: ignore
             else:
                 forward_context[layer_name].kv_cache = [new_kv]  # type: ignore
         else:
@@ -453,5 +479,3 @@ def _patch_get_computed_blocks() -> None:
         return self.empty_kv_cache_blocks, num_matched
 
     KVCacheManager.get_computed_blocks = patched  # type: ignore[reportAttributeAccessIssue]
-
-
