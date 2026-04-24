@@ -406,6 +406,7 @@ dependencies = [
     { name = "tiktoken", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "tinygrad", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "tomlkit", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "torch", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "transformers", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "types-aiofiles", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "zstandard", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
@@ -479,6 +480,7 @@ requires-dist = [
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "tinygrad", git = "https://github.com/AndreiCravtov/tinygrad.git?branch=andrei%2Ftinygrad-mlx-convert" },
     { name = "tomlkit", specifier = ">=0.14.0" },
+    { name = "torch", marker = "sys_platform == 'darwin'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform == 'linux' and extra != 'cpu' and extra != 'cuda12' and extra == 'cuda13'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torch", marker = "sys_platform == 'linux' and extra != 'cpu' and extra == 'cuda12' and extra != 'cuda13'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu120" },
     { name = "torch", marker = "(sys_platform == 'linux' and extra == 'cpu' and extra == 'cuda12') or (sys_platform == 'linux' and extra == 'cuda12' and extra == 'cuda13')", specifier = ">=2.10.0" },
@@ -2605,8 +2607,8 @@ wheels = [
 
 [[package]]
 name = "torch"
-version = "2.10.0"
-source = { registry = "https://pypi.org/simple" }
+version = "2.11.0"
+source = { registry = "https://download.pytorch.org/whl/cpu" }
 dependencies = [
     { name = "filelock", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "fsspec", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
@@ -2617,17 +2619,8 @@ dependencies = [
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ec/23/2c9fe0c9c27f7f6cb865abcea8a4568f29f00acaeadfc6a37f6801f84cb4/torch-2.10.0-2-cp313-none-macosx_11_0_arm64.whl", hash = "sha256:e521c9f030a3774ed770a9c011751fb47c4d12029a3d6522116e48431f2ff89e", size = 79498254, upload-time = "2026-02-10T21:44:44.095Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/c6/4dfe238342ffdcec5aef1c96c457548762d33c40b45a1ab7033bb26d2ff2/torch-2.10.0-3-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:80b1b5bfe38eb0e9f5ff09f206dcac0a87aadd084230d4a36eea5ec5232c115b", size = 915627275, upload-time = "2026-03-11T14:16:11.325Z" },
-    { url = "https://files.pythonhosted.org/packages/d8/f0/72bf18847f58f877a6a8acf60614b14935e2f156d942483af1ffc081aea0/torch-2.10.0-3-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:46b3574d93a2a8134b3f5475cfb98e2eb46771794c57015f6ad1fb795ec25e49", size = 915523474, upload-time = "2026-03-11T14:17:44.422Z" },
-    { url = "https://files.pythonhosted.org/packages/c9/6f/f2e91e34e3fcba2e3fc8d8f74e7d6c22e74e480bbd1db7bc8900fdf3e95c/torch-2.10.0-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:5c4d217b14741e40776dd7074d9006fd28b8a97ef5654db959d8635b2fe5f29b", size = 146004247, upload-time = "2026-01-21T16:24:29.335Z" },
-    { url = "https://files.pythonhosted.org/packages/98/fb/5160261aeb5e1ee12ee95fe599d0541f7c976c3701d607d8fc29e623229f/torch-2.10.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:6b71486353fce0f9714ca0c9ef1c850a2ae766b409808acd58e9678a3edb7738", size = 915716445, upload-time = "2026-01-21T16:22:45.353Z" },
-    { url = "https://files.pythonhosted.org/packages/6a/16/502fb1b41e6d868e8deb5b0e3ae926bbb36dab8ceb0d1b769b266ad7b0c3/torch-2.10.0-cp313-cp313-win_amd64.whl", hash = "sha256:c2ee399c644dc92ef7bc0d4f7e74b5360c37cdbe7c5ba11318dda49ffac2bc57", size = 113757050, upload-time = "2026-01-21T16:24:19.204Z" },
-    { url = "https://files.pythonhosted.org/packages/1a/0b/39929b148f4824bc3ad6f9f72a29d4ad865bcf7ebfc2fa67584773e083d2/torch-2.10.0-cp313-cp313t-macosx_14_0_arm64.whl", hash = "sha256:3202429f58309b9fa96a614885eace4b7995729f44beb54d3e4a47773649d382", size = 79851305, upload-time = "2026-01-21T16:24:09.209Z" },
-    { url = "https://files.pythonhosted.org/packages/d8/14/21fbce63bc452381ba5f74a2c0a959fdf5ad5803ccc0c654e752e0dbe91a/torch-2.10.0-cp313-cp313t-manylinux_2_28_aarch64.whl", hash = "sha256:aae1b29cd68e50a9397f5ee897b9c24742e9e306f88a807a27d617f07adb3bd8", size = 146005472, upload-time = "2026-01-21T16:22:29.022Z" },
-    { url = "https://files.pythonhosted.org/packages/54/fd/b207d1c525cb570ef47f3e9f836b154685011fce11a2f444ba8a4084d042/torch-2.10.0-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:6021db85958db2f07ec94e1bc77212721ba4920c12a18dc552d2ae36a3eb163f", size = 915612644, upload-time = "2026-01-21T16:21:47.019Z" },
-    { url = "https://files.pythonhosted.org/packages/36/53/0197f868c75f1050b199fe58f9bf3bf3aecac9b4e85cc9c964383d745403/torch-2.10.0-cp313-cp313t-win_amd64.whl", hash = "sha256:ff43db38af76fda183156153983c9a096fc4c78d0cd1e07b14a2314c7f01c2c8", size = 113997015, upload-time = "2026-01-21T16:23:00.767Z" },
-    { url = "https://files.pythonhosted.org/packages/0e/13/e76b4d9c160e89fff48bf16b449ea324bda84745d2ab30294c37c2434c0d/torch-2.10.0-cp313-none-macosx_11_0_arm64.whl", hash = "sha256:cdf2a523d699b70d613243211ecaac14fe9c5df8a0b0a9c02add60fb2a413e0f", size = 79498248, upload-time = "2026-01-21T16:23:09.315Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.11.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:442ec9dc78592564fdad69cf0beaa9da2f82ab810ccb4f13903869a90bf3f15d", upload-time = "2026-03-23T15:17:02Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.11.0-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:cc3a195701bba2239c313ee311487f80f8aaebe9e89b9073dddbcf2f93b5a0ba", upload-time = "2026-03-23T15:17:06Z" },
 ]
 
 [[package]]

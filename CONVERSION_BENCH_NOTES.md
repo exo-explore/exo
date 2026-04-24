@@ -19,6 +19,10 @@ and wrapper-construction overhead are still inside it.
   - `CONVERSION_BENCH_NOTES.md`
 - Interop code:
   - `mlx_tinygrad_interop/`
+- Baseline bridge module:
+  - `mlx_tinygrad_interop/tensor_bridge.py`
+- Route benchmark using existing PyTorch interop:
+  - `mlx_tinygrad_interop/bench_torch_route.py`
 - Historical benchmark kept as-is:
   - `tmp/bench_pingpong.py`
 
@@ -62,6 +66,8 @@ bidirectional latency, not symmetry for its own sake.
   - `mlx_tinygrad_interop.lease_pool.MlxToTinygradCopyLeasePool`
   - `mlx_tinygrad_interop.lease_pool.MlxToTinygradCopyLeasePools`
   - `mlx_tinygrad_interop.stress_interop`
+  - `mlx_tinygrad_interop.tensor_bridge.tinygrad_to_mlx`
+  - `mlx_tinygrad_interop.tensor_bridge.mlx_to_tinygrad` (stubbed)
 
 These helpers are intentionally private and unsafe.
 
@@ -107,6 +113,9 @@ Use the `exo` devshell and `uv` workflow.
 
 Do not rely on ad-hoc per-host build environments when the flake / devshell can
 carry the needed toolchain.
+
+For the PyTorch-route benchmark, `torch` must also be present in the normal
+Darwin project dependencies, not only in Linux extras.
 
 ### Important Lockfile Note
 
