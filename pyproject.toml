@@ -31,7 +31,7 @@ dependencies = [
   "mlx-vlm>=0.3.11",
   "transformers>=5.0.0,<5.4.0",
   "tinygrad",                                # TODO: maybe add a version or something idk lol
-  "torch>=2.10.0; sys_platform == 'darwin'",
+  "torch>=2.10.0",
 ]
 
 [project.scripts]
