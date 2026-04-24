@@ -16,7 +16,6 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 
-use futures_lite::FutureExt;
 use ipnet::Ipv6Net;
 use nix::errno::Errno;
 use nix::sys::signal::{Signal, kill};
@@ -26,7 +25,7 @@ use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, watch};
-use tokio::time::Duration;
+use tokio::time::{Duration, MissedTickBehavior, timeout};
 
 use crate::babel::Babble;
 use crate::babel::command::BabelCommand;
@@ -43,6 +42,10 @@ const PRIVATE_SOCK_PATH: &str = "/run/babbler/private/babeld.sock";
 const PRIVATE_DIR: &str = "/var/run/babbler/private";
 #[cfg(target_os = "linux")]
 const PRIVATE_DIR: &str = "/run/babbler/private";
+
+const STARTUP_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
+const STARTUP_SOCKET_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) struct BabelRuntime {
     proc: Child,
@@ -167,16 +170,29 @@ impl BabelRuntime {
     }
 
     async fn wait_for_socket(proc: &mut Child) -> Result<()> {
-        // maybe spinning logic is fine with magic numbers...?
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        while !matches!(tokio::fs::try_exists(PRIVATE_SOCK_PATH).await, Ok(true)) {
-            if let Some(status) = proc.try_wait()? {
-                return Err(BabbleError::BabeldCrashed(status.code()));
+        timeout(STARTUP_SOCKET_TIMEOUT, async {
+            let mut poll = tokio::time::interval(STARTUP_SOCKET_POLL_INTERVAL);
+            poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+            loop {
+                poll.tick().await;
+                match tokio::fs::try_exists(PRIVATE_SOCK_PATH).await {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => {}
+                    Err(err) => return Err(err.into()),
+                }
+                if let Some(status) = proc.try_wait()? {
+                    return Err(BabbleError::BabeldCrashed(status.code()));
+                }
             }
-            tracing::info!("where is the sock");
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-        Ok(())
+        })
+        .await
+        .unwrap_or_else(|_| {
+            Err(BabbleError::Other(format!(
+                "timed out after {}s waiting for babeld socket {PRIVATE_SOCK_PATH}",
+                STARTUP_SOCKET_TIMEOUT.as_secs()
+            )))
+        })
     }
 
     async fn abort_child(proc: &mut Child) {
@@ -393,23 +409,16 @@ impl BabelRuntime {
                 Ok(()) | Err(Errno::ESRCH) => Ok(()),
                 Err(err) => Err(io::Error::from_raw_os_error(err as i32).into()),
             };
-            let exit_code = async { Some(self.proc.wait().await) }
-                .or(async {
-                    // TODO: undocumented magic number
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                    None
-                })
-                .await;
-            match exit_code {
-                Some(Ok(code)) => {
+            match timeout(SHUTDOWN_TIMEOUT, self.proc.wait()).await {
+                Ok(Ok(code)) => {
                     if code.success() {
                         rc_err
                     } else {
                         rc_err.and_then(|()| Err(BabbleError::BabeldCrashed(code.code())))
                     }
                 }
-                Some(Err(e)) => Err(e.into()),
-                None => {
+                Ok(Err(e)) => Err(e.into()),
+                Err(_) => {
                     self.proc.kill().await?;
                     rc_err.and(Err(BabbleError::BabeldCrashed(None)))
                 }

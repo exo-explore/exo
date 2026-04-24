@@ -5,7 +5,7 @@ use ipnet::Ipv6Net;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
-    time::Duration,
+    time::{Duration, MissedTickBehavior},
 };
 
 use crate::babel::BabelState;
@@ -25,7 +25,7 @@ pub struct RoutingStack {
 }
 
 impl RoutingStack {
-    pub async fn start(
+    pub fn start(
         node_addr: Ipv6Net,
         tun: &TunDevice,
         udp_port: u16,
@@ -45,7 +45,7 @@ impl RoutingStack {
         })?;
         let dataplane_exit = dataplane
             .take_exit_receiver()
-            .expect("dataplane exit receiver must exist immediately after spawn");
+            .ok_or_else(|| color_eyre::eyre::eyre!("dataplane exit receiver missing"))?;
 
         let state_logger = tokio::spawn(async move {
             while state_recv.changed().await.is_ok() {
@@ -56,9 +56,8 @@ impl RoutingStack {
         });
 
         let babel_events = event_send.clone();
-        let babel_state_send = state_send.clone();
         let babel = tokio::spawn(async move {
-            let res = crate::babel(node_addr, iface_recv, babel_state_send).await;
+            let res = crate::babel(node_addr, iface_recv, state_send).await;
             let _ = babel_events
                 .send(RoutingStackEvent::Exited {
                     kind: StackTaskKind::Babel,
@@ -93,7 +92,7 @@ impl RoutingStack {
             res
         });
 
-        let dataplane_events = event_send.clone();
+        let dataplane_events = event_send;
         let dataplane_monitor = tokio::spawn(async move {
             let exit = dataplane_exit.await;
             let (kind, error) = match exit {
@@ -158,10 +157,12 @@ async fn publish_fib_updates(
     let builder = FibBuilder::new([node_addr.addr()], TUN_MTU);
     let mut pending = Some(Arc::new(builder.derive(state_recv.borrow().as_ref())));
     let mut published: Option<Arc<crate::fib::FibSnapshot>> = None;
+    let mut retry_tick = tokio::time::interval(Duration::from_millis(10));
+    retry_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     loop {
         if let Some(snapshot) = pending.take() {
-            let published_snapshot = snapshot.clone();
+            let published_snapshot = Arc::clone(&snapshot);
             match publisher.try_publish(snapshot) {
                 Ok(()) => {
                     published = Some(published_snapshot);
@@ -198,7 +199,7 @@ async fn publish_fib_updates(
                     Err(_) => return Ok(()),
                 }
             }
-            _ = tokio::time::sleep(Duration::from_millis(10)), if pending.is_some() => {}
+            _ = retry_tick.tick(), if pending.is_some() => {}
         }
     }
 }

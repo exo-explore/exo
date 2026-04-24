@@ -44,7 +44,6 @@ use crate::fib::{FibSnapshot, HostKey, host_key};
 
 const TOKEN_TUN: Token = Token(0);
 const MAX_POLL_EVENTS: usize = 128;
-const MAX_SNAPSHOT_BACKLOG: usize = 8;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const RECONCILE_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 const COUNTER_LOG_INTERVAL: Duration = Duration::from_secs(5);
@@ -356,21 +355,7 @@ impl DataplaneWorker {
     }
 
     fn drain_snapshot_updates(&mut self) -> Result<()> {
-        let mut drained = ArrayVec::<Arc<FibSnapshot>, MAX_SNAPSHOT_BACKLOG>::new();
-        loop {
-            match self.fib_updates.try_recv() {
-                Ok(snapshot) => {
-                    if drained.is_full() {
-                        drained.remove(0);
-                    }
-                    drained.push(snapshot);
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
-            }
-        }
-
-        if let Some(snapshot) = drained.pop() {
+        if let Some(snapshot) = self.fib_updates.try_iter().last() {
             self.apply_snapshot(snapshot)?;
         }
         Ok(())

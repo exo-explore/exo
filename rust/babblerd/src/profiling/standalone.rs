@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::io::{self, ErrorKind};
 use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
 use color_eyre::eyre::{Result, WrapErr, eyre};
@@ -650,10 +650,7 @@ fn format_duration(duration: Duration) -> String {
 }
 
 fn make_base_run_id() -> u64 {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, duration_nanos_u64);
-    now ^ (u64::from(std::process::id()) << 32)
+    rand::random()
 }
 
 #[cfg(test)]

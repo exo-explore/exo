@@ -264,9 +264,7 @@ impl DaemonCore {
             self.router_udp_port,
             self.babel_state_send.clone(),
             self.event_send.clone(),
-        )
-        .await
-        {
+        ) {
             Ok(stack) => {
                 self.routing_stack = Some(stack);
                 if let Err(err) = route_ctl::ensure_overlay_route(

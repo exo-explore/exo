@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::io::{self, ErrorKind};
 use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
 use color_eyre::eyre::{Result, WrapErr, eyre};
@@ -246,10 +246,9 @@ fn run_client(options: ClientOptions) -> Result<()> {
 
 fn run_probe(socket: &UdpSocket, peer: SocketAddr, config: &PbProbeConfig) -> Result<Estimate> {
     let mut bulk_len = config.initial_bulk_len;
-    let mut round = 0_u64;
 
     loop {
-        let run_id = make_run_id(round);
+        let run_id = make_run_id();
         println!(
             "PBProbe round: run_id={run_id} bulk_len={bulk_len} samples={} utilization={:.4}",
             config.sample_count, config.utilization
@@ -271,7 +270,6 @@ fn run_probe(socket: &UdpSocket, peer: SocketAddr, config: &PbProbeConfig) -> Re
                     format_duration(config.dispersion_threshold)
                 );
                 bulk_len = next_bulk_len;
-                round = round.saturating_add(1);
             }
         }
     }
@@ -733,11 +731,8 @@ fn is_timeout(err: &io::Error) -> bool {
     matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
 }
 
-fn make_run_id(round: u64) -> u64 {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, duration_nanos);
-    now ^ (u64::from(std::process::id()) << 32) ^ round
+fn make_run_id() -> u64 {
+    rand::random()
 }
 
 fn format_duration(duration: Duration) -> String {

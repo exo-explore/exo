@@ -109,13 +109,9 @@ fn is_not_found(err: &eyre::Report) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_path(name: &str) -> std::path::PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock before epoch")
-            .as_nanos();
+        let nonce = rand::random::<u64>();
         std::env::temp_dir().join(format!(
             "babblerd-identity-{name}-{}-{nonce}",
             std::process::id()
