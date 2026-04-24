@@ -22,7 +22,7 @@ def main() -> None:
             Tensor.from_blob(x.data_ptr(), x.shape, dtype=_from_torch_dtype(x.dtype), device="METAL")
             Tensor.from_blob(x.data_ptr(), x.shape, dtype=_from_torch_dtype(x.dtype), device="METAL")
             new = time.perf_counter_ns()
-            vals.append(new - old)
+            vals.append(float(new - old) / 4)
         print( f"result: {N*4:8d} pytorch to tinygrad in {statistics.mean(vals):.2f}ns with stddev {statistics.stdev(vals):.2f}ns" )
 
 
