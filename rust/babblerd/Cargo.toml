@@ -8,7 +8,7 @@ color-eyre = "0.6.5"
 clap = { version = "4.5.53", features = ["derive"] }
 futures-lite.workspace = true
 ipnet = "2.12.0"
-nix = { version = "0.31", features = ["fs", "signal", "process", "user", "net"] }
+nix = { version = "0.31", features = ["fs", "signal", "process", "user", "net", "uio"] }
 netdev = "0.42"
 ahash = "0.8.12"
 arrayvec = "0.7.6"
