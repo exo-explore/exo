@@ -142,11 +142,7 @@ def place_instance(
             cycle
             for cycle in cycles_with_sufficient_memory
             if command.model_card.hidden_size % len(cycle) == 0
-            and (
-                is_deepseek_v4
-                or kv_heads is None
-                or kv_heads % len(cycle) == 0
-            )
+            and (is_deepseek_v4 or kv_heads is None or kv_heads % len(cycle) == 0)
         ]
         if not cycles_with_sufficient_memory:
             raise ValueError(

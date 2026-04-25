@@ -14,8 +14,7 @@ context_length = 1048576
 [storage_size]
 in_bytes = 155095760030
 
-# Source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/blob/main/generation_config.json
-# Source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash (README — Flash supports three reasoning effort modes)
+# Source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash
 [sampling_defaults]
 temperature = 1.0
 top_p = 1.0

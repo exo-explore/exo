@@ -23,6 +23,7 @@ from exo.shared.types.chunks import (
 from exo.shared.types.common import ModelId
 from exo.shared.types.mlx import Model
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
+from exo.worker.engines.mlx.dsml_encoding import parse_dsml_output
 from exo.worker.engines.mlx.utils_mlx import (
     detect_thinking_prompt_suffix,
 )
@@ -241,11 +242,6 @@ def parse_deepseek_v32(
 def parse_deepseek_v4(
     responses: Generator[GenerationResponse | None],
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
-    """Parse DeepSeek V4 DSML tool calls. V4 uses `<｜DSML｜tool_calls>` block tags
-    (vs V3.2's `<｜DSML｜function_calls>`). Inner invoke/parameter syntax is identical,
-    so the V3.2 parameter parser handles the body."""
-    from exo.worker.engines.mlx.dsml_encoding import parse_dsml_output
-
     dsml_token = "｜DSML｜"
     start = f"<{dsml_token}tool_calls>"
     end = f"</{dsml_token}tool_calls>"
@@ -260,7 +256,9 @@ def _parse_dsml_stream(
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     accumulated = ""
     in_tool_call = False
+    # Tokens buffered while we detect the start of a DSML block
     pending_buffer: list[GenerationResponse] = []
+    # Text accumulated during a tool call block
     tool_call_text = ""
 
     def _try_parse_tool_call(
@@ -312,6 +310,7 @@ def _parse_dsml_stream(
         if tool_calls_start in accumulated:
             start_idx = accumulated.index(tool_calls_start)
             pre_text = accumulated[:start_idx]
+            # Flush pending buffer tokens that contributed text before the marker
             if pre_text:
                 for buf_resp in pending_buffer:
                     if not pre_text:
@@ -338,11 +337,13 @@ def _parse_dsml_stream(
             pending_buffer.append(response)
             continue
 
+        # No partial match — flush all pending tokens and the current one
         yield from pending_buffer
         pending_buffer.clear()
         accumulated = ""
         yield response
 
+    # Flush any remaining pending buffer at generator end
     yield from pending_buffer
 
 

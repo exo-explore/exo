@@ -769,6 +769,7 @@ class ShardedMoE(CustomMlxLayer):
 
 class ShardedMoEV4(CustomMlxLayer):
     """Same as ShardedMoE but for DeepseekV4MoE which takes (x, input_ids)."""
+
     def __init__(self, layer: DeepseekV4MoE):
         super().__init__(cast(_LayerCallable, cast(object, layer)))
         self._v4_inner = layer
@@ -869,9 +870,7 @@ def _shard_v4_attention_heads(
         numpy so we use mx.contiguous directly."""
         rest = arr.shape[1:]
         reshaped = arr.reshape(o_groups, heads_per_group, stride, *rest)
-        sliced = reshaped[:, start:end].reshape(
-            o_groups * hpg_per_rank * stride, *rest
-        )
+        sliced = reshaped[:, start:end].reshape(o_groups * hpg_per_rank * stride, *rest)
         detached = mx.contiguous(sliced)
         mx.eval(detached)
         return detached
@@ -918,15 +917,7 @@ class DeepseekV4ShardingStrategy(TensorParallelShardingStrategy):
 
             # Head-parallel attention with interleaved-per-group sharding.
             _shard_v4_attention_heads(layer.attn, self.N, self.group.rank())
-            # wo_a row-parallel: input dim (group_feat) sharded by head-shard
-            # alignment. Output dim full. Per-rank output is PARTIAL over the
-            # input shard; aggregation deferred to after wo_b (linear so it
-            # commutes with all_sum).
             self.sharded_to_all_linear_in_place(layer.attn.wo_a)
-            # wo_b: replicated. all_sum the partial wo_a output (one collective
-            # on n_groups*o_lora_rank), then run unsharded wo_b on every rank.
-            # At decode B=1 wo_b is only ~30M FLOPs/layer; not worth the extra
-            # all_gather an output-shard would cost.
             layer.attn.wo_b = _AllSumLinear(layer.attn.wo_b, self.group)  # type: ignore[assignment]
 
             ffn = layer.ffn
@@ -942,9 +933,6 @@ class DeepseekV4ShardingStrategy(TensorParallelShardingStrategy):
             layer.ffn = wrapped  # type: ignore[assignment]
 
             mx.eval(layer)
-            # Release the full pre-shard weights from mlx's memory pool —
-            # without this the OS never reclaims the 18+ GB transient per V4
-            # Pro layer and sharding eventually OOMs.
             mx.clear_cache()
             yield ModelLoadingResponse(layers_loaded=i, total=total)
 
@@ -1006,6 +994,7 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
                 layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
                 layer.mlp.sharding_group = self.group  # type: ignore
             mx.eval(layer)
+            mx.clear_cache()
 
             yield ModelLoadingResponse(layers_loaded=i, total=total)
 
@@ -1123,6 +1112,7 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             layer.block_sparse_moe = ShardedMoE(layer.block_sparse_moe)  # type: ignore
             layer.block_sparse_moe.sharding_group = self.group
             mx.eval(layer)
+            mx.clear_cache()
 
             yield ModelLoadingResponse(layers_loaded=i, total=total)
         return model
@@ -1287,6 +1277,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                 layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
 
             mx.eval(layer)
+            mx.clear_cache()
 
             yield ModelLoadingResponse(layers_loaded=i, total=total)
         return model
@@ -1332,6 +1323,7 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
                 layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
 
             mx.eval(layer)
+            mx.clear_cache()
 
             yield ModelLoadingResponse(layers_loaded=i, total=total)
         return model
@@ -1372,6 +1364,7 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
             layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
             layer.mlp.sharding_group = self.group
             mx.eval(layer)
+            mx.clear_cache()
 
             yield ModelLoadingResponse(layers_loaded=i, total=total)
         return model
@@ -1414,6 +1407,7 @@ class Step35ShardingStrategy(TensorParallelShardingStrategy):
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
 
             mx.eval(layer)
+            mx.clear_cache()
 
             yield ModelLoadingResponse(layers_loaded=i, total=total)
         return model
@@ -1456,6 +1450,7 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
                 layer.mixer = mixer  # pyright: ignore[reportAttributeAccessIssue]
 
             mx.eval(layer)
+            mx.clear_cache()
             yield ModelLoadingResponse(layers_loaded=i, total=total)
         return model
 
@@ -1593,5 +1588,6 @@ class Gemma4ShardingStrategy(TensorParallelShardingStrategy):
                 layer.experts.sharding_group = self.group
 
             mx.eval(layer)
+            mx.clear_cache()
             yield ModelLoadingResponse(layers_loaded=i, total=total)
         return model
