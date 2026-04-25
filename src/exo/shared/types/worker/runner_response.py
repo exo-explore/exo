@@ -16,10 +16,6 @@ class BaseRunnerResponse(TaggedModel):
     pass
 
 
-class TokenizedResponse(BaseRunnerResponse):
-    prompt_tokens: int
-
-
 class GenerationResponse(BaseRunnerResponse):
     text: str
     token: int
@@ -73,6 +69,10 @@ class FinishedResponse(BaseRunnerResponse):
 class ModelLoadingResponse(BaseRunnerResponse):
     layers_loaded: int
     total: int
+
+
+class CancelledResponse(BaseRunnerResponse):
+    pass
 
 
 class PrefillProgressResponse(BaseRunnerResponse):

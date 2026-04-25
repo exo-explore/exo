@@ -41,7 +41,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.keyed_backoff import KeyedBackoff
-from exo.worker.runner.runner_supervisor import RunnerSupervisor
+from exo.worker.runner.supervisor import RunnerSupervisor
 
 
 def plan(
