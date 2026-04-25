@@ -602,10 +602,10 @@ def encode_messages(
 
     prompt = bos_token if add_default_bos_token and len(context) == 0 else ""
 
-    # Resolve drop_thinking: if any message has tools defined, don't drop thinking
+    # Drop all reasoning for now.
     effective_drop_thinking = drop_thinking
-    if any(m.get("tools") for m in full_messages):
-        effective_drop_thinking = False
+    # if any(m.get("tools") for m in full_messages):
+    #     effective_drop_thinking = False
 
     if thinking_mode == "thinking" and effective_drop_thinking:
         full_messages = _drop_thinking_messages(full_messages)
