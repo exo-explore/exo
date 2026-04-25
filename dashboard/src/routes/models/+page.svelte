@@ -515,6 +515,13 @@
     color: var(--ux-accent);
     background: rgba(245, 166, 35, 0.08);
   }
+  .status-pill[data-status="available"] {
+    color: var(--ux-text-dim);
+    background: var(--ux-bg-raised);
+  }
+  .status-pill[data-status="available"] .dot {
+    background: var(--ux-text-faint);
+  }
 
   .specs {
     display: flex;

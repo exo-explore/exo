@@ -1,7 +1,6 @@
 <script lang="ts">
   import { browser } from "$app/environment";
   import { fade } from "svelte/transition";
-  import HeaderNav from "$lib/components/HeaderNav.svelte";
   import IntegrationCard from "$lib/components/IntegrationCard.svelte";
   import { instances, refreshState } from "$lib/stores/app.svelte";
   import { onMount } from "svelte";
@@ -366,23 +365,17 @@
   });
 </script>
 
-<div class="min-h-screen bg-exo-dark-gray flex flex-col">
-  <HeaderNav showHome={true} />
-
-  <main
-    class="flex-1 max-w-3xl mx-auto w-full px-4 md:px-6 py-8"
-    in:fade={{ duration: 200 }}
-  >
-    <div class="mb-8">
-      <h1
-        class="text-white text-xl md:text-2xl font-semibold tracking-wide mb-2"
-      >
-        Integrations
-      </h1>
-      <p class="text-exo-light-gray/60 text-sm">
-        Connect external tools to your exo cluster.
-      </p>
+<div class="page-header">
+  <div>
+    <div class="page-eyebrow">INTEGRATIONS</div>
+    <h1 class="page-title">Connect external tools.</h1>
+    <div class="page-sub">
+      Drop exo into Claude Code, Codex, OpenCode, Pi, and more — one config file each.
     </div>
+  </div>
+</div>
+
+<div class="integrations-wrap" in:fade={{ duration: 200 }}>
 
     <!-- Status -->
     <div class="mb-8">
@@ -652,5 +645,34 @@
         />
       {/if}
     </div>
-  </main>
 </div>
+
+<style>
+  .page-header {
+    margin-bottom: 28px;
+  }
+  .page-eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--ux-text-faint);
+    font-size: 10px;
+    font-weight: 600;
+    font-family: var(--ux-mono);
+    margin-bottom: 6px;
+  }
+  .page-title {
+    margin: 0;
+    font-size: 30px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--ux-text);
+  }
+  .page-sub {
+    color: var(--ux-text-dim);
+    font-size: 13px;
+    margin-top: 6px;
+  }
+  .integrations-wrap {
+    max-width: 920px;
+  }
+</style>
