@@ -23,9 +23,7 @@ def _extract_int_offset(cache: object | None) -> int | None:
 
 
 _ModelCall = Callable[[DeepseekV4Model, mx.array, list[object] | None], mx.array]
-_CompressorCall = Callable[
-    [Compressor, mx.array, object, object, int, int, int], mx.array | None
-]
+_CompressorCall = Callable[[Compressor, mx.array, object, object, str], mx.array]
 
 
 def apply() -> None:
@@ -56,17 +54,13 @@ def apply() -> None:
     def patched_compressor_call(
         self: Compressor,
         x: mx.array,
-        state: object,
+        cache: object,
         offset: object,
-        slot_compressed: int,
-        slot_kv_state: int,
-        slot_score_state: int,
-    ) -> mx.array | None:
+        key: str = "compressor",
+    ) -> mx.array:
         if isinstance(offset, mx.array) and _current_int_offset is not None:
             offset = _current_int_offset
-        return original_compressor_call(
-            self, x, state, offset, slot_compressed, slot_kv_state, slot_score_state
-        )
+        return original_compressor_call(self, x, cache, offset, key)
 
     Compressor.__call__ = patched_compressor_call
 
