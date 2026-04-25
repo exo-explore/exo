@@ -139,6 +139,84 @@ def _coerce_tool_arg_with_schema(value: Any, schema: dict[str, Any]) -> Any:  # 
     return value  # pyright: ignore[reportAny]
 
 
+def _normalise_apply_patch_input(input_value: Any) -> Any:  # pyright: ignore[reportAny]
+    if not isinstance(input_value, str):
+        return input_value
+
+    patch = input_value.strip()
+    if patch.startswith("```"):
+        lines = patch.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        patch = "\n".join(lines).strip()
+
+    end_marker = "*** End Patch"
+    lines = patch.splitlines()
+    while (
+        len(lines) >= 2
+        and lines[-1].strip() == end_marker
+        and lines[-2].strip() == end_marker
+    ):
+        lines.pop()
+
+    normalised_lines: list[str] = []
+    in_add_file = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("*** Add File: "):
+            in_add_file = True
+            normalised_lines.append(line)
+            continue
+        if stripped.startswith("*** "):
+            in_add_file = False
+            normalised_lines.append(line)
+            continue
+        if in_add_file and not line.startswith("+"):
+            normalised_lines.append(f"+{line}")
+            continue
+        normalised_lines.append(line)
+    lines = normalised_lines
+
+    if lines and lines[-1].strip() == end_marker:
+        return "\n".join(lines)
+    return patch
+
+
+def _coerce_freeform_input_arg(
+    tool_name: str, parsed_args: dict[str, Any], schema: dict[str, Any]
+) -> dict[str, Any]:
+    properties = schema.get("properties")
+    required = schema.get("required")
+    if not isinstance(properties, dict) or "input" not in properties:
+        return parsed_args
+    if not isinstance(required, list) or "input" not in required:
+        return parsed_args
+    if "input" in parsed_args:
+        if tool_name == "apply_patch":
+            return {
+                **parsed_args,
+                "input": _normalise_apply_patch_input(parsed_args["input"]),
+            }
+        return parsed_args
+
+    # Local tool-call models often infer a semantically named argument such as
+    # "patch" for apply_patch even though Codex's freeform tool contract wants
+    # the complete payload in "input". Preserve exactly one supplied payload.
+    if len(parsed_args) == 1:
+        input_value = next(iter(parsed_args.values()))
+        if tool_name == "apply_patch":
+            input_value = _normalise_apply_patch_input(input_value)
+        return {"input": input_value}
+    if "patch" in parsed_args:
+        input_value = parsed_args["patch"]
+        if tool_name == "apply_patch":
+            input_value = _normalise_apply_patch_input(input_value)
+        return {"input": input_value}
+    return parsed_args
+
+
 def _coerce_tool_calls_to_schema(
     tool_calls: list[ToolCallItem], tools: list[dict[str, Any]]
 ) -> list[ToolCallItem]:
@@ -172,6 +250,7 @@ def _coerce_tool_calls_to_schema(
             coerced_calls.append(tool_call)
             continue
 
+        parsed_args = _coerce_freeform_input_arg(tool_call.name, parsed_args, schema)
         coerced_args = _coerce_tool_arg_with_schema(parsed_args, schema)  # pyright: ignore[reportAny]
         if not isinstance(coerced_args, dict):
             coerced_calls.append(tool_call)

@@ -130,6 +130,54 @@ def _append_tool_call(
     )
 
 
+def _custom_tool_parameters(tool: dict[str, Any]) -> dict[str, Any]:
+    """Build a JSON schema for Responses custom/freeform tools.
+
+    Codex exposes some tools, notably apply_patch, as custom/freeform tools in
+    the Responses API. MLX chat templates expect function-style JSON schemas,
+    so preserve that freeform input as a single required string argument.
+    """
+    format_config = tool.get("format")
+    description = "Freeform tool input."
+    if isinstance(format_config, dict) and isinstance(
+        format_config.get("description"), str
+    ):
+        description = format_config["description"]
+
+    return {
+        "type": "object",
+        "properties": {
+            "input": {
+                "type": "string",
+                "description": description,
+            }
+        },
+        "required": ["input"],
+        "additionalProperties": False,
+    }
+
+
+def _normalise_responses_tool(tool: dict[str, Any]) -> dict[str, Any]:
+    """Convert a Responses API tool definition into chat-completions shape."""
+    if "function" in tool:
+        return tool
+
+    name = tool.get("name", "")
+    parameters = tool.get("parameters")
+    if not isinstance(parameters, dict):
+        parameters = _custom_tool_parameters(tool) if tool.get("type") == "custom" else {}
+
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": tool.get("description", ""),
+            "parameters": parameters,
+            **({"strict": tool["strict"]} if "strict" in tool else {}),
+        },
+    }
+
+
 async def responses_request_to_text_generation(
     request: ResponsesRequest,
 ) -> TextGenerationTaskParams:
@@ -234,7 +282,7 @@ async def responses_request_to_text_generation(
                             "type": "function",
                             "function": {
                                 "name": "apply_patch",
-                                "arguments": json.dumps({"patch": item.patch}),
+                                "arguments": json.dumps({"input": item.patch}),
                             },
                         },
                     )
@@ -289,19 +337,10 @@ async def responses_request_to_text_generation(
                         }
                     )
                 case ReasoningInputItem():
-                    reasoning_text = ""
-                    if item.content:
-                        reasoning_text = "".join(
-                            entry.get("text", "") for entry in item.content
-                        )
-                    elif item.summary:
-                        reasoning_text = "".join(
-                            entry.get("text", "") for entry in item.summary
-                        )
-                    if reasoning_text:
-                        chat_template_messages.append(
-                            {"role": "assistant", "content": reasoning_text}
-                        )
+                    # Reasoning items are internal assistant state. Replaying
+                    # them as assistant messages can separate an assistant
+                    # tool_call from its tool output in chat-template history.
+                    continue
                 case CompactionInputItem():
                     if item.summary:
                         chat_template_messages.append(
@@ -356,22 +395,7 @@ async def responses_request_to_text_generation(
     # we need to normalise to this format.
     normalised_tools: list[dict[str, Any]] | None = None
     if request.tools:
-        normalised_tools = []
-        for tool in request.tools:
-            if "function" in tool:
-                normalised_tools.append(tool)
-            else:
-                normalised_tools.append(
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": tool.get("name", ""),
-                            "description": tool.get("description", ""),
-                            "parameters": tool.get("parameters", {}),
-                            **({"strict": tool["strict"]} if "strict" in tool else {}),
-                        },
-                    }
-                )
+        normalised_tools = [_normalise_responses_tool(tool) for tool in request.tools]
 
     return TextGenerationTaskParams(
         model=request.model,
@@ -455,13 +479,22 @@ async def collect_responses_response(
                 summary=[ResponseReasoningSummaryText(text="".join(thinking_parts))],
             )
         )
-    output.append(
-        ResponseMessageItem(
-            id=item_id,
-            content=[ResponseOutputText(text=accumulated_text)],
-            status="completed",
+    if accumulated_text and not function_call_items:
+        output.append(
+            ResponseMessageItem(
+                id=item_id,
+                content=[ResponseOutputText(text=accumulated_text)],
+                status="completed",
+            )
         )
-    )
+    elif not function_call_items:
+        output.append(
+            ResponseMessageItem(
+                id=item_id,
+                content=[ResponseOutputText(text="")],
+                status="completed",
+            )
+        )
     output.extend(function_call_items)
 
     yield ResponsesResponse(
@@ -515,6 +548,7 @@ async def generate_responses_stream(
 
     # Track dynamic block creation
     reasoning_started = False
+    reasoning_closed = False
     reasoning_output_index = -1
     message_started = False
     message_output_index = -1
@@ -630,7 +664,7 @@ async def generate_responses_stream(
             continue
 
         # Close reasoning block when transitioning to text
-        if reasoning_started and not message_started:
+        if reasoning_started and not reasoning_closed:
             # response.reasoning_summary_text.done
             rs_text_done = ResponseReasoningSummaryTextDoneEvent(
                 sequence_number=next(seq),
@@ -661,49 +695,12 @@ async def generate_responses_stream(
                 ),
             )
             yield _format_sse(rs_item_done)
-
-        # Start message block on first text token
-        if not message_started:
-            message_started = True
-            message_output_index = next_output_index
-            next_output_index += 1
-
-            initial_item = ResponseMessageItem(
-                id=item_id,
-                content=[ResponseOutputText(text="")],
-                status="in_progress",
-            )
-            item_added = ResponseOutputItemAddedEvent(
-                sequence_number=next(seq),
-                output_index=message_output_index,
-                item=initial_item,
-            )
-            yield _format_sse(item_added)
-
-            initial_part = ResponseOutputText(text="")
-            part_added = ResponseContentPartAddedEvent(
-                sequence_number=next(seq),
-                item_id=item_id,
-                output_index=message_output_index,
-                content_index=0,
-                part=initial_part,
-            )
-            yield _format_sse(part_added)
+            reasoning_closed = True
 
         accumulated_text += chunk.text
 
-        # response.output_text.delta
-        delta_event = ResponseTextDeltaEvent(
-            sequence_number=next(seq),
-            item_id=item_id,
-            output_index=message_output_index,
-            content_index=0,
-            delta=chunk.text,
-        )
-        yield _format_sse(delta_event)
-
     # Close reasoning block if it was never followed by text
-    if reasoning_started and not message_started:
+    if reasoning_started and not reasoning_closed:
         rs_text_done = ResponseReasoningSummaryTextDoneEvent(
             sequence_number=next(seq),
             item_id=reasoning_id,
@@ -731,9 +728,40 @@ async def generate_responses_stream(
             ),
         )
         yield _format_sse(rs_item_done)
+        reasoning_closed = True
 
-    # If no message block was started, create one now (empty text)
+    # If this response has tool calls, do not also emit a pre-tool assistant
+    # message. Codex replays streamed items in a way that can place that message
+    # between the assistant tool_call and the tool output, which breaks local
+    # chat-template continuations.
+    tool_call_response = bool(function_call_items)
+    if not message_started and tool_call_response:
+        usage = _build_response_usage(last_usage) if last_usage is not None else None
+        output: list[ResponseItem] = []
+        if reasoning_started:
+            output.append(
+                ResponseReasoningItem(
+                    id=reasoning_id,
+                    summary=[ResponseReasoningSummaryText(text=accumulated_thinking)],
+                )
+            )
+        output.extend(function_call_items)
+        final_response = ResponsesResponse(
+            id=response_id,
+            model=model,
+            status="completed",
+            output=output,
+            output_text=accumulated_text,
+            usage=usage,
+        )
+        completed_event = ResponseCompletedEvent(
+            sequence_number=next(seq), response=final_response
+        )
+        yield _format_sse(completed_event)
+        return
+
     if not message_started:
+        message_started = True
         message_output_index = next_output_index
         next_output_index += 1
 
@@ -758,6 +786,16 @@ async def generate_responses_stream(
             part=initial_part,
         )
         yield _format_sse(part_added_evt)
+
+        if accumulated_text:
+            delta_event = ResponseTextDeltaEvent(
+                sequence_number=next(seq),
+                item_id=item_id,
+                output_index=message_output_index,
+                content_index=0,
+                delta=accumulated_text,
+            )
+            yield _format_sse(delta_event)
 
     # response.output_text.done
     text_done = ResponseTextDoneEvent(
@@ -805,7 +843,8 @@ async def generate_responses_stream(
                 summary=[ResponseReasoningSummaryText(text=accumulated_thinking)],
             )
         )
-    output.append(final_message_item)
+    if not function_call_items:
+        output.append(final_message_item)
     output.extend(function_call_items)
     final_response = ResponsesResponse(
         id=response_id,

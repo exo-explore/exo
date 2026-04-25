@@ -113,13 +113,14 @@ def _make_gen_responses(
 def _collect(
     tokens: list[tuple[int, str]],
     last_finish_reason: FinishReason = "stop",
+    tools: list[dict] | None = None,
 ) -> list[GenerationResponse | ToolCallResponse]:
     """Feed tokens through parse_gpt_oss and collect all yielded responses."""
 
     def _gen() -> Generator[GenerationResponse, None, None]:
         yield from _make_gen_responses(tokens, last_finish_reason)
 
-    return list(x for x in parse_gpt_oss(_gen()) if x is not None)
+    return list(x for x in parse_gpt_oss(_gen(), tools=tools) if x is not None)
 
 
 def _get_tool_call(
@@ -153,6 +154,26 @@ class TestParseGptOssRecipientPlacement:
         tc_b = _get_tool_call(_collect(FORMAT_B_TOKENS))
         assert tc_a.tool_calls[0].name == tc_b.tool_calls[0].name
         assert tc_a.tool_calls[0].arguments == tc_b.tool_calls[0].arguments
+
+    def test_gpt_oss_tool_calls_are_coerced_to_schema(self):
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_current_weather",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"input": {"type": "string"}},
+                        "required": ["input"],
+                        "additionalProperties": False,
+                    },
+                },
+            }
+        ]
+
+        tc = _get_tool_call(_collect(FORMAT_B_TOKENS, tools=tools))
+
+        assert tc.tool_calls[0].arguments == '{"input": "Tokyo"}'
 
 
 class TestParseGptOssThinkingThenToolCall:
