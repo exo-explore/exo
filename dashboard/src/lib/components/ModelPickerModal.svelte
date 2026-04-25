@@ -75,6 +75,7 @@
     totalMemoryGB: number;
     usedMemoryGB: number;
     downloadsData?: Record<string, unknown[]>;
+    downloadedModelIds?: Set<string>;
     topologyNodes?: Record<
       string,
       {
@@ -104,6 +105,7 @@
     totalMemoryGB,
     usedMemoryGB,
     downloadsData,
+    downloadedModelIds = new Set(),
     topologyNodes,
     instanceStatuses = {},
   }: ModelPickerModalProps = $props();
@@ -137,16 +139,29 @@
 
   const modelDownloadAvailability = $derived.by(() => {
     const result = new Map<string, DownloadAvailability>();
-    if (!downloadsData || !topologyNodes) return result;
 
     for (const model of models) {
-      const nodeIds = getNodesWithModelDownloaded(downloadsData, model.id);
-      if (nodeIds.length === 0) continue;
+      const nodeIds =
+        downloadsData && topologyNodes
+          ? getNodesWithModelDownloaded(downloadsData, model.id)
+          : [];
+
+      if (nodeIds.length === 0) {
+        if (downloadedModelIds.has(model.id)) {
+          result.set(model.id, {
+            available: true,
+            nodeNames: ["local disk"],
+            nodeIds: ["local"],
+          });
+        }
+        continue;
+      }
 
       // Sum total RAM across nodes that have the model
       let totalRamBytes = 0;
+      const nodes = topologyNodes ?? {};
       for (const nodeId of nodeIds) {
-        const ramTotal = topologyNodes[nodeId]?.macmon_info?.memory?.ram_total;
+        const ramTotal = nodes[nodeId]?.macmon_info?.memory?.ram_total;
         if (typeof ramTotal === "number") totalRamBytes += ramTotal;
       }
 

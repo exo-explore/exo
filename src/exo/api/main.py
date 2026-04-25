@@ -119,6 +119,7 @@ from exo.api.types.openai_responses import (
     ResponsesRequest,
     ResponsesResponse,
 )
+from exo.download.download_utils import resolve_existing_model
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
@@ -1728,7 +1729,12 @@ class API:
                 for dl in node_downloads:
                     if isinstance(dl, DownloadCompleted):
                         downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
-            cards = [c for c in cards if c.model_id in downloaded_model_ids]
+            cards = [
+                c
+                for c in cards
+                if c.model_id in downloaded_model_ids
+                or resolve_existing_model(c.model_id, c) is not None
+            ]
 
         return ModelList(
             data=[

@@ -23,6 +23,7 @@ _MESSAGE = 200008  # <|message|>
 _CALL = 200012  # <|call|>
 _END = 200007  # <|end|>
 _ASSISTANT = 173781  # "assistant"
+_FINAL = 17196  # "final"
 
 # fmt: off
 # " to=functions.get_current_weather<|channel|>commentary json<|message|>{\"location\": \"Tokyo\"}<|call|>"
@@ -243,12 +244,25 @@ PLAIN_TEXT_TOKENS: list[tuple[int, str]] = [
     (_START, "<|start|>"),
     (_ASSISTANT, "assistant"),
     (_CHANNEL, "<|channel|>"),
-    (12606,  "comment"),
-    (815,    "ary"),
+    (_FINAL, "final"),
     (_MESSAGE, "<|message|>"),
-    (9906,   "Hello"),
-    (14,     ","),
-    (2989,   " world"),
+    (13225,  "Hello"),
+    (11,     ","),
+    (2375,   " world"),
+]
+
+COMMENTARY_TEXT_THEN_TOOL_TOKENS: list[tuple[int, str]] = [
+    (_CHANNEL, "<|channel|>"),
+    (12606, "comment"),
+    (815, "ary"),
+    (_MESSAGE, "<|message|>"),
+    (13225, "Hello"),
+    (11, ","),
+    (2375, " world"),
+    (_END, "<|end|>"),
+    (_START, "<|start|>"),
+    (_ASSISTANT, "assistant"),
+    *FORMAT_B_TOKENS,
 ]
 # fmt: on
 
@@ -281,6 +295,32 @@ class TestParseGptOssMaxTokensTruncation:
         # due to Harmony encoding, so we just check something was emitted)
         all_text = "".join(r.text for r in gen_responses)
         assert len(all_text) > 0
+
+
+class TestParseGptOssHarmonyChannels:
+    """Harmony channels should map to Codex output types directly."""
+
+    def test_final_channel_streams_visible_text(self):
+        results = _collect(PLAIN_TEXT_TOKENS)
+
+        visible_text = "".join(
+            r.text
+            for r in results
+            if isinstance(r, GenerationResponse) and not r.is_thinking
+        )
+
+        assert "Hello, world" in visible_text
+
+    def test_standalone_commentary_before_tool_call_is_suppressed(self):
+        results = _collect(COMMENTARY_TEXT_THEN_TOOL_TOKENS)
+
+        visible_text = "".join(
+            r.text for r in results if isinstance(r, GenerationResponse)
+        )
+        assert "Hello, world" not in visible_text
+
+        tc = _get_tool_call(results)
+        assert tc.tool_calls[0].name == "get_current_weather"
 
 
 class TestGptOssReasoningTokensCounted:
