@@ -239,20 +239,60 @@ async def ensure_cache_dir(model_id: ModelId) -> Path:
     return target
 
 
+def _looks_like_model_dir(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    model_markers = (
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors.index.json",
+        "pytorch_model.bin.index.json",
+    )
+    if any((path / marker).exists() for marker in model_markers):
+        return True
+    return any(path.glob("*.safetensors")) or any(path.glob("*.gguf"))
+
+
+def _delete_model_path(path: Path, *, delete_symlink_target: bool) -> bool:
+    if path.is_symlink():
+        target = path.resolve(strict=False)
+        path.unlink()
+        if delete_symlink_target and target.exists():
+            if not _looks_like_model_dir(target):
+                raise OSError(f"Refusing to delete symlink target that does not look like a model directory: {target}")
+            shutil.rmtree(target, ignore_errors=False)
+        return True
+
+    if path.exists():
+        shutil.rmtree(path, ignore_errors=False)
+        return True
+
+    return False
+
+
 async def delete_model(model_id: ModelId) -> bool:
-    """Delete a model from writable directories. Skips read-only dirs."""
+    """Delete a model from writable directories. Skips read-only dirs.
+
+    Writable model entries may be symlinks into another local model store. In
+    that case, deleting the model should delete the linked model directory too,
+    not only remove the exo-facing symlink.
+    """
     normalized = model_id.normalize()
     deleted = False
     for models_dir in EXO_MODELS_DIRS:
         model_dir = models_dir / normalized
-        if await aios.path.exists(model_dir):
-            await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
-            deleted = True
+        deleted = (
+            await asyncio.to_thread(
+                _delete_model_path, model_dir, delete_symlink_target=True
+            )
+            or deleted
+        )
 
     # Clear cache from default dir
     cache_dir = EXO_DEFAULT_MODELS_DIR / "caches" / normalized
-    if await aios.path.exists(cache_dir):
-        await asyncio.to_thread(shutil.rmtree, cache_dir, ignore_errors=False)
+    await asyncio.to_thread(
+        _delete_model_path, cache_dir, delete_symlink_target=False
+    )
 
     return deleted
 
