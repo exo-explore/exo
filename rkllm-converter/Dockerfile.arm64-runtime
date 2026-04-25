@@ -1,0 +1,73 @@
+# RKLLM Runtime for ARM64 (RK3588/RK3576)
+# Runs RKLLM models on Rockchip NPU devices
+#
+# This is for INFERENCE on ARM64 devices, not conversion.
+# For model conversion, use the x86_64 converter Dockerfile.
+#
+# Build:  docker build -f Dockerfile.arm64-runtime -t rkllm-runtime .
+#
+# Run:    docker run --privileged -it --rm \
+#                    -v /dev:/dev \
+#                    -v $(pwd)/models:/workspace/models \
+#                    rkllm-runtime
+#
+# Prerequisites:
+#   - Rockchip device with NPU (RK3588, RK3576)
+#   - NPU kernel drivers v0.9.8+ installed on host
+#   - Docker Engine on ARM64 Linux
+#
+FROM arm64v8/python:3.10-slim
+
+LABEL maintainer="exo-rkllama"
+LABEL description="RKLLM Runtime for Rockchip RK3588/RK3576 NPU"
+LABEL version="1.2.3"
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# RKLLM version
+ARG RKLLM_VERSION=1.2.3
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create workspace
+WORKDIR /workspace
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Clone RKNN-LLM repo and copy runtime library
+RUN git clone --depth 1 --branch release-v${RKLLM_VERSION} \
+    https://github.com/airockchip/rknn-llm.git /tmp/rknn-llm && \
+    mkdir -p /usr/local/lib && \
+    cp /tmp/rknn-llm/rkllm-runtime/Linux/librkllm_api/aarch64/librkllmrt.so /usr/local/lib/ && \
+    ldconfig && \
+    rm -rf /tmp/rknn-llm
+
+# Install rkllama for serving
+RUN pip install --no-cache-dir \
+    transformers \
+    sentencepiece \
+    tiktoken \
+    huggingface_hub \
+    aiohttp \
+    pyyaml
+
+# Clone rkllama server
+RUN git clone --depth 1 https://github.com/jfreed-dev/rkllama.git /opt/rkllama
+
+# Create model directory
+RUN mkdir -p /workspace/models
+
+# Environment for NPU access
+ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
+
+# Default command - start rkllama server
+WORKDIR /opt/rkllama
+CMD ["python", "server.py", "--target_platform", "rk3588", "--port", "8080"]

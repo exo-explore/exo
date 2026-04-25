@@ -1,0 +1,46 @@
+[Unit]
+Description=Exo Distributed Inference with RKLLM Engine
+Documentation=https://github.com/jfreed-dev/exo-rkllama
+# Prometheus metrics available at http://localhost:52415/metrics
+After=network.target rkllama.service
+Wants=rkllama.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/exo
+
+# Environment
+Environment="PATH=/opt/exo/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="VIRTUAL_ENV=/opt/exo/venv"
+Environment="RKLLM_SERVER_HOST=localhost"
+Environment="RKLLM_SERVER_PORT=8080"
+Environment="HOME=/root"
+
+# Wait for rkllama to be ready
+ExecStartPre=/bin/bash -c 'for i in {1..30}; do curl -s http://localhost:8080/ > /dev/null && break || sleep 1; done'
+
+# Start exo with RKLLM engine
+ExecStart=/opt/exo/venv/bin/python -m exo.main --inference-engine rkllm --disable-tui
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=exo-rkllm
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=65535
+
+# Security (relaxed for NPU access)
+ProtectSystem=false
+ProtectHome=false
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target
