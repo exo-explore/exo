@@ -140,6 +140,11 @@ stubPath = ".mlx_typings"
 root = "src/exo/worker/engines/image"
 reportMissingModuleSource = false
 
+# TODO: DSV4 source missing on Linux mlx-lm install — drop once upstream wheel ships it.
+[[tool.basedpyright.executionEnvironments]]
+root = "src/exo/worker/engines/mlx"
+reportMissingModuleSource = false
+
 [[tool.basedpyright.executionEnvironments]]
 root = "src"
 
