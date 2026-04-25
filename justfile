@@ -40,6 +40,14 @@ build-app: rust-rebuild sync-clean package
     xcodebuild build -project app/EXO/EXO.xcodeproj -scheme EXO -configuration Debug -derivedDataPath app/EXO/build
     @echo "\nBuild complete. Run with:\n  open {{justfile_directory()}}/app/EXO/build/Build/Products/Debug/EXO.app"
 
+sync-cuda:
+    uv sync --extra vllm-cuda13 --extra mlx-cuda13 --no-install-package vllm
+    nix build .#exo-cuda-13.passthru.evenv
+    # will also grab vllm-0.19.1-distinfo
+    cp -aL result/lib/python3.13/site-packages/vllm* .venv/lib/python3.13/site-packages
+    chmod -R u+rwX .venv/lib/python3.13/site-packages/vllm*
+    rm result
+
 clean:
     rm -rf **/__pycache__
     rm -rf target/
