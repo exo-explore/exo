@@ -15,23 +15,32 @@
   let pickerOpen = $state(false);
 
   let messageList = $derived(messages());
-  let model = $derived(selectedChatModel());
+  let selectedModel = $derived(selectedChatModel());
   let isEmpty = $derived(messageList.length === 0);
   let runningInstances = $derived(instances());
   let runningModelIds = $derived.by(() => {
     const ids = new Set<string>();
-    for (const inst of Object.values(runningInstances ?? {})) {
-      if (inst && typeof inst === "object") {
-        const wrapped = inst as {
-          shardAssignments?: { modelId?: string };
-        };
-        const id = wrapped.shardAssignments?.modelId;
-        if (id) ids.add(id);
-      }
+    // Each instance arrives wrapped in a tagged-union envelope:
+    // { MlxRingInstance: { shardAssignments: {...} } } (or MlxJacclInstance, etc.).
+    for (const env of Object.values(runningInstances ?? {})) {
+      if (!env || typeof env !== "object") continue;
+      const keys = Object.keys(env);
+      if (keys.length !== 1) continue;
+      const inner = (env as Record<string, unknown>)[keys[0]!] as
+        | { shardAssignments?: { modelId?: string } }
+        | undefined;
+      const id = inner?.shardAssignments?.modelId;
+      if (id) ids.add(id);
     }
     return [...ids];
   });
-  let hasModelLoaded = $derived(runningModelIds.length > 0 || !!model);
+  // Display model: explicit selection wins; otherwise, if exactly one model is
+  // running, use that (matches the API's fallback-to-first-running behavior).
+  let model = $derived(
+    selectedModel ||
+      (runningModelIds.length === 1 ? runningModelIds[0]! : null),
+  );
+  let hasModelLoaded = $derived(runningModelIds.length > 0 || !!selectedModel);
 
   function shortName(id: string): string {
     return id.split("/").pop() ?? id;
