@@ -14,8 +14,7 @@ context_length = 1048576
 [storage_size]
 in_bytes = 849681803879
 
-# Source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/generation_config.json
-# Source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro (README — Pro supports three reasoning effort modes)
+# Source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
 [sampling_defaults]
 temperature = 1.0
 top_p = 1.0

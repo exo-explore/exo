@@ -122,9 +122,7 @@ def load_tokenizer_for_bench(model_id: str) -> Any:
 
         return hf_tokenizer
 
-    # Default: use AutoTokenizer, with a fallback for model types Transformers
-    # doesn't recognize yet (e.g. deepseek_v4 until HF transformers merges the
-    # registration). Mirrors mlx_lm.tokenizer_utils' fallback path.
+    # TODO: Change back to using only transformers
     try:
         return AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
     except (AttributeError, ValueError):
