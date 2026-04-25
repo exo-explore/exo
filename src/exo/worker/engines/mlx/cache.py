@@ -13,6 +13,7 @@ from mlx_lm.models.cache import (
     QuantizedKVCache,
     RotatingKVCache,
 )
+
 try:
     from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
 except ImportError:
@@ -51,7 +52,7 @@ class CacheSnapshot:
 
     def __init__(
         self,
-        states: list[RotatingKVCache | ArraysCache | CacheList | None],
+        states: list[RotatingKVCache | ArraysCache | CacheList | object | None],
         token_count: int,
     ):
         self.states = states
@@ -117,8 +118,8 @@ def _copy_cache_list(cl: CacheList) -> CacheList:
 
 
 def restore_snapshot_entry(
-    entry: ArraysCache | RotatingKVCache | CacheList | None,
-) -> ArraysCache | RotatingKVCache | CacheList | None:
+    entry: ArraysCache | RotatingKVCache | CacheList | object | None,
+) -> ArraysCache | RotatingKVCache | CacheList | object | None:
     if entry is None:
         return None
     if isinstance(entry, RotatingKVCache):
@@ -126,11 +127,15 @@ def restore_snapshot_entry(
         return snap if snap is not None else deepcopy(entry)
     if isinstance(entry, ArraysCache):
         return _copy_arrays_cache(entry)
-    return _copy_cache_list(entry)
+    if isinstance(entry, CacheList):
+        return _copy_cache_list(entry)
+    # DeepseekV4Cache (or any other unknown wrapper) — return a fresh deepcopy
+    # so the caller swaps the live cache slot for an independent copy.
+    return deepcopy(entry)
 
 
 def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
-    states: list[ArraysCache | RotatingKVCache | CacheList | None] = []
+    states: list[ArraysCache | RotatingKVCache | CacheList | object | None] = []
     for c in cache:
         if isinstance(c, ArraysCache):
             states.append(_copy_arrays_cache(c))
@@ -138,6 +143,12 @@ def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
             states.append(copy_rotating_kv_cache(c))
         elif isinstance(c, CacheList) and not bool(c.is_trimmable()):  # type: ignore[reportUnknownMemberType]
             states.append(_copy_cache_list(c))
+        elif DeepseekV4Cache is not None and isinstance(c, DeepseekV4Cache):
+            # DeepseekV4Cache wraps a RotatingKVCache + per-key Compressor /
+            # Indexer pool state. None of it round-trips through trim(), so
+            # we deepcopy the whole thing so the prefill +2 rollback can
+            # restore both the local KV and the pool state together.
+            states.append(deepcopy(c))
         else:
             states.append(None)
     token_count = cache_length(cache)
@@ -157,14 +168,20 @@ def _find_nearest_snapshot(
     return best
 
 
+def is_non_trimmable_cache_entry(c: object) -> bool:
+    """A cache entry is non-trimmable if `trim(n)` can't roll back its full
+    state — meaning the prefill +2 rollback must snapshot+restore it instead.
+    """
+    if isinstance(c, (ArraysCache, RotatingKVCache)):
+        return True
+    if isinstance(c, CacheList):
+        return not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
+    return DeepseekV4Cache is not None and isinstance(c, DeepseekV4Cache)
+
+
 def has_non_kv_caches(cache: KVCacheType) -> bool:
     """Check if a cache contains any ArraysCache (SSM) entries."""
-    for c in cache:
-        if isinstance(c, CacheList):
-            return any(isinstance(_c, (ArraysCache, RotatingKVCache)) for _c in c)  # type: ignore[reportUnknownVariableType]
-        elif isinstance(c, (ArraysCache, RotatingKVCache)):
-            return True
-    return False
+    return any(is_non_trimmable_cache_entry(c) for c in cache)
 
 
 class KVPrefixCache:
