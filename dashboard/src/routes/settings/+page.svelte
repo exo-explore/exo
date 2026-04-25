@@ -320,8 +320,8 @@
     border-color: var(--ux-border-strong);
   }
   .theme-option.active {
-    border-color: var(--ux-accent);
-    background: var(--ux-accent-bg);
+    border-color: var(--ux-text);
+    background: var(--ux-bg-hover);
   }
   .theme-swatch {
     flex-shrink: 0;
@@ -450,7 +450,7 @@
     right: 12px;
     font-family: var(--ux-mono);
     font-size: 9px;
-    color: var(--ux-accent);
+    color: var(--ux-text-dim);
     letter-spacing: 0.12em;
     opacity: 0;
     transition: opacity 120ms;

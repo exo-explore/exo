@@ -96,7 +96,7 @@
   }
   .ic-copy:hover {
     color: var(--ux-text);
-    border-color: var(--ux-accent);
+    border-color: var(--ux-border-strong);
   }
   .ic-copy.copied {
     color: var(--ux-green);

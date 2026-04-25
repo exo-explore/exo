@@ -112,11 +112,12 @@
   .empty-link {
     display: block;
     margin-top: 8px;
-    color: var(--ux-accent);
-    text-decoration: none;
+    color: var(--ux-text);
+    text-decoration: underline;
+    text-decoration-color: var(--ux-border-strong);
     font-size: 12px;
   }
   .empty-link:hover {
-    text-decoration: underline;
+    text-decoration-color: var(--ux-text);
   }
 </style>

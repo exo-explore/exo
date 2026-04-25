@@ -696,7 +696,7 @@
     color: var(--ux-text-faint);
   }
   .tabs button.active .count {
-    color: var(--ux-accent);
+    color: var(--ux-text);
   }
   .search input {
     background: var(--ux-card);
@@ -869,8 +869,9 @@
     letter-spacing: 0.02em;
   }
   .spec.accent {
-    color: var(--ux-accent);
-    background: var(--ux-accent-bg);
+    color: var(--ux-text);
+    background: var(--ux-bg-hover);
+    border: 1px solid var(--ux-border-strong);
   }
   .spec.faint {
     color: var(--ux-text-faint);
@@ -947,11 +948,15 @@
   .link {
     background: transparent;
     border: none;
-    color: var(--ux-accent);
+    color: var(--ux-text);
     cursor: pointer;
     text-decoration: underline;
+    text-decoration-color: var(--ux-border-strong);
     font: inherit;
     padding: 0;
+  }
+  .link:hover {
+    text-decoration-color: var(--ux-text);
   }
 
   /* Per-node disposition row */
@@ -1153,6 +1158,7 @@
     color: var(--ux-text-faint);
   }
   .np-status.accent {
-    color: var(--ux-accent);
+    color: var(--ux-text);
+    font-size: 12px;
   }
 </style>

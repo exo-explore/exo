@@ -330,9 +330,12 @@
     color: var(--ux-text-dim);
   }
   .empty-sub a {
-    color: var(--ux-accent);
+    color: var(--ux-text);
     text-decoration: none;
-    border-bottom: 1px dashed var(--ux-accent);
+    border-bottom: 1px dashed var(--ux-border-strong);
+  }
+  .empty-sub a:hover {
+    border-bottom-color: var(--ux-text);
   }
 
   .form-card {
@@ -402,7 +405,7 @@
     opacity: 0.55;
   }
   .field input[type="checkbox"] {
-    accent-color: var(--ux-accent);
+    accent-color: var(--ux-text);
     width: 14px;
     height: 14px;
     margin: 0;
@@ -512,7 +515,7 @@
     line-height: 1;
   }
   .summary-value.accent {
-    color: var(--ux-accent);
+    color: var(--ux-text);
   }
   .summary-value .unit {
     font-size: 13px;
@@ -575,7 +578,8 @@
     border-bottom: none;
   }
   .runs-table .accent {
-    color: var(--ux-accent);
+    color: var(--ux-text);
+    font-weight: 500;
   }
   .runs-table .muted {
     color: var(--ux-text-dim);

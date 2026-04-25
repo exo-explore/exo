@@ -744,8 +744,8 @@
     border-color: var(--ux-border);
   }
   .ic-tab.active {
-    background: var(--ux-accent-bg);
-    color: var(--ux-accent);
-    border-color: var(--ux-accent);
+    background: var(--ux-bg-hover);
+    color: var(--ux-text);
+    border-color: var(--ux-border-strong);
   }
 </style>

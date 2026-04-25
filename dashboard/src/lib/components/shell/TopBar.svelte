@@ -248,7 +248,7 @@
     background: var(--ux-bg-hover);
   }
   .theme-toggle:focus-visible {
-    outline: 2px solid var(--ux-accent);
+    outline: 2px solid var(--ux-text);
     outline-offset: 1px;
   }
   @media (max-width: 900px) {

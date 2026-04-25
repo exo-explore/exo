@@ -63,9 +63,7 @@
   .empty-card {
     padding: 64px 32px;
     text-align: center;
-    background:
-      radial-gradient(ellipse 60% 50% at center, var(--ux-accent-bg) 0%, transparent 70%),
-      var(--ux-card);
+    background: var(--ux-card);
   }
   .empty-eyebrow {
     font-family: var(--ux-mono);

@@ -194,14 +194,19 @@
     --exo-dark-gray: var(--ux-card);
     --exo-medium-gray: var(--ux-bg-raised);
     --exo-light-gray: var(--ux-text-dim);
-    --exo-yellow: var(--ux-accent);
-    --exo-yellow-darker: var(--ux-accent-strong);
-    --exo-yellow-glow: var(--ux-accent-strong);
+    /* oMLX-style restraint: the legacy "yellow" was used for the ▶ prompt
+       symbol, the form's top accent line, the SEND button hover, and a few
+       other functional bits. Remap to the regular text color so all of
+       those become refined dark-on-light (or light-on-dark) instead of
+       amber. Status/badge amber elsewhere on the page is unaffected. */
+    --exo-yellow: var(--ux-text);
+    --exo-yellow-darker: var(--ux-text);
+    --exo-yellow-glow: var(--ux-text);
     --background: var(--ux-bg);
     --foreground: var(--ux-text);
     --card: var(--ux-card);
     --border: var(--ux-border);
-    --primary: var(--ux-accent);
+    --primary: var(--ux-text);
     --muted: var(--ux-bg-raised);
     --muted-foreground: var(--ux-text-dim);
   }
@@ -329,7 +334,8 @@
     background: var(--ux-bg-hover);
   }
   .picker-item.active {
-    background: var(--ux-accent-bg);
+    background: var(--ux-bg-hover);
+    box-shadow: inset 2px 0 0 var(--ux-text);
   }
   .picker-dot {
     grid-row: 1 / span 2;
@@ -360,8 +366,9 @@
   .picker-empty a {
     display: block;
     margin-top: 6px;
-    color: var(--ux-accent);
-    text-decoration: none;
+    color: var(--ux-text);
+    text-decoration: underline;
+    text-decoration-color: var(--ux-border-strong);
   }
   .picker-footer {
     margin-top: 4px;
@@ -374,7 +381,7 @@
     transition: color 120ms;
   }
   .picker-footer:hover {
-    color: var(--ux-accent);
+    color: var(--ux-text);
   }
   .btn {
     font-family: var(--ux-sans);
@@ -436,12 +443,13 @@
     font-family: var(--ux-sans);
   }
   .empty-sub a {
-    color: var(--ux-accent);
+    color: var(--ux-text);
     text-decoration: none;
-    border-bottom: 1px dashed var(--ux-accent);
+    border-bottom: 1px dashed var(--ux-border-strong);
   }
   .empty-sub a:hover {
     border-bottom-style: solid;
+    border-bottom-color: var(--ux-text);
   }
   .empty-model {
     font-family: var(--ux-mono);
@@ -481,14 +489,14 @@
     text-align: left;
   }
   .chip:hover {
-    border-color: var(--ux-accent);
+    border-color: var(--ux-border-strong);
     color: var(--ux-text);
     background: var(--ux-bg-hover);
     transform: translateY(-1px);
   }
   .chip-arrow {
     font-family: var(--ux-mono);
-    color: var(--ux-accent);
+    color: var(--ux-text-faint);
     flex-shrink: 0;
     font-size: 13px;
     line-height: 1.4;
