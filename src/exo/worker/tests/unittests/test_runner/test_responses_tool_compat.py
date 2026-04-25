@@ -259,7 +259,7 @@ async def test_tool_call_response_omits_pre_tool_message():
 
 
 @pytest.mark.asyncio
-async def test_streaming_tool_call_response_buffers_pre_tool_text():
+async def test_streaming_text_deltas_are_not_buffered():
     async def chunks():
         yield TokenChunk(
             model="test-model",
@@ -284,7 +284,7 @@ async def test_streaming_tool_call_response_buffers_pre_tool_text():
         async for event in generate_responses_stream("cmd_1", "test-model", chunks())
     ]
 
-    assert "response.output_text.delta" not in "".join(events)
+    assert "response.output_text.delta" in "".join(events)
     completed = json.loads(events[-1].split("data: ", 1)[1])
     output = completed["response"]["output"]
     assert [item["type"] for item in output] == ["function_call"]

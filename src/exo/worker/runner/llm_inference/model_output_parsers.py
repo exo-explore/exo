@@ -208,7 +208,7 @@ def parse_gpt_oss(
                 tool_arg_parts = []
             continue
 
-        if delta:
+        if delta and ch != "commentary":
             yield response.model_copy(
                 update={"text": delta, "is_thinking": ch == "analysis"}
             )

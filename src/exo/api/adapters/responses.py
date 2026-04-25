@@ -697,7 +697,44 @@ async def generate_responses_stream(
             yield _format_sse(rs_item_done)
             reasoning_closed = True
 
+        # Start message block on first visible text token.
+        if not message_started:
+            message_started = True
+            message_output_index = next_output_index
+            next_output_index += 1
+
+            initial_item = ResponseMessageItem(
+                id=item_id,
+                content=[ResponseOutputText(text="")],
+                status="in_progress",
+            )
+            item_added = ResponseOutputItemAddedEvent(
+                sequence_number=next(seq),
+                output_index=message_output_index,
+                item=initial_item,
+            )
+            yield _format_sse(item_added)
+
+            initial_part = ResponseOutputText(text="")
+            part_added = ResponseContentPartAddedEvent(
+                sequence_number=next(seq),
+                item_id=item_id,
+                output_index=message_output_index,
+                content_index=0,
+                part=initial_part,
+            )
+            yield _format_sse(part_added)
+
         accumulated_text += chunk.text
+
+        delta_event = ResponseTextDeltaEvent(
+            sequence_number=next(seq),
+            item_id=item_id,
+            output_index=message_output_index,
+            content_index=0,
+            delta=chunk.text,
+        )
+        yield _format_sse(delta_event)
 
     # Close reasoning block if it was never followed by text
     if reasoning_started and not reasoning_closed:
@@ -786,16 +823,6 @@ async def generate_responses_stream(
             part=initial_part,
         )
         yield _format_sse(part_added_evt)
-
-        if accumulated_text:
-            delta_event = ResponseTextDeltaEvent(
-                sequence_number=next(seq),
-                item_id=item_id,
-                output_index=message_output_index,
-                content_index=0,
-                delta=accumulated_text,
-            )
-            yield _format_sse(delta_event)
 
     # response.output_text.done
     text_done = ResponseTextDoneEvent(
