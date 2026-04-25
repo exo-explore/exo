@@ -13,6 +13,10 @@ from mlx_lm.models.cache import (
     QuantizedKVCache,
     RotatingKVCache,
 )
+try:
+    from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
+except ImportError:
+    DeepseekV4Cache = None
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
@@ -316,6 +320,10 @@ class KVPrefixCache:
             trim_cache(prompt_cache, tokens_to_trim, restore_snap)
             # Reset cache offset to match trimmed length
             for c in prompt_cache:
+                if isinstance(c, (ArraysCache, RotatingKVCache)):
+                    continue
+                if DeepseekV4Cache is not None and isinstance(c, DeepseekV4Cache):
+                    continue
                 if hasattr(c, "offset"):
                     c.offset = restore_pos
 
@@ -416,11 +424,17 @@ def trim_cache(
                     cache[i] = restored  # type: ignore
             elif isinstance(c, (ArraysCache, RotatingKVCache)):
                 c.state = [None] * len(c.state)
+                if isinstance(c, RotatingKVCache):
+                    c.offset = 0
+                    c._idx = 0
             else:
                 # CacheList without a snapshot — zero each inner cache's state
                 for inner in c:  # type: ignore[reportUnknownVariableType]
                     if isinstance(inner, (ArraysCache, RotatingKVCache)):
                         inner.state = [None] * len(inner.state)
+                        if isinstance(inner, RotatingKVCache):
+                            inner.offset = 0
+                            inner._idx = 0
         else:
             c.trim(num_tokens)
 
