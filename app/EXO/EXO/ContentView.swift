@@ -16,6 +16,7 @@ struct ContentView: View {
     @EnvironmentObject private var updater: SparkleUpdater
     @EnvironmentObject private var thunderboltBridgeService: ThunderboltBridgeService
     @EnvironmentObject private var settingsWindowController: SettingsWindowController
+    @EnvironmentObject private var serverStatsService: ServerStatsService
     @State private var focusedNode: NodeViewModel?
     @State private var deletingInstanceIDs: Set<String> = []
     @State private var showAllNodes = false
@@ -158,7 +159,7 @@ struct ContentView: View {
         Group {
             if let snapshot = stateService.latestSnapshot {
                 let overview = snapshot.overview()
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         VStack(alignment: .leading) {
                             Text(
@@ -186,6 +187,9 @@ struct ContentView: View {
                                 .foregroundColor(.secondary)
                         }
                     }
+                    if let stats = serverStatsService.latest {
+                        liveStatsRow(stats: stats)
+                    }
                 }
             } else {
                 Text("Connecting to EXO…")
@@ -193,6 +197,50 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
             }
         }
+    }
+
+    private func liveStatsRow(stats: ServerStats) -> some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.up.arrow.down")
+                    .imageScale(.small)
+                    .foregroundColor(.secondary)
+                Text("\(stats.totalRequests.formatted()) reqs")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundColor(.primary)
+            }
+            Text("·")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text("up \(formatUptime(stats.uptimeSeconds))")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(.secondary)
+            if stats.activeCommands > 0 {
+                Text("·")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: 5, height: 5)
+                    Text("\(stats.activeCommands) in flight")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(.orange)
+                }
+            }
+            Spacer()
+        }
+        .padding(.top, 2)
+    }
+
+    private func formatUptime(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "—" }
+        let total = Int(seconds)
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m" }
+        return "\(total)s"
     }
 
     private var nodeSection: some View {
@@ -694,10 +742,13 @@ struct ContentView: View {
                 if isOn {
                     stateService.resetTransientState()
                     stateService.startPolling()
+                    serverStatsService.startPolling()
                     controller.cancelPendingLaunch()
                     controller.launchIfNeeded()
                 } else {
                     stateService.stopPolling()
+                    serverStatsService.stopPolling()
+                    serverStatsService.reset()
                     controller.stop()
                     stateService.resetTransientState()
                 }
