@@ -72,16 +72,16 @@ interface RawModelList {
   data?: RawModel[];
 }
 
+interface RawInstanceInner {
+  shardAssignments?: {
+    modelId?: string;
+    nodeToRunner?: Record<string, string>;
+  };
+}
+
 interface RawState {
-  instances?: Record<
-    string,
-    {
-      shardAssignments?: {
-        modelId?: string;
-        nodeToRunner?: Record<string, string>;
-      };
-    }
-  >;
+  /** Tagged-union envelope: { MlxRingInstance: {...} }. */
+  instances?: Record<string, Record<string, RawInstanceInner>>;
   downloads?: Record<string, unknown[]>;
   nodeDisk?: Record<
     string,
@@ -264,13 +264,17 @@ function createModelsStore() {
         const state = (await stateRes.json()) as RawState;
 
         // Running instances → running model + which nodes hold them.
-        for (const inst of Object.values(state.instances ?? {})) {
-          const mid = inst.shardAssignments?.modelId;
+        // Each instance is a discriminated-union envelope: { MlxRingInstance: {...} }.
+        for (const env of Object.values(state.instances ?? {})) {
+          const keys = Object.keys(env);
+          if (keys.length !== 1) continue;
+          const inner = env[keys[0]!];
+          const mid = inner?.shardAssignments?.modelId;
           if (!mid) continue;
           runningModelIds.add(mid);
           const set = runningOnNodes.get(mid) ?? new Set<string>();
           for (const nodeId of Object.keys(
-            inst.shardAssignments?.nodeToRunner ?? {},
+            inner.shardAssignments?.nodeToRunner ?? {},
           )) {
             set.add(nodeId);
           }

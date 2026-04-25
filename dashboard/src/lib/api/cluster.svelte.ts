@@ -56,15 +56,25 @@ interface RawShardAssignments {
   runnerToShard?: Record<string, unknown>;
 }
 
-interface RawInstance {
+interface RawInstanceInner {
   shardAssignments?: RawShardAssignments;
 }
+
+/** Instances arrive as a tagged-union envelope: { MlxRingInstance: {...} }. */
+type RawInstance = Record<string, RawInstanceInner>;
 
 interface RawState {
   nodeIdentities?: Record<string, RawIdentity>;
   nodeMemory?: Record<string, RawMemory>;
   nodeSystem?: Record<string, RawSystem>;
   instances?: Record<string, RawInstance>;
+}
+
+function unwrapInstance(env: RawInstance): RawInstanceInner | null {
+  const keys = Object.keys(env);
+  if (keys.length !== 1) return null;
+  const inner = env[keys[0]!];
+  return (inner as RawInstanceInner) ?? null;
 }
 
 const GB = 1024 * 1024 * 1024;
@@ -107,8 +117,9 @@ function transform(raw: RawState, localNodeId: string | null): ClusterSnapshot {
     };
   });
 
-  const instances: LoadedInstance[] = Object.entries(rawInstances).map(([id, inst]) => {
-    const assignments = inst.shardAssignments ?? {};
+  const instances: LoadedInstance[] = Object.entries(rawInstances).map(([id, env]) => {
+    const inner = unwrapInstance(env);
+    const assignments = inner?.shardAssignments ?? {};
     const nodes = Object.keys(assignments.nodeToRunner ?? {});
     const shardCount = Object.keys(assignments.runnerToShard ?? {}).length || nodes.length;
     return {

@@ -10,8 +10,24 @@
   let tab = $state<Tab>("downloaded");
   let query = $state("");
   let busyId = $state<string | null>(null);
+  /** Models we've fired a launch for; clear once they show as running. */
+  let pendingLaunches = $state<Set<string>>(new Set());
   let lastError = $state<string | null>(null);
   let nodePickerForModel = $state<string | null>(null);
+
+  // Auto-clear pendingLaunches once the model actually runs.
+  $effect(() => {
+    if (pendingLaunches.size === 0) return;
+    const next = new Set(pendingLaunches);
+    let changed = false;
+    for (const id of next) {
+      if (snap.runningModelIds.has(id)) {
+        next.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) pendingLaunches = next;
+  });
 
   let snap = $derived(models.value);
   let downloadedCount = $derived(snap.downloadedIds.size);
@@ -134,6 +150,9 @@
         const text = await createRes.text();
         throw new Error(`create: ${text || createRes.status}`);
       }
+      const next = new Set(pendingLaunches);
+      next.add(model.id);
+      pendingLaunches = next;
       await models.refresh();
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
@@ -498,12 +517,13 @@
               </span>
             {/if}
           {:else if status === "downloaded"}
+            {@const isLaunching = busyId === model.id || pendingLaunches.has(model.id)}
             <button
               class="btn-action primary"
-              disabled={busyId === model.id}
+              disabled={isLaunching}
               onclick={() => launch(model)}
             >
-              {busyId === model.id ? "Launching…" : "Launch"}
+              {isLaunching ? "Launching… (loading model)" : "Launch"}
             </button>
             {#if completedNodes.length < nodeCount && nodeCount > 1}
               <button
