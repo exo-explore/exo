@@ -8,7 +8,7 @@ family = "qwen"
 quantization = "6bit"
 base_model = "Qwen3.5 397B A17B"
 capabilities = ["text", "thinking", "thinking_toggle", "vision"]
-
+reasoning_dialect = "post_last_user"
 context_length = 262144
 
 [storage_size]

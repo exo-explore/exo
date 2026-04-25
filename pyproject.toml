@@ -34,6 +34,7 @@ dependencies = [
 
 [project.scripts]
 exo = "exo.main:main"
+exo-reasoning-proxy = "exo.reasoning_proxy.main:main"
 
 # dependencies only required for development
 [dependency-groups]

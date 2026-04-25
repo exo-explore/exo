@@ -13,6 +13,9 @@ from exo.shared.types.common import ModelId, TruncatingString
 
 MessageRole = Literal["user", "assistant", "system", "developer", "tool"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+ReasoningDialect = Literal[
+    "none", "post_last_user", "suffix", "channel", "tool_conditional"
+]
 
 
 def resolve_reasoning_params(
