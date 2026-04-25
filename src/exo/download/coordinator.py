@@ -319,7 +319,11 @@ class DownloadCoordinator:
 
         # Delete from disk
         logger.info(f"Deleting model files for {model_id}")
-        deleted = await delete_model(model_id)
+        try:
+            deleted = await delete_model(model_id)
+        except Exception:
+            logger.exception(f"Failed to delete model files for {model_id}")
+            return
 
         if deleted:
             logger.info(f"Successfully deleted model {model_id}")

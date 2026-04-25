@@ -260,6 +260,37 @@ class TestDeleteModel:
         assert result is True
         assert not await aios.path.exists(model_dir)
 
+    async def test_deletes_symlinked_model_target(
+        self, dirs: tuple[Path, Path, Path], tmp_path: Path
+    ) -> None:
+        w1, _, _ = dirs
+        target_dir = tmp_path / "external-model-store" / "test-model"
+        _create_complete_model(target_dir)
+        model_link = w1 / NORMALIZED
+        model_link.symlink_to(target_dir, target_is_directory=True)
+
+        result = await delete_model(MODEL_ID)
+
+        assert result is True
+        assert not model_link.exists()
+        assert not target_dir.exists()
+
+    async def test_rejects_symlink_target_that_is_not_a_model_dir(
+        self, dirs: tuple[Path, Path, Path], tmp_path: Path
+    ) -> None:
+        w1, _, _ = dirs
+        target_dir = tmp_path / "not-a-model"
+        target_dir.mkdir()
+        (target_dir / "notes.txt").write_text("not model data")
+        model_link = w1 / NORMALIZED
+        model_link.symlink_to(target_dir, target_is_directory=True)
+
+        with pytest.raises(OSError, match="does not look like a model directory"):
+            await delete_model(MODEL_ID)
+
+        assert not model_link.exists()
+        assert target_dir.exists()
+
     async def test_deletes_from_multiple_writable_dirs(
         self, dirs: tuple[Path, Path, Path]
     ) -> None:
