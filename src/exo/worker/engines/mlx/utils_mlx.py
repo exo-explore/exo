@@ -165,6 +165,12 @@ def load_mlx_items(
 ) -> Generator[
     ModelLoadingResponse, None, tuple[Model, TokenizerWrapper, "VisionProcessor | None"]
 ]:
+    # Raise the wired limit BEFORE loading. The default wired limit is well
+    # below max_recommended_working_set_size, so for a per-rank shard that's
+    # close to (but fits in) physical RAM, materialization during load OOMs
+    # before we ever get a chance to call set_wired_limit_for_model.
+    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
+
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
@@ -198,8 +204,6 @@ def load_mlx_items(
         logger.info(
             f"Time taken to shard and load model: {(end_time - start_time):.2f}s"
         )
-
-    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
     mx.clear_cache()
 
@@ -499,6 +503,28 @@ def _v4_reasoning_effort(task_params: TextGenerationTaskParams) -> str | None:
     return None
 
 
+_V4_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def _strip_v4_thinking_markers(content: str) -> str:
+    """Remove `<think>…</think>` blocks and any stray `<think>`/`</think>` tags
+    from prior-turn assistant content.
+
+    The V4 encoder drops `reasoning_content` for older turns when
+    `drop_thinking=True`, but it doesn't sanitize embedded markers in the
+    `content` field. The model's raw output for thinking turns is
+    `<think>…</think>response`; if the visible response that ends up back in
+    history still has a stray `</think>` (or even a partial block) the next
+    turn's prompt looks like `<｜Assistant｜></think>response`, which confuses
+    the model into starting its next reply mid-thinking and emitting tokens
+    like `responseGlad you liked it!`.
+    """
+    if not content:
+        return content
+    cleaned = _V4_THINK_BLOCK_RE.sub("", content)
+    return cleaned.replace("<think>", "").replace("</think>", "")
+
+
 def consolidate_system_messages(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -568,6 +594,11 @@ def render_chat_template(
         )
 
         v4_messages = [dict(m) for m in formatted_messages]
+        for msg in v4_messages:
+            if msg.get("role") == "assistant":
+                content = msg.get("content")
+                if isinstance(content, str):
+                    msg["content"] = _strip_v4_thinking_markers(content)
         if task_params.tools:
             for msg in v4_messages:
                 if msg.get("role") in ("system", "developer"):

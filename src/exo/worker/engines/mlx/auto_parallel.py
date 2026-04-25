@@ -297,6 +297,7 @@ def pipeline_auto_parallel(
     total = len(layers)
     for i, layer in enumerate(layers):
         mx.eval(layer)  # type: ignore
+        mx.clear_cache()
         yield ModelLoadingResponse(layers_loaded=i, total=total)
 
     layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
@@ -798,22 +799,18 @@ def _shard_quantized_rows(
         q.biases = slicer(biases, head_dim)
 
 
-class _AllSumAllGatherLinear(nn.Module):
-    """Wraps an output-sharded wo_b with the collectives needed to turn a
-    partial per-rank wo_a output into a full per-rank hidden vector.
+class _AllSumLinear(nn.Module):
+    """Wraps an unsharded wo_b that takes a head-sharded partial wo_a output.
 
     Flow per rank:
       1. all_sum the incoming partial wo_a output (summed across the head
          input shards → full wo_a_out on every rank)
-      2. apply the output-sharded wo_b (this rank's hidden/N slice)
-      3. all_gather the slices → full hidden on every rank.
+      2. apply the unsharded wo_b → full hidden on every rank
 
-    Two collectives (on `n_groups * o_lora_rank` then on `hidden`) buy us
-    1/N wo_b compute per rank. Math check:
-        final[h] = Σ_i wo_b_full[h,i] * wo_a_full[i]
-                 = Σ_i wo_b_full[h,i] * Σ_r wo_a_r_partial[i]
-                 = wo_b_full(Σ_r wo_a_r_partial)[h]
-    so we need the wo_a sum before applying any output slice of wo_b.
+    One collective per layer on the smaller of (n_groups * o_lora_rank) vs
+    hidden. wo_b compute is replicated, but at decode B=1 it's only ~30M FLOPs
+    per layer and 61 extra all_gathers/token cost more than running wo_b on
+    every rank.
     """
 
     def __init__(self, inner: nn.Module, group: mx.distributed.Group):
@@ -823,13 +820,7 @@ class _AllSumAllGatherLinear(nn.Module):
 
     def __call__(self, x: mx.array) -> mx.array:
         x = mx.distributed.all_sum(x, group=self._group)
-        y = cast(Callable[[mx.array], mx.array], self.inner)(x)
-        # AllToShardedLinear returns (..., hidden/N). mx.distributed.all_gather
-        # concatenates along axis 0, so move the sharded (last) axis to the
-        # front, gather, and move it back.
-        y_front = mx.moveaxis(y, -1, 0)
-        gathered = mx.distributed.all_gather(y_front, group=self._group)
-        return mx.moveaxis(gathered, 0, -1)
+        return cast(Callable[[mx.array], mx.array], self.inner)(x)
 
 
 def _shard_v4_attention_heads(
@@ -932,14 +923,11 @@ class DeepseekV4ShardingStrategy(TensorParallelShardingStrategy):
             # input shard; aggregation deferred to after wo_b (linear so it
             # commutes with all_sum).
             self.sharded_to_all_linear_in_place(layer.attn.wo_a)
-            # wo_b: output-parallel — each rank computes hidden/N slice of
-            # the projection. Wrapped to (1) all_sum the partial wo_a output
-            # into a full wo_a on every rank, (2) apply the output-sharded
-            # wo_b for 1/N compute, (3) all_gather the hidden/N slices into
-            # full hidden.
-            layer.attn.wo_b = _AllSumAllGatherLinear(  # type: ignore[assignment]
-                self.all_to_sharded_linear(layer.attn.wo_b), self.group
-            )
+            # wo_b: replicated. all_sum the partial wo_a output (one collective
+            # on n_groups*o_lora_rank), then run unsharded wo_b on every rank.
+            # At decode B=1 wo_b is only ~30M FLOPs/layer; not worth the extra
+            # all_gather an output-shard would cost.
+            layer.attn.wo_b = _AllSumLinear(layer.attn.wo_b, self.group)  # type: ignore[assignment]
 
             ffn = layer.ffn
             if getattr(ffn, "shared_experts", None) is not None:
