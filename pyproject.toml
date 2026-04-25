@@ -29,7 +29,7 @@ dependencies = [
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
   "mlx-vlm>=0.3.11",
-  "transformers>=5.0.0,<5.4.0",
+  "transformers>=5.6.2",
 ]
 
 [project.scripts]
@@ -77,7 +77,7 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 [tool.uv.sources]
 exo-pyo3-bindings = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
-mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/fix-arrayscache-leak" }
+mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
 torch = [
   { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'cuda13' and extra != 'cpu' and extra != 'cuda12'" },
   { index = "pytorch-cu120", marker = "sys_platform == 'linux' and extra == 'cuda12' and extra != 'cpu' and extra != 'cuda13'" },
@@ -140,6 +140,11 @@ stubPath = ".mlx_typings"
 root = "src/exo/worker/engines/image"
 reportMissingModuleSource = false
 
+# TODO: DSV4 source missing on Linux mlx-lm install — drop once upstream wheel ships it.
+[[tool.basedpyright.executionEnvironments]]
+root = "src/exo/worker/engines/mlx"
+reportMissingModuleSource = false
+
 [[tool.basedpyright.executionEnvironments]]
 root = "src"
 
@@ -154,7 +159,7 @@ required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }, { extra = "cpu" }]]
-constraint-dependencies = ["transformers>=5.0.0,<5.4.0"]
+constraint-dependencies = ["transformers>=5.6.2"]
 override-dependencies = [
   "mlx==0.31.1; sys_platform=='linux'",
   "mlx; sys_platform=='darwin'",

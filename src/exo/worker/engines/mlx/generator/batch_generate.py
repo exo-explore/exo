@@ -332,6 +332,17 @@ class ExoBatchGenerator:
                 state.detokenizer.finalize()
             text = state.detokenizer.last_segment
             state.completion_tokens += 1
+            # Per-token trace: dump id + decoded piece so we can see exactly
+            # what the model is emitting (esp. multi-token DSML markers).
+            try:
+                _decoded_piece = self.tokenizer.decode([response.token])
+            except Exception:
+                _decoded_piece = "<decode-failed>"
+            logger.info(
+                f"[tok] uid={response.uid} #{state.completion_tokens} "
+                f"id={response.token} text={text!r} piece={_decoded_piece!r} "
+                f"finish={response.finish_reason}"
+            )
             if state.task_params.bench:
                 delta = now - state.first_gen_token_time
                 logger.debug(

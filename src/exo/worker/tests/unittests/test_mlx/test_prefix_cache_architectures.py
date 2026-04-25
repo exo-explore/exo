@@ -70,6 +70,13 @@ def _reduce_config(cfg: dict[str, Any]) -> dict[str, Any]:
         tc: dict[str, Any] = result["text_config"]
         if "num_nextn_predict_layers" in tc:
             tc["num_nextn_predict_layers"] = 0
+        tc_n_layers = cast(int, tc.get("num_hidden_layers", n_layers))
+        if "layer_types" in tc and isinstance(tc["layer_types"], list):
+            tc["layer_types"] = cast(list[Any], tc["layer_types"])[:tc_n_layers]
+        if "mlp_only_layers" in tc and isinstance(tc["mlp_only_layers"], list):
+            tc["mlp_only_layers"] = [
+                i for i in cast(list[int], tc["mlp_only_layers"]) if i < tc_n_layers
+            ]
 
     if "layer_types" in result and isinstance(result["layer_types"], list):
         result["layer_types"] = result["layer_types"][:n_layers]

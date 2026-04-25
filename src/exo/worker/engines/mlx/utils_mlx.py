@@ -165,6 +165,8 @@ def load_mlx_items(
 ) -> Generator[
     ModelLoadingResponse, None, tuple[Model, TokenizerWrapper, "VisionProcessor | None"]
 ]:
+    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
+
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
@@ -198,8 +200,6 @@ def load_mlx_items(
         logger.info(
             f"Time taken to shard and load model: {(end_time - start_time):.2f}s"
         )
-
-    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
     mx.clear_cache()
 
@@ -486,6 +486,34 @@ def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
     return "deepseek-v3.2" in task_params.model.lower()
 
 
+def _needs_v4_encoding(task_params: TextGenerationTaskParams) -> bool:
+    return "deepseek-v4" in task_params.model.lower()
+
+
+def _v4_reasoning_effort(task_params: TextGenerationTaskParams) -> str | None:
+    effort = task_params.reasoning_effort
+    if effort == "xhigh":
+        return "max"
+    if effort == "high":
+        return "high"
+    return None
+
+
+_V4_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def _strip_v4_thinking_markers(content: str) -> str:
+    """Remove `<think>…</think>` blocks and any stray `<think>`/`</think>` tags
+    from prior-turn assistant content.
+
+    The V4 encoder drops `reasoning_content` for older turns when
+    `drop_thinking=True`"""
+    if not content:
+        return content
+    cleaned = _V4_THINK_BLOCK_RE.sub("", content)
+    return cleaned.replace("<think>", "").replace("</think>", "")
+
+
 def consolidate_system_messages(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -544,6 +572,38 @@ def render_chat_template(
             if task_params.enable_thinking is False
             else "thinking",
             tools=task_params.tools,
+        )
+        if partial_assistant_content:
+            prompt += partial_assistant_content
+        return prompt
+
+    if _needs_v4_encoding(task_params):
+        from exo.worker.engines.mlx.deepseek_v4_encoding import (
+            encode_messages as encode_messages_v4,
+        )
+
+        v4_messages = [dict(m) for m in formatted_messages]
+        for msg in v4_messages:
+            if msg.get("role") == "assistant":
+                content = msg.get("content")
+                if isinstance(content, str):
+                    msg["content"] = _strip_v4_thinking_markers(content)
+        if task_params.tools:
+            for msg in v4_messages:
+                if msg.get("role") in ("system", "developer"):
+                    msg["tools"] = task_params.tools
+                    break
+            else:
+                v4_messages.insert(
+                    0, {"role": "system", "content": "", "tools": task_params.tools}
+                )
+
+        prompt = encode_messages_v4(
+            messages=v4_messages,
+            thinking_mode="chat"
+            if task_params.enable_thinking is False
+            else "thinking",
+            reasoning_effort=_v4_reasoning_effort(task_params),
         )
         if partial_assistant_content:
             prompt += partial_assistant_content
