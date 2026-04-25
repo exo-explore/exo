@@ -108,12 +108,10 @@ class Compressor(nn.Module):
     def __call__(
         self,
         x: mx.array,
-        state: ArraysCache,
+        cache: "DeepseekV4Cache",
         offset: Any,
-        slot_compressed: int,
-        slot_kv_state: int,
-        slot_score_state: int,
-    ) -> Optional[mx.array]: ...
+        key: str = ...,
+    ) -> mx.array: ...
 
 class Indexer(nn.Module):
     def __init__(
