@@ -118,7 +118,7 @@
     lastError = null;
     try {
       const placementRes = await fetch(
-        `/placement?model_id=${encodeURIComponent(model.id)}`,
+        `/instance/placement?model_id=${encodeURIComponent(model.id)}`,
       );
       if (!placementRes.ok) {
         const text = await placementRes.text();
