@@ -4,6 +4,7 @@ import hashlib
 import json
 import random
 import time
+from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 from http import HTTPStatus
@@ -248,6 +249,12 @@ class API:
         self.port = port
         self._sent_image_hashes: set[str] = set()
         self._started_at_monotonic: float = time.monotonic()
+        # Caches updated incrementally in _apply_state. Reading these on
+        # GET is O(1) — walking _event_log on every poll was blocking the
+        # async loop and killing inference throughput.
+        self._text_gen_total: int = 0
+        self._recent_text_gens: deque[RecentRequestItem] = deque(maxlen=200)
+        self._recent_index: dict[str, int] = {}
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -1833,6 +1840,7 @@ class API:
                     self._close_streams_for_instance(event.instance_id)
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
+                self._update_text_gen_caches(event)
 
     def _close_streams_for_instance(self, instance_id: InstanceId) -> None:
         """Close any active generation streams for commands running on the given instance."""
@@ -1928,21 +1936,79 @@ class API:
             raise HTTPException(status_code=400, detail=f"Invalid task ID: {task_id}")
         return trace_path
 
+    _TASK_STATUS_TO_STR: dict[TaskStatus, str] = {
+        TaskStatus.Pending: "pending",
+        TaskStatus.Running: "running",
+        TaskStatus.Complete: "complete",
+        TaskStatus.Failed: "failed",
+        TaskStatus.TimedOut: "failed",
+        TaskStatus.Cancelled: "cancelled",
+    }
+
+    def _update_text_gen_caches(self, event: Event) -> None:
+        """Maintain the cached recent-text-gen state from incoming events.
+
+        Called from _apply_state on every event. Walking the event log on
+        each GET (~100k entries x several pollers) was blocking the async
+        loop and starving inference; this keeps both handlers O(1).
+        """
+        if isinstance(event, TaskCreated) and isinstance(
+            event.task, TextGenerationTask
+        ):
+            tid = str(event.task_id)
+            if tid in self._recent_index:
+                return
+            self._text_gen_total += 1
+            when = event._master_time_stamp
+            created_at = when.timestamp() if when else time.time()
+            status_str = self._TASK_STATUS_TO_STR.get(
+                event.task.task_status, "pending"
+            )
+            item = RecentRequestItem(
+                task_id=tid,
+                model_id=str(event.task.task_params.model),
+                created_at=created_at,
+                status=status_str,  # type: ignore[arg-type]
+            )
+            # appendleft on a full deque evicts the rightmost (oldest) entry.
+            if len(self._recent_text_gens) == self._recent_text_gens.maxlen:
+                evicted = self._recent_text_gens[-1]
+                self._recent_index.pop(evicted.task_id, None)
+            self._recent_text_gens.appendleft(item)
+            # Cheap to fully rebuild since maxlen=200; keeps index correct
+            # without per-position bookkeeping when appendleft shifts the
+            # other items by 1.
+            self._rebuild_recent_index()
+        elif isinstance(event, TaskStatusUpdated):
+            tid = str(event.task_id)
+            idx = self._recent_index.get(tid)
+            if idx is not None:
+                old = self._recent_text_gens[idx]
+                self._recent_text_gens[idx] = old.model_copy(
+                    update={
+                        "status": self._TASK_STATUS_TO_STR.get(
+                            event.task_status, "pending"
+                        )
+                    }
+                )
+        elif isinstance(event, TaskFailed):
+            tid = str(event.task_id)
+            idx = self._recent_index.get(tid)
+            if idx is not None:
+                old = self._recent_text_gens[idx]
+                self._recent_text_gens[idx] = old.model_copy(
+                    update={"status": "failed"}
+                )
+
+    def _rebuild_recent_index(self) -> None:
+        self._recent_index = {
+            item.task_id: i for i, item in enumerate(self._recent_text_gens)
+        }
+
     async def get_server_stats(self) -> ServerStatsResponse:
-        uptime_seconds = time.monotonic() - self._started_at_monotonic
-        # Count completed text-generation tasks from the event log. Was
-        # previously counting only benchmark trace files on disk, which
-        # are written for `bench: true` requests only — so the headline
-        # "0 requests served" was wrong even after lots of chat traffic.
-        total_requests = 0
-        for event in self._event_log.read_all():
-            if isinstance(event, TaskCreated) and isinstance(
-                event.task, TextGenerationTask
-            ):
-                total_requests += 1
         return ServerStatsResponse(
-            uptime_seconds=uptime_seconds,
-            total_requests=total_requests,
+            uptime_seconds=time.monotonic() - self._started_at_monotonic,
+            total_requests=self._text_gen_total,
             instance_count=len(self.state.instances),
             node_count=len(self.state.node_identities),
             active_commands=len(self._text_generation_queues)
@@ -1952,60 +2018,8 @@ class API:
     async def get_recent_requests(
         self, limit: int = Query(default=20, ge=1, le=200)
     ) -> RecentRequestsResponse:
-        """Walk the event log for recent text-generation tasks.
-
-        Status is the latest seen (TaskCreated → Pending; TaskStatusUpdated
-        → that status; TaskFailed → Failed). Returned newest first.
-        """
-        latest_status: dict[str, TaskStatus] = {}
-        created_at: dict[str, float] = {}
-        model_id: dict[str, str] = {}
-        order: list[str] = []
-
-        for event in self._event_log.read_all():
-            if isinstance(event, TaskCreated) and isinstance(
-                event.task, TextGenerationTask
-            ):
-                tid = str(event.task_id)
-                if tid not in created_at:
-                    when = event._master_time_stamp
-                    created_at[tid] = (
-                        when.timestamp() if when else time.time()
-                    )
-                    model_id[tid] = str(event.task.task_params.model)
-                    latest_status[tid] = event.task.task_status
-                    order.append(tid)
-            elif isinstance(event, TaskStatusUpdated):
-                tid = str(event.task_id)
-                if tid in latest_status:
-                    latest_status[tid] = event.task_status
-            elif isinstance(event, TaskFailed):
-                tid = str(event.task_id)
-                if tid in latest_status:
-                    latest_status[tid] = TaskStatus.Failed
-
-        def _normalize(s: TaskStatus) -> str:
-            mapping = {
-                TaskStatus.Pending: "pending",
-                TaskStatus.Running: "running",
-                TaskStatus.Complete: "complete",
-                TaskStatus.Failed: "failed",
-                TaskStatus.TimedOut: "failed",
-                TaskStatus.Cancelled: "cancelled",
-            }
-            return mapping.get(s, "pending")
-
-        # Newest first; cap to `limit`.
-        recent_ids = list(reversed(order))[:limit]
-        items = [
-            RecentRequestItem(
-                task_id=tid,
-                model_id=model_id[tid],
-                created_at=created_at[tid],
-                status=_normalize(latest_status[tid]),  # type: ignore[arg-type]
-            )
-            for tid in recent_ids
-        ]
+        # Deque is in newest-first order (we appendleft); slice + return.
+        items = list(self._recent_text_gens)[:limit]
         return RecentRequestsResponse(requests=items)
 
     async def list_traces(self) -> TraceListResponse:
