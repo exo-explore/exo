@@ -490,6 +490,21 @@ class ServerStatsResponse(FrozenModel):
     active_commands: int
 
 
+class RecentRequestItem(FrozenModel):
+    """One recent text-generation request, summarised for the dashboard."""
+
+    task_id: str
+    model_id: str
+    created_at: float
+    """Wall-clock time the request was created (unix seconds)."""
+    status: Literal["pending", "running", "complete", "failed", "cancelled"]
+    output_tokens: int | None = None
+
+
+class RecentRequestsResponse(FrozenModel):
+    requests: list[RecentRequestItem]
+
+
 class DeleteTracesRequest(FrozenModel):
     task_ids: list[str]
 

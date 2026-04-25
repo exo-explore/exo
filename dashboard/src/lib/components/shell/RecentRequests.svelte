@@ -1,54 +1,77 @@
 <script lang="ts">
   import { browser } from "$app/environment";
 
-  interface TraceItem {
-    task_id: string;
-    created_at: string;
-    file_size: number;
+  type Status = "pending" | "running" | "complete" | "failed" | "cancelled";
+
+  interface RecentRequest {
+    taskId: string;
+    modelId: string;
+    createdAt: number; // unix seconds
+    status: Status;
+    outputTokens: number | null;
   }
 
-  let traces = $state<TraceItem[]>([]);
+  let requests = $state<RecentRequest[]>([]);
 
-  async function fetchTraces() {
+  async function fetchRecent() {
     try {
-      const res = await fetch("/v1/traces");
+      const res = await fetch("/v1/recent-requests?limit=6");
       if (!res.ok) return;
-      const data = (await res.json()) as { traces: TraceItem[] };
-      traces = (data.traces ?? []).slice(0, 6);
+      const data = (await res.json()) as { requests: RecentRequest[] };
+      requests = data.requests ?? [];
     } catch {
       // ignore
     }
   }
 
   if (browser) {
-    fetchTraces();
-    setInterval(fetchTraces, 4000);
+    fetchRecent();
+    setInterval(fetchRecent, 3000);
   }
 
-  function timeOf(iso: string): string {
-    try {
-      return new Date(iso).toTimeString().slice(0, 8);
-    } catch {
-      return "—";
-    }
+  function relativeTime(seconds: number): string {
+    const ms = Date.now() - seconds * 1000;
+    if (!isFinite(ms) || ms < 0) return "now";
+    const s = Math.round(ms / 1000);
+    if (s < 5) return "now";
+    if (s < 60) return `${s}s ago`;
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.round(h / 24);
+    return `${d}d ago`;
+  }
+
+  function shortModel(id: string): string {
+    return id.split("/").pop() ?? id;
   }
 </script>
 
 <div class="card">
   <div class="card-header">
     <span class="card-title">Recent requests</span>
-    <a class="card-sublabel link" href="#/legacy">VIEW ALL →</a>
+    <span class="card-sublabel">{requests.length} SHOWN</span>
   </div>
   <div class="list">
-    {#if traces.length === 0}
-      <div class="empty">No traces yet. Send a request to see activity here.</div>
+    {#if requests.length === 0}
+      <div class="empty">
+        No requests yet. Send a chat message to see activity here.
+      </div>
     {:else}
-      {#each traces as t}
-        <div class="row">
+      {#each requests as r}
+        <div class="row" data-status={r.status}>
           <span class="status"></span>
-          <span class="time">{timeOf(t.created_at)}</span>
-          <span class="task">trace · {t.task_id.slice(0, 10)}</span>
-          <span class="size">{(t.file_size / 1024).toFixed(1)} KB</span>
+          <div class="middle">
+            <div class="model">{shortModel(r.modelId)}</div>
+            <div class="meta">
+              <span class="time">{relativeTime(r.createdAt)}</span>
+              <span class="sep">·</span>
+              <span class="state-text">{r.status}</span>
+              <span class="sep">·</span>
+              <span class="tid">{r.taskId.slice(0, 8)}</span>
+            </div>
+          </div>
         </div>
       {/each}
     {/if}
@@ -89,13 +112,11 @@
   }
   .row {
     display: grid;
-    grid-template-columns: auto auto 1fr auto;
+    grid-template-columns: auto 1fr;
     align-items: center;
     gap: 12px;
-    padding: 11px 18px;
+    padding: 10px 18px;
     border-bottom: 1px solid var(--ux-border);
-    font-family: var(--ux-mono);
-    font-size: 11.5px;
   }
   .row:last-child {
     border-bottom: none;
@@ -104,19 +125,63 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
+    background: var(--ux-text-faint);
+  }
+  .row[data-status="complete"] .status {
     background: var(--ux-green);
     box-shadow: 0 0 0 2px var(--ux-green-bg);
   }
-  .time {
-    color: var(--ux-text-faint);
-    font-size: 10.5px;
+  .row[data-status="running"] .status,
+  .row[data-status="pending"] .status {
+    background: var(--ux-accent);
+    box-shadow: 0 0 0 2px var(--ux-accent-bg);
+    animation: uxPulse 1.6s ease-in-out infinite;
   }
-  .task {
+  .row[data-status="failed"] .status {
+    background: var(--ux-red);
+  }
+  .row[data-status="cancelled"] .status {
+    background: var(--ux-text-faint);
+  }
+  .middle {
+    min-width: 0;
+  }
+  .model {
+    font-family: var(--ux-mono);
+    font-size: 11.5px;
     color: var(--ux-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .size {
-    color: var(--ux-text-dim);
-    text-align: right;
+  .meta {
+    margin-top: 2px;
+    font-family: var(--ux-mono);
+    font-size: 10px;
+    color: var(--ux-text-faint);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sep {
+    opacity: 0.5;
+  }
+  .state-text {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .row[data-status="complete"] .state-text {
+    color: var(--ux-green);
+  }
+  .row[data-status="running"] .state-text,
+  .row[data-status="pending"] .state-text {
+    color: var(--ux-accent);
+  }
+  .row[data-status="failed"] .state-text {
+    color: var(--ux-red);
+  }
+  .tid {
+    color: var(--ux-text-faint);
   }
   .empty {
     padding: 30px 18px;

@@ -84,6 +84,8 @@ from exo.api.types import (
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
+    RecentRequestItem,
+    RecentRequestsResponse,
     ServerStatsResponse,
     StartDownloadParams,
     StartDownloadResponse,
@@ -173,6 +175,9 @@ from exo.shared.types.events import (
     Event,
     IndexedEvent,
     InstanceDeleted,
+    TaskCreated,
+    TaskFailed,
+    TaskStatusUpdated,
     TracesMerged,
 )
 from exo.shared.types.memory import Memory
@@ -182,6 +187,9 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.tasks import (
     ImageGeneration as ImageGenerationTask,
+)
+from exo.shared.types.tasks import (
+    TaskStatus,
 )
 from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
@@ -379,6 +387,7 @@ class API:
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
         self.app.get("/v1/stats")(self.get_server_stats)
+        self.app.get("/v1/recent-requests")(self.get_recent_requests)
 
     def get_state(self, path: str = ""):
         if path == "":
@@ -1921,12 +1930,16 @@ class API:
 
     async def get_server_stats(self) -> ServerStatsResponse:
         uptime_seconds = time.monotonic() - self._started_at_monotonic
-        try:
-            total_requests = sum(
-                1 for _ in EXO_TRACING_CACHE_DIR.glob("trace_*.json")
-            )
-        except OSError:
-            total_requests = 0
+        # Count completed text-generation tasks from the event log. Was
+        # previously counting only benchmark trace files on disk, which
+        # are written for `bench: true` requests only — so the headline
+        # "0 requests served" was wrong even after lots of chat traffic.
+        total_requests = 0
+        for event in self._event_log.read_all():
+            if isinstance(event, TaskCreated) and isinstance(
+                event.task, TextGenerationTask
+            ):
+                total_requests += 1
         return ServerStatsResponse(
             uptime_seconds=uptime_seconds,
             total_requests=total_requests,
@@ -1935,6 +1948,65 @@ class API:
             active_commands=len(self._text_generation_queues)
             + len(self._image_generation_queues),
         )
+
+    async def get_recent_requests(
+        self, limit: int = Query(default=20, ge=1, le=200)
+    ) -> RecentRequestsResponse:
+        """Walk the event log for recent text-generation tasks.
+
+        Status is the latest seen (TaskCreated → Pending; TaskStatusUpdated
+        → that status; TaskFailed → Failed). Returned newest first.
+        """
+        latest_status: dict[str, TaskStatus] = {}
+        created_at: dict[str, float] = {}
+        model_id: dict[str, str] = {}
+        order: list[str] = []
+
+        for event in self._event_log.read_all():
+            if isinstance(event, TaskCreated) and isinstance(
+                event.task, TextGenerationTask
+            ):
+                tid = str(event.task_id)
+                if tid not in created_at:
+                    when = event._master_time_stamp
+                    created_at[tid] = (
+                        when.timestamp() if when else time.time()
+                    )
+                    model_id[tid] = str(event.task.task_params.model)
+                    latest_status[tid] = event.task.task_status
+                    order.append(tid)
+            elif isinstance(event, TaskStatusUpdated):
+                tid = str(event.task_id)
+                if tid in latest_status:
+                    latest_status[tid] = event.task_status
+            elif isinstance(event, TaskFailed):
+                tid = str(event.task_id)
+                if tid in latest_status:
+                    latest_status[tid] = TaskStatus.Failed
+
+        def _normalize(s: TaskStatus) -> str:
+            mapping = {
+                TaskStatus.Pending: "pending",
+                TaskStatus.Running: "running",
+                TaskStatus.Complete: "complete",
+                TaskStatus.Failed: "failed",
+                TaskStatus.TimedOut: "failed",
+                TaskStatus.Cancelled: "cancelled",
+            }
+            return mapping.get(s, "pending")
+
+        # Newest first; cap to `limit`.
+        recent_ids = list(reversed(order))[:limit]
+        items = [
+            RecentRequestItem(
+                task_id=tid,
+                model_id=model_id[tid],
+                created_at=created_at[tid],
+                status=_normalize(latest_status[tid]),  # type: ignore[arg-type]
+            )
+            for tid in recent_ids
+        ]
+        return RecentRequestsResponse(requests=items)
 
     async def list_traces(self) -> TraceListResponse:
         traces: list[TraceListItem] = []
