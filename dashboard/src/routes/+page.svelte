@@ -41,7 +41,6 @@
     </div>
   </div>
   <div class="page-actions">
-    <a class="btn" href="#/legacy">Open legacy view</a>
     <a class="btn btn-primary" href="#/models">+ Launch model</a>
   </div>
 </div>
@@ -126,16 +125,17 @@
   }
   .btn:hover {
     background: var(--ux-bg-hover);
-    border-color: #353535;
+    border-color: var(--ux-border-stronger);
   }
   .btn-primary {
     background: var(--ux-text);
-    color: var(--ux-bg);
+    color: var(--ux-text-invert);
     border-color: var(--ux-text);
     font-weight: 600;
   }
   .btn-primary:hover {
-    background: #fff;
+    background: var(--ux-primary-hover);
+    border-color: var(--ux-primary-hover);
   }
   .stat-grid {
     display: grid;

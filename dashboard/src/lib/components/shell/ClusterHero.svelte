@@ -98,7 +98,7 @@
                 width="38"
                 height="10"
                 rx="5"
-                fill="#f5a623"
+                fill="var(--ux-accent)"
               />
               <text class="badge" x={node.cx} y={node.cy - r - 9}>LEADER</text>
             {/if}
@@ -173,7 +173,7 @@
     align-items: center;
     justify-content: center;
     background:
-      radial-gradient(ellipse 60% 50% at center, rgba(245, 166, 35, 0.045) 0%, transparent 70%),
+      radial-gradient(ellipse 60% 50% at center, var(--ux-accent-bg) 0%, transparent 70%),
       var(--ux-card);
     border-radius: 0 0 var(--ux-radius) var(--ux-radius);
     overflow: hidden;
@@ -184,9 +184,10 @@
     inset: 0;
     background-image: radial-gradient(
       circle at 1px 1px,
-      rgba(255, 255, 255, 0.04) 1px,
+      var(--ux-text-faint) 1px,
       transparent 0
     );
+    opacity: 0.18;
     background-size: 24px 24px;
     mask-image: radial-gradient(ellipse 70% 60% at center, #000 0%, transparent 100%);
   }
@@ -204,12 +205,12 @@
   }
   .ring-bg {
     fill: none;
-    stroke: #2e2e2e;
+    stroke: var(--ux-border-strong);
     stroke-width: 1;
     stroke-dasharray: 1 3;
   }
   .core {
-    fill: #14100a;
+    fill: var(--ux-surface-deep);
     stroke: var(--ux-accent);
     stroke-width: 1;
   }
@@ -249,13 +250,13 @@
     font-family: var(--ux-mono);
     font-size: 7px;
     font-weight: 600;
-    fill: var(--ux-bg);
+    fill: var(--ux-text-invert);
     text-anchor: middle;
     letter-spacing: 0.08em;
   }
   .mem-track {
-    fill: #1a1a1a;
-    stroke: #2e2e2e;
+    fill: var(--ux-bg-raised);
+    stroke: var(--ux-border-strong);
     stroke-width: 0.6;
   }
   .mem-fill {

@@ -105,7 +105,7 @@
     height: 6px;
     border-radius: 50%;
     background: var(--ux-green);
-    box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.15);
+    box-shadow: 0 0 0 2px var(--ux-green-bg);
   }
   .time {
     color: var(--ux-text-faint);

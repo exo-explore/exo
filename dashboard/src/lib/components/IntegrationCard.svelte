@@ -32,31 +32,101 @@
   }
 </script>
 
-<div
-  class="border border-exo-light-gray/20 rounded-lg bg-exo-medium-gray/20 overflow-hidden"
->
-  <div class="flex items-center justify-between px-5 py-4">
+<div class="ic">
+  <div class="ic-head">
     <div>
-      <h3 class="text-white text-sm font-semibold tracking-wide">{title}</h3>
-      <p class="text-exo-light-gray/60 text-xs mt-0.5 font-mono">{subtitle}</p>
+      <h3 class="ic-title">{title}</h3>
+      <p class="ic-sub">{subtitle}</p>
     </div>
     <button
       onclick={copyToClipboard}
-      class="px-3 py-1.5 text-xs rounded border transition-all duration-200 cursor-pointer
-        {copied
-        ? 'border-green-500/50 text-green-400 bg-green-500/10'
-        : failed
-          ? 'border-red-500/50 text-red-400 bg-red-500/10'
-          : 'border-exo-light-gray/30 text-exo-light-gray hover:border-exo-yellow/50 hover:text-exo-yellow'}"
+      class="ic-copy"
+      class:copied
+      class:failed
     >
-      {copied ? "Copied!" : failed ? "Copy failed" : "Copy"}
+      {copied ? "Copied" : failed ? "Failed" : "Copy"}
     </button>
   </div>
   {#if description}
-    <p class="text-exo-light-gray/70 text-xs px-5 pb-3">{description}</p>
+    <p class="ic-desc">{description}</p>
   {/if}
-  <div class="bg-black/30 border-t border-exo-light-gray/10">
-    <pre
-      class="text-xs text-exo-light-gray/90 font-mono p-4 overflow-x-auto whitespace-pre">{config}</pre>
+  <div class="ic-code">
+    <pre>{config}</pre>
   </div>
 </div>
+
+<style>
+  .ic {
+    background: var(--ux-card);
+    border: 1px solid var(--ux-border);
+    border-radius: var(--ux-radius);
+    overflow: hidden;
+  }
+  .ic-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 14px 18px 10px;
+  }
+  .ic-title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ux-text);
+    letter-spacing: -0.005em;
+  }
+  .ic-sub {
+    margin: 2px 0 0;
+    font-family: var(--ux-mono);
+    font-size: 11px;
+    color: var(--ux-text-faint);
+  }
+  .ic-copy {
+    flex-shrink: 0;
+    font-family: var(--ux-sans);
+    font-size: 11px;
+    padding: 5px 11px;
+    border-radius: var(--ux-radius-sm);
+    border: 1px solid var(--ux-border-strong);
+    background: var(--ux-bg-raised);
+    color: var(--ux-text-dim);
+    cursor: pointer;
+    transition: border-color 120ms, color 120ms, background 120ms;
+  }
+  .ic-copy:hover {
+    color: var(--ux-text);
+    border-color: var(--ux-accent);
+  }
+  .ic-copy.copied {
+    color: var(--ux-green);
+    border-color: var(--ux-green-border);
+    background: var(--ux-green-bg);
+  }
+  .ic-copy.failed {
+    color: var(--ux-red);
+    border-color: var(--ux-red-border);
+    background: var(--ux-red-bg);
+  }
+  .ic-desc {
+    margin: 0;
+    padding: 0 18px 12px;
+    font-size: 12px;
+    color: var(--ux-text-dim);
+    line-height: 1.45;
+  }
+  .ic-code {
+    background: var(--ux-bg-raised);
+    border-top: 1px solid var(--ux-border);
+  }
+  .ic-code pre {
+    margin: 0;
+    padding: 14px 18px;
+    font-family: var(--ux-mono);
+    font-size: 12px;
+    color: var(--ux-text);
+    overflow-x: auto;
+    white-space: pre;
+    line-height: 1.5;
+  }
+</style>

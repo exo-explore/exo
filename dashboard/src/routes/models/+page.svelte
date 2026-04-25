@@ -131,9 +131,6 @@
       Launch from disk, browse the catalog, watch downloads land.
     </div>
   </div>
-  <div class="actions">
-    <a class="btn" href="#/legacy">Open legacy picker</a>
-  </div>
 </div>
 
 <div class="controls">
@@ -393,17 +390,17 @@
     align-items: center;
     gap: 10px;
     padding: 10px 14px;
-    background: rgba(245, 100, 80, 0.08);
-    border: 1px solid rgba(245, 100, 80, 0.4);
+    background: var(--ux-red-bg);
+    border: 1px solid var(--ux-red-border);
     border-radius: var(--ux-radius-sm);
     margin-bottom: 16px;
     font-family: var(--ux-mono);
     font-size: 12px;
-    color: #f5b6a8;
+    color: var(--ux-red-text);
   }
   .error-tag {
-    background: rgba(245, 100, 80, 0.2);
-    color: #ffb59f;
+    background: var(--ux-red-bg);
+    color: var(--ux-red);
     padding: 2px 6px;
     border-radius: 3px;
     font-weight: 600;
@@ -414,7 +411,7 @@
     margin-left: auto;
     background: transparent;
     border: none;
-    color: #f5b6a8;
+    color: var(--ux-red-text);
     cursor: pointer;
     font-size: 18px;
     line-height: 1;
@@ -440,10 +437,10 @@
     border-color: var(--ux-border-strong);
   }
   .card.running {
-    border-color: rgba(74, 222, 128, 0.35);
+    border-color: var(--ux-green-border);
     background: linear-gradient(
       180deg,
-      rgba(74, 222, 128, 0.04) 0%,
+      var(--ux-green-bg) 0%,
       var(--ux-card) 60%
     );
   }
@@ -506,14 +503,14 @@
   }
   .status-pill[data-status="running"] {
     color: var(--ux-green);
-    background: rgba(74, 222, 128, 0.1);
+    background: var(--ux-green-bg);
   }
   .status-pill[data-status="running"] .dot {
-    box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.15);
+    box-shadow: 0 0 0 2px var(--ux-green-bg);
   }
   .status-pill[data-status="downloaded"] {
     color: var(--ux-accent);
-    background: rgba(245, 166, 35, 0.08);
+    background: var(--ux-accent-bg);
   }
   .status-pill[data-status="available"] {
     color: var(--ux-text-dim);
@@ -540,7 +537,7 @@
   }
   .spec.accent {
     color: var(--ux-accent);
-    background: rgba(245, 166, 35, 0.1);
+    background: var(--ux-accent-bg);
   }
   .spec.faint {
     color: var(--ux-text-faint);
@@ -570,7 +567,7 @@
   }
   .btn-action:hover:not(:disabled) {
     background: var(--ux-bg-hover);
-    border-color: #353535;
+    border-color: var(--ux-border-stronger);
   }
   .btn-action:disabled {
     opacity: 0.55;
@@ -578,12 +575,13 @@
   }
   .btn-action.primary {
     background: var(--ux-text);
-    color: var(--ux-bg);
+    color: var(--ux-text-invert);
     border-color: var(--ux-text);
     font-weight: 600;
   }
   .btn-action.primary:hover:not(:disabled) {
-    background: #fff;
+    background: var(--ux-primary-hover);
+    border-color: var(--ux-primary-hover);
   }
   .muted {
     font-family: var(--ux-mono);

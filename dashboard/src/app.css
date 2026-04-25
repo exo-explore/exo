@@ -4,25 +4,114 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* === oMLX-feel design tokens (used by new shell + pages) === */
+/* === oMLX-feel design tokens (used by new shell + pages) ===
+ * Theme = data-theme attribute on <body>. The boot script in app.html sets
+ * this before hydration to avoid flash. The theme.svelte.ts store keeps it
+ * in sync at runtime. Adding a new theme = drop in a new selector block. */
+
 :root {
+	/* Font + radius are theme-independent. */
+	--ux-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+	--ux-sans: 'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+	--ux-radius: 10px;
+	--ux-radius-sm: 6px;
+}
+
+/* === Light (default) — flagship oMLX-feel === */
+body[data-theme='light'] {
+	--ux-bg: #ffffff;
+	--ux-bg-raised: #f6f6f6;
+	--ux-bg-hover: #f0f0f0;
+	--ux-card: #ffffff;
+	--ux-surface-deep: #fafafa;
+	--ux-border: #e7e7e7;
+	--ux-border-strong: #d4d4d4;
+	--ux-text: #111111;
+	--ux-text-dim: #555555;
+	--ux-text-faint: #999999;
+	--ux-text-invert: #ffffff;
+	--ux-accent: #d97706;
+	--ux-accent-strong: #b45309;
+	--ux-accent-bg: rgba(217, 119, 6, 0.1);
+	--ux-accent-bg-strong: rgba(217, 119, 6, 0.18);
+	--ux-green: #16a34a;
+	--ux-green-bg: rgba(22, 163, 74, 0.12);
+	--ux-green-border: rgba(22, 163, 74, 0.35);
+	--ux-red: #dc2626;
+	--ux-red-text: #b91c1c;
+	--ux-red-bg: rgba(220, 38, 38, 0.08);
+	--ux-red-border: rgba(220, 38, 38, 0.4);
+	--ux-grain-opacity: 0.018;
+	--ux-grain-blend: multiply;
+	/* Primary-button hover surface: slightly off-from-text so the lift reads. */
+	--ux-primary-hover: #2a2a2a;
+	--ux-border-stronger: #b8b8b8;
+	--ux-blue: #2563eb;
+	--ux-blue-bg: rgba(37, 99, 235, 0.1);
+}
+
+/* === Dark — preserves the original new-shell look exactly === */
+body[data-theme='dark'] {
 	--ux-bg: #0a0a0a;
 	--ux-bg-raised: #121212;
 	--ux-bg-hover: #181818;
 	--ux-card: #111111;
+	--ux-surface-deep: #14100a;
 	--ux-border: #212121;
 	--ux-border-strong: #2a2a2a;
 	--ux-text: #ededed;
 	--ux-text-dim: #9a9a9a;
 	--ux-text-faint: #5a5a5a;
+	--ux-text-invert: #0a0a0a;
 	--ux-accent: #f5a623;
 	--ux-accent-strong: #ffb84d;
+	--ux-accent-bg: rgba(245, 166, 35, 0.1);
+	--ux-accent-bg-strong: rgba(245, 166, 35, 0.18);
 	--ux-green: #4ade80;
+	--ux-green-bg: rgba(74, 222, 128, 0.12);
+	--ux-green-border: rgba(74, 222, 128, 0.35);
 	--ux-red: #ef4444;
-	--ux-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-	--ux-sans: 'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-	--ux-radius: 10px;
-	--ux-radius-sm: 6px;
+	--ux-red-text: #f5b6a8;
+	--ux-red-bg: rgba(245, 100, 80, 0.08);
+	--ux-red-border: rgba(245, 100, 80, 0.4);
+	--ux-grain-opacity: 0.035;
+	--ux-grain-blend: overlay;
+	--ux-primary-hover: #ffffff;
+	--ux-border-stronger: #353535;
+	--ux-blue: #93c5fd;
+	--ux-blue-bg: rgba(96, 165, 250, 0.15);
+}
+
+/* === Solar — warm paper, showcase third theme === */
+body[data-theme='solar'] {
+	--ux-bg: #fbf6e8;
+	--ux-bg-raised: #f5efdc;
+	--ux-bg-hover: #efe6cb;
+	--ux-card: #fffdf5;
+	--ux-surface-deep: #f0e9d2;
+	--ux-border: #e6dcc0;
+	--ux-border-strong: #d6c89e;
+	--ux-text: #2a1f0a;
+	--ux-text-dim: #6b5837;
+	--ux-text-faint: #a89570;
+	--ux-text-invert: #fffdf5;
+	--ux-accent: #d2691e;
+	--ux-accent-strong: #a0521b;
+	--ux-accent-bg: rgba(210, 105, 30, 0.12);
+	--ux-accent-bg-strong: rgba(210, 105, 30, 0.2);
+	--ux-green: #4a7c2a;
+	--ux-green-bg: rgba(74, 124, 42, 0.14);
+	--ux-green-border: rgba(74, 124, 42, 0.4);
+	--ux-red: #b32f2f;
+	--ux-red-text: #8a2424;
+	--ux-red-bg: rgba(179, 47, 47, 0.08);
+	--ux-red-border: rgba(179, 47, 47, 0.35);
+	--ux-grain-opacity: 0.025;
+	--ux-grain-blend: multiply;
+	--ux-primary-hover: #4a3a18;
+	--ux-border-stronger: #b89d65;
+	--ux-blue: #2c5d8a;
+	--ux-blue-bg: rgba(44, 93, 138, 0.14);
 }
 
 /* Apply the new sans font + grain to the body when the new shell is active */
@@ -41,18 +130,18 @@ body.ux-new-shell::before {
 	inset: 0;
 	pointer-events: none;
 	z-index: 1;
-	opacity: 0.035;
+	opacity: var(--ux-grain-opacity, 0.035);
 	background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence baseFrequency='0.9' numOctaves='2' seed='3'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
-	mix-blend-mode: overlay;
+	mix-blend-mode: var(--ux-grain-blend, overlay);
 }
 
 @keyframes uxPulse {
-	0%, 100% { box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.15); }
-	50% { box-shadow: 0 0 0 5px rgba(74, 222, 128, 0.07); }
+	0%, 100% { box-shadow: 0 0 0 3px var(--ux-green-bg); }
+	50% { box-shadow: 0 0 0 5px var(--ux-green-border); }
 }
 @keyframes uxAmberPulse {
-	0%, 100% { box-shadow: 0 0 0 2px rgba(245, 166, 35, 0.2); }
-	50% { box-shadow: 0 0 0 4px rgba(245, 166, 35, 0.1); }
+	0%, 100% { box-shadow: 0 0 0 2px var(--ux-accent-bg-strong); }
+	50% { box-shadow: 0 0 0 4px var(--ux-accent-bg); }
 }
 @keyframes uxNodeGlow {
 	0%, 100% { opacity: 0.18; r: 40; }

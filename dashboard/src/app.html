@@ -7,7 +7,33 @@
 		<title>EXO</title>
 		%sveltekit.head%
 	</head>
-	<body data-sveltekit-preload-data="hover">
+	<body data-sveltekit-preload-data="hover" data-theme="light">
+		<script>
+			// Apply theme + new-shell body class before paint to avoid flash.
+			// Mirrors logic in $lib/theme.svelte.ts; keep in sync.
+			(function () {
+				try {
+					var stored = localStorage.getItem('exo-theme') || 'light';
+					var effective = stored;
+					if (stored === 'system') {
+						effective = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+							? 'dark'
+							: 'light';
+					}
+					if (effective !== 'light' && effective !== 'dark' && effective !== 'solar') {
+						effective = 'light';
+					}
+					document.body.setAttribute('data-theme', effective);
+					var hash = window.location.hash || '';
+					if (!hash.startsWith('#/legacy')) {
+						document.body.classList.add('ux-new-shell');
+					}
+				} catch (_) {
+					document.body.setAttribute('data-theme', 'light');
+					document.body.classList.add('ux-new-shell');
+				}
+			})();
+		</script>
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>

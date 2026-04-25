@@ -377,71 +377,46 @@
 
 <div class="integrations-wrap" in:fade={{ duration: 200 }}>
 
-    <!-- Status -->
-    <div class="mb-8">
-      <span class="text-exo-light-gray/70 text-xs uppercase tracking-wider"
-        >API Endpoint</span
-      >
-      <span class="text-white font-mono text-sm ml-2">{apiUrl}</span>
+    <!-- Status + Endpoints -->
+    <div class="endpoint-summary">
+      <div class="endpoint-summary-header">
+        <span class="es-label">API ENDPOINT</span>
+        <span class="es-url">{apiUrl}</span>
+      </div>
       {#if runningModels.length > 0}
-        <div class="text-exo-light-gray/50 text-xs mt-2">
+        <div class="es-running">
           Running model{runningModels.length > 1 ? "s" : ""}:
-          <ul class="mt-1 space-y-0.5 list-none">
-            {#each runningModels as model}
-              <li class="text-exo-yellow font-mono">{model}</li>
-            {/each}
-          </ul>
+          {#each runningModels as model}
+            <span class="es-model">{model}</span>
+          {/each}
         </div>
       {:else}
-        <p class="text-exo-light-gray/40 text-xs mt-2 italic">
-          No models currently running
-        </p>
+        <div class="es-running es-running-empty">No models currently running.</div>
       {/if}
     </div>
 
-    <!-- API Endpoints -->
-    <div class="mb-8">
-      <div
-        class="flex flex-col sm:flex-row gap-3 text-xs font-mono text-exo-light-gray/70"
-      >
-        <div
-          class="flex-1 bg-black/20 border border-exo-light-gray/10 rounded px-3 py-2"
-        >
-          <span class="text-exo-light-gray/40 text-[10px] uppercase block mb-1"
-            >OpenAI-compatible</span
-          >
-          <span class="text-white/80">{apiUrl}/v1</span>
-        </div>
-        <div
-          class="flex-1 bg-black/20 border border-exo-light-gray/10 rounded px-3 py-2"
-        >
-          <span class="text-exo-light-gray/40 text-[10px] uppercase block mb-1"
-            >Claude-compatible</span
-          >
-          <span class="text-white/80">{apiUrl}</span>
-        </div>
-        <div
-          class="flex-1 bg-black/20 border border-exo-light-gray/10 rounded px-3 py-2"
-        >
-          <span class="text-exo-light-gray/40 text-[10px] uppercase block mb-1"
-            >Ollama-compatible</span
-          >
-          <span class="text-white/80">{apiUrl}/ollama</span>
-        </div>
+    <div class="endpoint-cards">
+      <div class="endpoint-card">
+        <div class="ec-label">OPENAI-COMPATIBLE</div>
+        <div class="ec-url">{apiUrl}/v1</div>
+      </div>
+      <div class="endpoint-card">
+        <div class="ec-label">ANTHROPIC-COMPATIBLE</div>
+        <div class="ec-url">{apiUrl}</div>
+      </div>
+      <div class="endpoint-card">
+        <div class="ec-label">OLLAMA-COMPATIBLE</div>
+        <div class="ec-url">{apiUrl}/ollama</div>
       </div>
     </div>
 
     <!-- Tabs -->
-    <div
-      class="flex flex-wrap gap-2 mb-6 border-b border-exo-light-gray/10 pb-3"
-    >
+    <div class="ic-tabs">
       {#each tabs as tab}
         <button
           onclick={() => (activeTab = tab)}
-          class="px-3 py-1.5 text-xs rounded-md transition-all cursor-pointer
-            {activeTab === tab
-            ? 'bg-exo-yellow/15 text-exo-yellow border border-exo-yellow/30'
-            : 'text-exo-light-gray/60 hover:text-white/80 border border-transparent hover:border-exo-light-gray/20'}"
+          class="ic-tab"
+          class:active={activeTab === tab}
         >
           {tab}
         </button>
@@ -674,5 +649,103 @@
   }
   .integrations-wrap {
     max-width: 920px;
+  }
+  .endpoint-summary {
+    background: var(--ux-card);
+    border: 1px solid var(--ux-border);
+    border-radius: var(--ux-radius);
+    padding: 14px 18px;
+    margin-bottom: 12px;
+  }
+  .endpoint-summary-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .es-label {
+    font-family: var(--ux-mono);
+    font-size: 10px;
+    color: var(--ux-text-faint);
+    letter-spacing: 0.12em;
+  }
+  .es-url {
+    font-family: var(--ux-mono);
+    font-size: 13px;
+    color: var(--ux-text);
+  }
+  .es-running {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--ux-text-dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .es-running-empty {
+    color: var(--ux-text-faint);
+    font-style: italic;
+  }
+  .es-model {
+    font-family: var(--ux-mono);
+    font-size: 11px;
+    color: var(--ux-accent);
+    background: var(--ux-accent-bg);
+    padding: 2px 8px;
+    border-radius: 3px;
+  }
+  .endpoint-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .endpoint-card {
+    background: var(--ux-bg-raised);
+    border: 1px solid var(--ux-border);
+    border-radius: var(--ux-radius-sm);
+    padding: 10px 14px;
+  }
+  .ec-label {
+    font-family: var(--ux-mono);
+    font-size: 9.5px;
+    color: var(--ux-text-faint);
+    letter-spacing: 0.12em;
+    margin-bottom: 5px;
+  }
+  .ec-url {
+    font-family: var(--ux-mono);
+    font-size: 12px;
+    color: var(--ux-text);
+    word-break: break-all;
+  }
+  .ic-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    border-bottom: 1px solid var(--ux-border);
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+  }
+  .ic-tab {
+    font-family: var(--ux-sans);
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: var(--ux-radius-sm);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--ux-text-dim);
+    cursor: pointer;
+    transition: color 120ms, border-color 120ms, background 120ms;
+  }
+  .ic-tab:hover {
+    color: var(--ux-text);
+    border-color: var(--ux-border);
+  }
+  .ic-tab.active {
+    background: var(--ux-accent-bg);
+    color: var(--ux-accent);
+    border-color: var(--ux-accent);
   }
 </style>

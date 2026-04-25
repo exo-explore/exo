@@ -2,6 +2,7 @@
   import { browser } from "$app/environment";
   import { serverStats } from "$lib/api/stats.svelte";
   import { cluster } from "$lib/api/cluster.svelte";
+  import { theme, THEME_OPTIONS, type ThemeMode } from "$lib/theme.svelte";
   import { onMount } from "svelte";
 
   const apiUrl = browser
@@ -10,6 +11,8 @@
 
   let stats = $derived(serverStats.value);
   let clusterSnap = $derived(cluster.value);
+  let themeMode = $derived<ThemeMode>(theme.mode);
+  let effectiveTheme = $derived(theme.effective);
 
   let onboardingDone = $state<boolean | null>(null);
   let copied = $state<string | null>(null);
@@ -99,6 +102,41 @@
 
 <section class="block">
   <div class="block-header">
+    <div class="block-title">Appearance</div>
+    <div class="block-hint">
+      {#if themeMode === "system"}
+        Following macOS · resolved to {effectiveTheme}
+      {:else}
+        Stored locally per browser
+      {/if}
+    </div>
+  </div>
+  <div class="theme-picker" role="radiogroup" aria-label="Theme">
+    {#each THEME_OPTIONS as opt}
+      <button
+        type="button"
+        class="theme-option"
+        class:active={themeMode === opt.mode}
+        role="radio"
+        aria-checked={themeMode === opt.mode}
+        onclick={() => theme.setMode(opt.mode)}
+      >
+        <div class="theme-swatch" data-theme-preview={opt.mode}>
+          <span class="swatch-bg"></span>
+          <span class="swatch-card"></span>
+          <span class="swatch-accent"></span>
+        </div>
+        <div class="theme-text">
+          <div class="theme-label">{opt.label}</div>
+          <div class="theme-desc">{opt.description}</div>
+        </div>
+      </button>
+    {/each}
+  </div>
+</section>
+
+<section class="block">
+  <div class="block-header">
     <div class="block-title">API endpoints</div>
     <div class="block-hint">Click any URL to copy.</div>
   </div>
@@ -177,17 +215,10 @@
 
 <section class="block">
   <div class="block-header">
-    <div class="block-title">Advanced</div>
-    <div class="block-hint">Things still living in the legacy surfaces.</div>
+    <div class="block-title">Quick links</div>
+    <div class="block-hint">Other surfaces in the app.</div>
   </div>
   <div class="link-list">
-    <a class="link-row" href="#/legacy">
-      <div>
-        <div class="link-title">Legacy dashboard</div>
-        <div class="link-desc">Detailed topology, downloads, RDMA, debugging panels.</div>
-      </div>
-      <div class="link-arrow">→</div>
-    </a>
     <a class="link-row" href="#/integrations">
       <div>
         <div class="link-title">Integrations</div>
@@ -199,6 +230,13 @@
       <div>
         <div class="link-title">Cluster detail</div>
         <div class="link-desc">Per-node memory, temperature, IDs.</div>
+      </div>
+      <div class="link-arrow">→</div>
+    </a>
+    <a class="link-row" href="#/benchmark">
+      <div>
+        <div class="link-title">Benchmark</div>
+        <div class="link-desc">Prompt and generation throughput, prefix-cache hits.</div>
       </div>
       <div class="link-arrow">→</div>
     </a>
@@ -257,6 +295,112 @@
     color: var(--ux-text-faint);
     text-transform: uppercase;
     letter-spacing: 0.1em;
+  }
+
+  .theme-picker {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+  }
+  .theme-option {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    background: var(--ux-bg-raised);
+    border: 1px solid var(--ux-border);
+    border-radius: var(--ux-radius-sm);
+    cursor: pointer;
+    text-align: left;
+    color: var(--ux-text);
+    font: inherit;
+    transition: border-color 120ms, background 120ms;
+  }
+  .theme-option:hover {
+    border-color: var(--ux-border-strong);
+  }
+  .theme-option.active {
+    border-color: var(--ux-accent);
+    background: var(--ux-accent-bg);
+  }
+  .theme-swatch {
+    flex-shrink: 0;
+    width: 44px;
+    height: 32px;
+    border-radius: var(--ux-radius-sm);
+    overflow: hidden;
+    position: relative;
+    border: 1px solid var(--ux-border);
+  }
+  .theme-swatch[data-theme-preview="light"] {
+    background: #ffffff;
+  }
+  .theme-swatch[data-theme-preview="dark"] {
+    background: #0a0a0a;
+  }
+  .theme-swatch[data-theme-preview="solar"] {
+    background: #fbf6e8;
+  }
+  .theme-swatch[data-theme-preview="system"] {
+    background: linear-gradient(90deg, #ffffff 50%, #0a0a0a 50%);
+  }
+  .swatch-bg {
+    display: none;
+  }
+  .swatch-card {
+    position: absolute;
+    left: 6px;
+    top: 6px;
+    bottom: 6px;
+    width: 14px;
+    border-radius: 3px;
+    border: 1px solid currentColor;
+    opacity: 0.18;
+  }
+  .swatch-accent {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .theme-swatch[data-theme-preview="light"] .swatch-card,
+  .theme-swatch[data-theme-preview="solar"] .swatch-card {
+    color: #111;
+  }
+  .theme-swatch[data-theme-preview="dark"] .swatch-card,
+  .theme-swatch[data-theme-preview="system"] .swatch-card {
+    color: #ededed;
+  }
+  .theme-swatch[data-theme-preview="light"] .swatch-accent {
+    background: #d97706;
+  }
+  .theme-swatch[data-theme-preview="dark"] .swatch-accent {
+    background: #f5a623;
+  }
+  .theme-swatch[data-theme-preview="solar"] .swatch-accent {
+    background: #d2691e;
+  }
+  .theme-swatch[data-theme-preview="system"] .swatch-accent {
+    background: #f5a623;
+    box-shadow: -10px 0 0 #d97706;
+  }
+  .theme-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .theme-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ux-text);
+    margin-bottom: 2px;
+  }
+  .theme-desc {
+    font-size: 11.5px;
+    color: var(--ux-text-dim);
+    line-height: 1.35;
   }
 
   .endpoints {

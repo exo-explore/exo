@@ -86,12 +86,12 @@
     font-weight: 600;
   }
   .tag.local {
-    background: rgba(96, 165, 250, 0.15);
-    color: #93c5fd;
+    background: var(--ux-blue-bg);
+    color: var(--ux-blue);
   }
   .tag.leader {
     background: var(--ux-accent);
-    color: var(--ux-bg);
+    color: var(--ux-text-invert);
   }
   .sub {
     font-size: 11px;
@@ -116,7 +116,7 @@
     height: 5px;
     border-radius: 50%;
     background: var(--ux-green);
-    box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.15);
+    box-shadow: 0 0 0 2px var(--ux-green-bg);
   }
   .grid {
     display: grid;

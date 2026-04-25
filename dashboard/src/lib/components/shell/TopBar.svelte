@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from "$app/state";
   import { serverStats } from "$lib/api/stats.svelte";
+  import { theme, type ThemeMode } from "$lib/theme.svelte";
 
   const navItems: Array<{ href: string; label: string }> = [
     { href: "#/", label: "Status" },
@@ -34,15 +35,26 @@
   let statusText = $derived(
     isRunning ? `RUNNING · ${uptimeDisplay(stats?.uptimeSeconds ?? 0)}` : "OFFLINE"
   );
+
+  let themeMode = $derived<ThemeMode>(theme.mode);
+  let themeTooltip = $derived.by(() => {
+    const labels: Record<ThemeMode, string> = {
+      light: "Light",
+      dark: "Dark",
+      solar: "Solar",
+      system: "System",
+    };
+    return `Theme: ${labels[themeMode]} (click to cycle)`;
+  });
 </script>
 
 <header class="topbar">
   <a class="brand" href="#/">
     <span class="brand-mark">
       <svg width="12" height="12" viewBox="0 0 12 12">
-        <path d="M3 6L9 3M3 6L9 9" stroke="rgba(237,237,237,0.35)" stroke-width="0.6" />
-        <circle cx="3" cy="6" r="1.4" fill="#ededed" />
-        <circle cx="9" cy="3" r="1.4" fill="#ededed" />
+        <path d="M3 6L9 3M3 6L9 9" stroke="currentColor" stroke-opacity="0.35" stroke-width="0.6" />
+        <circle cx="3" cy="6" r="1.4" fill="currentColor" />
+        <circle cx="9" cy="3" r="1.4" fill="currentColor" />
         <circle cx="9" cy="9" r="1.4" fill="var(--ux-accent)" />
       </svg>
     </span>
@@ -57,13 +69,42 @@
   </nav>
 
   <div class="topbar-right">
+    <button
+      class="theme-toggle"
+      type="button"
+      onclick={() => theme.cycle()}
+      title={themeTooltip}
+      aria-label={themeTooltip}
+    >
+      {#if themeMode === "light"}
+        <!-- sun -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+        </svg>
+      {:else if themeMode === "dark"}
+        <!-- moon -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+        </svg>
+      {:else if themeMode === "solar"}
+        <!-- paper / book -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4h12a4 4 0 0 1 4 4v12H8a4 4 0 0 1-4-4V4z" />
+          <path d="M4 4v16M8 8h8M8 12h8M8 16h6" />
+        </svg>
+      {:else}
+        <!-- system / display -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="13" rx="2" />
+          <path d="M8 21h8M12 17v4" />
+        </svg>
+      {/if}
+    </button>
     <span class="status-pill" class:offline={!isRunning}>
       <span class="dot"></span>
       <span>{statusText}</span>
     </span>
-    <a href="#/legacy" class="legacy-link" title="Open legacy command-center view">
-      legacy →
-    </a>
   </div>
 </header>
 
@@ -97,8 +138,13 @@
     width: 22px;
     height: 22px;
     border-radius: 6px;
-    background: linear-gradient(135deg, #1c1c1c 0%, #0a0a0a 100%);
+    background: linear-gradient(
+      135deg,
+      var(--ux-bg-raised) 0%,
+      var(--ux-surface-deep) 100%
+    );
     border: 1px solid var(--ux-border-strong);
+    color: var(--ux-text);
     display: grid;
     place-items: center;
     position: relative;
@@ -110,7 +156,7 @@
     inset: 0;
     background: radial-gradient(
       circle at 70% 30%,
-      rgba(245, 166, 35, 0.35) 0%,
+      var(--ux-accent-bg-strong) 0%,
       transparent 60%
     );
   }
@@ -174,7 +220,7 @@
     height: 6px;
     border-radius: 50%;
     background: var(--ux-green);
-    box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.15);
+    box-shadow: 0 0 0 3px var(--ux-green-bg);
     animation: uxPulse 2.4s ease-in-out infinite;
   }
   .status-pill.offline .dot {
@@ -182,16 +228,28 @@
     box-shadow: none;
     animation: none;
   }
-  .legacy-link {
-    font-family: var(--ux-mono);
-    font-size: 10px;
-    color: var(--ux-text-faint);
-    text-decoration: none;
-    letter-spacing: 0.05em;
-    transition: color 120ms;
-  }
-  .legacy-link:hover {
+  .theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--ux-radius-sm);
+    background: var(--ux-card);
+    border: 1px solid var(--ux-border);
     color: var(--ux-text-dim);
+    cursor: pointer;
+    padding: 0;
+    transition: color 120ms, border-color 120ms, background 120ms;
+  }
+  .theme-toggle:hover {
+    color: var(--ux-text);
+    border-color: var(--ux-border-strong);
+    background: var(--ux-bg-hover);
+  }
+  .theme-toggle:focus-visible {
+    outline: 2px solid var(--ux-accent);
+    outline-offset: 1px;
   }
   @media (max-width: 900px) {
     .topbar {

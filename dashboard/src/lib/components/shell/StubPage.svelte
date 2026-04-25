@@ -64,7 +64,7 @@
     padding: 64px 32px;
     text-align: center;
     background:
-      radial-gradient(ellipse 60% 50% at center, rgba(245, 166, 35, 0.04) 0%, transparent 70%),
+      radial-gradient(ellipse 60% 50% at center, var(--ux-accent-bg) 0%, transparent 70%),
       var(--ux-card);
   }
   .empty-eyebrow {

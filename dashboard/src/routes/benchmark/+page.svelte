@@ -433,12 +433,13 @@
   }
   .btn.primary {
     background: var(--ux-text);
-    color: var(--ux-bg);
+    color: var(--ux-text-invert);
     border-color: var(--ux-text);
     font-weight: 600;
   }
   .btn.primary:hover:not(:disabled) {
-    background: #fff;
+    background: var(--ux-primary-hover);
+    border-color: var(--ux-primary-hover);
   }
   .muted {
     font-family: var(--ux-mono);
@@ -451,17 +452,17 @@
     align-items: center;
     gap: 10px;
     padding: 10px 14px;
-    background: rgba(245, 100, 80, 0.08);
-    border: 1px solid rgba(245, 100, 80, 0.4);
+    background: var(--ux-red-bg);
+    border: 1px solid var(--ux-red-border);
     border-radius: var(--ux-radius-sm);
     margin-bottom: 16px;
     font-family: var(--ux-mono);
     font-size: 12px;
-    color: #f5b6a8;
+    color: var(--ux-red-text);
   }
   .error-tag {
-    background: rgba(245, 100, 80, 0.2);
-    color: #ffb59f;
+    background: var(--ux-red-bg);
+    color: var(--ux-red);
     padding: 2px 6px;
     border-radius: 3px;
     font-weight: 600;
@@ -472,7 +473,7 @@
     margin-left: auto;
     background: transparent;
     border: none;
-    color: #f5b6a8;
+    color: var(--ux-red-text);
     cursor: pointer;
     font-size: 18px;
     line-height: 1;
@@ -590,11 +591,11 @@
     letter-spacing: 0.08em;
   }
   .prefix-tag[data-state="exact"] {
-    background: rgba(74, 222, 128, 0.12);
+    background: var(--ux-green-bg);
     color: var(--ux-green);
   }
   .prefix-tag[data-state="partial"] {
-    background: rgba(245, 166, 35, 0.12);
+    background: var(--ux-accent-bg);
     color: var(--ux-accent);
   }
 </style>
