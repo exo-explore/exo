@@ -781,6 +781,15 @@ def mlx_generate(
         if on_generation_token is not None:
             on_generation_token()
 
+        try:
+            _piece = tokenizer.decode([out.token])
+        except Exception:
+            _piece = "<decode-failed>"
+        logger.info(
+            f"[tok-seq] id={out.token} text={text!r} piece={_piece!r} "
+            f"finish={finish_reason}"
+        )
+
         yield GenerationResponse(
             text=text,
             token=out.token,
