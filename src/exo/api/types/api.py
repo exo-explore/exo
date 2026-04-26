@@ -441,6 +441,15 @@ class CancelDownloadResponse(FrozenModel):
     command_id: CommandId
 
 
+class PauseDownloadParams(FrozenModel):
+    target_node_id: NodeId
+    model_id: ModelId
+
+
+class PauseDownloadResponse(FrozenModel):
+    command_id: CommandId
+
+
 class TraceEventResponse(FrozenModel):
     name: str
     start_us: int

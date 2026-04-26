@@ -39,6 +39,8 @@ from .api import LogprobsContentItem as LogprobsContentItem
 from .api import ModelList as ModelList
 from .api import ModelListModel as ModelListModel
 from .api import NodePowerStats as NodePowerStats
+from .api import PauseDownloadParams as PauseDownloadParams
+from .api import PauseDownloadResponse as PauseDownloadResponse
 from .api import PlaceInstanceParams as PlaceInstanceParams
 from .api import PlacementPreview as PlacementPreview
 from .api import PlacementPreviewResponse as PlacementPreviewResponse
