@@ -1452,6 +1452,7 @@ class API:
                         command.command_id,
                         payload.model,
                         self._token_chunk_stream(command.command_id),
+                        reasoning=payload.reasoning,
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1468,6 +1469,7 @@ class API:
                     command.command_id,
                     payload.model,
                     self._token_chunk_stream(command.command_id),
+                    reasoning=payload.reasoning,
                 ),
                 media_type="application/json",
             )

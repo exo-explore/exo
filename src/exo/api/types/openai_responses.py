@@ -440,6 +440,7 @@ class ResponsesResponse(BaseModel, frozen=True):
     output: list[ResponseItem]
     output_text: str
     usage: ResponseUsage | None = None
+    reasoning: Reasoning | None = None
 
 
 # Streaming event types
