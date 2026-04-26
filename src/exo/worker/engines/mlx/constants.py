@@ -1,3 +1,5 @@
+import os
+
 # TODO: Do we want so many constants?
 #  I think we want a lot of these as parameters?
 
@@ -9,7 +11,11 @@ MAX_KV_SIZE: int | None = 3200
 KEEP_KV_SIZE: int | None = 1600
 QUANTIZE_MODEL_MODE: str | None = "affine"
 CACHE_GROUP_SIZE: int = 64
-KV_CACHE_BITS: int | None = None
+KV_CACHE_BITS: int | None = (
+    int(os.environ["EXO_KV_CACHE_BITS"])
+    if os.environ.get("EXO_KV_CACHE_BITS")
+    else None
+)
 
 DEFAULT_TOP_LOGPROBS: int = 5
 
