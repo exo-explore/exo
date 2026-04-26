@@ -99,3 +99,20 @@ EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true
 EXO_MAX_CONCURRENT_REQUESTS = int(os.getenv("EXO_MAX_CONCURRENT_REQUESTS", "8"))
 
 EXO_MAX_INSTANCE_RETRIES = 5
+
+EXO_FILE_SERVER_PORT = int(os.getenv("EXO_FILE_SERVER_PORT", "52416"))
+# Interface the P2P file server binds to. Default 0.0.0.0 because peer IPs
+# are discovered dynamically and not known at bind time. Set to "127.0.0.1"
+# to disable P2P serving on this node, or to a specific interface IP to
+# narrow exposure. See docs/p2p-model-distribution.md for the security stance.
+EXO_FILE_SERVER_BIND_HOST = os.getenv("EXO_FILE_SERVER_BIND_HOST", "0.0.0.0")
+# Cap on concurrent in-flight serves from the P2P file server. A misbehaving
+# peer can otherwise spawn enough parallel curl-fetches to saturate the
+# server. Default 64 = 16 files/peer × 4 peers, matching the receiver's
+# Semaphore in download_utils._download_file_from_peer's caller. Over-cap
+# requests get a 503 with Retry-After; the receiver's outer retry loop
+# (download_file_with_retry) re-invokes curl which then auto-resumes via
+# `-C -` so no bytes are wasted.
+EXO_FILE_SERVER_MAX_CONCURRENCY = int(
+    os.getenv("EXO_FILE_SERVER_MAX_CONCURRENCY", "64")
+)

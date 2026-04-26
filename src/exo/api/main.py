@@ -117,6 +117,7 @@ from exo.api.types.openai_responses import (
     ResponsesRequest,
     ResponsesResponse,
 )
+from exo.download.peer_discovery import find_peer_repo_url
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
@@ -1881,9 +1882,16 @@ class API:
     async def start_download(
         self, payload: StartDownloadParams
     ) -> StartDownloadResponse:
+        repo_url = payload.repo_url or find_peer_repo_url(
+            node_id=payload.target_node_id,
+            model_id=str(payload.shard_metadata.model_card.model_id),
+            global_download_status=self.state.downloads,
+            node_network=self.state.node_network,
+        )
         command = StartDownload(
             target_node_id=payload.target_node_id,
             shard_metadata=payload.shard_metadata,
+            repo_url=repo_url,
         )
         await self._send_download(command)
         return StartDownloadResponse(command_id=command.command_id)

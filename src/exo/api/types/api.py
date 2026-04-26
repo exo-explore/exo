@@ -421,6 +421,7 @@ class ImageListResponse(BaseModel, frozen=True):
 class StartDownloadParams(FrozenModel):
     target_node_id: NodeId
     shard_metadata: ShardMetadata
+    repo_url: str | None = None
 
 
 class StartDownloadResponse(FrozenModel):
