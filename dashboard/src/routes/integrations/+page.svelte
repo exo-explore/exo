@@ -14,6 +14,7 @@
 
   let modelCapabilities = $state<Record<string, string[]>>({});
   let modelContextLengths = $state<Record<string, number>>({});
+  let modelReasoningDialects = $state<Record<string, string>>({});
 
   const runningModels = $derived.by(() => {
     const models: string[] = [];
@@ -132,12 +133,30 @@
     for (const modelId of runningModels) {
       const caps = modelCapabilities[modelId] || [];
       const ctxLen = modelContextLengths[modelId] || 0;
+      const dialect = modelReasoningDialects[modelId];
       const entry: Record<string, unknown> = { name: modelId };
       if (ctxLen > 0) {
         entry.limit = { context: ctxLen, output: Math.min(ctxLen, 16384) };
       }
       if (caps.includes("vision")) {
         entry.modalities = { input: ["text", "image"], output: ["text"] };
+      }
+      // Reasoning round-trip: opencode's `interleaved` field tells the
+      // openai-compatible adapter to send the assistant's prior
+      // reasoning_content back in subsequent turns. Emit it for dialects
+      // whose chat templates actually read `message.reasoning_content`:
+      //   - `tool_conditional` (DeepSeek V3.2 / V4): wrapper preserves all
+      //     reasoning when tools are present.
+      //   - `post_last_user` (Qwen3-Thinking, GLM 4.5+, MiniMax M2.x):
+      //     Jinja template reads reasoning_content for assistant turns since
+      //     the last user message — exactly the tool-chain window.
+      // `channel` (gpt-oss): reads `message.thinking`, not
+      // `message.reasoning_content`, and opencode's field option doesn't
+      // support `thinking` — handled separately if/when we add server-side
+      // field translation.
+      // `suffix` (Kimi): reasoning lives in content; no separate field path.
+      if (dialect === "tool_conditional" || dialect === "post_last_user") {
+        entry.interleaved = { field: "reasoning_content" };
       }
       models[modelId] = entry;
     }
@@ -350,16 +369,25 @@
     try {
       const resp = await fetch("/v1/models");
       const data = (await resp.json()) as {
-        data: { id: string; capabilities: string[]; context_length: number }[];
+        data: {
+          id: string;
+          capabilities: string[];
+          context_length: number;
+          reasoning_dialect?: string;
+        }[];
       };
       const caps: Record<string, string[]> = {};
       const ctxs: Record<string, number> = {};
+      const dialects: Record<string, string> = {};
       for (const model of data.data) {
         caps[model.id] = model.capabilities || [];
         if (model.context_length > 0) ctxs[model.id] = model.context_length;
+        if (model.reasoning_dialect)
+          dialects[model.id] = model.reasoning_dialect;
       }
       modelCapabilities = caps;
       modelContextLengths = ctxs;
+      modelReasoningDialects = dialects;
     } catch {
       /* ignore */
     }

@@ -783,7 +783,7 @@ def mlx_generate(
             _piece = tokenizer.decode([out.token])
         except Exception:
             _piece = "<decode-failed>"
-        logger.info(
+        logger.debug(
             f"[tok-seq] id={out.token} text={text!r} piece={_piece!r} "
             f"finish={finish_reason}"
         )

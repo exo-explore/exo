@@ -28,6 +28,7 @@ from exo.shared.constants import (
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
+from exo.shared.types.text_generation import ReasoningDialect
 from exo.utils.pydantic_ext import FrozenModel
 
 # kinda ugly...
@@ -145,6 +146,7 @@ class ModelCard(FrozenModel):
     quantization: str = ""
     base_model: str = ""
     capabilities: list[str] = []
+    reasoning_dialect: ReasoningDialect = "none"
     context_length: int = 0
     uses_cfg: bool = False
     trust_remote_code: bool = True

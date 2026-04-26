@@ -338,7 +338,7 @@ class ExoBatchGenerator:
                 _decoded_piece = self.tokenizer.decode([response.token])
             except Exception:
                 _decoded_piece = "<decode-failed>"
-            logger.info(
+            logger.debug(
                 f"[tok] uid={response.uid} #{state.completion_tokens} "
                 f"id={response.token} text={text!r} piece={_decoded_piece!r} "
                 f"finish={response.finish_reason}"

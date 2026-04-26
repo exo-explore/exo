@@ -8,6 +8,7 @@ family = "deepseek"
 quantization = "8bit"
 base_model = "DeepSeek V4 Flash"
 capabilities = ["text", "thinking", "thinking_toggle"]
+reasoning_dialect = "tool_conditional"
 
 context_length = 1048576
 
