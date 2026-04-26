@@ -402,3 +402,73 @@ async def test_tie_breaker_prefers_node_with_more_commands_seen() -> None:
             em_in_tx.close()
             cm_tx.close()
             co_tx.close()
+
+
+@pytest.mark.anyio
+async def test_rejects_low_seniority_winner_when_forced_master_seen() -> None:
+    """
+    After seeing a high-seniority (forced-master) peer in a prior round,
+    a subsequent round that resolves without that peer must NOT elect a
+    low-seniority winner. The current master session should be preserved.
+    """
+    em_out_tx, em_out_rx = channel[ElectionMessage]()
+    em_in_tx, em_in_rx = channel[ElectionMessage]()
+    er_tx, er_rx = channel[ElectionResult]()
+    cm_tx, cm_rx = channel[ConnectionMessage]()
+    co_tx, co_rx = channel[ForwarderCommand]()
+
+    election = Election(
+        node_id=NodeId("WORKER"),
+        election_message_receiver=em_in_rx,
+        election_message_sender=em_out_tx,
+        election_result_sender=er_tx,
+        connection_message_receiver=cm_rx,
+        command_receiver=co_rx,
+        is_candidate=True,
+        seniority=0,
+    )
+
+    async with create_task_group() as tg:
+        with fail_after(3):
+            tg.start_soon(election.run)
+
+            # Round 1: forced master (seniority=1_000_000) participates and wins
+            await em_in_tx.send(
+                em(clock=1, seniority=1_000_000, node_id="MASTER")
+            )
+            while True:
+                got = await em_out_rx.receive()
+                if got.clock == 1:
+                    break
+            r1 = await er_rx.receive()
+            assert r1.session_id.master_node_id == NodeId("MASTER")
+
+            # Round 2: triggered by a higher clock, but the forced master's
+            # message doesn't arrive (simulated by only sending a
+            # low-seniority peer message).
+            await em_in_tx.send(
+                em(clock=2, seniority=0, node_id="OTHER_WORKER")
+            )
+            while True:
+                got = await em_out_rx.receive()
+                if got.clock == 2:
+                    break
+
+            # The election should be rejected (no ElectionResult emitted)
+            # because the winner's seniority (0) < max observed (1_000_000).
+            got_result = False
+            with move_on_after(0.5):
+                r2 = await er_rx.receive()
+                if r2.session_id.election_clock >= 2:
+                    got_result = True
+            assert not got_result, (
+                "Should not accept a low-seniority winner when a "
+                "forced-master node was previously observed"
+            )
+
+            # The current session should still point to the forced master
+            assert election.current_session.master_node_id == NodeId("MASTER")
+
+            em_in_tx.close()
+            cm_tx.close()
+            co_tx.close()
