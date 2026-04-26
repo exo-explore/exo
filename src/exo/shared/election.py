@@ -70,6 +70,11 @@ class Election:
             master_node_id=node_id, election_clock=0
         )
 
+        # Highest seniority observed from any peer across all election rounds.
+        # Prevents accepting a low-seniority winner when the high-seniority
+        # node's message simply hasn't arrived yet (network delay / message loss).
+        self._max_observed_seniority: int = seniority
+
         # Senders/Receivers
         self._em_sender = election_message_sender
         self._em_receiver = election_message_receiver
@@ -132,6 +137,11 @@ class Election:
                     logger.debug("Dropping message from ourselves")
                     # Drop messages from us (See exo.routing.router)
                     continue
+
+                self._max_observed_seniority = max(
+                    self._max_observed_seniority, message.seniority
+                )
+
                 # If a new round is starting, we participate
                 if message.clock > self.clock:
                     self.clock = message.clock
@@ -222,6 +232,21 @@ class Election:
                 elected = max(candidates)
                 logger.debug(f"Election queue {candidates}")
                 logger.debug(f"Elected: {elected}")
+
+                # Guard: if a forced-master node (high seniority) has been seen
+                # in any prior round but didn't participate in this round (its
+                # message was lost or delayed), don't accept a lower-seniority
+                # winner. Keep the current session unchanged so running
+                # instances aren't disrupted.
+                if elected.seniority < self._max_observed_seniority:
+                    logger.info(
+                        f"Rejecting election winner (seniority={elected.seniority}) "
+                        f"because a node with seniority={self._max_observed_seniority} "
+                        f"was previously observed but did not participate in this round. "
+                        f"Keeping current master {self.current_session.master_node_id}."
+                    )
+                    return
+
                 if (
                     self.node_id == elected.proposed_session.master_node_id
                     and self.seniority >= 0
