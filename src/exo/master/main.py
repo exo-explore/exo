@@ -133,10 +133,12 @@ class Master:
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                 ):
+                                    in_flight = {TaskStatus.Pending, TaskStatus.Running}
                                     task_count = sum(
                                         1
                                         for task in self.state.tasks.values()
                                         if task.instance_id == instance.instance_id
+                                        and task.task_status in in_flight
                                     )
                                     instance_task_counts[instance.instance_id] = (
                                         task_count
@@ -175,10 +177,12 @@ class Master:
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                 ):
+                                    in_flight = {TaskStatus.Pending, TaskStatus.Running}
                                     task_count = sum(
                                         1
                                         for task in self.state.tasks.values()
                                         if task.instance_id == instance.instance_id
+                                        and task.task_status in in_flight
                                     )
                                     instance_task_counts[instance.instance_id] = (
                                         task_count
@@ -229,10 +233,12 @@ class Master:
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                 ):
+                                    in_flight = {TaskStatus.Pending, TaskStatus.Running}
                                     task_count = sum(
                                         1
                                         for task in self.state.tasks.values()
                                         if task.instance_id == instance.instance_id
+                                        and task.task_status in in_flight
                                     )
                                     instance_task_counts[instance.instance_id] = (
                                         task_count
