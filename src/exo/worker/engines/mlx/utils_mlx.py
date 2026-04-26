@@ -124,7 +124,6 @@ def mlx_distributed_init(
                 assert all(
                     jaccl_devices[i][i] is None for i in range(len(jaccl_devices))
                 )
-                # Use RDMA connectivity matrix
                 jaccl_devices_json = json.dumps(jaccl_devices)
 
                 with open(coordination_file, "w") as f:
@@ -139,7 +138,21 @@ def mlx_distributed_init(
                 os.environ["MLX_IBV_DEVICES"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
-                group = mx.distributed.init(backend="jaccl", strict=True)
+
+                max_jaccl_attempts = 8
+                for attempt in range(1, max_jaccl_attempts + 1):
+                    try:
+                        group = mx.distributed.init(backend="jaccl", strict=True)
+                        break
+                    except (RuntimeError, ValueError) as exc:
+                        if attempt == max_jaccl_attempts:
+                            raise
+                        backoff = min(2.0 * attempt, 10.0)
+                        logger.warning(
+                            f"rank {rank} JACCL init attempt {attempt}/{max_jaccl_attempts} "
+                            f"failed ({exc}), retrying in {backoff:.0f}s"
+                        )
+                        time.sleep(backoff)
 
         logger.info(f"Rank {rank} mlx distributed initialization complete")
 
