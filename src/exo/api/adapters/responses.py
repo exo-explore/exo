@@ -32,6 +32,7 @@ from exo.api.types.openai_responses import (
     McpCallInputItem,
     McpListToolsInputItem,
     OutputTokensDetails,
+    Reasoning,
     ReasoningInputItem,
     ResponseCompletedEvent,
     ResponseContentPart,
@@ -424,6 +425,7 @@ async def collect_responses_response(
     chunk_stream: AsyncGenerator[
         ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
     ],
+    reasoning: Reasoning | None = None,
 ) -> AsyncGenerator[str]:
     # This is an AsyncGenerator[str] rather than returning a ChatCompletionReponse because
     # FastAPI handles the cancellation better but wouldn't auto-serialize for some reason
@@ -504,6 +506,7 @@ async def collect_responses_response(
         output=output,
         output_text=accumulated_text,
         usage=usage,
+        reasoning=reasoning,
     ).model_dump_json()
     return
 
@@ -514,6 +517,7 @@ async def generate_responses_stream(
     chunk_stream: AsyncGenerator[
         ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
     ],
+    reasoning: Reasoning | None = None,
 ) -> AsyncGenerator[str, None]:
     """Generate OpenAI Responses API streaming events from TokenChunks."""
     response_id = f"resp_{command_id}"
@@ -528,6 +532,7 @@ async def generate_responses_stream(
         status="in_progress",
         output=[],
         output_text="",
+        reasoning=reasoning,
     )
     created_event = ResponseCreatedEvent(
         sequence_number=next(seq), response=initial_response
@@ -790,6 +795,7 @@ async def generate_responses_stream(
             output=output,
             output_text=accumulated_text,
             usage=usage,
+            reasoning=reasoning,
         )
         completed_event = ResponseCompletedEvent(
             sequence_number=next(seq), response=final_response
@@ -880,6 +886,7 @@ async def generate_responses_stream(
         output=output,
         output_text=accumulated_text,
         usage=usage,
+        reasoning=reasoning,
     )
     completed_event = ResponseCompletedEvent(
         sequence_number=next(seq), response=final_response
