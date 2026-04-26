@@ -482,6 +482,185 @@ def test_tensor_rdma_backend_connectivity_matrix(
             assert len(ip_part.split(".")) == 4
 
 
+def test_ring_placement_uses_advertised_lan_ips_for_rdma_only_topology(
+    model_card: ModelCard,
+) -> None:
+    topology = Topology()
+    model_card = model_card.model_copy(
+        update={
+            "storage_size": Memory.from_bytes(1500),
+            "n_layers": 12,
+        }
+    )
+
+    node_a = NodeId()
+    node_b = NodeId()
+
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_connection(
+        Connection(source=node_a, sink=node_b, edge=create_rdma_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_b, sink=node_a, edge=create_rdma_connection(2))
+    )
+
+    node_memory = {
+        node_a: create_node_memory(1000),
+        node_b: create_node_memory(1000),
+    }
+    node_network = {
+        node_a: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en9", ip_address="192.168.1.10", interface_type="ethernet"
+                )
+            ]
+        ),
+        node_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en9", ip_address="192.168.1.11", interface_type="ethernet"
+                )
+            ]
+        ),
+    }
+
+    command = place_instance_command(model_card)
+    command = command.model_copy(update={"min_nodes": 2})
+
+    placements = place_instance(command, topology, {}, node_memory, node_network)
+
+    instance = list(placements.values())[0]
+    assert isinstance(instance, MlxRingInstance)
+    assert len(instance.shard_assignments.node_to_runner) == 2
+    assert any(host.ip == "192.168.1.11" for host in instance.hosts_by_node[node_a])
+    assert any(host.ip == "192.168.1.10" for host in instance.hosts_by_node[node_b])
+
+
+def test_jaccl_placement_uses_advertised_lan_ip_for_rdma_coordinator(
+    model_card: ModelCard,
+) -> None:
+    topology = Topology()
+    model_card = model_card.model_copy(
+        update={
+            "storage_size": Memory.from_bytes(1500),
+            "n_layers": 12,
+            "hidden_size": 32,
+            "num_key_value_heads": 8,
+            "supports_tensor": True,
+        }
+    )
+
+    node_a = NodeId()
+    node_b = NodeId()
+
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_connection(
+        Connection(source=node_a, sink=node_b, edge=create_rdma_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_b, sink=node_a, edge=create_rdma_connection(2))
+    )
+
+    node_memory = {
+        node_a: create_node_memory(1000),
+        node_b: create_node_memory(1000),
+    }
+    node_network = {
+        node_a: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en9", ip_address="192.168.1.10", interface_type="ethernet"
+                )
+            ]
+        ),
+        node_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en9", ip_address="192.168.1.11", interface_type="ethernet"
+                )
+            ]
+        ),
+    }
+    command = PlaceInstance(
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxJaccl,
+        command_id=CommandId(),
+        model_card=model_card,
+        min_nodes=2,
+    )
+
+    placements = place_instance(command, topology, {}, node_memory, node_network)
+
+    instance = list(placements.values())[0]
+    assert isinstance(instance, MlxJacclInstance)
+    assert len(instance.shard_assignments.node_to_runner) == 2
+    assert any(
+        coordinator.startswith("192.168.1.")
+        for coordinator in instance.jaccl_coordinators.values()
+    )
+
+
+def test_placement_prefers_socket_reachable_rank_zero(
+    model_card: ModelCard,
+) -> None:
+    topology = Topology()
+    model_card = model_card.model_copy(
+        update={
+            "storage_size": Memory.from_bytes(1500),
+            "n_layers": 12,
+        }
+    )
+
+    listener = NodeId()
+    peer = NodeId()
+
+    topology.add_node(listener)
+    topology.add_node(peer)
+    topology.add_connection(
+        Connection(source=listener, sink=peer, edge=create_rdma_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=peer, sink=listener, edge=create_rdma_connection(2))
+    )
+    topology.add_connection(
+        Connection(source=peer, sink=listener, edge=create_socket_connection(10))
+    )
+
+    node_memory = {
+        listener: create_node_memory(1000),
+        peer: create_node_memory(1000),
+    }
+    node_network = {
+        listener: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en9", ip_address="192.168.1.10", interface_type="ethernet"
+                )
+            ]
+        ),
+        peer: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en9", ip_address="192.168.1.11", interface_type="ethernet"
+                )
+            ]
+        ),
+    }
+
+    command = place_instance_command(model_card)
+    command = command.model_copy(update={"min_nodes": 2})
+
+    placements = place_instance(command, topology, {}, node_memory, node_network)
+
+    instance = list(placements.values())[0]
+    runner_id = instance.shard_assignments.node_to_runner[listener]
+    shard = instance.shard_assignments.runner_to_shard[runner_id]
+    assert shard.device_rank == 0
+
+
 def _make_task(
     instance_id: InstanceId,
     status: TaskStatus = TaskStatus.Running,

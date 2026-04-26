@@ -30,6 +30,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.topology import SocketConnection
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -201,6 +202,7 @@ def place_instance(
             ),
         ),
     )
+    selected_cycle = _prefer_socket_reachable_rank_zero(selected_cycle, topology)
 
     # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
     if len(selected_cycle) == 1:
@@ -269,6 +271,33 @@ def place_instance(
             )
 
     return target_instances
+
+
+def _prefer_socket_reachable_rank_zero(cycle: Cycle, topology: Topology) -> Cycle:
+    """Rotate multi-node placements so rank 0 is easiest for peers to reach.
+
+    MLX ring and JACCL both make rank 0 the listener/coordinator. Discovery can
+    produce RDMA-only edges in one direction and socket control-plane edges in
+    another, so putting a node with advertised inbound socket edges at rank 0
+    avoids assigning the listener role to a machine peers cannot dial.
+    """
+    if len(cycle) <= 1:
+        return cycle
+
+    inbound_socket_edges: dict[NodeId, int] = {node_id: 0 for node_id in cycle}
+    for connection in topology.list_connections():
+        if connection.sink not in inbound_socket_edges:
+            continue
+        if isinstance(connection.edge, SocketConnection):
+            inbound_socket_edges[connection.sink] += 1
+
+    best_index = max(
+        range(len(cycle.node_ids)),
+        key=lambda index: (inbound_socket_edges[cycle.node_ids[index]], -index),
+    )
+    if best_index == 0:
+        return cycle
+    return Cycle(node_ids=cycle.node_ids[best_index:] + cycle.node_ids[:best_index])
 
 
 def delete_instance(
