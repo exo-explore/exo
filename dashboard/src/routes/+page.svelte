@@ -1902,6 +1902,7 @@
           RunnerLoaded: "Loaded",
           RunnerWarmingUp: "WarmingUp",
           RunnerReady: "Ready",
+          RunnerIdle: "Idle",
           RunnerRunning: "Running",
           RunnerShutdown: "Shutdown",
           RunnerFailed: "Failed",
@@ -1954,6 +1955,7 @@
       return { statusText: "WARMING UP", statusClass: "starting" };
     if (has("Running"))
       return { statusText: "RUNNING", statusClass: "running" };
+    if (has("Idle")) return { statusText: "READY", statusClass: "loaded" };
     if (has("Ready")) return { statusText: "READY", statusClass: "loaded" };
     if (has("Loaded")) return { statusText: "LOADED", statusClass: "loaded" };
     if (has("WaitingForModel"))
