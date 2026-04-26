@@ -114,19 +114,29 @@ pub struct Behaviour {
 
 impl Behaviour {
     pub fn new(keypair: &identity::Keypair, bootstrap_peers: Vec<Multiaddr>) -> io::Result<Self> {
-        Ok(Self {
+        let mut behaviour = Self {
             managed: managed::Behaviour::new(keypair)?,
             mdns_discovered: HashMap::new(),
             bootstrap_peers,
             retry_delay: Delay::new(RETRY_CONNECT_INTERVAL),
             pending_events: WakerDeque::new(),
-        })
+        };
+        behaviour.dial_bootstrap_peers();
+        Ok(behaviour)
     }
 
     fn dial(&mut self, peer_id: PeerId, addr: Multiaddr) {
         self.pending_events.push_back(ToSwarm::Dial {
             opts: DialOpts::peer_id(peer_id).addresses(vec![addr]).build(),
         })
+    }
+
+    fn dial_bootstrap_peers(&mut self) {
+        for addr in &self.bootstrap_peers {
+            self.pending_events.push_back(ToSwarm::Dial {
+                opts: DialOpts::unknown_peer_id().address(addr.clone()).build(),
+            })
+        }
     }
 
     fn close_connection(&mut self, peer_id: PeerId, connection: ConnectionId) {
@@ -371,11 +381,7 @@ impl NetworkBehaviour for Behaviour {
                 }
             }
             // dial bootstrap peers (for environments where mDNS is unavailable)
-            for addr in &self.bootstrap_peers {
-                self.pending_events.push_back(ToSwarm::Dial {
-                    opts: DialOpts::unknown_peer_id().address(addr.clone()).build(),
-                })
-            }
+            self.dial_bootstrap_peers();
             self.retry_delay.reset(RETRY_CONNECT_INTERVAL) // reset timeout
         }
 
