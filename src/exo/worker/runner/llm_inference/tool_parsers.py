@@ -1,7 +1,7 @@
 import json
 import math
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from exo.api.types import ToolCallItem
 
@@ -19,7 +19,7 @@ class ToolParser:
         if parsed is None:
             return None
         if tools is not None:
-            parsed = _coerce_tool_calls_to_schema(parsed, tools)
+            parsed = coerce_tool_calls_to_schema(parsed, tools)
         return parsed
 
 
@@ -141,7 +141,7 @@ def _coerce_tool_arg_with_schema(value: Any, schema: dict[str, Any]) -> Any:  # 
 
 def _normalise_apply_patch_input(input_value: Any) -> Any:  # pyright: ignore[reportAny]
     if not isinstance(input_value, str):
-        return input_value
+        return input_value  # pyright: ignore[reportAny]
 
     patch = input_value.strip()
     if patch.startswith("```"):
@@ -205,19 +205,19 @@ def _coerce_freeform_input_arg(
     # "patch" for apply_patch even though Codex's freeform tool contract wants
     # the complete payload in "input". Preserve exactly one supplied payload.
     if len(parsed_args) == 1:
-        input_value = next(iter(parsed_args.values()))
+        input_value: Any = next(iter(parsed_args.values()))  # pyright: ignore[reportAny]
         if tool_name == "apply_patch":
-            input_value = _normalise_apply_patch_input(input_value)
+            input_value = _normalise_apply_patch_input(input_value)  # pyright: ignore[reportAny]
         return {"input": input_value}
     if "patch" in parsed_args:
-        input_value = parsed_args["patch"]
+        input_value = parsed_args["patch"]  # pyright: ignore[reportAny]
         if tool_name == "apply_patch":
-            input_value = _normalise_apply_patch_input(input_value)
+            input_value = _normalise_apply_patch_input(input_value)  # pyright: ignore[reportAny]
         return {"input": input_value}
     return parsed_args
 
 
-def _coerce_tool_calls_to_schema(
+def coerce_tool_calls_to_schema(
     tool_calls: list[ToolCallItem], tools: list[dict[str, Any]]
 ) -> list[ToolCallItem]:
     schema_by_name: dict[str, dict[str, Any]] = {}
@@ -250,7 +250,11 @@ def _coerce_tool_calls_to_schema(
             coerced_calls.append(tool_call)
             continue
 
-        parsed_args = _coerce_freeform_input_arg(tool_call.name, parsed_args, schema)
+        # json.loads narrows to dict[Unknown, Unknown] after isinstance; we treat
+        # JSON object payloads as dict[str, Any] by contract.
+        parsed_args = _coerce_freeform_input_arg(
+            tool_call.name, cast(dict[str, Any], parsed_args), schema
+        )
         coerced_args = _coerce_tool_arg_with_schema(parsed_args, schema)  # pyright: ignore[reportAny]
         if not isinstance(coerced_args, dict):
             coerced_calls.append(tool_call)

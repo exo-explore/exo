@@ -140,10 +140,10 @@ def _custom_tool_parameters(tool: dict[str, Any]) -> dict[str, Any]:
     """
     format_config = tool.get("format")
     description = "Freeform tool input."
-    if isinstance(format_config, dict) and isinstance(
-        format_config.get("description"), str
-    ):
-        description = format_config["description"]
+    if isinstance(format_config, dict):
+        candidate_description: object = format_config.get("description")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if isinstance(candidate_description, str):
+            description = candidate_description
 
     return {
         "type": "object",
@@ -163,10 +163,13 @@ def _normalise_responses_tool(tool: dict[str, Any]) -> dict[str, Any]:
     if "function" in tool:
         return tool
 
-    name = tool.get("name", "")
+    name_value = tool.get("name", "")  # pyright: ignore[reportAny]
+    name: str = name_value if isinstance(name_value, str) else ""
     parameters = tool.get("parameters")
     if not isinstance(parameters, dict):
-        parameters = _custom_tool_parameters(tool) if tool.get("type") == "custom" else {}
+        parameters = (
+            _custom_tool_parameters(tool) if tool.get("type") == "custom" else {}
+        )
 
     return {
         "type": "function",
@@ -779,20 +782,20 @@ async def generate_responses_stream(
     tool_call_response = bool(function_call_items)
     if not message_started and tool_call_response:
         usage = _build_response_usage(last_usage) if last_usage is not None else None
-        output: list[ResponseItem] = []
+        tool_only_output: list[ResponseItem] = []
         if reasoning_started:
-            output.append(
+            tool_only_output.append(
                 ResponseReasoningItem(
                     id=reasoning_id,
                     summary=[ResponseReasoningSummaryText(text=accumulated_thinking)],
                 )
             )
-        output.extend(function_call_items)
+        tool_only_output.extend(function_call_items)
         final_response = ResponsesResponse(
             id=response_id,
             model=model,
             status="completed",
-            output=output,
+            output=tool_only_output,
             output_text=accumulated_text,
             usage=usage,
             reasoning=reasoning,

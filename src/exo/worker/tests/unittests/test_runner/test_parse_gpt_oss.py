@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from typing import Any
 
 from exo.api.types import (
     CompletionTokensDetails,
@@ -114,7 +115,7 @@ def _make_gen_responses(
 def _collect(
     tokens: list[tuple[int, str]],
     last_finish_reason: FinishReason = "stop",
-    tools: list[dict] | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> list[GenerationResponse | ToolCallResponse]:
     """Feed tokens through parse_gpt_oss and collect all yielded responses."""
 

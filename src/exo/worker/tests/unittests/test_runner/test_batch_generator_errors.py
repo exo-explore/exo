@@ -1,8 +1,11 @@
 from collections import deque
+from typing import Any, cast
+
+import pytest
 
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.common import CommandId, ModelId
-from exo.shared.types.events import ChunkGenerated
+from exo.shared.types.events import ChunkGenerated, Event
 from exo.shared.types.tasks import TextGeneration
 from exo.shared.types.text_generation import (
     InputMessage,
@@ -10,24 +13,27 @@ from exo.shared.types.text_generation import (
     TextGenerationTaskParams,
 )
 from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.runner_response import FinishedResponse
+from exo.utils.channels import MpSender
+from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
 from exo.worker.runner.llm_inference import batch_generator as batch_generator_module
-from exo.worker.runner.llm_inference.batch_generator import BatchGenerator, Finished
+from exo.worker.runner.llm_inference.batch_generator import BatchGenerator
 
 
 class _FakeBatchEngine:
-    has_work = False
+    has_work: bool = False
 
 
 class _FakeEventSender:
     def __init__(self) -> None:
-        self.events = []
+        self.events: list[Event] = []
 
-    def send(self, event) -> None:
+    def send(self, event: Event) -> None:
         self.events.append(event)
 
 
 def test_batch_generator_finishes_task_when_prompt_template_fails(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sender = _FakeEventSender()
     model_id = ModelId("mlx-community/gpt-oss-120b-MXFP4-Q8")
@@ -45,17 +51,21 @@ def test_batch_generator_finishes_task_when_prompt_template_fails(
         ),
     )
 
+    # We bypass the dataclass __init__ because constructing a real BatchGenerator
+    # requires a full inference engine, tokenizer, and MP queue stack. The test
+    # only exercises the prompt-templating error path inside step(), so we wire
+    # in fakes for just the attributes that path touches.
     generator = object.__new__(BatchGenerator)
     generator.model_id = model_id
     generator.device_rank = 0
-    generator.tokenizer = object()
-    generator.event_sender = sender
-    generator._queue = deque([task])
-    generator._active_tasks = {}
-    generator._cancelled_tasks = set()
-    generator._mlx_gen = _FakeBatchEngine()
+    generator.tokenizer = cast(Any, object())
+    generator.event_sender = cast(MpSender[Event], cast(object, sender))
+    generator._queue = deque([task])  # pyright: ignore[reportPrivateUsage]
+    generator._active_tasks = {}  # pyright: ignore[reportPrivateUsage]
+    generator._cancelled_tasks = set()  # pyright: ignore[reportPrivateUsage]
+    generator._gen = cast(ExoBatchGenerator, cast(object, _FakeBatchEngine()))  # pyright: ignore[reportPrivateUsage]
 
-    def fail_template(*_args, **_kwargs):
+    def fail_template(*_args: object, **_kwargs: object) -> None:
         raise ValueError("bad tool history")
 
     monkeypatch.setattr(
@@ -68,8 +78,8 @@ def test_batch_generator_finishes_task_when_prompt_template_fails(
 
     assert len(results) == 1
     assert results[0][0] == task.task_id
-    assert isinstance(results[0][1], Finished)
-    assert generator._active_tasks == {}
+    assert isinstance(results[0][1], FinishedResponse)
+    assert generator._active_tasks == {}  # pyright: ignore[reportPrivateUsage]
     assert len(sender.events) == 1
     assert isinstance(sender.events[0], ChunkGenerated)
     assert isinstance(sender.events[0].chunk, ErrorChunk)

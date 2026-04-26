@@ -31,7 +31,7 @@ from exo.worker.engines.mlx.vendor.dsml_encoding import parse_dsml_output
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.tool_parsers import (
     ToolParser,
-    _coerce_tool_calls_to_schema,  # pyright: ignore[reportPrivateUsage]
+    coerce_tool_calls_to_schema,
 )
 
 
@@ -200,7 +200,7 @@ def parse_gpt_oss(
                     )
                 ]
                 if tools is not None:
-                    tool_calls = _coerce_tool_calls_to_schema(tool_calls, tools)
+                    tool_calls = coerce_tool_calls_to_schema(tool_calls, tools)
                 yield ToolCallResponse(
                     tool_calls=tool_calls,
                     usage=response.usage,

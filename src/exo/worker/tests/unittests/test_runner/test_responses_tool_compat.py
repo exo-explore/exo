@@ -1,4 +1,5 @@
 import json
+from typing import Any, cast
 
 import pytest
 
@@ -15,14 +16,18 @@ from exo.api.types.openai_responses import (
     ReasoningInputItem,
     ResponsesRequest,
 )
-from exo.worker.runner.llm_inference.tool_parsers import _coerce_tool_calls_to_schema
 from exo.shared.types.chunks import TokenChunk, ToolCallChunk
+from exo.shared.types.common import CommandId, ModelId
+from exo.worker.runner.llm_inference.tool_parsers import coerce_tool_calls_to_schema
+
+_TEST_MODEL = ModelId("test-model")
+_TEST_COMMAND_ID = CommandId("cmd_1")
 
 
 @pytest.mark.asyncio
-async def test_custom_responses_tool_gets_freeform_input_schema():
+async def test_custom_responses_tool_gets_freeform_input_schema() -> None:
     request = ResponsesRequest(
-        model="test-model",
+        model=_TEST_MODEL,
         input="edit a file",
         tools=[
             {
@@ -37,16 +42,16 @@ async def test_custom_responses_tool_gets_freeform_input_schema():
     params = await responses_request_to_text_generation(request)
 
     assert params.tools is not None
-    function = params.tools[0]["function"]
+    function = cast(dict[str, Any], params.tools[0]["function"])
     assert function["name"] == "apply_patch"
     assert function["parameters"]["required"] == ["input"]
     assert function["parameters"]["properties"]["input"]["type"] == "string"
 
 
 @pytest.mark.asyncio
-async def test_apply_patch_replay_uses_codex_input_argument():
+async def test_apply_patch_replay_uses_codex_input_argument() -> None:
     request = ResponsesRequest(
-        model="test-model",
+        model=_TEST_MODEL,
         input=[
             ApplyPatchCallInputItem(
                 call_id="call_1",
@@ -58,13 +63,16 @@ async def test_apply_patch_replay_uses_codex_input_argument():
     params = await responses_request_to_text_generation(request)
 
     assert params.chat_template_messages is not None
-    tool_call = params.chat_template_messages[0]["tool_calls"][0]
-    assert json.loads(tool_call["function"]["arguments"]) == {
+    # chat_template_messages is typed loosely as a list of dicts of mixed
+    # values; coerce the navigation through the assistant tool_calls payload.
+    first_message = cast(dict[str, Any], params.chat_template_messages[0])
+    tool_call = cast(dict[str, Any], first_message["tool_calls"][0])
+    assert json.loads(cast(str, tool_call["function"]["arguments"])) == {
         "input": "*** Begin Patch\n*** End Patch"
     }
 
 
-def test_freeform_tool_args_are_coerced_to_input():
+def test_freeform_tool_args_are_coerced_to_input() -> None:
     tool_calls = [
         ToolCallItem(
             id="call_1",
@@ -72,7 +80,7 @@ def test_freeform_tool_args_are_coerced_to_input():
             arguments=json.dumps({"patch": "*** Begin Patch\n*** End Patch"}),
         )
     ]
-    tools = [
+    tools: list[dict[str, Any]] = [
         {
             "type": "function",
             "function": {
@@ -87,14 +95,14 @@ def test_freeform_tool_args_are_coerced_to_input():
         }
     ]
 
-    coerced = _coerce_tool_calls_to_schema(tool_calls, tools)
+    coerced = coerce_tool_calls_to_schema(tool_calls, tools)
 
     assert json.loads(coerced[0].arguments) == {
         "input": "*** Begin Patch\n*** End Patch"
     }
 
 
-def test_apply_patch_input_drops_duplicate_end_marker():
+def test_apply_patch_input_drops_duplicate_end_marker() -> None:
     tool_calls = [
         ToolCallItem(
             id="call_1",
@@ -114,7 +122,7 @@ def test_apply_patch_input_drops_duplicate_end_marker():
             ),
         )
     ]
-    tools = [
+    tools: list[dict[str, Any]] = [
         {
             "type": "function",
             "function": {
@@ -129,7 +137,7 @@ def test_apply_patch_input_drops_duplicate_end_marker():
         }
     ]
 
-    coerced = _coerce_tool_calls_to_schema(tool_calls, tools)
+    coerced = coerce_tool_calls_to_schema(tool_calls, tools)
 
     assert json.loads(coerced[0].arguments) == {
         "input": "\n".join(
@@ -143,7 +151,7 @@ def test_apply_patch_input_drops_duplicate_end_marker():
     }
 
 
-def test_apply_patch_add_file_prefixes_content_lines():
+def test_apply_patch_add_file_prefixes_content_lines() -> None:
     tool_calls = [
         ToolCallItem(
             id="call_1",
@@ -162,7 +170,7 @@ def test_apply_patch_add_file_prefixes_content_lines():
             ),
         )
     ]
-    tools = [
+    tools: list[dict[str, Any]] = [
         {
             "type": "function",
             "function": {
@@ -177,7 +185,7 @@ def test_apply_patch_add_file_prefixes_content_lines():
         }
     ]
 
-    coerced = _coerce_tool_calls_to_schema(tool_calls, tools)
+    coerced = coerce_tool_calls_to_schema(tool_calls, tools)
 
     assert json.loads(coerced[0].arguments) == {
         "input": "\n".join(
@@ -192,9 +200,9 @@ def test_apply_patch_add_file_prefixes_content_lines():
 
 
 @pytest.mark.asyncio
-async def test_reasoning_replay_does_not_split_tool_call_and_output():
+async def test_reasoning_replay_does_not_split_tool_call_and_output() -> None:
     request = ResponsesRequest(
-        model="test-model",
+        model=_TEST_MODEL,
         input=[
             FunctionCallInputItem(
                 call_id="call_1",
@@ -228,16 +236,16 @@ async def test_reasoning_replay_does_not_split_tool_call_and_output():
 
 
 @pytest.mark.asyncio
-async def test_tool_call_response_omits_pre_tool_message():
+async def test_tool_call_response_omits_pre_tool_message() -> None:
     async def chunks():
         yield TokenChunk(
-            model="test-model",
+            model=_TEST_MODEL,
             text="Creating hello.txt",
             token_id=1,
             usage=None,
         )
         yield ToolCallChunk(
-            model="test-model",
+            model=_TEST_MODEL,
             tool_calls=[
                 ToolCallItem(
                     id="call_1",
@@ -250,25 +258,27 @@ async def test_tool_call_response_omits_pre_tool_message():
 
     responses = [
         json.loads(chunk)
-        async for chunk in collect_responses_response("cmd_1", "test-model", chunks())
+        async for chunk in collect_responses_response(
+            _TEST_COMMAND_ID, "test-model", chunks()
+        )
     ]
 
-    output = responses[0]["output"]
+    output = cast(list[dict[str, Any]], responses[0]["output"])
     assert [item["type"] for item in output] == ["function_call"]
     assert responses[0]["output_text"] == "Creating hello.txt"
 
 
 @pytest.mark.asyncio
-async def test_streaming_text_deltas_are_not_buffered():
+async def test_streaming_text_deltas_are_not_buffered() -> None:
     async def chunks():
         yield TokenChunk(
-            model="test-model",
+            model=_TEST_MODEL,
             text="Creating hello.txt",
             token_id=1,
             usage=None,
         )
         yield ToolCallChunk(
-            model="test-model",
+            model=_TEST_MODEL,
             tool_calls=[
                 ToolCallItem(
                     id="call_1",
@@ -281,11 +291,13 @@ async def test_streaming_text_deltas_are_not_buffered():
 
     events = [
         event
-        async for event in generate_responses_stream("cmd_1", "test-model", chunks())
+        async for event in generate_responses_stream(
+            _TEST_COMMAND_ID, "test-model", chunks()
+        )
     ]
 
     assert "response.output_text.delta" in "".join(events)
-    completed = json.loads(events[-1].split("data: ", 1)[1])
-    output = completed["response"]["output"]
+    completed = cast(dict[str, Any], json.loads(events[-1].split("data: ", 1)[1]))
+    output = cast(list[dict[str, Any]], completed["response"]["output"])
     assert [item["type"] for item in output] == ["function_call"]
     assert completed["response"]["output_text"] == "Creating hello.txt"

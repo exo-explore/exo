@@ -1,10 +1,10 @@
 from pathlib import Path
 
-from anyio import Path as AsyncPath
 import pytest
+from anyio import Path as AsyncPath
 
 from exo.shared.models import model_cards
-from exo.shared.models.model_cards import ModelCard, ModelId, get_model_cards
+from exo.shared.models.model_cards import ModelId, get_model_cards
 
 
 @pytest.mark.asyncio
@@ -39,9 +39,7 @@ capabilities = {capabilities}
 [storage_size]
 in_bytes = 1
 """
-    (builtin_dir / "test--model.toml").write_text(
-        card.format(capabilities='["text"]')
-    )
+    (builtin_dir / "test--model.toml").write_text(card.format(capabilities='["text"]'))
     (custom_dir / "test--model.toml").write_text(
         card.format(capabilities='["text", "tools"]')
     )
