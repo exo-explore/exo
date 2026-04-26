@@ -228,6 +228,9 @@ class Node:
                     logger.info(
                         f"Node {result.session_id.master_node_id} elected master"
                     )
+                if self.api is not None:
+                    self.api.set_master(result.session_id.master_node_id)
+
                 if result.is_new_master:
                     if self.download_coordinator:
                         await self.download_coordinator.shutdown()
