@@ -940,6 +940,7 @@ dependencies = [
  "netdev",
  "netwatch",
  "nix 0.31.2",
+ "nusb",
  "rand 0.10.1",
  "route_manager",
  "slab",
@@ -2013,6 +2014,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-kit-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06d3a048d09fbb6597dbf7c69f40d14df4a49487db1487191618c893fc3b1c26"
+dependencies = [
+ "core-foundation-sys",
+ "mach2",
+]
+
+[[package]]
 name = "ipconfig"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2960,6 +2971,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baee0bbc17ce759db233beb01648088061bf678383130602a298e6998eedb2d8"
 
 [[package]]
+name = "mach2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a1b95cd5421ec55b445b5ae102f5ea0e768de1f82bd3001e11f426c269c3aea"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "maplit"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3573,6 +3593,24 @@ dependencies = [
  "pyo3",
  "pyo3-build-config",
  "rustc-hash 2.1.1",
+]
+
+[[package]]
+name = "nusb"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a330b3bc7f8b4fc729a4c63164b3927eeeaced198222a3ce6b8b6e034851b7a"
+dependencies = [
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "futures-core",
+ "io-kit-sys",
+ "linux-raw-sys",
+ "log",
+ "once_cell",
+ "rustix",
+ "slab",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

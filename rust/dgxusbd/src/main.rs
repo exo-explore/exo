@@ -2,6 +2,7 @@
 compile_error!("dgxusbd is linux-only");
 
 use color_eyre::eyre::{self};
+use dgxusb::cli::Cli;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -10,5 +11,5 @@ async fn main() -> eyre::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    Ok(())
+    dgxusb::run(<Cli as clap::Parser>::parse())
 }

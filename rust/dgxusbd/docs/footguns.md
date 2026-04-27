@@ -55,6 +55,10 @@ For quick Spark tests, this also works but can be slower because it may build th
 RUST_LOG=info sudo -E nix run .#dgxusbd -- ...
 ```
 
+## Nix Flake Source And New Files
+
+`nix run .#dgxusbd` builds from the flake source, which follows Git state. New Rust source files must be at least staged with `git add` before `nix run` can see them. Otherwise the normal Cargo build may pass locally while the Nix build fails with missing module files.
+
 ## Keep Early Tests Narrow
 
 Initial target should be one NCM pair only:
@@ -71,4 +75,3 @@ Adding pair 2/3, aggregation, DHCP integration, routing, and reconnect loops sho
 ## Do Not Store Secrets
 
 Do not commit sudo passwords, SSH keys, host-private credentials, or generated signing keys. Lab credentials should stay in the secure handoff/channel, not in repository docs.
-

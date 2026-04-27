@@ -34,6 +34,7 @@ libc = "0.2"
 mio = { version = "1.1.0", features = ["net", "os-ext", "os-poll"] }
 n0-watcher = "0.6"
 netwatch = "0.16"
+nusb = "0.2.3"
 rand = "0.10"
 route_manager = "0.2.11"
 slab = "0.4.11"
