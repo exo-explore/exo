@@ -679,6 +679,7 @@ impl NtbParametersReport {
                 self.ndp_out_payload_remainder,
                 datagram_alignment,
             ),
+            max_datagrams: sanitize_max_datagrams(self.ntb_out_max_datagrams),
         }
     }
 }
@@ -1189,6 +1190,14 @@ fn adjusted_payload_remainder(remainder: u16, alignment: usize) -> usize {
     let alignment = alignment.max(1);
     let ethernet_header_remainder = crate::ncm::ETHERNET_HEADER_LEN % alignment;
     (usize::from(remainder) + alignment - ethernet_header_remainder) % alignment
+}
+
+fn sanitize_max_datagrams(value: u16) -> usize {
+    if value == 0 {
+        usize::MAX
+    } else {
+        usize::from(value)
+    }
 }
 
 fn optional_endpoint(value: Option<u8>) -> String {

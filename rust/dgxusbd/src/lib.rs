@@ -3,6 +3,7 @@ compile_error!("dgxusbd is linux-only");
 
 pub mod bridge;
 pub mod cli;
+pub mod dataplane;
 pub mod ncm;
 pub mod tap;
 pub mod usb;
@@ -77,8 +78,9 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
             tap,
             duration_seconds,
             max_events,
-            usb_timeout_ms,
+            usb_write_timeout_ms,
             usb_read_timeout_ms,
+            usb_read_queue_depth,
             tap_budget_frames,
             usb_budget_ntbs,
         } => {
@@ -100,9 +102,10 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
                 duration: duration_seconds.map(DurationArgExt::seconds),
                 max_events,
                 usb_read_timeout: usb_read_timeout_ms.milliseconds(),
-                usb_write_timeout: usb_timeout_ms.milliseconds(),
+                usb_write_timeout: usb_write_timeout_ms.milliseconds(),
                 tap_budget_frames,
                 usb_budget_ntbs,
+                usb_read_queue_depth,
             })?;
             print!("{}", render_bridge_report(&report));
         }

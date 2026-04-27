@@ -75,21 +75,25 @@ pub enum Command {
         #[arg(long)]
         max_events: Option<u64>,
 
-        /// Per USB bulk transfer timeout in milliseconds.
-        #[arg(long, default_value_t = 100)]
-        usb_timeout_ms: u64,
+        /// Per USB bulk OUT write timeout in milliseconds.
+        #[arg(long, alias = "usb-timeout-ms", default_value_t = 100)]
+        usb_write_timeout_ms: u64,
 
-        /// Per USB bulk IN poll timeout in milliseconds.
-        #[arg(long, default_value_t = 1)]
+        /// USB bulk IN wait timeout in milliseconds for the USB-to-TAP worker.
+        #[arg(long, default_value_t = 100)]
         usb_read_timeout_ms: u64,
 
-        /// Maximum TAP frames to forward before polling USB.
+        /// Maximum TAP frames to collect for one readiness drain and NTB batch.
         #[arg(long, default_value_t = 32)]
         tap_budget_frames: usize,
 
-        /// Maximum USB NTBs to forward before returning to TAP.
+        /// Maximum completed USB NTBs to drain before checking stop/error state.
         #[arg(long, default_value_t = 8)]
         usb_budget_ntbs: usize,
+
+        /// Number of USB bulk IN transfers to keep queued.
+        #[arg(long, default_value_t = crate::bridge::DEFAULT_BRIDGE_USB_READ_QUEUE_DEPTH)]
+        usb_read_queue_depth: usize,
     },
 }
 
@@ -209,6 +213,19 @@ mod tests {
 
         match cli.command {
             Command::Bridge { tap, .. } => assert_eq!(tap.name, "labtap0"),
+            _ => panic!("expected bridge command"),
+        }
+    }
+
+    #[test]
+    fn bridge_accepts_legacy_usb_timeout_alias_as_write_timeout() {
+        let cli = Cli::try_parse_from(["dgxusbd", "bridge", "--usb-timeout-ms", "77"]).unwrap();
+
+        match cli.command {
+            Command::Bridge {
+                usb_write_timeout_ms,
+                ..
+            } => assert_eq!(usb_write_timeout_ms, 77),
             _ => panic!("expected bridge command"),
         }
     }

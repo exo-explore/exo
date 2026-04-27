@@ -1,15 +1,13 @@
 use std::fmt::Write as _;
-use std::io::ErrorKind;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use color_eyre::eyre::{self, Context as _, OptionExt as _};
-use nusb::transfer::{Bulk, In, Out, TransferError};
+use color_eyre::eyre;
 
-use crate::ncm::{DEFAULT_NTB_MAX_SIZE, ETHERNET_HEADER_LEN, NtbBuildConfig, NtbParseConfig};
-use crate::tap::{TapOptions, create_tap};
-use crate::usb::{NcmPair, NcmSetupReport, OpenPairOptions, open_ncm_pair, render_setup_report};
+use crate::tap::TapOptions;
+use crate::usb::{NcmPair, NcmSetupReport, OpenPairOptions, render_setup_report};
 
 pub const DEFAULT_BRIDGE_USB_TIMEOUT: Duration = Duration::from_millis(100);
+pub const DEFAULT_BRIDGE_USB_READ_QUEUE_DEPTH: usize = 8;
 
 #[derive(Clone, Debug)]
 pub struct BridgeOptions {
@@ -21,6 +19,7 @@ pub struct BridgeOptions {
     pub usb_write_timeout: Duration,
     pub tap_budget_frames: usize,
     pub usb_budget_ntbs: usize,
+    pub usb_read_queue_depth: usize,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -32,6 +31,7 @@ pub struct BridgeCounters {
     pub usb_timeouts: u64,
     pub usb_frames_rx: u64,
     pub tap_frames_tx: u64,
+    pub tap_write_dropped: u64,
     pub malformed_ntbs: u64,
 }
 
@@ -43,92 +43,8 @@ pub struct BridgeReport {
     pub counters: BridgeCounters,
 }
 
-struct TapToUsb<'a> {
-    tap: &'a tun_rs::SyncDevice,
-    tap_buffer: &'a mut [u8],
-    ep_out: &'a mut nusb::Endpoint<Bulk, Out>,
-    build_config: NtbBuildConfig,
-    usb_timeout: Duration,
-    budget_frames: usize,
-}
-
 pub fn run_bridge(options: BridgeOptions) -> eyre::Result<BridgeReport> {
-    let open = open_ncm_pair(options.open)?;
-    let bulk_in = open
-        .pair
-        .bulk_in
-        .ok_or_eyre("selected pair has no bulk IN endpoint")?;
-    let bulk_out = open
-        .pair
-        .bulk_out
-        .ok_or_eyre("selected pair has no bulk OUT endpoint")?;
-    let mut ep_in = open
-        .data_interface
-        .endpoint::<Bulk, In>(bulk_in)
-        .wrap_err_with(|| format!("failed to open bulk IN endpoint {bulk_in:#04x}"))?;
-    let mut ep_out = open
-        .data_interface
-        .endpoint::<Bulk, Out>(bulk_out)
-        .wrap_err_with(|| format!("failed to open bulk OUT endpoint {bulk_out:#04x}"))?;
-
-    let mut tap_options = options.tap.clone();
-    tap_options.nonblocking = true;
-    let tap = create_tap(&tap_options)?;
-
-    let parse_config = open
-        .setup_report
-        .ntb_parameters
-        .map_or_else(NtbParseConfig::default, NtbParseConfig::from);
-    let build_config = open
-        .setup_report
-        .ntb_parameters
-        .map_or_else(NtbBuildConfig::default, NtbBuildConfig::from);
-    let read_size = transfer_size(parse_config.max_size, ep_in.max_packet_size());
-    let tap_budget_frames = options.tap_budget_frames.max(1);
-    let usb_budget_ntbs = options.usb_budget_ntbs.max(1);
-
-    let deadline = options.duration.map(|duration| Instant::now() + duration);
-    let mut counters = BridgeCounters::default();
-    let mut tap_buffer = vec![0; usize::from(tap.mtu) + ETHERNET_HEADER_LEN + 64];
-    let mut sequence = 0_u16;
-
-    loop {
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-            break;
-        }
-        if options
-            .max_events
-            .is_some_and(|max_events| total_events(&counters) >= max_events)
-        {
-            break;
-        }
-
-        let mut tap_to_usb = TapToUsb {
-            tap: &tap.device,
-            tap_buffer: &mut tap_buffer,
-            ep_out: &mut ep_out,
-            build_config,
-            usb_timeout: options.usb_write_timeout,
-            budget_frames: tap_budget_frames,
-        };
-        drain_tap_to_usb(&mut tap_to_usb, &mut sequence, &mut counters)?;
-        poll_usb_to_tap(
-            &tap.device,
-            &mut ep_in,
-            parse_config,
-            read_size,
-            options.usb_read_timeout,
-            usb_budget_ntbs,
-            &mut counters,
-        )?;
-    }
-
-    Ok(BridgeReport {
-        tap_name: tap.name,
-        pair: open.pair,
-        setup_report: open.setup_report,
-        counters,
-    })
+    crate::dataplane::run_bridge_dataplane(options)
 }
 
 #[must_use]
@@ -146,7 +62,7 @@ pub fn render_bridge_report(report: &BridgeReport) -> String {
     render_setup_report(&mut out, &report.setup_report);
     let _ = writeln!(
         out,
-        "counters: tap_rx={} tap_drop={} usb_tx_ntb={} usb_rx_ntb={} usb_timeout={} usb_rx_frames={} tap_tx={} malformed_ntb={}",
+        "counters: tap_rx={} tap_drop={} usb_tx_ntb={} usb_rx_ntb={} usb_timeout={} usb_rx_frames={} tap_tx={} tap_tx_drop={} malformed_ntb={}",
         report.counters.tap_frames_rx,
         report.counters.tap_frames_dropped,
         report.counters.usb_ntbs_tx,
@@ -154,110 +70,15 @@ pub fn render_bridge_report(report: &BridgeReport) -> String {
         report.counters.usb_timeouts,
         report.counters.usb_frames_rx,
         report.counters.tap_frames_tx,
+        report.counters.tap_write_dropped,
         report.counters.malformed_ntbs
     );
     out
 }
 
-fn drain_tap_to_usb(
-    work: &mut TapToUsb<'_>,
-    sequence: &mut u16,
-    counters: &mut BridgeCounters,
-) -> eyre::Result<()> {
-    for _ in 0..work.budget_frames {
-        match work.tap.recv(work.tap_buffer) {
-            Ok(length) => {
-                counters.tap_frames_rx += 1;
-                if length < ETHERNET_HEADER_LEN {
-                    counters.tap_frames_dropped += 1;
-                    continue;
-                }
-                let frame = &work.tap_buffer[..length];
-                let ntb = crate::ncm::build_ntb16(*sequence, &[frame], work.build_config)
-                    .wrap_err("failed to build NTB16 from TAP frame")?;
-                *sequence = sequence.wrapping_add(1);
-                work.ep_out
-                    .transfer_blocking(ntb.into(), work.usb_timeout)
-                    .status
-                    .map_err(usb_transfer_error)
-                    .wrap_err("failed to write NTB16 to USB OUT endpoint")?;
-                counters.usb_ntbs_tx += 1;
-            }
-            Err(err) if err.kind() == ErrorKind::WouldBlock => return Ok(()),
-            Err(err) if err.kind() == ErrorKind::Interrupted => continue,
-            Err(err) => return Err(err).wrap_err("failed to read TAP frame"),
-        }
-    }
-
-    Ok(())
-}
-
-fn poll_usb_to_tap(
-    tap: &tun_rs::SyncDevice,
-    ep_in: &mut nusb::Endpoint<Bulk, In>,
-    parse_config: NtbParseConfig,
-    read_size: usize,
-    usb_timeout: Duration,
-    budget_ntbs: usize,
-    counters: &mut BridgeCounters,
-) -> eyre::Result<()> {
-    for _ in 0..budget_ntbs {
-        let completion =
-            ep_in.transfer_blocking(nusb::transfer::Buffer::new(read_size), usb_timeout);
-        match completion.status {
-            Ok(()) => {}
-            Err(TransferError::Cancelled) => {
-                counters.usb_timeouts += 1;
-                return Ok(());
-            }
-            Err(err) => {
-                return Err(usb_transfer_error(err)).wrap_err("failed to read USB IN endpoint");
-            }
-        }
-
-        counters.usb_ntbs_rx += 1;
-        let ntb = &completion.buffer[..completion.actual_len];
-        match crate::ncm::parse_ntb16(ntb, parse_config) {
-            Ok(parsed) => {
-                for frame in parsed.frames {
-                    tap.send(frame).wrap_err("failed to write frame to TAP")?;
-                    counters.usb_frames_rx += 1;
-                    counters.tap_frames_tx += 1;
-                }
-            }
-            Err(err) => {
-                counters.malformed_ntbs += 1;
-                tracing::warn!(%err, "dropping malformed NTB16");
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn transfer_size(configured_size: usize, max_packet_size: usize) -> usize {
-    let capped = configured_size.clamp(max_packet_size.max(1), usize::from(u16::MAX));
-    let packet = max_packet_size.max(1);
-    let rounded = capped / packet * packet;
-    rounded.max(packet).min(DEFAULT_NTB_MAX_SIZE.max(packet))
-}
-
-fn total_events(counters: &BridgeCounters) -> u64 {
-    counters.tap_frames_rx + counters.usb_ntbs_rx + counters.usb_ntbs_tx + counters.malformed_ntbs
-}
-
-fn usb_transfer_error(err: TransferError) -> eyre::Report {
-    eyre::eyre!("{err}")
-}
-
-impl From<crate::usb::NtbParametersReport> for NtbParseConfig {
-    fn from(parameters: crate::usb::NtbParametersReport) -> Self {
-        parameters.rx_parse_config()
-    }
-}
-
-impl From<crate::usb::NtbParametersReport> for NtbBuildConfig {
-    fn from(parameters: crate::usb::NtbParametersReport) -> Self {
-        parameters.tx_build_config()
+impl BridgeCounters {
+    #[must_use]
+    pub fn total_events(&self) -> u64 {
+        self.tap_frames_rx + self.usb_ntbs_rx + self.usb_ntbs_tx + self.malformed_ntbs
     }
 }

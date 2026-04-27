@@ -23,6 +23,7 @@ pub struct NtbBuildConfig {
     pub max_size: usize,
     pub datagram_alignment: usize,
     pub datagram_remainder: usize,
+    pub max_datagrams: usize,
 }
 
 impl Default for NtbBuildConfig {
@@ -31,6 +32,7 @@ impl Default for NtbBuildConfig {
             max_size: DEFAULT_NTB_MAX_SIZE,
             datagram_alignment: DEFAULT_DATAGRAM_ALIGNMENT,
             datagram_remainder: 0,
+            max_datagrams: usize::MAX,
         }
     }
 }
@@ -194,6 +196,9 @@ pub fn build_ntb16(
 ) -> Result<Vec<u8>, NcmError> {
     if frames.is_empty() {
         return Err(NcmError::NoFrames);
+    }
+    if frames.len() > config.max_datagrams {
+        return Err(NcmError::TooManyFrames(frames.len()));
     }
     if frames.len() > (usize::from(u16::MAX) / DPE16_LEN).saturating_sub(3) {
         return Err(NcmError::TooManyFrames(frames.len()));
@@ -540,6 +545,73 @@ mod tests {
         assert!(matches!(
             build_ntb16(1, &[&frame], config),
             Err(NcmError::BuiltNtbTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn builder_applies_alignment_padding_between_multiple_frames() {
+        let first = ethernet_frame(0x80, 47);
+        let second = ethernet_frame(0x90, 73);
+        let config = NtbBuildConfig {
+            datagram_alignment: 16,
+            datagram_remainder: 6,
+            ..NtbBuildConfig::default()
+        };
+
+        let ntb = build_ntb16(2, &[&first, &second], config).unwrap();
+        let first_dpe_offset = NTH16_LEN + NDP16_LEN;
+        let second_dpe_offset = first_dpe_offset + DPE16_LEN;
+        let first_dpe = Dpe16::read_from_bytes(&ntb[first_dpe_offset..second_dpe_offset]).unwrap();
+        let second_dpe =
+            Dpe16::read_from_bytes(&ntb[second_dpe_offset..second_dpe_offset + DPE16_LEN]).unwrap();
+        let first_index = usize::from(first_dpe.w_datagram_index.get());
+        let second_index = usize::from(second_dpe.w_datagram_index.get());
+
+        assert_eq!(
+            first_index % config.datagram_alignment,
+            config.datagram_remainder
+        );
+        assert_eq!(
+            second_index % config.datagram_alignment,
+            config.datagram_remainder
+        );
+        assert!(second_index > first_index + first.len());
+        assert_eq!(
+            parse_ntb16(&ntb, NtbParseConfig::default()).unwrap().frames,
+            vec![first.as_slice(), second.as_slice()]
+        );
+    }
+
+    #[test]
+    fn builder_rejects_too_large_aggregate_batch() {
+        let first = ethernet_frame(0xa0, 100);
+        let second = ethernet_frame(0xb0, 100);
+        let one_frame_len = build_ntb16(3, &[&first], NtbBuildConfig::default())
+            .unwrap()
+            .len();
+        let config = NtbBuildConfig {
+            max_size: one_frame_len + 8,
+            ..NtbBuildConfig::default()
+        };
+
+        assert!(matches!(
+            build_ntb16(3, &[&first, &second], config),
+            Err(NcmError::BuiltNtbTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn builder_enforces_max_datagrams() {
+        let first = ethernet_frame(0xc0, 46);
+        let second = ethernet_frame(0xd0, 46);
+        let config = NtbBuildConfig {
+            max_datagrams: 1,
+            ..NtbBuildConfig::default()
+        };
+
+        assert!(matches!(
+            build_ntb16(4, &[&first, &second], config),
+            Err(NcmError::TooManyFrames(2))
         ));
     }
 }
