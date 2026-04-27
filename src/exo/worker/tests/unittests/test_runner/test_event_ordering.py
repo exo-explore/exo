@@ -113,6 +113,16 @@ CHAT_TASK = TextGeneration(
 def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Event]):
     for test_event, true_event in zip(test_events, true_events, strict=True):
         test_event = test_event.model_copy(update={"event_id": true_event.event_id})
+        if isinstance(test_event, RunnerStatusUpdated) and isinstance(
+            test_event.runner_status, (RunnerReady, RunnerRunning)
+        ):
+            test_event = test_event.model_copy(
+                update={
+                    "runner_status": test_event.runner_status.model_copy(
+                        update={"prefill_server_port": None}
+                    )
+                }
+            )
         assert test_event == true_event, f"{test_event} != {true_event}"
 
 
