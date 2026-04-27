@@ -270,7 +270,7 @@ Review response:
 - The NTB builder preflight needs broader tests before batching work grows: multi-frame alignment padding and too-large aggregate output should be covered explicitly.
 - Babblerd has the better runtime shape for a hot dataplane: a dedicated dataplane object/thread, readiness-driven drains, precompiled hot-path state, and low-churn storage. `dgxusbd` should borrow that shape, but not babblerd's one-packet-per-datagram behavior because CDC-NCM throughput depends heavily on NTB batching.
 
-Next proposed iteration, user-facing Iteration 4:
+Previous proposal for user-facing Iteration 4, now implemented:
 
 - Treat Iteration 4 as dataplane runtime and throughput correctness, not generic operational polish.
 - Start with the small review fixes: exact `--max-events`, write-timeout naming/help, and the missing NTB builder tests.
@@ -279,6 +279,86 @@ Next proposed iteration, user-facing Iteration 4:
 - Add reusable buffers and multi-frame NTB batching before deeper USB pipelining.
 - Rerun the same iperf TCP/UDP matrix and compare against the baseline above.
 
-Deferred until after Iteration 4:
+Deferred after user-facing Iteration 4:
 
 - Reconnect handling, pair-selection polish, optional pair 2/3 support, pcap/debug dump, IP assignment helpers, and general shutdown/cleanup ergonomics.
+
+## User-Facing Iteration 4: Dataplane Runtime
+
+Commits:
+
+- `435a8c00 Refactor dgxusbd bridge dataplane`
+- `34fb3105 Enable multi-queue TAP for dgxusbd dataplane`
+- `365dd8ed Share single TAP handle in dgxusbd dataplane`
+- `8e98295e Queue USB OUT transfers in dgxusbd dataplane`
+
+Status:
+
+- Implemented the review fixes from the prior iteration:
+  - added exact event-budget accounting for the event counters
+  - renamed the bridge write timeout to `--usb-write-timeout-ms` while keeping `--usb-timeout-ms` as an alias
+  - added NTB builder tests for multi-frame padding, aggregate-size rejection, and max datagram count
+  - kept NTB16 limits on standard `u16::MAX`
+- Moved bridge forwarding into `src/dataplane.rs`.
+- Split forwarding into two OS workers:
+  - TAP-to-USB uses `mio::Poll` for TAP readability.
+  - USB-to-TAP keeps multiple `nusb` bulk-IN transfers queued.
+- Added multi-frame NTB batching for TAP-to-USB, bounded by negotiated max NTB size and datagram count.
+- Added queued `nusb` bulk-OUT transfers for TAP-to-USB. This is still architecturally desirable, but it did not solve the remaining Spark-to-Mac bottleneck by itself.
+- Tried Linux TAP multi-queue, then backed it out for the bridge path. Cloning a multi-queue TAP created separate queues; because the bridge did not drain every queue, IPv6 ping stopped working. The bridge now shares one TAP handle between workers instead.
+
+Checks:
+
+```sh
+nix develop -c cargo fmt -p dgxusbd --check
+nix develop -c cargo check -p dgxusbd
+nix develop -c cargo test -p dgxusbd
+nix develop -c cargo clippy -p dgxusbd --all-targets
+```
+
+Result: success locally. Tests: 14 passed. Clippy still exits 0 with broad warning noise.
+
+Spark after pull:
+
+```sh
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && nix develop -c cargo check -p dgxusbd"
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && nix develop -c cargo test -p dgxusbd"
+```
+
+Result: success. Tests: 14 passed.
+
+Hardware test policy update:
+
+- Current lab throughput tests should use IPv6 link-local addresses scoped to the USB interfaces.
+- Do not add temporary IPv4 addresses until the end-state validation pass needs them.
+- Example observed addresses during the final runs:
+  - Spark: `fe80::8c02:56ff:feef:8a19%dgxusb0`, later `fe80::9c75:5cff:fe02:4dae%dgxusb0`
+  - Mac: `fe80::8a2:83dc:50cd:d9a%en5`
+
+Link-local ping after the shared-TAP fix:
+
+- Mac to Spark: 3/3 replies, 0% loss, about 2.1 ms average.
+- Spark to Mac: 3/3 replies, 0% loss, about 1.5 ms average.
+
+Throughput observations over IPv6 link-local:
+
+| Code state | Direction | Test | Receiver result |
+| --- | --- | --- | --- |
+| `365dd8ed` shared TAP | Mac -> Spark | TCP, 5s | 4.49 Gbit/s |
+| `365dd8ed` shared TAP | Mac -> Spark | UDP `-b 0`, 5s | 5.71 Gbit/s, 0.095% loss |
+| `365dd8ed` shared TAP | Spark -> Mac | TCP, 5s | 14.4 Mbit/s and failed iperf result exchange |
+| `365dd8ed` shared TAP | Spark -> Mac | UDP `-b 500M`, 5s | about 458-479 Mbit/s by interval, 2-7.5% loss, failed result exchange |
+| `8e98295e` queued OUT | Mac -> Spark | TCP, 5s | 3.36 Gbit/s |
+| `8e98295e` queued OUT | Spark -> Mac | TCP, 5s | 25.1 Mbit/s and failed iperf result exchange |
+
+Negative tests:
+
+- `--tap-budget-frames 1` did not improve Spark-to-Mac TCP. It often made the link wedging easier to trigger.
+- Disabling TAP offloads with `ethtool -K dgxusb0 gro off gso off sg off txvlan off rxvlan off` immediately after TAP creation did not fix Spark-to-Mac TCP. A clean run still received only about 4.4 Mbit/s.
+
+Current interpretation:
+
+- The userspace path is viable for Mac-to-Spark traffic and basic bidirectional ICMP.
+- The main remaining correctness/performance blocker is Spark-to-Mac data-plane traffic, specifically frames built by `dgxusbd` and sent to the Mac over CDC-NCM bulk OUT.
+- The blocker is probably not the old timeout scheduler, TAP multi-queue, simple Linux TAP offloads, or lack of USB OUT queueing.
+- Next investigation should focus on the CDC-NCM transmit format expected by Apple's `05ac:1905` function: NTB placement, NDP placement, short-packet/ZLP behavior, per-NTB batching semantics, sequence behavior, and any Apple/Linux `CDC_NCM_FLAG_NDP_TO_END`-style quirks.

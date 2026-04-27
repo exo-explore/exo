@@ -82,6 +82,28 @@ Some operations will require root or capabilities:
 - creating/configuring TAP devices
 - changing routes or IP addresses
 
+## Cleanup Rule
+
+Before and after hardware throughput testing, kill workflow binaries on both remote hosts even if the current session did not start them. Stray `iperf3` servers are easy to leave behind and can confuse later tests.
+
+Spark:
+
+```sh
+ssh jensen@gx10-a174 "pkill -x iperf3 || true; pkill -x dgxusbd || true; pgrep -a -x iperf3 || true; pgrep -a -x dgxusbd || true"
+```
+
+Mac:
+
+```sh
+ssh e2@e2 "pkill -x iperf3 || true; pkill -x dgxusbd || true; pgrep -a -x iperf3 || true; pgrep -a -x dgxusbd || true"
+```
+
+If a bridge was interrupted, confirm that Spark's TAP device disappeared:
+
+```sh
+ssh jensen@gx10-a174 "ip link show dgxusb0 || true"
+```
+
 ## Current Bridge Test Commands
 
 USB endpoint smoke on Spark:
@@ -99,59 +121,81 @@ ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- tap-smoke
 Short bridge smoke on Spark:
 
 ```sh
-ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- bridge --tap-name dgxusb0 --mtu 1500 --duration-seconds 3 --usb-timeout-ms 100 --usb-read-timeout-ms 1 --tap-budget-frames 32 --usb-budget-ntbs 8"
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- bridge --tap-name dgxusb0 --mtu 1500 --duration-seconds 3 --usb-write-timeout-ms 100 --usb-read-timeout-ms 100 --tap-budget-frames 32 --usb-budget-ntbs 8 --usb-read-queue-depth 8 --usb-write-queue-depth 8"
 ```
 
-Temporary static-IP ping shape:
+IPv6 link-local ping shape:
 
 1. Run bridge long enough for testing on Spark:
 
 ```sh
-ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- bridge --tap-name dgxusb0 --mtu 1500 --duration-seconds 180"
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- bridge --tap-name dgxusb0 --mtu 1500 --duration-seconds 180 --usb-write-timeout-ms 100 --usb-read-timeout-ms 100 --tap-budget-frames 32 --usb-budget-ntbs 8 --usb-read-queue-depth 8 --usb-write-queue-depth 8"
 ```
 
-2. Add `192.168.254.2/30` to Spark `dgxusb0`.
-3. Add temporary `192.168.254.1/30` to Mac `en5`.
-4. Ping `192.168.254.2` from the Mac.
-5. Remove the Mac alias and let the bridge exit so Spark `dgxusb0` disappears.
+2. Read Spark's auto-assigned link-local address:
 
-The successful test used exactly that shape and produced 3/3 ICMP replies.
+```sh
+ssh jensen@gx10-a174 "ip -6 addr show dev dgxusb0"
+```
 
-## Throughput Testing
+3. Read Mac's scoped link-local address:
 
-Use iperf3 only after the bridge is running and both sides have temporary static IPs on the USB-C link. The known-good addressing shape is:
+```sh
+ssh e2@e2 "ifconfig en5"
+```
+
+4. Ping Spark from the Mac, substituting the current Spark address:
+
+```sh
+ssh e2@e2 "ping6 -c 3 fe80::<spark-suffix>%en5"
+```
+
+5. Ping the Mac from Spark:
+
+```sh
+ssh jensen@gx10-a174 "ping -6 -c 3 'fe80::<mac-suffix>%dgxusb0'"
+```
+
+Current policy: use IPv6 link-local for iteration testing. Do not add temporary IPv4 addresses until the final validation pass needs them.
+
+Old temporary static-IPv4 shape, deferred until final validation:
 
 - Spark TAP `dgxusb0`: `192.168.254.2/30`
 - Mac peer interface `en5`: `192.168.254.1/30`
+- Remove the Mac alias after testing and let the bridge exit so Spark `dgxusb0` disappears.
 
-On the Mac, use `/opt/homebrew/bin/iperf3` in noninteractive SSH sessions unless the PATH has been adjusted. If port 5201 is already occupied, use a matched `-p <port>` on both server and client.
+## Throughput Testing
+
+Use iperf3 only after the bridge is running and both sides have link-local IPv6 addresses on the USB-C link. Use scoped addresses with `%en5` on macOS and `%dgxusb0` on Linux. If port 5201 is already occupied, use a matched `-p <port>` on both server and client.
+
+On the Mac, use `/opt/homebrew/bin/iperf3` in noninteractive SSH sessions unless the PATH has been adjusted.
 
 TCP from Mac to Spark:
 
 ```sh
-ssh jensen@gx10-a174 "iperf3 -s -1"
-ssh e2@e2 "/opt/homebrew/bin/iperf3 -c 192.168.254.2"
+ssh jensen@gx10-a174 "iperf3 -s -1 -p 5202"
+ssh e2@e2 "/opt/homebrew/bin/iperf3 -6 -c 'fe80::<spark-suffix>%en5' -p 5202 -t 5 --connect-timeout 5000"
 ```
 
 UDP from Mac to Spark, uncapped by iperf's target bitrate:
 
 ```sh
-ssh jensen@gx10-a174 "iperf3 -s -1"
-ssh e2@e2 "/opt/homebrew/bin/iperf3 -c 192.168.254.2 -b 0 -u"
+ssh jensen@gx10-a174 "iperf3 -s -1 -p 5202"
+ssh e2@e2 "/opt/homebrew/bin/iperf3 -6 -c 'fe80::<spark-suffix>%en5' -p 5202 -t 5 --connect-timeout 5000 -b 0 -u"
 ```
 
 Reverse direction can be tested by starting the server on the Mac and the client on the Spark:
 
 ```sh
-ssh e2@e2 "/opt/homebrew/bin/iperf3 -s -1"
-ssh jensen@gx10-a174 "iperf3 -c 192.168.254.1"
-ssh e2@e2 "/opt/homebrew/bin/iperf3 -s -1"
-ssh jensen@gx10-a174 "iperf3 -c 192.168.254.1 -b 0 -u"
+ssh e2@e2 "/opt/homebrew/bin/iperf3 -s -1 -p 5202"
+ssh jensen@gx10-a174 "iperf3 -6 -c 'fe80::<mac-suffix>%dgxusb0' -p 5202 -t 5 --connect-timeout 5000"
+ssh e2@e2 "/opt/homebrew/bin/iperf3 -s -1 -p 5202"
+ssh jensen@gx10-a174 "iperf3 -6 -c 'fe80::<mac-suffix>%dgxusb0' -p 5202 -t 5 --connect-timeout 5000 -b 50M -u"
 ```
 
 For Spark-to-Mac UDP, also run capped tests such as `-b 50M -u` and `-b 100M -u`. On Linux, `iperf3 -u -b 0` can inject far more traffic than the current userspace bridge can drain, so heavy loss in that specific test is an overload datapoint rather than a clean throughput ceiling.
 
-Expected interpretation for the current MVP: successful packet movement and low malformed-NTB counts matter first. The bridge now has bounded per-loop TAP and USB budgets, but it still uses one synchronous loop, sends one Ethernet frame per NTB, allocates a fresh NTB for each TAP frame, and does no batching or deeper USB queueing. Asymmetric and lower-than-link-rate throughput is expected until those pieces change.
+Expected interpretation for the current dataplane: Mac-to-Spark can be multi-gigabit. Spark-to-Mac is still the active blocker; poor TCP, failed iperf result exchange, or link wedging during Spark-originated traffic should be treated as transmit-format evidence, not as a generic scheduler problem.
 
 ## Useful Observation Commands
 

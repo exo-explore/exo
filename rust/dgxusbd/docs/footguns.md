@@ -104,11 +104,25 @@ Adding pair 2/3, aggregation, DHCP integration, routing, and reconnect loops sho
 
 Do not require received DPE datagram indexes to be 4-byte aligned. Live Mac NTBs used datagram index 30. The bridge should still enforce bounds, terminators, signatures, and minimum Ethernet-frame size, but a strict DPE-index alignment check drops valid traffic from this Mac.
 
+## TAP Multi-Queue
+
+Do not enable TAP multi-queue for the current bridge shape. A trial with cloned multi-queue TAP handles created separate queues, and because the bridge did not drain every queue, IPv6 ping stopped working. The current bridge shares one TAP handle between the TAP-to-USB and USB-to-TAP workers.
+
+## Spark-To-Mac Is The Active Directional Blocker
+
+Do not treat every Spark-to-Mac throughput failure as a scheduler problem anymore. Iteration 4 already removed the alternating timeout loop, added queued USB reads and writes, tried one-frame NTBs, and tried disabling Linux TAP offloads. Mac-to-Spark is multi-gigabit, while Spark-to-Mac TCP/UDP remains unstable.
+
+The next likely fault domain is transmit format compatibility with Apple's CDC-NCM function: NDP placement, short packet or ZLP behavior, sequence expectations, negotiated alignment/remainder interpretation, and Apple-specific quirks mirrored by Linux `cdc_ncm`.
+
 ## Timeout Fairness Is Not A Throughput Dataplane
 
 Bounded drains are useful, but do not build the next bridge runtime around alternating blocking timeouts. A loop that sends a TAP budget and then waits for USB-IN traffic can directly cap one-way Spark-to-Mac throughput when no USB-IN traffic is pending. Prefer readiness-driven TAP drains plus either pollable USB readiness or independent USB/TAP workers. Use remaining event/byte budgets inside the drain functions so bounded tests remain exact.
 
 For CDC-NCM, batching multiple Ethernet frames per NTB is the main throughput lever. Reusable buffers, precomputed NTB parameters, and fewer per-frame allocations matter more than small formatting or parser cleanups once packet movement is correct.
+
+## Clean Up Remote Test Processes
+
+Kill workflow binaries on both remote hosts before and after lab runs, even if the current session did not start them. In particular, kill stray `iperf3` servers and any leftover `dgxusbd` bridge. See `lab-workflow.md` for the exact commands.
 
 ## Do Not Store Secrets
 

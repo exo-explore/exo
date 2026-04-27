@@ -132,35 +132,61 @@ Acceptance result:
 - TCP and UDP iperf3 tests can be run in both directions with documented commands.
 - Measured throughput is no longer treated as an unknown side effect of the smoke test.
 
-## Active Iteration 4: Dataplane Runtime And Throughput Correctness
+## Iteration 4: Dataplane Runtime And Throughput Correctness
 
 Purpose: replace the timeout-shaped MVP loop with a real forwarding dataplane before spending more time on operational polish.
 
-Proposed changes:
+Status: implemented, with a remaining Spark-to-Mac transmit blocker.
+
+Completed changes:
 
 - First, fix the review's small correctness issues:
   - make `--max-events` exact by passing remaining event budgets into the drain functions
   - rename or alias `--usb-timeout-ms` as the USB write timeout and update help text
   - add NTB builder tests for multi-frame alignment padding and aggregate-size rejection
-- Move forwarding out of the CLI call path into a dataplane object with explicit start, stop, and counters, similar in spirit to `rust/babblerd/src/dataplane.rs`.
-- Prefer readiness or real concurrency over timeout fairness:
+- Moved forwarding out of the CLI call path into a dataplane object with explicit start, stop, and counters, similar in spirit to `rust/babblerd/src/dataplane.rs`.
+- Replaced timeout fairness with readiness plus real concurrency:
   - register TAP readiness with `mio` where possible
-  - if `nusb` endpoints cannot be readiness-polled, use independent TAP-to-USB and USB-to-TAP workers with blocking endpoint operations rather than alternating directions in one loop
+  - use independent TAP-to-USB and USB-to-TAP workers because `nusb` endpoints are not file-descriptor readiness sources in this code
 - Keep hot-path state precomputed before forwarding starts:
   - selected NCM pair, endpoint addresses, max packet sizes
   - NTB parse/build configs, max NTB sizes, datagram alignment, max datagram count
   - reusable TAP and NTB buffers
   - counters and stop/cancellation channels
 - Batch multiple TAP Ethernet frames into each CDC-NCM NTB up to negotiated size/count limits. Do not copy babblerd's one-packet-per-datagram shape; for CDC-NCM, batching is the main throughput lever.
-- Investigate queued or multiple in-flight USB transfers if `nusb` exposes an API that can do this safely.
-- Rerun the same TCP/UDP iperf baseline in both directions and compare with the Iteration 3b numbers in `status.md`.
+- Keep multiple USB bulk-IN transfers queued.
+- Keep multiple USB bulk-OUT transfers queued.
+- Rerun the TCP/UDP iperf baseline over IPv6 link-local addresses and compare with the Iteration 3b numbers in `status.md`.
+
+Acceptance result:
+
+- One-way Spark-to-Mac traffic is no longer forced to wait on idle USB-IN polling after every TAP budget.
+- `--max-events` counts submitted/received bridge events exactly in counters.
+- Bridge counters remain accurate under the concurrent forwarding shape.
+- Mac-to-Spark throughput improved materially, reaching multi-gigabit over IPv6 link-local.
+- Spark-to-Mac data traffic remains the active blocker. It is not fixed by the scheduler, TAP multi-queue, Linux TAP offload settings, or USB OUT queueing. See `status.md`.
+
+## Active Iteration 5: Apple CDC-NCM Transmit Correctness
+
+Purpose: make Spark-generated CDC-NCM bulk-OUT traffic match what Apple's `05ac:1905` function expects well enough for stable TCP/UDP from Spark to Mac.
+
+Proposed changes:
+
+- Compare `dgxusbd` NTB16 transmit layout against Linux `cdc_ncm` with Apple quirks, especially:
+  - NDP-at-end versus NDP-near-front placement
+  - short packet or zero-length packet behavior after NTBs whose length is a multiple of the endpoint packet size
+  - sequence-number expectations
+  - `wNdpOutDivisor`, `wNdpOutPayloadRemainder`, and `wNdpOutAlignment` interpretation
+  - whether macOS expects one NTB per USB transfer or tolerates multiple queued OUT transfers
+- Add optional debug capture for transmitted NTBs and parsed received NTBs so hardware observations can be compared byte-for-byte.
+- Add targeted transmit-shape flags for lab testing before committing to one layout.
+- Keep the main lab tests on IPv6 link-local addresses. IPv4 static addressing is deferred until final validation.
 
 Acceptance:
 
-- One-way Spark-to-Mac traffic is not forced to wait on idle USB-IN polling after every TAP budget.
-- `--max-events` stops at the requested count, not up to one budget later.
-- Bridge counters remain accurate under concurrent or readiness-driven forwarding.
-- Throughput baseline improves materially or the remaining bottleneck is identified with counters/logs.
+- Spark-to-Mac link-local ping stays healthy after sustained Spark-originated TCP/UDP.
+- Spark-to-Mac TCP reaches a stable, materially higher baseline and iperf receives final results cleanly.
+- Spark-to-Mac paced UDP has low loss at a documented bitrate.
 
 ## Later Iteration: Operational Robustness
 

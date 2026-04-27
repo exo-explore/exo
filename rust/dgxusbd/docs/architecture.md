@@ -100,15 +100,14 @@ Minimal runtime:
 
 MVP can use one pair only. Pair 2/3 can be added after the first pair is proven.
 
-Current bridge status: the MVP still uses one synchronous loop with bounded drains and USB read/write timeouts. That is acceptable for proof-of-viability, but it is not the right hot-path shape for throughput because one direction can insert idle waits into the other direction.
+Current bridge status: forwarding now lives in `src/dataplane.rs` rather than the CLI call stack. It uses separate TAP-to-USB and USB-to-TAP OS workers, TAP readiness through `mio`, queued USB bulk-IN reads, queued USB bulk-OUT writes, and multi-frame CDC-NCM TX batching. This is much closer to the desired hot-path shape than the original single-loop MVP.
 
-Target dataplane shape for the next iteration:
+Current dataplane constraints:
 
-- Keep CLI/control setup outside the hot path.
-- Move forwarding into a dataplane object with explicit start, stop, and counters.
-- Use readiness for TAP, and either readiness or independent workers for USB endpoints. If `nusb` bulk endpoints cannot be polled like file descriptors, prefer one TAP-to-USB worker and one USB-to-TAP worker over one alternating timeout loop.
-- Precompute selected pair parameters, endpoint addresses, NTB parse/build configs, max sizes, alignment, and reusable buffers before entering the forwarding path.
-- Batch multiple Ethernet frames into each CDC-NCM NTB. Babblerd's dataplane is a good model for runtime structure, but its one-packet-per-datagram forwarding shape should not be copied for CDC-NCM.
+- Mac-to-Spark traffic is healthy and reaches multi-gigabit rates over IPv6 link-local.
+- Spark-to-Mac TCP/UDP data traffic is still unstable and low-throughput even after scheduler, TAP multi-queue, offload, and USB OUT queueing experiments.
+- Next work should focus on Apple CDC-NCM transmit-format compatibility rather than generic runtime shape.
+- Keep IPv6 link-local addressing as the primary test path. IPv4 static addressing should wait until final validation.
 
 ## Non-Goals For The First Iteration
 

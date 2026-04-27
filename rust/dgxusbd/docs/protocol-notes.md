@@ -95,9 +95,21 @@ write USB transfer
 
 The Linux IP stack owns ARP, IPv4, IPv6, TCP, UDP, DHCP, etc. `dgxusbd` should forward opaque Ethernet frames and avoid becoming an IP stack.
 
+## Current TX Compatibility Question
+
+Mac-to-Spark traffic means the RX parser and USB-IN path are broadly healthy. Spark-to-Mac ICMP works, but sustained Spark-originated TCP/UDP traffic remains unstable. The next investigation should compare the NTB16 blocks built by `dgxusbd` against what Apple's function expects.
+
+Specific transmit details to test:
+
+- NDP location: near the front versus at the end of the NTB.
+- Short-packet or zero-length-packet behavior after USB OUT transfers, especially when NTB length is a multiple of the endpoint max packet size.
+- Whether queued OUT transfers expose a Mac-side bug or whether Apple expects stricter pacing.
+- Sequence number behavior.
+- Interpretation of `wNdpOutDivisor`, `wNdpOutPayloadRemainder`, and `wNdpOutAlignment`.
+- Whether the Apple-specific Linux `cdc_ncm` quirk changes any transmit flags beyond accepting a control interface with no status endpoint.
+
 ## Useful References
 
 - Linux `cdc_ncm.c`: `drivers/net/usb/cdc_ncm.c`
 - Linux USB CDC UAPI constants/structs: `include/uapi/linux/usb/cdc.h`
 - Linux TAP docs: kernel `networking/tuntap`
-
