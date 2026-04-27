@@ -17,6 +17,7 @@ Mac mini:
 - SSH: `ssh e2@e2`
 - Used for observing macOS interface state and USB/Thunderbolt status.
 - Nix is installed.
+- During the successful bridge ping test, macOS hardware port `Ethernet Adapter (en5)` was the usable peer interface.
 
 Local workstation:
 
@@ -81,6 +82,36 @@ Some operations will require root or capabilities:
 - creating/configuring TAP devices
 - changing routes or IP addresses
 
+## Current Bridge Test Commands
+
+USB endpoint smoke on Spark:
+
+```sh
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- usb-smoke --read-timeout-ms 250"
+```
+
+TAP smoke on Spark:
+
+```sh
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- tap-smoke --name dgxusb0 --mtu 1500"
+```
+
+Short bridge smoke on Spark:
+
+```sh
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- bridge --tap-name dgxusb0 --mtu 1500 --duration-seconds 3 --usb-timeout-ms 100"
+```
+
+Temporary static-IP ping shape:
+
+1. Run bridge long enough for testing on Spark.
+2. Add `192.168.254.2/30` to Spark `dgxusb0`.
+3. Add temporary `192.168.254.1/30` to Mac `en5`.
+4. Ping `192.168.254.2` from the Mac.
+5. Remove the Mac alias and let the bridge exit so Spark `dgxusb0` disappears.
+
+The successful test used exactly that shape and produced 3/3 ICMP replies.
+
 ## Useful Observation Commands
 
 Spark:
@@ -107,4 +138,3 @@ system_profiler SPUSBDataType
 ## Interrupt Safety
 
 Avoid commands that unload networking modules, reset interfaces, or alter routes unless the current iteration explicitly calls for it. SSH access is over Wi-Fi/Tailscale-style paths today, but still treat network changes as potentially disruptive.
-

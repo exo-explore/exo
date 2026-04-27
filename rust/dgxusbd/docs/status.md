@@ -31,6 +31,9 @@ Implemented subcommands:
 
 - `list`: list candidate USB devices, currently defaulting to Apple `05ac:1905`.
 - `probe`: open the candidate device, inspect descriptors, detect CDC-NCM pairs, and optionally claim interfaces.
+- `usb-smoke`: claim one NCM pair, run CDC-NCM class setup, select the data altsetting, open bulk endpoints, and do one timed IN read.
+- `tap-smoke`: create a Linux TAP interface through `tun-rs`.
+- `bridge`: run a conservative one-pair CDC-NCM-to-TAP bridge.
 
 `dgxusbd` is already registered as a workspace member and flake app/package.
 
@@ -75,6 +78,47 @@ ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- probe --c
 ```
 
 Result: success. Userspace claimed interfaces 0, 1, 2, and 3 without requiring a kernel module patch.
+
+Spark USB endpoint smoke:
+
+```sh
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- usb-smoke --read-timeout-ms 250"
+```
+
+Result: success. Pair 0/1 was selected, data altsetting 1 was set, bulk endpoints `0x81` and `0x01` opened with 1024-byte max packets, and a timed IN read returned 140 bytes.
+
+Spark TAP smoke:
+
+```sh
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- tap-smoke --name dgxusb0 --mtu 1500"
+```
+
+Result: success. `dgxusb0` was created and removed when the process exited.
+
+Spark bridge smoke:
+
+```sh
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- bridge --tap-name dgxusb0 --mtu 1500 --duration-seconds 3 --usb-timeout-ms 100"
+```
+
+Result after RX alignment fix: success. Counters showed Spark-to-Mac and Mac-to-Spark frame movement with zero malformed NTBs:
+
+```text
+tap_rx=17 tap_drop=0 usb_tx_ntb=17 usb_rx_ntb=21 usb_timeout=23 usb_rx_frames=21 tap_tx=21 malformed_ntb=0
+```
+
+Temporary static-IP ping:
+
+- Spark bridge/TAP: `dgxusb0` with `192.168.254.2/30`
+- Mac interface: `en5` with temporary `192.168.254.1/30`
+- Result: `3 packets transmitted, 3 packets received, 0.0% packet loss`
+- Final bridge counters for that run:
+
+```text
+tap_rx=58 tap_drop=0 usb_tx_ntb=58 usb_rx_ntb=102 usb_timeout=362 usb_rx_frames=103 tap_tx=103 malformed_ntb=0
+```
+
+The temporary Mac IP alias was removed after the ping. The Spark TAP was removed when the bridge process exited.
 
 ## Hardware Findings
 
@@ -124,6 +168,31 @@ Iteration 1 status:
 - Hardware probe confirmed the prior descriptor hypothesis.
 - Userspace can claim the unbound NCM interfaces.
 
+Iteration 2-4 commits:
+
+- `ed1cfe49 Add dgxusbd NCM bridge MVP`
+- `d2a87e6b Accept unaligned RX datagrams`
+
+Iteration 2-4 status:
+
+- Implemented CDC-NCM NTB16 parser/builder with unit tests.
+- Implemented NCM class setup based on Linux `cdc_ncm` behavior:
+  - `GET_NTB_PARAMETERS`
+  - `SET_CRC_MODE`
+  - `SET_NTB_FORMAT`
+  - `SET_NTB_INPUT_SIZE`
+  - `GET/SET_MAX_DATAGRAM_SIZE`
+  - `SET_ETHERNET_PACKET_FILTER`
+- Implemented TAP creation through `tun-rs`.
+- Implemented a one-pair bridge defaulting to control interface 0, data interface 1, IN `0x81`, OUT `0x01`.
+- Hardware bridge successfully carried ICMP over the USB-C cable between macOS `en5` and Spark `dgxusb0`.
+
+Important bug found and fixed:
+
+- The first bridge run rejected all Mac-to-Spark NTBs because the parser required DPE datagram indexes to be 4-byte aligned.
+- Live Mac NTBs used datagram index 30. This is plausible because NCM payload alignment is about payload placement, not necessarily DPE datagram-index alignment.
+- RX index alignment validation was relaxed in `d2a87e6b`; malformed count then dropped to zero.
+
 Next proposed iteration:
 
-- Implement CDC-NCM framing as a pure library module with unit tests before touching TAP or live packet forwarding.
+- Add operational polish around the working MVP: clearer command docs, optional IP assignment helper, pcap/debug dump, reconnect handling, and bridge shutdown/cleanup behavior.

@@ -12,7 +12,7 @@ Status: complete in `df1fa775`.
 
 Implemented changes:
 
-- Add USB crate dependency, likely `nusb`.
+- Added USB crate dependency `nusb`.
 - Add CLI with modes:
   - `list`: print candidate USB devices and interfaces
   - `probe`: open `05ac:1905`, inspect descriptors, print detected NCM pairs/endpoints
@@ -33,7 +33,9 @@ Important result:
 
 Purpose: implement CDC-NCM framing without needing the hardware loop to be correct yet.
 
-Proposed changes:
+Status: complete in `ed1cfe49` and adjusted in `d2a87e6b`.
+
+Implemented changes:
 
 - Add `ncm` module.
 - Define NTH16/NDP16/DPE16 layouts with `zerocopy`.
@@ -44,49 +46,62 @@ Proposed changes:
   - multi-frame RX
   - malformed header rejection
   - TX round-trip through RX parser
-  - alignment and bounds checks
+  - bounds checks and conservative malformed-input rejection
 
-Acceptance:
+Acceptance result:
 
 - Unit tests pass locally and on Spark.
 - Codec is independent of USB/TAP runtime.
+
+Important correction:
+
+- RX parsing originally rejected Mac NTBs whose DPE datagram index was 30 because the code required 4-byte alignment.
+- Live hardware showed those NTBs are valid enough for macOS traffic; the RX parser now avoids enforcing datagram-index alignment and continues to enforce header, bounds, terminator, and minimum-frame checks.
 
 ## Iteration 3: TAP Skeleton
 
 Purpose: create and exercise the Linux TAP path independently.
 
-Proposed changes:
+Status: complete in `ed1cfe49`.
+
+Implemented changes:
 
 - Add TAP module around `tun-rs`.
-- Add CLI mode to create TAP and optionally echo/log frames.
-- Do not yet connect USB to TAP.
+- Add `tap-smoke` CLI mode to create a TAP interface.
 
-Acceptance:
+Acceptance result:
 
-- On Spark, root invocation creates a TAP interface.
-- The process can read/write frames without panics.
+- On Spark, root invocation created `dgxusb0` with MTU 1500.
+- The TAP disappears when the process exits.
 
 ## Iteration 4: One-Pair Bridge MVP
 
 Purpose: move Ethernet frames between one Apple NCM pair and one TAP interface.
 
-Proposed changes:
+Status: complete in `ed1cfe49` and adjusted in `d2a87e6b`.
 
-- Hardcode or default to pair:
+Implemented changes:
+
+- Default to pair:
   - control interface 0
   - data interface 1
   - IN endpoint `0x81`
   - OUT endpoint `0x01`
-- Run two forwarding tasks.
+- Run a conservative single-loop forwarder:
+  - drain TAP frames to USB OUT as NTB16
+  - poll USB IN, parse NTB16, and write Ethernet frames to TAP
 - Add counters for USB reads/writes, TAP reads/writes, decoded frames, malformed NTBs.
 - Treat USB presence as carrier; no interrupt/status endpoint is expected.
 
-Acceptance:
+Acceptance result:
 
 - Spark creates TAP interface.
-- Mac-generated traffic appears as TAP RX counters.
+- Mac-generated traffic appears as decoded USB RX frames and TAP TX counters.
 - Spark-generated traffic is sent to USB OUT endpoint without NCM formatting errors.
-- Manual static IP ping is attempted if basic frame movement is visible.
+- Manual static IP ping succeeded:
+  - Mac `en5`: temporary `192.168.254.1/30`
+  - Spark `dgxusb0`: temporary `192.168.254.2/30`
+  - Result: 3/3 ICMP replies, 0% loss.
 
 ## Iteration 5: Robustness
 

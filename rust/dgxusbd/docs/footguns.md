@@ -86,6 +86,10 @@ bulk OUT 0x01
 
 Adding pair 2/3, aggregation, DHCP integration, routing, and reconnect loops should wait until one-pair packet movement is proven.
 
+## NCM RX Alignment
+
+Do not require received DPE datagram indexes to be 4-byte aligned. Live Mac NTBs used datagram index 30. The bridge should still enforce bounds, terminators, signatures, and minimum Ethernet-frame size, but a strict DPE-index alignment check drops valid traffic from this Mac.
+
 ## Do Not Store Secrets
 
 Do not commit sudo passwords, SSH keys, host-private credentials, or generated signing keys. Lab credentials should stay in the secure handoff/channel, not in repository docs.
