@@ -112,6 +112,38 @@ Temporary static-IP ping shape:
 
 The successful test used exactly that shape and produced 3/3 ICMP replies.
 
+## Throughput Testing
+
+Use iperf3 only after the bridge is running and both sides have temporary static IPs on the USB-C link. The known-good addressing shape is:
+
+- Spark TAP `dgxusb0`: `192.168.254.2/30`
+- Mac peer interface `en5`: `192.168.254.1/30`
+
+TCP from Mac to Spark:
+
+```sh
+ssh jensen@gx10-a174 "iperf3 -s -1"
+ssh e2@e2 "iperf3 -c 192.168.254.2"
+```
+
+UDP from Mac to Spark, uncapped by iperf's target bitrate:
+
+```sh
+ssh jensen@gx10-a174 "iperf3 -s -1"
+ssh e2@e2 "iperf3 -c 192.168.254.2 -b 0 -u"
+```
+
+Reverse direction can be tested by starting the server on the Mac and the client on the Spark:
+
+```sh
+ssh e2@e2 "iperf3 -s -1"
+ssh jensen@gx10-a174 "iperf3 -c 192.168.254.1"
+ssh e2@e2 "iperf3 -s -1"
+ssh jensen@gx10-a174 "iperf3 -c 192.168.254.1 -b 0 -u"
+```
+
+Expected interpretation for the current MVP: successful packet movement matters more than raw throughput. The bridge currently uses a single synchronous loop, sends one Ethernet frame per NTB, allocates a fresh NTB for each TAP frame, and can block on USB reads. Low throughput is therefore expected until the bridge grows fair scheduling, batching, and deeper USB I/O.
+
 ## Useful Observation Commands
 
 Spark:

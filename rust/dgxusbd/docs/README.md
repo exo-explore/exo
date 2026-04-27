@@ -2,7 +2,7 @@
 
 Last updated: 2026-04-27.
 
-`dgxusbd` is intended to explore a userspace CDC-NCM-to-TAP bridge for direct USB-C networking between an Apple Mac mini and an ASUS/NVIDIA GX10 / DGX Spark. The current repository contains only a Rust stub binary and library; implementation has not started.
+`dgxusbd` explores a userspace CDC-NCM-to-TAP bridge for direct USB-C networking between an Apple Mac mini and an ASUS/NVIDIA GX10 / DGX Spark. The current implementation can probe the Apple USB CDC-NCM descriptors, create a TAP interface, and carry Ethernet frames over one CDC-NCM USB pair.
 
 Start here:
 

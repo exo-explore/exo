@@ -103,9 +103,30 @@ Acceptance result:
   - Spark `dgxusb0`: temporary `192.168.254.2/30`
   - Result: 3/3 ICMP replies, 0% loss.
 
-## Iteration 5: Robustness
+## Iteration 5: Scheduler, Validation, And Throughput Baseline
 
-Purpose: make it useful enough for repeated lab testing.
+Purpose: turn the proof-of-packet-movement bridge into a measurable bridge that cannot starve one direction under sustained traffic.
+
+Proposed changes:
+
+- Add per-loop frame or byte budgets for TAP-to-USB and USB-to-TAP work.
+- Consider moving to a two-direction scheduler, `mio`, async, or dedicated RX/TX workers if simple budgets are not enough.
+- Make bridge mode fail on required NCM setup failures, especially selected NTB format, NTB input size, and max datagram size.
+- Fix NTB builder sizing so it uses checked length accumulation and returns `BuiltNtbTooLarge` before allocating oversized output.
+- Add repeatable iperf3 TCP and UDP test commands to the lab workflow and capture a baseline in `status.md`.
+- Refactor repeated CLI options with `clap(flatten)` structs.
+- Introduce small domain newtypes where they reduce primitive misuse, starting with USB IDs if parsing grows.
+
+Acceptance:
+
+- Under sustained one-way TAP traffic, the opposite USB-to-TAP direction still gets scheduled.
+- Bridge exits early when a required NCM setup step fails.
+- TCP and UDP iperf3 tests can be run in both directions with documented commands.
+- Measured throughput is no longer treated as an unknown side effect of the smoke test.
+
+## Iteration 6: Operational Robustness
+
+Purpose: make the bridge useful enough for repeated lab testing.
 
 Proposed changes:
 
@@ -114,6 +135,7 @@ Proposed changes:
 - Optional pair 2/3 support.
 - Better error messages for permission, detach/claim, endpoint stall, malformed NTBs.
 - Optional pcap/debug dump for NTBs or Ethernet frames.
+- Optional IP assignment helper for the lab static-IP flow.
 
 Acceptance:
 

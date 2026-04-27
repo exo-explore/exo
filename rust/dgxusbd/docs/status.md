@@ -195,4 +195,9 @@ Important bug found and fixed:
 
 Next proposed iteration:
 
-- Add operational polish around the working MVP: clearer command docs, optional IP assignment helper, pcap/debug dump, reconnect handling, and bridge shutdown/cleanup behavior.
+- Prioritize bridge data-path correctness and measurement before general polish.
+- Add per-loop frame or byte budgets so sustained TAP traffic cannot starve USB-to-TAP reads.
+- Make required bridge-mode NCM setup failures fatal instead of report-only.
+- Preflight NTB builder output size before allocation.
+- Add repeatable iperf3 throughput tests to the hardware loop and record baseline numbers.
+- Keep operational polish next: clearer command docs, optional IP assignment helper, pcap/debug dump, reconnect handling, and bridge shutdown/cleanup behavior.
