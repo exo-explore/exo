@@ -928,6 +928,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "crossbeam-channel",
+ "extend",
  "futures-lite",
  "hashbrown 0.16.1",
  "ipnet",

@@ -11,6 +11,7 @@ use std::thread;
 use std::time::Duration;
 
 use color_eyre::eyre;
+use extend::ext;
 
 use crate::bridge::{BridgeOptions, render_bridge_report, run_bridge};
 use crate::cli::{Cli, Command};
@@ -27,87 +28,73 @@ use crate::usb::{
 /// Returns an error when USB discovery, device probing, or interface claiming fails.
 pub fn run(cli: Cli) -> eyre::Result<()> {
     let command = cli.command;
-    let selector = command.selector();
 
     match command {
-        Command::List { all, .. } => {
-            let devices = list_devices(selector, all)?;
+        Command::List { usb, all } => {
+            let devices = list_devices(usb.selector(), all)?;
             print!("{}", render_device_list(&devices));
         }
-        Command::Probe {
-            claim,
-            detach_kernel_driver,
-            ..
-        } => {
+        Command::Probe { usb, claim } => {
             let report = probe(ProbeOptions {
-                selector,
-                claim,
-                detach_kernel_driver,
+                selector: usb.selector(),
+                claim: claim.claim,
+                detach_kernel_driver: claim.detach_kernel_driver,
             })?;
             print!("{}", render_probe_report(&report));
         }
         Command::UsbSmoke {
-            pair_index,
-            detach_kernel_driver,
+            open,
             skip_ncm_init,
             read_timeout_ms,
-            ..
         } => {
             let report = smoke_usb_data_path(UsbSmokeOptions {
                 open: OpenPairOptions {
-                    selector,
-                    pair_index,
-                    detach_kernel_driver,
+                    selector: open.usb.selector(),
+                    pair_index: open.pair_index,
+                    detach_kernel_driver: open.detach_kernel_driver,
                     initialize_ncm: !skip_ncm_init,
-                    ntb_input_size: default_ntb_input_size(),
-                    max_datagram_size: ethernet_max_datagram_size(crate::tap::DEFAULT_TAP_MTU),
+                    ntb_input_size: crate::ncm::DEFAULT_NTB_MAX_SIZE_U32,
+                    max_datagram_size: crate::tap::DEFAULT_TAP_MTU.ethernet_datagram_size(),
                 },
-                read_timeout: Duration::from_millis(read_timeout_ms),
+                read_timeout: read_timeout_ms.milliseconds(),
             })?;
             print!("{}", render_usb_smoke_report(&report));
         }
-        Command::TapSmoke {
-            name,
-            mtu,
-            hold_seconds,
-        } => {
+        Command::TapSmoke { tap, hold_seconds } => {
             let tap = create_tap(&TapOptions {
-                name,
-                mtu,
+                name: tap.name,
+                mtu: tap.mtu,
                 nonblocking: false,
             })?;
             print!("{}", render_tap_smoke(&tap));
             if hold_seconds > 0 {
-                thread::sleep(Duration::from_secs(hold_seconds));
+                thread::sleep(hold_seconds.seconds());
             }
         }
         Command::Bridge {
-            pair_index,
-            detach_kernel_driver,
-            tap_name,
-            mtu,
+            open,
+            tap,
             duration_seconds,
             max_events,
             usb_timeout_ms,
-            ..
         } => {
             let report = run_bridge(BridgeOptions {
                 open: OpenPairOptions {
-                    selector,
-                    pair_index,
-                    detach_kernel_driver,
+                    selector: open.usb.selector(),
+                    pair_index: open.pair_index,
+                    detach_kernel_driver: open.detach_kernel_driver,
                     initialize_ncm: true,
-                    ntb_input_size: default_ntb_input_size(),
-                    max_datagram_size: ethernet_max_datagram_size(mtu),
+                    ntb_input_size: crate::ncm::DEFAULT_NTB_MAX_SIZE_U32,
+                    max_datagram_size: tap.mtu.ethernet_datagram_size(),
                 },
                 tap: TapOptions {
-                    name: tap_name,
-                    mtu,
+                    name: tap.name,
+                    mtu: tap.mtu,
                     nonblocking: true,
                 },
-                duration: duration_seconds.map(Duration::from_secs),
+                duration: duration_seconds.map(DurationArgExt::seconds),
                 max_events,
-                usb_timeout: Duration::from_millis(usb_timeout_ms),
+                usb_timeout: usb_timeout_ms.milliseconds(),
             })?;
             print!("{}", render_bridge_report(&report));
         }
@@ -116,12 +103,20 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
     Ok(())
 }
 
-fn default_ntb_input_size() -> u32 {
-    u32::try_from(crate::ncm::DEFAULT_NTB_MAX_SIZE).expect("default NTB size fits u32")
+#[ext(pub(crate), name = DurationArgExt)]
+impl u64 {
+    fn milliseconds(self) -> Duration {
+        Duration::from_millis(self)
+    }
+
+    fn seconds(self) -> Duration {
+        Duration::from_secs(self)
+    }
 }
 
-fn ethernet_max_datagram_size(mtu: u16) -> u16 {
-    mtu.saturating_add(
-        u16::try_from(crate::ncm::ETHERNET_HEADER_LEN).expect("Ethernet header fits u16"),
-    )
+#[ext(pub(crate), name = MtuExt)]
+impl u16 {
+    fn ethernet_datagram_size(self) -> u16 {
+        self.saturating_add(crate::ncm::ETHERNET_HEADER_LEN_U16)
+    }
 }

@@ -6,8 +6,10 @@ use zerocopy::byteorder::little_endian::{U16, U32};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 pub const DEFAULT_NTB_MAX_SIZE: usize = 16 * 1024;
+pub const DEFAULT_NTB_MAX_SIZE_U32: u32 = 16 * 1024;
 pub const DEFAULT_DATAGRAM_ALIGNMENT: usize = 4;
 pub const ETHERNET_HEADER_LEN: usize = 14;
+pub const ETHERNET_HEADER_LEN_U16: u16 = 14;
 
 const NTH16_SIGNATURE: u32 = u32::from_le_bytes(*b"NCMH");
 const NDP16_NO_CRC_SIGNATURE: u32 = u32::from_le_bytes(*b"NCM0");
