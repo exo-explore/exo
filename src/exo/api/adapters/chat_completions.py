@@ -168,6 +168,8 @@ async def chat_request_to_text_generation(
         min_p=request.min_p,
         repetition_penalty=request.repetition_penalty,
         repetition_context_size=request.repetition_context_size,
+        presence_penalty=request.presence_penalty,
+        frequency_penalty=request.frequency_penalty,
         images=images,
     )
 
