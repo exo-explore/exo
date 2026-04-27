@@ -15,11 +15,11 @@ dependencies = [
   "huggingface-hub>=1.8.0",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
-  "exo-pyo3-bindings",                       # rust bindings
+  "exo-pyo3-bindings",                         # rust bindings
   "anyio==4.11.0",
   "mlx==0.31.2; sys_platform == 'darwin'",
   "mlx-lm; sys_platform=='darwin'",
-  "tiktoken>=0.12.0",                        # required for kimi k2 tokenizer
+  "tiktoken>=0.12.0",                          # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",
@@ -28,7 +28,7 @@ dependencies = [
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
-  "mlx-vlm>=0.3.11",
+  "mlx-vlm>=0.3.11; sys_platform == 'darwin'",
   "transformers>=5.6.2",
 ]
 
@@ -52,18 +52,21 @@ cpu = [
   "mlx==0.31.1; sys_platform == 'linux'",
   "mlx-cpu==0.31.1; sys_platform == 'linux'",
   "mlx-lm; sys_platform == 'linux'",
+  "mlx-vlm>=0.3.11; sys_platform== 'linux'",
   "torch>=2.10.0; sys_platform == 'linux'",
 ]
 cuda12 = [
   "mlx==0.31.1; sys_platform == 'linux'",
   "mlx-cuda-12==0.31.1; sys_platform == 'linux'",
   "mlx-lm; sys_platform == 'linux'",
+  "mlx-vlm>=0.3.11; sys_platform== 'linux'",
   "torch>=2.10.0; sys_platform == 'linux'",
 ]
 cuda13 = [
   "mlx==0.31.1; sys_platform == 'linux'",
   "mlx-cuda-13==0.31.1; sys_platform == 'linux'",
   "mlx-lm; sys_platform == 'linux'",
+  "mlx-vlm>=0.3.11; sys_platform== 'linux'",
   "torch>=2.10.0; sys_platform == 'linux'",
 ]
 
@@ -138,11 +141,6 @@ stubPath = ".mlx_typings"
 
 [[tool.basedpyright.executionEnvironments]]
 root = "src/exo/worker/engines/image"
-reportMissingModuleSource = false
-
-# TODO: DSV4 source missing on Linux mlx-lm install — drop once upstream wheel ships it.
-[[tool.basedpyright.executionEnvironments]]
-root = "src/exo/worker/engines/mlx"
 reportMissingModuleSource = false
 
 [[tool.basedpyright.executionEnvironments]]
