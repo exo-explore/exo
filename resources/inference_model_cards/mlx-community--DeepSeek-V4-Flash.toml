@@ -1,0 +1,21 @@
+model_id = "mlx-community/DeepSeek-V4-Flash"
+n_layers = 43
+hidden_size = 4096
+num_key_value_heads = 1
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "deepseek"
+quantization = "8bit"
+base_model = "DeepSeek V4 Flash"
+capabilities = ["text", "thinking", "thinking_toggle"]
+reasoning_dialect = "tool_conditional"
+
+context_length = 1048576
+
+[storage_size]
+in_bytes = 155095760030
+
+# Source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash
+[sampling_defaults]
+temperature = 1.0
+top_p = 1.0

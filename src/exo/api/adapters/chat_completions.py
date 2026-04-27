@@ -131,9 +131,13 @@ async def chat_request_to_text_generation(
                         multimodal_content.append({"type": "text", "text": part.text})
                     else:
                         multimodal_content.append({"type": "image"})
-                chat_template_messages.append(
-                    {"role": msg.role, "content": multimodal_content}
-                )
+                multimodal_msg: dict[str, Any] = {
+                    "role": msg.role,
+                    "content": multimodal_content,
+                }
+                if msg.reasoning_content is not None:
+                    multimodal_msg["reasoning_content"] = msg.reasoning_content
+                chat_template_messages.append(multimodal_msg)
                 continue
             msg_copy = msg.model_copy(update={"content": content})
 

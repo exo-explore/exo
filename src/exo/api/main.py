@@ -1663,6 +1663,7 @@ class API:
                     quantization=card.quantization,
                     base_model=card.base_model,
                     capabilities=card.capabilities,
+                    reasoning_dialect=card.reasoning_dialect,
                     context_length=card.context_length,
                 )
                 for card in cards

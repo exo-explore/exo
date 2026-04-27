@@ -1670,7 +1670,15 @@ class AppStore {
               }
             }
           }
-          return { role: m.role, content: msgContent };
+          const out: {
+            role: string;
+            content: string;
+            reasoning_content?: string;
+          } = { role: m.role, content: msgContent };
+          if (m.role === "assistant" && m.thinking) {
+            out.reasoning_content = m.thinking;
+          }
+          return out;
         }),
       ];
 
@@ -1877,7 +1885,15 @@ class AppStore {
       const apiMessages = [
         systemPrompt,
         ...targetConversation.messages.slice(0, -1).map((m) => {
-          return { role: m.role, content: m.content };
+          const out: {
+            role: string;
+            content: string;
+            reasoning_content?: string;
+          } = { role: m.role, content: m.content };
+          if (m.role === "assistant" && m.thinking) {
+            out.reasoning_content = m.thinking;
+          }
+          return out;
         }),
       ];
 
@@ -2408,10 +2424,15 @@ class AppStore {
               contentParts.push({ type: "text", text: textContent });
             }
 
-            return {
-              role: m.role,
-              content: contentParts,
-            };
+            const out: {
+              role: string;
+              content: typeof contentParts;
+              reasoning_content?: string;
+            } = { role: m.role, content: contentParts };
+            if (m.role === "assistant" && m.thinking) {
+              out.reasoning_content = m.thinking;
+            }
+            return out;
           }
 
           // Text-only message (original path)
@@ -2429,10 +2450,15 @@ class AppStore {
             }
           }
 
-          return {
-            role: m.role,
-            content: msgContent,
-          };
+          const out: {
+            role: string;
+            content: string;
+            reasoning_content?: string;
+          } = { role: m.role, content: msgContent };
+          if (m.role === "assistant" && m.thinking) {
+            out.reasoning_content = m.thinking;
+          }
+          return out;
         }),
       ];
 

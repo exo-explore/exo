@@ -13,6 +13,23 @@ from exo.shared.types.common import ModelId, TruncatingString
 
 MessageRole = Literal["user", "assistant", "system", "developer", "tool"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+# How a model wants prior-turn reasoning content handled. Drives both the
+# server-side encoder (drop vs keep) and the integration configs we emit
+# (e.g. opencode's per-model `interleaved` flag).
+#   - "none":            model has no reasoning channel.
+#   - "post_last_user":  reasoning is only meaningful for the latest assistant
+#                        turn; older turns can drop it (drop_thinking=True).
+#   - "suffix":          reasoning is embedded in the assistant content as a
+#                        suffix/prefix; round-tripping content already covers
+#                        it (no separate `reasoning_content` round-trip).
+#   - "channel":         reasoning lives on a dedicated channel (Harmony, etc.)
+#                        and must be sent back verbatim every turn.
+#   - "tool_conditional": always round-trip when the conversation has tools;
+#                        the model relies on prior reasoning to chain tool
+#                        calls (DeepSeek V3.2 / V4).
+ReasoningDialect = Literal[
+    "none", "post_last_user", "suffix", "channel", "tool_conditional"
+]
 
 
 def resolve_reasoning_params(

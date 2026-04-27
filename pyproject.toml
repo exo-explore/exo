@@ -15,11 +15,11 @@ dependencies = [
   "huggingface-hub>=1.8.0",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
-  "exo-pyo3-bindings",                       # rust bindings
+  "exo-pyo3-bindings",                         # rust bindings
   "anyio==4.11.0",
   "mlx==0.31.2; sys_platform == 'darwin'",
   "mlx-lm; sys_platform=='darwin'",
-  "tiktoken>=0.12.0",                        # required for kimi k2 tokenizer
+  "tiktoken>=0.12.0",                          # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",
@@ -28,8 +28,8 @@ dependencies = [
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
-  "mlx-vlm>=0.3.11",
-  "transformers>=5.0.0,<5.4.0",
+  "mlx-vlm>=0.3.11; sys_platform == 'darwin'",
+  "transformers>=5.6.2",
 ]
 
 [project.scripts]
@@ -52,18 +52,21 @@ cpu = [
   "mlx==0.31.1; sys_platform == 'linux'",
   "mlx-cpu==0.31.1; sys_platform == 'linux'",
   "mlx-lm; sys_platform == 'linux'",
+  "mlx-vlm>=0.3.11; sys_platform== 'linux'",
   "torch>=2.10.0; sys_platform == 'linux'",
 ]
 cuda12 = [
   "mlx==0.31.1; sys_platform == 'linux'",
   "mlx-cuda-12==0.31.1; sys_platform == 'linux'",
   "mlx-lm; sys_platform == 'linux'",
+  "mlx-vlm>=0.3.11; sys_platform== 'linux'",
   "torch>=2.10.0; sys_platform == 'linux'",
 ]
 cuda13 = [
   "mlx==0.31.1; sys_platform == 'linux'",
   "mlx-cuda-13==0.31.1; sys_platform == 'linux'",
   "mlx-lm; sys_platform == 'linux'",
+  "mlx-vlm>=0.3.11; sys_platform== 'linux'",
   "torch>=2.10.0; sys_platform == 'linux'",
 ]
 
@@ -77,7 +80,7 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 [tool.uv.sources]
 exo-pyo3-bindings = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
-mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/fix-arrayscache-leak" }
+mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
 torch = [
   { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'cuda13' and extra != 'cpu' and extra != 'cuda12'" },
   { index = "pytorch-cu120", marker = "sys_platform == 'linux' and extra == 'cuda12' and extra != 'cpu' and extra != 'cuda13'" },
@@ -154,7 +157,7 @@ required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }, { extra = "cpu" }]]
-constraint-dependencies = ["transformers>=5.0.0,<5.4.0"]
+constraint-dependencies = ["transformers>=5.6.2"]
 override-dependencies = [
   "mlx==0.31.1; sys_platform=='linux'",
   "mlx; sys_platform=='darwin'",
