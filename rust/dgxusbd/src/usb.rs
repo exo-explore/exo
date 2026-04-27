@@ -636,7 +636,7 @@ impl NtbParametersReport {
     pub fn rx_parse_config(self) -> NtbParseConfig {
         NtbParseConfig {
             max_size: usize::try_from(self.ntb_in_max_size).unwrap_or(DEFAULT_NTB_MAX_SIZE),
-            datagram_alignment: sanitize_alignment(self.ndp_in_divisor),
+            datagram_alignment: 1,
             ..NtbParseConfig::default()
         }
     }

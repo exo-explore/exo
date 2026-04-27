@@ -44,7 +44,7 @@ impl Default for NtbParseConfig {
     fn default() -> Self {
         Self {
             max_size: DEFAULT_NTB_MAX_SIZE,
-            datagram_alignment: DEFAULT_DATAGRAM_ALIGNMENT,
+            datagram_alignment: 1,
             min_datagram_size: ETHERNET_HEADER_LEN,
         }
     }
