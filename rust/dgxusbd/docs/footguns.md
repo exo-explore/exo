@@ -104,6 +104,12 @@ Adding pair 2/3, aggregation, DHCP integration, routing, and reconnect loops sho
 
 Do not require received DPE datagram indexes to be 4-byte aligned. Live Mac NTBs used datagram index 30. The bridge should still enforce bounds, terminators, signatures, and minimum Ethernet-frame size, but a strict DPE-index alignment check drops valid traffic from this Mac.
 
+## Timeout Fairness Is Not A Throughput Dataplane
+
+Bounded drains are useful, but do not build the next bridge runtime around alternating blocking timeouts. A loop that sends a TAP budget and then waits for USB-IN traffic can directly cap one-way Spark-to-Mac throughput when no USB-IN traffic is pending. Prefer readiness-driven TAP drains plus either pollable USB readiness or independent USB/TAP workers. Use remaining event/byte budgets inside the drain functions so bounded tests remain exact.
+
+For CDC-NCM, batching multiple Ethernet frames per NTB is the main throughput lever. Reusable buffers, precomputed NTB parameters, and fewer per-frame allocations matter more than small formatting or parser cleanups once packet movement is correct.
+
 ## Do Not Store Secrets
 
 Do not commit sudo passwords, SSH keys, host-private credentials, or generated signing keys. Lab credentials should stay in the secure handoff/channel, not in repository docs.

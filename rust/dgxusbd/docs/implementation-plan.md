@@ -4,6 +4,10 @@ Last updated: 2026-04-27.
 
 This plan tracks implementation iterations. Each iteration should be small enough to commit, push, pull to the Spark, and test independently.
 
+## Numbering Note
+
+The first docs split probe, codec, TAP, bridge, and scheduler work into Iterations 1-5. During live review, the user-facing numbering collapsed the scheduler and cleanup work into Iteration 3b. From here, "Iteration 4" means the next active user-facing iteration: dataplane runtime and throughput correctness.
+
 ## Iteration 1: Probe And Dry-Run
 
 Purpose: confirm a Rust USB library can see and claim the Apple NCM interfaces without involving TAP or packet forwarding.
@@ -119,7 +123,7 @@ Completed changes:
 Implementation notes:
 
 - In this conversation, the CLI cleanup was called Iteration 3a and the scheduler/validation/baseline pass was called Iteration 3b. In this document's original numbering, those map to Iteration 5.
-- Simple budgets were enough to avoid the original single-direction drain loop, but `mio`, async, dedicated RX/TX workers, USB request pipelining, and NTB batching remain future throughput work.
+- Simple budgets were enough to avoid the original unlimited TAP drain, but the loop is still timeout-driven: after a full TAP budget it can wait for USB IN traffic even during one-way Spark-to-Mac traffic. That likely contributes to the asymmetric iperf baseline.
 
 Acceptance result:
 
@@ -128,9 +132,39 @@ Acceptance result:
 - TCP and UDP iperf3 tests can be run in both directions with documented commands.
 - Measured throughput is no longer treated as an unknown side effect of the smoke test.
 
-## Iteration 6: Operational Robustness
+## Active Iteration 4: Dataplane Runtime And Throughput Correctness
 
-Purpose: make the bridge useful enough for repeated lab testing.
+Purpose: replace the timeout-shaped MVP loop with a real forwarding dataplane before spending more time on operational polish.
+
+Proposed changes:
+
+- First, fix the review's small correctness issues:
+  - make `--max-events` exact by passing remaining event budgets into the drain functions
+  - rename or alias `--usb-timeout-ms` as the USB write timeout and update help text
+  - add NTB builder tests for multi-frame alignment padding and aggregate-size rejection
+- Move forwarding out of the CLI call path into a dataplane object with explicit start, stop, and counters, similar in spirit to `rust/babblerd/src/dataplane.rs`.
+- Prefer readiness or real concurrency over timeout fairness:
+  - register TAP readiness with `mio` where possible
+  - if `nusb` endpoints cannot be readiness-polled, use independent TAP-to-USB and USB-to-TAP workers with blocking endpoint operations rather than alternating directions in one loop
+- Keep hot-path state precomputed before forwarding starts:
+  - selected NCM pair, endpoint addresses, max packet sizes
+  - NTB parse/build configs, max NTB sizes, datagram alignment, max datagram count
+  - reusable TAP and NTB buffers
+  - counters and stop/cancellation channels
+- Batch multiple TAP Ethernet frames into each CDC-NCM NTB up to negotiated size/count limits. Do not copy babblerd's one-packet-per-datagram shape; for CDC-NCM, batching is the main throughput lever.
+- Investigate queued or multiple in-flight USB transfers if `nusb` exposes an API that can do this safely.
+- Rerun the same TCP/UDP iperf baseline in both directions and compare with the Iteration 3b numbers in `status.md`.
+
+Acceptance:
+
+- One-way Spark-to-Mac traffic is not forced to wait on idle USB-IN polling after every TAP budget.
+- `--max-events` stops at the requested count, not up to one budget later.
+- Bridge counters remain accurate under concurrent or readiness-driven forwarding.
+- Throughput baseline improves materially or the remaining bottleneck is identified with counters/logs.
+
+## Later Iteration: Operational Robustness
+
+Purpose: make the bridge useful enough for repeated lab testing once the hot dataplane shape is sound.
 
 Proposed changes:
 

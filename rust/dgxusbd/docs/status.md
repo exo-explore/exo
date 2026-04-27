@@ -262,7 +262,23 @@ Interpretation:
 - Low/asymmetric throughput is still expected for this userspace MVP because it uses one synchronous loop, sends one Ethernet frame per NTB, allocates per TAP frame, and does not batch or pipeline USB transfers.
 - Spark-to-Mac `iperf3 -u -b 0` is not a useful capacity test. It is an overload test where Linux injects traffic far faster than the current bridge can drain it.
 
-Next proposed iteration:
+Review response:
 
-- Keep operational polish next: clearer command docs, optional IP assignment helper, pcap/debug dump, reconnect handling, and bridge shutdown/cleanup behavior.
-- If throughput becomes the priority instead, focus on batching multiple Ethernet frames per NTB, reusing buffers, and deeper USB read/write queueing before chasing small parser or formatting cleanups.
+- The timeout-driven fairness concern is valid. The bridge now avoids unlimited TAP draining, but every full TAP budget is still followed by a USB-IN read attempt. With the default 1 ms read timeout, one-way Spark-to-Mac traffic can be shaped by idle waits for traffic that is not arriving.
+- The `--max-events` concern is valid. The current loop can overshoot by up to a TAP/USB budget because it checks the limit only at the top of the outer loop.
+- The USB timeout help text is stale. `--usb-timeout-ms` is now the write timeout in bridge mode; read timeout is controlled separately by `--usb-read-timeout-ms`.
+- The NTB builder preflight needs broader tests before batching work grows: multi-frame alignment padding and too-large aggregate output should be covered explicitly.
+- Babblerd has the better runtime shape for a hot dataplane: a dedicated dataplane object/thread, readiness-driven drains, precompiled hot-path state, and low-churn storage. `dgxusbd` should borrow that shape, but not babblerd's one-packet-per-datagram behavior because CDC-NCM throughput depends heavily on NTB batching.
+
+Next proposed iteration, user-facing Iteration 4:
+
+- Treat Iteration 4 as dataplane runtime and throughput correctness, not generic operational polish.
+- Start with the small review fixes: exact `--max-events`, write-timeout naming/help, and the missing NTB builder tests.
+- Move forwarding into a dataplane module/object with explicit start, stop, and counters.
+- Replace timeout fairness with readiness or real concurrency. If `nusb` endpoints cannot be readiness-polled, use independent TAP-to-USB and USB-to-TAP workers with blocking endpoint operations.
+- Add reusable buffers and multi-frame NTB batching before deeper USB pipelining.
+- Rerun the same iperf TCP/UDP matrix and compare against the baseline above.
+
+Deferred until after Iteration 4:
+
+- Reconnect handling, pair-selection polish, optional pair 2/3 support, pcap/debug dump, IP assignment helpers, and general shutdown/cleanup ergonomics.

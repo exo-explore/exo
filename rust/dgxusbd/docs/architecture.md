@@ -100,6 +100,16 @@ Minimal runtime:
 
 MVP can use one pair only. Pair 2/3 can be added after the first pair is proven.
 
+Current bridge status: the MVP still uses one synchronous loop with bounded drains and USB read/write timeouts. That is acceptable for proof-of-viability, but it is not the right hot-path shape for throughput because one direction can insert idle waits into the other direction.
+
+Target dataplane shape for the next iteration:
+
+- Keep CLI/control setup outside the hot path.
+- Move forwarding into a dataplane object with explicit start, stop, and counters.
+- Use readiness for TAP, and either readiness or independent workers for USB endpoints. If `nusb` bulk endpoints cannot be polled like file descriptors, prefer one TAP-to-USB worker and one USB-to-TAP worker over one alternating timeout loop.
+- Precompute selected pair parameters, endpoint addresses, NTB parse/build configs, max sizes, alignment, and reusable buffers before entering the forwarding path.
+- Batch multiple Ethernet frames into each CDC-NCM NTB. Babblerd's dataplane is a good model for runtime structure, but its one-packet-per-datagram forwarding shape should not be copied for CDC-NCM.
+
 ## Non-Goals For The First Iteration
 
 - No kernel module patching.
