@@ -9,7 +9,7 @@ use color_eyre::eyre::{self, Context as _, OptionExt as _};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use mio::unix::SourceFd;
 use mio::{Events, Interest, Poll, Token};
-use nusb::transfer::{Bulk, In, Out, TransferError};
+use nusb::transfer::{Buffer, Bulk, In, Out, TransferError};
 
 use crate::bridge::{BridgeCounters, BridgeOptions, BridgeReport};
 use crate::ncm::{
@@ -56,6 +56,9 @@ struct TapToUsbWorker {
     ep_out: nusb::Endpoint<Bulk, Out>,
     build_config: NtbBuildConfig,
     write_timeout: Duration,
+    write_queue_depth: usize,
+    write_transfer_size: usize,
+    write_buffers: Vec<Buffer>,
     tap_buffer: Vec<u8>,
     batch_frames: Vec<Vec<u8>>,
     batch_limit: usize,
@@ -113,6 +116,8 @@ impl BridgeDataplane {
             .map_or_else(NtbBuildConfig::default, NtbBuildConfig::from);
 
         let read_size = transfer_size(parse_config.max_size, ep_in.max_packet_size());
+        let write_transfer_size =
+            write_transfer_size(build_config.max_size, ep_out.max_packet_size());
         let batch_limit = batch_limit(
             options.tap_budget_frames.max(1),
             usize::from(tap.mtu) + ETHERNET_HEADER_LEN,
@@ -126,6 +131,9 @@ impl BridgeDataplane {
             ep_out,
             build_config,
             write_timeout: options.usb_write_timeout,
+            write_queue_depth: options.usb_write_queue_depth.max(1),
+            write_transfer_size,
+            write_buffers: Vec::with_capacity(options.usb_write_queue_depth.max(1)),
             tap_buffer: vec![0; usize::from(tap.mtu) + ETHERNET_HEADER_LEN + 64],
             batch_frames: Vec::with_capacity(batch_limit),
             batch_limit,
@@ -307,6 +315,7 @@ impl AtomicBridgeCounters {
 
 impl TapToUsbWorker {
     fn run(mut self) -> eyre::Result<()> {
+        self.allocate_write_buffers();
         let mut poll = Poll::new().wrap_err("creating TAP poller")?;
         let mut events = Events::with_capacity(8);
         let tap_raw_fd = self.tap.as_ref().as_raw_fd();
@@ -318,6 +327,7 @@ impl TapToUsbWorker {
         while !self.shared.should_stop() {
             poll.poll(&mut events, Some(TAP_POLL_INTERVAL))
                 .wrap_err("polling TAP fd")?;
+            self.reclaim_completed_writes()?;
             for event in &events {
                 if event.token() == TOKEN_TAP {
                     self.drain_tap_ready()?;
@@ -325,6 +335,7 @@ impl TapToUsbWorker {
             }
         }
 
+        self.cancel_pending_writes();
         Ok(())
     }
 
@@ -370,7 +381,7 @@ impl TapToUsbWorker {
         }
         let refs: Vec<_> = frames.iter().map(Vec::as_slice).collect();
         match crate::ncm::build_ntb16(self.sequence, &refs, self.build_config) {
-            Ok(ntb) => self.send_ntb(ntb),
+            Ok(ntb) => self.send_ntb(&ntb),
             Err(NcmError::BuiltNtbTooLarge { .. }) if frames.len() > 1 => {
                 let mid = frames.len() / 2;
                 let (left, right) = frames.split_at(mid);
@@ -381,17 +392,91 @@ impl TapToUsbWorker {
         }
     }
 
-    fn send_ntb(&mut self, ntb: Vec<u8>) -> eyre::Result<()> {
+    fn send_ntb(&mut self, ntb: &[u8]) -> eyre::Result<()> {
         if !self.shared.inc_usb_ntbs_tx() {
             return Ok(());
         }
-        self.ep_out
-            .transfer_blocking(ntb.into(), self.write_timeout)
-            .status
-            .map_err(usb_transfer_error)
-            .wrap_err("failed to write NTB16 to USB OUT endpoint")?;
+        let mut buffer = self.next_write_buffer(ntb.len())?;
+        buffer.extend_from_slice(&ntb);
+        self.ep_out.submit(buffer);
         self.sequence = self.sequence.wrapping_add(1);
+        self.reclaim_completed_writes()?;
         Ok(())
+    }
+
+    fn allocate_write_buffers(&mut self) {
+        while self.write_buffers.len() < self.write_queue_depth {
+            self.write_buffers
+                .push(self.ep_out.allocate(self.write_transfer_size));
+        }
+    }
+
+    fn next_write_buffer(&mut self, min_capacity: usize) -> eyre::Result<Buffer> {
+        while self.write_buffers.is_empty() {
+            if self.ep_out.pending() == 0 {
+                self.write_buffers.push(
+                    self.ep_out
+                        .allocate(self.write_transfer_size.max(min_capacity)),
+                );
+                continue;
+            }
+            if !self.reclaim_one_write(self.write_timeout)? {
+                return Err(eyre::eyre!(
+                    "timed out waiting for USB OUT completion after {:?}",
+                    self.write_timeout
+                ));
+            }
+        }
+
+        let mut buffer = self
+            .write_buffers
+            .pop()
+            .ok_or_eyre("USB OUT idle buffer queue unexpectedly empty")?;
+        if buffer.capacity() < min_capacity {
+            buffer = self.ep_out.allocate(min_capacity);
+        }
+        buffer.clear();
+        Ok(buffer)
+    }
+
+    fn reclaim_completed_writes(&mut self) -> eyre::Result<()> {
+        while self.ep_out.pending() > 0 {
+            if !self.reclaim_one_write(Duration::ZERO)? {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn reclaim_one_write(&mut self, timeout: Duration) -> eyre::Result<bool> {
+        let Some(completion) = self.ep_out.wait_next_complete(timeout) else {
+            return Ok(false);
+        };
+        let mut buffer = completion.buffer;
+        match completion.status {
+            Ok(()) => {
+                buffer.clear();
+                self.write_buffers.push(buffer);
+                Ok(true)
+            }
+            Err(TransferError::Cancelled) if self.shared.should_stop() => Ok(true),
+            Err(err) => {
+                Err(usb_transfer_error(err)).wrap_err("failed to complete USB OUT transfer")
+            }
+        }
+    }
+
+    fn cancel_pending_writes(&mut self) {
+        self.ep_out.cancel_all();
+        while self.ep_out.pending() > 0 {
+            if self
+                .ep_out
+                .wait_next_complete(Duration::from_millis(100))
+                .is_none()
+            {
+                break;
+            }
+        }
     }
 }
 
@@ -512,6 +597,10 @@ fn transfer_size(configured_size: usize, max_packet_size: usize) -> usize {
     let packet = max_packet_size.max(1);
     let rounded = capped / packet * packet;
     rounded.max(packet).min(DEFAULT_NTB_MAX_SIZE.max(packet))
+}
+
+fn write_transfer_size(configured_size: usize, max_packet_size: usize) -> usize {
+    configured_size.clamp(max_packet_size.max(1), usize::from(u16::MAX))
 }
 
 fn batch_limit(configured_limit: usize, frame_capacity: usize, config: NtbBuildConfig) -> usize {

@@ -94,6 +94,10 @@ pub enum Command {
         /// Number of USB bulk IN transfers to keep queued.
         #[arg(long, default_value_t = crate::bridge::DEFAULT_BRIDGE_USB_READ_QUEUE_DEPTH)]
         usb_read_queue_depth: usize,
+
+        /// Number of USB bulk OUT transfers to keep queued.
+        #[arg(long, default_value_t = crate::bridge::DEFAULT_BRIDGE_USB_WRITE_QUEUE_DEPTH)]
+        usb_write_queue_depth: usize,
     },
 }
 

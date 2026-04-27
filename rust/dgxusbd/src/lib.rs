@@ -82,6 +82,7 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
             usb_write_timeout_ms,
             usb_read_timeout_ms,
             usb_read_queue_depth,
+            usb_write_queue_depth,
             tap_budget_frames,
             usb_budget_ntbs,
         } => {
@@ -108,6 +109,7 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
                 tap_budget_frames,
                 usb_budget_ntbs,
                 usb_read_queue_depth,
+                usb_write_queue_depth,
             })?;
             print!("{}", render_bridge_report(&report));
         }

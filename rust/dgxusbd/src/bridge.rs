@@ -8,6 +8,7 @@ use crate::usb::{NcmPair, NcmSetupReport, OpenPairOptions, render_setup_report};
 
 pub const DEFAULT_BRIDGE_USB_TIMEOUT: Duration = Duration::from_millis(100);
 pub const DEFAULT_BRIDGE_USB_READ_QUEUE_DEPTH: usize = 8;
+pub const DEFAULT_BRIDGE_USB_WRITE_QUEUE_DEPTH: usize = 8;
 
 #[derive(Clone, Debug)]
 pub struct BridgeOptions {
@@ -20,6 +21,7 @@ pub struct BridgeOptions {
     pub tap_budget_frames: usize,
     pub usb_budget_ntbs: usize,
     pub usb_read_queue_depth: usize,
+    pub usb_write_queue_depth: usize,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
