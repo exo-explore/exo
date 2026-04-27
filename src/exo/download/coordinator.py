@@ -33,6 +33,7 @@ from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadFailed,
     DownloadOngoing,
+    DownloadPaused,
     DownloadPending,
     DownloadProgress,
 )
@@ -153,8 +154,8 @@ class DownloadCoordinator:
                     continue
 
                 match cmd.command:
-                    case StartDownload(shard_metadata=shard):
-                        await self._start_download(shard)
+                    case StartDownload(shard_metadata=shard, repo_url=repo_url):
+                        await self._start_download(shard, repo_url=repo_url)
                     case DeleteDownload(model_id=model_id):
                         await self._delete_download(model_id)
                     case CancelDownload(model_id=model_id):
@@ -162,7 +163,7 @@ class DownloadCoordinator:
 
     async def _cancel_download(self, model_id: ModelId) -> None:
         if model_id in self.active_downloads and model_id in self.download_status:
-            logger.info(f"Cancelling download for {model_id}")
+            logger.info(f"Pausing download for {model_id}")
             self.active_downloads[model_id].cancel()
             current_status = self.download_status[model_id]
             downloaded = Memory()
@@ -170,19 +171,19 @@ class DownloadCoordinator:
             if isinstance(current_status, DownloadOngoing):
                 downloaded = current_status.download_progress.downloaded
                 total = current_status.download_progress.total
-            pending = DownloadPending(
+            paused = DownloadPaused(
                 shard_metadata=current_status.shard_metadata,
                 node_id=self.node_id,
                 model_directory=self._default_model_dir(model_id),
                 downloaded=downloaded,
                 total=total,
             )
-            self.download_status[model_id] = pending
+            self.download_status[model_id] = paused
             await self.event_sender.send(
-                NodeDownloadProgress(download_progress=pending)
+                NodeDownloadProgress(download_progress=paused)
             )
 
-    async def _start_download(self, shard: ShardMetadata) -> None:
+    async def _start_download(self, shard: ShardMetadata, repo_url: str | None = None) -> None:
         model_id = shard.model_card.model_id
 
         # Check if already downloading, complete, or recently failed
@@ -259,10 +260,10 @@ class DownloadCoordinator:
             return
 
         # Start actual download
-        self._start_download_task(shard, initial_progress)
+        self._start_download_task(shard, initial_progress, repo_url=repo_url)
 
     def _start_download_task(
-        self, shard: ShardMetadata, initial_progress: RepoDownloadProgress
+        self, shard: ShardMetadata, initial_progress: RepoDownloadProgress, repo_url: str | None = None
     ) -> None:
         model_id = shard.model_card.model_id
 
@@ -281,7 +282,7 @@ class DownloadCoordinator:
         async def download_wrapper(cancel_scope: anyio.CancelScope) -> None:
             try:
                 with cancel_scope:
-                    await self.shard_downloader.ensure_shard(shard)
+                    await self.shard_downloader.ensure_shard(shard, repo_url=repo_url)
             except Exception as e:
                 logger.error(f"Download failed for {model_id}: {e}")
                 failed = DownloadFailed(

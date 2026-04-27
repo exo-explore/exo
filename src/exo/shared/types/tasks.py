@@ -42,6 +42,7 @@ class CreateRunner(BaseTask):  # emitted by Worker
 
 class DownloadModel(BaseTask):  # emitted by Worker
     shard_metadata: ShardMetadata
+    repo_url: str | None = None
 
 
 class LoadModel(BaseTask):  # emitted by Worker

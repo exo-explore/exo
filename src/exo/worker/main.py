@@ -193,6 +193,7 @@ class Worker:
                 self.image_cache,
                 self._instance_backoff,
                 self._download_backoff,
+                self.state.node_network,
             )
             if task is None:
                 continue
@@ -225,7 +226,7 @@ class Worker:
                             task_id=task.task_id, task_status=TaskStatus.Complete
                         )
                     )
-                case DownloadModel(shard_metadata=shard):
+                case DownloadModel(shard_metadata=shard, repo_url=repo_url):
                     model_id = shard.model_card.model_id
                     self._download_backoff.record_attempt(model_id)
 
@@ -252,12 +253,15 @@ class Worker:
                             )
                         )
                     else:
+                        if repo_url:
+                            logger.info(f"P2P download available for {model_id} from {repo_url}")
                         await self.download_command_sender.send(
                             ForwarderDownloadCommand(
                                 origin=self._system_id,
                                 command=StartDownload(
                                     target_node_id=self.node_id,
                                     shard_metadata=shard,
+                                    repo_url=repo_url,
                                 ),
                             )
                         )

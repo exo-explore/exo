@@ -47,8 +47,17 @@ class DownloadOngoing(BaseDownloadProgress):
     download_progress: DownloadProgressData
 
 
+class DownloadPaused(BaseDownloadProgress):
+    downloaded: Memory = Memory()
+    total: Memory = Memory()
+
+
 DownloadProgress = (
-    DownloadPending | DownloadCompleted | DownloadFailed | DownloadOngoing
+    DownloadPending
+    | DownloadCompleted
+    | DownloadFailed
+    | DownloadOngoing
+    | DownloadPaused
 )
 
 

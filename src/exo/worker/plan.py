@@ -2,8 +2,10 @@
 
 from collections.abc import Mapping, Sequence
 
+from exo.download.peer_discovery import find_peer_repo_url
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, ModelId, NodeId
+from exo.shared.types.profiling import NodeNetworkInfo
 from exo.shared.types.tasks import (
     CancelTask,
     ConnectToGroup,
@@ -24,6 +26,7 @@ from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadFailed,
     DownloadOngoing,
+    DownloadPaused,
     DownloadProgress,
 )
 from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
@@ -56,6 +59,7 @@ def plan(
     image_cache: Mapping[Base64ImageHash, Base64Image],
     instance_backoff: KeyedBackoff[InstanceId],
     download_backoff: KeyedBackoff[ModelId],
+    node_network: Mapping[NodeId, NodeNetworkInfo] | None = None,
 ) -> Task | None:
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
@@ -63,7 +67,7 @@ def plan(
         or _kill_runner(runners, all_runners, instances)
         or _create_runner(node_id, runners, all_runners, instances, instance_backoff)
         or _model_needs_download(
-            node_id, runners, global_download_status, download_backoff
+            node_id, runners, global_download_status, download_backoff, node_network or {}
         )
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
@@ -141,6 +145,7 @@ def _model_needs_download(
     runners: Mapping[RunnerId, RunnerSupervisor],
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
     download_backoff: KeyedBackoff[ModelId],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
 ) -> DownloadModel | None:
     local_downloads = global_download_status.get(node_id, [])
     download_status = {
@@ -155,15 +160,19 @@ def _model_needs_download(
                 model_id not in download_status
                 or not isinstance(
                     download_status[model_id],
-                    (DownloadOngoing, DownloadCompleted, DownloadFailed),
+                    (DownloadOngoing, DownloadCompleted, DownloadFailed, DownloadPaused),
                 )
             )
             and download_backoff.should_proceed(model_id)
         ):
+            repo_url = find_peer_repo_url(
+                node_id, model_id, global_download_status, node_network
+            )
             # We don't invalidate download_status randomly in case a file gets deleted on disk
             return DownloadModel(
                 instance_id=runner.bound_instance.instance.instance_id,
                 shard_metadata=runner.bound_instance.bound_shard,
+                repo_url=repo_url,
             )
 
 

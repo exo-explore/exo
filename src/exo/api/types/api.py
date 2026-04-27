@@ -422,6 +422,7 @@ class ImageListResponse(BaseModel, frozen=True):
 class StartDownloadParams(FrozenModel):
     target_node_id: NodeId
     shard_metadata: ShardMetadata
+    repo_url: str | None = None
 
 
 class StartDownloadResponse(FrozenModel):
@@ -438,6 +439,15 @@ class CancelDownloadParams(FrozenModel):
 
 
 class CancelDownloadResponse(FrozenModel):
+    command_id: CommandId
+
+
+class PauseDownloadParams(FrozenModel):
+    target_node_id: NodeId
+    model_id: ModelId
+
+
+class PauseDownloadResponse(FrozenModel):
     command_id: CommandId
 
 

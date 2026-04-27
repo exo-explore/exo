@@ -20,7 +20,7 @@ from exo.shared.types.commands import (
 from exo.shared.types.common import NodeId, SystemId
 from exo.shared.types.events import Event, NodeDownloadProgress
 from exo.shared.types.memory import Memory
-from exo.shared.types.worker.downloads import DownloadPending
+from exo.shared.types.worker.downloads import DownloadPaused
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 from exo.utils.channels import Receiver, Sender, channel
 
@@ -66,6 +66,7 @@ class SlowShardDownloader(ShardDownloader):
         self,
         shard: ShardMetadata,
         config_only: bool = False,  # noqa: ARG002
+        repo_url: str | None = None,  # noqa: ARG002
     ) -> Path:
         # Fire an in-progress callback, then block forever (until cancelled)
         progress = RepoDownloadProgress(
@@ -149,17 +150,17 @@ def _setup_coordinator(
     return coordinator, cmd_send, event_recv
 
 
-async def _wait_for_pending(
+async def _wait_for_paused(
     event_recv: Receiver[Event], model_id: ModelId, timeout: float = 2.0
-) -> DownloadPending | None:
-    """Drain events until we see a DownloadPending for the given model, or timeout."""
+) -> DownloadPaused | None:
+    """Drain events until we see a DownloadPaused for the given model, or timeout."""
     try:
         async with asyncio.timeout(timeout):
             while True:
                 event = await event_recv.receive()
                 if (
                     isinstance(event, NodeDownloadProgress)
-                    and isinstance(event.download_progress, DownloadPending)
+                    and isinstance(event.download_progress, DownloadPaused)
                     and event.download_progress.shard_metadata.model_card.model_id
                     == model_id
                 ):
@@ -169,7 +170,7 @@ async def _wait_for_pending(
 
 
 async def test_cancel_active_download_transitions_to_pending() -> None:
-    """Cancelling an in-progress download should emit a DownloadPending event
+    """Cancelling an in-progress download should emit a DownloadPaused event
     and remove the model from active_downloads."""
     slow_downloader = SlowShardDownloader()
     coordinator, cmd_send, event_recv = _setup_coordinator(slow_downloader)
@@ -189,7 +190,7 @@ async def test_cancel_active_download_transitions_to_pending() -> None:
         # Wait for the download to actually start (blocking in ensure_shard)
         await asyncio.wait_for(slow_downloader.download_started.wait(), timeout=2.0)
 
-        # Drain any events emitted before the cancel (initial DownloadPending, DownloadOngoing)
+        # Drain any events emitted before the cancel (initial DownloadPaused, DownloadOngoing)
         while True:
             try:
                 async with asyncio.timeout(0.1):
@@ -205,9 +206,9 @@ async def test_cancel_active_download_transitions_to_pending() -> None:
             )
         )
 
-        # Should receive a DownloadPending event with preserved progress
-        pending = await _wait_for_pending(event_recv, MODEL_ID)
-        assert pending is not None, "Cancel should emit DownloadPending"
+        # Should receive a DownloadPaused event with preserved progress
+        pending = await _wait_for_paused(event_recv, MODEL_ID)
+        assert pending is not None, "Pause should emit DownloadPaused"
         assert pending.shard_metadata.model_card.model_id == MODEL_ID
         assert pending.total == Memory.from_mb(100), "Should preserve total bytes"
 
@@ -218,7 +219,7 @@ async def test_cancel_active_download_transitions_to_pending() -> None:
         assert MODEL_ID not in coordinator.active_downloads
         # But should still be in download_status as pending
         assert MODEL_ID in coordinator.download_status
-        assert isinstance(coordinator.download_status[MODEL_ID], DownloadPending)
+        assert isinstance(coordinator.download_status[MODEL_ID], DownloadPaused)
     finally:
         await coordinator.shutdown()
         coordinator_task.cancel()
@@ -242,8 +243,8 @@ async def test_cancel_nonexistent_download_is_noop() -> None:
             )
         )
 
-        # Should NOT receive any DownloadPending event
-        pending = await _wait_for_pending(event_recv, MODEL_ID, timeout=0.5)
+        # Should NOT receive any DownloadPaused event
+        pending = await _wait_for_paused(event_recv, MODEL_ID, timeout=0.5)
         assert pending is None, "Cancel of non-existent download should not emit events"
 
         # Coordinator state should be empty
@@ -281,8 +282,8 @@ async def test_cancel_then_resume_download() -> None:
                 command=CancelDownload(target_node_id=NODE_ID, model_id=MODEL_ID),
             )
         )
-        pending = await _wait_for_pending(event_recv, MODEL_ID)
-        assert pending is not None, "Cancel should emit DownloadPending"
+        pending = await _wait_for_paused(event_recv, MODEL_ID)
+        assert pending is not None, "Pause should emit DownloadPaused"
 
         await asyncio.sleep(0.05)
 

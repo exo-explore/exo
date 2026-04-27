@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hashlib
 import os
 import shutil
@@ -525,6 +526,53 @@ async def calc_hash(path: Path, hash_type: Literal["sha1", "sha256"] = "sha1") -
     return hasher.hexdigest()
 
 
+def _sha256_sidecar_path(file_path: Path) -> Path:
+    """Sidecar location for caching a SHA256 hex digest next to its file.
+
+    A separate ``<file>.sha256`` lets the P2P file server emit
+    ``X-File-SHA256`` without re-hashing on every request, and lets the
+    receiver verify what it just downloaded against the same hash the
+    source node verified at HF-download time.
+    """
+    return file_path.with_suffix(file_path.suffix + ".sha256")
+
+
+async def write_sha256_sidecar(file_path: Path, digest: str) -> None:
+    """Best-effort write of a SHA256 sidecar. Failures are logged but never
+    raise — a missing sidecar just means peers downloading from this node
+    won't get hash verification, not that the file itself is bad."""
+    sidecar = _sha256_sidecar_path(file_path)
+    try:
+        async with aiofiles.open(sidecar, "w") as f:
+            await f.write(digest + "\n")
+    except OSError as e:
+        logger.warning(f"Could not write sha256 sidecar for {file_path}: {e}")
+
+
+def _parse_x_file_sha256(headers_text: str) -> str | None:
+    """Pull the ``X-File-SHA256`` value out of a curl ``-D`` header dump.
+
+    Curl with ``-C -`` (resume) may produce more than one response in the
+    dump if the server redirects or the resume protocol does a separate
+    HEAD; we walk the lines and take the *last* matching header so the
+    final response wins.
+    """
+    found: str | None = None
+    for raw_line in headers_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        prefix, _, value = line.partition(":")
+        if prefix.strip().lower() == "x-file-sha256":
+            value = value.strip()
+            if (
+                len(value) == 64
+                and all(c in "0123456789abcdef" for c in value.lower())
+            ):
+                found = value
+    return found
+
+
 async def file_meta(
     model_id: ModelId, revision: str, path: str, redirected_location: str | None = None
 ) -> tuple[int, str]:
@@ -570,12 +618,15 @@ async def download_file_with_retry(
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
     on_connection_lost: Callable[[], None] = lambda: None,
     skip_internet: bool = False,
+    repo_url: str | None = None,
+    session: aiohttp.ClientSession | None = None,
+    expected_size: int = 0,
 ) -> Path:
     n_attempts = 3
     for attempt in range(n_attempts):
         try:
             return await _download_file(
-                model_id, revision, path, target_dir, on_progress, skip_internet
+                model_id, revision, path, target_dir, on_progress, skip_internet, repo_url=repo_url, session=session, expected_size=expected_size
             )
         except HuggingFaceAuthenticationError:
             raise
@@ -610,11 +661,14 @@ async def _download_file(
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
     skip_internet: bool = False,
+    repo_url: str | None = None,
+    session: aiohttp.ClientSession | None = None,
+    expected_size: int = 0,
 ) -> Path:
     target_path = target_dir / path
 
     if await aios.path.exists(target_path):
-        if skip_internet:
+        if skip_internet or repo_url:
             return target_path
 
         local_size = (await aios.stat(target_path)).st_size
@@ -642,6 +696,14 @@ async def _download_file(
         )
 
     await aios.makedirs((target_dir / path).parent, exist_ok=True)
+
+    if repo_url:
+        # P2P download from peer file server — no auth, no hash verification
+        # Don't share the HF session; P2P is local with no TLS overhead
+        return await _download_file_from_peer(
+            repo_url, model_id, path, target_dir, on_progress, total_bytes=expected_size
+        )
+
     length, etag = await file_meta(model_id, revision, path)
     remote_hash = etag[:-5] if etag.endswith("-gzip") else etag
     partial_path = target_dir / f"{path}.partial"
@@ -656,28 +718,35 @@ async def _download_file(
         if resume_byte_pos:
             headers["Range"] = f"bytes={resume_byte_pos}-"
         n_read = resume_byte_pos or 0
-        async with (
-            create_http_session(timeout_profile="long") as session,
-            session.get(url, headers=headers) as r,
-        ):
-            if r.status == 404:
-                raise FileNotFoundError(f"File not found: {url}")
-            if r.status in [401, 403]:
-                msg = await _build_auth_error_message(r.status, model_id)
-                raise HuggingFaceAuthenticationError(msg)
-            assert r.status in [200, 206], (
-                f"Failed to download {path} from {url}: {r.status}"
-            )
-            async with aiofiles.open(
-                partial_path, "ab" if resume_byte_pos else "wb"
-            ) as f:
-                while chunk := await r.content.read(8 * 1024 * 1024):
-                    n_read = n_read + (await f.write(chunk))
-                    on_progress(n_read, length, False)
 
-    final_hash = await calc_hash(
-        partial_path, hash_type="sha256" if len(remote_hash) == 64 else "sha1"
+        async def _do_hf_download(s: aiohttp.ClientSession) -> None:
+            nonlocal n_read
+            async with s.get(url, headers=headers) as r:
+                if r.status == 404:
+                    raise FileNotFoundError(f"File not found: {url}")
+                if r.status in [401, 403]:
+                    msg = await _build_auth_error_message(r.status, model_id)
+                    raise HuggingFaceAuthenticationError(msg)
+                assert r.status in [200, 206], (
+                    f"Failed to download {path} from {url}: {r.status}"
+                )
+                async with aiofiles.open(
+                    partial_path, "ab" if resume_byte_pos else "wb"
+                ) as f:
+                    while chunk := await r.content.read(8 * 1024 * 1024):
+                        n_read = n_read + (await f.write(chunk))
+                        on_progress(n_read, length, False)
+
+        if session is not None:
+            await _do_hf_download(session)
+        else:
+            async with create_http_session(timeout_profile="long") as fallback_session:
+                await _do_hf_download(fallback_session)
+
+    hash_type: Literal["sha1", "sha256"] = (
+        "sha256" if len(remote_hash) == 64 else "sha1"
     )
+    final_hash = await calc_hash(partial_path, hash_type=hash_type)
     integrity = final_hash == remote_hash
     if not integrity:
         try:
@@ -687,9 +756,127 @@ async def _download_file(
         raise Exception(
             f"Downloaded file {target_dir / path} has hash {final_hash} but remote hash is {remote_hash}"
         )
-    await aios.rename(partial_path, target_dir / path)
+    target_path = target_dir / path
+    await aios.rename(partial_path, target_path)
+    # If HF gave us a SHA256 (LFS-tracked safetensors etc.), drop a sidecar so
+    # this node can serve the file to peers via the P2P file server with an
+    # ``X-File-SHA256`` header. SHA1 etags (small text files) are skipped —
+    # those don't need P2P integrity verification, they're tiny and re-fetch
+    # from HF if anything looks off.
+    if hash_type == "sha256":
+        await write_sha256_sidecar(target_path, final_hash)
     on_progress(length, length, True)
-    return target_dir / path
+    return target_path
+
+
+async def _download_file_from_peer(
+    repo_url: str,
+    model_id: ModelId,
+    path: str,
+    target_dir: Path,
+    on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
+    total_bytes: int = 0,
+) -> Path:
+    """Download a file from a peer's file server over the local network.
+
+    Uses curl subprocess for zero-copy transfer — data goes from socket to
+    disk entirely in C without passing through Python.
+
+    Verification: if the peer's response includes an ``X-File-SHA256``
+    header, we hash the downloaded bytes after the transfer and refuse to
+    rename ``.partial → final`` unless they match. The header is best-effort
+    on the server side (only present when the source node has a sidecar);
+    if absent we skip verification, log debug, and proceed. The outer
+    retry loop in :func:`download_file_with_retry` re-invokes us on any
+    failure (non-zero curl exit, hash mismatch, 503 from the server when
+    it's at its concurrency cap), and ``-C -`` auto-resumes from whatever
+    bytes the previous attempt landed.
+    """
+    target_path = target_dir / path
+    url = f"{repo_url}/{model_id}/{path}"
+    partial_path = target_dir / f"{path}.partial"
+    headers_dump = target_dir / f"{path}.headers"
+
+    # Build curl command: -C - auto-resume, -f fail on HTTP errors,
+    # -D headers_dump capture response headers (so we can read X-File-SHA256
+    # without a second round-trip).
+    cmd = [
+        "curl", "-f", "-s", "-C", "-",
+        "-D", str(headers_dump),
+        "-o", str(partial_path),
+        url,
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    async def _poll_progress() -> None:
+        while True:
+            await asyncio.sleep(2)
+            try:
+                if await aios.path.exists(partial_path):
+                    current_size = (await aios.stat(partial_path)).st_size
+                    if total_bytes > 0:
+                        on_progress(current_size, total_bytes, False)
+            except OSError:
+                pass
+
+    progress_task = asyncio.create_task(_poll_progress())
+    try:
+        _, stderr_bytes = await proc.communicate()
+    finally:
+        progress_task.cancel()
+
+    expected_sha = await _read_header_dump_sha256(headers_dump)
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"curl failed for {url} (exit {proc.returncode}): {stderr_bytes.decode().strip()}"
+        )
+
+    if expected_sha is not None:
+        actual_sha = await calc_hash(partial_path, hash_type="sha256")
+        if actual_sha != expected_sha:
+            with contextlib.suppress(OSError):
+                await aios.remove(partial_path)
+            raise RuntimeError(
+                f"P2P hash mismatch for {url}: peer reported {expected_sha}, "
+                f"got {actual_sha} after download (will retry)"
+            )
+    else:
+        logger.debug(
+            f"P2P peer {repo_url} did not report X-File-SHA256 for {path}; "
+            "skipping integrity check"
+        )
+
+    final_size = (await aios.stat(partial_path)).st_size
+    await aios.rename(partial_path, target_path)
+    if expected_sha is not None:
+        # Persist the verified hash so this node can in turn serve the file
+        # to other peers with the same X-File-SHA256 header.
+        await write_sha256_sidecar(target_path, expected_sha)
+    on_progress(final_size, final_size, True)
+    logger.info(f"P2P download complete: {path} from {repo_url}")
+    return target_path
+
+
+async def _read_header_dump_sha256(headers_dump: Path) -> str | None:
+    """Read ``curl -D <file>`` output and pull out X-File-SHA256.
+
+    The dump file is removed afterward (best-effort — leaving it around is
+    harmless but clutters target_dir). Returns None on any read error or
+    when the header is absent."""
+    try:
+        async with aiofiles.open(headers_dump, "r") as f:
+            text = await f.read()
+    except OSError:
+        return None
+    with contextlib.suppress(OSError):
+        await aios.remove(headers_dump)
+    return _parse_x_file_sha256(text)
 
 
 def calculate_repo_progress(
@@ -809,6 +996,7 @@ async def download_shard(
     skip_internet: bool = False,
     allow_patterns: list[str] | None = None,
     on_connection_lost: Callable[[], None] = lambda: None,
+    repo_url: str | None = None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
         logger.debug(f"Downloading {shard.model_card.model_id=}")
@@ -958,7 +1146,9 @@ async def download_shard(
             start_time=time.time(),
         )
 
-    semaphore = asyncio.Semaphore(max_parallel_downloads)
+    # P2P can handle more parallelism than HF CDN, but don't spawn too many processes
+    effective_parallelism = min(16, len(filtered_file_list)) if repo_url else max_parallel_downloads
+    semaphore = asyncio.Semaphore(effective_parallelism)
 
     def schedule_progress(
         file: FileListEntry, curr_bytes: int, total_bytes: int, is_renamed: bool
@@ -967,7 +1157,9 @@ async def download_shard(
             on_progress_wrapper(file, curr_bytes, total_bytes, is_renamed)
         )
 
-    async def download_with_semaphore(file: FileListEntry) -> None:
+    async def download_with_semaphore(
+        file: FileListEntry, session: aiohttp.ClientSession
+    ) -> None:
         async with semaphore:
             await download_file_with_retry(
                 model_id,
@@ -979,12 +1171,16 @@ async def download_shard(
                 ),
                 on_connection_lost=on_connection_lost,
                 skip_internet=skip_internet,
+                repo_url=repo_url,
+                session=session,
+                expected_size=file.size or 0,
             )
 
     if not skip_download:
-        await asyncio.gather(
-            *[download_with_semaphore(file) for file in filtered_file_list]
-        )
+        async with create_http_session(timeout_profile="long") as session:
+            await asyncio.gather(
+                *[download_with_semaphore(file, session) for file in filtered_file_list]
+            )
     final_repo_progress = calculate_repo_progress(
         shard, model_id, revision, file_progress, all_start_time
     )

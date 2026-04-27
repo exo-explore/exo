@@ -35,6 +35,7 @@ from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadFailed,
     DownloadOngoing,
+    DownloadPaused,
     DownloadPending,
     DownloadProgress,
 )
@@ -82,7 +83,7 @@ def _get_node_download_fraction(
                     if total > 0
                     else 0.0
                 )
-            case DownloadPending():
+            case DownloadPending() | DownloadPaused():
                 total = progress.total.in_bytes
                 return progress.downloaded.in_bytes / total if total > 0 else 0.0
             case DownloadFailed():

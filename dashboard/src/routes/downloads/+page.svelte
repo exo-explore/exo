@@ -9,7 +9,7 @@
     refreshState,
     lastUpdate as lastUpdateStore,
     startDownload,
-    cancelDownload,
+    pauseDownload,
     deleteDownload,
   } from "$lib/stores/app.svelte";
   import {
@@ -572,7 +572,7 @@
                             type="button"
                             class="text-white/50 hover:text-exo-yellow transition-colors cursor-pointer"
                             onclick={() =>
-                              cancelDownload(col.nodeId, row.modelId)}
+                              pauseDownload(col.nodeId, row.modelId)}
                             title="Pause download"
                           >
                             {@render pauseIcon()}
