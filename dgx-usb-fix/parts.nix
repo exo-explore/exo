@@ -2,6 +2,8 @@
   perSystem =
     { pkgs, lib, ... }:
     let
+      repoSource = toString ../.;
+
       rootWrapper =
         name: targetScript:
         pkgs.writeShellApplication {
@@ -16,11 +18,15 @@
             }
 
             repo_root="''${DGX_USB_FIX_REPO:-}"
+            fallback_root="${repoSource}"
             if [[ -z "$repo_root" ]]; then
               repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
             fi
-            if [[ -z "$repo_root" ]]; then
+            if [[ -z "$repo_root" && -x "$PWD/${targetScript}" ]]; then
               repo_root="$PWD"
+            fi
+            if [[ -z "$repo_root" ]]; then
+              repo_root="$fallback_root"
             fi
 
             target="$repo_root/${targetScript}"
@@ -91,11 +97,14 @@
           export DGX_USB_FIX_NIX_ENV=1
           export MOK_KEY="''${MOK_KEY:-/root/MOK.priv}"
           export MOK_CERT="''${MOK_CERT:-/root/MOK.der}"
+          fallback_root="${repoSource}"
           if [[ -z "''${DGX_USB_FIX_REPO:-}" ]]; then
             if command -v git >/dev/null 2>&1 && git_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
               export DGX_USB_FIX_REPO="$git_root"
-            else
+            elif [[ -x "$PWD/dgx-usb-fix/build-and-install.sh" ]]; then
               export DGX_USB_FIX_REPO="$PWD"
+            else
+              export DGX_USB_FIX_REPO="$fallback_root"
             fi
           fi
           cat <<'EOF'
