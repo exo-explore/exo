@@ -89,6 +89,10 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
             tx_reserve_ndp_table,
             tx_short_packet_padding,
         } => {
+            let max_datagram_size = tap
+                .mtu
+                .ethernet_datagram_size()
+                .max(crate::tap::DEFAULT_TAP_MTU.ethernet_datagram_size());
             let report = run_bridge(BridgeOptions {
                 open: OpenPairOptions {
                     selector: open.usb.selector(),
@@ -97,7 +101,7 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
                     initialize_ncm: true,
                     require_ncm_setup_success: true,
                     ntb_input_size: crate::ncm::DEFAULT_NTB_MAX_SIZE_U32,
-                    max_datagram_size: tap.mtu.ethernet_datagram_size(),
+                    max_datagram_size,
                 },
                 tap: TapOptions {
                     name: tap.name,
