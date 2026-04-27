@@ -1,10 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+use std::mem::size_of;
 use std::time::Duration;
 
 use color_eyre::eyre::{self, Context as _, OptionExt as _};
-use nusb::descriptors::{ConfigurationDescriptor, InterfaceDescriptor, TransferType};
+use nusb::descriptors::{ConfigurationDescriptor, InterfaceDescriptor, TransferType, language_id};
+use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, In, Out, Recipient, TransferError};
 use nusb::{DeviceInfo, MaybeFuture as _};
+use zerocopy::byteorder::little_endian::{U16, U32};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
+
+use crate::ncm::{DEFAULT_NTB_MAX_SIZE, NtbBuildConfig, NtbParseConfig};
 
 pub const APPLE_VENDOR_ID: u16 = 0x05ac;
 pub const APPLE_MAC_PRODUCT_ID: u16 = 0x1905;
@@ -19,7 +25,24 @@ const USB_CDC_UNION_TYPE: u8 = 0x06;
 const USB_CDC_ETHERNET_TYPE: u8 = 0x0f;
 const USB_CDC_NCM_TYPE: u8 = 0x1a;
 const STRING_TIMEOUT: Duration = Duration::from_millis(500);
-const US_ENGLISH: u16 = 0x0409;
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(1);
+const CDC_GET_NTB_PARAMETERS: u8 = 0x80;
+const CDC_SET_NTB_FORMAT: u8 = 0x84;
+const CDC_GET_MAX_DATAGRAM_SIZE: u8 = 0x87;
+const CDC_SET_MAX_DATAGRAM_SIZE: u8 = 0x88;
+const CDC_SET_CRC_MODE: u8 = 0x8a;
+const CDC_SET_ETHERNET_PACKET_FILTER: u8 = 0x43;
+const CDC_SET_NTB_INPUT_SIZE: u8 = 0x86;
+const CDC_NCM_NTB16_FORMAT: u16 = 0x0000;
+const CDC_NCM_NTB32_SUPPORTED: u16 = 0x0002;
+const CDC_NCM_CRC_NOT_APPENDED: u16 = 0x0000;
+const CDC_PACKET_TYPE_DIRECTED: u16 = 0x0001;
+const CDC_PACKET_TYPE_ALL_MULTICAST: u16 = 0x0004;
+const CDC_PACKET_TYPE_BROADCAST: u16 = 0x0008;
+const CDC_NCM_NCAP_ETH_FILTER: u8 = 0x01;
+const CDC_NCM_NCAP_MAX_DATAGRAM_SIZE: u8 = 0x08;
+const CDC_NCM_NCAP_CRC_MODE: u8 = 0x10;
+const CDC_NCM_NCAP_NTB_INPUT_SIZE: u8 = 0x20;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UsbSelector {
@@ -133,14 +156,94 @@ pub struct NcmPair {
     pub bulk_out: Option<u8>,
     pub mac_string_index: Option<u8>,
     pub mac: Option<String>,
+    pub max_segment_size: Option<u16>,
+    pub ncm_capabilities: Option<u8>,
     pub control_has_status_endpoint: bool,
 }
 
 #[derive(Debug)]
 pub struct ClaimResult {
     pub interface_number: u8,
-    pub detached_kernel_driver: bool,
+    pub used_detach_and_claim: bool,
     pub result: Result<(), String>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct OpenPairOptions {
+    pub selector: UsbSelector,
+    pub pair_index: usize,
+    pub detach_kernel_driver: bool,
+    pub initialize_ncm: bool,
+    pub ntb_input_size: u32,
+    pub max_datagram_size: u16,
+}
+
+#[derive(Debug)]
+pub struct OpenNcmPair {
+    pub pair: NcmPair,
+    pub device_summary: DeviceSummary,
+    pub control_interface: nusb::Interface,
+    pub data_interface: nusb::Interface,
+    pub setup_report: NcmSetupReport,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct NcmSetupReport {
+    pub ntb_parameters: Option<NtbParametersReport>,
+    pub steps: Vec<ControlStep>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ControlStep {
+    pub name: &'static str,
+    pub result: Result<String, String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NtbParametersReport {
+    pub formats_supported: u16,
+    pub ntb_in_max_size: u32,
+    pub ndp_in_divisor: u16,
+    pub ndp_in_payload_remainder: u16,
+    pub ndp_in_alignment: u16,
+    pub ntb_out_max_size: u32,
+    pub ndp_out_divisor: u16,
+    pub ndp_out_payload_remainder: u16,
+    pub ndp_out_alignment: u16,
+    pub ntb_out_max_datagrams: u16,
+}
+
+#[derive(Debug)]
+pub struct UsbSmokeOptions {
+    pub open: OpenPairOptions,
+    pub read_timeout: Duration,
+}
+
+#[derive(Debug)]
+pub struct UsbSmokeReport {
+    pub open: OpenNcmPair,
+    pub bulk_in: u8,
+    pub bulk_out: u8,
+    pub bulk_in_max_packet_size: usize,
+    pub bulk_out_max_packet_size: usize,
+    pub read_result: Result<usize, String>,
+}
+
+#[derive(Clone, Copy, Debug, FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned)]
+#[repr(C)]
+struct NtbParametersRaw {
+    w_length: U16,
+    bm_ntb_formats_supported: U16,
+    dw_ntb_in_max_size: U32,
+    w_ndp_in_divisor: U16,
+    w_ndp_in_payload_remainder: U16,
+    w_ndp_in_alignment: U16,
+    w_reserved: U16,
+    dw_ntb_out_max_size: U32,
+    w_ndp_out_divisor: U16,
+    w_ndp_out_payload_remainder: U16,
+    w_ndp_out_alignment: U16,
+    w_ntb_out_max_datagrams: U16,
 }
 
 /// List USB devices visible to the current process.
@@ -189,6 +292,111 @@ pub fn probe(options: ProbeOptions) -> eyre::Result<ProbeReport> {
         configuration: configuration_report,
         ncm_pairs,
         claim_results,
+    })
+}
+
+/// Open one detected CDC-NCM pair, run minimal class setup, and select the data altsetting.
+///
+/// # Errors
+///
+/// Returns an error if the USB device is absent, the selected pair is missing, interface claiming
+/// fails, required NCM parameters cannot be read, or the data altsetting cannot be selected.
+pub fn open_ncm_pair(options: OpenPairOptions) -> eyre::Result<OpenNcmPair> {
+    let device_info = find_single_device(options.selector)?;
+    let device_summary = summarize_device_info(&device_info);
+    let device = device_info
+        .open()
+        .wait()
+        .wrap_err_with(|| format!("failed to open {}", format_device_id(&device_summary)))?;
+    let configuration = device
+        .active_configuration()
+        .wrap_err("failed to read active USB configuration")?;
+    let configuration_report = summarize_configuration(&device, &configuration);
+    let pairs = detect_ncm_pairs(&configuration_report);
+    let pair = pairs.get(options.pair_index).cloned().ok_or_else(|| {
+        eyre::eyre!(
+            "pair index {} is missing; detected {} NCM pair(s)",
+            options.pair_index,
+            pairs.len()
+        )
+    })?;
+    ensure_pair_has_bulk_endpoints(&pair)?;
+
+    let control_interface = claim_interface(
+        &device,
+        pair.control_interface,
+        options.detach_kernel_driver,
+    )?;
+    let data_interface =
+        claim_interface(&device, pair.data_interface, options.detach_kernel_driver)?;
+
+    let setup_report = if options.initialize_ncm {
+        initialize_ncm_control(&control_interface, &pair, options)?
+    } else {
+        NcmSetupReport::default()
+    };
+
+    data_interface
+        .set_alt_setting(pair.data_alt_setting)
+        .wait()
+        .wrap_err_with(|| {
+            format!(
+                "failed to set data interface {} altsetting {}",
+                pair.data_interface, pair.data_alt_setting
+            )
+        })?;
+
+    Ok(OpenNcmPair {
+        pair,
+        device_summary,
+        control_interface,
+        data_interface,
+        setup_report,
+    })
+}
+
+/// Claim the selected pair, select altsetting 1, open bulk endpoints, and try one timed read.
+///
+/// # Errors
+///
+/// Returns an error when pair setup or endpoint opening fails.
+pub fn smoke_usb_data_path(options: UsbSmokeOptions) -> eyre::Result<UsbSmokeReport> {
+    let open = open_ncm_pair(options.open)?;
+    let bulk_in = open
+        .pair
+        .bulk_in
+        .ok_or_eyre("selected pair has no bulk IN endpoint")?;
+    let bulk_out = open
+        .pair
+        .bulk_out
+        .ok_or_eyre("selected pair has no bulk OUT endpoint")?;
+    let mut ep_in = open
+        .data_interface
+        .endpoint::<Bulk, In>(bulk_in)
+        .wrap_err_with(|| format!("failed to open bulk IN endpoint {bulk_in:#04x}"))?;
+    let ep_out = open
+        .data_interface
+        .endpoint::<Bulk, Out>(bulk_out)
+        .wrap_err_with(|| format!("failed to open bulk OUT endpoint {bulk_out:#04x}"))?;
+
+    let bulk_in_max_packet_size = ep_in.max_packet_size();
+    let bulk_out_max_packet_size = ep_out.max_packet_size();
+    let completion = ep_in.transfer_blocking(
+        nusb::transfer::Buffer::new(DEFAULT_NTB_MAX_SIZE),
+        options.read_timeout,
+    );
+    let read_result = completion
+        .status
+        .map(|()| completion.actual_len)
+        .map_err(|err| err.to_string());
+
+    Ok(UsbSmokeReport {
+        open,
+        bulk_in,
+        bulk_out,
+        bulk_in_max_packet_size,
+        bulk_out_max_packet_size,
+        read_result,
     })
 }
 
@@ -319,8 +527,8 @@ pub fn render_probe_report(report: &ProbeReport) -> String {
         for claim in &report.claim_results {
             match &claim.result {
                 Ok(()) => {
-                    let detach = if claim.detached_kernel_driver {
-                        " detach"
+                    let detach = if claim.used_detach_and_claim {
+                        " detach-and-claim"
                     } else {
                         ""
                     };
@@ -336,9 +544,114 @@ pub fn render_probe_report(report: &ProbeReport) -> String {
     out
 }
 
+#[must_use]
+pub fn render_usb_smoke_report(report: &UsbSmokeReport) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "device: {}",
+        format_device_id(&report.open.device_summary)
+    );
+    let _ = writeln!(
+        out,
+        "pair: control if{} -> data if{} alt{}",
+        report.open.pair.control_interface,
+        report.open.pair.data_interface,
+        report.open.pair.data_alt_setting
+    );
+    let _ = writeln!(
+        out,
+        "bulk endpoints: in={:#04x} max_packet={} out={:#04x} max_packet={}",
+        report.bulk_in,
+        report.bulk_in_max_packet_size,
+        report.bulk_out,
+        report.bulk_out_max_packet_size
+    );
+    render_setup_report(&mut out, &report.open.setup_report);
+    match &report.read_result {
+        Ok(len) => {
+            let _ = writeln!(out, "timed bulk read: ok {len} bytes");
+        }
+        Err(err) => {
+            let _ = writeln!(out, "timed bulk read: {err}");
+        }
+    }
+    out
+}
+
+pub fn render_setup_report(out: &mut String, report: &NcmSetupReport) {
+    if let Some(parameters) = report.ntb_parameters {
+        let _ = writeln!(
+            out,
+            "ntb parameters: formats={:#06x} in_max={} out_max={} out_datagrams={} payload_mod={} payload_remainder={} ndp_align={}",
+            parameters.formats_supported,
+            parameters.ntb_in_max_size,
+            parameters.ntb_out_max_size,
+            parameters.ntb_out_max_datagrams,
+            parameters.ndp_out_divisor,
+            parameters.ndp_out_payload_remainder,
+            parameters.ndp_out_alignment
+        );
+    }
+    if !report.steps.is_empty() {
+        let _ = writeln!(out, "ncm setup:");
+        for step in &report.steps {
+            match &step.result {
+                Ok(message) => {
+                    let _ = writeln!(out, "  {}: ok {message}", step.name);
+                }
+                Err(err) => {
+                    let _ = writeln!(out, "  {}: error {err}", step.name);
+                }
+            }
+        }
+    }
+}
+
 impl CdcInterfaceInfo {
     fn mac_display(&self) -> &str {
         self.ethernet_mac.as_deref().unwrap_or("<unread>")
+    }
+}
+
+impl NtbParametersRaw {
+    fn into_report(self) -> NtbParametersReport {
+        NtbParametersReport {
+            formats_supported: self.bm_ntb_formats_supported.get(),
+            ntb_in_max_size: self.dw_ntb_in_max_size.get(),
+            ndp_in_divisor: self.w_ndp_in_divisor.get(),
+            ndp_in_payload_remainder: self.w_ndp_in_payload_remainder.get(),
+            ndp_in_alignment: self.w_ndp_in_alignment.get(),
+            ntb_out_max_size: self.dw_ntb_out_max_size.get(),
+            ndp_out_divisor: self.w_ndp_out_divisor.get(),
+            ndp_out_payload_remainder: self.w_ndp_out_payload_remainder.get(),
+            ndp_out_alignment: self.w_ndp_out_alignment.get(),
+            ntb_out_max_datagrams: self.w_ntb_out_max_datagrams.get(),
+        }
+    }
+}
+
+impl NtbParametersReport {
+    #[must_use]
+    pub fn rx_parse_config(self) -> NtbParseConfig {
+        NtbParseConfig {
+            max_size: usize::try_from(self.ntb_in_max_size).unwrap_or(DEFAULT_NTB_MAX_SIZE),
+            datagram_alignment: sanitize_alignment(self.ndp_in_divisor),
+            ..NtbParseConfig::default()
+        }
+    }
+
+    #[must_use]
+    pub fn tx_build_config(self) -> NtbBuildConfig {
+        let datagram_alignment = sanitize_alignment(self.ndp_out_divisor);
+        NtbBuildConfig {
+            max_size: usize::try_from(self.ntb_out_max_size).unwrap_or(DEFAULT_NTB_MAX_SIZE),
+            datagram_alignment,
+            datagram_remainder: adjusted_payload_remainder(
+                self.ndp_out_payload_remainder,
+                datagram_alignment,
+            ),
+        }
     }
 }
 
@@ -486,9 +799,221 @@ fn parse_cdc_interface_info(
 fn read_string_descriptor(device: &nusb::Device, index: u8) -> Option<String> {
     let index = std::num::NonZeroU8::new(index)?;
     device
-        .get_string_descriptor(index, US_ENGLISH, STRING_TIMEOUT)
+        .get_string_descriptor(index, language_id::US_ENGLISH, STRING_TIMEOUT)
         .wait()
         .ok()
+}
+
+fn ensure_pair_has_bulk_endpoints(pair: &NcmPair) -> eyre::Result<()> {
+    if pair.bulk_in.is_none() {
+        return Err(eyre::eyre!(
+            "selected pair control if{} data if{} has no bulk IN endpoint",
+            pair.control_interface,
+            pair.data_interface
+        ));
+    }
+    if pair.bulk_out.is_none() {
+        return Err(eyre::eyre!(
+            "selected pair control if{} data if{} has no bulk OUT endpoint",
+            pair.control_interface,
+            pair.data_interface
+        ));
+    }
+    Ok(())
+}
+
+fn claim_interface(
+    device: &nusb::Device,
+    interface_number: u8,
+    detach_kernel_driver: bool,
+) -> eyre::Result<nusb::Interface> {
+    let result = if detach_kernel_driver {
+        device.detach_and_claim_interface(interface_number).wait()
+    } else {
+        device.claim_interface(interface_number).wait()
+    };
+
+    result.wrap_err_with(|| {
+        let mode = if detach_kernel_driver {
+            "detach-and-claim"
+        } else {
+            "claim"
+        };
+        format!("failed to {mode} interface {interface_number}")
+    })
+}
+
+fn initialize_ncm_control(
+    control_interface: &nusb::Interface,
+    pair: &NcmPair,
+    options: OpenPairOptions,
+) -> eyre::Result<NcmSetupReport> {
+    let mut report = NcmSetupReport::default();
+    let parameters = read_ntb_parameters(control_interface)?;
+    report.ntb_parameters = Some(parameters);
+
+    if pair
+        .ncm_capabilities
+        .is_some_and(|capabilities| capabilities & CDC_NCM_NCAP_CRC_MODE != 0)
+    {
+        report.steps.push(control_out_value(
+            control_interface,
+            "set-crc-mode",
+            CDC_SET_CRC_MODE,
+            CDC_NCM_CRC_NOT_APPENDED,
+            &[],
+        ));
+    }
+
+    if parameters.formats_supported & CDC_NCM_NTB32_SUPPORTED != 0 {
+        report.steps.push(control_out_value(
+            control_interface,
+            "set-ntb16-format",
+            CDC_SET_NTB_FORMAT,
+            CDC_NCM_NTB16_FORMAT,
+            &[],
+        ));
+    }
+
+    if pair
+        .ncm_capabilities
+        .is_some_and(|capabilities| capabilities & CDC_NCM_NCAP_NTB_INPUT_SIZE != 0)
+    {
+        let requested = options.ntb_input_size.min(parameters.ntb_in_max_size);
+        report.steps.push(control_out_value(
+            control_interface,
+            "set-ntb-input-size",
+            CDC_SET_NTB_INPUT_SIZE,
+            0,
+            &requested.to_le_bytes(),
+        ));
+    }
+
+    if pair
+        .ncm_capabilities
+        .is_some_and(|capabilities| capabilities & CDC_NCM_NCAP_MAX_DATAGRAM_SIZE != 0)
+    {
+        let max_datagram_size = options
+            .max_datagram_size
+            .min(pair.max_segment_size.unwrap_or(options.max_datagram_size));
+        report.steps.push(control_in_u16(
+            control_interface,
+            "get-max-datagram-size",
+            CDC_GET_MAX_DATAGRAM_SIZE,
+        ));
+        report.steps.push(control_out_value(
+            control_interface,
+            "set-max-datagram-size",
+            CDC_SET_MAX_DATAGRAM_SIZE,
+            0,
+            &max_datagram_size.to_le_bytes(),
+        ));
+    }
+
+    if pair
+        .ncm_capabilities
+        .is_some_and(|capabilities| capabilities & CDC_NCM_NCAP_ETH_FILTER != 0)
+    {
+        report.steps.push(control_out_value(
+            control_interface,
+            "set-packet-filter",
+            CDC_SET_ETHERNET_PACKET_FILTER,
+            CDC_PACKET_TYPE_DIRECTED | CDC_PACKET_TYPE_ALL_MULTICAST | CDC_PACKET_TYPE_BROADCAST,
+            &[],
+        ));
+    }
+
+    Ok(report)
+}
+
+fn read_ntb_parameters(control_interface: &nusb::Interface) -> eyre::Result<NtbParametersReport> {
+    let bytes = control_interface
+        .control_in(
+            ControlIn {
+                control_type: ControlType::Class,
+                recipient: Recipient::Interface,
+                request: CDC_GET_NTB_PARAMETERS,
+                value: 0,
+                index: u16::from(control_interface.interface_number()),
+                length: u16::try_from(size_of::<NtbParametersRaw>())
+                    .expect("NtbParametersRaw length fits u16"),
+            },
+            CONTROL_TIMEOUT,
+        )
+        .wait()
+        .map_err(control_error)
+        .wrap_err("failed GET_NTB_PARAMETERS")?;
+    let raw = NtbParametersRaw::read_from_bytes(bytes.as_slice())
+        .map_err(|err| eyre::eyre!("GET_NTB_PARAMETERS returned malformed length: {err}"))?;
+    Ok(raw.into_report())
+}
+
+fn control_out_value(
+    control_interface: &nusb::Interface,
+    name: &'static str,
+    request: u8,
+    value: u16,
+    data: &[u8],
+) -> ControlStep {
+    let result = control_interface
+        .control_out(
+            ControlOut {
+                control_type: ControlType::Class,
+                recipient: Recipient::Interface,
+                request,
+                value,
+                index: u16::from(control_interface.interface_number()),
+                data,
+            },
+            CONTROL_TIMEOUT,
+        )
+        .wait()
+        .map(|()| {
+            if data.is_empty() {
+                format!("value={value:#06x}")
+            } else {
+                format!("value={value:#06x} bytes={}", data.len())
+            }
+        })
+        .map_err(|err| control_error(err).to_string());
+
+    ControlStep { name, result }
+}
+
+fn control_in_u16(
+    control_interface: &nusb::Interface,
+    name: &'static str,
+    request: u8,
+) -> ControlStep {
+    let result = control_interface
+        .control_in(
+            ControlIn {
+                control_type: ControlType::Class,
+                recipient: Recipient::Interface,
+                request,
+                value: 0,
+                index: u16::from(control_interface.interface_number()),
+                length: 2,
+            },
+            CONTROL_TIMEOUT,
+        )
+        .wait()
+        .map_err(control_error)
+        .and_then(|bytes| {
+            let value = bytes
+                .as_slice()
+                .try_into()
+                .map(u16::from_le_bytes)
+                .map_err(|_| eyre::eyre!("expected 2 bytes, got {}", bytes.len()))?;
+            Ok(format!("value={value}"))
+        })
+        .map_err(|err| err.to_string());
+
+    ControlStep { name, result }
+}
+
+fn control_error(err: TransferError) -> eyre::Report {
+    eyre::eyre!("{err}")
 }
 
 fn detect_ncm_pairs(configuration: &ConfigurationReport) -> Vec<NcmPair> {
@@ -557,6 +1082,8 @@ fn build_ncm_pair(
         bulk_out,
         mac_string_index: control.cdc.ethernet_mac_string_index,
         mac: control.cdc.ethernet_mac.clone(),
+        max_segment_size: control.cdc.max_segment_size,
+        ncm_capabilities: control.cdc.ncm_capabilities,
         control_has_status_endpoint,
     })
 }
@@ -585,13 +1112,13 @@ fn claim_ncm_interfaces(
                 claimed.push(interface);
                 results.push(ClaimResult {
                     interface_number,
-                    detached_kernel_driver: detach_kernel_driver,
+                    used_detach_and_claim: detach_kernel_driver,
                     result: Ok(()),
                 });
             }
             Err(err) => results.push(ClaimResult {
                 interface_number,
-                detached_kernel_driver: detach_kernel_driver,
+                used_detach_and_claim: detach_kernel_driver,
                 result: Err(err.to_string()),
             }),
         }
@@ -619,6 +1146,21 @@ fn format_device_id(device: &DeviceSummary) -> String {
         let _ = write!(text, " product={product:?}");
     }
     text
+}
+
+fn sanitize_alignment(value: u16) -> usize {
+    let alignment = usize::from(value);
+    if alignment >= 4 && alignment.is_power_of_two() {
+        alignment
+    } else {
+        4
+    }
+}
+
+fn adjusted_payload_remainder(remainder: u16, alignment: usize) -> usize {
+    let alignment = alignment.max(1);
+    let ethernet_header_remainder = crate::ncm::ETHERNET_HEADER_LEN % alignment;
+    (usize::from(remainder) + alignment - ethernet_header_remainder) % alignment
 }
 
 fn optional_endpoint(value: Option<u8>) -> String {
