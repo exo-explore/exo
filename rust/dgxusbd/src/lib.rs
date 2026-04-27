@@ -67,6 +67,7 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
                 name: tap.name,
                 mtu: tap.mtu,
                 nonblocking: false,
+                multi_queue: false,
             })?;
             print!("{}", render_tap_smoke(&tap));
             if hold_seconds > 0 {
@@ -98,6 +99,7 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
                     name: tap.name,
                     mtu: tap.mtu,
                     nonblocking: true,
+                    multi_queue: true,
                 },
                 duration: duration_seconds.map(DurationArgExt::seconds),
                 max_events,

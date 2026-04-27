@@ -9,6 +9,7 @@ pub struct TapOptions {
     pub name: String,
     pub mtu: u16,
     pub nonblocking: bool,
+    pub multi_queue: bool,
 }
 
 impl Default for TapOptions {
@@ -17,6 +18,7 @@ impl Default for TapOptions {
             name: DEFAULT_TAP_NAME.to_owned(),
             mtu: DEFAULT_TAP_MTU,
             nonblocking: false,
+            multi_queue: false,
         }
     }
 }
@@ -37,11 +39,14 @@ impl std::fmt::Debug for TapDevice {
 }
 
 pub fn create_tap(options: &TapOptions) -> eyre::Result<TapDevice> {
-    let device = DeviceBuilder::new()
+    let builder = DeviceBuilder::new()
         .name(options.name.clone())
         .layer(Layer::L2)
         .mtu(options.mtu)
-        .packet_information(false)
+        .packet_information(false);
+    #[cfg(target_os = "linux")]
+    let builder = builder.multi_queue(options.multi_queue);
+    let device = builder
         .build_sync()
         .wrap_err_with(|| format!("failed to create TAP interface {}", options.name))?;
     if options.nonblocking {
