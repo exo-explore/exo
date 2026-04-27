@@ -2,11 +2,10 @@ diff --git a/drivers/net/usb/cdc_ncm.c b/drivers/net/usb/cdc_ncm.c
 index 000000000000..000000000000 100644
 --- a/drivers/net/usb/cdc_ncm.c
 +++ b/drivers/net/usb/cdc_ncm.c
-@@ -1990,6 +1990,16 @@ static const struct usb_device_id cdc_devs[] = {
- 	{ USB_DEVICE_INTERFACE_NUMBER(0x05ac, 0x12ab, 4),
- 		.driver_info = (unsigned long)&apple_private_interface_info,
+@@ -2104,6 +2104,14 @@ static const struct usb_device_id cdc_devs[] = {
+ 	  .driver_info = (unsigned long)&cdc_ncm_zlp_info,
  	},
-+
+ 
 +	/* Apple Mac direct USB-C networking quirk: no status endpoint on control interfaces. */
 +	{ USB_DEVICE_INTERFACE_NUMBER(0x05ac, 0x1905, 0),
 +	  .driver_info = (unsigned long)&apple_private_interface_info,
@@ -15,13 +14,13 @@ index 000000000000..000000000000 100644
 +	  .driver_info = (unsigned long)&apple_private_interface_info,
 +	},
 +
- 
- 	/* Ericsson MBM devices like F5521gw */
- 	{ .match_flags = USB_DEVICE_ID_MATCH_INT_INFO
-@@ -2127,5 +2137,6 @@ static struct usb_driver cdc_ncm_driver = {
+ 	/* Generic CDC-NCM devices */
+ 	{ USB_INTERFACE_INFO(USB_CLASS_COMM,
+ 		USB_CDC_SUBCLASS_NCM, USB_CDC_PROTO_NONE),
+@@ -2129,5 +2137,6 @@ static struct usb_driver cdc_ncm_driver = {
  
  module_usb_driver(cdc_ncm_driver);
  
-+MODULE_INFO(dgx_usb_fix, "apple-05ac-1905-cdc-ncm");
  MODULE_AUTHOR("Hans Petter Selasky");
++MODULE_INFO(dgx_usb_fix, "apple-05ac-1905-cdc-ncm");
  MODULE_DESCRIPTION("USB CDC NCM host driver");
