@@ -171,10 +171,9 @@ class Runner:
                 )
             return True
 
-        self._prefill_server = PrefillServer(
-            resolve=resolve, host="0.0.0.0", port=random_ephemeral_port()
-        )
-        self._prefill_server_port = self._prefill_server.start()
+        port = random_ephemeral_port()
+        self._prefill_server = PrefillServer(resolve=resolve, host="0.0.0.0", port=port)
+        self._prefill_server_port = port
         return self._prefill_server_port
 
     def _start_task_reader(self) -> None:

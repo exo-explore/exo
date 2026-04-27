@@ -64,9 +64,8 @@ def test_server_drains_via_main_thread() -> None:
         return done.wait(timeout=5)
 
     server = PrefillServer(
-        resolve=resolve, host="127.0.0.1", port=random_ephemeral_port()
+        resolve=resolve, host="127.0.0.1", port=(port:=random_ephemeral_port())
     )
-    port = server.start()
 
     def serve_one(wfile: BinaryIO) -> None:
         dtype = wire_dtype_from_cache([gold])

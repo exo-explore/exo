@@ -72,11 +72,10 @@ def test_server_client_roundtrip() -> None:
         _stream_cache(wfile, gold, request_id=job.request_id)
         return True
 
-    server = PrefillServer(resolve=resolve, host="127.0.0.1", port=0)
-    port = server.start()
+    server = PrefillServer(resolve=resolve, host="127.0.0.1", port=52417)
     try:
         result = remote_prefill_fetch(
-            endpoint=f"127.0.0.1:{port}",
+            endpoint=f"127.0.0.1:52417",
             request=PrefillRequest(
                 model_id="test-model",
                 token_ids=list(range(seq_len)),
@@ -107,12 +106,11 @@ def test_server_reports_pickup_failure() -> None:
     def resolve(_job: PrefillRequest, _wfile: BinaryIO) -> bool:
         return False
 
-    server = PrefillServer(resolve=resolve, host="127.0.0.1", port=0)
-    port = server.start()
+    server = PrefillServer(resolve=resolve, host="127.0.0.1", port=52418)
     try:
         with pytest.raises(RuntimeError, match="not picked up"):
             _ = remote_prefill_fetch(
-                endpoint=f"127.0.0.1:{port}",
+                endpoint=f"127.0.0.1:52418",
                 request=PrefillRequest(
                     model_id="test-model",
                     token_ids=[1, 2, 3],
@@ -135,11 +133,10 @@ def test_server_client_roundtrip_with_start_pos() -> None:
         _stream_cache(wfile, gold, request_id=job.request_id, start_pos=start_pos)
         return True
 
-    server = PrefillServer(resolve=resolve, host="127.0.0.1", port=0)
-    port = server.start()
+    server = PrefillServer(resolve=resolve, host="127.0.0.1", port=52419)
     try:
         result = remote_prefill_fetch(
-            endpoint=f"127.0.0.1:{port}",
+            endpoint=f"127.0.0.1:52419",
             request=PrefillRequest(
                 model_id="test-model",
                 token_ids=list(range(seq_len)),
