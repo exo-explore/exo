@@ -7,6 +7,7 @@ from pydantic.alias_generators import to_camel
 
 from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.common import NodeId
+from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
@@ -60,6 +61,8 @@ class State(FrozenModel):
 
     # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
     thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []
+
+    instance_links: Mapping[InstanceLinkId, InstanceLink] = {}
 
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:

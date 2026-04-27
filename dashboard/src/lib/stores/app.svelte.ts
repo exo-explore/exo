@@ -74,6 +74,12 @@ export interface Instance {
   };
 }
 
+export interface RawInstanceLink {
+  linkId: string;
+  prefillInstances: string[];
+  decodeInstances: string[];
+}
+
 // Granular node state types from the new state structure
 interface RawNodeIdentity {
   modelId?: string;
@@ -223,6 +229,7 @@ interface RawStateResponse {
     }
   >;
   runners?: Record<string, unknown>;
+  instanceLinks?: Record<string, RawInstanceLink>;
   downloads?: Record<string, unknown[]>;
   // New granular node state fields
   nodeIdentities?: Record<string, RawNodeIdentity>;
@@ -541,6 +548,7 @@ class AppStore {
   topologyData = $state<TopologyData | null>(null);
   instances = $state<Record<string, unknown>>({});
   runners = $state<Record<string, unknown>>({});
+  instanceLinks = $state<Record<string, RawInstanceLink>>({});
   downloads = $state<Record<string, unknown[]>>({});
   nodeDisk = $state<
     Record<
@@ -1309,6 +1317,11 @@ class AppStore {
       }
       if (data.runners) {
         this.runners = data.runners;
+      }
+      if (data.instanceLinks) {
+        this.instanceLinks = data.instanceLinks;
+      } else {
+        this.instanceLinks = {};
       }
       if (data.downloads) {
         this.downloads = data.downloads;
@@ -3307,6 +3320,60 @@ class AppStore {
     }
   }
 
+  async createInstanceLink(
+    prefillInstances: string[],
+    decodeInstances: string[],
+  ): Promise<void> {
+    const response = await fetch("/v1/instance-links", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prefill_instances: prefillInstances,
+        decode_instances: decodeInstances,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Failed to create instance link: ${response.status} ${await response.text()}`,
+      );
+    }
+  }
+
+  async updateInstanceLink(
+    linkId: string,
+    prefillInstances: string[],
+    decodeInstances: string[],
+  ): Promise<void> {
+    const response = await fetch(
+      `/v1/instance-links/${encodeURIComponent(linkId)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prefill_instances: prefillInstances,
+          decode_instances: decodeInstances,
+        }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to update instance link: ${response.status} ${await response.text()}`,
+      );
+    }
+  }
+
+  async deleteInstanceLink(linkId: string): Promise<void> {
+    const response = await fetch(
+      `/v1/instance-links/${encodeURIComponent(linkId)}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to delete instance link: ${response.status} ${await response.text()}`,
+      );
+    }
+  }
+
   /**
    * Delete a downloaded model from a specific node
    */
@@ -3405,6 +3472,18 @@ export const prefillProgress = () => appStore.prefillProgress;
 export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const runners = () => appStore.runners;
+export const instanceLinks = () => appStore.instanceLinks;
+export const createInstanceLink = (
+  prefillInstances: string[],
+  decodeInstances: string[],
+) => appStore.createInstanceLink(prefillInstances, decodeInstances);
+export const updateInstanceLink = (
+  linkId: string,
+  prefillInstances: string[],
+  decodeInstances: string[],
+) => appStore.updateInstanceLink(linkId, prefillInstances, decodeInstances);
+export const deleteInstanceLink = (linkId: string) =>
+  appStore.deleteInstanceLink(linkId);
 export const downloads = () => appStore.downloads;
 export const nodeDisk = () => appStore.nodeDisk;
 export const placementPreviews = () => appStore.placementPreviews;

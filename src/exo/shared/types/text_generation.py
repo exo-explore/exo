@@ -132,6 +132,8 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     images: list[Base64Image] = Field(default_factory=list)
     image_hashes: dict[int, Base64ImageHash] = Field(default_factory=dict)
 
+    prefill_endpoints: list[str] = Field(default_factory=list)
+
     def with_card_sampling_defaults(self) -> "TextGenerationTaskParams":
         from exo.shared.models.model_cards import get_card
 
