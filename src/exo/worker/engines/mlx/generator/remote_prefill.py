@@ -6,14 +6,14 @@ import mlx.core as mx
 from mlx_lm.models.cache import ArraysCache, KVCache, RotatingKVCache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.types.mlx import KVCacheType, Model
 from exo.worker.engines.mlx.cache import CacheSnapshot, snapshot_ssm_states
 from exo.worker.engines.mlx.disaggregated.client import (
     PrefillRequest,
     ingest_into_mlx_cache,
     remote_prefill_fetch,
 )
-from exo.worker.engines.mlx.disaggregated.protocol import KVChunk
+from exo.worker.disaggregated.protocol import Header, KVChunk
+from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.runner.bootstrap import logger
 
 
@@ -38,10 +38,8 @@ def remote_prefill(
     total_prompt_tokens = int(prompt_tokens.shape[0])
     num_layers_box: list[int] = [0]
 
-    def _on_header(header: dict[str, object]) -> None:
-        nl = header.get("num_layers", 0)
-        if isinstance(nl, int):
-            num_layers_box[0] = nl
+    def _on_header(header: Header) -> None:
+        num_layers_box[0] = header.num_layers
 
     def _on_chunk(_chunk: KVChunk, chunks_received: int) -> None:
         if on_prefill_progress is None:

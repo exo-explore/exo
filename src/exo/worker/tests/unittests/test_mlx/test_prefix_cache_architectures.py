@@ -17,7 +17,6 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.download.download_utils import resolve_existing_model
 from exo.shared.constants import EXO_MODELS_DIRS, EXO_MODELS_READ_ONLY_DIRS
 from exo.shared.types.common import ModelId
-from exo.shared.types.mlx import Model
 from exo.shared.types.text_generation import (
     InputMessage,
     InputMessageContent,
@@ -25,6 +24,7 @@ from exo.shared.types.text_generation import (
 )
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import mlx_generate
+from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     load_tokenizer_for_model_id,

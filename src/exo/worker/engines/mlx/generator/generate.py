@@ -24,7 +24,6 @@ from exo.api.types import (
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import KVCacheType, Model
 from exo.shared.types.text_generation import (
     InputMessage,
     InputMessageContent,
@@ -55,6 +54,7 @@ from exo.worker.engines.mlx.constants import (
     KV_GROUP_SIZE,
     MAX_TOKENS,
 )
+from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,

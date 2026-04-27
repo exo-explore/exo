@@ -24,7 +24,6 @@ from exo.api.types import (
     Usage,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import KVCacheType, Model
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.worker.engines.mlx.cache import (
@@ -46,6 +45,7 @@ from exo.worker.engines.mlx.patches.opt_batch_gen import (
     set_needs_topk,
     take_ready_topk,
 )
+from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     fix_unmatched_think_end_tokens,
     system_prompt_token_count,

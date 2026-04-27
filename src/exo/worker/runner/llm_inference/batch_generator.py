@@ -12,7 +12,6 @@ from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
 from exo.shared.types.chunks import ErrorChunk, GenerationChunk, PrefillProgressChunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import ChunkGenerated, Event
-from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import CANCEL_ALL_TASKS, TaskId, TextGeneration
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
@@ -24,6 +23,7 @@ from exo.worker.engines.mlx.generator.generate import (
     mlx_generate,
     warmup_inference,
 )
+from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     mx_all_gather_tasks,
@@ -65,6 +65,7 @@ class InferenceGenerator(ABC):
     model: Model
     tokenizer: TokenizerWrapper
     group: mx.distributed.Group | None
+    kv_prefix_cache: KVPrefixCache | None
 
     def should_cancel(self, task_id: TaskId) -> bool:
         return (

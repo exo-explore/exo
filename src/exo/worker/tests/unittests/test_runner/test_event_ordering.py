@@ -153,11 +153,10 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_batch_generator, "ExoBatchGenerator", FakeExoBatchGenerator)
 
     # Don't bind a real TCP port for the prefill server in event-ordering tests.
-    monkeypatch.setattr(
-        mlx_runner.Runner,
-        "_start_prefill_server",
-        lambda self: None,
-    )
+    def _no_prefill_server(_self: mlx_runner.Runner) -> int | None:
+        return None
+
+    monkeypatch.setattr(mlx_runner.Runner, "_start_prefill_server", _no_prefill_server)
 
 
 class FakeExoBatchGenerator:
