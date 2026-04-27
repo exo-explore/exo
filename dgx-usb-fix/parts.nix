@@ -2,7 +2,7 @@
   perSystem =
     { pkgs, lib, ... }:
     let
-      repoSource = toString ../.;
+      repoSource = ../.;
 
       rootWrapper =
         name: targetScript:
