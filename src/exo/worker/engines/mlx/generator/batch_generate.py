@@ -216,14 +216,9 @@ class ExoBatchGenerator:
             if use_remote and task_params.prefill_endpoint is not None:
                 try:
                     _prefill_tps, _prefill_tokens, cache_snapshots = remote_prefill(
-                        self.model,
-                        self.tokenizer,
-                        sampler,
                         prompt_tokens[:-1],
                         cache,
-                        self.group,
                         on_prefill_progress,
-                        distributed_prompt_progress_callback,
                         endpoint=task_params.prefill_endpoint,
                         request_id=str(uuid.uuid4()),
                         model_id=str(task_params.model),

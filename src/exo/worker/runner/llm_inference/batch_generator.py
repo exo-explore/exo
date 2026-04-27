@@ -17,10 +17,10 @@ from exo.shared.types.tasks import CANCEL_ALL_TASKS, TaskId, TextGeneration
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.utils.channels import MpReceiver, MpSender
-from exo.worker.disaggregated.server import PrefillJob
+from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.disaggregated.adapter import write_cache_to_wire
-from exo.worker.engines.mlx.disaggregated.serve import run_prefill_for_job
+from exo.worker.engines.mlx.disaggregated.serve import run_prefill_for_request
 from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
 from exo.worker.engines.mlx.generator.generate import (
     PrefillCancelled,
@@ -90,7 +90,7 @@ class InferenceGenerator(ABC):
     def close(self) -> None: ...
 
     @abstractmethod
-    def serve_prefill(self, job: PrefillJob, wfile: BinaryIO) -> None: ...
+    def serve_prefill(self, request: PrefillRequest, wfile: BinaryIO) -> None: ...
 
 
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"
@@ -315,20 +315,20 @@ class SequentialGenerator(InferenceGenerator):
     def close(self) -> None:
         del self.model, self.tokenizer, self.group
 
-    def serve_prefill(self, job: PrefillJob, wfile: BinaryIO) -> None:
-        cache = run_prefill_for_job(
+    def serve_prefill(self, request: PrefillRequest, wfile: BinaryIO) -> None:
+        cache = run_prefill_for_request(
             model=self.model,
             tokenizer=self.tokenizer,
             group=self.group,
             kv_prefix_cache=self.kv_prefix_cache,
-            job=job,
+            request=request,
         )
         write_cache_to_wire(
             wfile,
             cache,
-            request_id=job.request_id,
-            model_id=job.model_id,
-            start_pos=job.start_pos,
+            request_id=request.request_id,
+            model_id=request.model_id,
+            start_pos=request.start_pos,
         )
 
 
@@ -558,18 +558,18 @@ class BatchGenerator(InferenceGenerator):
         self._mlx_gen.close()
         del self.model, self.tokenizer, self.group
 
-    def serve_prefill(self, job: PrefillJob, wfile: BinaryIO) -> None:
-        cache = run_prefill_for_job(
+    def serve_prefill(self, request: PrefillRequest, wfile: BinaryIO) -> None:
+        cache = run_prefill_for_request(
             model=self.model,
             tokenizer=self.tokenizer,
             group=self.group,
             kv_prefix_cache=self.kv_prefix_cache,
-            job=job,
+            request=request,
         )
         write_cache_to_wire(
             wfile,
             cache,
-            request_id=job.request_id,
-            model_id=job.model_id,
-            start_pos=job.start_pos,
+            request_id=request.request_id,
+            model_id=request.model_id,
+            start_pos=request.start_pos,
         )

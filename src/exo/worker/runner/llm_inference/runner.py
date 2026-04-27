@@ -52,7 +52,7 @@ from exo.shared.types.worker.runners import (
 from exo.utils.channels import MpReceiver, MpSender
 from exo.utils.ports import random_ephemeral_port
 from exo.worker.disaggregated.server import (
-    PrefillJob,
+    PrefillRequest,
     PrefillServer,
 )
 from exo.worker.engines.mlx.cache import KVPrefixCache
@@ -77,15 +77,15 @@ PREFILL_FINISH_TIMEOUT_SECONDS = 300
 
 
 @dataclass
-class _PrefillRequest:
-    job: PrefillJob
+class PrefillTask:
+    request: PrefillRequest
     wfile: BinaryIO
     started: threading.Event
     done: threading.Event
 
 
 _TaskStreamClosed = object()
-WorkItem = Task | _PrefillRequest | object
+WorkItem = Task | PrefillTask | object
 
 
 class ExitCode(str, Enum):
@@ -150,9 +150,9 @@ class Runner:
         if self._prefill_server_port is not None:
             return self._prefill_server_port
 
-        def resolve(job: PrefillJob, wfile: BinaryIO) -> bool:
-            req = _PrefillRequest(
-                job=job,
+        def resolve(request: PrefillRequest, wfile: BinaryIO) -> bool:
+            req = PrefillTask(
+                request=request,
                 wfile=wfile,
                 started=threading.Event(),
                 done=threading.Event(),
@@ -160,13 +160,13 @@ class Runner:
             self._work_queue.put(req)
             if not req.started.wait(timeout=PREFILL_PICKUP_TIMEOUT_SECONDS):
                 logger.warning(
-                    f"Prefill request {job.request_id} not picked up within "
+                    f"Prefill request {request.request_id} not picked up within "
                     f"{PREFILL_PICKUP_TIMEOUT_SECONDS}s — runner busy"
                 )
                 return False
             if not req.done.wait(timeout=PREFILL_FINISH_TIMEOUT_SECONDS):
                 logger.warning(
-                    f"Prefill request {job.request_id} did not finish within "
+                    f"Prefill request {request.request_id} did not finish within "
                     f"{PREFILL_FINISH_TIMEOUT_SECONDS}s"
                 )
             return True
@@ -194,14 +194,14 @@ class Runner:
         self._task_reader_thread = threading.Thread(target=loop, name="task-reader")
         self._task_reader_thread.start()
 
-    def _serve_prefill(self, req: _PrefillRequest) -> None:
+    def _serve_prefill(self, req: PrefillTask) -> None:
         req.started.set()
         try:
             assert isinstance(self.generator, InferenceGenerator)
-            self.generator.serve_prefill(req.job, req.wfile)
+            self.generator.serve_prefill(req.request, req.wfile)
         except Exception:
             logger.opt(exception=True).warning(
-                f"Failed to serve prefill request {req.job.request_id}"
+                f"Failed to serve prefill request {req.request.request_id}"
             )
         finally:
             req.done.set()
@@ -229,7 +229,7 @@ class Runner:
                 item = self._work_queue.get()
                 if item is _TaskStreamClosed:
                     break
-                if isinstance(item, _PrefillRequest):
+                if isinstance(item, PrefillTask):
                     self._serve_prefill(item)
                     continue
                 task: Task = item  # type: ignore
@@ -402,7 +402,7 @@ class Runner:
                 continue
             if item is _TaskStreamClosed:
                 return ExitCode.Shutdown
-            if isinstance(item, _PrefillRequest):
+            if isinstance(item, PrefillTask):
                 self._serve_prefill(item)
                 continue
             task: Task = item  # type: ignore

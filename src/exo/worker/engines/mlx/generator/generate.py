@@ -649,14 +649,9 @@ def mlx_generate(
         if use_remote and task.prefill_endpoint is not None:
             try:
                 prefill_tps, prefill_tokens, ssm_snapshots_list = remote_prefill(
-                    model,
-                    tokenizer,
-                    sampler,
                     prompt_tokens[:-1],
                     caches,
-                    group,
                     on_prefill_progress,
-                    distributed_prompt_progress_callback,
                     endpoint=task.prefill_endpoint,
                     request_id=str(uuid.uuid4()),
                     model_id=str(task.model),

@@ -4,47 +4,40 @@ from typing import cast
 
 import mlx.core as mx
 from mlx_lm.models.cache import ArraysCache, KVCache, RotatingKVCache
-from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.worker.disaggregated.protocol import Header, KVChunk
+from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.mlx.cache import CacheSnapshot, snapshot_ssm_states
 from exo.worker.engines.mlx.disaggregated.client import (
-    PrefillRequest,
     ingest_into_mlx_cache,
     remote_prefill_fetch,
 )
-from exo.worker.engines.mlx.types import KVCacheType, Model
+from exo.worker.engines.mlx.types import KVCacheType
 from exo.worker.runner.bootstrap import logger
 
 
 def remote_prefill(
-    model: Model,
-    tokenizer: TokenizerWrapper,
-    sampler: Callable[[mx.array], mx.array],
     prompt_tokens: mx.array,
     cache: KVCacheType,
-    group: mx.distributed.Group | None,
     on_prefill_progress: Callable[[int, int], None] | None,
-    distributed_prompt_progress_callback: Callable[[], None] | None,
     *,
     endpoint: str,
     request_id: str,
     model_id: str,
     start_pos: int = 0,
 ) -> tuple[float, int, list[CacheSnapshot]]:
-    del model, tokenizer, sampler, group, distributed_prompt_progress_callback
-
     t0 = time.perf_counter()
     total_prompt_tokens = int(prompt_tokens.shape[0])
-    num_layers_box: list[int] = [0]
+    num_layers: int = 0
 
     def _on_header(header: Header) -> None:
-        num_layers_box[0] = header.num_layers
+        nonlocal num_layers
+        num_layers = header.num_layers
 
     def _on_chunk(_chunk: KVChunk, chunks_received: int) -> None:
+        nonlocal num_layers
         if on_prefill_progress is None:
             return
-        num_layers = num_layers_box[0]
         if num_layers > 0 and chunks_received % num_layers == 0:
             tokens_so_far = chunks_received // num_layers
             on_prefill_progress(

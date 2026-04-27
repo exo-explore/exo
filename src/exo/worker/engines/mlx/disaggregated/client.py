@@ -17,7 +17,7 @@ from exo.worker.disaggregated.protocol import (
     read_header,
     read_message,
 )
-from exo.worker.disaggregated.server import PrefillJob, write_request
+from exo.worker.disaggregated.server import PrefillRequest, write_request
 from exo.worker.engines.mlx.disaggregated.adapter import (
     chunk_to_mlx_nhd,
     inject_arrays_cache,
@@ -27,14 +27,6 @@ from exo.worker.engines.mlx.disaggregated.adapter import (
 
 _SOCKET_TIMEOUT_SECS = 60
 _RECV_BUFFER_BYTES = 4 * 1024 * 1024
-
-
-@dataclass
-class PrefillRequest:
-    model_id: str
-    token_ids: list[int]
-    start_pos: int = 0
-    request_id: str = ""
 
 
 @dataclass
@@ -75,15 +67,7 @@ def remote_prefill_fetch(
     try:
         wfile = sock.makefile("wb", buffering=256 * 1024)
         wstream: BinaryIO = cast(BinaryIO, cast(object, wfile))
-        write_request(
-            wstream,
-            PrefillJob(
-                request_id=request.request_id,
-                model_id=request.model_id,
-                token_ids=request.token_ids,
-                start_pos=request.start_pos,
-            ),
-        )
+        write_request(wstream, request)
 
         raw_stream = sock.makefile("rb", buffering=256 * 1024)
         stream: BinaryIO = cast(BinaryIO, cast(object, raw_stream))

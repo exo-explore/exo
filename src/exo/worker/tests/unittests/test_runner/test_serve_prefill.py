@@ -18,7 +18,7 @@ from exo.worker.disaggregated.protocol import (
     read_header,
     read_message,
 )
-from exo.worker.disaggregated.server import PrefillJob
+from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.disaggregated.adapter import write_cache_to_wire
 
@@ -91,21 +91,21 @@ def _decode(payload: bytes) -> tuple[Header, list[KVChunk], int]:
     return hdr, chunks, total
 
 
-def _serve(job: PrefillJob, kv_prefix_cache: KVPrefixCache | None) -> bytes:
-    cache = mlx_serve_mod.run_prefill_for_job(
+def _serve(request: PrefillRequest, kv_prefix_cache: KVPrefixCache | None) -> bytes:
+    cache = mlx_serve_mod.run_prefill_for_request(
         model=cast(Any, _FakeModel()),  # pyright: ignore[reportAny]
         tokenizer=cast(Any, _FakeTokenizer()),  # pyright: ignore[reportAny]
         group=None,
         kv_prefix_cache=kv_prefix_cache,
-        job=job,
+        request=request,
     )
     buf = io.BytesIO()
     write_cache_to_wire(
         buf,
         cache,
-        request_id=job.request_id,
-        model_id=job.model_id,
-        start_pos=job.start_pos,
+        request_id=request.request_id,
+        model_id=request.model_id,
+        start_pos=request.start_pos,
     )
     return buf.getvalue()
 
@@ -117,7 +117,7 @@ def test_serve_prefill_runs_full_prefill_when_cache_empty(
     cache = KVPrefixCache(group=None)
 
     payload = _serve(
-        PrefillJob(
+        PrefillRequest(
             request_id="r1", model_id="m", token_ids=list(range(20)), start_pos=0
         ),
         cache,
@@ -144,12 +144,14 @@ def test_serve_prefill_skips_work_on_exact_cache_hit(
     tokens = list(range(20))
 
     _serve(
-        PrefillJob(request_id="r1", model_id="m", token_ids=tokens, start_pos=0), cache
+        PrefillRequest(request_id="r1", model_id="m", token_ids=tokens, start_pos=0),
+        cache,
     )
     inputs.clear()
 
     _serve(
-        PrefillJob(request_id="r2", model_id="m", token_ids=tokens, start_pos=0), cache
+        PrefillRequest(request_id="r2", model_id="m", token_ids=tokens, start_pos=0),
+        cache,
     )
 
     assert inputs == []
@@ -163,13 +165,14 @@ def test_serve_prefill_only_runs_suffix_on_partial_match(
 
     base = list(range(15))
     _serve(
-        PrefillJob(request_id="r1", model_id="m", token_ids=base, start_pos=0), cache
+        PrefillRequest(request_id="r1", model_id="m", token_ids=base, start_pos=0),
+        cache,
     )
     inputs.clear()
 
     extended = base + [99, 100, 101, 102, 103]
     _serve(
-        PrefillJob(request_id="r2", model_id="m", token_ids=extended, start_pos=0),
+        PrefillRequest(request_id="r2", model_id="m", token_ids=extended, start_pos=0),
         cache,
     )
 
@@ -188,7 +191,7 @@ def test_serve_prefill_slices_payload_at_client_start_pos(
     client_has = 12
 
     payload = _serve(
-        PrefillJob(
+        PrefillRequest(
             request_id="r1",
             model_id="m",
             token_ids=list(range(n_tokens)),
@@ -211,7 +214,7 @@ def test_serve_prefill_works_without_prefix_cache(
     inputs = _patch_prefill(monkeypatch)
 
     payload = _serve(
-        PrefillJob(
+        PrefillRequest(
             request_id="r1", model_id="m", token_ids=list(range(20)), start_pos=0
         ),
         None,

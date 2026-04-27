@@ -12,13 +12,12 @@ from mlx_lm.models.cache import KVCache
 
 from exo.utils.ports import random_ephemeral_port
 from exo.worker.disaggregated.protocol import Header, write_done, write_header
-from exo.worker.disaggregated.server import PrefillJob, PrefillServer
+from exo.worker.disaggregated.server import PrefillRequest, PrefillServer
 from exo.worker.engines.mlx.disaggregated.adapter import (
     send_mlx_kv_cache,
     wire_dtype_from_cache,
 )
 from exo.worker.engines.mlx.disaggregated.client import (
-    PrefillRequest,
     PrefillResult,
     ingest_into_mlx_cache,
     remote_prefill_fetch,
@@ -55,11 +54,11 @@ def test_server_drains_via_main_thread() -> None:
     head_dim = 4
     gold = _make_cache(seq_len, n_heads, head_dim)
 
-    request_queue: queue.Queue[tuple[PrefillJob, BinaryIO, threading.Event]] = (
+    request_queue: queue.Queue[tuple[PrefillRequest, BinaryIO, threading.Event]] = (
         queue.Queue()
     )
 
-    def resolve(job: PrefillJob, wfile: BinaryIO) -> bool:
+    def resolve(job: PrefillRequest, wfile: BinaryIO) -> bool:
         done = threading.Event()
         request_queue.put((job, wfile, done))
         return done.wait(timeout=5)
@@ -79,7 +78,7 @@ def test_server_drains_via_main_thread() -> None:
         write_done(wfile, tokens)
         wfile.flush()
 
-    drained_job: list[PrefillJob] = []
+    drained_job: list[PrefillRequest] = []
     fetch_result: list[PrefillResult] = []
 
     def fetcher() -> None:

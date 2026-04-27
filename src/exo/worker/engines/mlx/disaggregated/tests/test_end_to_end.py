@@ -6,13 +6,12 @@ import pytest
 from mlx_lm.models.cache import KVCache
 
 from exo.worker.disaggregated.protocol import Header, write_done, write_header
-from exo.worker.disaggregated.server import PrefillJob, PrefillServer
+from exo.worker.disaggregated.server import PrefillRequest, PrefillServer
 from exo.worker.engines.mlx.disaggregated.adapter import (
     send_mlx_kv_cache,
     wire_dtype_from_cache,
 )
 from exo.worker.engines.mlx.disaggregated.client import (
-    PrefillRequest,
     ingest_into_mlx_cache,
     remote_prefill_fetch,
 )
@@ -69,7 +68,7 @@ def test_server_client_roundtrip() -> None:
     head_dim = 4
     gold = _make_cache(seq_len, n_heads, head_dim)
 
-    def resolve(job: PrefillJob, wfile: BinaryIO) -> bool:
+    def resolve(job: PrefillRequest, wfile: BinaryIO) -> bool:
         _stream_cache(wfile, gold, request_id=job.request_id)
         return True
 
@@ -105,7 +104,7 @@ def test_server_client_roundtrip() -> None:
 
 @pytest.mark.slow
 def test_server_reports_pickup_failure() -> None:
-    def resolve(_job: PrefillJob, _wfile: BinaryIO) -> bool:
+    def resolve(_job: PrefillRequest, _wfile: BinaryIO) -> bool:
         return False
 
     server = PrefillServer(resolve=resolve, host="127.0.0.1", port=0)
@@ -132,7 +131,7 @@ def test_server_client_roundtrip_with_start_pos() -> None:
     head_dim = 4
     gold = _make_cache(seq_len, n_heads, head_dim)
 
-    def resolve(job: PrefillJob, wfile: BinaryIO) -> bool:
+    def resolve(job: PrefillRequest, wfile: BinaryIO) -> bool:
         _stream_cache(wfile, gold, request_id=job.request_id, start_pos=start_pos)
         return True
 

@@ -17,7 +17,7 @@ from exo.worker.disaggregated.protocol import (
 )
 
 
-class PrefillJob(msgspec.Struct):
+class PrefillRequest(msgspec.Struct):
     request_id: str = ""
     model_id: str = ""
     token_ids: list[int] = []
@@ -25,23 +25,23 @@ class PrefillJob(msgspec.Struct):
 
 
 _request_encoder = msgspec.msgpack.Encoder()
-_request_decoder: msgspec.msgpack.Decoder[PrefillJob] = msgspec.msgpack.Decoder(
-    PrefillJob
+_request_decoder: msgspec.msgpack.Decoder[PrefillRequest] = msgspec.msgpack.Decoder(
+    PrefillRequest
 )
 
 
-def write_request(stream: BinaryIO, job: PrefillJob) -> None:
+def write_request(stream: BinaryIO, job: PrefillRequest) -> None:
     write_frame(stream, _request_encoder.encode(job))
 
 
-def read_request(stream: BinaryIO) -> PrefillJob:
+def read_request(stream: BinaryIO) -> PrefillRequest:
     payload = read_frame(stream)
     if not payload:
         raise ConnectionError("No request received")
     return _request_decoder.decode(payload)
 
 
-ResolveHandler = Callable[[PrefillJob, BinaryIO], bool]
+ResolveHandler = Callable[[PrefillRequest, BinaryIO], bool]
 
 
 def _send_error(wfile: BinaryIO, code: int, message: str) -> None:

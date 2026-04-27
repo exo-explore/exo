@@ -4,7 +4,7 @@ import mlx.core as mx
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.worker.disaggregated.server import PrefillJob
+from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.mlx.cache import (
     KVPrefixCache,
     cache_length,
@@ -17,15 +17,15 @@ from exo.worker.engines.mlx.utils_mlx import fix_unmatched_think_end_tokens
 from exo.worker.runner.bootstrap import logger
 
 
-def run_prefill_for_job(
+def run_prefill_for_request(
     *,
     model: Model,
     tokenizer: TokenizerWrapper,
     group: mx.distributed.Group | None,
     kv_prefix_cache: KVPrefixCache | None,
-    job: PrefillJob,
+    request: PrefillRequest,
 ) -> KVCacheType:
-    prompt_tokens = mx.array(job.token_ids)
+    prompt_tokens = mx.array(request.token_ids)
     prompt_tokens = fix_unmatched_think_end_tokens(prompt_tokens, tokenizer)
     n_tokens = int(prompt_tokens.shape[0])
     t0 = time.perf_counter()
@@ -79,7 +79,7 @@ def run_prefill_for_job(
     elapsed = time.perf_counter() - t0
     final_offset = cache_length(cache)
     logger.info(
-        f"Prefill: request_id={job.request_id} "
+        f"Prefill: request_id={request.request_id} "
         f"{n_tokens} tokens (prefix_hit={prefix_hit_length}, "
         f"final_offset={final_offset}) in {elapsed * 1000:.0f}ms"
     )
