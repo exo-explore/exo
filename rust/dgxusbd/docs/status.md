@@ -230,7 +230,7 @@ Result: success. Tests: 9 passed.
 
 Hardware checks after this pass:
 
-- `usb-smoke` still selected pair 0/1, selected data altsetting 1, opened bulk endpoints `0x81` and `0x01`, completed all NCM setup requests, and read a 140-byte NTB.
+- `usb-smoke` still selected pair 0/1, selected data altsetting 1, opened bulk endpoints `0x81` and `0x01`, completed all NCM setup requests, and completed timed NTB reads. The baseline smoke read 140 bytes; the final pulled-commit smoke read 232 bytes.
 - Short bridge smoke with scheduling flags moved frames both directions with zero malformed NTBs:
 
 ```text
