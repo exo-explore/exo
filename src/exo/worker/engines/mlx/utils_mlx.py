@@ -561,7 +561,7 @@ def render_chat_template(
         formatted_messages = formatted_messages[:-1]
 
     if _needs_dsml_encoding(task_params):
-        from exo.worker.engines.mlx.dsml_encoding import encode_messages
+        from exo.worker.engines.mlx.vendor.dsml_encoding import encode_messages
 
         prompt = encode_messages(
             messages=formatted_messages,
@@ -576,7 +576,7 @@ def render_chat_template(
         return prompt
 
     if _needs_v4_encoding(task_params):
-        from exo.worker.engines.mlx.deepseek_v4_encoding import (
+        from exo.worker.engines.mlx.vendor.deepseek_v4_encoding import (
             encode_messages as encode_messages_v4,
         )
 

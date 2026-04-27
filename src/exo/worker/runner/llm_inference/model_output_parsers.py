@@ -24,10 +24,10 @@ from exo.shared.types.chunks import (
 from exo.shared.types.common import ModelId
 from exo.shared.types.mlx import Model
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
-from exo.worker.engines.mlx.dsml_encoding import parse_dsml_output
 from exo.worker.engines.mlx.utils_mlx import (
     detect_thinking_prompt_suffix,
 )
+from exo.worker.engines.mlx.vendor.dsml_encoding import parse_dsml_output
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.tool_parsers import ToolParser
 
@@ -229,7 +229,7 @@ def parse_deepseek_v32(
     Thinking tag handling is delegated to parse_thinking_models, which
     wraps this parser in apply_all_parsers.
     """
-    from exo.worker.engines.mlx.dsml_encoding import (
+    from exo.worker.engines.mlx.vendor.dsml_encoding import (
         TOOL_CALLS_END,
         TOOL_CALLS_START,
         parse_dsml_output,
