@@ -75,7 +75,7 @@ cuda13 = [
 ###
 
 [tool.uv.workspace]
-members = ["rust/exo_pyo3_bindings", "bench"]
+members = ["rust/exo_pyo3_bindings", "bench", "tools"]
 
 [tool.uv.sources]
 exo-pyo3-bindings = { workspace = true }
