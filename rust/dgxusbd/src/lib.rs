@@ -53,6 +53,7 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
                     pair_index: open.pair_index,
                     detach_kernel_driver: open.detach_kernel_driver,
                     initialize_ncm: !skip_ncm_init,
+                    require_ncm_setup_success: false,
                     ntb_input_size: crate::ncm::DEFAULT_NTB_MAX_SIZE_U32,
                     max_datagram_size: crate::tap::DEFAULT_TAP_MTU.ethernet_datagram_size(),
                 },
@@ -77,6 +78,9 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
             duration_seconds,
             max_events,
             usb_timeout_ms,
+            usb_read_timeout_ms,
+            tap_budget_frames,
+            usb_budget_ntbs,
         } => {
             let report = run_bridge(BridgeOptions {
                 open: OpenPairOptions {
@@ -84,6 +88,7 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
                     pair_index: open.pair_index,
                     detach_kernel_driver: open.detach_kernel_driver,
                     initialize_ncm: true,
+                    require_ncm_setup_success: true,
                     ntb_input_size: crate::ncm::DEFAULT_NTB_MAX_SIZE_U32,
                     max_datagram_size: tap.mtu.ethernet_datagram_size(),
                 },
@@ -94,7 +99,10 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
                 },
                 duration: duration_seconds.map(DurationArgExt::seconds),
                 max_events,
-                usb_timeout: usb_timeout_ms.milliseconds(),
+                usb_read_timeout: usb_read_timeout_ms.milliseconds(),
+                usb_write_timeout: usb_timeout_ms.milliseconds(),
+                tap_budget_frames,
+                usb_budget_ntbs,
             })?;
             print!("{}", render_bridge_report(&report));
         }

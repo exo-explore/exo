@@ -17,6 +17,7 @@ const NDP16_CRC_SIGNATURE: u32 = u32::from_le_bytes(*b"NCM1");
 const NTH16_LEN: usize = size_of::<Nth16>();
 const NDP16_LEN: usize = size_of::<Ndp16>();
 const DPE16_LEN: usize = size_of::<Dpe16>();
+const U16_MAX_USIZE: usize = 0xFFFF;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NtbBuildConfig {
@@ -136,6 +137,12 @@ struct Dpe16 {
     w_datagram_length: U16,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FramePlan {
+    offset: usize,
+    length: usize,
+}
+
 pub fn parse_ntb16<'a>(bytes: &'a [u8], config: NtbParseConfig) -> Result<ParsedNtb<'a>, NcmError> {
     if bytes.len() > config.max_size {
         return Err(NcmError::NtbTooLarge {
@@ -189,66 +196,115 @@ pub fn build_ntb16(
     if frames.is_empty() {
         return Err(NcmError::NoFrames);
     }
-    if frames.len() > (u16::MAX as usize / DPE16_LEN).saturating_sub(3) {
+    if frames.len() > (U16_MAX_USIZE / DPE16_LEN).saturating_sub(3) {
         return Err(NcmError::TooManyFrames(frames.len()));
     }
 
     let ndp_index = NTH16_LEN;
-    let ndp_length = NDP16_LEN + (frames.len() + 1) * DPE16_LEN;
-    let data_start = align_up_to_remainder(
-        ndp_index + ndp_length,
+    let ndp_entries_len = frames
+        .len()
+        .checked_add(1)
+        .and_then(|entries| entries.checked_mul(DPE16_LEN))
+        .ok_or(NcmError::BuiltNtbTooLarge {
+            actual: usize::MAX,
+            max: U16_MAX_USIZE,
+        })?;
+    let ndp_length = NDP16_LEN
+        .checked_add(ndp_entries_len)
+        .ok_or(NcmError::BuiltNtbTooLarge {
+            actual: usize::MAX,
+            max: U16_MAX_USIZE,
+        })?;
+    if ndp_length > U16_MAX_USIZE {
+        return Err(NcmError::BuiltNtbTooLarge {
+            actual: ndp_length,
+            max: U16_MAX_USIZE,
+        });
+    }
+    let data_start = checked_align_up_to_remainder(
+        ndp_index
+            .checked_add(ndp_length)
+            .ok_or(NcmError::BuiltNtbTooLarge {
+                actual: usize::MAX,
+                max: U16_MAX_USIZE,
+            })?,
         config.datagram_alignment,
         config.datagram_remainder,
-    );
-
-    let mut out =
-        Vec::with_capacity(data_start + frames.iter().map(|frame| frame.len()).sum::<usize>());
-    out.resize(data_start, 0);
+    )?;
     let mut entries = Vec::with_capacity(frames.len());
+    let mut frame_plans = Vec::with_capacity(frames.len());
+    let mut next_offset = data_start;
 
     for frame in frames {
         let frame_len = frame.len();
-        if frame_len > u16::MAX as usize {
+        if frame_len > U16_MAX_USIZE {
             return Err(NcmError::FrameTooLarge(frame_len));
         }
-        let frame_offset = align_up_to_remainder(
-            out.len(),
+        let frame_offset = checked_align_up_to_remainder(
+            next_offset,
             config.datagram_alignment,
             config.datagram_remainder,
-        );
-        out.resize(frame_offset, 0);
-        out.extend_from_slice(frame);
+        )?;
+        let frame_end = frame_offset
+            .checked_add(frame_len)
+            .ok_or(NcmError::BuiltNtbTooLarge {
+                actual: usize::MAX,
+                max: config.max_size,
+            })?;
+        if frame_end > config.max_size {
+            return Err(NcmError::BuiltNtbTooLarge {
+                actual: frame_end,
+                max: config.max_size,
+            });
+        }
+        if frame_end > U16_MAX_USIZE {
+            return Err(NcmError::BuiltNtbTooLarge {
+                actual: frame_end,
+                max: U16_MAX_USIZE,
+            });
+        }
         entries.push(Dpe16 {
             w_datagram_index: U16::new(u16::try_from(frame_offset).map_err(|_| {
                 NcmError::BuiltNtbTooLarge {
                     actual: frame_offset,
-                    max: u16::MAX as usize,
+                    max: U16_MAX_USIZE,
                 }
             })?),
             w_datagram_length: U16::new(
                 u16::try_from(frame_len).map_err(|_| NcmError::FrameTooLarge(frame_len))?,
             ),
         });
+        frame_plans.push(FramePlan {
+            offset: frame_offset,
+            length: frame_len,
+        });
+        next_offset = frame_end;
     }
 
-    if out.len() > config.max_size {
+    if next_offset > config.max_size {
         return Err(NcmError::BuiltNtbTooLarge {
-            actual: out.len(),
+            actual: next_offset,
             max: config.max_size,
         });
     }
-    if out.len() > u16::MAX as usize {
+    if next_offset > U16_MAX_USIZE {
         return Err(NcmError::BuiltNtbTooLarge {
-            actual: out.len(),
-            max: u16::MAX as usize,
+            actual: next_offset,
+            max: U16_MAX_USIZE,
         });
+    }
+
+    let mut out = vec![0; next_offset];
+    for (frame, plan) in frames.iter().zip(frame_plans) {
+        let frame_end = plan.offset + plan.length;
+        out[plan.offset..frame_end].copy_from_slice(frame);
     }
 
     let nth = Nth16 {
         dw_signature: U32::new(NTH16_SIGNATURE),
         w_header_length: U16::new(u16::try_from(NTH16_LEN).expect("NTH16 length fits u16")),
         w_sequence: U16::new(sequence),
-        w_block_length: U16::new(u16::try_from(out.len()).expect("checked above")),
+        w_block_length: U16::new(u16::try_from(next_offset).expect("checked above")),
         w_ndp_index: U16::new(u16::try_from(ndp_index).expect("NDP index fits u16")),
     };
     out[..NTH16_LEN].copy_from_slice(nth.as_bytes());
@@ -362,18 +418,28 @@ fn checked_range(bytes: &[u8], offset: usize, length: usize) -> Result<usize, Nc
         })
 }
 
-fn align_up_to_remainder(value: usize, alignment: usize, remainder: usize) -> usize {
+fn checked_align_up_to_remainder(
+    value: usize,
+    alignment: usize,
+    remainder: usize,
+) -> Result<usize, NcmError> {
     if alignment <= 1 {
-        return value;
+        return Ok(value);
     }
     let remainder = remainder % alignment;
     let current = value % alignment;
     if current == remainder {
-        value
-    } else if current < remainder {
-        value + (remainder - current)
+        Ok(value)
     } else {
-        value + (alignment - current) + remainder
+        let delta = if current < remainder {
+            remainder - current
+        } else {
+            alignment - current + remainder
+        };
+        value.checked_add(delta).ok_or(NcmError::BuiltNtbTooLarge {
+            actual: usize::MAX,
+            max: U16_MAX_USIZE,
+        })
     }
 }
 

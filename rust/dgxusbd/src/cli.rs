@@ -78,6 +78,18 @@ pub enum Command {
         /// Per USB bulk transfer timeout in milliseconds.
         #[arg(long, default_value_t = 100)]
         usb_timeout_ms: u64,
+
+        /// Per USB bulk IN poll timeout in milliseconds.
+        #[arg(long, default_value_t = 1)]
+        usb_read_timeout_ms: u64,
+
+        /// Maximum TAP frames to forward before polling USB.
+        #[arg(long, default_value_t = 32)]
+        tap_budget_frames: usize,
+
+        /// Maximum USB NTBs to forward before returning to TAP.
+        #[arg(long, default_value_t = 8)]
+        usb_budget_ntbs: usize,
     },
 }
 

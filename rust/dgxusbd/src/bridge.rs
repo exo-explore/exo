@@ -17,7 +17,10 @@ pub struct BridgeOptions {
     pub tap: TapOptions,
     pub duration: Option<Duration>,
     pub max_events: Option<u64>,
-    pub usb_timeout: Duration,
+    pub usb_read_timeout: Duration,
+    pub usb_write_timeout: Duration,
+    pub tap_budget_frames: usize,
+    pub usb_budget_ntbs: usize,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -38,6 +41,15 @@ pub struct BridgeReport {
     pub pair: NcmPair,
     pub setup_report: NcmSetupReport,
     pub counters: BridgeCounters,
+}
+
+struct TapToUsb<'a> {
+    tap: &'a tun_rs::SyncDevice,
+    tap_buffer: &'a mut [u8],
+    ep_out: &'a mut nusb::Endpoint<Bulk, Out>,
+    build_config: NtbBuildConfig,
+    usb_timeout: Duration,
+    budget_frames: usize,
 }
 
 pub fn run_bridge(options: BridgeOptions) -> eyre::Result<BridgeReport> {
@@ -72,6 +84,8 @@ pub fn run_bridge(options: BridgeOptions) -> eyre::Result<BridgeReport> {
         .ntb_parameters
         .map_or_else(NtbBuildConfig::default, NtbBuildConfig::from);
     let read_size = transfer_size(parse_config.max_size, ep_in.max_packet_size());
+    let tap_budget_frames = options.tap_budget_frames.max(1);
+    let usb_budget_ntbs = options.usb_budget_ntbs.max(1);
 
     let deadline = options.duration.map(|duration| Instant::now() + duration);
     let mut counters = BridgeCounters::default();
@@ -89,21 +103,22 @@ pub fn run_bridge(options: BridgeOptions) -> eyre::Result<BridgeReport> {
             break;
         }
 
-        drain_tap_to_usb(
-            &tap.device,
-            &mut tap_buffer,
-            &mut ep_out,
+        let mut tap_to_usb = TapToUsb {
+            tap: &tap.device,
+            tap_buffer: &mut tap_buffer,
+            ep_out: &mut ep_out,
             build_config,
-            options.usb_timeout,
-            &mut sequence,
-            &mut counters,
-        )?;
+            usb_timeout: options.usb_write_timeout,
+            budget_frames: tap_budget_frames,
+        };
+        drain_tap_to_usb(&mut tap_to_usb, &mut sequence, &mut counters)?;
         poll_usb_to_tap(
             &tap.device,
             &mut ep_in,
             parse_config,
             read_size,
-            options.usb_timeout,
+            options.usb_read_timeout,
+            usb_budget_ntbs,
             &mut counters,
         )?;
     }
@@ -145,28 +160,24 @@ pub fn render_bridge_report(report: &BridgeReport) -> String {
 }
 
 fn drain_tap_to_usb(
-    tap: &tun_rs::SyncDevice,
-    tap_buffer: &mut [u8],
-    ep_out: &mut nusb::Endpoint<Bulk, Out>,
-    build_config: NtbBuildConfig,
-    usb_timeout: Duration,
+    work: &mut TapToUsb<'_>,
     sequence: &mut u16,
     counters: &mut BridgeCounters,
 ) -> eyre::Result<()> {
-    loop {
-        match tap.recv(tap_buffer) {
+    for _ in 0..work.budget_frames {
+        match work.tap.recv(work.tap_buffer) {
             Ok(length) => {
                 counters.tap_frames_rx += 1;
                 if length < ETHERNET_HEADER_LEN {
                     counters.tap_frames_dropped += 1;
                     continue;
                 }
-                let frame = &tap_buffer[..length];
-                let ntb = crate::ncm::build_ntb16(*sequence, &[frame], build_config)
+                let frame = &work.tap_buffer[..length];
+                let ntb = crate::ncm::build_ntb16(*sequence, &[frame], work.build_config)
                     .wrap_err("failed to build NTB16 from TAP frame")?;
                 *sequence = sequence.wrapping_add(1);
-                ep_out
-                    .transfer_blocking(ntb.into(), usb_timeout)
+                work.ep_out
+                    .transfer_blocking(ntb.into(), work.usb_timeout)
                     .status
                     .map_err(usb_transfer_error)
                     .wrap_err("failed to write NTB16 to USB OUT endpoint")?;
@@ -177,6 +188,8 @@ fn drain_tap_to_usb(
             Err(err) => return Err(err).wrap_err("failed to read TAP frame"),
         }
     }
+
+    Ok(())
 }
 
 fn poll_usb_to_tap(
@@ -185,31 +198,37 @@ fn poll_usb_to_tap(
     parse_config: NtbParseConfig,
     read_size: usize,
     usb_timeout: Duration,
+    budget_ntbs: usize,
     counters: &mut BridgeCounters,
 ) -> eyre::Result<()> {
-    let completion = ep_in.transfer_blocking(nusb::transfer::Buffer::new(read_size), usb_timeout);
-    match completion.status {
-        Ok(()) => {}
-        Err(TransferError::Cancelled) => {
-            counters.usb_timeouts += 1;
-            return Ok(());
-        }
-        Err(err) => return Err(usb_transfer_error(err)).wrap_err("failed to read USB IN endpoint"),
-    }
-
-    counters.usb_ntbs_rx += 1;
-    let ntb = &completion.buffer[..completion.actual_len];
-    match crate::ncm::parse_ntb16(ntb, parse_config) {
-        Ok(parsed) => {
-            for frame in parsed.frames {
-                tap.send(frame).wrap_err("failed to write frame to TAP")?;
-                counters.usb_frames_rx += 1;
-                counters.tap_frames_tx += 1;
+    for _ in 0..budget_ntbs {
+        let completion =
+            ep_in.transfer_blocking(nusb::transfer::Buffer::new(read_size), usb_timeout);
+        match completion.status {
+            Ok(()) => {}
+            Err(TransferError::Cancelled) => {
+                counters.usb_timeouts += 1;
+                return Ok(());
+            }
+            Err(err) => {
+                return Err(usb_transfer_error(err)).wrap_err("failed to read USB IN endpoint");
             }
         }
-        Err(err) => {
-            counters.malformed_ntbs += 1;
-            tracing::warn!(%err, "dropping malformed NTB16");
+
+        counters.usb_ntbs_rx += 1;
+        let ntb = &completion.buffer[..completion.actual_len];
+        match crate::ncm::parse_ntb16(ntb, parse_config) {
+            Ok(parsed) => {
+                for frame in parsed.frames {
+                    tap.send(frame).wrap_err("failed to write frame to TAP")?;
+                    counters.usb_frames_rx += 1;
+                    counters.tap_frames_tx += 1;
+                }
+            }
+            Err(err) => {
+                counters.malformed_ntbs += 1;
+                tracing::warn!(%err, "dropping malformed NTB16");
+            }
         }
     }
 

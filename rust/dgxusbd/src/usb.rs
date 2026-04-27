@@ -174,6 +174,7 @@ pub struct OpenPairOptions {
     pub pair_index: usize,
     pub detach_kernel_driver: bool,
     pub initialize_ncm: bool,
+    pub require_ncm_setup_success: bool,
     pub ntb_input_size: u32,
     pub max_datagram_size: u16,
 }
@@ -335,6 +336,9 @@ pub fn open_ncm_pair(options: OpenPairOptions) -> eyre::Result<OpenNcmPair> {
     } else {
         NcmSetupReport::default()
     };
+    if options.require_ncm_setup_success {
+        setup_report.ensure_success()?;
+    }
 
     data_interface
         .set_alt_setting(pair.data_alt_setting)
@@ -611,6 +615,30 @@ pub fn render_setup_report(out: &mut String, report: &NcmSetupReport) {
 impl CdcInterfaceInfo {
     fn mac_display(&self) -> &str {
         self.ethernet_mac.as_deref().unwrap_or("<unread>")
+    }
+}
+
+impl NcmSetupReport {
+    fn ensure_success(&self) -> eyre::Result<()> {
+        let failures: Vec<_> = self
+            .steps
+            .iter()
+            .filter_map(|step| {
+                step.result
+                    .as_ref()
+                    .err()
+                    .map(|err| format!("{}: {err}", step.name))
+            })
+            .collect();
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(eyre::eyre!(
+                "required CDC-NCM setup failed: {}",
+                failures.join("; ")
+            ))
+        }
     }
 }
 
