@@ -2,7 +2,7 @@
 """Single-node integration tests.
 
 Run with:
-    uv run pytest tests/integration/test_single_node.py -v
+    uv run pytest tests/integration/test_1node.py -v
 """
 
 from __future__ import annotations
