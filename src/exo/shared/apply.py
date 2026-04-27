@@ -44,7 +44,12 @@ from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
-from exo.shared.types.worker.runners import RunnerId, RunnerShutdown, RunnerStatus
+from exo.shared.types.worker.runners import (
+    RunnerId,
+    RunnerReady,
+    RunnerShutdown,
+    RunnerStatus,
+)
 from exo.utils.info_gatherer.info_gatherer import (
     MacmonMetrics,
     MacThunderboltConnections,
@@ -240,12 +245,28 @@ def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> Sta
         new_runners: Mapping[RunnerId, RunnerStatus] = {
             rid: rs for rid, rs in state.runners.items() if rid != event.runner_id
         }
-        return state.model_copy(update={"runners": new_runners})
+        new_ports: Mapping[RunnerId, int] = {
+            rid: p
+            for rid, p in state.prefill_server_ports.items()
+            if rid != event.runner_id
+        }
+        return state.model_copy(
+            update={"runners": new_runners, "prefill_server_ports": new_ports}
+        )
     new_runners = {
         **state.runners,
         event.runner_id: event.runner_status,
     }
-    return state.model_copy(update={"runners": new_runners})
+    update: dict[str, object] = {"runners": new_runners}
+    if (
+        isinstance(event.runner_status, RunnerReady)
+        and event.runner_status.prefill_server_port is not None
+    ):
+        update["prefill_server_ports"] = {
+            **state.prefill_server_ports,
+            event.runner_id: event.runner_status.prefill_server_port,
+        }
+    return state.model_copy(update=update)
 
 
 def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:

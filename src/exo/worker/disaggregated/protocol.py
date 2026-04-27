@@ -3,7 +3,6 @@ from typing import BinaryIO, Literal
 import msgspec
 
 DType = Literal["bfloat16", "float16", "float32"]
-Layout = Literal["NHD"]
 
 
 class ProtocolError(Exception):
@@ -15,7 +14,6 @@ class Header(msgspec.Struct):
     model_id: str = ""
     num_layers: int = 0
     dtype: DType = "bfloat16"
-    layout: Layout = "NHD"
     start_pos: int = 0
 
 
@@ -73,13 +71,13 @@ def _read_exactly(stream: BinaryIO, n: int) -> bytes:
     return bytes(buf)
 
 
-def _write_frame(stream: BinaryIO, payload: bytes) -> None:
+def write_frame(stream: BinaryIO, payload: bytes) -> None:
     stream.write(len(payload).to_bytes(4, "big"))
     stream.write(payload)
     stream.flush()
 
 
-def _read_frame(stream: BinaryIO) -> bytes:
+def read_frame(stream: BinaryIO) -> bytes:
     raw = _read_exactly(stream, 4)
     if not raw:
         return b""
@@ -88,11 +86,11 @@ def _read_frame(stream: BinaryIO) -> bytes:
 
 
 def write_header(stream: BinaryIO, header: Header) -> None:
-    _write_frame(stream, _header_encoder.encode(header))
+    write_frame(stream, _header_encoder.encode(header))
 
 
 def read_header(stream: BinaryIO) -> Header:
-    payload = _read_frame(stream)
+    payload = read_frame(stream)
     if not payload:
         raise ConnectionError("No header received")
     try:
@@ -102,11 +100,11 @@ def read_header(stream: BinaryIO) -> Header:
 
 
 def write_message(stream: BinaryIO, msg: Message) -> None:
-    _write_frame(stream, _msg_encoder.encode(msg))
+    write_frame(stream, _msg_encoder.encode(msg))
 
 
 def read_message(stream: BinaryIO) -> Message | None:
-    payload = _read_frame(stream)
+    payload = read_frame(stream)
     if not payload:
         return None
     try:

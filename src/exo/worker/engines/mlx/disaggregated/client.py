@@ -1,4 +1,3 @@
-import json
 import socket
 from collections import defaultdict
 from collections.abc import Callable
@@ -18,6 +17,7 @@ from exo.worker.disaggregated.protocol import (
     read_header,
     read_message,
 )
+from exo.worker.disaggregated.server import PrefillJob, write_request
 from exo.worker.engines.mlx.disaggregated.adapter import (
     chunk_to_mlx_nhd,
     inject_arrays_cache,
@@ -25,7 +25,6 @@ from exo.worker.engines.mlx.disaggregated.adapter import (
     inject_rotating_kv_chunk,
 )
 
-DEFAULT_PORT = 8900
 _SOCKET_TIMEOUT_SECS = 60
 _RECV_BUFFER_BYTES = 4 * 1024 * 1024
 
@@ -54,7 +53,7 @@ def _parse_endpoint(endpoint: str) -> tuple[str, int]:
     if ":" in endpoint:
         host, port_str = endpoint.rsplit(":", 1)
         return host, int(port_str)
-    return endpoint, DEFAULT_PORT
+    raise ValueError(f"Invalid endpoint {endpoint}")
 
 
 def remote_prefill_fetch(
@@ -74,18 +73,17 @@ def remote_prefill_fetch(
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, _RECV_BUFFER_BYTES)
     try:
-        req_bytes = (
-            json.dumps(
-                {
-                    "request_id": request.request_id,
-                    "model": request.model_id,
-                    "token_ids": request.token_ids,
-                    "start_pos": request.start_pos,
-                }
-            ).encode("utf-8")
-            + b"\n"
+        wfile = sock.makefile("wb", buffering=256 * 1024)
+        wstream: BinaryIO = cast(BinaryIO, cast(object, wfile))
+        write_request(
+            wstream,
+            PrefillJob(
+                request_id=request.request_id,
+                model_id=request.model_id,
+                token_ids=request.token_ids,
+                start_pos=request.start_pos,
+            ),
         )
-        sock.sendall(req_bytes)
 
         raw_stream = sock.makefile("rb", buffering=256 * 1024)
         stream: BinaryIO = cast(BinaryIO, cast(object, raw_stream))

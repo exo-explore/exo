@@ -91,7 +91,7 @@ class DeleteCustomModelCard(BaseCommand):
 
 
 class SetInstanceLink(BaseCommand):
-    link_id: InstanceLinkId | None = None
+    link_id: InstanceLinkId
     prefill_instances: list[InstanceId]
     decode_instances: list[InstanceId]
 

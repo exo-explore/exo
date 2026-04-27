@@ -1,4 +1,3 @@
-import json
 import socket
 import socketserver
 import threading
@@ -6,55 +5,43 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO, cast
 
+import msgspec
 from loguru import logger
 
 from exo.worker.disaggregated.protocol import (
     Header,
+    read_frame,
     write_error,
+    write_frame,
     write_header,
 )
 
 
-@dataclass
-class PrefillJob:
-    request_id: str
-    model_id: str
-    token_ids: list[int]
-    start_pos: int
-
-
-ResolveHandler = Callable[[PrefillJob], bytes | None]
-
-
-def _parse_request_line(line: bytes) -> PrefillJob:
-    parsed = cast(object, json.loads(line.decode("utf-8")))
-    if not isinstance(parsed, dict):
-        raise ValueError(f"Expected JSON object, got {type(parsed).__name__}")
-    d = cast(dict[str, object], parsed)
-
-    def _str(key: str, default: str = "") -> str:
-        v = d.get(key, default)
-        return v if isinstance(v, str) else default
-
-    def _int(key: str, default: int = 0) -> int:
-        v = d.get(key, default)
-        return v if isinstance(v, int) else default
-
-    raw_tokens = d.get("token_ids")
-    if not isinstance(raw_tokens, list):
-        raise ValueError("Missing token_ids in request")
+class PrefillJob(msgspec.Struct):
+    request_id: str = ""
+    model_id: str = ""
     token_ids: list[int] = []
-    for t in cast(list[object], raw_tokens):
-        if not isinstance(t, int):
-            raise ValueError("token_ids must be list[int]")
-        token_ids.append(t)
+    start_pos: int = 0
 
-    return PrefillJob(
-        request_id=_str("request_id"),
-        model_id=_str("model"),
-        token_ids=token_ids,
-        start_pos=_int("start_pos"),
-    )
+
+_request_encoder = msgspec.msgpack.Encoder()
+_request_decoder: msgspec.msgpack.Decoder[PrefillJob] = msgspec.msgpack.Decoder(
+    PrefillJob
+)
+
+
+def write_request(stream: BinaryIO, job: PrefillJob) -> None:
+    write_frame(stream, _request_encoder.encode(job))
+
+
+def read_request(stream: BinaryIO) -> PrefillJob:
+    payload = read_frame(stream)
+    if not payload:
+        raise ConnectionError("No request received")
+    return _request_decoder.decode(payload)
+
+
+ResolveHandler = Callable[[PrefillJob, BinaryIO], bool]
 
 
 def _send_error(wfile: BinaryIO, code: int, message: str) -> None:
@@ -81,33 +68,25 @@ class _PrefillHandler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
         server = cast(_PrefillTCPServer, self.server)
         wfile: BinaryIO = cast(BinaryIO, cast(object, self.wfile))
-        line: bytes = self.rfile.readline()
-        if not line:
-            return
+        rfile: BinaryIO = cast(BinaryIO, cast(object, self.rfile))
         try:
-            job = _parse_request_line(line)
-        except (ValueError, json.JSONDecodeError) as exc:
+            job = read_request(rfile)
+        except ConnectionError:
+            return
+        except (msgspec.DecodeError, ValueError) as exc:
             _send_error(wfile, 400, f"Bad request: {exc}")
             return
         try:
-            payload = server.resolve(job)
+            picked_up = server.resolve(job, wfile)
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=True).warning(
                 f"Prefill resolve error for request_id={job.request_id}"
             )
             _send_error(wfile, 500, str(exc))
             return
-        if payload is None:
+        if not picked_up:
             _send_error(
-                wfile, 503, f"No payload ready for request_id={job.request_id!r}"
-            )
-            return
-        try:
-            wfile.write(payload)
-            wfile.flush()
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to write payload for request_id={job.request_id}"
+                wfile, 503, f"Prefill not picked up for request_id={job.request_id!r}"
             )
 
 
@@ -118,27 +97,22 @@ class PrefillServer:
     port: int = 0
     _server: _PrefillTCPServer | None = field(default=None, init=False, repr=False)
     _thread: threading.Thread | None = field(default=None, init=False, repr=False)
-    _bound_port: int = field(default=0, init=False, repr=False)
-
-    @property
-    def bound_port(self) -> int:
-        return self._bound_port
 
     def start(self) -> int:
         if self._server is not None:
-            return self._bound_port
+            sock = cast(socket.socket, cast(Any, self._server).socket)
+            return int(cast(tuple[str, int], sock.getsockname())[1])
 
         self._server = _PrefillTCPServer((self.host, self.port), _PrefillHandler)
         self._server.resolve = self.resolve
         sock = cast(socket.socket, cast(Any, self._server).socket)
-        addr = cast(tuple[str, int], sock.getsockname())
-        self._bound_port = int(addr[1])
+        bound_port = int(cast(tuple[str, int], sock.getsockname())[1])
         self._thread = threading.Thread(
-            target=self._server.serve_forever, name="prefill-server", daemon=True
+            target=self._server.serve_forever, name="prefill-server"
         )
         self._thread.start()
-        logger.info(f"Prefill server listening on {self.host}:{self._bound_port}")
-        return self._bound_port
+        logger.info(f"Prefill server listening on {self.host}:{bound_port}")
+        return bound_port
 
     def stop(self) -> None:
         if self._server is not None:
@@ -148,4 +122,3 @@ class PrefillServer:
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
-        self._bound_port = 0

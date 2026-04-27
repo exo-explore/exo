@@ -5,10 +5,10 @@ import time
 from collections.abc import Generator
 from dataclasses import dataclass
 from enum import Enum
+from typing import BinaryIO
 
 import mlx.core as mx
 from anyio import ClosedResourceError, EndOfStream
-from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelTask
@@ -54,20 +54,9 @@ from exo.worker.disaggregated.server import (
     PrefillJob,
     PrefillServer,
 )
-from exo.worker.engines.mlx.cache import (
-    KVPrefixCache,
-    cache_length,
-    make_kv_cache,
-    snapshot_ssm_states,
-)
-from exo.worker.engines.mlx.disaggregated.adapter import (
-    serialize_mlx_cache_to_payload,
-    wire_dtype_from_cache,
-)
-from exo.worker.engines.mlx.generator.generate import prefill as mlx_prefill
+from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
-    fix_unmatched_think_end_tokens,
     initialize_mlx,
     load_mlx_items,
 )
@@ -89,91 +78,13 @@ PREFILL_FINISH_TIMEOUT_SECONDS = 300
 @dataclass
 class _PrefillRequest:
     job: PrefillJob
+    wfile: BinaryIO
     started: threading.Event
     done: threading.Event
-    holder: list[bytes | None]
 
 
 _TaskStreamClosed = object()
 WorkItem = Task | _PrefillRequest | object
-
-
-def serve_prefill_request(
-    *,
-    model: Model,
-    tokenizer: TokenizerWrapper,
-    group: mx.distributed.Group | None,
-    kv_prefix_cache: KVPrefixCache | None,
-    job: PrefillJob,
-) -> bytes:
-    prompt_tokens = mx.array(job.token_ids)
-    prompt_tokens = fix_unmatched_think_end_tokens(prompt_tokens, tokenizer)
-    n_tokens = int(prompt_tokens.shape[0])
-    t0 = time.perf_counter()
-
-    matched_index: int | None = None
-    prefix_hit_length = 0
-    if kv_prefix_cache is not None:
-        cache, remaining, matched_index, _ = kv_prefix_cache.get_kv_cache(
-            model, prompt_tokens
-        )
-        prefix_hit_length = n_tokens - int(remaining.shape[0])
-    else:
-        cache = make_kv_cache(model)
-        remaining = prompt_tokens
-
-    target_offset = max(0, n_tokens - 2)
-    new_tokens = max(0, target_offset - prefix_hit_length)
-    prefill_input = remaining[:new_tokens]
-    if int(prefill_input.shape[0]) > 0:
-        sampler = make_sampler(temp=1.0)
-        _ = mlx_prefill(
-            model=model,
-            tokenizer=tokenizer,
-            sampler=sampler,
-            prompt_tokens=prefill_input,
-            cache=cache,
-            group=group,
-            on_prefill_progress=None,
-            distributed_prompt_progress_callback=None,
-        )
-
-    if kv_prefix_cache is not None:
-        try:
-            cache_snapshots = [snapshot_ssm_states(cache)]
-            hit_ratio = prefix_hit_length / n_tokens if n_tokens > 0 else 0.0
-            if matched_index is not None and hit_ratio >= 0.5:
-                kv_prefix_cache.update_kv_cache(
-                    matched_index,
-                    prompt_tokens,
-                    cache,
-                    cache_snapshots,
-                    restore_pos=prefix_hit_length,
-                )
-            else:
-                kv_prefix_cache.add_kv_cache(prompt_tokens, cache, cache_snapshots)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to save prefix cache on prefill server"
-            )
-
-    final_offset = cache_length(cache)
-    payload = serialize_mlx_cache_to_payload(
-        cache,
-        dtype=wire_dtype_from_cache(cache),
-        model_id=job.model_id,
-        request_id=job.request_id,
-        start_pos=job.start_pos,
-    )
-    elapsed = time.perf_counter() - t0
-    sent = max(0, final_offset - job.start_pos)
-    logger.info(
-        f"Served prefill: request_id={job.request_id} "
-        f"{n_tokens} tokens (prefix_hit={prefix_hit_length}, "
-        f"client_start_pos={job.start_pos}, sent={sent}) "
-        f"in {elapsed * 1000:.0f}ms"
-    )
-    return payload
 
 
 class ExitCode(str, Enum):
@@ -236,12 +147,12 @@ class Runner:
         if self._prefill_server_port is not None:
             return self._prefill_server_port
 
-        def resolve(job: PrefillJob) -> bytes | None:
+        def resolve(job: PrefillJob, wfile: BinaryIO) -> bool:
             req = _PrefillRequest(
                 job=job,
+                wfile=wfile,
                 started=threading.Event(),
                 done=threading.Event(),
-                holder=[None],
             )
             self._work_queue.put(req)
             if not req.started.wait(timeout=PREFILL_PICKUP_TIMEOUT_SECONDS):
@@ -249,20 +160,18 @@ class Runner:
                     f"Prefill request {job.request_id} not picked up within "
                     f"{PREFILL_PICKUP_TIMEOUT_SECONDS}s — runner busy"
                 )
-                return None
+                return False
             if not req.done.wait(timeout=PREFILL_FINISH_TIMEOUT_SECONDS):
                 logger.warning(
                     f"Prefill request {job.request_id} did not finish within "
                     f"{PREFILL_FINISH_TIMEOUT_SECONDS}s"
                 )
-                return None
-            return req.holder[0]
+            return True
 
         self._prefill_server = PrefillServer(
             resolve=resolve, host="0.0.0.0", port=random_ephemeral_port()
         )
-        self._prefill_server.start()
-        self._prefill_server_port = self._prefill_server.bound_port
+        self._prefill_server_port = self._prefill_server.start()
         return self._prefill_server_port
 
     def _start_task_reader(self) -> None:
@@ -279,32 +188,20 @@ class Runner:
             finally:
                 self._work_queue.put(_TaskStreamClosed)
 
-        self._task_reader_thread = threading.Thread(
-            target=loop, name="task-reader", daemon=True
-        )
+        self._task_reader_thread = threading.Thread(target=loop, name="task-reader")
         self._task_reader_thread.start()
 
     def _serve_prefill(self, req: _PrefillRequest) -> None:
         req.started.set()
         try:
-            req.holder[0] = self._serve_prefill_request(req.job)
+            assert isinstance(self.generator, InferenceGenerator)
+            self.generator.serve_prefill(req.job, req.wfile)
         except Exception:
             logger.opt(exception=True).warning(
                 f"Failed to serve prefill request {req.job.request_id}"
             )
-            req.holder[0] = None
         finally:
             req.done.set()
-
-    def _serve_prefill_request(self, job: PrefillJob) -> bytes:
-        assert isinstance(self.generator, InferenceGenerator)
-        return serve_prefill_request(
-            model=self.generator.model,
-            tokenizer=self.generator.tokenizer,
-            group=self.generator.group,
-            kv_prefix_cache=self.generator.kv_prefix_cache,
-            job=job,
-        )
 
     def update_status(self, status: RunnerStatus):
         self.current_status = status
@@ -324,21 +221,30 @@ class Runner:
 
     def main(self):
         self._start_task_reader()
-        while True:
-            item = self._work_queue.get()
-            if item is _TaskStreamClosed:
-                break
-            if isinstance(item, _PrefillRequest):
-                self._serve_prefill(item)
-                continue
-            task: Task = item  # type: ignore[assignment]
-            if task.task_id in self.seen:
-                logger.warning("repeat task - potential error")
-                continue
-            self.seen.add(task.task_id)
-            self.handle_first_task(task)
-            if isinstance(self.current_status, RunnerShutdown):
-                break
+        try:
+            while True:
+                item = self._work_queue.get()
+                if item is _TaskStreamClosed:
+                    break
+                if isinstance(item, _PrefillRequest):
+                    self._serve_prefill(item)
+                    continue
+                task: Task = item  # type: ignore
+                if task.task_id in self.seen:
+                    logger.warning("repeat task - potential error")
+                    continue
+                self.seen.add(task.task_id)
+                self.handle_first_task(task)
+                if isinstance(self.current_status, RunnerShutdown):
+                    break
+        finally:
+            if self._prefill_server is not None:
+                self._prefill_server.stop()
+                self._prefill_server = None
+            self.task_receiver.close()
+            if self._task_reader_thread is not None:
+                self._task_reader_thread.join(timeout=5)
+                self._task_reader_thread = None
 
     def handle_first_task(self, task: Task):
         self.send_task_status(task.task_id, TaskStatus.Running)
@@ -463,7 +369,7 @@ class Runner:
         assert isinstance(self.generator, InferenceGenerator)
 
         logger.info(f"received chat request: {starting_task}")
-        self.update_status(RunnerRunning(prefill_server_port=self._prefill_server_port))
+        self.update_status(RunnerRunning())
         logger.info("runner running")
         self.acknowledge_task(starting_task)
         self.seen.add(starting_task.task_id)
@@ -496,7 +402,7 @@ class Runner:
             if isinstance(item, _PrefillRequest):
                 self._serve_prefill(item)
                 continue
-            task: Task = item  # type: ignore[assignment]
+            task: Task = item  # type: ignore
             if task.task_id in self.seen:
                 logger.warning("repeat task - potential error")
                 continue

@@ -632,7 +632,7 @@ class API:
     async def create_instance_link(
         self, body: InstanceLinkBody
     ) -> InstanceLinkResponse:
-        return await self._set_instance_link(None, body)
+        return await self._set_instance_link(InstanceLinkId(), body)
 
     async def update_instance_link(
         self, link_id: InstanceLinkId, body: InstanceLinkBody
@@ -640,7 +640,7 @@ class API:
         return await self._set_instance_link(link_id, body)
 
     async def _set_instance_link(
-        self, link_id: InstanceLinkId | None, body: InstanceLinkBody
+        self, link_id: InstanceLinkId, body: InstanceLinkBody
     ) -> InstanceLinkResponse:
         command = SetInstanceLink(
             link_id=link_id,

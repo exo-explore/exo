@@ -63,6 +63,7 @@ class State(FrozenModel):
     thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []
 
     instance_links: Mapping[InstanceLinkId, InstanceLink] = {}
+    prefill_server_ports: Mapping[RunnerId, int] = {}
 
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:

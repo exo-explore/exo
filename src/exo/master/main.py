@@ -10,6 +10,7 @@ from exo.master.placement import (
     get_transition_events,
     place_instance,
 )
+from exo.master.placement_utils import find_ip_prioritised
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
@@ -52,7 +53,7 @@ from exo.shared.types.events import (
     TracesCollected,
     TracesMerged,
 )
-from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
+from exo.shared.types.instance_link import InstanceLink
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -68,24 +69,19 @@ from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.worker.instances import InstanceId
-from exo.shared.types.worker.runners import RunnerReady, RunnerRunning
 from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
 
 
-def _prefill_endpoints_for(state: State, decode_instance_id: InstanceId) -> list[str]:
-    from exo.master.placement_utils import (
-        _find_ip_prioritised as find_ip_prioritised,  # pyright: ignore[reportPrivateUsage]
-    )
-
+def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
     decode = state.instances.get(decode_instance_id)
     if decode is None:
-        return []
+        return None
     decode_node = next(iter(decode.shard_assignments.node_to_runner.keys()), None)
     if decode_node is None:
-        return []
+        return None
 
     sources: set[InstanceId] = set()
     for link in state.instance_links.values():
@@ -93,19 +89,21 @@ def _prefill_endpoints_for(state: State, decode_instance_id: InstanceId) -> list
             sources.update(link.prefill_instances)
     sources.discard(decode_instance_id)
 
-    endpoints: list[str] = []
-    seen: set[str] = set()
-    for src_id in sources:
+    in_flight = {TaskStatus.Pending, TaskStatus.Running}
+    task_counts: dict[InstanceId, int] = {
+        src_id: sum(
+            1
+            for task in state.tasks.values()
+            if task.instance_id == src_id and task.task_status in in_flight
+        )
+        for src_id in sources
+    }
+    for src_id in sorted(sources, key=lambda sid: task_counts[sid]):
         instance = state.instances.get(src_id)
         if instance is None:
             continue
         for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
-            status = state.runners.get(runner_id)
-            port = (
-                status.prefill_server_port
-                if isinstance(status, (RunnerReady, RunnerRunning))
-                else None
-            )
+            port = state.prefill_server_ports.get(runner_id)
             if port is None:
                 continue
             ip = find_ip_prioritised(
@@ -113,13 +111,8 @@ def _prefill_endpoints_for(state: State, decode_instance_id: InstanceId) -> list
             )
             if ip is None:
                 continue
-            endpoint = f"{ip}:{port}"
-            if endpoint in seen:
-                continue
-            seen.add(endpoint)
-            endpoints.append(endpoint)
-            break
-    return endpoints
+            return f"{ip}:{port}"
+    return None
 
 
 class Master:
@@ -181,10 +174,17 @@ class Master:
                         case TestCommand():
                             pass
                         case TextGeneration():
+                            prefill_only: set[InstanceId] = set()
+                            for link in self.state.instance_links.values():
+                                prefill_only.update(link.prefill_instances)
+                            for link in self.state.instance_links.values():
+                                prefill_only.difference_update(link.decode_instances)
+
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
+                                    and instance.instance_id not in prefill_only
                                 ):
                                     in_flight = {TaskStatus.Pending, TaskStatus.Running}
                                     task_count = sum(
@@ -213,7 +213,7 @@ class Master:
                             task_id = TaskId()
                             params = command.task_params.model_copy(
                                 update={
-                                    "prefill_endpoints": _prefill_endpoints_for(
+                                    "prefill_endpoint": _prefill_endpoint_for(
                                         self.state, decode_instance_id
                                     ),
                                 }
@@ -425,7 +425,7 @@ class Master:
                             )
                         case SetInstanceLink():
                             link = InstanceLink(
-                                link_id=command.link_id or InstanceLinkId(),
+                                link_id=command.link_id,
                                 prefill_instances=list(
                                     dict.fromkeys(command.prefill_instances)
                                 ),
