@@ -25,7 +25,7 @@ class TestFourNodeInference:
         client = make_client(four_node_cluster)
 
         place_and_wait(client, sharding="Pipeline", instance_meta="MlxRing", min_nodes=4, timeout=900.0)
-        verify_node_count(client, expected_min=4)
+        verify_node_count(client, expected=4)
         chat_and_assert(client)
 
     def test_4node_cluster_state(self, four_node_cluster: ClusterInfo):

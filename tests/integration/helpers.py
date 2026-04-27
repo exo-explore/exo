@@ -397,13 +397,24 @@ def chat_and_assert(client: ExoClient, model_id: str = DEFAULT_MODEL):
     return resp
 
 
-def verify_node_count(client: ExoClient, expected_min: int):
-    """Verify the placed instance uses at least the expected number of nodes."""
+def verify_node_count(
+    client: ExoClient, *, expected: int | None = None, expected_min: int | None = None
+):
+    """Verify the placed instance uses the expected number of nodes.
+
+    Pass `expected` for an exact count or `expected_min` for a minimum.
+    """
+    assert (expected is not None) != (expected_min is not None), (
+        "Pass exactly one of expected or expected_min"
+    )
+
     state = client.request_json("GET", "/state")
     instances = state.get("instances", {})
     assert len(instances) > 0, "No instances found after placement"
 
     for _key, instance in instances.items():
         n = nodes_used_in_instance(instance)
-        print(f"=============== using {n} nodes ===============")
-        assert n >= expected_min, f"Expected at least {expected_min} nodes, got {n}"
+        if expected is not None:
+            assert n == expected, f"Expected exactly {expected} nodes, got {n}"
+        else:
+            assert n >= expected_min, f"Expected at least {expected_min} nodes, got {n}"
