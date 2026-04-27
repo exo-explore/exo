@@ -293,11 +293,15 @@ def sharding_filter(sharding: str, wanted: str) -> bool:
 
 
 def fetch_and_filter_placements(
-    client: ExoClient, full_model_id: str, args: argparse.Namespace
+    client: ExoClient,
+    full_model_id: str,
+    args: argparse.Namespace,
+    node_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    previews_resp = client.request_json(
-        "GET", "/instance/previews", params={"model_id": full_model_id}
-    )
+    params: dict[str, str] = {"model_id": full_model_id}
+    if node_id is not None:
+        params["node_ids"] = node_id
+    previews_resp = client.request_json("GET", "/instance/previews", params=params)
     previews = previews_resp.get("previews") or []
 
     selected: list[dict[str, Any]] = []
@@ -357,8 +361,9 @@ def settle_and_fetch_placements(
     full_model_id: str,
     args: argparse.Namespace,
     settle_timeout: float = 0,
+    node_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    selected = fetch_and_filter_placements(client, full_model_id, args)
+    selected = fetch_and_filter_placements(client, full_model_id, args, node_id=node_id)
 
     if not selected and settle_timeout > 0:
         backoff = _SETTLE_INITIAL_BACKOFF_S
@@ -371,7 +376,9 @@ def settle_and_fetch_placements(
             )
             time.sleep(min(backoff, remaining))
             backoff = min(backoff * _SETTLE_BACKOFF_MULTIPLIER, _SETTLE_MAX_BACKOFF_S)
-            selected = fetch_and_filter_placements(client, full_model_id, args)
+            selected = fetch_and_filter_placements(
+                client, full_model_id, args, node_id=node_id
+            )
 
     return selected
 
