@@ -52,7 +52,7 @@ struct AtomicBridgeCounters {
 }
 
 struct TapToUsbWorker {
-    tap: tun_rs::SyncDevice,
+    tap: Arc<tun_rs::SyncDevice>,
     ep_out: nusb::Endpoint<Bulk, Out>,
     build_config: NtbBuildConfig,
     write_timeout: Duration,
@@ -64,7 +64,7 @@ struct TapToUsbWorker {
 }
 
 struct UsbToTapWorker {
-    tap: tun_rs::SyncDevice,
+    tap: Arc<tun_rs::SyncDevice>,
     ep_in: nusb::Endpoint<Bulk, In>,
     parse_config: NtbParseConfig,
     read_size: usize,
@@ -101,13 +101,7 @@ impl BridgeDataplane {
         let mut tap_options = options.tap.clone();
         tap_options.nonblocking = true;
         let tap = create_tap(&tap_options)?;
-        let tap_tx = tap
-            .device
-            .try_clone()
-            .wrap_err("failed to clone TAP handle for USB-to-TAP worker")?;
-        tap_tx
-            .set_nonblocking(true)
-            .wrap_err("failed to put cloned TAP handle in nonblocking mode")?;
+        let tap_device = Arc::new(tap.device);
 
         let parse_config = open
             .setup_report
@@ -128,7 +122,7 @@ impl BridgeDataplane {
         let (errors_send, errors) = bounded(2);
 
         let tap_worker = TapToUsbWorker {
-            tap: tap.device,
+            tap: Arc::clone(&tap_device),
             ep_out,
             build_config,
             write_timeout: options.usb_write_timeout,
@@ -139,7 +133,7 @@ impl BridgeDataplane {
             sequence: 0,
         };
         let usb_worker = UsbToTapWorker {
-            tap: tap_tx,
+            tap: tap_device,
             ep_in,
             parse_config,
             read_size,
@@ -315,7 +309,7 @@ impl TapToUsbWorker {
     fn run(mut self) -> eyre::Result<()> {
         let mut poll = Poll::new().wrap_err("creating TAP poller")?;
         let mut events = Events::with_capacity(8);
-        let tap_raw_fd = self.tap.as_raw_fd();
+        let tap_raw_fd = self.tap.as_ref().as_raw_fd();
         let mut tap_source = SourceFd(&tap_raw_fd);
         poll.registry()
             .register(&mut tap_source, TOKEN_TAP, Interest::READABLE)

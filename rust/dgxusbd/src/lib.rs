@@ -99,7 +99,7 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
                     name: tap.name,
                     mtu: tap.mtu,
                     nonblocking: true,
-                    multi_queue: true,
+                    multi_queue: false,
                 },
                 duration: duration_seconds.map(DurationArgExt::seconds),
                 max_events,
