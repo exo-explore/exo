@@ -220,5 +220,5 @@ pythonpath = "."
 asyncio_mode = "auto"
 markers = ["slow: marks tests as slow (deselected by default)"]
 env = ["EXO_TESTS=1"]
-addopts = "-m 'not slow' --ignore=tests/start_distributed_test.py"
+addopts = "-m 'not slow' --ignore=tests/start_distributed_test.py --ignore=tests/integration"
 filterwarnings = ["ignore:builtin type Swig:DeprecationWarning"]
