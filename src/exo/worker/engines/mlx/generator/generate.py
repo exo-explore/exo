@@ -42,11 +42,11 @@ from exo.worker.engines.mlx.auto_parallel import (
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
+    copy_snapshot_entry,
     encode_prompt,
     has_non_kv_caches,
     is_non_trimmable_cache_entry,
     make_kv_cache,
-    restore_snapshot_entry,
     snapshot_ssm_states,
 )
 from exo.worker.engines.mlx.constants import (
@@ -375,7 +375,7 @@ def prefill(
         non_trimmable = is_non_trimmable_cache_entry(c)
         if has_ssm and non_trimmable:
             assert pre_gen is not None
-            restored = restore_snapshot_entry(pre_gen.states[i])
+            restored = copy_snapshot_entry(pre_gen.states[i])
             if restored is not None:
                 cache[i] = restored  # type: ignore
         else:

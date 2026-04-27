@@ -13,7 +13,12 @@ from mlx_lm.models.cache import (
     QuantizedKVCache,
     RotatingKVCache,
 )
-from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
+from mlx_lm.models.deepseek_v4 import (
+    DeepseekV4Cache,
+)
+from mlx_lm.models.deepseek_v4 import (
+    _CompressorBranch as CompressorBranch,  # type: ignore
+)
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
@@ -48,7 +53,9 @@ class CacheSnapshot:
 
     def __init__(
         self,
-        states: list[RotatingKVCache | ArraysCache | CacheList | object | None],
+        states: list[
+            RotatingKVCache | ArraysCache | CacheList | DeepseekV4Cache | None
+        ],
         token_count: int,
     ):
         self.states = states
@@ -113,25 +120,71 @@ def _copy_cache_list(cl: CacheList) -> CacheList:
     return CacheList(*copied)
 
 
-def restore_snapshot_entry(
-    entry: ArraysCache | RotatingKVCache | CacheList | object | None,
-) -> ArraysCache | RotatingKVCache | CacheList | object | None:
-    if entry is None:
+def _detached_copy_or_none(a: mx.array | None) -> mx.array | None:
+    if a is None:
         return None
-    if isinstance(entry, RotatingKVCache):
-        snap = copy_rotating_kv_cache(entry)
-        return snap if snap is not None else deepcopy(entry)
-    if isinstance(entry, ArraysCache):
-        return _copy_arrays_cache(entry)
-    if isinstance(entry, CacheList):
-        return _copy_cache_list(entry)
-    # DeepseekV4Cache (or any other unknown wrapper) — return a fresh deepcopy
-    # so the caller swaps the live cache slot for an independent copy.
-    return deepcopy(entry)
+    out = _detached_copy(a)
+    mx.eval(out)
+    return out
+
+
+def _copy_compressor_branch(b: CompressorBranch) -> CompressorBranch:
+    out = CompressorBranch.__new__(CompressorBranch)
+    out.buffer_kv = _detached_copy_or_none(b.buffer_kv)
+    out.buffer_gate = _detached_copy_or_none(b.buffer_gate)
+    out.prev_kv = _detached_copy_or_none(b.prev_kv)
+    out.prev_gate = _detached_copy_or_none(b.prev_gate)
+    out.pool = _detached_copy_or_none(b.pool)
+    out.buffer_lengths = deepcopy(b.buffer_lengths)
+    out.pool_lengths = deepcopy(b.pool_lengths)
+    out.buffer_count = deepcopy(b.buffer_count)
+    out._new_pool_lengths = deepcopy(b._new_pool_lengths)
+    return out
+
+
+def _copy_v4_cache(c: DeepseekV4Cache) -> DeepseekV4Cache:
+    snap = DeepseekV4Cache.__new__(DeepseekV4Cache)
+
+    local: RotatingKVCache = c.local
+    local_snap = copy_rotating_kv_cache(local)
+    if local_snap is None:
+        local_snap = RotatingKVCache.__new__(RotatingKVCache)
+        local_snap.keys = None
+        local_snap.values = None
+        local_snap.offset = local.offset
+        local_snap._idx = 0
+        local_snap.keep = local.keep
+        local_snap.max_size = local.max_size
+    snap.local = local_snap
+
+    snap._branches = {
+        key: _copy_compressor_branch(branch) for key, branch in c._branches.items()
+    }
+    snap._pending_lengths = deepcopy(c._pending_lengths)
+    return snap
+
+
+def copy_snapshot_entry(
+    entry: ArraysCache | RotatingKVCache | CacheList | DeepseekV4Cache | None,
+) -> ArraysCache | RotatingKVCache | CacheList | DeepseekV4Cache | None:
+    match entry:
+        case None:
+            return None
+        case RotatingKVCache():
+            snap = copy_rotating_kv_cache(entry)
+            return snap if snap is not None else deepcopy(entry)
+        case ArraysCache():
+            return _copy_arrays_cache(entry)
+        case CacheList():
+            return _copy_cache_list(entry)
+        case DeepseekV4Cache():
+            return _copy_v4_cache(entry)
 
 
 def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
-    states: list[ArraysCache | RotatingKVCache | CacheList | object | None] = []
+    states: list[
+        RotatingKVCache | ArraysCache | CacheList | DeepseekV4Cache | None
+    ] = []
     for c in cache:
         if isinstance(c, ArraysCache):
             states.append(_copy_arrays_cache(c))
@@ -140,11 +193,7 @@ def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
         elif isinstance(c, CacheList) and not bool(c.is_trimmable()):  # type: ignore[reportUnknownMemberType]
             states.append(_copy_cache_list(c))
         elif isinstance(c, DeepseekV4Cache):
-            # DeepseekV4Cache wraps a RotatingKVCache + per-key Compressor /
-            # Indexer pool state. None of it round-trips through trim(), so
-            # we deepcopy the whole thing so the prefill +2 rollback can
-            # restore both the local KV and the pool state together.
-            states.append(deepcopy(c))
+            states.append(_copy_v4_cache(c))
         else:
             states.append(None)
     token_count = cache_length(cache)
@@ -432,7 +481,7 @@ def trim_cache(
         )
         if non_trimmable:
             if snapshot is not None and snapshot.states[i] is not None:
-                restored = restore_snapshot_entry(snapshot.states[i])
+                restored = copy_snapshot_entry(snapshot.states[i])
                 if restored is not None:
                     cache[i] = restored  # type: ignore
             elif isinstance(c, (ArraysCache, RotatingKVCache)):
@@ -465,7 +514,12 @@ def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
 
 
 def _entry_length(
-    c: KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList,
+    c: KVCache
+    | RotatingKVCache
+    | QuantizedKVCache
+    | ArraysCache
+    | CacheList
+    | DeepseekV4Cache,
 ) -> int:
     # Use .offset attribute which KVCache types have (len() not implemented in older QuantizedKVCache).
     if hasattr(c, "offset"):

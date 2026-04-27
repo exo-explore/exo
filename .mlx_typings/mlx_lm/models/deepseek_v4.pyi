@@ -121,14 +121,29 @@ class Indexer(nn.Module):
         rope: DeepseekV4RoPE,
     ) -> None: ...
 
+class _CompressorBranch:
+    buffer_kv: Optional[mx.array]
+    buffer_gate: Optional[mx.array]
+    prev_kv: Optional[mx.array]
+    prev_gate: Optional[mx.array]
+    pool: Optional[mx.array]
+    buffer_lengths: Optional[List[int]]
+    pool_lengths: Optional[List[int]]
+    buffer_count: int
+    _new_pool_lengths: Optional[List[int]]
+
+    def __init__(self) -> None: ...
+
 class DeepseekV4Cache:
-    local: Any
+    local: RotatingKVCache
     offset: int
     keys: Optional[mx.array]
     values: Optional[mx.array]
     state: Any
     meta_state: Any
     nbytes: int
+    _branches: Dict[str, _CompressorBranch]
+    _pending_lengths: Optional[List[int]]
 
     def __init__(self, sliding_window: int) -> None: ...
     def update_and_fetch(
