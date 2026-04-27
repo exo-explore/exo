@@ -144,18 +144,22 @@
       // Reasoning round-trip: opencode's `interleaved` field tells the
       // openai-compatible adapter to send the assistant's prior
       // reasoning_content back in subsequent turns. Emit it for dialects
-      // whose chat templates actually read `message.reasoning_content`:
+      // whose chat templates use prior reasoning:
       //   - `tool_conditional` (DeepSeek V3.2 / V4): wrapper preserves all
       //     reasoning when tools are present.
       //   - `post_last_user` (Qwen3-Thinking, GLM 4.5+, MiniMax M2.x):
       //     Jinja template reads reasoning_content for assistant turns since
       //     the last user message — exactly the tool-chain window.
-      // `channel` (gpt-oss): reads `message.thinking`, not
-      // `message.reasoning_content`, and opencode's field option doesn't
-      // support `thinking` — handled separately if/when we add server-side
-      // field translation.
+      //   - `channel` (gpt-oss / Harmony): the model's Jinja template reads
+      //     `message.thinking` rather than `message.reasoning_content`, but
+      //     the server bridges `reasoning_content` → `thinking` before
+      //     rendering, so the round-trip works through the standard field.
       // `suffix` (Kimi): reasoning lives in content; no separate field path.
-      if (dialect === "tool_conditional" || dialect === "post_last_user") {
+      if (
+        dialect === "tool_conditional" ||
+        dialect === "post_last_user" ||
+        dialect === "channel"
+      ) {
         entry.interleaved = { field: "reasoning_content" };
       }
       models[modelId] = entry;

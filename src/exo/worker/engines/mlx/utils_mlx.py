@@ -610,6 +610,14 @@ def render_chat_template(
     for msg in formatted_messages:
         _normalize_tool_calls(msg)
 
+    # Put reasoning content in thinking block for GPT OSS
+    if "gpt-oss" in task_params.model.lower():
+        for msg in formatted_messages:
+            if msg.get("role") == "assistant" and "thinking" not in msg:
+                rc = msg.get("reasoning_content")
+                if isinstance(rc, str) and rc:
+                    msg["thinking"] = rc
+
     extra_kwargs: dict[str, Any] = {}
     if task_params.enable_thinking is not None:
         # Qwen3 and GLM use "enable_thinking"; DeepSeek uses "thinking".

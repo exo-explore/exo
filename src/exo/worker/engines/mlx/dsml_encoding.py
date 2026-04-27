@@ -36,10 +36,7 @@ def encode_messages(
 ) -> str:
     # V3.2 (like V4) is `tool_conditional`: when tools are in play, prior-turn
     # reasoning_content must be retained so multi-step tool chains stay
-    # coherent. Upstream `deepseek_v32.encode_messages` doesn't auto-flip on
-    # tools the way V4 does, so we mirror that behavior here. Clients
-    # round-trip reasoning_content via opencode's `interleaved` field /
-    # codex's default serialization based on our /v1/models dialect.
+    # coherent.
     effective_drop_thinking = drop_thinking
     if tools:
         effective_drop_thinking = False
