@@ -540,13 +540,17 @@ def main() -> int:
         logger.error("[exo-bench] tokenizer usable but prompt sizing failed")
         raise
 
-    # Auto-detect a running instance for this model
+    # Optionally reuse a running instance for this model
     reused_instance_id: str | None = None
-    if not args.fresh_instance:
+    if args.reuse_instance:
         existing = find_existing_instance(client, full_model_id)
         if existing:
             reused_instance_id = existing
             logger.info(f"Reusing existing instance {reused_instance_id}")
+        else:
+            logger.warning(
+                "--reuse-instance: no existing instance found, creating a new one"
+            )
 
     if reused_instance_id is not None:
         # Use the existing instance directly — skip placement iteration

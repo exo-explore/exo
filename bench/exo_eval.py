@@ -1469,12 +1469,16 @@ def main() -> int:
         force_download=args.force_download,
     )
 
-    # Auto-detect a running instance for this model
-    if not args.fresh_instance:
+    # Optionally reuse a running instance for this model
+    if args.reuse_instance:
         existing = find_existing_instance(client, full_model_id)
         if existing:
             instance_id = existing
             logger.info(f"Reusing existing instance {instance_id}")
+        else:
+            logger.warning(
+                "--reuse-instance: no existing instance found, creating a new one"
+            )
 
     if instance_id is None:
         selected = settle_and_fetch_placements(

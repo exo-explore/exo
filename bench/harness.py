@@ -612,7 +612,7 @@ def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
         help="Delete existing models from smallest to largest to make room for benchmark model.",
     )
     ap.add_argument(
-        "--fresh-instance",
+        "--reuse-instance",
         action="store_true",
-        help="Force creating a new instance even if one is already running for this model.",
+        help="Reuse an existing running instance for this model instead of creating a new one.",
     )
