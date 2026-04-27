@@ -2,6 +2,7 @@ from collections.abc import Callable, Generator, Iterator
 from functools import cache
 from typing import Any
 
+from mlx_lm.models.deepseek_v4 import Model as DeepseekV4Model
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
@@ -86,7 +87,7 @@ def apply_all_parsers(
                 starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
             )
         generator = parse_deepseek_v32(generator)
-    elif "deepseek-v4" in normalized_id:
+    elif issubclass(model_type, DeepseekV4Model) and "deepseek-v4" in normalized_id:
         if tokenizer.has_thinking:
             generator = parse_thinking_models(
                 generator,

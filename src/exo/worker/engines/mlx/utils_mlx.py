@@ -499,18 +499,16 @@ def _v4_reasoning_effort(task_params: TextGenerationTaskParams) -> str | None:
     return None
 
 
-_V4_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
-
-
 def _strip_v4_thinking_markers(content: str) -> str:
     """Remove `<think>…</think>` blocks and any stray `<think>`/`</think>` tags
     from prior-turn assistant content.
 
     The V4 encoder drops `reasoning_content` for older turns when
     `drop_thinking=True`"""
+    block = re.compile(r"<think>.*?</think>", re.DOTALL)
     if not content:
         return content
-    cleaned = _V4_THINK_BLOCK_RE.sub("", content)
+    cleaned = block.sub("", content)
     return cleaned.replace("<think>", "").replace("</think>", "")
 
 

@@ -13,11 +13,7 @@ from mlx_lm.models.cache import (
     QuantizedKVCache,
     RotatingKVCache,
 )
-
-try:
-    from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
-except ImportError:
-    DeepseekV4Cache = None
+from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
@@ -143,7 +139,7 @@ def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
             states.append(copy_rotating_kv_cache(c))
         elif isinstance(c, CacheList) and not bool(c.is_trimmable()):  # type: ignore[reportUnknownMemberType]
             states.append(_copy_cache_list(c))
-        elif DeepseekV4Cache is not None and isinstance(c, DeepseekV4Cache):
+        elif isinstance(c, DeepseekV4Cache):
             # DeepseekV4Cache wraps a RotatingKVCache + per-key Compressor /
             # Indexer pool state. None of it round-trips through trim(), so
             # we deepcopy the whole thing so the prefill +2 rollback can
@@ -176,7 +172,7 @@ def is_non_trimmable_cache_entry(c: object) -> bool:
         return True
     if isinstance(c, CacheList):
         return not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
-    return DeepseekV4Cache is not None and isinstance(c, DeepseekV4Cache)
+    return isinstance(c, DeepseekV4Cache)
 
 
 def has_non_kv_caches(cache: KVCacheType) -> bool:
@@ -339,7 +335,7 @@ class KVPrefixCache:
             for c in prompt_cache:
                 if isinstance(c, (ArraysCache, RotatingKVCache)):
                     continue
-                if DeepseekV4Cache is not None and isinstance(c, DeepseekV4Cache):
+                if isinstance(c, DeepseekV4Cache):
                     continue
                 if hasattr(c, "offset"):
                     c.offset = restore_pos
