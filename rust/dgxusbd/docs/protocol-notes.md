@@ -95,18 +95,24 @@ write USB transfer
 
 The Linux IP stack owns ARP, IPv4, IPv6, TCP, UDP, DHCP, etc. `dgxusbd` should forward opaque Ethernet frames and avoid becoming an IP stack.
 
-## Current TX Compatibility Question
+## Current TX Compatibility State
 
-Mac-to-Spark traffic means the RX parser and USB-IN path are broadly healthy. Spark-to-Mac ICMP works, but sustained Spark-originated TCP/UDP traffic remains unstable. The next investigation should compare the NTB16 blocks built by `dgxusbd` against what Apple's function expects.
+Mac-to-Spark traffic means the RX parser and USB-IN path are broadly healthy. Spark-to-Mac ICMP works, and after Iteration 5 Spark-originated paced UDP is clean at 50 Mbit/s and 100 Mbit/s. Spark-originated TCP still collapses under iperf.
 
-Specific transmit details to test:
+Linux `cdc_ncm` details now mirrored by default:
 
-- NDP location: near the front versus at the end of the NTB.
-- Short-packet or zero-length-packet behavior after USB OUT transfers, especially when NTB length is a multiple of the endpoint max packet size.
-- Whether queued OUT transfers expose a Mac-side bug or whether Apple expects stricter pacing.
-- Sequence number behavior.
-- Interpretation of `wNdpOutDivisor`, `wNdpOutPayloadRemainder`, and `wNdpOutAlignment`.
-- Whether the Apple-specific Linux `cdc_ncm` quirk changes any transmit flags beyond accepting a control interface with no status endpoint.
+- The Apple private Linux driver info uses `FLAG_SEND_ZLP` and does not set `CDC_NCM_FLAG_NDP_TO_END`.
+- `dgxusbd` therefore defaults to NDP near the front. The `--tx-ndp-placement end` lab flag exists, but NDP-at-end did not improve the observed TCP issue.
+- Linux reserves a full NDP table for up to 40 datagrams. `dgxusbd` now does the same by default.
+- Linux starts from a conservative 16 KiB TX NTB size and bumps it by one byte when needed so a short packet can be forced below the Mac's advertised 32764-byte OUT maximum. `dgxusbd` now mirrors this by using a 16385-byte effective TX maximum when the endpoint max packet is 1024.
+- `wNdpOutPayloadRemainder` is interpreted after subtracting the Ethernet header length, matching Linux's adjustment.
+
+Remaining transmit details to investigate:
+
+- Whether queued OUT transfers or large NTB batches expose a Mac-side receive limitation during TCP bursts.
+- Whether Spark-originated TCP needs explicit userspace pacing or smaller per-NTB batches even though paced UDP is clean.
+- Sequence behavior is still worth sampling, but no malformed NTBs have been observed in bridge counters.
+- TCP-specific capture is needed to determine whether the stall is data loss on Spark-to-Mac, ACK starvation on Mac-to-Spark, or Mac-side CDC-NCM receive backpressure.
 
 ## Useful References
 

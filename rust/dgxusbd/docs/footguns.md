@@ -110,9 +110,9 @@ Do not enable TAP multi-queue for the current bridge shape. A trial with cloned 
 
 ## Spark-To-Mac Is The Active Directional Blocker
 
-Do not treat every Spark-to-Mac throughput failure as a scheduler problem anymore. Iteration 4 already removed the alternating timeout loop, added queued USB reads and writes, tried one-frame NTBs, and tried disabling Linux TAP offloads. Mac-to-Spark is multi-gigabit, while Spark-to-Mac TCP/UDP remains unstable.
+Do not treat every Spark-to-Mac throughput failure as a scheduler problem anymore. Iteration 4 already removed the alternating timeout loop, added queued USB reads and writes, tried one-frame NTBs, and tried disabling Linux TAP offloads. Iteration 5 mirrored Linux's Apple CDC-NCM TX shape and made Spark-to-Mac paced UDP clean at 50-100 Mbit/s. Mac-to-Spark is still multi-gigabit, while Spark-to-Mac TCP remains unstable.
 
-The next likely fault domain is transmit format compatibility with Apple's CDC-NCM function: NDP placement, short packet or ZLP behavior, sequence expectations, negotiated alignment/remainder interpretation, and Apple-specific quirks mirrored by Linux `cdc_ncm`.
+The next likely fault domain is TCP burst/backpressure behavior, not basic NTB validity. NDP-at-end was tested and did not beat the Linux-style front NDP. Do not remove the Linux-compatible TX defaults without replacing them with measured evidence.
 
 ## Timeout Fairness Is Not A Throughput Dataplane
 

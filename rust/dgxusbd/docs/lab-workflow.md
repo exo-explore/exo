@@ -124,6 +124,16 @@ Short bridge smoke on Spark:
 ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- bridge --tap-name dgxusb0 --mtu 1500 --duration-seconds 3 --usb-write-timeout-ms 100 --usb-read-timeout-ms 100 --tap-budget-frames 32 --usb-budget-ntbs 8 --usb-read-queue-depth 8 --usb-write-queue-depth 8"
 ```
 
+Default bridge transmit shape now mirrors Linux's Apple CDC-NCM behavior. For lab A/B testing only, these flags can override it:
+
+```sh
+--tx-ndp-placement end
+--no-tx-reserve-ndp-table
+--no-tx-short-packet-padding
+```
+
+If testing a smaller Linux TAP MTU such as `--mtu 1280`, the bridge still keeps the CDC-NCM max datagram setup at least normal Ethernet size. The Mac stalls when asked to shrink `SET_MAX_DATAGRAM_SIZE` below 1514.
+
 IPv6 link-local ping shape:
 
 1. Run bridge long enough for testing on Spark:
@@ -193,9 +203,9 @@ ssh e2@e2 "/opt/homebrew/bin/iperf3 -s -1 -p 5202"
 ssh jensen@gx10-a174 "iperf3 -6 -c 'fe80::<mac-suffix>%dgxusb0' -p 5202 -t 5 --connect-timeout 5000 -b 50M -u"
 ```
 
-For Spark-to-Mac UDP, also run capped tests such as `-b 50M -u` and `-b 100M -u`. On Linux, `iperf3 -u -b 0` can inject far more traffic than the current userspace bridge can drain, so heavy loss in that specific test is an overload datapoint rather than a clean throughput ceiling.
+For Spark-to-Mac UDP, run capped tests such as `-b 50M -u` and `-b 100M -u` first. As of Iteration 5, both completed with 0% loss on the lab link. Higher rates are overload tests: a 250 Mbit/s Spark-to-Mac UDP run caused the Mac receiver to stop receiving after the first burst while the bridge still reported zero malformed NTBs.
 
-Expected interpretation for the current dataplane: Mac-to-Spark can be multi-gigabit. Spark-to-Mac is still the active blocker; poor TCP, failed iperf result exchange, or link wedging during Spark-originated traffic should be treated as transmit-format evidence, not as a generic scheduler problem.
+Expected interpretation for the current dataplane: Mac-to-Spark can be multi-gigabit. Spark-to-Mac paced UDP is now useful at 100 Mbit/s. Spark-to-Mac TCP is still the active blocker; poor TCP, failed iperf result exchange, or link wedging during Spark-originated traffic should now be treated as TCP burst/backpressure evidence rather than as generic NTB parse failure.
 
 ## Useful Observation Commands
 

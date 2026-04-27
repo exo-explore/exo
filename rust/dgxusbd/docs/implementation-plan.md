@@ -166,27 +166,57 @@ Acceptance result:
 - Mac-to-Spark throughput improved materially, reaching multi-gigabit over IPv6 link-local.
 - Spark-to-Mac data traffic remains the active blocker. It is not fixed by the scheduler, TAP multi-queue, Linux TAP offload settings, or USB OUT queueing. See `status.md`.
 
-## Active Iteration 5: Apple CDC-NCM Transmit Correctness
+## Iteration 5: Apple CDC-NCM Transmit Correctness
 
 Purpose: make Spark-generated CDC-NCM bulk-OUT traffic match what Apple's `05ac:1905` function expects well enough for stable TCP/UDP from Spark to Mac.
 
+Status: implemented with a partial Spark-to-Mac improvement. UDP is now stable at documented paced rates; TCP remains the active blocker.
+
+Completed changes:
+
+- Mirrored the Linux Apple CDC-NCM transmit shape for the default bridge path:
+  - NTH16 plus NDP16 near the front, not NDP-at-end
+  - at most 40 datagrams per NDP, matching Linux's `CDC_NCM_DPT_DATAGRAMS_MAX`
+  - full reserved NDP16 table space before Ethernet frame data
+  - conservative 16 KiB TX NTB target, bumped to 16385 bytes when needed so a short USB bulk packet can be forced below the Mac's advertised 32764-byte OUT maximum
+  - one zero byte appended when an NTB would otherwise end exactly on a bulk endpoint packet boundary
+- Added direct NTB construction into reusable `nusb::Buffer` objects, avoiding the extra NTB `Vec` and copy into the USB OUT buffer.
+- Reused per-batch TAP frame slots and removed the per-batch refs `Vec`.
+- Added byte counters and USB write-completion counters to the bridge report.
+- Preserved worker errors through shutdown by draining the worker error channel after joins.
+- Changed `--max-events` semantics so TAP reads do not consume the bounded-test event budget before a packet is committed to USB.
+- Added lab flags for transmit-shape experiments:
+  - `--tx-ndp-placement before-data|end`
+  - `--no-tx-reserve-ndp-table`
+  - `--no-tx-short-packet-padding`
+- Kept NCM max datagram setup at least normal Ethernet size when testing a smaller TAP MTU. This lets `--mtu 1280` be tested without asking the Mac to shrink `SET_MAX_DATAGRAM_SIZE`, which it stalls.
+
+Acceptance result:
+
+- Spark-to-Mac link-local ping remains healthy after sustained Spark-originated traffic.
+- Spark-to-Mac paced UDP now completes cleanly at 50 Mbit/s and 100 Mbit/s with 0% loss.
+- Spark-to-Mac TCP is still unstable and low-throughput, usually around single-digit Mbit/s with iperf result-exchange failures.
+- A 250 Mbit/s Spark-to-Mac UDP overload run still wedges or starves Mac receive after the initial burst. Treat this as an overload/fault-domain signal, not as the stable capacity.
+- Mac-to-Spark TCP remains multi-gigabit over IPv6 link-local.
+- NDP-at-end was tested and did not improve TCP or UDP over the Linux-style front-NDP layout.
+
+## Active Iteration 6: Spark-To-Mac TCP Stability
+
+Purpose: explain and fix why Spark-originated TCP collapses even though Spark-originated paced UDP is clean at 100 Mbit/s and Mac-originated TCP reaches multi-gigabit rates.
+
 Proposed changes:
 
-- Compare `dgxusbd` NTB16 transmit layout against Linux `cdc_ncm` with Apple quirks, especially:
-  - NDP-at-end versus NDP-near-front placement
-  - short packet or zero-length packet behavior after NTBs whose length is a multiple of the endpoint packet size
-  - sequence-number expectations
-  - `wNdpOutDivisor`, `wNdpOutPayloadRemainder`, and `wNdpOutAlignment` interpretation
-  - whether macOS expects one NTB per USB transfer or tolerates multiple queued OUT transfers
-- Add optional debug capture for transmitted NTBs and parsed received NTBs so hardware observations can be compared byte-for-byte.
-- Add targeted transmit-shape flags for lab testing before committing to one layout.
-- Keep the main lab tests on IPv6 link-local addresses. IPv4 static addressing is deferred until final validation.
+- Add live dataplane stats so TCP tests can correlate queue depth, submitted/completed USB writes, ACK ingress, and TAP/USB bytes without waiting for bridge exit.
+- Add optional NTB/TAP sampling or pcap-compatible capture for Spark-to-Mac TCP to compare dropped/stalled sequences against Mac receive behavior.
+- Investigate whether the Mac's CDC-NCM function needs additional pacing, smaller NTB batches, or fewer queued OUT transfers for TCP-like bursts.
+- Investigate host TCP behavior separately from raw forwarding by testing controlled frame generators or iperf TCP with constrained socket/window settings.
+- Keep IPv6 link-local as the primary validation path; defer IPv4 until final validation.
 
 Acceptance:
 
-- Spark-to-Mac link-local ping stays healthy after sustained Spark-originated TCP/UDP.
 - Spark-to-Mac TCP reaches a stable, materially higher baseline and iperf receives final results cleanly.
-- Spark-to-Mac paced UDP has low loss at a documented bitrate.
+- Spark-to-Mac paced UDP remains clean at 100 Mbit/s or better.
+- Any intentional transmit pacing/batching limit is documented as a bridge policy, not hidden as an accidental side effect.
 
 ## Later Iteration: Operational Robustness
 

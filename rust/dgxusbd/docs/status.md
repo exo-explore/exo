@@ -359,6 +359,67 @@ Negative tests:
 Current interpretation:
 
 - The userspace path is viable for Mac-to-Spark traffic and basic bidirectional ICMP.
-- The main remaining correctness/performance blocker is Spark-to-Mac data-plane traffic, specifically frames built by `dgxusbd` and sent to the Mac over CDC-NCM bulk OUT.
-- The blocker is probably not the old timeout scheduler, TAP multi-queue, simple Linux TAP offloads, or lack of USB OUT queueing.
-- Next investigation should focus on the CDC-NCM transmit format expected by Apple's `05ac:1905` function: NTB placement, NDP placement, short-packet/ZLP behavior, per-NTB batching semantics, sequence behavior, and any Apple/Linux `CDC_NCM_FLAG_NDP_TO_END`-style quirks.
+- The main remaining correctness/performance blocker is Spark-to-Mac TCP. Spark-to-Mac paced UDP is now clean at 50 Mbit/s and 100 Mbit/s after the Iteration 5 transmit-shape work.
+- The blocker is probably not the old timeout scheduler, TAP multi-queue, simple Linux TAP offloads, lack of USB OUT queueing, or a basic malformed-NTB issue.
+- Next investigation should focus on TCP burst/backpressure behavior: queued OUT pressure, NTB batch size, explicit pacing, ACK ingress, and packet capture/sampling.
+
+## Iteration 5 Results
+
+Commits:
+
+- `6de9a76c` `Mirror Linux Apple NCM transmit framing`
+- `f5a4ceac` `Keep NCM datagram size for smaller TAP MTUs`
+
+Local validation:
+
+- `nix develop -c cargo test -p dgxusbd`: passed, 19 tests.
+- `nix develop -c cargo fmt --check -p dgxusbd`: passed.
+- `nix develop -c cargo clippy -p dgxusbd --all-targets`: passed with broad existing warning noise.
+
+Implemented behavior:
+
+- Default TX NTBs now mirror Linux's Apple private CDC-NCM path:
+  - front NDP, not NDP-at-end
+  - 40 datagrams per NDP max
+  - full reserved NDP table before data
+  - 16 KiB conservative TX NTB size, bumped to 16385 bytes for 1024-byte USB packet short-packet behavior
+  - one zero byte appended when needed to avoid ending a short NTB exactly on a USB bulk packet boundary
+- NTBs are built directly into reusable `nusb::Buffer` objects.
+- TAP batch frame storage is reused instead of allocating a fresh `Vec` for every TAP frame.
+- Bridge report now includes byte counters and USB write completions.
+- Worker errors are drained after shutdown so late worker failures are not hidden.
+- TAP reads no longer consume `--max-events` before packets are committed to USB.
+- Smaller TAP MTUs no longer force smaller CDC-NCM max datagram setup; the Mac stalls if asked to set max datagram below 1514.
+
+Hardware observations over IPv6 link-local:
+
+| Commit/config | Direction | Test | Result |
+| --- | --- | --- | --- |
+| `6de9a76c`, default TX | Spark -> Mac | ping | 3/3 replies, 0% loss |
+| `6de9a76c`, default TX | Mac -> Spark | ping | 3/3 replies, 0% loss |
+| `6de9a76c`, default TX | Spark -> Mac | UDP `-b 50M`, 5s | 50.0 Mbit/s, 0% loss, clean result exchange |
+| `6de9a76c`, default TX | Spark -> Mac | UDP `-b 100M`, 5s | 99.9-100 Mbit/s, 0% loss, clean result exchange |
+| `6de9a76c`, default TX | Spark -> Mac | UDP `-b 250M`, 5s | overload; Mac receiver stopped after initial burst, result exchange did not complete cleanly |
+| `6de9a76c`, default TX | Spark -> Mac | TCP, 8s | still unstable, single-digit Mbit/s receiver rate and frequent result-exchange failures |
+| `6de9a76c`, `--tx-ndp-placement end` | Spark -> Mac | ping and UDP `-b 100M` | works, but no improvement over front NDP |
+| `f5a4ceac`, `--mtu 1280` | Spark -> Mac | TCP, 8s | still unstable; smaller TAP MTU did not fix TCP |
+| `f5a4ceac`, `--mtu 1280` | Mac -> Spark | TCP, 5s | about 3.53 Gbit/s receiver rate |
+
+Representative bridge counters from a default-TX run that included Spark-to-Mac UDP/TCP tests:
+
+```text
+tap_rx=83075 tap_rx_bytes=123774726 tap_drop=0 usb_tx_ntb=11920 usb_tx_bytes=126134132 usb_rx_ntb=1778 usb_rx_bytes=240796 usb_timeout=2276 usb_rx_frames=1793 tap_tx=1793 tap_tx_bytes=187373 tap_tx_drop=0 malformed_ntb=0 usb_write_done=11920
+```
+
+Representative bridge counters from a later `--mtu 1280` run that included Mac-to-Spark TCP:
+
+```text
+tap_rx=637102 tap_rx_bytes=60742343 tap_drop=0 usb_tx_ntb=165210 usb_tx_bytes=92415182 usb_rx_ntb=154209 usb_rx_bytes=2388581318 usb_timeout=1383 usb_rx_frames=1834601 tap_tx=1834601 tap_tx_bytes=2373261985 tap_tx_drop=0 malformed_ntb=0 usb_write_done=165210
+```
+
+Interpretation:
+
+- The Linux Apple transmit-format changes are directionally correct for UDP and no longer look like a malformed-NTB problem.
+- The remaining TCP failure is likely burst/backpressure or ACK/data scheduling behavior under TCP, not basic CDC-NCM descriptor parsing or NDP placement.
+- Do not make NDP-at-end the default based on current evidence.
+- Do not treat `iperf3 -u -b 250M` or `-b 0` as a clean capacity test yet; they are overload tests.
