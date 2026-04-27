@@ -29,6 +29,10 @@ DEFAULT_MODEL = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 # eco commands run as the "test" user to avoid interfering with manual usage.
 _ECO_ENV = {**os.environ, "USER": "test"}
 
+# When set, deploy from a GitHub branch/tag instead of local source (rsync).
+# Useful for CI where the local worktree may not be the code under test.
+_EXO_REF = os.environ.get("EXO_REF")
+
 
 @dataclass
 class ClusterInfo:
@@ -75,10 +79,14 @@ def eco_start_deploy(
     count: int | None = None,
     thunderbolt: bool = False,
     wait: bool = True,
-    ref: str | None = None,
+    ref: str | None = _EXO_REF,
     timeout: int = 600,
 ) -> ClusterInfo:
-    """Start and deploy exo on a set of hosts via eco."""
+    """Start and deploy exo on a set of hosts via eco.
+
+    By default, deploys from local source via rsync. Set EXO_INTEGRATION_REF
+    or pass ref= to deploy from a GitHub branch/tag instead (for CI).
+    """
     cmd: list[str] = ["eco", "--json", "start", "--deploy"]
     if hosts:
         cmd.extend(hosts)
