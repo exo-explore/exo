@@ -44,7 +44,7 @@ Acceptance:
 - `nix develop .#dgx-usb-fix` provides compiler/build dependencies and route-A
   utilities.
 - `build-and-install.sh` no longer mutates host package state.
-- Root commands preserve the dev-shell `PATH` through `sudo env`.
+- Root commands preserve the dev-shell `PATH` through flake-provided wrappers.
 
 ## Iteration 3: MOK Enrollment And Signed Build
 
@@ -59,7 +59,7 @@ Steps:
 - Import `/root/MOK.der` with `mokutil --import`.
 - Reboot and enroll the cert in MOK Manager.
 - Confirm `mokutil --test-key /root/MOK.der`.
-- Run `build-and-install.sh`.
+- Run `dgx-usb-fix-install`.
 
 Acceptance:
 

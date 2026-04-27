@@ -35,10 +35,13 @@ cd ~/Desktop/exo
 nix develop .#dgx-usb-fix
 ```
 
-For root commands, preserve the shell PATH:
+The shell also provides root wrappers that preserve the Nix `PATH` across
+`sudo`:
 
 ```sh
-sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/diagnose.sh
+dgx-usb-fix-diagnose
+dgx-usb-fix-create-mok-key
+dgx-usb-fix-install
 ```
 
 The shell provides compiler/build tooling (`gcc`, `make`, `binutils`, `bc`,
@@ -66,13 +69,13 @@ nix develop .#dgx-usb-fix
 2. Check the current state:
 
 ```sh
-./dgx-usb-fix/diagnose.sh
+dgx-usb-fix-diagnose
 ```
 
 3. Create local signing key files:
 
 ```sh
-sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/create-mok-key.sh
+dgx-usb-fix-create-mok-key
 ```
 
 This creates:
@@ -126,7 +129,7 @@ After MOK enrollment:
 ```sh
 cd ~/Desktop/exo
 nix develop .#dgx-usb-fix
-sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/build-and-install.sh
+dgx-usb-fix-install
 ```
 
 The script:

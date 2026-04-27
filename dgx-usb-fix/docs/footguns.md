@@ -25,17 +25,22 @@ Do not hide this inside a build script. It is a boot-trust change.
 
 It does not run `mokutil --import`, does not reboot, and does not enroll a key.
 
-## Preserve Nix PATH Through sudo
+## Use The Devshell Root Wrappers
 
 The build dependencies come from `nix develop .#dgx-usb-fix`, not apt. A plain
 `sudo ./dgx-usb-fix/build-and-install.sh` may lose the Nix PATH and fail to find
 `dpkg-source`, `gcc`, `make`, `mokutil`, or other tools.
 
-Use:
+Use the wrapper commands from the dev shell:
 
 ```sh
-sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/build-and-install.sh
+dgx-usb-fix-diagnose
+dgx-usb-fix-create-mok-key
+dgx-usb-fix-install
 ```
+
+If bypassing the wrappers, preserve the Nix environment manually with
+`sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ...`.
 
 ## Spark Is Ubuntu-Kernel Based In Current Observations
 
@@ -61,7 +66,7 @@ A second reboot is only a fallback if `cdc_ncm` cannot be unloaded because
 another device is using it. In that case:
 
 ```sh
-sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/build-and-install.sh --skip-load
+dgx-usb-fix-install --skip-load
 sudo reboot
 ```
 

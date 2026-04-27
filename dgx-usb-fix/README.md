@@ -27,11 +27,11 @@ From the repo root on Spark:
 
 ```sh
 nix develop .#dgx-usb-fix
-./dgx-usb-fix/diagnose.sh
-sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/build-and-install.sh --skip-load
+dgx-usb-fix-diagnose
+dgx-usb-fix-install --skip-load
 sudo modprobe -r cdc_mbim cdc_ncm
 sudo modprobe cdc_ncm
-./dgx-usb-fix/diagnose.sh
+dgx-usb-fix-diagnose
 ```
 
 Then unplug and replug the USB-C cable to the Mac, and check:
@@ -51,7 +51,7 @@ To create the key files only:
 
 ```sh
 nix develop .#dgx-usb-fix
-sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/create-mok-key.sh
+dgx-usb-fix-create-mok-key
 ```
 
 To trust the generated cert, import it and complete the reboot-time enrollment:
@@ -61,7 +61,7 @@ sudo mokutil --import /root/MOK.der
 sudo reboot
 ```
 
-After enrollment, rerun `build-and-install.sh`.
+After enrollment, rerun `dgx-usb-fix-install`.
 
 ## Notes
 

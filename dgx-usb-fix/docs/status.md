@@ -78,6 +78,9 @@ Implemented:
     and kernel logs
 - `dgx-usb-fix/parts.nix`
   - provides the build shell as `nix develop .#dgx-usb-fix`
+  - exports the default MOK paths
+  - provides root wrappers: `dgx-usb-fix-diagnose`,
+    `dgx-usb-fix-create-mok-key`, and `dgx-usb-fix-install`
 - `tmp/spark/spark-build-apple-cdc-ncm*.sh`
   - now compatibility wrappers around `dgx-usb-fix/build-and-install.sh`
 

@@ -19,7 +19,7 @@ need() {
 
 usage() {
   cat <<'EOF'
-Usage: sudo ./dgx-usb-fix/build-and-install.sh [options]
+Usage: dgx-usb-fix-install [options]
 
 Options:
   --skip-load      Build, sign, install, and depmod, but do not unload/reload cdc_ncm.
@@ -35,6 +35,10 @@ Environment:
 Build tools are provided by the repo dev shell:
 
   nix develop .#dgx-usb-fix
+  dgx-usb-fix-install
+
+Manual equivalent:
+
   sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/build-and-install.sh
 EOF
 }
@@ -64,7 +68,7 @@ if [[ -z ${DGX_USB_FIX_NIX_ENV:-} ]]; then
 WARNING: DGX_USB_FIX_NIX_ENV is not set.
 Expected flow:
   nix develop .#dgx-usb-fix
-  sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/build-and-install.sh
+  dgx-usb-fix-install
 Continuing because required tools may already be available.
 EOF
 fi
@@ -150,8 +154,8 @@ sign_module_if_needed() {
 
   if secure_boot_enabled; then
     log "Secure Boot is enabled; signing module"
-    [[ -f $MOK_KEY ]] || die "Missing MOK private key: $MOK_KEY. Run: sudo ${FIX_ROOT}/create-mok-key.sh"
-    [[ -f $MOK_CERT ]] || die "Missing MOK cert: $MOK_CERT. Run: sudo ${FIX_ROOT}/create-mok-key.sh"
+    [[ -f $MOK_KEY ]] || die "Missing MOK private key: $MOK_KEY. Run from the Nix shell: dgx-usb-fix-create-mok-key"
+    [[ -f $MOK_CERT ]] || die "Missing MOK cert: $MOK_CERT. Run from the Nix shell: dgx-usb-fix-create-mok-key"
     [[ -x $sign_file ]] || die "Missing kernel sign-file tool: $sign_file"
     "$sign_file" sha256 "$MOK_KEY" "$MOK_CERT" "$PATCHED_MODULE"
   else
