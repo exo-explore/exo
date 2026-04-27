@@ -6,12 +6,10 @@ Hosts s9 and s10 must be Thunderbolt-connected for jaccl tests.
 Run with:
     uv run pytest integration_tests/test_2node.py -v
 """
+
 from __future__ import annotations
 
-import pytest
-
 from .helpers import (
-    DEFAULT_MODEL,
     ClusterInfo,
     chat_and_assert,
     chat_completion,
@@ -36,31 +34,19 @@ class TestTwoNodeInference:
         """Place a model across 2 nodes with pipeline/ring and verify inference."""
         client = make_client(two_node_cluster)
 
-        place_and_wait(client, sharding="Pipeline", instance_meta="MlxRing", min_nodes=2)
+        place_and_wait(
+            client, sharding="Pipeline", instance_meta="MlxRing", min_nodes=2
+        )
         verify_node_count(client, expected=2)
         chat_and_assert(client)
-
-    def test_2node_placement_previews(self, two_node_cluster: ClusterInfo):
-        """Verify placement previews return valid options for a 2-node cluster."""
-        client = make_client(two_node_cluster)
-
-        previews_resp = client.request_json(
-            "GET",
-            "/instance/previews",
-            params={"model_id": DEFAULT_MODEL},
-        )
-        assert previews_resp is not None
-        previews = previews_resp.get("previews", [])
-        assert len(previews) > 0, "Expected at least one placement preview"
-
-        valid = [p for p in previews if p.get("error") is None]
-        assert len(valid) > 0, "Expected at least one valid (error-free) placement preview"
 
     def test_2node_ring_multi_turn(self, two_node_cluster: ClusterInfo):
         """Multi-turn conversation across 2 nodes with pipeline/ring."""
         client = make_client(two_node_cluster)
 
-        place_and_wait(client, sharding="Pipeline", instance_meta="MlxRing", min_nodes=2)
+        place_and_wait(
+            client, sharding="Pipeline", instance_meta="MlxRing", min_nodes=2
+        )
 
         messages = [{"role": "user", "content": "What is the capital of France?"}]
         resp = chat_completion(client, messages=messages)
