@@ -193,11 +193,76 @@ Important bug found and fixed:
 - Live Mac NTBs used datagram index 30. This is plausible because NCM payload alignment is about payload placement, not necessarily DPE datagram-index alignment.
 - RX index alignment validation was relaxed in `d2a87e6b`; malformed count then dropped to zero.
 
+Iteration 3a/3b in the conversation, Iteration 5 in `implementation-plan.md`:
+
+- `58395120 Refactor dgxusbd CLI options`
+- `436c521c Improve dgxusbd bridge scheduling`
+
+Status:
+
+- Implemented `clap(flatten)` option structs and a `UsbId` parser.
+- Added separate USB read/write timeout configuration.
+- Added bounded per-loop TAP-to-USB and USB-to-TAP budgets so one direction does not drain indefinitely before the other direction is checked.
+- Made bridge mode require successful CDC-NCM setup requests. `usb-smoke` still reports setup failures without making every probe fatal.
+- Reworked NTB16 builder sizing to use checked accumulation and reject oversized output before allocating the final buffer.
+- Removed the custom `U16_MAX_USIZE` alias; NTB16 limits now use the standard `u16::MAX`.
+- Added repeatable iperf3 commands and recorded a baseline.
+
+Local checks after this pass:
+
+```sh
+nix develop -c cargo fmt -p dgxusbd --check
+nix develop -c cargo check -p dgxusbd
+nix develop -c cargo test -p dgxusbd
+nix develop -c cargo clippy -p dgxusbd --all-targets
+```
+
+Result: success. Tests: 9 passed. Clippy still emits broad workspace warning noise but exits 0.
+
+Spark checks after pull:
+
+```sh
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && nix develop -c cargo check -p dgxusbd"
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && nix develop -c cargo test -p dgxusbd"
+```
+
+Result: success. Tests: 9 passed.
+
+Hardware checks after this pass:
+
+- `usb-smoke` still selected pair 0/1, selected data altsetting 1, opened bulk endpoints `0x81` and `0x01`, completed all NCM setup requests, and read a 140-byte NTB.
+- Short bridge smoke with scheduling flags moved frames both directions with zero malformed NTBs:
+
+```text
+tap_rx=18 tap_drop=0 usb_tx_ntb=18 usb_rx_ntb=16 usb_timeout=1780 usb_rx_frames=16 tap_tx=16 malformed_ntb=0
+```
+
+- Temporary static-IP ping from Mac to Spark: 3/3 replies, 0% loss, about 3.4 ms average.
+- Temporary static-IP ping from Spark to Mac: 3/3 replies, 0% loss, about 2.0 ms average.
+- Longer bridge run covering TCP and UDP iperf traffic had zero malformed NTBs:
+
+```text
+tap_rx=140625 tap_drop=0 usb_tx_ntb=140625 usb_rx_ntb=101507 usb_timeout=111006 usb_rx_frames=804611 tap_tx=804611 malformed_ntb=0
+```
+
+Throughput baseline:
+
+| Direction | Test | Receiver result |
+| --- | --- | --- |
+| Mac -> Spark | TCP, 5s | 387 Mbit/s |
+| Mac -> Spark | UDP `-b 0`, 5s | 1.41 Gbit/s, 0.47% loss |
+| Spark -> Mac | TCP, 5s | 207 Mbit/s, client reported 58 retransmits |
+| Spark -> Mac | UDP `-b 0`, 5s | 34.9 Mbit/s received; sender attempted 14.5 Gbit/s and dropped almost everything |
+| Spark -> Mac | UDP `-b 100M`, 5s | 55.6 Mbit/s, 39% loss |
+| Spark -> Mac | UDP `-b 50M`, 5s | 48.9 Mbit/s, 0% loss |
+
+Interpretation:
+
+- The bridge is viable and no longer just a packet-movement proof.
+- Low/asymmetric throughput is still expected for this userspace MVP because it uses one synchronous loop, sends one Ethernet frame per NTB, allocates per TAP frame, and does not batch or pipeline USB transfers.
+- Spark-to-Mac `iperf3 -u -b 0` is not a useful capacity test. It is an overload test where Linux injects traffic far faster than the current bridge can drain it.
+
 Next proposed iteration:
 
-- Prioritize bridge data-path correctness and measurement before general polish.
-- Add per-loop frame or byte budgets so sustained TAP traffic cannot starve USB-to-TAP reads.
-- Make required bridge-mode NCM setup failures fatal instead of report-only.
-- Preflight NTB builder output size before allocation.
-- Add repeatable iperf3 throughput tests to the hardware loop and record baseline numbers.
 - Keep operational polish next: clearer command docs, optional IP assignment helper, pcap/debug dump, reconnect handling, and bridge shutdown/cleanup behavior.
+- If throughput becomes the priority instead, focus on batching multiple Ethernet frames per NTB, reusing buffers, and deeper USB read/write queueing before chasing small parser or formatting cleanups.

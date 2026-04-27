@@ -99,12 +99,17 @@ ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- tap-smoke
 Short bridge smoke on Spark:
 
 ```sh
-ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- bridge --tap-name dgxusb0 --mtu 1500 --duration-seconds 3 --usb-timeout-ms 100"
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- bridge --tap-name dgxusb0 --mtu 1500 --duration-seconds 3 --usb-timeout-ms 100 --usb-read-timeout-ms 1 --tap-budget-frames 32 --usb-budget-ntbs 8"
 ```
 
 Temporary static-IP ping shape:
 
-1. Run bridge long enough for testing on Spark.
+1. Run bridge long enough for testing on Spark:
+
+```sh
+ssh jensen@gx10-a174 "cd ~/Desktop/exo && sudo -E nix run .#dgxusbd -- bridge --tap-name dgxusb0 --mtu 1500 --duration-seconds 180"
+```
+
 2. Add `192.168.254.2/30` to Spark `dgxusb0`.
 3. Add temporary `192.168.254.1/30` to Mac `en5`.
 4. Ping `192.168.254.2` from the Mac.
@@ -119,30 +124,34 @@ Use iperf3 only after the bridge is running and both sides have temporary static
 - Spark TAP `dgxusb0`: `192.168.254.2/30`
 - Mac peer interface `en5`: `192.168.254.1/30`
 
+On the Mac, use `/opt/homebrew/bin/iperf3` in noninteractive SSH sessions unless the PATH has been adjusted. If port 5201 is already occupied, use a matched `-p <port>` on both server and client.
+
 TCP from Mac to Spark:
 
 ```sh
 ssh jensen@gx10-a174 "iperf3 -s -1"
-ssh e2@e2 "iperf3 -c 192.168.254.2"
+ssh e2@e2 "/opt/homebrew/bin/iperf3 -c 192.168.254.2"
 ```
 
 UDP from Mac to Spark, uncapped by iperf's target bitrate:
 
 ```sh
 ssh jensen@gx10-a174 "iperf3 -s -1"
-ssh e2@e2 "iperf3 -c 192.168.254.2 -b 0 -u"
+ssh e2@e2 "/opt/homebrew/bin/iperf3 -c 192.168.254.2 -b 0 -u"
 ```
 
 Reverse direction can be tested by starting the server on the Mac and the client on the Spark:
 
 ```sh
-ssh e2@e2 "iperf3 -s -1"
+ssh e2@e2 "/opt/homebrew/bin/iperf3 -s -1"
 ssh jensen@gx10-a174 "iperf3 -c 192.168.254.1"
-ssh e2@e2 "iperf3 -s -1"
+ssh e2@e2 "/opt/homebrew/bin/iperf3 -s -1"
 ssh jensen@gx10-a174 "iperf3 -c 192.168.254.1 -b 0 -u"
 ```
 
-Expected interpretation for the current MVP: successful packet movement matters more than raw throughput. The bridge currently uses a single synchronous loop, sends one Ethernet frame per NTB, allocates a fresh NTB for each TAP frame, and can block on USB reads. Low throughput is therefore expected until the bridge grows fair scheduling, batching, and deeper USB I/O.
+For Spark-to-Mac UDP, also run capped tests such as `-b 50M -u` and `-b 100M -u`. On Linux, `iperf3 -u -b 0` can inject far more traffic than the current userspace bridge can drain, so heavy loss in that specific test is an overload datapoint rather than a clean throughput ceiling.
+
+Expected interpretation for the current MVP: successful packet movement and low malformed-NTB counts matter first. The bridge now has bounded per-loop TAP and USB budgets, but it still uses one synchronous loop, sends one Ethernet frame per NTB, allocates a fresh NTB for each TAP frame, and does no batching or deeper USB queueing. Asymmetric and lower-than-link-rate throughput is expected until those pieces change.
 
 ## Useful Observation Commands
 

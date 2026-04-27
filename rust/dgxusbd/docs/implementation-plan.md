@@ -107,17 +107,21 @@ Acceptance result:
 
 Purpose: turn the proof-of-packet-movement bridge into a measurable bridge that cannot starve one direction under sustained traffic.
 
-Proposed changes:
+Completed changes:
 
 - Add per-loop frame or byte budgets for TAP-to-USB and USB-to-TAP work.
-- Consider moving to a two-direction scheduler, `mio`, async, or dedicated RX/TX workers if simple budgets are not enough.
 - Make bridge mode fail on required NCM setup failures, especially selected NTB format, NTB input size, and max datagram size.
 - Fix NTB builder sizing so it uses checked length accumulation and returns `BuiltNtbTooLarge` before allocating oversized output.
 - Add repeatable iperf3 TCP and UDP test commands to the lab workflow and capture a baseline in `status.md`.
 - Refactor repeated CLI options with `clap(flatten)` structs.
 - Introduce small domain newtypes where they reduce primitive misuse, starting with USB IDs if parsing grows.
 
-Acceptance:
+Implementation notes:
+
+- In this conversation, the CLI cleanup was called Iteration 3a and the scheduler/validation/baseline pass was called Iteration 3b. In this document's original numbering, those map to Iteration 5.
+- Simple budgets were enough to avoid the original single-direction drain loop, but `mio`, async, dedicated RX/TX workers, USB request pipelining, and NTB batching remain future throughput work.
+
+Acceptance result:
 
 - Under sustained one-way TAP traffic, the opposite USB-to-TAP direction still gets scheduled.
 - Bridge exits early when a required NCM setup step fails.

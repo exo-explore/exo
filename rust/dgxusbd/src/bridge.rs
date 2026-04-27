@@ -236,7 +236,7 @@ fn poll_usb_to_tap(
 }
 
 fn transfer_size(configured_size: usize, max_packet_size: usize) -> usize {
-    let capped = configured_size.clamp(max_packet_size.max(1), u16::MAX as usize);
+    let capped = configured_size.clamp(max_packet_size.max(1), usize::from(u16::MAX));
     let packet = max_packet_size.max(1);
     let rounded = capped / packet * packet;
     rounded.max(packet).min(DEFAULT_NTB_MAX_SIZE.max(packet))

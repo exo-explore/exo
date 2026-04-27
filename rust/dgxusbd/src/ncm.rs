@@ -17,7 +17,6 @@ const NDP16_CRC_SIGNATURE: u32 = u32::from_le_bytes(*b"NCM1");
 const NTH16_LEN: usize = size_of::<Nth16>();
 const NDP16_LEN: usize = size_of::<Ndp16>();
 const DPE16_LEN: usize = size_of::<Dpe16>();
-const U16_MAX_USIZE: usize = 0xFFFF;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NtbBuildConfig {
@@ -196,7 +195,7 @@ pub fn build_ntb16(
     if frames.is_empty() {
         return Err(NcmError::NoFrames);
     }
-    if frames.len() > (U16_MAX_USIZE / DPE16_LEN).saturating_sub(3) {
+    if frames.len() > (usize::from(u16::MAX) / DPE16_LEN).saturating_sub(3) {
         return Err(NcmError::TooManyFrames(frames.len()));
     }
 
@@ -207,18 +206,18 @@ pub fn build_ntb16(
         .and_then(|entries| entries.checked_mul(DPE16_LEN))
         .ok_or(NcmError::BuiltNtbTooLarge {
             actual: usize::MAX,
-            max: U16_MAX_USIZE,
+            max: usize::from(u16::MAX),
         })?;
     let ndp_length = NDP16_LEN
         .checked_add(ndp_entries_len)
         .ok_or(NcmError::BuiltNtbTooLarge {
             actual: usize::MAX,
-            max: U16_MAX_USIZE,
+            max: usize::from(u16::MAX),
         })?;
-    if ndp_length > U16_MAX_USIZE {
+    if ndp_length > usize::from(u16::MAX) {
         return Err(NcmError::BuiltNtbTooLarge {
             actual: ndp_length,
-            max: U16_MAX_USIZE,
+            max: usize::from(u16::MAX),
         });
     }
     let data_start = checked_align_up_to_remainder(
@@ -226,7 +225,7 @@ pub fn build_ntb16(
             .checked_add(ndp_length)
             .ok_or(NcmError::BuiltNtbTooLarge {
                 actual: usize::MAX,
-                max: U16_MAX_USIZE,
+                max: usize::from(u16::MAX),
             })?,
         config.datagram_alignment,
         config.datagram_remainder,
@@ -237,7 +236,7 @@ pub fn build_ntb16(
 
     for frame in frames {
         let frame_len = frame.len();
-        if frame_len > U16_MAX_USIZE {
+        if frame_len > usize::from(u16::MAX) {
             return Err(NcmError::FrameTooLarge(frame_len));
         }
         let frame_offset = checked_align_up_to_remainder(
@@ -257,17 +256,17 @@ pub fn build_ntb16(
                 max: config.max_size,
             });
         }
-        if frame_end > U16_MAX_USIZE {
+        if frame_end > usize::from(u16::MAX) {
             return Err(NcmError::BuiltNtbTooLarge {
                 actual: frame_end,
-                max: U16_MAX_USIZE,
+                max: usize::from(u16::MAX),
             });
         }
         entries.push(Dpe16 {
             w_datagram_index: U16::new(u16::try_from(frame_offset).map_err(|_| {
                 NcmError::BuiltNtbTooLarge {
                     actual: frame_offset,
-                    max: U16_MAX_USIZE,
+                    max: usize::from(u16::MAX),
                 }
             })?),
             w_datagram_length: U16::new(
@@ -287,10 +286,10 @@ pub fn build_ntb16(
             max: config.max_size,
         });
     }
-    if next_offset > U16_MAX_USIZE {
+    if next_offset > usize::from(u16::MAX) {
         return Err(NcmError::BuiltNtbTooLarge {
             actual: next_offset,
-            max: U16_MAX_USIZE,
+            max: usize::from(u16::MAX),
         });
     }
 
@@ -438,7 +437,7 @@ fn checked_align_up_to_remainder(
         };
         value.checked_add(delta).ok_or(NcmError::BuiltNtbTooLarge {
             actual: usize::MAX,
-            max: U16_MAX_USIZE,
+            max: usize::from(u16::MAX),
         })
     }
 }
