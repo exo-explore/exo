@@ -29,7 +29,7 @@ class TestTwoNodeInference:
         client = make_client(two_node_cluster)
 
         place_and_wait(client, sharding="Tensor", instance_meta="MlxJaccl", min_nodes=2)
-        verify_node_count(client, expected_min=2)
+        verify_node_count(client, expected=2)
         chat_and_assert(client)
 
     def test_2node_pipeline_ring(self, two_node_cluster: ClusterInfo):
@@ -37,7 +37,7 @@ class TestTwoNodeInference:
         client = make_client(two_node_cluster)
 
         place_and_wait(client, sharding="Pipeline", instance_meta="MlxRing", min_nodes=2)
-        verify_node_count(client, expected_min=2)
+        verify_node_count(client, expected=2)
         chat_and_assert(client)
 
     def test_2node_placement_previews(self, two_node_cluster: ClusterInfo):
