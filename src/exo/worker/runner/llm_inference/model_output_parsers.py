@@ -22,8 +22,8 @@ from exo.shared.types.chunks import (
     ToolCallChunk,
 )
 from exo.shared.types.common import ModelId
-from exo.shared.types.mlx import Model
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
+from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
     detect_thinking_prompt_suffix,
 )

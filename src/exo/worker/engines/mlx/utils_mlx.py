@@ -44,7 +44,6 @@ from pydantic import RootModel
 from exo.download.download_utils import build_model_path
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import TaskId, TextGeneration
 from exo.shared.types.text_generation import ChatTemplateValue, TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
@@ -65,6 +64,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.types import Model
 from exo.worker.runner.bootstrap import logger
 
 

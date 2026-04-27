@@ -1,5 +1,4 @@
 import io
-from collections.abc import Sequence
 from typing import BinaryIO
 
 import mlx.core as mx
@@ -12,34 +11,42 @@ from mlx_lm.models.cache import (
     RotatingKVCache,
 )
 
-from exo.worker.engines.mlx.disaggregated.protocol import (
+from exo.worker.disaggregated.protocol import (
     DType,
+    Header,
     KVChunk,
     TensorBlob,
-    make_header,
     write_arrays_state,
     write_done,
     write_header,
     write_kv_chunk,
 )
+from exo.worker.engines.mlx.types import KVCacheType
 
-AnyMLXCache = (
-    KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList | None
-)
-
-_STR_TO_MX: dict[str, mx.Dtype] = {
+_STR_TO_MX: dict[DType, mx.Dtype] = {
     "bfloat16": mx.bfloat16,
     "float16": mx.float16,
     "float32": mx.float32,
 }
 
-_MX_TO_STR: dict[mx.Dtype, str] = {v: k for k, v in _STR_TO_MX.items()}
+_MX_TO_STR: dict[mx.Dtype, DType] = {v: k for k, v in _STR_TO_MX.items()}
 
 
 def mx_dtype_to_str(dtype: mx.Dtype) -> DType:
     if dtype not in _MX_TO_STR:
         raise ValueError(f"Unsupported mlx dtype on wire: {dtype}")
     return _MX_TO_STR[dtype]
+
+
+def wire_dtype_from_cache(caches: KVCacheType) -> DType:
+    for c in caches:
+        keys: mx.array | None = getattr(c, "keys", None)
+        if keys is None:
+            continue
+        if keys.dtype in _MX_TO_STR:
+            return _MX_TO_STR[keys.dtype]
+        break
+    return "bfloat16"
 
 
 def str_to_mx_dtype(dtype: DType) -> mx.Dtype:
@@ -84,14 +91,14 @@ def nhd_to_bhsd(t: mx.array) -> mx.array:
 
 def send_mlx_kv_cache(
     stream: BinaryIO,
-    caches: list[AnyMLXCache] | Sequence[AnyMLXCache],
+    caches: KVCacheType,
     *,
+    dtype: DType,
+    start_pos: int = 0,
     max_tokens: int | None = None,
 ) -> int:
     tokens_sent = 0
     for layer_idx, c in enumerate(caches):
-        if c is None:
-            continue
         if isinstance(c, (QuantizedKVCache, CacheList)):
             continue
         if isinstance(c, (KVCache, RotatingKVCache)):
@@ -102,12 +109,11 @@ def send_mlx_kv_cache(
             offset = int(c.offset)
             if max_tokens is not None:
                 offset = min(offset, max_tokens)
-            if offset <= 0:
+            if offset <= start_pos:
                 continue
-            # Materialize on CPU so array_to_bytes works regardless of caller's stream.
             with mx.stream(mx.Device(mx.cpu)):
-                k = mx.array(keys[:, :, :offset, :])
-                v = mx.array(values[:, :, :offset, :])
+                k = mx.array(keys[:, :, start_pos:offset, :])
+                v = mx.array(values[:, :, start_pos:offset, :])
                 k_nhd = bhsd_to_nhd(k)
                 v_nhd = bhsd_to_nhd(v)
                 mx.eval(k_nhd, v_nhd)
@@ -120,6 +126,7 @@ def send_mlx_kv_cache(
                 num_tokens=num_tokens,
                 n_heads=n_heads,
                 head_dim=head_dim,
+                dtype=dtype,
                 keys=array_to_bytes(k_nhd),
                 values=array_to_bytes(v_nhd),
             )
@@ -196,7 +203,7 @@ def inject_arrays_cache(cache: ArraysCache, blobs: list[TensorBlob]) -> None:
 
 
 def serialize_mlx_cache_to_payload(
-    caches: list[AnyMLXCache] | Sequence[AnyMLXCache],
+    caches: KVCacheType,
     *,
     dtype: DType,
     model_id: str = "",
@@ -205,14 +212,16 @@ def serialize_mlx_cache_to_payload(
     max_tokens: int | None = None,
 ) -> bytes:
     buf = io.BytesIO()
-    header = make_header(
+    header = Header(
+        request_id=request_id,
+        model_id=model_id,
         num_layers=len(caches),
         dtype=dtype,
-        model_id=model_id,
-        request_id=request_id,
         start_pos=start_pos,
     )
     write_header(buf, header)
-    tokens_sent = send_mlx_kv_cache(buf, caches, max_tokens=max_tokens)
+    tokens_sent = send_mlx_kv_cache(
+        buf, caches, dtype=dtype, start_pos=start_pos, max_tokens=max_tokens
+    )
     write_done(buf, tokens_sent)
     return buf.getvalue()

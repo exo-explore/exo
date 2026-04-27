@@ -68,7 +68,7 @@ from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.worker.instances import InstanceId
-from exo.shared.types.worker.runners import RunnerReady
+from exo.shared.types.worker.runners import RunnerReady, RunnerRunning
 from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
@@ -101,16 +101,19 @@ def _prefill_endpoints_for(state: State, decode_instance_id: InstanceId) -> list
             continue
         for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
             status = state.runners.get(runner_id)
-            if not isinstance(status, RunnerReady):
-                continue
-            if status.prefill_server_port is None:
+            port = (
+                status.prefill_server_port
+                if isinstance(status, (RunnerReady, RunnerRunning))
+                else None
+            )
+            if port is None:
                 continue
             ip = find_ip_prioritised(
                 decode_node, node_id, state.topology, state.node_network, ring=True
             )
             if ip is None:
                 continue
-            endpoint = f"{ip}:{status.prefill_server_port}"
+            endpoint = f"{ip}:{port}"
             if endpoint in seen:
                 continue
             seen.add(endpoint)

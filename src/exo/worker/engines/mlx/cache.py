@@ -22,8 +22,8 @@ from mlx_lm.models.deepseek_v4 import (
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import KVCacheType, Model
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
+from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:

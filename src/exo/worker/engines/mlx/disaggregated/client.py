@@ -9,19 +9,20 @@ import mlx.core as mx
 from loguru import logger
 from mlx_lm.models.cache import ArraysCache, KVCache, RotatingKVCache
 
+from exo.worker.disaggregated.protocol import (
+    ArraysState,
+    Done,
+    Header,
+    KVChunk,
+    TensorBlob,
+    read_header,
+    read_message,
+)
 from exo.worker.engines.mlx.disaggregated.adapter import (
     chunk_to_mlx_nhd,
     inject_arrays_cache,
     inject_kv_chunk,
     inject_rotating_kv_chunk,
-)
-from exo.worker.engines.mlx.disaggregated.protocol import (
-    ArraysState,
-    Done,
-    KVChunk,
-    TensorBlob,
-    read_header,
-    read_message,
 )
 
 DEFAULT_PORT = 8900
@@ -39,7 +40,7 @@ class PrefillRequest:
 
 @dataclass
 class PrefillResult:
-    header: dict[str, object]
+    header: Header
     kv_chunks: dict[int, list[KVChunk]] = field(
         default_factory=dict[int, list[KVChunk]]
     )
@@ -59,7 +60,7 @@ def _parse_endpoint(endpoint: str) -> tuple[str, int]:
 def remote_prefill_fetch(
     endpoint: str,
     request: PrefillRequest,
-    on_header: Callable[[dict[str, object]], None] | None = None,
+    on_header: Callable[[Header], None] | None = None,
     on_kv_chunk: Callable[[KVChunk, int], None] | None = None,
     timeout_secs: float = _SOCKET_TIMEOUT_SECS,
 ) -> PrefillResult:
@@ -98,7 +99,7 @@ def remote_prefill_fetch(
         chunks_received = 0
 
         while True:
-            msg = read_message(stream, header)
+            msg = read_message(stream)
             if msg is None:
                 break
             if isinstance(msg, KVChunk):

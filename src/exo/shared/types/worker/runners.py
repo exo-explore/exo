@@ -51,7 +51,7 @@ class RunnerReady(BaseRunnerStatus):
 
 
 class RunnerRunning(BaseRunnerStatus):
-    pass
+    prefill_server_port: int | None = None
 
 
 class RunnerShuttingDown(BaseRunnerStatus):
