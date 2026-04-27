@@ -17,6 +17,7 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteCustomModelCard,
     DeleteInstance,
+    DeleteInstanceLink,
     ForwarderCommand,
     ForwarderDownloadCommand,
     ImageEdits,
@@ -24,6 +25,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     RequestEventLog,
     SendInputChunk,
+    SetInstanceLink,
     TaskCancelled,
     TaskFinished,
     TestCommand,
@@ -38,6 +40,8 @@ from exo.shared.types.events import (
     IndexedEvent,
     InputChunkReceived,
     InstanceDeleted,
+    InstanceLinkCreated,
+    InstanceLinkDeleted,
     LocalForwarderEvent,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -48,6 +52,7 @@ from exo.shared.types.events import (
     TracesCollected,
     TracesMerged,
 )
+from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -63,10 +68,55 @@ from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.runners import RunnerReady
 from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
+
+
+def _prefill_endpoints_for(state: State, decode_instance_id: InstanceId) -> list[str]:
+    from exo.master.placement_utils import (
+        _find_ip_prioritised as find_ip_prioritised,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    decode = state.instances.get(decode_instance_id)
+    if decode is None:
+        return []
+    decode_node = next(iter(decode.shard_assignments.node_to_runner.keys()), None)
+    if decode_node is None:
+        return []
+
+    sources: set[InstanceId] = set()
+    for link in state.instance_links.values():
+        if decode_instance_id in link.decode_instances:
+            sources.update(link.prefill_instances)
+    sources.discard(decode_instance_id)
+
+    endpoints: list[str] = []
+    seen: set[str] = set()
+    for src_id in sources:
+        instance = state.instances.get(src_id)
+        if instance is None:
+            continue
+        for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
+            status = state.runners.get(runner_id)
+            if not isinstance(status, RunnerReady):
+                continue
+            if status.prefill_server_port is None:
+                continue
+            ip = find_ip_prioritised(
+                decode_node, node_id, state.topology, state.node_network, ring=True
+            )
+            if ip is None:
+                continue
+            endpoint = f"{ip}:{status.prefill_server_port}"
+            if endpoint in seen:
+                continue
+            seen.add(endpoint)
+            endpoints.append(endpoint)
+            break
+    return endpoints
 
 
 class Master:
@@ -154,20 +204,27 @@ class Master:
                                 ],
                             )
 
+                            decode_instance_id = available_instance_ids[0]
                             task_id = TaskId()
+                            params = command.task_params.model_copy(
+                                update={
+                                    "prefill_endpoints": _prefill_endpoints_for(
+                                        self.state, decode_instance_id
+                                    ),
+                                }
+                            )
                             generated_events.append(
                                 TaskCreated(
                                     task_id=task_id,
                                     task=TextGenerationTask(
                                         task_id=task_id,
                                         command_id=command.command_id,
-                                        instance_id=available_instance_ids[0],
+                                        instance_id=decode_instance_id,
                                         task_status=TaskStatus.Pending,
-                                        task_params=command.task_params,
+                                        task_params=params,
                                     ),
                                 )
                             )
-
                             self.command_task_mapping[command.command_id] = task_id
                         case ImageGeneration():
                             for instance in self.state.instances.values():
@@ -356,6 +413,21 @@ class Master:
                         case DeleteCustomModelCard():
                             generated_events.append(
                                 CustomModelCardDeleted(model_id=command.model_id)
+                            )
+                        case SetInstanceLink():
+                            link = InstanceLink(
+                                link_id=command.link_id or InstanceLinkId(),
+                                prefill_instances=list(
+                                    dict.fromkeys(command.prefill_instances)
+                                ),
+                                decode_instances=list(
+                                    dict.fromkeys(command.decode_instances)
+                                ),
+                            )
+                            generated_events.append(InstanceLinkCreated(link=link))
+                        case DeleteInstanceLink():
+                            generated_events.append(
+                                InstanceLinkDeleted(link_id=command.link_id)
                             )
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages

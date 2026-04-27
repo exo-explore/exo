@@ -68,7 +68,13 @@ def plan(
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
-        or _pending_tasks(runners, tasks, all_runners, input_chunk_buffer, image_cache)
+        or _pending_tasks(
+            runners,
+            tasks,
+            all_runners,
+            input_chunk_buffer,
+            image_cache,
+        )
     )
 
 

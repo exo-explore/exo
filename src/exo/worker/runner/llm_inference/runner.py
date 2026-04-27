@@ -1,11 +1,14 @@
 import os
+import queue
+import threading
 import time
 from collections.abc import Generator
 from dataclasses import dataclass
 from enum import Enum
 
 import mlx.core as mx
-from anyio import WouldBlock
+from anyio import ClosedResourceError, EndOfStream
+from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelTask
@@ -18,7 +21,7 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.shared.types.mlx import Model
+from exo.shared.types.mlx import KVCacheType, Model
 from exo.shared.types.tasks import (
     ConnectToGroup,
     LoadModel,
@@ -47,8 +50,18 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
-from exo.worker.engines.mlx.cache import KVPrefixCache
+from exo.utils.ports import random_ephemeral_port
+from exo.worker.engines.mlx.cache import KVPrefixCache, make_kv_cache
+from exo.worker.engines.mlx.disaggregated.adapter import (
+    serialize_mlx_cache_to_payload,
+)
+from exo.worker.engines.mlx.disaggregated.server import (
+    PrefillJob,
+    PrefillServer,
+)
+from exo.worker.engines.mlx.generator.generate import prefill as mlx_prefill
 from exo.worker.engines.mlx.utils_mlx import (
+    fix_unmatched_think_end_tokens,
     initialize_mlx,
     load_mlx_items,
 )
@@ -62,6 +75,36 @@ from exo.worker.runner.llm_inference.batch_generator import (
 
 from .batch_generator import Cancelled, Finished
 from .tool_parsers import make_mlx_parser
+
+PREFILL_PICKUP_TIMEOUT_SECONDS = 3
+PREFILL_FINISH_TIMEOUT_SECONDS = 300
+
+
+def _wire_dtype_from_cache(cache: KVCacheType) -> str:
+    for c in cache:
+        keys: mx.array | None = getattr(c, "keys", None)
+        if keys is None:
+            continue
+        if keys.dtype == mx.bfloat16:
+            return "bfloat16"
+        if keys.dtype == mx.float16:
+            return "float16"
+        if keys.dtype == mx.float32:
+            return "float32"
+        break
+    return "bfloat16"
+
+
+@dataclass
+class _PrefillRequest:
+    job: PrefillJob
+    started: threading.Event
+    done: threading.Event
+    holder: list[bytes | None]
+
+
+_TaskStreamClosed = object()
+WorkItem = Task | _PrefillRequest | object
 
 
 class ExitCode(str, Enum):
@@ -110,8 +153,128 @@ class Runner:
             TextGeneration,
         ] = {}
 
+        self._prefill_server: PrefillServer | None = None
+        self._prefill_server_port: int | None = None
+        self._work_queue: queue.Queue[WorkItem] = queue.Queue()
+        self._task_reader_thread: threading.Thread | None = None
+
         logger.info("runner created")
         self.update_status(RunnerIdle())
+
+    def _start_prefill_server(self) -> int:
+        if self._prefill_server_port is not None:
+            return self._prefill_server_port
+
+        def resolve(job: PrefillJob) -> bytes | None:
+            req = _PrefillRequest(
+                job=job,
+                started=threading.Event(),
+                done=threading.Event(),
+                holder=[None],
+            )
+            self._work_queue.put(req)
+            if not req.started.wait(timeout=PREFILL_PICKUP_TIMEOUT_SECONDS):
+                logger.warning(
+                    f"Prefill request {job.request_id} not picked up within "
+                    f"{PREFILL_PICKUP_TIMEOUT_SECONDS}s — runner busy"
+                )
+                return None
+            if not req.done.wait(timeout=PREFILL_FINISH_TIMEOUT_SECONDS):
+                logger.warning(
+                    f"Prefill request {job.request_id} did not finish within "
+                    f"{PREFILL_FINISH_TIMEOUT_SECONDS}s"
+                )
+                return None
+            return req.holder[0]
+
+        self._prefill_server = PrefillServer(
+            resolve=resolve, host="0.0.0.0", port=random_ephemeral_port()
+        )
+        self._prefill_server.start()
+        self._prefill_server_port = self._prefill_server.port
+        return self._prefill_server_port
+
+    def _start_task_reader(self) -> None:
+        if self._task_reader_thread is not None:
+            return
+
+        def loop() -> None:
+            try:
+                with self.task_receiver:
+                    for task in self.task_receiver:
+                        self._work_queue.put(task)
+            except (EndOfStream, ClosedResourceError):
+                pass
+            finally:
+                self._work_queue.put(_TaskStreamClosed)
+
+        self._task_reader_thread = threading.Thread(
+            target=loop, name="task-reader", daemon=True
+        )
+        self._task_reader_thread.start()
+
+    def _serve_prefill(self, req: _PrefillRequest) -> None:
+        req.started.set()
+        was_ready = isinstance(self.current_status, RunnerReady)
+        if was_ready:
+            self.update_status(RunnerRunning())
+        try:
+            req.holder[0] = self._serve_prefill_request(req.job)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to serve prefill request {req.job.request_id}"
+            )
+            req.holder[0] = None
+        finally:
+            req.done.set()
+            if was_ready:
+                self.update_status(
+                    RunnerReady(prefill_server_port=self._prefill_server_port)
+                )
+
+    def _serve_prefill_request(self, job: PrefillJob) -> bytes:
+        assert isinstance(self.generator, InferenceGenerator)
+        model = self.generator.model
+        tokenizer = self.generator.tokenizer
+        group = self.generator.group
+
+        prompt_tokens = mx.array(job.token_ids)
+        prompt_tokens = fix_unmatched_think_end_tokens(prompt_tokens, tokenizer)
+        n_tokens = int(prompt_tokens.shape[0])
+        logger.info(
+            f"Serving prefill: request_id={job.request_id} tokens={n_tokens} "
+            f"start_pos={job.start_pos}"
+        )
+        t0 = time.perf_counter()
+
+        cache = make_kv_cache(model)
+        sampler = make_sampler(temp=1.0)
+        prefill_input = prompt_tokens[:-2] if n_tokens > 2 else prompt_tokens
+        _ = mlx_prefill(
+            model=model,
+            tokenizer=tokenizer,
+            sampler=sampler,
+            prompt_tokens=prefill_input,
+            cache=cache,
+            group=group,
+            on_prefill_progress=None,
+            distributed_prompt_progress_callback=None,
+        )
+
+        payload = serialize_mlx_cache_to_payload(
+            cache,
+            dtype=_wire_dtype_from_cache(cache),
+            model_id=job.model_id,
+            request_id=job.request_id,
+            start_pos=job.start_pos,
+        )
+        elapsed = time.perf_counter() - t0
+        logger.info(
+            f"Served prefill: request_id={job.request_id} "
+            f"{n_tokens} tokens in {elapsed * 1000:.0f}ms "
+            f"({n_tokens / max(elapsed, 0.001):.0f} tok/s)"
+        )
+        return payload
 
     def update_status(self, status: RunnerStatus):
         self.current_status = status
@@ -130,15 +293,22 @@ class Runner:
         self.event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
     def main(self):
-        with self.task_receiver:
-            for task in self.task_receiver:
-                if task.task_id in self.seen:
-                    logger.warning("repeat task - potential error")
-                    continue
-                self.seen.add(task.task_id)
-                self.handle_first_task(task)
-                if isinstance(self.current_status, RunnerShutdown):
-                    break
+        self._start_task_reader()
+        while True:
+            item = self._work_queue.get()
+            if item is _TaskStreamClosed:
+                break
+            if isinstance(item, _PrefillRequest):
+                self._serve_prefill(item)
+                continue
+            task: Task = item  # type: ignore[assignment]
+            if task.task_id in self.seen:
+                logger.warning("repeat task - potential error")
+                continue
+            self.seen.add(task.task_id)
+            self.handle_first_task(task)
+            if isinstance(self.current_status, RunnerShutdown):
+                break
 
     def handle_first_task(self, task: Task):
         self.send_task_status(task.task_id, TaskStatus.Running)
@@ -219,8 +389,9 @@ class Runner:
                     f"runner initialized in {time.time() - self.setup_start_time} seconds"
                 )
 
+                prefill_port = self._start_prefill_server()
                 self.send_task_status(task.task_id, TaskStatus.Complete)
-                self.update_status(RunnerReady())
+                self.update_status(RunnerReady(prefill_server_port=prefill_port))
                 logger.info("runner ready")
 
             case TextGeneration() if isinstance(self.current_status, RunnerReady):
@@ -285,29 +456,37 @@ class Runner:
                 self.active_tasks.pop(task_id, None)
 
             try:
-                task = self.task_receiver.receive_nowait()
+                item = self._work_queue.get_nowait()
+            except queue.Empty:
+                continue
+            if item is _TaskStreamClosed:
+                # Task stream closed mid-generation. Bail out.
+                return ExitCode.Shutdown
+            if isinstance(item, _PrefillRequest):
+                # Refuse — runner is mid-generation. Client picks up the 3s
+                # pickup timeout and 503s.
+                item.started.set()
+                item.holder[0] = None
+                item.done.set()
+                continue
+            task: Task = item  # type: ignore[assignment]
+            if task.task_id in self.seen:
+                logger.warning("repeat task - potential error")
+                continue
+            self.seen.add(task.task_id)
+            match task:
+                case TextGeneration():
+                    self.acknowledge_task(task)
+                    self.submit_text_generation(task)
+                case Shutdown():
+                    self.shutdown(task)
+                    return ExitCode.Shutdown
+                case _:
+                    raise ValueError(
+                        f"Received {task.__class__.__name__} outside of state machine in {self.current_status=}"
+                    )
 
-                if task.task_id in self.seen:
-                    logger.warning("repeat task - potential error")
-                    continue
-                self.seen.add(task.task_id)
-
-                match task:
-                    case TextGeneration():
-                        self.acknowledge_task(task)
-                        self.submit_text_generation(task)
-                    case Shutdown():
-                        self.shutdown(task)
-                        return ExitCode.Shutdown
-                    case _:
-                        raise ValueError(
-                            f"Received {task.__class__.__name__} outside of state machine in {self.current_status=}"
-                        )
-
-            except WouldBlock:
-                pass
-
-        self.update_status(RunnerReady())
+        self.update_status(RunnerReady(prefill_server_port=self._prefill_server_port))
         logger.info("runner ready")
 
         return ExitCode.AllTasksComplete

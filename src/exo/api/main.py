@@ -79,6 +79,8 @@ from exo.api.types import (
     ImageListItem,
     ImageListResponse,
     ImageSize,
+    InstanceLinkBody,
+    InstanceLinkResponse,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -154,6 +156,7 @@ from exo.shared.types.commands import (
     DeleteCustomModelCard,
     DeleteDownload,
     DeleteInstance,
+    DeleteInstanceLink,
     DownloadCommand,
     ForwarderCommand,
     ForwarderDownloadCommand,
@@ -161,6 +164,7 @@ from exo.shared.types.commands import (
     ImageGeneration,
     PlaceInstance,
     SendInputChunk,
+    SetInstanceLink,
     StartDownload,
     TaskCancelled,
     TaskFinished,
@@ -174,6 +178,7 @@ from exo.shared.types.events import (
     InstanceDeleted,
     TracesMerged,
 )
+from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
@@ -328,6 +333,10 @@ class API:
         self.app.get("/instance/previews")(self.get_placement_previews)
         self.app.get("/instance/{instance_id}")(self.get_instance)
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
+        self.app.get("/v1/instance-links")(self.list_instance_links)
+        self.app.post("/v1/instance-links")(self.create_instance_link)
+        self.app.put("/v1/instance-links/{link_id}")(self.update_instance_link)
+        self.app.delete("/v1/instance-links/{link_id}")(self.delete_instance_link)
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/models/add")(self.add_custom_model)
@@ -613,6 +622,41 @@ class API:
             message="Command received.",
             command_id=command.command_id,
             instance_id=instance_id,
+        )
+
+    async def list_instance_links(self) -> list[InstanceLink]:
+        return list(self.state.instance_links.values())
+
+    async def create_instance_link(
+        self, body: InstanceLinkBody
+    ) -> InstanceLinkResponse:
+        return await self._set_instance_link(None, body)
+
+    async def update_instance_link(
+        self, link_id: InstanceLinkId, body: InstanceLinkBody
+    ) -> InstanceLinkResponse:
+        return await self._set_instance_link(link_id, body)
+
+    async def _set_instance_link(
+        self, link_id: InstanceLinkId | None, body: InstanceLinkBody
+    ) -> InstanceLinkResponse:
+        command = SetInstanceLink(
+            link_id=link_id,
+            prefill_instances=list(body.prefill_instances),
+            decode_instances=list(body.decode_instances),
+        )
+        await self._send(command)
+        return InstanceLinkResponse(
+            message="Command received.", command_id=command.command_id
+        )
+
+    async def delete_instance_link(
+        self, link_id: InstanceLinkId
+    ) -> InstanceLinkResponse:
+        command = DeleteInstanceLink(link_id=link_id)
+        await self._send(command)
+        return InstanceLinkResponse(
+            message="Command received.", command_id=command.command_id
         )
 
     async def cancel_command(self, command_id: CommandId) -> CancelCommandResponse:
