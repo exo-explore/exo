@@ -1,5 +1,3 @@
-diff --git a/drivers/net/usb/cdc_ncm.c b/drivers/net/usb/cdc_ncm.c
-index 000000000000..000000000000 100644
 --- a/drivers/net/usb/cdc_ncm.c
 +++ b/drivers/net/usb/cdc_ncm.c
 @@ -2104,6 +2104,14 @@ static const struct usb_device_id cdc_devs[] = {
