@@ -26,8 +26,9 @@ Linux's existing Apple private CDC-NCM driver info.
 From the repo root on Spark:
 
 ```sh
+nix develop .#dgx-usb-fix
 ./dgx-usb-fix/diagnose.sh
-sudo ./dgx-usb-fix/build-and-install.sh --skip-load
+sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/build-and-install.sh --skip-load
 sudo modprobe -r cdc_mbim cdc_ncm
 sudo modprobe cdc_ncm
 ./dgx-usb-fix/diagnose.sh
@@ -49,7 +50,8 @@ change, so it is intentionally not hidden inside the build script.
 To create the key files only:
 
 ```sh
-sudo ./dgx-usb-fix/create-mok-key.sh
+nix develop .#dgx-usb-fix
+sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/create-mok-key.sh
 ```
 
 To trust the generated cert, import it and complete the reboot-time enrollment:

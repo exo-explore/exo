@@ -18,6 +18,11 @@ Creates only:
   /root/MOK.der
 
 It does not import the key into MOK and does not change Secure Boot trust.
+
+Use the repo dev shell for openssl:
+
+  nix develop .#dgx-usb-fix
+  sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/create-mok-key.sh
 EOF
 }
 
@@ -70,6 +75,6 @@ To enroll this certificate for Secure Boot module loading:
   sudo reboot
 
 Complete the MOK enrollment in the boot UI, then rerun:
-  sudo ./dgx-usb-fix/build-and-install.sh
+  sudo env "PATH=\$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/build-and-install.sh
 
 EOF

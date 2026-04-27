@@ -67,6 +67,7 @@
       imports = [
         inputs.treefmt-nix.flakeModule
         ./dashboard/parts.nix
+        ./dgx-usb-fix/parts.nix
         ./rust/parts.nix
         ./python/parts.nix
       ];

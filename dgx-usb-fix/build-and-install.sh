@@ -9,19 +9,19 @@ KERNEL_BUILD_DIR="/lib/modules/${KERNEL_VERSION}/build"
 INSTALL_DIR="${INSTALL_DIR:-/lib/modules/${KERNEL_VERSION}/updates/dgx-usb-fix}"
 MOK_KEY="${MOK_KEY:-/root/MOK.priv}"
 MOK_CERT="${MOK_CERT:-/root/MOK.der}"
-SKIP_APT=0
 SKIP_LOAD=0
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
-need() { command -v "$1" >/dev/null 2>&1 || die "Missing command: $1"; }
+need() {
+  command -v "$1" >/dev/null 2>&1 || die "Missing command: $1. Run from: nix develop .#dgx-usb-fix"
+}
 
 usage() {
   cat <<'EOF'
 Usage: sudo ./dgx-usb-fix/build-and-install.sh [options]
 
 Options:
-  --skip-apt       Do not run apt-get update/install for build dependencies.
   --skip-load      Build, sign, install, and depmod, but do not unload/reload cdc_ncm.
   -h, --help       Show this help.
 
@@ -31,14 +31,16 @@ Environment:
   INSTALL_DIR      Module install directory. Defaults to /lib/modules/$KERNEL_VERSION/updates/dgx-usb-fix.
   MOK_KEY          Secure Boot signing key. Defaults to /root/MOK.priv.
   MOK_CERT         Secure Boot signing cert. Defaults to /root/MOK.der.
+
+Build tools are provided by the repo dev shell:
+
+  nix develop .#dgx-usb-fix
+  sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/build-and-install.sh
 EOF
 }
 
 while (($#)); do
   case "$1" in
-    --skip-apt)
-      SKIP_APT=1
-      ;;
     --skip-load)
       SKIP_LOAD=1
       ;;
@@ -57,21 +59,14 @@ done
 [[ -d $KERNEL_BUILD_DIR ]] || die "Missing kernel headers: $KERNEL_BUILD_DIR"
 need dpkg-query
 
-if ((SKIP_APT == 0)); then
-  need apt-get
-  log "Installing build dependencies"
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    curl \
-    dpkg-dev \
-    kmod \
-    linux-headers-"${KERNEL_VERSION}" \
-    mokutil \
-    python3 \
-    zstd
+if [[ -z ${DGX_USB_FIX_NIX_ENV:-} ]]; then
+  cat >&2 <<'EOF'
+WARNING: DGX_USB_FIX_NIX_ENV is not set.
+Expected flow:
+  nix develop .#dgx-usb-fix
+  sudo env "PATH=$PATH" DGX_USB_FIX_NIX_ENV=1 ./dgx-usb-fix/build-and-install.sh
+Continuing because required tools may already be available.
+EOF
 fi
 
 for cmd in curl dpkg-source find make modinfo depmod python3 mokutil; do
