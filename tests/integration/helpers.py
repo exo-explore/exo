@@ -15,16 +15,16 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 
-from exo.client import (
-    ExoClient,
+from exo_tools.client import ExoClient
+from exo_tools.client import ExoHttpError as ExoHttpError  # re-exported
+from exo_tools.harness import (
+    capture_cluster_snapshot as capture_cluster_snapshot,  # re-exported
+)
+from exo_tools.harness import (
     instance_id_from_instance,
     nodes_used_in_instance,
     wait_for_instance_gone,
     wait_for_instance_ready,
-)
-from exo.client import ExoHttpError as ExoHttpError  # re-exported
-from exo.client import (
-    capture_cluster_snapshot as capture_cluster_snapshot,  # re-exported
 )
 
 logger = logging.getLogger("integration_tests")
