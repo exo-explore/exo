@@ -8,6 +8,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 pub const DEFAULT_NTB_MAX_SIZE: usize = 16 * 1024;
 pub const DEFAULT_NTB_MAX_SIZE_U32: u32 = 16 * 1024;
 pub const DEFAULT_DATAGRAM_ALIGNMENT: usize = 4;
+pub const LINUX_MAX_DATAGRAMS_PER_NDP: usize = 40;
 pub const ETHERNET_HEADER_LEN: usize = 14;
 pub const ETHERNET_HEADER_LEN_U16: u16 = 14;
 
@@ -21,8 +22,13 @@ const DPE16_LEN: usize = size_of::<Dpe16>();
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NtbBuildConfig {
     pub max_size: usize,
+    pub advertised_max_size: usize,
     pub datagram_alignment: usize,
     pub datagram_remainder: usize,
+    pub ndp_alignment: usize,
+    pub ndp_table_reserved_size: usize,
+    pub ndp_placement: NdpPlacement,
+    pub short_packet_max_packet: Option<usize>,
     pub max_datagrams: usize,
 }
 
@@ -30,11 +36,22 @@ impl Default for NtbBuildConfig {
     fn default() -> Self {
         Self {
             max_size: DEFAULT_NTB_MAX_SIZE,
+            advertised_max_size: DEFAULT_NTB_MAX_SIZE,
             datagram_alignment: DEFAULT_DATAGRAM_ALIGNMENT,
             datagram_remainder: 0,
-            max_datagrams: usize::MAX,
+            ndp_alignment: DEFAULT_DATAGRAM_ALIGNMENT,
+            ndp_table_reserved_size: ndp16_table_size(LINUX_MAX_DATAGRAMS_PER_NDP),
+            ndp_placement: NdpPlacement::BeforeData,
+            short_packet_max_packet: None,
+            max_datagrams: LINUX_MAX_DATAGRAMS_PER_NDP,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NdpPlacement {
+    BeforeData,
+    End,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -144,6 +161,24 @@ struct FramePlan {
     length: usize,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct NtbBuildPlan {
+    ndp_index: usize,
+    ndp_length: usize,
+    ndp_reserved_length: usize,
+    final_length: usize,
+    frames: Vec<FramePlan>,
+}
+
+pub trait NtbBuffer {
+    fn len(&self) -> usize;
+    fn capacity(&self) -> usize;
+    fn clear(&mut self);
+    fn extend_zeroed(&mut self, length: usize) -> Result<&mut [u8], NcmError>;
+    fn extend_from_slice(&mut self, slice: &[u8]) -> Result<(), NcmError>;
+    fn as_mut_slice(&mut self) -> &mut [u8];
+}
+
 pub fn parse_ntb16<'a>(bytes: &'a [u8], config: NtbParseConfig) -> Result<ParsedNtb<'a>, NcmError> {
     if bytes.len() > config.max_size {
         return Err(NcmError::NtbTooLarge {
@@ -194,6 +229,28 @@ pub fn build_ntb16(
     frames: &[&[u8]],
     config: NtbBuildConfig,
 ) -> Result<Vec<u8>, NcmError> {
+    let plan = plan_ntb16(frames, config)?;
+    let mut out = Vec::with_capacity(plan.final_length);
+    write_ntb16_plan(sequence, frames, config, &plan, &mut out)?;
+    Ok(out)
+}
+
+pub fn build_ntb16_into<B: NtbBuffer>(
+    sequence: u16,
+    frames: &[&[u8]],
+    config: NtbBuildConfig,
+    out: &mut B,
+) -> Result<(), NcmError> {
+    let plan = plan_ntb16(frames, config)?;
+    write_ntb16_plan(sequence, frames, config, &plan, out)
+}
+
+#[must_use]
+pub const fn ndp16_table_size(max_datagrams: usize) -> usize {
+    NDP16_LEN + (max_datagrams + 1) * DPE16_LEN
+}
+
+fn plan_ntb16(frames: &[&[u8]], config: NtbBuildConfig) -> Result<NtbBuildPlan, NcmError> {
     if frames.is_empty() {
         return Err(NcmError::NoFrames);
     }
@@ -225,19 +282,36 @@ pub fn build_ntb16(
             max: usize::from(u16::MAX),
         });
     }
-    let data_start = checked_align_up_to_remainder(
-        ndp_index
-            .checked_add(ndp_length)
-            .ok_or(NcmError::BuiltNtbTooLarge {
-                actual: usize::MAX,
-                max: usize::from(u16::MAX),
-            })?,
-        config.datagram_alignment,
-        config.datagram_remainder,
-    )?;
-    let mut entries = Vec::with_capacity(frames.len());
+    let ndp_reserved_length = config.ndp_table_reserved_size.max(ndp_length);
+    if ndp_reserved_length > usize::from(u16::MAX) {
+        return Err(NcmError::BuiltNtbTooLarge {
+            actual: ndp_reserved_length,
+            max: usize::from(u16::MAX),
+        });
+    }
+
     let mut frame_plans = Vec::with_capacity(frames.len());
-    let mut next_offset = data_start;
+    let mut next_offset = match config.ndp_placement {
+        NdpPlacement::BeforeData => {
+            let ndp_end =
+                ndp_index
+                    .checked_add(ndp_reserved_length)
+                    .ok_or(NcmError::BuiltNtbTooLarge {
+                        actual: usize::MAX,
+                        max: usize::from(u16::MAX),
+                    })?;
+            checked_align_up_to_remainder(
+                ndp_end,
+                config.datagram_alignment,
+                config.datagram_remainder,
+            )?
+        }
+        NdpPlacement::End => checked_align_up_to_remainder(
+            NTH16_LEN,
+            config.datagram_alignment,
+            config.datagram_remainder,
+        )?,
+    };
 
     for frame in frames {
         let frame_len = frame.len();
@@ -267,17 +341,6 @@ pub fn build_ntb16(
                 max: usize::from(u16::MAX),
             });
         }
-        entries.push(Dpe16 {
-            w_datagram_index: U16::new(u16::try_from(frame_offset).map_err(|_| {
-                NcmError::BuiltNtbTooLarge {
-                    actual: frame_offset,
-                    max: usize::from(u16::MAX),
-                }
-            })?),
-            w_datagram_length: U16::new(
-                u16::try_from(frame_len).map_err(|_| NcmError::FrameTooLarge(frame_len))?,
-            ),
-        });
         frame_plans.push(FramePlan {
             offset: frame_offset,
             length: frame_len,
@@ -285,53 +348,139 @@ pub fn build_ntb16(
         next_offset = frame_end;
     }
 
-    if next_offset > config.max_size {
+    let ndp_index = match config.ndp_placement {
+        NdpPlacement::BeforeData => ndp_index,
+        NdpPlacement::End => checked_align_up_to_remainder(next_offset, config.ndp_alignment, 0)?,
+    };
+    let block_length = match config.ndp_placement {
+        NdpPlacement::BeforeData => next_offset,
+        NdpPlacement::End => {
+            ndp_index
+                .checked_add(ndp_reserved_length)
+                .ok_or(NcmError::BuiltNtbTooLarge {
+                    actual: usize::MAX,
+                    max: usize::from(u16::MAX),
+                })?
+        }
+    };
+    let final_length = apply_short_packet_padding(block_length, config)?;
+
+    if final_length > config.max_size {
         return Err(NcmError::BuiltNtbTooLarge {
-            actual: next_offset,
+            actual: final_length,
             max: config.max_size,
         });
     }
-    if next_offset > usize::from(u16::MAX) {
+    if final_length > usize::from(u16::MAX) {
         return Err(NcmError::BuiltNtbTooLarge {
-            actual: next_offset,
+            actual: final_length,
             max: usize::from(u16::MAX),
         });
     }
 
-    let mut out = vec![0; next_offset];
-    for (frame, plan) in frames.iter().zip(frame_plans) {
-        let frame_end = plan.offset + plan.length;
-        out[plan.offset..frame_end].copy_from_slice(frame);
+    Ok(NtbBuildPlan {
+        ndp_index,
+        ndp_length,
+        ndp_reserved_length,
+        final_length,
+        frames: frame_plans,
+    })
+}
+
+fn write_ntb16_plan<B: NtbBuffer>(
+    sequence: u16,
+    frames: &[&[u8]],
+    config: NtbBuildConfig,
+    plan: &NtbBuildPlan,
+    out: &mut B,
+) -> Result<(), NcmError> {
+    out.clear();
+    extend_zeroes_to(out, NTH16_LEN)?;
+
+    match config.ndp_placement {
+        NdpPlacement::BeforeData => {
+            extend_zeroes_to(out, plan.ndp_index)?;
+            out.extend_zeroed(plan.ndp_reserved_length)?;
+            write_frames(out, frames, &plan.frames)?;
+        }
+        NdpPlacement::End => {
+            write_frames(out, frames, &plan.frames)?;
+            extend_zeroes_to(out, plan.ndp_index)?;
+            out.extend_zeroed(plan.ndp_reserved_length)?;
+        }
     }
+    extend_zeroes_to(out, plan.final_length)?;
 
     let nth = Nth16 {
         dw_signature: U32::new(NTH16_SIGNATURE),
         w_header_length: U16::new(u16::try_from(NTH16_LEN).expect("NTH16 length fits u16")),
         w_sequence: U16::new(sequence),
-        w_block_length: U16::new(u16::try_from(next_offset).expect("checked above")),
-        w_ndp_index: U16::new(u16::try_from(ndp_index).expect("NDP index fits u16")),
+        w_block_length: U16::new(u16::try_from(plan.final_length).expect("checked above")),
+        w_ndp_index: U16::new(u16::try_from(plan.ndp_index).expect("checked above")),
     };
-    out[..NTH16_LEN].copy_from_slice(nth.as_bytes());
+    let bytes = out.as_mut_slice();
+    bytes[..NTH16_LEN].copy_from_slice(nth.as_bytes());
 
     let ndp = Ndp16 {
         dw_signature: U32::new(NDP16_NO_CRC_SIGNATURE),
-        w_length: U16::new(u16::try_from(ndp_length).expect("NDP length fits u16")),
+        w_length: U16::new(u16::try_from(plan.ndp_length).expect("NDP length fits u16")),
         w_next_ndp_index: U16::new(0),
     };
-    out[ndp_index..ndp_index + NDP16_LEN].copy_from_slice(ndp.as_bytes());
+    bytes[plan.ndp_index..plan.ndp_index + NDP16_LEN].copy_from_slice(ndp.as_bytes());
 
-    let mut entry_offset = ndp_index + NDP16_LEN;
-    for entry in entries {
-        out[entry_offset..entry_offset + DPE16_LEN].copy_from_slice(entry.as_bytes());
+    let mut entry_offset = plan.ndp_index + NDP16_LEN;
+    for plan in &plan.frames {
+        let entry = Dpe16 {
+            w_datagram_index: U16::new(u16::try_from(plan.offset).expect("checked above")),
+            w_datagram_length: U16::new(u16::try_from(plan.length).expect("checked above")),
+        };
+        bytes[entry_offset..entry_offset + DPE16_LEN].copy_from_slice(entry.as_bytes());
         entry_offset += DPE16_LEN;
     }
     let terminator = Dpe16 {
         w_datagram_index: U16::new(0),
         w_datagram_length: U16::new(0),
     };
-    out[entry_offset..entry_offset + DPE16_LEN].copy_from_slice(terminator.as_bytes());
+    bytes[entry_offset..entry_offset + DPE16_LEN].copy_from_slice(terminator.as_bytes());
 
-    Ok(out)
+    Ok(())
+}
+
+fn write_frames<B: NtbBuffer>(
+    out: &mut B,
+    frames: &[&[u8]],
+    plans: &[FramePlan],
+) -> Result<(), NcmError> {
+    for (frame, plan) in frames.iter().zip(plans) {
+        extend_zeroes_to(out, plan.offset)?;
+        out.extend_from_slice(frame)?;
+    }
+    Ok(())
+}
+
+fn extend_zeroes_to<B: NtbBuffer>(out: &mut B, target: usize) -> Result<(), NcmError> {
+    if out.len() > target {
+        return Err(NcmError::BuiltNtbTooLarge {
+            actual: out.len(),
+            max: target,
+        });
+    }
+    out.extend_zeroed(target - out.len())?;
+    Ok(())
+}
+
+fn apply_short_packet_padding(length: usize, config: NtbBuildConfig) -> Result<usize, NcmError> {
+    let Some(max_packet) = config.short_packet_max_packet.filter(|size| *size > 0) else {
+        return Ok(length);
+    };
+    if length < config.max_size && length % max_packet == 0 {
+        length.checked_add(1).ok_or(NcmError::BuiltNtbTooLarge {
+            actual: usize::MAX,
+            max: config.max_size,
+        })
+    } else {
+        Ok(length)
+    }
 }
 
 fn parse_ndp16<'a>(
@@ -447,6 +596,41 @@ fn checked_align_up_to_remainder(
     }
 }
 
+impl NtbBuffer for Vec<u8> {
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+
+    fn capacity(&self) -> usize {
+        Vec::capacity(self)
+    }
+
+    fn clear(&mut self) {
+        Vec::clear(self);
+    }
+
+    fn extend_zeroed(&mut self, length: usize) -> Result<&mut [u8], NcmError> {
+        let start = self.len();
+        let end = start
+            .checked_add(length)
+            .ok_or(NcmError::BuiltNtbTooLarge {
+                actual: usize::MAX,
+                max: usize::from(u16::MAX),
+            })?;
+        self.resize(end, 0);
+        Ok(&mut self[start..end])
+    }
+
+    fn extend_from_slice(&mut self, slice: &[u8]) -> Result<(), NcmError> {
+        Vec::extend_from_slice(self, slice);
+        Ok(())
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        Vec::as_mut_slice(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,6 +661,49 @@ mod tests {
         let parsed = parse_ntb16(&ntb, NtbParseConfig::default()).unwrap();
 
         assert_eq!(parsed.frames, vec![first.as_slice(), second.as_slice()]);
+    }
+
+    #[test]
+    fn tx_default_reserves_linux_sized_ndp_table() {
+        let frame = ethernet_frame(0x25, 46);
+        let config = NtbBuildConfig::default();
+        let ntb = build_ntb16(9, &[&frame], config).unwrap();
+        let dpe = Dpe16::read_from_bytes(&ntb[NTH16_LEN + NDP16_LEN..][..DPE16_LEN]).unwrap();
+        let frame_index = usize::from(dpe.w_datagram_index.get());
+
+        assert!(frame_index >= NTH16_LEN + ndp16_table_size(LINUX_MAX_DATAGRAMS_PER_NDP));
+    }
+
+    #[test]
+    fn tx_can_place_ndp_at_end() {
+        let frame = ethernet_frame(0x28, 46);
+        let config = NtbBuildConfig {
+            ndp_placement: NdpPlacement::End,
+            ..NtbBuildConfig::default()
+        };
+        let ntb = build_ntb16(10, &[&frame], config).unwrap();
+        let nth = Nth16::read_from_bytes(&ntb[..NTH16_LEN]).unwrap();
+        let ndp_index = usize::from(nth.w_ndp_index.get());
+        let parsed = parse_ntb16(&ntb, NtbParseConfig::default()).unwrap();
+
+        assert!(ndp_index >= NTH16_LEN + frame.len());
+        assert_eq!(parsed.frames, vec![frame.as_slice()]);
+    }
+
+    #[test]
+    fn tx_short_packet_padding_extends_packet_aligned_ntb() {
+        let frame = ethernet_frame(0x2a, 826);
+        let config = NtbBuildConfig {
+            short_packet_max_packet: Some(1024),
+            ..NtbBuildConfig::default()
+        };
+        let ntb = build_ntb16(11, &[&frame], config).unwrap();
+        let nth = Nth16::read_from_bytes(&ntb[..NTH16_LEN]).unwrap();
+        let parsed = parse_ntb16(&ntb, NtbParseConfig::default()).unwrap();
+
+        assert_eq!(ntb.len(), 1025);
+        assert_eq!(usize::from(nth.w_block_length.get()), 1025);
+        assert_eq!(parsed.frames, vec![frame.as_slice()]);
     }
 
     #[test]

@@ -1,8 +1,9 @@
 use std::fmt;
 use std::str::FromStr;
 
+use crate::ncm::NdpPlacement;
 use crate::usb::UsbSelector;
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -98,7 +99,34 @@ pub enum Command {
         /// Number of USB bulk OUT transfers to keep queued.
         #[arg(long, default_value_t = crate::bridge::DEFAULT_BRIDGE_USB_WRITE_QUEUE_DEPTH)]
         usb_write_queue_depth: usize,
+
+        /// NDP placement to use for transmitted NTB16 blocks.
+        #[arg(long, value_enum, default_value = "before-data")]
+        tx_ndp_placement: TxNdpPlacement,
+
+        /// Do not reserve the full Linux-sized NDP16 table before Ethernet frame data.
+        #[arg(long = "no-tx-reserve-ndp-table", action = ArgAction::SetFalse, default_value_t = true)]
+        tx_reserve_ndp_table: bool,
+
+        /// Do not append a zero byte to force short USB bulk OUT packets.
+        #[arg(long = "no-tx-short-packet-padding", action = ArgAction::SetFalse, default_value_t = true)]
+        tx_short_packet_padding: bool,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum TxNdpPlacement {
+    BeforeData,
+    End,
+}
+
+impl From<TxNdpPlacement> for NdpPlacement {
+    fn from(value: TxNdpPlacement) -> Self {
+        match value {
+            TxNdpPlacement::BeforeData => Self::BeforeData,
+            TxNdpPlacement::End => Self::End,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -230,6 +258,29 @@ mod tests {
                 usb_write_timeout_ms,
                 ..
             } => assert_eq!(usb_write_timeout_ms, 77),
+            _ => panic!("expected bridge command"),
+        }
+    }
+
+    #[test]
+    fn bridge_can_disable_default_tx_linux_compat_flags() {
+        let cli = Cli::try_parse_from([
+            "dgxusbd",
+            "bridge",
+            "--no-tx-reserve-ndp-table",
+            "--no-tx-short-packet-padding",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Command::Bridge {
+                tx_reserve_ndp_table,
+                tx_short_packet_padding,
+                ..
+            } => {
+                assert!(!tx_reserve_ndp_table);
+                assert!(!tx_short_packet_padding);
+            }
             _ => panic!("expected bridge command"),
         }
     }

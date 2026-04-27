@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use arrayvec::ArrayVec;
 use color_eyre::eyre::{self, Context as _, OptionExt as _};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use mio::unix::SourceFd;
@@ -13,7 +14,8 @@ use nusb::transfer::{Buffer, Bulk, In, Out, TransferError};
 
 use crate::bridge::{BridgeCounters, BridgeOptions, BridgeReport};
 use crate::ncm::{
-    DEFAULT_NTB_MAX_SIZE, ETHERNET_HEADER_LEN, NcmError, NtbBuildConfig, NtbParseConfig,
+    DEFAULT_NTB_MAX_SIZE, ETHERNET_HEADER_LEN, LINUX_MAX_DATAGRAMS_PER_NDP, NcmError, NtbBuffer,
+    NtbBuildConfig, NtbParseConfig, ndp16_table_size,
 };
 use crate::tap::create_tap;
 use crate::usb::{NcmPair, NcmSetupReport, open_ncm_pair};
@@ -21,6 +23,7 @@ use crate::usb::{NcmPair, NcmSetupReport, open_ncm_pair};
 const TOKEN_TAP: Token = Token(0);
 const TAP_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const SUPERVISOR_POLL_INTERVAL: Duration = Duration::from_millis(20);
+const MAX_BATCH_FRAMES: usize = LINUX_MAX_DATAGRAMS_PER_NDP;
 
 struct BridgeDataplane {
     tap_name: String,
@@ -41,14 +44,19 @@ struct SharedDataplaneState {
 #[derive(Default)]
 struct AtomicBridgeCounters {
     tap_frames_rx: AtomicU64,
+    tap_bytes_rx: AtomicU64,
     tap_frames_dropped: AtomicU64,
     usb_ntbs_tx: AtomicU64,
+    usb_bytes_tx: AtomicU64,
     usb_ntbs_rx: AtomicU64,
+    usb_bytes_rx: AtomicU64,
     usb_timeouts: AtomicU64,
     usb_frames_rx: AtomicU64,
     tap_frames_tx: AtomicU64,
+    tap_bytes_tx: AtomicU64,
     tap_write_dropped: AtomicU64,
     malformed_ntbs: AtomicU64,
+    usb_write_completions: AtomicU64,
 }
 
 struct TapToUsbWorker {
@@ -100,6 +108,7 @@ impl BridgeDataplane {
             .data_interface
             .endpoint::<Bulk, Out>(bulk_out)
             .wrap_err_with(|| format!("failed to open bulk OUT endpoint {bulk_out:#04x}"))?;
+        let ep_out_max_packet_size = ep_out.max_packet_size();
 
         let mut tap_options = options.tap.clone();
         tap_options.nonblocking = true;
@@ -110,14 +119,26 @@ impl BridgeDataplane {
             .setup_report
             .ntb_parameters
             .map_or_else(NtbParseConfig::default, NtbParseConfig::from);
-        let build_config = open
+        let mut build_config = open
             .setup_report
             .ntb_parameters
             .map_or_else(NtbBuildConfig::default, NtbBuildConfig::from);
+        build_config.ndp_placement = options.tx_ndp_placement;
+        build_config.short_packet_max_packet = options
+            .tx_short_packet_padding
+            .then_some(ep_out_max_packet_size);
+        if options.tx_short_packet_padding {
+            apply_linux_short_packet_tx_max(&mut build_config, ep_out_max_packet_size);
+        }
+        build_config.ndp_table_reserved_size = if options.tx_reserve_ndp_table {
+            ndp16_table_size(build_config.max_datagrams)
+        } else {
+            0
+        };
 
         let read_size = transfer_size(parse_config.max_size, ep_in.max_packet_size());
         let write_transfer_size =
-            write_transfer_size(build_config.max_size, ep_out.max_packet_size());
+            write_transfer_size(build_config.max_size, ep_out_max_packet_size);
         let batch_limit = batch_limit(
             options.tap_budget_frames.max(1),
             usize::from(tap.mtu) + ETHERNET_HEADER_LEN,
@@ -202,7 +223,16 @@ impl BridgeDataplane {
         self.shared.stop();
         let tap_result = join_worker(self.tap_to_usb.take(), "TAP-to-USB worker");
         let usb_result = join_worker(self.usb_to_tap.take(), "USB-to-TAP worker");
-        tap_result.and(usb_result)
+        tap_result.and(usb_result).and(self.drain_worker_errors())
+    }
+
+    fn drain_worker_errors(&self) -> eyre::Result<()> {
+        let messages: Vec<_> = self.errors.try_iter().collect();
+        if messages.is_empty() {
+            Ok(())
+        } else {
+            Err(eyre::eyre!("{}", messages.join("\n")))
+        }
     }
 }
 
@@ -260,27 +290,31 @@ impl SharedDataplaneState {
         }
     }
 
-    fn inc_tap_frames_rx(&self) -> bool {
-        if self.record_total_event() {
-            self.counters.tap_frames_rx.fetch_add(1, Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
+    fn inc_tap_frames_rx(&self, bytes: usize) {
+        self.counters.tap_frames_rx.fetch_add(1, Ordering::Relaxed);
+        self.counters
+            .tap_bytes_rx
+            .fetch_add(bytes as u64, Ordering::Relaxed);
     }
 
-    fn inc_usb_ntbs_tx(&self) -> bool {
+    fn inc_usb_ntbs_tx(&self, bytes: usize) -> bool {
         if self.record_total_event() {
             self.counters.usb_ntbs_tx.fetch_add(1, Ordering::Relaxed);
+            self.counters
+                .usb_bytes_tx
+                .fetch_add(bytes as u64, Ordering::Relaxed);
             true
         } else {
             false
         }
     }
 
-    fn inc_usb_ntbs_rx(&self) -> bool {
+    fn inc_usb_ntbs_rx(&self, bytes: usize) -> bool {
         if self.record_total_event() {
             self.counters.usb_ntbs_rx.fetch_add(1, Ordering::Relaxed);
+            self.counters
+                .usb_bytes_rx
+                .fetch_add(bytes as u64, Ordering::Relaxed);
             true
         } else {
             false
@@ -295,20 +329,32 @@ impl SharedDataplaneState {
             false
         }
     }
+
+    fn inc_tap_frames_tx(&self, bytes: usize) {
+        self.counters.tap_frames_tx.fetch_add(1, Ordering::Relaxed);
+        self.counters
+            .tap_bytes_tx
+            .fetch_add(bytes as u64, Ordering::Relaxed);
+    }
 }
 
 impl AtomicBridgeCounters {
     fn snapshot(&self) -> BridgeCounters {
         BridgeCounters {
             tap_frames_rx: self.tap_frames_rx.load(Ordering::Relaxed),
+            tap_bytes_rx: self.tap_bytes_rx.load(Ordering::Relaxed),
             tap_frames_dropped: self.tap_frames_dropped.load(Ordering::Relaxed),
             usb_ntbs_tx: self.usb_ntbs_tx.load(Ordering::Relaxed),
+            usb_bytes_tx: self.usb_bytes_tx.load(Ordering::Relaxed),
             usb_ntbs_rx: self.usb_ntbs_rx.load(Ordering::Relaxed),
+            usb_bytes_rx: self.usb_bytes_rx.load(Ordering::Relaxed),
             usb_timeouts: self.usb_timeouts.load(Ordering::Relaxed),
             usb_frames_rx: self.usb_frames_rx.load(Ordering::Relaxed),
             tap_frames_tx: self.tap_frames_tx.load(Ordering::Relaxed),
+            tap_bytes_tx: self.tap_bytes_tx.load(Ordering::Relaxed),
             tap_write_dropped: self.tap_write_dropped.load(Ordering::Relaxed),
             malformed_ntbs: self.malformed_ntbs.load(Ordering::Relaxed),
+            usb_write_completions: self.usb_write_completions.load(Ordering::Relaxed),
         }
     }
 }
@@ -340,13 +386,11 @@ impl TapToUsbWorker {
     }
 
     fn drain_tap_ready(&mut self) -> eyre::Result<()> {
-        self.batch_frames.clear();
-        while self.batch_frames.len() < self.batch_limit && !self.shared.should_stop() {
+        let mut batch_len = 0;
+        while batch_len < self.batch_limit && !self.shared.should_stop() {
             match self.tap.recv(&mut self.tap_buffer) {
                 Ok(length) => {
-                    if !self.shared.inc_tap_frames_rx() {
-                        return Ok(());
-                    }
+                    self.shared.inc_tap_frames_rx(length);
                     if length < ETHERNET_HEADER_LEN {
                         self.shared
                             .counters
@@ -358,7 +402,16 @@ impl TapToUsbWorker {
                         .tap_buffer
                         .get(..length)
                         .ok_or_eyre("TAP read length exceeded TAP buffer")?;
-                    self.batch_frames.push(frame.to_vec());
+                    if self.batch_frames.len() == batch_len {
+                        self.batch_frames.push(Vec::with_capacity(length));
+                    }
+                    let slot = self
+                        .batch_frames
+                        .get_mut(batch_len)
+                        .ok_or_eyre("TAP batch slot unexpectedly missing")?;
+                    slot.clear();
+                    slot.extend_from_slice(frame);
+                    batch_len += 1;
                 }
                 Err(err) if err.kind() == ErrorKind::WouldBlock => break,
                 Err(err) if err.kind() == ErrorKind::Interrupted => continue,
@@ -366,42 +419,61 @@ impl TapToUsbWorker {
             }
         }
 
-        if self.batch_frames.is_empty() {
-            return Ok(());
+        if batch_len > 0 {
+            self.send_batch_range(0, batch_len)?;
         }
-        let frames = std::mem::take(&mut self.batch_frames);
-        self.send_batch(&frames)?;
-        self.batch_frames = frames;
         Ok(())
     }
 
-    fn send_batch(&mut self, frames: &[Vec<u8>]) -> eyre::Result<()> {
-        if frames.is_empty() || self.shared.should_stop() {
+    fn send_batch_range(&mut self, start: usize, end: usize) -> eyre::Result<()> {
+        if start >= end || self.shared.should_stop() {
             return Ok(());
         }
-        let refs: Vec<_> = frames.iter().map(Vec::as_slice).collect();
-        match crate::ncm::build_ntb16(self.sequence, &refs, self.build_config) {
-            Ok(ntb) => self.send_ntb(&ntb),
-            Err(NcmError::BuiltNtbTooLarge { .. }) if frames.len() > 1 => {
-                let mid = frames.len() / 2;
-                let (left, right) = frames.split_at(mid);
-                self.send_batch(left)?;
-                self.send_batch(right)
+
+        let mut buffer = self.next_write_buffer(self.write_transfer_size)?;
+        let build_result = {
+            let mut refs: ArrayVec<&[u8], MAX_BATCH_FRAMES> = ArrayVec::new();
+            for frame in &self.batch_frames[start..end] {
+                refs.push(frame.as_slice());
             }
-            Err(err) => Err(err).wrap_err("failed to build NTB16 from TAP frame batch"),
+            crate::ncm::build_ntb16_into(
+                self.sequence,
+                refs.as_slice(),
+                self.build_config,
+                &mut buffer,
+            )
+        };
+
+        match build_result {
+            Ok(()) => self.submit_ntb(buffer),
+            Err(NcmError::BuiltNtbTooLarge { .. }) if end - start > 1 => {
+                self.return_write_buffer(buffer);
+                let mid = start + (end - start) / 2;
+                self.send_batch_range(start, mid)?;
+                self.send_batch_range(mid, end)
+            }
+            Err(err) => {
+                self.return_write_buffer(buffer);
+                Err(err).wrap_err("failed to build NTB16 from TAP frame batch")
+            }
         }
     }
 
-    fn send_ntb(&mut self, ntb: &[u8]) -> eyre::Result<()> {
-        if !self.shared.inc_usb_ntbs_tx() {
+    fn submit_ntb(&mut self, buffer: Buffer) -> eyre::Result<()> {
+        let ntb_len = buffer.len();
+        if !self.shared.inc_usb_ntbs_tx(ntb_len) {
+            self.return_write_buffer(buffer);
             return Ok(());
         }
-        let mut buffer = self.next_write_buffer(ntb.len())?;
-        buffer.extend_from_slice(&ntb);
         self.ep_out.submit(buffer);
         self.sequence = self.sequence.wrapping_add(1);
         self.reclaim_completed_writes()?;
         Ok(())
+    }
+
+    fn return_write_buffer(&mut self, mut buffer: Buffer) {
+        buffer.clear();
+        self.write_buffers.push(buffer);
     }
 
     fn allocate_write_buffers(&mut self) {
@@ -455,6 +527,10 @@ impl TapToUsbWorker {
         let mut buffer = completion.buffer;
         match completion.status {
             Ok(()) => {
+                self.shared
+                    .counters
+                    .usb_write_completions
+                    .fetch_add(1, Ordering::Relaxed);
                 buffer.clear();
                 self.write_buffers.push(buffer);
                 Ok(true)
@@ -498,7 +574,7 @@ impl UsbToTapWorker {
                 let buffer = completion.buffer;
                 match completion.status {
                     Ok(()) => {
-                        if !self.shared.inc_usb_ntbs_rx() {
+                        if !self.shared.inc_usb_ntbs_rx(completion.actual_len) {
                             return Ok(());
                         }
                         let ntb = buffer
@@ -545,10 +621,7 @@ impl UsbToTapWorker {
                                 .counters
                                 .usb_frames_rx
                                 .fetch_add(1, Ordering::Relaxed);
-                            self.shared
-                                .counters
-                                .tap_frames_tx
-                                .fetch_add(1, Ordering::Relaxed);
+                            self.shared.inc_tap_frames_tx(frame.len());
                         }
                         Err(err) if err.kind() == ErrorKind::WouldBlock => {
                             self.shared
@@ -603,6 +676,16 @@ fn write_transfer_size(configured_size: usize, max_packet_size: usize) -> usize 
     configured_size.clamp(max_packet_size.max(1), usize::from(u16::MAX))
 }
 
+fn apply_linux_short_packet_tx_max(config: &mut NtbBuildConfig, max_packet_size: usize) {
+    let max_packet_size = max_packet_size.max(1);
+    if config.max_size != config.advertised_max_size
+        && config.max_size % max_packet_size == 0
+        && config.max_size < config.advertised_max_size
+    {
+        config.max_size = config.max_size.saturating_add(1);
+    }
+}
+
 fn batch_limit(configured_limit: usize, frame_capacity: usize, config: NtbBuildConfig) -> usize {
     let frame_budget = frame_capacity
         .saturating_add(config.datagram_alignment.max(1))
@@ -624,6 +707,59 @@ fn usb_transfer_error(err: TransferError) -> eyre::Report {
     eyre::eyre!("{err}")
 }
 
+impl NtbBuffer for Buffer {
+    fn len(&self) -> usize {
+        Buffer::len(self)
+    }
+
+    fn capacity(&self) -> usize {
+        Buffer::capacity(self)
+    }
+
+    fn clear(&mut self) {
+        Buffer::clear(self);
+    }
+
+    fn extend_zeroed(&mut self, length: usize) -> Result<&mut [u8], NcmError> {
+        let end = self
+            .len()
+            .checked_add(length)
+            .ok_or(NcmError::BuiltNtbTooLarge {
+                actual: usize::MAX,
+                max: self.capacity(),
+            })?;
+        if end > self.capacity() {
+            return Err(NcmError::BuiltNtbTooLarge {
+                actual: end,
+                max: self.capacity(),
+            });
+        }
+        Ok(self.extend_fill(length, 0))
+    }
+
+    fn extend_from_slice(&mut self, slice: &[u8]) -> Result<(), NcmError> {
+        let end = self
+            .len()
+            .checked_add(slice.len())
+            .ok_or(NcmError::BuiltNtbTooLarge {
+                actual: usize::MAX,
+                max: self.capacity(),
+            })?;
+        if end > self.capacity() {
+            return Err(NcmError::BuiltNtbTooLarge {
+                actual: end,
+                max: self.capacity(),
+            });
+        }
+        Buffer::extend_from_slice(self, slice);
+        Ok(())
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self[..]
+    }
+}
+
 impl From<crate::usb::NtbParametersReport> for NtbParseConfig {
     fn from(parameters: crate::usb::NtbParametersReport) -> Self {
         parameters.rx_parse_config()
@@ -641,17 +777,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn event_budget_is_exact_across_total_event_counters() {
-        let shared = SharedDataplaneState::new(Some(3));
+    fn event_budget_counts_committed_usb_events_not_tap_reads() {
+        let shared = SharedDataplaneState::new(Some(2));
 
-        assert!(shared.inc_tap_frames_rx());
-        assert!(shared.inc_usb_ntbs_tx());
-        assert!(shared.inc_usb_ntbs_rx());
+        shared.inc_tap_frames_rx(64);
+        assert!(shared.inc_usb_ntbs_tx(128));
+        assert!(shared.inc_usb_ntbs_rx(256));
         assert!(!shared.inc_malformed_ntbs());
 
         let counters = shared.counters.snapshot();
-        assert_eq!(counters.total_events(), 3);
+        assert_eq!(counters.tap_frames_rx, 1);
+        assert_eq!(counters.tap_bytes_rx, 64);
+        assert_eq!(counters.total_events(), 2);
         assert_eq!(counters.malformed_ntbs, 0);
         assert!(shared.event_budget_exhausted());
+    }
+
+    #[test]
+    fn linux_short_packet_tx_max_allows_pad_byte_below_advertised_max() {
+        let mut config = NtbBuildConfig {
+            max_size: 16 * 1024,
+            advertised_max_size: 32764,
+            ..NtbBuildConfig::default()
+        };
+
+        apply_linux_short_packet_tx_max(&mut config, 1024);
+
+        assert_eq!(config.max_size, 16 * 1024 + 1);
     }
 }

@@ -85,6 +85,9 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
             usb_write_queue_depth,
             tap_budget_frames,
             usb_budget_ntbs,
+            tx_ndp_placement,
+            tx_reserve_ndp_table,
+            tx_short_packet_padding,
         } => {
             let report = run_bridge(BridgeOptions {
                 open: OpenPairOptions {
@@ -110,6 +113,9 @@ pub fn run(cli: Cli) -> eyre::Result<()> {
                 usb_budget_ntbs,
                 usb_read_queue_depth,
                 usb_write_queue_depth,
+                tx_ndp_placement: tx_ndp_placement.into(),
+                tx_reserve_ndp_table,
+                tx_short_packet_padding,
             })?;
             print!("{}", render_bridge_report(&report));
         }

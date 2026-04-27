@@ -10,7 +10,10 @@ use nusb::{DeviceInfo, MaybeFuture as _};
 use zerocopy::byteorder::little_endian::{U16, U32};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
-use crate::ncm::{DEFAULT_NTB_MAX_SIZE, NtbBuildConfig, NtbParseConfig};
+use crate::ncm::{
+    DEFAULT_NTB_MAX_SIZE, LINUX_MAX_DATAGRAMS_PER_NDP, NtbBuildConfig, NtbParseConfig,
+    ndp16_table_size,
+};
 
 pub const APPLE_VENDOR_ID: u16 = 0x05ac;
 pub const APPLE_MAC_PRODUCT_ID: u16 = 0x1905;
@@ -672,14 +675,22 @@ impl NtbParametersReport {
     #[must_use]
     pub fn tx_build_config(self) -> NtbBuildConfig {
         let datagram_alignment = sanitize_alignment(self.ndp_out_divisor);
+        let max_datagrams =
+            sanitize_max_datagrams(self.ntb_out_max_datagrams).min(LINUX_MAX_DATAGRAMS_PER_NDP);
+        let advertised_max_size =
+            usize::try_from(self.ntb_out_max_size).unwrap_or(DEFAULT_NTB_MAX_SIZE);
         NtbBuildConfig {
-            max_size: usize::try_from(self.ntb_out_max_size).unwrap_or(DEFAULT_NTB_MAX_SIZE),
+            max_size: advertised_max_size.min(DEFAULT_NTB_MAX_SIZE),
+            advertised_max_size,
             datagram_alignment,
             datagram_remainder: adjusted_payload_remainder(
                 self.ndp_out_payload_remainder,
                 datagram_alignment,
             ),
-            max_datagrams: sanitize_max_datagrams(self.ntb_out_max_datagrams),
+            ndp_alignment: sanitize_alignment(self.ndp_out_alignment),
+            ndp_table_reserved_size: ndp16_table_size(max_datagrams),
+            max_datagrams,
+            ..NtbBuildConfig::default()
         }
     }
 }

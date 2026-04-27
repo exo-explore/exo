@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use color_eyre::eyre;
 
+use crate::ncm::NdpPlacement;
 use crate::tap::TapOptions;
 use crate::usb::{NcmPair, NcmSetupReport, OpenPairOptions, render_setup_report};
 
@@ -22,19 +23,27 @@ pub struct BridgeOptions {
     pub usb_budget_ntbs: usize,
     pub usb_read_queue_depth: usize,
     pub usb_write_queue_depth: usize,
+    pub tx_ndp_placement: NdpPlacement,
+    pub tx_reserve_ndp_table: bool,
+    pub tx_short_packet_padding: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BridgeCounters {
     pub tap_frames_rx: u64,
+    pub tap_bytes_rx: u64,
     pub tap_frames_dropped: u64,
     pub usb_ntbs_tx: u64,
+    pub usb_bytes_tx: u64,
     pub usb_ntbs_rx: u64,
+    pub usb_bytes_rx: u64,
     pub usb_timeouts: u64,
     pub usb_frames_rx: u64,
     pub tap_frames_tx: u64,
+    pub tap_bytes_tx: u64,
     pub tap_write_dropped: u64,
     pub malformed_ntbs: u64,
+    pub usb_write_completions: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -64,16 +73,21 @@ pub fn render_bridge_report(report: &BridgeReport) -> String {
     render_setup_report(&mut out, &report.setup_report);
     let _ = writeln!(
         out,
-        "counters: tap_rx={} tap_drop={} usb_tx_ntb={} usb_rx_ntb={} usb_timeout={} usb_rx_frames={} tap_tx={} tap_tx_drop={} malformed_ntb={}",
+        "counters: tap_rx={} tap_rx_bytes={} tap_drop={} usb_tx_ntb={} usb_tx_bytes={} usb_rx_ntb={} usb_rx_bytes={} usb_timeout={} usb_rx_frames={} tap_tx={} tap_tx_bytes={} tap_tx_drop={} malformed_ntb={} usb_write_done={}",
         report.counters.tap_frames_rx,
+        report.counters.tap_bytes_rx,
         report.counters.tap_frames_dropped,
         report.counters.usb_ntbs_tx,
+        report.counters.usb_bytes_tx,
         report.counters.usb_ntbs_rx,
+        report.counters.usb_bytes_rx,
         report.counters.usb_timeouts,
         report.counters.usb_frames_rx,
         report.counters.tap_frames_tx,
+        report.counters.tap_bytes_tx,
         report.counters.tap_write_dropped,
-        report.counters.malformed_ntbs
+        report.counters.malformed_ntbs,
+        report.counters.usb_write_completions
     );
     out
 }
@@ -81,6 +95,6 @@ pub fn render_bridge_report(report: &BridgeReport) -> String {
 impl BridgeCounters {
     #[must_use]
     pub fn total_events(&self) -> u64 {
-        self.tap_frames_rx + self.usb_ntbs_rx + self.usb_ntbs_tx + self.malformed_ntbs
+        self.usb_ntbs_rx + self.usb_ntbs_tx + self.malformed_ntbs
     }
 }
