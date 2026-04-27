@@ -59,6 +59,20 @@ RUST_LOG=info sudo -E nix run .#dgxusbd -- ...
 
 `nix run .#dgxusbd` builds from the flake source, which follows Git state. New Rust source files must be at least staged with `git add` before `nix run` can see them. Otherwise the normal Cargo build may pass locally while the Nix build fails with missing module files.
 
+## Avoid Reinventing The Wheel
+
+Treat handrolled infrastructure as a last resort. Before implementing parsing, formatting, byte-level conversions, CLI value parsing, protocol codecs, packet manipulation, async orchestration, Linux interface management, logging/reporting, test fixtures, or unsafe code, first check whether the standard library, an existing dependency, a kernel/userspace API wrapper, or a well-maintained crate already solves the problem.
+
+Use this process before adding nontrivial custom machinery:
+
+1. Search the current dependency graph and existing source for a helper that already fits the need.
+2. Check the upstream API of the crate closest to the problem domain. Prefer domain-specific APIs over generic byte/string manipulation.
+3. Search for maintained crates if the current dependency set does not cover the need. Favor crates with recent releases, docs, tests, sensible ownership, and narrow scope.
+4. Compare the cost of adding the dependency against the long-term cost of maintaining custom code. For protocol parsing, binary layouts, network interface setup, packet formats, and async IO, the dependency usually wins.
+5. If custom code remains necessary, keep it small, isolated, heavily tested, and documented with the reason an off-the-shelf option was not used.
+
+It is acceptable to add a decently maintained dependency when it removes meaningful custom parsing, binary layout handling, unsafe code, platform-specific syscall wrappers, or complex formatting/reporting logic. Do not avoid a dependency just to save a few lines in `Cargo.toml` while growing bespoke code in `src/`.
+
 ## Keep Early Tests Narrow
 
 Initial target should be one NCM pair only:
