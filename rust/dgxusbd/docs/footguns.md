@@ -1,0 +1,74 @@
+# Footguns And Shortcuts
+
+Last updated: 2026-04-27.
+
+## Do Not Confuse Interfaces
+
+`enP7s7` on Spark is Realtek PCI Ethernet using `r8127`. It is not the USB-C Mac link.
+
+The USB-C Mac link currently creates no Linux netdev because `cdc_ncm` fails to bind. Look at `lsusb`, `lsusb -t`, and kernel logs rather than `ip link` alone.
+
+## Kernel Driver State
+
+Current `cdc_ncm` failure is useful for userspace work because the interfaces remain unbound:
+
+```text
+Driver=[none]
+```
+
+If a future kernel or local patch successfully binds `cdc_ncm`, a userspace USB program may fail to claim the interfaces unless it detaches the kernel driver or the driver is prevented from binding. Be careful with detach behavior because it changes system state.
+
+## Secure Boot And Kernel Modules
+
+Spark has Secure Boot enabled. Loading a custom kernel module probably requires signing with an enrolled key. No `/root/MOK.priv` or `/root/MOK.der` files were found during the initial check.
+
+The userspace bridge is specifically meant to avoid this path.
+
+## USB Gadget Mode
+
+No `/sys/class/udc` was present on Spark during investigation. Do not assume Spark can act as a USB Ethernet gadget unless a later kernel/firmware exposes a UDC.
+
+## Thunderbolt
+
+The physical connector may be USB-C/Thunderbolt-looking, but the observed path is not Thunderbolt networking:
+
+- Spark had no Thunderbolt bus devices.
+- macOS reported no Thunderbolt device connected.
+- Spark saw the Mac as a USB device on xHCI.
+
+Do not spend implementation time on `thunderbolt_net` unless the hardware state changes.
+
+## Running With sudo
+
+Hardware runs will likely need root for USB claim and TAP creation. Avoid accidentally creating root-owned source-tree build artifacts.
+
+Safer pattern when possible:
+
+```sh
+nix build .#dgxusbd
+sudo -E ./result/bin/dgxusbd ...
+```
+
+For quick Spark tests, this also works but can be slower because it may build through Nix:
+
+```sh
+RUST_LOG=info sudo -E nix run .#dgxusbd -- ...
+```
+
+## Keep Early Tests Narrow
+
+Initial target should be one NCM pair only:
+
+```text
+control interface 0
+data interface 1
+bulk IN 0x81
+bulk OUT 0x01
+```
+
+Adding pair 2/3, aggregation, DHCP integration, routing, and reconnect loops should wait until one-pair packet movement is proven.
+
+## Do Not Store Secrets
+
+Do not commit sudo passwords, SSH keys, host-private credentials, or generated signing keys. Lab credentials should stay in the secure handoff/channel, not in repository docs.
+
