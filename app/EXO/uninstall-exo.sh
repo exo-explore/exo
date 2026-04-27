@@ -22,19 +22,19 @@ set -euo pipefail
 KEEP_MODELS=0
 for arg in "$@"; do
   case "$arg" in
-    --keep-models)
-      KEEP_MODELS=1
-      ;;
-    -h | --help)
-      echo "Usage: sudo ./uninstall-exo.sh [--keep-models]"
-      echo "  --keep-models   Preserve ~/.exo/models when removing the EXO data directory."
-      exit 0
-      ;;
-    *)
-      echo "Unknown argument: $arg" >&2
-      echo "Usage: sudo ./uninstall-exo.sh [--keep-models]" >&2
-      exit 2
-      ;;
+  --keep-models)
+    KEEP_MODELS=1
+    ;;
+  -h | --help)
+    echo "Usage: sudo ./uninstall-exo.sh [--keep-models]"
+    echo "  --keep-models   Preserve ~/.exo/models when removing the EXO data directory."
+    exit 0
+    ;;
+  *)
+    echo "Unknown argument: $arg" >&2
+    echo "Usage: sudo ./uninstall-exo.sh [--keep-models]" >&2
+    exit 2
+    ;;
   esac
 done
 
@@ -197,8 +197,8 @@ echo "  • Network configuration script"
 echo "  • Log files"
 echo "  • 'exo' network location"
 case "$EXO_DIR_REMOVED" in
-  full) echo "  • EXO data directory (~/.exo)" ;;
-  kept_models) echo "  • EXO data directory (~/.exo, models preserved)" ;;
+full) echo "  • EXO data directory (~/.exo)" ;;
+kept_models) echo "  • EXO data directory (~/.exo, models preserved)" ;;
 esac
 echo ""
 echo "Your network has been restored to use the 'Automatic' location."
