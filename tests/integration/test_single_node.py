@@ -2,8 +2,9 @@
 """Single-node integration tests.
 
 Run with:
-    uv run pytest integration_tests/test_single_node.py -v
+    uv run pytest tests/integration/test_single_node.py -v
 """
+
 from __future__ import annotations
 
 from .helpers import (
@@ -102,7 +103,10 @@ class TestSingleNodeDownload:
 
         # Clear the model cache on the host
         cache_name = model.replace("/", "--")
-        eco_exec(single_node_cluster.hosts, f"rm -rf ~/.cache/huggingface/hub/models--{cache_name}")
+        eco_exec(
+            single_node_cluster.hosts,
+            f"rm -rf ~/.cache/huggingface/hub/models--{cache_name}",
+        )
 
         # Place model — this will trigger a fresh download
         place_and_wait(client, model, timeout=900.0)

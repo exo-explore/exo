@@ -5,8 +5,9 @@ Prerequisites:
     npx --yes playwright install chromium
 
 Run with:
-    uv run pytest integration_tests/test_dashboard.py -v
+    uv run pytest tests/integration/test_dashboard.py -v
 """
+
 from __future__ import annotations
 
 import pytest
@@ -20,7 +21,9 @@ def playwright_page(single_node_cluster: ClusterInfo):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        pytest.skip("playwright not installed (run: pip install playwright && playwright install chromium)")
+        pytest.skip(
+            "playwright not installed (run: pip install playwright && playwright install chromium)"
+        )
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -41,7 +44,9 @@ class TestDashboard:
         assert body_text is not None
         assert len(body_text) > 0
 
-    def test_dashboard_shows_node_info(self, playwright_page, single_node_cluster: ClusterInfo):
+    def test_dashboard_shows_node_info(
+        self, playwright_page, single_node_cluster: ClusterInfo
+    ):
         """Verify the dashboard displays node/cluster information."""
         page = playwright_page
         page.screenshot(path="/tmp/dashboard_cluster_info.png")
@@ -56,7 +61,15 @@ class TestDashboard:
         # memory info, node count, model names, or status indicators
         has_cluster_content = any(
             indicator in body_text
-            for indicator in ["gb", "memory", "node", "model", "connected", "online", "select"]
+            for indicator in [
+                "gb",
+                "memory",
+                "node",
+                "model",
+                "connected",
+                "online",
+                "select",
+            ]
         )
         assert has_cluster_content, (
             f"Dashboard doesn't appear to show cluster info. "
@@ -98,6 +111,8 @@ class TestDashboard:
                 assert len(body_text) > 0
             else:
                 page.screenshot(path="/tmp/dashboard_no_textarea.png")
-                pytest.skip("Could not find chat textarea — dashboard UI may have changed")
+                pytest.skip(
+                    "Could not find chat textarea — dashboard UI may have changed"
+                )
 
             browser.close()

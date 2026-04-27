@@ -7,6 +7,7 @@ ExoClient and related utilities are imported from exo.client.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -14,13 +15,17 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 
-from exo.client import ExoClient
-from exo.client import ExoHttpError
-from exo.client import capture_cluster_snapshot
-from exo.client import instance_id_from_instance
-from exo.client import nodes_used_in_instance
-from exo.client import wait_for_instance_gone
-from exo.client import wait_for_instance_ready
+from exo.client import (
+    ExoClient,
+    instance_id_from_instance,
+    nodes_used_in_instance,
+    wait_for_instance_gone,
+    wait_for_instance_ready,
+)
+from exo.client import ExoHttpError as ExoHttpError  # re-exported
+from exo.client import (
+    capture_cluster_snapshot as capture_cluster_snapshot,  # re-exported
+)
 
 logger = logging.getLogger("integration_tests")
 
@@ -84,7 +89,7 @@ def eco_start_deploy(
 ) -> ClusterInfo:
     """Start and deploy exo on a set of hosts via eco.
 
-    By default, deploys from local source via rsync. Set EXO_INTEGRATION_REF
+    By default, deploys from local source via rsync. Set EXO_REF
     or pass ref= to deploy from a GitHub branch/tag instead (for CI).
     """
     cmd: list[str] = ["eco", "--json", "start", "--deploy"]
@@ -122,9 +127,7 @@ def eco_stop(hosts: list[str], *, keep: bool = False, timeout: int = 120) -> Non
     _run_eco(cmd, timeout=timeout)
 
 
-def eco_start_hosts(
-    hosts: list[str], *, namespace: str, timeout: int = 300
-) -> None:
+def eco_start_hosts(hosts: list[str], *, namespace: str, timeout: int = 300) -> None:
     """Start (previously stopped) hosts back into an existing namespace."""
     cmd: list[str] = ["eco", "--json", "start"]
     cmd.extend(hosts)
@@ -239,10 +242,8 @@ def get_instance_ids(client: ExoClient) -> set[str]:
     instances = state.get("instances", {})
     result = set()
     for _key, instance in instances.items():
-        try:
+        with contextlib.suppress(Exception):
             result.add(instance_id_from_instance(instance))
-        except Exception:
-            pass
     return result
 
 
@@ -335,7 +336,6 @@ def place_and_wait(
     # Retry placement — the first attempt can fail if the cluster is still settling
     for attempt in range(placement_retries):
         before_ids = get_instance_ids(client)
-        print(f"==================== before_ids: {before_ids} ====================")
 
         resp = client.request_json("POST", "/place_instance", body=body)
         command_id = resp["command_id"]
@@ -344,9 +344,6 @@ def place_and_wait(
         poll_deadline = time.time() + 30.0  # 30s to detect the new instance
         while time.time() < poll_deadline:
             current_ids = get_instance_ids(client)
-            print(
-                f"==================== instance_ids: {current_ids} ===================="
-            )
             new_ids = current_ids - before_ids
             if new_ids:
                 instance_id = next(iter(new_ids))
@@ -400,7 +397,6 @@ def chat_and_assert(client: ExoClient, model_id: str = DEFAULT_MODEL):
     choices = resp.get("choices", [])
     assert len(choices) > 0
     content = choices[0]["message"]["content"]
-    print(f"=============== content: {content} ===============")
     assert len(content) > 0, "Expected non-empty response content"
     return resp
 

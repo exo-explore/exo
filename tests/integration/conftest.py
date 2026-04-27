@@ -5,8 +5,9 @@ These tests run against real hardware clusters managed by `eco`.
 They are excluded from the default `uv run pytest` run and must be
 invoked explicitly:
 
-    uv run pytest integration_tests/ -v
+    uv run pytest tests/integration/ -v
 """
+
 from __future__ import annotations
 
 import json
@@ -28,24 +29,24 @@ from .helpers import (
 
 @pytest.fixture(scope="session")
 def single_node_cluster():
-    """Deploy a single-node cluster on s9 for the entire test session."""
-    cluster = eco_start_deploy(hosts=["s9"], wait=True)
+    """Deploy a single-node cluster."""
+    cluster = eco_start_deploy(count=1, wait=True)
     yield cluster
     eco_stop(cluster.hosts)
 
 
 @pytest.fixture(scope="session")
 def two_node_cluster():
-    """Deploy a 2-node cluster on s9+s10 (Thunderbolt-connected)."""
-    cluster = eco_start_deploy(hosts=["s9", "s10"], wait=True)
+    """Deploy a 2-node Thunderbolt-connected cluster."""
+    cluster = eco_start_deploy(count=2, thunderbolt=True, wait=True)
     yield cluster
     eco_stop(cluster.hosts)
 
 
 @pytest.fixture(scope="session")
 def four_node_cluster():
-    """Deploy a 4-node cluster on s2+s4+s9+s10."""
-    cluster = eco_start_deploy(hosts=["s2", "s4", "s9", "s10"], wait=True)
+    """Deploy a 4-node cluster."""
+    cluster = eco_start_deploy(count=4, wait=True)
     yield cluster
     eco_stop(cluster.hosts)
 

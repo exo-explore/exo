@@ -2,8 +2,9 @@
 """Resilience tests: disconnect/reconnect nodes and verify cluster recovery.
 
 Run with:
-    uv run pytest integration_tests/test_resilience.py -v
+    uv run pytest tests/integration/test_resilience.py -v
 """
+
 from __future__ import annotations
 
 import time
@@ -58,7 +59,9 @@ class TestResilience:
         # Verify the full cluster is operational again
         state = remaining_client.request_json("GET", "/state")
         identities = state.get("nodeIdentities", {})
-        assert len(identities) >= 2, f"Expected 2 nodes after reconnect, got {len(identities)}"
+        assert len(identities) >= 2, (
+            f"Expected 2 nodes after reconnect, got {len(identities)}"
+        )
 
     def test_api_resilience_during_disconnect(self, two_node_cluster: ClusterInfo):
         """Verify the API server stays alive and responds during a node disconnect.
