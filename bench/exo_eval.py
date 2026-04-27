@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from harness import (
+from exo.client import (
     ExoClient,
     ExoHttpError,
     add_common_instance_args,
