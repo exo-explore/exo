@@ -1,110 +1,81 @@
 <script lang="ts">
+  import { browser } from "$app/environment";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
   import PrefillDecodeDisaggregation from "$lib/components/PrefillDecodeDisaggregation.svelte";
+  import { featureFlags, refreshState } from "$lib/stores/app.svelte";
+  import { onMount } from "svelte";
 
   type TabId = "prefill-decode";
 
-  type Tab = {
-    id: TabId;
-    label: string;
-  };
-
-  const tabs: Tab[] = [
-    { id: "prefill-decode", label: "Prefill / Decode disaggregation" },
+  const tabs: { id: TabId; label: string }[] = [
+    { id: "prefill-decode", label: "Prefill / Decode" },
   ];
 
   let activeTab = $state<TabId>(tabs[0].id);
+  let flagsLoaded = $state(false);
+
+  onMount(() => {
+    refreshState().finally(() => {
+      flagsLoaded = true;
+    });
+  });
+
+  const flags = $derived(featureFlags());
+  const enabled = $derived(flags["disaggregation"] === true);
+
+  $effect(() => {
+    if (browser && flagsLoaded && !enabled) {
+      // No advanced features enabled — bounce home.
+      window.location.hash = "/";
+    }
+  });
 </script>
 
-<HeaderNav />
+<div class="min-h-screen bg-exo-dark-gray flex flex-col">
+  <HeaderNav />
 
-<main class="page">
-  <header class="page-header">
-    <h1>Advanced</h1>
-    <p>Cluster-level configuration. Most users don't need anything here.</p>
-  </header>
-
-  <div class="layout">
-    <nav class="tab-list" aria-label="Advanced settings sections">
-      {#each tabs as tab (tab.id)}
-        <button
-          class="tab"
-          class:active={activeTab === tab.id}
-          onclick={() => (activeTab = tab.id)}
+  <main class="flex-1 max-w-[1100px] mx-auto w-full px-4 md:px-6 py-8">
+    {#if !flagsLoaded}
+      <div class="text-exo-light-gray/60 text-sm">Loading…</div>
+    {:else if !enabled}
+      <div class="text-exo-light-gray/60 text-sm">
+        No advanced features enabled. Set <code
+          class="text-exo-yellow font-mono">ENABLE_DISAGGREGATION=true</code
+        > on the cluster to access prefill/decode disaggregation.
+      </div>
+    {:else}
+      <div class="mb-4">
+        <h1
+          class="text-white text-xl md:text-2xl font-semibold tracking-wide mb-2"
         >
-          {tab.label}
-        </button>
-      {/each}
-    </nav>
+          Advanced
+        </h1>
+        <p class="text-exo-light-gray/60 text-sm">
+          Cluster-level configuration. Most users don't need anything here.
+        </p>
+      </div>
 
-    <section class="tab-panel">
-      {#if activeTab === "prefill-decode"}
-        <PrefillDecodeDisaggregation />
-      {/if}
-    </section>
-  </div>
-</main>
+      <div
+        class="flex flex-wrap gap-2 mb-6 border-b border-exo-light-gray/10 pb-3"
+      >
+        {#each tabs as tab (tab.id)}
+          <button
+            onclick={() => (activeTab = tab.id)}
+            class="px-3 py-1.5 text-xs rounded-md transition-all cursor-pointer
+              {activeTab === tab.id
+              ? 'bg-exo-yellow/15 text-exo-yellow border border-exo-yellow/30'
+              : 'text-exo-light-gray/60 hover:text-white/80 border border-transparent hover:border-exo-light-gray/20'}"
+          >
+            {tab.label}
+          </button>
+        {/each}
+      </div>
 
-<style>
-  .page {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 1.5rem;
-    color: var(--text-primary, #eee);
-  }
-  .page-header h1 {
-    margin: 0 0 0.5rem 0;
-  }
-  .page-header p {
-    margin: 0 0 1.5rem 0;
-    color: var(--text-secondary, #aaa);
-  }
-  .layout {
-    display: grid;
-    grid-template-columns: 240px 1fr;
-    gap: 1.5rem;
-    align-items: start;
-  }
-  @media (max-width: 720px) {
-    .layout {
-      grid-template-columns: 1fr;
-    }
-  }
-  .tab-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    border-right: 1px solid rgba(255, 255, 255, 0.08);
-    padding-right: 1rem;
-  }
-  @media (max-width: 720px) {
-    .tab-list {
-      flex-direction: row;
-      flex-wrap: wrap;
-      border-right: none;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-      padding-right: 0;
-      padding-bottom: 0.5rem;
-    }
-  }
-  .tab {
-    background: transparent;
-    color: inherit;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    padding: 0.5rem 0.75rem;
-    text-align: left;
-    cursor: pointer;
-    font: inherit;
-  }
-  .tab:hover:not(.active) {
-    background: rgba(255, 255, 255, 0.05);
-  }
-  .tab.active {
-    background: rgba(80, 180, 255, 0.15);
-    border-color: rgba(80, 180, 255, 0.5);
-  }
-  .tab-panel {
-    min-width: 0;
-  }
-</style>
+      <div class="space-y-4">
+        {#if activeTab === "prefill-decode"}
+          <PrefillDecodeDisaggregation />
+        {/if}
+      </div>
+    {/if}
+  </main>
+</div>

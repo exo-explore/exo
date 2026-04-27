@@ -549,6 +549,7 @@ class AppStore {
   instances = $state<Record<string, unknown>>({});
   runners = $state<Record<string, unknown>>({});
   instanceLinks = $state<Record<string, RawInstanceLink>>({});
+  featureFlags = $state<Record<string, boolean>>({});
   downloads = $state<Record<string, unknown[]>>({});
   nodeDisk = $state<
     Record<
@@ -1282,6 +1283,7 @@ class AppStore {
 
   startPolling() {
     this.fetchState();
+    this.fetchFeatureFlags();
     this.fetchInterval = setInterval(() => this.fetchState(), 1000);
   }
 
@@ -1291,6 +1293,16 @@ class AppStore {
       this.fetchInterval = null;
     }
     this.stopPreviewsPolling();
+  }
+
+  async fetchFeatureFlags() {
+    try {
+      const response = await fetch("/v1/feature-flags");
+      if (!response.ok) return;
+      this.featureFlags = await response.json();
+    } catch {
+      // Silently ignore — defaults to all-disabled.
+    }
   }
 
   async fetchState() {
@@ -3473,6 +3485,7 @@ export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const runners = () => appStore.runners;
 export const instanceLinks = () => appStore.instanceLinks;
+export const featureFlags = () => appStore.featureFlags;
 export const createInstanceLink = (
   prefillInstances: string[],
   decodeInstances: string[],

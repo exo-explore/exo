@@ -124,6 +124,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
+    ENABLE_DISAGGREGATION,
     EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
@@ -218,6 +219,17 @@ def _ensure_seed(params: AdvancedImageParams | None) -> AdvancedImageParams:
     if params.seed is None:
         return params.model_copy(update={"seed": random.randint(0, 2**32 - 1)})
     return params
+
+
+def _require_disaggregation_enabled() -> None:
+    if not ENABLE_DISAGGREGATION:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail=(
+                "Prefill/decode disaggregation is disabled. "
+                "Set ENABLE_DISAGGREGATION=true to enable."
+            ),
+        )
 
 
 class API:
@@ -337,6 +349,7 @@ class API:
         self.app.post("/v1/instance-links")(self.create_instance_link)
         self.app.put("/v1/instance-links/{link_id}")(self.update_instance_link)
         self.app.delete("/v1/instance-links/{link_id}")(self.delete_instance_link)
+        self.app.get("/v1/feature-flags")(self.get_feature_flags)
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/models/add")(self.add_custom_model)
@@ -626,17 +639,24 @@ class API:
             instance_id=instance_id,
         )
 
+    async def get_feature_flags(self) -> dict[str, bool]:
+        return {"disaggregation": ENABLE_DISAGGREGATION}
+
     async def list_instance_links(self) -> list[InstanceLink]:
+        if not ENABLE_DISAGGREGATION:
+            return []
         return list(self.state.instance_links.values())
 
     async def create_instance_link(
         self, body: InstanceLinkBody
     ) -> InstanceLinkResponse:
+        _require_disaggregation_enabled()
         return await self._set_instance_link(InstanceLinkId(), body)
 
     async def update_instance_link(
         self, link_id: InstanceLinkId, body: InstanceLinkBody
     ) -> InstanceLinkResponse:
+        _require_disaggregation_enabled()
         return await self._set_instance_link(link_id, body)
 
     async def _set_instance_link(
@@ -655,6 +675,7 @@ class API:
     async def delete_instance_link(
         self, link_id: InstanceLinkId
     ) -> InstanceLinkResponse:
+        _require_disaggregation_enabled()
         command = DeleteInstanceLink(link_id=link_id)
         await self._send(command)
         return InstanceLinkResponse(

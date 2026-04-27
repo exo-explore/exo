@@ -11,6 +11,7 @@ import mlx.core as mx
 from anyio import ClosedResourceError, EndOfStream
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.shared.constants import ENABLE_DISAGGREGATION
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.chunks import GenerationChunk
 from exo.shared.types.common import CommandId, ModelId
@@ -142,6 +143,8 @@ class Runner:
         self.update_status(RunnerIdle())
 
     def _start_prefill_server(self) -> int | None:
+        if not ENABLE_DISAGGREGATION:
+            return None
         if self.device_rank != 0:
             return None
         if self._prefill_server_port is not None:
