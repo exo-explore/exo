@@ -15,6 +15,7 @@ import json
 import pytest
 
 from .helpers import (
+    _ECO_USER,
     cleanup_all_instances,
     eco_logs,
     eco_start_deploy,
@@ -25,6 +26,11 @@ from .helpers import (
 # ---------------------------------------------------------------------------
 # Session-scoped cluster fixtures
 # ---------------------------------------------------------------------------
+
+
+def pytest_report_header():
+    """Show the eco user for this test session."""
+    return f"eco user: {_ECO_USER}"
 
 
 @pytest.fixture(scope="session")
