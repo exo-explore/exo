@@ -2,13 +2,15 @@
 
 Last updated: 2026-04-27.
 
-This is a plan for review. Do not start code changes until the plan is accepted or revised.
+This plan tracks implementation iterations. Each iteration should be small enough to commit, push, pull to the Spark, and test independently.
 
 ## Iteration 1: Probe And Dry-Run
 
 Purpose: confirm a Rust USB library can see and claim the Apple NCM interfaces without involving TAP or packet forwarding.
 
-Proposed changes:
+Status: complete in `df1fa775`.
+
+Implemented changes:
 
 - Add USB crate dependency, likely `nusb`.
 - Add CLI with modes:
@@ -17,11 +19,15 @@ Proposed changes:
 - Keep binary thin and call library logic.
 - No TAP device, no claims unless `probe --claim` or equivalent is explicit.
 
-Acceptance:
+Acceptance result:
 
 - `nix develop -c cargo check -p dgxusbd` passes locally and on Spark.
-- `nix run .#dgxusbd -- list` runs on Spark.
-- `sudo -E nix run .#dgxusbd -- probe --claim` can claim the unbound interfaces or reports a precise permission/kernel-driver error.
+- `nix run .#dgxusbd -- list` runs on Spark and reports the Mac as `05ac:1905`.
+- `sudo -E nix run .#dgxusbd -- probe --claim` claimed interfaces 0, 1, 2, and 3.
+
+Important result:
+
+- The observed descriptors confirm the expected Apple-specific shape: valid CDC-NCM function and data interfaces, but no interrupt/status endpoint on the control interfaces.
 
 ## Iteration 2: NCM Codec Unit Tests
 
@@ -98,4 +104,3 @@ Acceptance:
 
 - Cable replug does not require killing stuck processes.
 - Logs are enough to diagnose failure without attaching a debugger.
-
