@@ -7,12 +7,15 @@ ExoClient and related utilities are imported from exo.client.
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import json
 import logging
 import os
+import signal
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass, field
 
 from exo_tools.client import ExoClient
@@ -31,12 +34,47 @@ logger = logging.getLogger("integration_tests")
 
 DEFAULT_MODEL = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 
-# eco commands run as the "test" user to avoid interfering with manual usage.
-_ECO_ENV = {**os.environ, "USER": "test"}
+# Each test session gets a unique eco user to isolate reservations.
+_SESSION_ID = uuid.uuid4().hex[:8]
+_ECO_USER = f"test-{_SESSION_ID}"
+_ECO_ENV = {**os.environ, "USER": _ECO_USER}
 
 # When set, deploy from a GitHub branch/tag instead of local source (rsync).
 # Useful for CI where the local worktree may not be the code under test.
 _EXO_REF = os.environ.get("EXO_REF")
+
+
+def _release_all_reservations() -> None:
+    """Release all eco reservations for this test session's user."""
+    with contextlib.suppress(Exception):
+        subprocess.run(
+            ["eco", "stop"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=_ECO_ENV,
+        )
+    with contextlib.suppress(Exception):
+        subprocess.run(
+            ["eco", "release"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=_ECO_ENV,
+        )
+
+
+# Register cleanup for normal exit, uncaught exceptions, and signals.
+atexit.register(_release_all_reservations)
+
+
+def _signal_handler(signum: int, _frame: object) -> None:
+    _release_all_reservations()
+    raise SystemExit(128 + signum)
+
+
+for _sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_sig, _signal_handler)
 
 
 @dataclass
@@ -72,9 +110,20 @@ class ClusterInfo:
 def _run_eco(
     args: list[str], *, check: bool = True, timeout: int = 120
 ) -> subprocess.CompletedProcess[str]:
-    """Run an eco command with USER=test."""
+    """Run an eco command with USER=test.
+
+    stdout is captured (JSON output), stderr is passed through to the
+    console so eco's progress messages are visible during test runs.
+    """
+    logger.info(f"eco: {' '.join(args)}")
     return subprocess.run(
-        args, capture_output=True, text=True, check=check, timeout=timeout, env=_ECO_ENV
+        args,
+        stdout=subprocess.PIPE,
+        stderr=None,
+        text=True,
+        check=check,
+        timeout=timeout,
+        env=_ECO_ENV,
     )
 
 
