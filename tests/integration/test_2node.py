@@ -4,10 +4,12 @@
 Hosts s9 and s10 must be Thunderbolt-connected for jaccl tests.
 
 Run with:
-    uv run pytest integration_tests/test_2node.py -v
+    uv run pytest tests/integration/test_2node.py -v
 """
 
 from __future__ import annotations
+
+import pytest
 
 from .helpers import (
     ClusterInfo,
@@ -18,34 +20,41 @@ from .helpers import (
     verify_node_count,
 )
 
+PARALLELISM = [
+    ("Tensor", "MlxJaccl"),
+    ("Pipeline", "MlxRing"),
+]
+
 
 class TestTwoNodeInference:
     """Two-node inference tests with different parallelism strategies."""
 
-    def test_2node_tensor_jaccl(self, two_node_cluster: ClusterInfo):
-        """Place a model across 2 nodes with tensor/jaccl and verify inference."""
-        client = make_client(two_node_cluster)
-
-        place_and_wait(client, sharding="Tensor", instance_meta="MlxJaccl", min_nodes=2)
-        verify_node_count(client, expected=2)
-        chat_and_assert(client)
-
-    def test_2node_pipeline_ring(self, two_node_cluster: ClusterInfo):
-        """Place a model across 2 nodes with pipeline/ring and verify inference."""
+    @pytest.mark.parametrize(
+        "sharding,instance_meta", PARALLELISM, ids=["tensor-jaccl", "pipeline-ring"]
+    )
+    def test_2node_inference(
+        self, two_node_cluster: ClusterInfo, sharding: str, instance_meta: str
+    ):
+        """Place a model across 2 nodes and verify inference."""
         client = make_client(two_node_cluster)
 
         place_and_wait(
-            client, sharding="Pipeline", instance_meta="MlxRing", min_nodes=2
+            client, sharding=sharding, instance_meta=instance_meta, min_nodes=2
         )
         verify_node_count(client, expected=2)
         chat_and_assert(client)
 
-    def test_2node_ring_multi_turn(self, two_node_cluster: ClusterInfo):
-        """Multi-turn conversation across 2 nodes with pipeline/ring."""
+    @pytest.mark.parametrize(
+        "sharding,instance_meta", PARALLELISM, ids=["tensor-jaccl", "pipeline-ring"]
+    )
+    def test_2node_multi_turn(
+        self, two_node_cluster: ClusterInfo, sharding: str, instance_meta: str
+    ):
+        """Multi-turn conversation across 2 nodes."""
         client = make_client(two_node_cluster)
 
         place_and_wait(
-            client, sharding="Pipeline", instance_meta="MlxRing", min_nodes=2
+            client, sharding=sharding, instance_meta=instance_meta, min_nodes=2
         )
 
         messages = [{"role": "user", "content": "What is the capital of France?"}]
