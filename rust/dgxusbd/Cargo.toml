@@ -1,0 +1,54 @@
+[package]
+name = "dgxusbd"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "dgxusb"
+
+[[bin]]
+name = "dgxusbd"
+
+[dependencies]
+color-eyre = "0.6.5"
+clap = { version = "4.5.53", features = ["derive"] }
+futures-lite.workspace = true
+ipnet = "2.12.0"
+nix = { version = "0.31", features = [
+    "fs",
+    "signal",
+    "process",
+    "user",
+    "net",
+    "uio",
+] }
+netdev = "0.42"
+ahash = "0.8.12"
+arrayvec = "0.7.6"
+crossbeam-channel = "0.5.15"
+hashbrown = "0.16.0"
+iroh-quinn-udp = { version = "0.8.0", default-features = false, features = [
+    "fast-apple-datapath",
+] }
+libc = "0.2"
+mio = { version = "1.1.0", features = ["net", "os-ext", "os-poll"] }
+n0-watcher = "0.6"
+netwatch = "0.16"
+rand = "0.10"
+route_manager = "0.2.11"
+slab = "0.4.11"
+socket2 = "0.6.1"
+tokio = { workspace = true, features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+tun-rs = "2.8.1" # if you update, it causes transitive dependeny clashes that need patch.crates-io fixes or whatnot, too long to do now :)
+
+# parsing
+memchr = "2.8"
+winnow = "1.0"
+thiserror = "2.0"
+macaddr = "1.0"
+zerocopy = { version = "0.8.31", features = ["derive"] }
+
+[lints]
+workspace = true

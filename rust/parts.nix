@@ -79,7 +79,7 @@
       };
 
       config = {
-        packages = {
+        packages = rec {
           # Python bindings wheel via maturin
           exo_pyo3_bindings = craneLib.buildPackage (
             commonArgs
@@ -110,6 +110,20 @@
               '';
             }
           );
+
+          # Build dgxusbd from source
+          dgxusbd-unwrapped = craneLib.buildPackage (
+            commonArgs // {
+              inherit cargoArtifacts;
+              pname = "dgxusbd-unwrapped";
+            }
+          );
+          dgxusbd = pkgs.writeShellApplication {
+            name = "dgxusbd";
+            text = ''
+              exec ${dgxusbd-unwrapped}/bin/dgxusbd "$@"
+            '';
+          };
         };
 
         checks = {
