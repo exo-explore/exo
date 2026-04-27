@@ -45,8 +45,8 @@ def two_node_cluster():
 
 @pytest.fixture(scope="session")
 def four_node_cluster():
-    """Deploy a 4-node cluster."""
-    cluster = eco_start_deploy(count=4, wait=True)
+    """Deploy a 4-node Thunderbolt-connected cluster."""
+    cluster = eco_start_deploy(count=4, thunderbolt=True, wait=True)
     yield cluster
     eco_stop(cluster.hosts)
 
