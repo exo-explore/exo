@@ -1,6 +1,6 @@
 --- a/drivers/net/usb/cdc_ncm.c
 +++ b/drivers/net/usb/cdc_ncm.c
-@@ -2104,6 +2104,14 @@ static const struct usb_device_id cdc_devs[] = {
+@@ -2104,6 +2104,14 @@
  	  .driver_info = (unsigned long)&cdc_ncm_zlp_info,
  	},
  
@@ -15,10 +15,11 @@
  	/* Generic CDC-NCM devices */
  	{ USB_INTERFACE_INFO(USB_CLASS_COMM,
  		USB_CDC_SUBCLASS_NCM, USB_CDC_PROTO_NONE),
-@@ -2129,5 +2137,6 @@ static struct usb_driver cdc_ncm_driver = {
- 
+module_usb_driver(cdc_ncm_driver);
+@@ -2129,5 +2137,6 @@
  module_usb_driver(cdc_ncm_driver);
  
  MODULE_AUTHOR("Hans Petter Selasky");
 +MODULE_INFO(dgx_usb_fix, "apple-05ac-1905-cdc-ncm");
  MODULE_DESCRIPTION("USB CDC NCM host driver");
+ MODULE_LICENSE("Dual BSD/GPL");
