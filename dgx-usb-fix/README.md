@@ -16,6 +16,8 @@ Linux's existing Apple private CDC-NCM driver info.
 - `diagnose.sh`: read-only Spark diagnostics before or after installing.
 - `create-mok-key.sh`: explicitly create `/root/MOK.priv` and `/root/MOK.der`
   for local module signing. It does not import the key or change firmware trust.
+- `configure-link-local.sh`: set Apple `05ac:1905` CDC-NCM NetworkManager
+  profiles to IPv6 link-local-only so `fe80::` addresses persist without DHCP.
 - `scripts/patch_cdc_ncm.py`: source-aware patcher for `drivers/net/usb/cdc_ncm.c`.
 - `patches/apple-05ac-1905-cdc-ncm.patch`: human-readable reference patch for
   Linux 6.17-style trees.
@@ -31,6 +33,7 @@ dgx-usb-fix-diagnose
 dgx-usb-fix-install --skip-load
 sudo modprobe -r cdc_mbim cdc_ncm
 sudo modprobe cdc_ncm
+dgx-usb-fix-configure-link-local
 dgx-usb-fix-diagnose
 ```
 
@@ -39,6 +42,7 @@ Then unplug and replug the USB-C cable to the Mac, and check:
 ```sh
 lsusb -t
 ip -br link
+ip -6 addr
 journalctl -k --no-pager | grep -E 'cdc_ncm|05ac|1905|bind'
 ```
 

@@ -69,7 +69,7 @@ Acceptance:
 
 ## Iteration 4: Bind And Netdev Validation
 
-Status: pending.
+Status: partially validated.
 
 Purpose: prove route A fixes the original kernel bind failure.
 
@@ -86,7 +86,35 @@ Acceptance:
 - Interfaces 0/1 and/or 2/3 bind to `cdc_ncm` instead of remaining unbound.
 - Linux creates a network interface for the Mac USB-C link.
 
-## Iteration 5: Connectivity And Throughput
+Observed:
+
+- Spark created `enxd2dcb4ccf72d` for USB interface `00`.
+- Spark created `enxd2dcb4ccf70d` for USB interface `02`.
+- Mac pairing observed:
+  - `enxd2dcb4ccf72d` <-> `en5`
+  - `enxd2dcb4ccf70d` <-> `anpi0`
+
+## Iteration 5: Link-Local NetworkManager Profiles
+
+Status: implemented in tooling; needs privileged run on Spark.
+
+Purpose: make Spark behave like macOS for direct links: while the cable is
+connected, each USB network interface keeps an IPv6 link-local address even
+without DHCP, RA, ULA, or global address assignment.
+
+Steps:
+
+- Run `dgx-usb-fix-configure-link-local`.
+- Confirm the Apple `05ac:1905` `cdc_ncm` profiles are set to IPv6 link-local.
+- Confirm `ip -6 addr` retains `fe80::` addresses after NetworkManager's normal
+  DHCP timeout window.
+
+Acceptance:
+
+- NetworkManager no longer withdraws `fe80::` addresses after DHCP/RA failure.
+- `ping -6 -I <spark-usb-iface> ff02::1` remains usable.
+
+## Iteration 6: Connectivity And Throughput
 
 Status: pending.
 

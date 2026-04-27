@@ -36,6 +36,7 @@ Use the wrapper commands from the dev shell:
 ```sh
 dgx-usb-fix-diagnose
 dgx-usb-fix-create-mok-key
+dgx-usb-fix-configure-link-local
 dgx-usb-fix-install
 ```
 
@@ -71,6 +72,22 @@ sudo reboot
 ```
 
 After reboot, `depmod` should select the installed `updates/dgx-usb-fix` module.
+
+## NetworkManager Can Withdraw IPv6 Link-Local Addresses
+
+The kernel link can be up while NetworkManager's auto-created `Wired connection`
+profile is still trying DHCP/RA. If that automatic IP configuration fails,
+NetworkManager may mark activation failed and remove otherwise valid `fe80::`
+link-local addresses.
+
+For Mac-style "link-local exists while the cable is connected" behavior, run:
+
+```sh
+dgx-usb-fix-configure-link-local
+```
+
+This changes only Apple `05ac:1905` `cdc_ncm` profiles and sets IPv4 disabled
+plus IPv6 link-local-only activation.
 
 ## Userspace Claims Can Block Kernel Bind
 

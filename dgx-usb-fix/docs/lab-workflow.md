@@ -41,6 +41,7 @@ The shell also provides root wrappers that preserve the Nix `PATH` across
 ```sh
 dgx-usb-fix-diagnose
 dgx-usb-fix-create-mok-key
+dgx-usb-fix-configure-link-local
 dgx-usb-fix-install
 ```
 
@@ -176,10 +177,28 @@ Expected:
 Once the kernel creates a netdev, prefer IPv6 link-local tests first:
 
 ```sh
+dgx-usb-fix-configure-link-local
 ip -6 addr
 ssh e2@e2 "ifconfig en5"
 ping -6 -c 3 'fe80::<mac-suffix>%<spark-usb-iface>'
 ssh e2@e2 "ping6 -c 3 fe80::<spark-suffix>%en5"
+```
+
+On Spark, NetworkManager's default auto-created wired profiles may withdraw
+IPv6 link-local addresses after DHCP/RA timeout. `dgx-usb-fix-configure-link-local`
+changes the Apple `05ac:1905` `cdc_ncm` profiles to:
+
+```text
+ipv4.method disabled
+ipv6.method link-local
+ipv6.addr-gen-mode stable-privacy
+```
+
+Expected current pairing:
+
+```text
+Spark enxd2dcb4ccf72d <-> Mac en5
+Spark enxd2dcb4ccf70d <-> Mac anpi0
 ```
 
 Static IPv4 can be used later for final validation if needed:

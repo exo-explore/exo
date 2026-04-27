@@ -220,6 +220,7 @@ Next:
   1. Unplug and replug the USB-C cable to the Mac.
   2. Run:
        ${FIX_ROOT}/diagnose.sh
+       dgx-usb-fix-configure-link-local
        ip -br link
        lsusb -t
 

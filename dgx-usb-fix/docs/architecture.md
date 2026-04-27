@@ -24,6 +24,7 @@ behavior.
 dgx-usb-fix/
   README.md
   build-and-install.sh
+  configure-link-local.sh
   create-mok-key.sh
   diagnose.sh
   parts.nix
@@ -75,6 +76,12 @@ dgx-usb-fix/
 `diagnose.sh`:
 
 - Read-only state collection for route A.
+
+`configure-link-local.sh`:
+
+- Finds Apple `05ac:1905` interfaces driven by `cdc_ncm`.
+- Configures their NetworkManager profiles for IPv6 link-local-only activation.
+- Avoids NetworkManager tearing down `fe80::` addresses after DHCP/RA failure.
 
 ## Install Location
 

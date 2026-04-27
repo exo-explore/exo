@@ -53,6 +53,7 @@
 
       linuxRootCommands = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         (rootWrapper "dgx-usb-fix-create-mok-key" "dgx-usb-fix/create-mok-key.sh")
+        (rootWrapper "dgx-usb-fix-configure-link-local" "dgx-usb-fix/configure-link-local.sh")
         (rootWrapper "dgx-usb-fix-diagnose" "dgx-usb-fix/diagnose.sh")
         (rootWrapper "dgx-usb-fix-install" "dgx-usb-fix/build-and-install.sh")
       ];
@@ -113,6 +114,7 @@ DGX USB fix shell
 Root commands are wrapped so sudo preserves this shell's PATH:
   dgx-usb-fix-diagnose
   dgx-usb-fix-create-mok-key
+  dgx-usb-fix-configure-link-local
   dgx-usb-fix-install [--skip-load]
 EOF
         '';

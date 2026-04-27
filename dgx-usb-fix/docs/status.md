@@ -76,11 +76,16 @@ Implemented:
 - `dgx-usb-fix/diagnose.sh`
   - read-only diagnostics for kernel, Secure Boot, module aliases, USB state,
     and kernel logs
+- `dgx-usb-fix/configure-link-local.sh`
+  - configures Apple `05ac:1905` `cdc_ncm` NetworkManager profiles for
+    IPv6 link-local-only operation
+  - prevents DHCP/RA activation failure from withdrawing `fe80::` addresses
 - `dgx-usb-fix/parts.nix`
   - provides the build shell as `nix develop .#dgx-usb-fix`
   - exports the default MOK paths
   - provides root wrappers: `dgx-usb-fix-diagnose`,
-    `dgx-usb-fix-create-mok-key`, and `dgx-usb-fix-install`
+    `dgx-usb-fix-create-mok-key`, `dgx-usb-fix-configure-link-local`,
+    and `dgx-usb-fix-install`
 - `tmp/spark/spark-build-apple-cdc-ncm*.sh`
   - now compatibility wrappers around `dgx-usb-fix/build-and-install.sh`
 
@@ -89,6 +94,7 @@ Validation run on Spark:
 ```sh
 bash -n dgx-usb-fix/build-and-install.sh \
   dgx-usb-fix/create-mok-key.sh \
+  dgx-usb-fix/configure-link-local.sh \
   dgx-usb-fix/diagnose.sh \
   tmp/spark/spark-build-apple-cdc-ncm-clean.sh \
   tmp/spark/spark-build-apple-cdc-ncm.sh
