@@ -21,6 +21,8 @@ Pair A:
   bulk IN endpoint:  0x81
   bulk OUT endpoint: 0x01
   MAC string:        D2DCB4CCF72D
+  Spark netdev:      enxd2dcb4ccf72d
+  Mac peer iface:    en5
 
 Pair B:
   control interface: 2
@@ -28,6 +30,8 @@ Pair B:
   bulk IN endpoint:  0x82
   bulk OUT endpoint: 0x02
   MAC string:        D2DCB4CCF70D
+  Spark netdev:      enxd2dcb4ccf70d
+  Mac peer iface:    anpi0
 ```
 
 Both data interfaces expose bulk endpoints on alternate setting 1.
@@ -82,6 +86,21 @@ Add explicit matches before the generic CDC-NCM class match:
 
 This changes only the match path for the Apple Mac direct USB-C networking
 function. It does not implement a new CDC-NCM data path.
+
+## Current Link-Local Addresses
+
+Current verified route-A lab pairs:
+
+```text
+spark@fe80::5786:d998:b0b6:9041%enxd2dcb4ccf72d
+  <-> mac@fe80::8a2:83dc:50cd:d9a%en5
+
+spark@fe80::dc3d:13fd:b127:97ac%enxd2dcb4ccf70d
+  <-> mac@fe80::d0dc:b4ff:fecc:f7f2%anpi0
+```
+
+Spark's `fe80::` addresses are NetworkManager stable/private link-local
+addresses, not EUI-64 addresses derived from the Spark-side MACs.
 
 ## Why This Helps Route B's TX Problem
 

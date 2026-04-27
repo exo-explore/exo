@@ -48,7 +48,7 @@ Acceptance:
 
 ## Iteration 3: MOK Enrollment And Signed Build
 
-Status: not run yet.
+Status: complete on Spark.
 
 Purpose: establish a trusted local module-signing key, then build and load the
 patched module.
@@ -67,9 +67,16 @@ Acceptance:
 - `modinfo -n cdc_ncm` points at `updates/dgx-usb-fix/cdc_ncm.ko`.
 - `modinfo cdc_ncm` shows `dgx_usb_fix` marker and `v05ACp1905` aliases.
 
+Observed:
+
+- `modinfo -n cdc_ncm` resolves to
+  `/lib/modules/6.17.0-1014-nvidia/updates/dgx-usb-fix/cdc_ncm.ko`.
+- Module marker: `dgx_usb_fix: apple-05ac-1905-cdc-ncm`.
+- Signer: `DGX USB Fix Module Signing`.
+
 ## Iteration 4: Bind And Netdev Validation
 
-Status: partially validated.
+Status: complete on current Spark/Mac link.
 
 Purpose: prove route A fixes the original kernel bind failure.
 
@@ -93,10 +100,13 @@ Observed:
 - Mac pairing observed:
   - `enxd2dcb4ccf72d` <-> `en5`
   - `enxd2dcb4ccf70d` <-> `anpi0`
+- `lsusb -t` showed interfaces 0, 1, 2, and 3 using `Driver=cdc_ncm`.
+- Fresh route-A binding no longer shows the old `bind() failure` for the
+  current replugged device.
 
 ## Iteration 5: Link-Local NetworkManager Profiles
 
-Status: implemented in tooling; needs privileged run on Spark.
+Status: complete on Spark.
 
 Purpose: make Spark behave like macOS for direct links: while the cable is
 connected, each USB network interface keeps an IPv6 link-local address even
@@ -113,6 +123,13 @@ Acceptance:
 
 - NetworkManager no longer withdraws `fe80::` addresses after DHCP/RA failure.
 - `ping -6 -I <spark-usb-iface> ff02::1` remains usable.
+
+Observed current pairs:
+
+- `spark@fe80::5786:d998:b0b6:9041%enxd2dcb4ccf72d`
+  <-> `mac@fe80::8a2:83dc:50cd:d9a%en5`
+- `spark@fe80::dc3d:13fd:b127:97ac%enxd2dcb4ccf70d`
+  <-> `mac@fe80::d0dc:b4ff:fecc:f7f2%anpi0`
 
 ## Iteration 6: Connectivity And Throughput
 

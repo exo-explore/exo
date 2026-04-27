@@ -164,6 +164,15 @@ Done.
 
 Expected checks:
   ip -br addr show
+  ip -br -6 addr show
   ping -6 -I <spark-interface> ff02::1
+
+Current lab mapping has been:
+  enxd2dcb4ccf72d <-> macOS en5
+  enxd2dcb4ccf70d <-> macOS anpi0
+
+If addresses changed, remap with:
+  ip -6 neigh show dev <spark-interface>
+  ssh e2@e2 'ndp -an | grep -E "%en5|%anpi0"'
 
 EOF

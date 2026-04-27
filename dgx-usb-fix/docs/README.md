@@ -7,6 +7,7 @@ Spark / GX10 can bind Apple's `05ac:1905` direct USB-C CDC-NCM device.
 
 Start here:
 
+- [quickstart.md](quickstart.md): shortest current handoff, commands, and live interface pairs.
 - [status.md](status.md): current route-A repository, hardware, and validation status.
 - [motivation.md](motivation.md): why this kernel quirk is the cleanest technical fix.
 - [lab-workflow.md](lab-workflow.md): exact build, MOK enrollment, install, and test flow.

@@ -15,9 +15,11 @@ Spark repo:
 - Host: `jensen@gx10-a174`
 - Path: `~/Desktop/exo`
 - Branch: `andrei/dgx-mac-usb-fix`
-- Latest route-A tooling pulled and validated on Spark through commit `9658406d`.
+- Latest route-A tooling, including the link-local helper, has been pulled and
+  validated on Spark. Run `git rev-parse --short HEAD` in `~/Desktop/exo` for
+  the exact current commit.
 
-## Hardware Findings Shared With Route B
+## Hardware And Kernel
 
 Spark:
 
@@ -28,8 +30,6 @@ Spark:
   - real C source package: `linux-nvidia-6.17 6.17.0-1014.14`
 - Headers present at `/lib/modules/6.17.0-1014-nvidia/build`.
 - Secure Boot enabled.
-- No `/sys/class/udc` was present during investigation.
-- No Thunderbolt bus was observed on Spark.
 - `enP7s7` is Realtek PCI Ethernet via `r8127`, not the USB-C Mac link.
 
 Mac:
@@ -37,8 +37,6 @@ Mac:
 - SSH target: `e2@e2`
 - OS observed: Darwin 25.4.0
 - macOS reported no Thunderbolt device connected on its Thunderbolt/USB4 buses.
-- USB peer interface observed as `Ethernet Adapter (en5)` with address
-  `d2:dc:b4:cc:f7:d2`.
 
 USB-C link:
 
@@ -50,12 +48,85 @@ USB-C link:
   - control interface 2, data interface 3, IN `0x82`, OUT `0x02`,
     MAC string `D2DCB4CCF70D`
 - Control interfaces 0 and 2 have no status/interrupt endpoint.
-- Stock `cdc_ncm` failed with:
+
+## Route-A Module Status
+
+Route A has been built, signed, installed, and loaded on Spark.
+
+Observed after install:
+
+```text
+modinfo -n cdc_ncm
+/lib/modules/6.17.0-1014-nvidia/updates/dgx-usb-fix/cdc_ncm.ko
+
+dgx_usb_fix:    apple-05ac-1905-cdc-ncm
+alias:          usb:v05ACp1905d*dc*dsc*dp*ic*isc*ip*in02*
+alias:          usb:v05ACp1905d*dc*dsc*dp*ic*isc*ip*in00*
+signer:         DGX USB Fix Module Signing
+```
+
+The pre-patch failure was:
 
 ```text
 cdc_ncm 4-1:1.0: bind() failure
 cdc_ncm 4-1:1.2: bind() failure
 ```
+
+After route A, both functions bound:
+
+```text
+4-1:1.0 + 4-1:1.1 -> Spark enxd2dcb4ccf72d
+4-1:1.2 + 4-1:1.3 -> Spark enxd2dcb4ccf70d
+```
+
+## Current IPv6 Link-Local Map
+
+Current verified pairs:
+
+```text
+spark@fe80::5786:d998:b0b6:9041%enxd2dcb4ccf72d
+  <-> mac@fe80::8a2:83dc:50cd:d9a%en5
+
+spark@fe80::dc3d:13fd:b127:97ac%enxd2dcb4ccf70d
+  <-> mac@fe80::d0dc:b4ff:fecc:f7f2%anpi0
+```
+
+Both directions were verified with scoped IPv6 ping.
+
+Notes:
+
+- `fe80::/64` here is normal IPv6 link-local, not a global routed prefix.
+- Spark uses NetworkManager stable/private link-local addresses, so they are
+  not derived from the Spark interface MACs.
+- Mac `en5` has an IPv4 APIPA address too, but route-A validation currently
+  only needs IPv6 link-local.
+
+## NetworkManager Link-Local Fix
+
+Problem observed after the module started working:
+
+- NetworkManager auto-created `Wired connection 1` and `Wired connection 2`.
+- The profiles used automatic IPv4/IPv6 config.
+- With no DHCP/RA on the direct link, NetworkManager eventually marked
+  activation failed and withdrew otherwise valid `fe80::` addresses.
+
+Fix:
+
+```sh
+dgx-usb-fix-configure-link-local
+```
+
+That helper matches only Apple `05ac:1905` interfaces driven by `cdc_ncm` and
+sets:
+
+```text
+ipv4.method disabled
+ipv6.method link-local
+ipv6.addr-gen-mode stable-privacy
+connection.autoconnect yes
+```
+
+The user reported this now works.
 
 ## Route-A Tooling Status
 
@@ -63,7 +134,7 @@ Implemented:
 
 - `dgx-usb-fix/build-and-install.sh`
   - derives the matching Ubuntu source package from `linux-image-$(uname -r)`
-  - downloads the matching source files from Launchpad
+  - downloads matching source files from Launchpad
   - runs `scripts/patch_cdc_ncm.py`
   - builds `cdc_ncm.ko` as an external module against running kernel headers
   - signs the module when Secure Boot is enabled
@@ -73,23 +144,20 @@ Implemented:
 - `dgx-usb-fix/create-mok-key.sh`
   - creates `/root/MOK.priv` and `/root/MOK.der`
   - intentionally does not import or enroll the cert
-- `dgx-usb-fix/diagnose.sh`
-  - read-only diagnostics for kernel, Secure Boot, module aliases, USB state,
-    and kernel logs
 - `dgx-usb-fix/configure-link-local.sh`
   - configures Apple `05ac:1905` `cdc_ncm` NetworkManager profiles for
     IPv6 link-local-only operation
-  - prevents DHCP/RA activation failure from withdrawing `fe80::` addresses
+- `dgx-usb-fix/diagnose.sh`
+  - read-only diagnostics for kernel, Secure Boot, module aliases, USB state,
+    and kernel logs
 - `dgx-usb-fix/parts.nix`
   - provides the build shell as `nix develop .#dgx-usb-fix`
-  - exports the default MOK paths
+  - exports default MOK paths
   - provides root wrappers: `dgx-usb-fix-diagnose`,
     `dgx-usb-fix-create-mok-key`, `dgx-usb-fix-configure-link-local`,
     and `dgx-usb-fix-install`
-- `tmp/spark/spark-build-apple-cdc-ncm*.sh`
-  - now compatibility wrappers around `dgx-usb-fix/build-and-install.sh`
 
-Validation run on Spark:
+Validation run locally and on Spark:
 
 ```sh
 bash -n dgx-usb-fix/build-and-install.sh \
@@ -99,35 +167,17 @@ bash -n dgx-usb-fix/build-and-install.sh \
   tmp/spark/spark-build-apple-cdc-ncm-clean.sh \
   tmp/spark/spark-build-apple-cdc-ncm.sh
 python3 -m py_compile dgx-usb-fix/scripts/patch_cdc_ncm.py
+nix eval .#devShells.x86_64-linux.dgx-usb-fix.drvPath
 ```
 
-Result: success.
+## Current Next Step
 
-Remote source patch validation:
+The kernel bind problem is fixed for the current Spark/Mac link. The next useful
+work is throughput and stability validation:
 
-- The Python patcher was run against upstream Linux 6.17 `drivers/net/usb/cdc_ncm.c`.
-- It inserted explicit `05ac:1905` matches for interfaces `0` and `2`.
-- It inserted `MODULE_INFO(dgx_usb_fix, "apple-05ac-1905-cdc-ncm");`.
-- The reference patch applies with `patch --dry-run` to the same source shape.
-
-## Not Yet Run
-
-The actual route-A module build/install/load has not been run in this session.
-Reasons:
-
-- Secure Boot is enabled.
-- No current proof of enrolled `/root/MOK.priv` and `/root/MOK.der` was available
-  without root.
-- Creating and enrolling MOK keys changes machine boot trust and requires an
-  interactive reboot-time flow.
-
-## Current Expected Next Step
-
-If no MOK key is already enrolled, follow [lab-workflow.md](lab-workflow.md):
-
-1. Enter the Nix shell.
-2. Create `/root/MOK.priv` and `/root/MOK.der`.
-3. Import `/root/MOK.der` with `mokutil`.
-4. Reboot once and enroll the cert in the MOK Manager pre-boot UI.
-5. Build, sign, install, and reload `cdc_ncm`.
-6. Replug the USB-C cable and validate a Linux netdev appears.
+- Run `iperf3` TCP and UDP over each link-local pair.
+- Decide whether both CDC-NCM functions are useful or whether route A should
+  bind only one function.
+- Record any throughput and loss findings in this file.
+- If Spark boots a new kernel, rerun `dgx-usb-fix-install`; the MOK enrollment
+  can be reused if `/root/MOK.priv` and `/root/MOK.der` remain available.

@@ -17,7 +17,7 @@ Mac mini:
 - SSH: `ssh e2@e2`
 - Used for observing macOS interface state and testing peer connectivity.
 - Nix installed.
-- Observed USB peer interface: `en5`.
+- Observed active USB peer interfaces: `en5` and `anpi0`.
 
 Local workstation:
 
@@ -155,11 +155,12 @@ the patched module on boot.
 Run:
 
 ```sh
-./dgx-usb-fix/diagnose.sh
+dgx-usb-fix-diagnose
 modinfo -n cdc_ncm
 modinfo cdc_ncm | grep -E 'dgx_usb_fix|v05ACp1905'
 lsusb -t
 ip -br link
+ip -br -6 addr
 journalctl -k --no-pager | grep -E 'cdc_ncm|05ac|1905|bind'
 ```
 
@@ -197,8 +198,20 @@ ipv6.addr-gen-mode stable-privacy
 Expected current pairing:
 
 ```text
-Spark enxd2dcb4ccf72d <-> Mac en5
-Spark enxd2dcb4ccf70d <-> Mac anpi0
+spark@fe80::5786:d998:b0b6:9041%enxd2dcb4ccf72d
+  <-> mac@fe80::8a2:83dc:50cd:d9a%en5
+
+spark@fe80::dc3d:13fd:b127:97ac%enxd2dcb4ccf70d
+  <-> mac@fe80::d0dc:b4ff:fecc:f7f2%anpi0
+```
+
+Current ping commands:
+
+```sh
+ping -6 "fe80::8a2:83dc:50cd:d9a%enxd2dcb4ccf72d"
+ping -6 "fe80::d0dc:b4ff:fecc:f7f2%enxd2dcb4ccf70d"
+ssh e2@e2 'ping6 "fe80::5786:d998:b0b6:9041%en5"'
+ssh e2@e2 'ping6 "fe80::dc3d:13fd:b127:97ac%anpi0"'
 ```
 
 Static IPv4 can be used later for final validation if needed:
