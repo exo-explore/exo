@@ -349,7 +349,11 @@ async def fetch_config_data(model_id: ModelId) -> ConfigData:
 
 
 async def fetch_safetensors_size(model_id: ModelId) -> Memory:
-    """Gets model size from safetensors index or falls back to HF API."""
+    """Gets model size from safetensors index or falls back to HF API.
+
+    Single-shard repos don't have a `model.safetensors.index.json`; fall back
+    to the HF API for those.
+    """
     from exo.download.download_utils import (
         download_file_with_retry,
         resolve_model_dir,
@@ -357,21 +361,25 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
     from exo.shared.types.worker.downloads import ModelSafetensorsIndex
 
     target_dir = await resolve_model_dir(model_id)
-    index_path = await download_file_with_retry(
-        model_id,
-        "main",
-        "model.safetensors.index.json",
-        target_dir,
-        lambda curr_bytes, total_bytes, is_renamed: logger.debug(
-            f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
-        ),
-    )
-    async with aiofiles.open(index_path, "r") as f:
-        index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
+    try:
+        index_path = await download_file_with_retry(
+            model_id,
+            "main",
+            "model.safetensors.index.json",
+            target_dir,
+            lambda curr_bytes, total_bytes, is_renamed: logger.debug(
+                f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
+            ),
+        )
+    except FileNotFoundError:
+        index_path = None
 
-    metadata = index_data.metadata
-    if metadata is not None and metadata.total_size is not None:
-        return Memory.from_bytes(metadata.total_size)
+    if index_path is not None:
+        async with aiofiles.open(index_path, "r") as f:
+            index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
+        metadata = index_data.metadata
+        if metadata is not None and metadata.total_size is not None:
+            return Memory.from_bytes(metadata.total_size)
 
     info = model_info(model_id)
     if info.safetensors is None:

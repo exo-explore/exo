@@ -703,7 +703,10 @@
       ? Object.keys(topologyData()!.nodes).length
       : 1;
     const sharding = nodeCount <= 1 ? "Pipeline" : selectedSharding;
-    const instanceType = nodeCount <= 1 ? "MlxRing" : selectedInstanceType;
+    const instanceType =
+      nodeCount <= 1 && selectedInstanceType === "MlxJaccl"
+        ? "MlxRing"
+        : selectedInstanceType;
     try {
       const placementResponse = await fetch(
         `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${sharding}&instance_meta=${instanceType}&min_nodes=1`,
@@ -933,7 +936,12 @@
     // Apply sharding and instance type unconditionally
     selectedSharding = defaults.sharding;
     selectedInstanceType =
-      defaults.instanceType === "MlxRing" ? "MlxRing" : "MlxJaccl";
+      defaults.instanceType === "MlxRing"
+        ? "MlxRing"
+        : defaults.instanceType === "Vllm"
+          ? "Vllm"
+          : "MlxJaccl";
+    userPickedInstanceType = true;
 
     // Apply minNodes if valid (between 1 and maxNodes)
     if (
@@ -955,6 +963,12 @@
   }
 
   let selectedInstanceType = $state<InstanceMeta>("MlxRing");
+  let userPickedInstanceType = $state(false);
+  $effect(() => {
+    if (!userPickedInstanceType && featureFlags()["vllm_available"]) {
+      selectedInstanceType = "Vllm";
+    }
+  });
   let selectedMinNodes = $state<number>(1);
   let minNodesInitialized = $state(false);
   let launchingModelId = $state<string | null>(null);
@@ -1147,9 +1161,7 @@
   }
 
   const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
-    selectedInstanceType === "MlxRing"
-      ? runtime === "MlxRing"
-      : runtime === "MlxJaccl";
+    runtime === selectedInstanceType;
 
   // Helper to check if a model can be launched (has valid placement with >= minNodes)
   function canModelFit(modelId: string): boolean {
@@ -5772,6 +5784,7 @@
                       <button
                         onclick={() => {
                           selectedInstanceType = "MlxRing";
+                          userPickedInstanceType = true;
                           saveLaunchDefaults();
                         }}
                         class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
@@ -5795,6 +5808,7 @@
                       <button
                         onclick={() => {
                           selectedInstanceType = "MlxJaccl";
+                          userPickedInstanceType = true;
                           saveLaunchDefaults();
                         }}
                         class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
@@ -5819,6 +5833,7 @@
                         <button
                           onclick={() => {
                             selectedInstanceType = "Vllm";
+                            userPickedInstanceType = true;
                             saveLaunchDefaults();
                           }}
                           class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===

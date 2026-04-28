@@ -22,7 +22,6 @@ from exo.worker.disaggregated.protocol import (
     write_kv_chunk,
 )
 from exo.worker.engines.mlx.types import KVCacheType
-from exo.worker.runner.bootstrap import logger
 
 _STR_TO_MX: dict[DType, mx.Dtype] = {
     "bfloat16": mx.bfloat16,
@@ -90,6 +89,18 @@ def nhd_to_bhsd(t: mx.array) -> mx.array:
     return mx.expand_dims(mx.transpose(t, (1, 0, 2)), 0)
 
 
+def _rotating_to_temporal(buf: mx.array, idx: int, offset: int, keep: int) -> mx.array:
+    seq = int(buf.shape[2])
+    if idx == seq:
+        return buf
+    if idx < offset:
+        return mx.concatenate(
+            [buf[..., :keep, :], buf[..., idx:, :], buf[..., keep:idx, :]],
+            axis=2,
+        )
+    return buf[..., :idx, :]
+
+
 def send_mlx_kv_cache(
     stream: BinaryIO,
     caches: KVCacheType,
@@ -103,7 +114,7 @@ def send_mlx_kv_cache(
         match c:
             case QuantizedKVCache() | CacheList() | DeepseekV4Cache():
                 raise NotImplementedError
-            case KVCache() | RotatingKVCache():
+            case KVCache():
                 keys = c.keys
                 values = c.values
                 if keys is None or values is None:
@@ -132,11 +143,39 @@ def send_mlx_kv_cache(
                     keys=array_to_bytes(k_nhd),
                     values=array_to_bytes(v_nhd),
                 )
-                if tokens_sent != 0 and num_tokens != tokens_sent:
-                    logger.critical(
-                        f"Unexpected number of tokens sent {num_tokens} != {tokens_sent}"
-                    )
-                tokens_sent = num_tokens
+                tokens_sent = max(tokens_sent, num_tokens)
+            case RotatingKVCache():
+                keys = c.keys
+                values = c.values
+                if keys is None or values is None:
+                    continue
+                offset = int(c.offset)
+                if offset <= 0:
+                    continue
+                idx = int(c._idx)
+                keep = int(c.keep)
+                with mx.stream(mx.Device(mx.cpu)):
+                    k_temporal = _rotating_to_temporal(keys, idx, offset, keep)
+                    v_temporal = _rotating_to_temporal(values, idx, offset, keep)
+                    k = mx.array(k_temporal)
+                    v = mx.array(v_temporal)
+                    k_nhd = bhsd_to_nhd(k)
+                    v_nhd = bhsd_to_nhd(v)
+                    mx.eval(k_nhd, v_nhd)
+                num_tokens = int(k_nhd.shape[0])
+                n_heads = int(k_nhd.shape[1])
+                head_dim = int(k_nhd.shape[2])
+                write_kv_chunk(
+                    stream,
+                    layer_idx=layer_idx,
+                    num_tokens=num_tokens,
+                    n_heads=n_heads,
+                    head_dim=head_dim,
+                    dtype=dtype,
+                    keys=array_to_bytes(k_nhd),
+                    values=array_to_bytes(v_nhd),
+                )
+                tokens_sent = max(tokens_sent, offset)
             case ArraysCache():
                 blobs: list[TensorBlob] = []
                 for a in c.state:

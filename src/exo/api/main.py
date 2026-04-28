@@ -526,8 +526,10 @@ class API:
                         )
                     ]
                 )
-        # TODO: PDD
-        # instance_combinations.append((Sharding.PrefillDecodeDisaggregation, InstanceMeta.MlxRing, 1))
+        if any(self.state.node_vllm.values()):
+            instance_combinations.append(
+                (Sharding.Pipeline, InstanceMeta.Vllm, 1)
+            )
 
         for sharding, instance_meta, min_nodes in instance_combinations:
             try:
