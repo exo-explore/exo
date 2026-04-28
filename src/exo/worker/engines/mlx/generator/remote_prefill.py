@@ -25,6 +25,7 @@ def remote_prefill(
     request_id: str,
     model_id: str,
     start_pos: int = 0,
+    use_prefix_cache: bool = True,
 ) -> tuple[float, int, list[CacheSnapshot]]:
     t0 = time.perf_counter()
     total_prompt_tokens = int(prompt_tokens.shape[0])
@@ -50,6 +51,7 @@ def remote_prefill(
         token_ids=cast(list[int], prompt_tokens.tolist()),
         start_pos=start_pos,
         request_id=request_id,
+        use_prefix_cache=use_prefix_cache,
     )
     result = remote_prefill_fetch(
         endpoint, request, on_header=_on_header, on_kv_chunk=_on_chunk

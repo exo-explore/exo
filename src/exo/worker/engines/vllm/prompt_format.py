@@ -57,5 +57,7 @@ def make_vllm_sampling_params(
     if params.bench:
         kwargs.ignore_eos = True
         kwargs.min_tokens = kwargs.max_tokens
+        if not params.use_prefix_cache:
+            kwargs.skip_reading_prefix_cache = True
 
     return kwargs

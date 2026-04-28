@@ -21,6 +21,7 @@ class PrefillRequest(msgspec.Struct):
     model_id: str = ""
     token_ids: list[int] = msgspec.field(default_factory=list)
     start_pos: int = 0
+    use_prefix_cache: bool = True
 
 
 _request_encoder = msgspec.msgpack.Encoder()

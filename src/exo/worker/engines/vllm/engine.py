@@ -158,7 +158,157 @@ class VllmEngine(Engine):
         self._gen.close()
 
     def serve_prefill(self, request: PrefillRequest, wfile: BinaryIO) -> None:
-        raise NotImplementedError("vLLM serve_prefill is not supported yet")
+        import threading
+        import time
+
+        import torch
+        from vllm import SamplingParams
+
+        from exo.worker.engines.vllm.disaggregated.adapter import (
+            write_kv_layer_chunk,
+            write_layer_arrays,
+            write_prefill_done,
+            write_prefill_header,
+        )
+        from exo.worker.engines.vllm.growable_cache import get_model_runner
+        from exo.worker.engines.vllm.kv_connector import (
+            get_arrays_queue,
+            get_gdn_states,
+            get_kv_queue,
+            init_gdn_layer_order,
+            reset_capture_state,
+        )
+
+        engine = self._gen.engine
+        if engine.has_unfinished_requests():
+            logger.warning("serve_prefill: engine busy, refusing prefill request")
+            return
+
+        model_runner = get_model_runner()
+        if model_runner is None:
+            logger.warning("serve_prefill: model runner not initialized")
+            return
+        init_gdn_layer_order(model_runner.kv_caches)
+
+        prefill_token_ids = (
+            request.token_ids[:-2]
+            if len(request.token_ids) > 2
+            else list(request.token_ids)
+        )
+        n_layers = len(model_runner.kv_caches)
+
+        reset_capture_state()
+        arrays_queue = get_arrays_queue()
+        kv_queue = get_kv_queue()
+
+        write_prefill_header(
+            wfile,
+            request_id=request.request_id,
+            model_id=request.model_id,
+            num_layers=n_layers,
+            start_pos=request.start_pos,
+        )
+
+        skip_tokens = max(0, request.start_pos)
+        chunks_sent = [0]
+        layer_token_counts: dict[int, int] = {}
+
+        def writer_loop() -> None:
+            while True:
+                item = kv_queue.get()
+                if item is None:
+                    break
+                layer_idx, keys, values = item
+                previous = layer_token_counts.get(layer_idx, 0)
+                count = int(keys.shape[0])
+                layer_token_counts[layer_idx] = previous + count
+                new_total = previous + count
+
+                if new_total <= skip_tokens:
+                    continue
+                if previous < skip_tokens:
+                    trim = skip_tokens - previous
+                    keys = keys[trim:]
+                    values = values[trim:]
+                if keys.numel() == 0:
+                    continue
+                write_kv_layer_chunk(wfile, layer_idx, keys, values)
+                chunks_sent[0] += 1
+
+        sp = SamplingParams(max_tokens=2, temperature=0.0, detokenize=False)
+        if not request.use_prefix_cache:
+            sp.skip_reading_prefix_cache = True
+        engine.add_request(
+            request.request_id,
+            {"prompt_token_ids": prefill_token_ids},
+            sp,
+        )
+
+        writer_thread = threading.Thread(target=writer_loop, daemon=True)
+        writer_thread.start()
+
+        t0 = time.perf_counter()
+        try:
+            while engine.has_unfinished_requests():
+                outputs = engine.step()
+                for output in outputs:
+                    if (
+                        getattr(output, "request_id", None) == request.request_id
+                        and output.outputs[0].token_ids
+                    ):
+                        engine.abort_request([request.request_id])
+                        break
+                else:
+                    continue
+                break
+            while engine.has_unfinished_requests():
+                _ = engine.step()
+        finally:
+            kv_queue.put(None)
+            writer_thread.join(timeout=30)
+            if writer_thread.is_alive():
+                logger.warning("serve_prefill: writer thread did not exit")
+
+        per_layer_arrays: dict[int, list[torch.Tensor]] = {}
+        while not arrays_queue.empty():
+            try:
+                arr_item = arrays_queue.get_nowait()
+            except Exception:
+                break
+            if arr_item is None:
+                continue
+            layer_idx, arrays = arr_item
+            per_layer_arrays[layer_idx] = arrays
+
+        gdn = get_gdn_states()
+        for layer_idx in sorted(gdn.keys()):
+            if layer_idx in per_layer_arrays:
+                continue
+            state = gdn[layer_idx]
+            arrs: list[torch.Tensor] = []
+            if "conv" in state:
+                arrs.append(state["conv"])
+            if "ssm" in state:
+                arrs.append(state["ssm"])
+            if arrs:
+                per_layer_arrays[layer_idx] = arrs
+
+        arrays_layers = 0
+        for layer_idx in sorted(per_layer_arrays.keys()):
+            arrs = per_layer_arrays[layer_idx]
+            if arrs:
+                write_layer_arrays(wfile, layer_idx, arrs)
+                arrays_layers += 1
+
+        actual_per_layer = max(layer_token_counts.values(), default=0)
+        tokens_sent = max(0, actual_per_layer - skip_tokens)
+        write_prefill_done(wfile, tokens_sent)
+        elapsed = time.perf_counter() - t0
+        logger.info(
+            f"serve_prefill {request.request_id}: kv_chunks={chunks_sent[0]} "
+            f"arrays_layers={arrays_layers} tokens={tokens_sent} "
+            f"elapsed_ms={elapsed * 1000:.0f}"
+        )
 
     def _start_task(
         self, task: TextGeneration

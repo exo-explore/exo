@@ -375,7 +375,13 @@ def find_ip_prioritised(
             "maybe_ethernet": 3,
             "thunderbolt": 4,
         }
-    return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
+
+    def _key(ip: str) -> tuple[int, int]:
+        link_local = 0 if ip.startswith("169.254.") else 1
+        type_pri = priority.get(ip_to_type.get(ip, "unknown"), 2)
+        return (link_local, type_pri)
+
+    return min(ips, key=_key)
 
 
 def get_mlx_ring_hosts_by_node(

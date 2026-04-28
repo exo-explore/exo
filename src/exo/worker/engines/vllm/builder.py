@@ -31,7 +31,18 @@ class VllmBuilder(Builder):
         self,
         bound_instance: BoundInstance,
     ) -> Generator[ModelLoadingResponse]:
-        kv_connector_cls: type[object] | None = None
+        from exo.worker.engines.vllm.kv_connector import (
+            ExoKVProducerConnector,
+            _patch_gdn_capture,
+            _patch_vllm_for_connector,
+        )
+
+        # Apply bypass patches before vLLM init reads its connector registry
+        # and the unifier touches hybrid kv-cache specs.
+        _patch_vllm_for_connector(ExoKVProducerConnector)
+        _patch_gdn_capture()
+
+        kv_connector_cls: type[object] | None = ExoKVProducerConnector
         # overlapping = not os.environ.get("EXO_NO_OVERLAPPING_PREFILL_SENDS")
 
         def on_layer_loaded(loaded: int, total: int) -> None:

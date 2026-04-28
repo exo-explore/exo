@@ -336,8 +336,24 @@ def _summarise(rows: list[dict[str, Any]]) -> dict[tuple[int, int], dict[str, fl
             "prompt_tps": mean(x["stats"]["prompt_tps"] for x in runs),
             "gen_tps": mean(x["stats"]["generation_tps"] for x in runs),
             "elapsed_s": mean(x["elapsed_s"] for x in runs),
+            "prompt_tokens": mean(x["stats"]["prompt_tokens"] for x in runs),
+            "gen_tokens": mean(x["stats"]["generation_tokens"] for x in runs),
         }
     return out
+
+
+def _normalised_seconds(summary: dict[str, float], pp: int, tg: int) -> float | None:
+    """Wall-clock time implied by reported tps for the *configured* pp/tg.
+
+    elapsed_s is not comparable across phases when models EOS at different
+    lengths. This formula reconstructs "what would this phase take to do
+    pp prompt tokens + tg generation tokens" using its own reported rates.
+    """
+    p_tps = summary.get("prompt_tps", 0.0)
+    g_tps = summary.get("gen_tps", 0.0)
+    if p_tps <= 0 or g_tps <= 0:
+        return None
+    return pp / p_tps + tg / g_tps
 
 
 def _print_diff(
@@ -350,14 +366,16 @@ def _print_diff(
     prefill_alone = _summarise(prefill_alone_rows)
     keys = set(disagg.keys()) | set(decode_alone.keys()) | set(prefill_alone.keys())
 
-    width = 64
+    width = 88
     for key in sorted(keys):
         pp, tg = key
         logger.info("─" * width)
         logger.info(f"  pp={pp}  tg={tg}")
         logger.info("─" * width)
         logger.info(
-            f"  {'phase':<16} {'elapsed':>10}  {'prompt_tps':>11}  {'gen_tps':>9}"
+            f"  {'phase':<16} {'elapsed':>9}  {'norm':>9}  "
+            f"{'prompt_tps':>11}  {'gen_tps':>8}  "
+            f"{'p_tok':>6}  {'g_tok':>6}"
         )
         for label, summary in (
             ("disaggregated", disagg.get(key)),
@@ -365,26 +383,43 @@ def _print_diff(
             ("prefill_alone", prefill_alone.get(key)),
         ):
             if summary is None:
-                logger.info(f"  {label:<16} {'—':>10}  {'—':>11}  {'—':>9}")
+                logger.info(
+                    f"  {label:<16} {'—':>9}  {'—':>9}  "
+                    f"{'—':>11}  {'—':>8}  {'—':>6}  {'—':>6}"
+                )
                 continue
+            norm = _normalised_seconds(summary, pp, tg)
+            norm_str = f"{norm:>8.2f}s" if norm is not None else f"{'—':>9}"
             logger.info(
                 f"  {label:<16} "
-                f"{summary['elapsed_s']:>9.2f}s  "
+                f"{summary['elapsed_s']:>8.2f}s  "
+                f"{norm_str}  "
                 f"{summary['prompt_tps']:>11.1f}  "
-                f"{summary['gen_tps']:>9.2f}"
+                f"{summary['gen_tps']:>8.2f}  "
+                f"{summary['prompt_tokens']:>6.0f}  "
+                f"{summary['gen_tokens']:>6.0f}"
             )
 
         d = disagg.get(key)
         da = decode_alone.get(key)
         pa = prefill_alone.get(key)
-        if d and da and d["elapsed_s"] > 0:
-            logger.info(
-                f"  speedup vs decode_alone:  {da['elapsed_s'] / d['elapsed_s']:.2f}x"
-            )
-        if d and pa and d["elapsed_s"] > 0:
-            logger.info(
-                f"  speedup vs prefill_alone: {pa['elapsed_s'] / d['elapsed_s']:.2f}x"
-            )
+        d_norm = _normalised_seconds(d, pp, tg) if d else None
+        if d_norm and da:
+            da_norm = _normalised_seconds(da, pp, tg)
+            if da_norm:
+                logger.info(
+                    f"  norm speedup vs decode_alone:  {da_norm / d_norm:.2f}x  "
+                    f"(prefill {d['prompt_tps'] / da['prompt_tps']:.2f}x, "
+                    f"decode {d['gen_tps'] / da['gen_tps']:.2f}x)"
+                )
+        if d_norm and pa:
+            pa_norm = _normalised_seconds(pa, pp, tg)
+            if pa_norm:
+                logger.info(
+                    f"  norm speedup vs prefill_alone: {pa_norm / d_norm:.2f}x  "
+                    f"(prefill {d['prompt_tps'] / pa['prompt_tps']:.2f}x, "
+                    f"decode {d['gen_tps'] / pa['gen_tps']:.2f}x)"
+                )
     logger.info("─" * width)
 
 

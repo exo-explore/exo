@@ -656,6 +656,7 @@ def mlx_generate(
                     request_id=str(uuid.uuid4()),
                     model_id=str(task.model),
                     start_pos=prefix_hit_length,
+                    use_prefix_cache=not is_bench or task.use_prefix_cache,
                 )
                 remote_prefilled = True
             except Exception:

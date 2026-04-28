@@ -29,7 +29,7 @@ max_nodes = 1
 
 [decode]
 model = "mlx-community/Qwen3.6-27B-4bit"
-node = "localhost"
+node = "Ryuichi’s MacBook Pro"
 instance_meta = "ring"
 sharding = "pipeline"
 min_nodes = 1

@@ -10,8 +10,7 @@ from typing import cast
 
 import torch
 from vllm.config import CompilationConfig
-from vllm.config.compilation import CUDAGraphMode
-from vllm.config.kv_transfer import KVTransferConfig
+from vllm.config.compilation import CompilationMode, CUDAGraphMode
 from vllm.engine.arg_utils import EngineArgs
 from vllm.entrypoints.chat_utils import (
     ChatCompletionMessageParam,
@@ -409,14 +408,18 @@ def load_vllm_engine(
 
     set_n_layers(n_layers)
 
-    kv_transfer_config: KVTransferConfig | None = None
+    # Use the dict-with-colon form the original branch used. The typed
+    # `KVTransferConfig` object goes through a different vLLM code path
+    # and (with `kv_load_failure_policy="recompute"`) trips the
+    # APC/hybrid/chunked-prefill kv-cache nesting bug.
+    kv_transfer_config: dict[str, str] | None = None
     if kv_connector_cls is not None:
-        kv_transfer_config = KVTransferConfig(
-            kv_connector=kv_connector_cls.__name__,
-            kv_connector_module_path=kv_connector_cls.__module__,
-            kv_role="kv_both",
-            kv_load_failure_policy="recompute",
-        )
+        kv_transfer_config = {
+            "kv_connector": (
+                f"{kv_connector_cls.__module__}:{kv_connector_cls.__name__}"
+            ),
+            "kv_role": "kv_both",
+        }
 
     has_mamba = False
     try:
@@ -449,12 +452,14 @@ def load_vllm_engine(
                 enable_prefix_caching=True,
                 attention_backend=backend,
                 compilation_config=CompilationConfig(
-                    level=0, cudagraph_mode=CUDAGraphMode.NONE
+                    mode=CompilationMode.NONE,
+                    cudagraph_mode=CUDAGraphMode.NONE,
                 ),
                 disable_log_stats=True,
                 max_num_batched_tokens=4096,
                 kv_transfer_config=kv_transfer_config,
                 disable_hybrid_kv_cache_manager=False,
+                kv_cache_dtype="auto",
             )
 
             set_weight_loading_callback(on_layer_loaded)

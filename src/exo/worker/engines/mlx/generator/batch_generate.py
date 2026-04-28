@@ -223,6 +223,7 @@ class ExoBatchGenerator:
                         request_id=str(uuid.uuid4()),
                         model_id=str(task_params.model),
                         start_pos=prefix_hit_length,
+                        use_prefix_cache=not is_bench or task_params.use_prefix_cache,
                     )
                     remote_prefilled = True
                 except Exception:
