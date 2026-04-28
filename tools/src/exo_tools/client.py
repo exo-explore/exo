@@ -1,5 +1,6 @@
 # type: ignore
 """HTTP client for the exo API."""
+
 from __future__ import annotations
 
 import http.client
