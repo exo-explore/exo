@@ -1,13 +1,17 @@
 import os
+import queue
+import threading
 import time
 from collections.abc import Generator
 from dataclasses import dataclass
 from enum import Enum
+from typing import BinaryIO
 
 import mlx.core as mx
-from anyio import WouldBlock
+from anyio import ClosedResourceError, EndOfStream
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.shared.constants import ENABLE_DISAGGREGATION
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.chunks import GenerationChunk
 from exo.shared.types.common import CommandId, ModelId
@@ -18,7 +22,6 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
-from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import (
     ConnectToGroup,
     LoadModel,
@@ -47,7 +50,13 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
+from exo.utils.ports import random_ephemeral_port
+from exo.worker.disaggregated.server import (
+    PrefillRequest,
+    PrefillServer,
+)
 from exo.worker.engines.mlx.cache import KVPrefixCache
+from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
@@ -62,6 +71,21 @@ from exo.worker.runner.llm_inference.batch_generator import (
 
 from .batch_generator import Cancelled, Finished
 from .tool_parsers import make_mlx_parser
+
+PREFILL_PICKUP_TIMEOUT_SECONDS = 3
+PREFILL_FINISH_TIMEOUT_SECONDS = 300
+
+
+@dataclass
+class PrefillTask:
+    request: PrefillRequest
+    wfile: BinaryIO
+    started: threading.Event
+    done: threading.Event
+
+
+_TaskStreamClosed = object()
+WorkItem = Task | PrefillTask | object
 
 
 class ExitCode(str, Enum):
@@ -110,8 +134,76 @@ class Runner:
             TextGeneration,
         ] = {}
 
+        self._prefill_server: PrefillServer | None = None
+        self._prefill_server_port: int | None = None
+        self._work_queue: queue.Queue[WorkItem] = queue.Queue()
+        self._task_reader_thread: threading.Thread | None = None
+
         logger.info("runner created")
         self.update_status(RunnerIdle())
+
+    def _start_prefill_server(self) -> int | None:
+        if not ENABLE_DISAGGREGATION:
+            return None
+        if self.device_rank != 0:
+            return None
+        if self._prefill_server_port is not None:
+            return self._prefill_server_port
+
+        def resolve(request: PrefillRequest, wfile: BinaryIO) -> bool:
+            req = PrefillTask(
+                request=request,
+                wfile=wfile,
+                started=threading.Event(),
+                done=threading.Event(),
+            )
+            self._work_queue.put(req)
+            if not req.started.wait(timeout=PREFILL_PICKUP_TIMEOUT_SECONDS):
+                logger.warning(
+                    f"Prefill request {request.request_id} not picked up within "
+                    f"{PREFILL_PICKUP_TIMEOUT_SECONDS}s — runner busy"
+                )
+                return False
+            if not req.done.wait(timeout=PREFILL_FINISH_TIMEOUT_SECONDS):
+                logger.warning(
+                    f"Prefill request {request.request_id} did not finish within "
+                    f"{PREFILL_FINISH_TIMEOUT_SECONDS}s"
+                )
+            return True
+
+        port = random_ephemeral_port()
+        self._prefill_server = PrefillServer(resolve=resolve, host="0.0.0.0", port=port)
+        self._prefill_server_port = port
+        return self._prefill_server_port
+
+    def _start_task_reader(self) -> None:
+        if self._task_reader_thread is not None:
+            return
+
+        def loop() -> None:
+            try:
+                with self.task_receiver:
+                    for task in self.task_receiver:
+                        self._work_queue.put(task)
+            except (EndOfStream, ClosedResourceError):
+                pass
+            finally:
+                self._work_queue.put(_TaskStreamClosed)
+
+        self._task_reader_thread = threading.Thread(target=loop, name="task-reader")
+        self._task_reader_thread.start()
+
+    def _serve_prefill(self, req: PrefillTask) -> None:
+        req.started.set()
+        try:
+            assert isinstance(self.generator, InferenceGenerator)
+            self.generator.serve_prefill(req.request, req.wfile)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to serve prefill request {req.request.request_id}"
+            )
+        finally:
+            req.done.set()
 
     def update_status(self, status: RunnerStatus):
         self.current_status = status
@@ -130,8 +222,16 @@ class Runner:
         self.event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
     def main(self):
-        with self.task_receiver:
-            for task in self.task_receiver:
+        self._start_task_reader()
+        try:
+            while True:
+                item = self._work_queue.get()
+                if item is _TaskStreamClosed:
+                    break
+                if isinstance(item, PrefillTask):
+                    self._serve_prefill(item)
+                    continue
+                task: Task = item  # type: ignore
                 if task.task_id in self.seen:
                     logger.warning("repeat task - potential error")
                     continue
@@ -139,6 +239,14 @@ class Runner:
                 self.handle_first_task(task)
                 if isinstance(self.current_status, RunnerShutdown):
                     break
+        finally:
+            if self._prefill_server is not None:
+                self._prefill_server.stop()
+                self._prefill_server = None
+            self.task_receiver.close()
+            if self._task_reader_thread is not None:
+                self._task_reader_thread.join(timeout=5)
+                self._task_reader_thread = None
 
     def handle_first_task(self, task: Task):
         self.send_task_status(task.task_id, TaskStatus.Running)
@@ -219,8 +327,11 @@ class Runner:
                     f"runner initialized in {time.time() - self.setup_start_time} seconds"
                 )
 
+                self._start_prefill_server()
                 self.send_task_status(task.task_id, TaskStatus.Complete)
-                self.update_status(RunnerReady())
+                self.update_status(
+                    RunnerReady(prefill_server_port=self._prefill_server_port)
+                )
                 logger.info("runner ready")
 
             case TextGeneration() if isinstance(self.current_status, RunnerReady):
@@ -285,29 +396,32 @@ class Runner:
                 self.active_tasks.pop(task_id, None)
 
             try:
-                task = self.task_receiver.receive_nowait()
+                item = self._work_queue.get_nowait()
+            except queue.Empty:
+                continue
+            if item is _TaskStreamClosed:
+                return ExitCode.Shutdown
+            if isinstance(item, PrefillTask):
+                self._serve_prefill(item)
+                continue
+            task: Task = item  # type: ignore
+            if task.task_id in self.seen:
+                logger.warning("repeat task - potential error")
+                continue
+            self.seen.add(task.task_id)
+            match task:
+                case TextGeneration():
+                    self.acknowledge_task(task)
+                    self.submit_text_generation(task)
+                case Shutdown():
+                    self.shutdown(task)
+                    return ExitCode.Shutdown
+                case _:
+                    raise ValueError(
+                        f"Received {task.__class__.__name__} outside of state machine in {self.current_status=}"
+                    )
 
-                if task.task_id in self.seen:
-                    logger.warning("repeat task - potential error")
-                    continue
-                self.seen.add(task.task_id)
-
-                match task:
-                    case TextGeneration():
-                        self.acknowledge_task(task)
-                        self.submit_text_generation(task)
-                    case Shutdown():
-                        self.shutdown(task)
-                        return ExitCode.Shutdown
-                    case _:
-                        raise ValueError(
-                            f"Received {task.__class__.__name__} outside of state machine in {self.current_status=}"
-                        )
-
-            except WouldBlock:
-                pass
-
-        self.update_status(RunnerReady())
+        self.update_status(RunnerReady(prefill_server_port=self._prefill_server_port))
         logger.info("runner ready")
 
         return ExitCode.AllTasksComplete

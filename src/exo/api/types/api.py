@@ -296,6 +296,16 @@ class CancelCommandResponse(BaseModel):
     command_id: CommandId
 
 
+class InstanceLinkBody(BaseModel):
+    prefill_instances: list[InstanceId]
+    decode_instances: list[InstanceId]
+
+
+class InstanceLinkResponse(BaseModel):
+    message: str
+    command_id: CommandId
+
+
 ImageSize = Literal[
     "auto",
     "512x512",

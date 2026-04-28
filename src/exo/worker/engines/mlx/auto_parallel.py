@@ -918,7 +918,7 @@ class DeepseekV4ShardingStrategy(TensorParallelShardingStrategy):
             # Head-parallel attention with interleaved-per-group sharding.
             _shard_v4_attention_heads(layer.attn, self.N, self.group.rank())
             self.sharded_to_all_linear_in_place(layer.attn.wo_a)
-            layer.attn.wo_b = _AllSumLinear(layer.attn.wo_b, self.group)  # type: ignore[assignment]
+            layer.attn.wo_b = _AllSumLinear(layer.attn.wo_b, self.group)  # type: ignore
 
             ffn = layer.ffn
             if getattr(ffn, "shared_experts", None) is not None:
@@ -930,7 +930,7 @@ class DeepseekV4ShardingStrategy(TensorParallelShardingStrategy):
             self.all_to_sharded_linear_in_place(ffn.switch_mlp.up_proj)
             wrapped = ShardedMoEV4(ffn)
             wrapped.sharding_group = self.group
-            layer.ffn = wrapped  # type: ignore[assignment]
+            layer.ffn = wrapped  # type: ignore
 
             mx.eval(layer)
             mx.clear_cache()

@@ -152,6 +152,11 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     )
     monkeypatch.setattr(mlx_batch_generator, "ExoBatchGenerator", FakeExoBatchGenerator)
 
+    def _no_prefill_server(_self: mlx_runner.Runner) -> int | None:
+        return None
+
+    monkeypatch.setattr(mlx_runner.Runner, "_start_prefill_server", _no_prefill_server)
+
 
 class FakeExoBatchGenerator:
     def __init__(self, *_args: object, **_kwargs: object) -> None:

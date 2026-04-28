@@ -1,5 +1,6 @@
 import contextlib
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Literal, cast
 
@@ -23,7 +24,6 @@ from exo.api.types import (
     Usage,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import KVCacheType, Model
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.worker.engines.mlx.cache import (
@@ -40,10 +40,12 @@ from exo.worker.engines.mlx.generator.generate import (
     patch_embed_tokens,
     prefill,
 )
+from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
 from exo.worker.engines.mlx.patches.opt_batch_gen import (
     set_needs_topk,
     take_ready_topk,
 )
+from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     fix_unmatched_think_end_tokens,
     system_prompt_token_count,
@@ -57,6 +59,7 @@ from exo.worker.engines.mlx.vision import (
 from exo.worker.runner.bootstrap import logger
 
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
+REMOTE_PREFILL_MIN_TOKENS = 1000
 
 
 def _stop_sequences(task_params: TextGenerationTaskParams) -> list[str]:
@@ -199,17 +202,45 @@ class ExoBatchGenerator:
             if vision is not None
             else contextlib.nullcontext()
         )
+        uncached_count = len(prompt_tokens)
+        use_remote = (
+            uncached_count > REMOTE_PREFILL_MIN_TOKENS
+            and task_params.prefill_endpoint is not None
+        )
+
+        _prefill_tps: float = 0.0
+        _prefill_tokens: int = 0
+        cache_snapshots: list[CacheSnapshot] = []
+        remote_prefilled = False
         with vision_ctx:
-            _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
-                self.model,
-                self.tokenizer,
-                sampler,
-                prompt_tokens[:-1],
-                cache,
-                self.group,
-                on_prefill_progress,
-                distributed_prompt_progress_callback,
-            )
+            if use_remote and task_params.prefill_endpoint is not None:
+                try:
+                    _prefill_tps, _prefill_tokens, cache_snapshots = remote_prefill(
+                        prompt_tokens[:-1],
+                        cache,
+                        on_prefill_progress,
+                        endpoint=task_params.prefill_endpoint,
+                        request_id=str(uuid.uuid4()),
+                        model_id=str(task_params.model),
+                        start_pos=prefix_hit_length,
+                    )
+                    remote_prefilled = True
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Remote prefill failed, falling back to local prefill"
+                    )
+
+            if not remote_prefilled:
+                _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
+                    self.model,
+                    self.tokenizer,
+                    sampler,
+                    prompt_tokens[:-1],
+                    cache,
+                    self.group,
+                    on_prefill_progress,
+                    distributed_prompt_progress_callback,
+                )
 
         prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
         if matched_index is not None and prefix_hit_length > 0:
