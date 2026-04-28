@@ -45,18 +45,10 @@ _EXO_REF = os.environ.get("EXO_REF")
 
 
 def _release_all_reservations() -> None:
-    """Release all eco reservations for this test session's user."""
+    """Stop all clusters and release all reservations for this test session."""
     with contextlib.suppress(Exception):
         subprocess.run(
             ["eco", "stop"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=_ECO_ENV,
-        )
-    with contextlib.suppress(Exception):
-        subprocess.run(
-            ["eco", "release"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -64,7 +56,9 @@ def _release_all_reservations() -> None:
         )
 
 
-# Register cleanup for normal exit, uncaught exceptions, and signals.
+# atexit covers normal exit and uncaught exceptions.
+# SIGTERM/SIGHUP get explicit handlers for external kills.
+# SIGINT is left to pytest so KeyboardInterrupt aborts tests naturally.
 atexit.register(_release_all_reservations)
 
 
@@ -73,7 +67,7 @@ def _signal_handler(signum: int, _frame: object) -> None:
     raise SystemExit(128 + signum)
 
 
-for _sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+for _sig in (signal.SIGTERM, signal.SIGHUP):
     signal.signal(_sig, _signal_handler)
 
 
