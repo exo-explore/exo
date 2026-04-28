@@ -57,7 +57,7 @@ from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
 from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
-from exo.worker.runner.runner_supervisor import RunnerSupervisor
+from exo.worker.runner.supervisor import RunnerSupervisor
 
 
 class Worker:
