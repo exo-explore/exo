@@ -16,7 +16,10 @@
 set -euo pipefail
 
 LABEL="io.exo.networksetup"
-SCRIPT_DEST="/Library/Application Support/EXO/disable_bridge_enable_dhcp.sh"
+# Current script path. Older installs used a different filename; keep the
+# legacy path here so a fresh uninstall still cleans up upgraded machines.
+CURRENT_SCRIPT_DEST="/Library/Application Support/EXO/disable_bridge.sh"
+LEGACY_SCRIPT_DEST="/Library/Application Support/EXO/disable_bridge_enable_dhcp.sh"
 PLIST_DEST="/Library/LaunchDaemons/io.exo.networksetup.plist"
 LOG_OUT="/var/log/${LABEL}.log"
 LOG_ERR="/var/log/${LABEL}.err.log"
@@ -69,11 +72,17 @@ else
   echo_warn "LaunchDaemon plist not found (already removed?)"
 fi
 
-# Remove the script and parent directory
-if [[ -f $SCRIPT_DEST ]]; then
-  rm -f "$SCRIPT_DEST"
-  echo_info "Removed network setup script"
-else
+# Remove the script (current and legacy filenames) — backwards-compatible:
+# tolerate either, both, or neither being present.
+removed_any_script=0
+for script in "$CURRENT_SCRIPT_DEST" "$LEGACY_SCRIPT_DEST"; do
+  if [[ -f $script ]]; then
+    rm -f "$script"
+    echo_info "Removed network setup script: $script"
+    removed_any_script=1
+  fi
+done
+if [[ $removed_any_script -eq 0 ]]; then
   echo_warn "Network setup script not found (already removed?)"
 fi
 
