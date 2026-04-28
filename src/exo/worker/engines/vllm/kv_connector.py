@@ -36,9 +36,6 @@ _LOG_PREFIX = "[exo-pd vllm-connector]"
 # We defer prefix reuse to vLLM APC and do not keep a separate TorchKVCache.
 _kv_queue: "queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None]" = queue.Queue()
 _arrays_queue: "queue.Queue[tuple[int, list[torch.Tensor]] | None]" = queue.Queue()
-# Per-request block_ids captured at request_finished, keyed by vLLM's internal
-# request id (which may have a suffix appended to the id we passed in).
-_completed_block_lists: dict[str, tuple[list[int], ...]] = {}
 _captured_layers: dict[int, dict[str, torch.Tensor]] = {}
 _captured_arrays: dict[int, list[torch.Tensor]] = {}
 # Hybrid-model SSM/conv state captured via causal_conv1d + delta-rule patches.
@@ -60,15 +57,6 @@ def get_gdn_states() -> dict[int, dict[str, torch.Tensor]]:
     return _gdn_states
 
 
-def pop_completed_block_list(request_id: str) -> tuple[list[int], ...] | None:
-    if request_id in _completed_block_lists:
-        return _completed_block_lists.pop(request_id)
-    for key in list(_completed_block_lists.keys()):
-        if key.startswith(request_id):
-            return _completed_block_lists.pop(key)
-    return None
-
-
 def get_captured_layers() -> dict[int, dict[str, torch.Tensor]]:
     return _captured_layers
 
@@ -88,7 +76,6 @@ def reset_capture_state() -> None:
             _arrays_queue.get_nowait()
         except queue.Empty:
             break
-    _completed_block_lists.clear()
     _captured_layers.clear()
     _captured_arrays.clear()
     _gdn_states.clear()
@@ -147,9 +134,10 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
 
         # Hybrid (Mamba+attention) layers: kv_layer is a list/tuple of state
         # tensors (conv + ssm). Send them straight to the arrays queue —
-        # they don't live in the paged KV cache.
+        # they don't live in the paged KV cache. Stay on GPU; the writer
+        # thread does the D2H copy via `tensor_to_wire_bytes`.
         if isinstance(kv_layer, (list, tuple)):
-            arrays = [to_bf16(t).cpu() for t in kv_layer]
+            arrays = [to_bf16(t) for t in kv_layer]
             _arrays_queue.put((layer_idx, arrays))
             return
 
@@ -185,19 +173,11 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
     def request_finished(
         self, request: Any, block_ids: list[int]
     ) -> tuple[bool, dict[str, Any] | None]:
-        request_id = str(getattr(request, "request_id", ""))
-        if request_id:
-            _completed_block_lists[request_id] = (list(block_ids),)
         return False, None
 
     def request_finished_all_groups(
         self, request: Any, block_ids: tuple[list[int], ...]
     ) -> tuple[bool, dict[str, Any] | None]:
-        request_id = str(getattr(request, "request_id", ""))
-        if request_id:
-            _completed_block_lists[request_id] = tuple(
-                list(group) for group in block_ids
-            )
         return False, None
 
 
@@ -379,7 +359,9 @@ def _patch_gdn_capture() -> None:
             idx = _gdn_call_idx[0]
             if _gdn_layer_order and idx < len(_gdn_layer_order) * 100:
                 layer_idx = _gdn_layer_order[idx % len(_gdn_layer_order)]
-                conv_at_ci = conv_states[ci : ci + 1].transpose(-1, -2).contiguous().cpu()
+                # `.contiguous()` decouples the slice from the underlying
+                # buffer; D2H is deferred to the writer thread.
+                conv_at_ci = conv_states[ci : ci + 1].transpose(-1, -2).contiguous()
                 _gdn_states.setdefault(layer_idx, {})["conv"] = conv_at_ci
                 _gdn_states[layer_idx]["ci"] = ci
             _gdn_call_idx[0] += 1
@@ -430,7 +412,7 @@ def _patch_gdn_capture() -> None:
                         if _gdn_layer_order and idx < len(_gdn_layer_order) * 100:
                             layer_idx = _gdn_layer_order[idx % len(_gdn_layer_order)]
                             _gdn_states.setdefault(layer_idx, {})["ssm"] = (
-                                ssm_state.cpu()
+                                ssm_state
                             )
                         _ssm_call_idx[0] += 1
                     return result

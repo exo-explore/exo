@@ -31,6 +31,7 @@ from typing import Any
 
 from exo_bench import (
     PromptSizer,
+    SystemMetricsSampler,
     format_peak_memory,
     load_tokenizer_for_bench,
     parse_int_list,
@@ -278,6 +279,7 @@ def _run_phase(
     warmup: int,
     repeat: int,
     common_meta: dict[str, Any],
+    sampler: SystemMetricsSampler | None = None,
 ) -> list[dict[str, Any]]:
     logger.info(f"=== phase: {label} (model={model_id}) ===")
     rows: list[dict[str, Any]] = []
@@ -288,10 +290,13 @@ def _run_phase(
     for pp, tg in pp_tg_pairs:
         logger.info(f"--- {label}: pp={pp} tg={tg} ---")
         runs: list[dict[str, Any]] = []
+        inference_windows: list[tuple[float, float]] = []
         for r in range(repeat):
             time.sleep(2)
             try:
+                inf_t0 = time.monotonic()
                 row, actual_pp_tokens = run_one(client, model_id, pp, tg, prompt_sizer)
+                inference_windows.append((inf_t0, time.monotonic()))
             except Exception as e:
                 logger.error(e)
                 continue
@@ -315,11 +320,26 @@ def _run_phase(
             gtok = mean(x["stats"]["generation_tokens"] for x in runs)
             peak = mean(x["stats"]["peak_memory_usage"]["inBytes"] for x in runs)
             avg_elapsed = mean(x["elapsed_s"] for x in runs)
+            energy_str = ""
+            if sampler is not None and inference_windows:
+                joules = sum(
+                    sampler.energy_between(t0, t1) for t0, t1 in inference_windows
+                )
+                inf_seconds = sum(t1 - t0 for t0, t1 in inference_windows)
+                avg_watts = joules / inf_seconds if inf_seconds > 0 else 0.0
+                energy_per_run = joules / len(runs) if runs else 0.0
+                energy_str = (
+                    f"    energy={joules:.1f}J ({avg_watts:.1f}W avg over "
+                    f"{inf_seconds:.1f}s inference, {energy_per_run:.1f}J/run)"
+                )
+                for run_row, (t0, t1) in zip(runs, inference_windows, strict=False):
+                    run_row["energy_joules"] = sampler.energy_between(t0, t1)
+                    run_row["inference_window_s"] = t1 - t0
             logger.info(
                 f"[{label}] prompt_tps={prompt_tps:.2f} gen_tps={gen_tps:.2f}    "
                 f"prompt_tokens={ptok} gen_tokens={gtok}    "
                 f"peak_memory={format_peak_memory(peak)}    "
-                f"avg_elapsed={avg_elapsed:.2f}s"
+                f"avg_elapsed={avg_elapsed:.2f}s{energy_str}"
             )
         time.sleep(2)
     return rows
@@ -332,12 +352,18 @@ def _summarise(rows: list[dict[str, Any]]) -> dict[tuple[int, int], dict[str, fl
         grouped.setdefault(key, []).append(r)
     out: dict[tuple[int, int], dict[str, float]] = {}
     for key, runs in grouped.items():
+        energy_runs = [x.get("energy_joules") for x in runs if "energy_joules" in x]
+        window_runs = [
+            x.get("inference_window_s") for x in runs if "inference_window_s" in x
+        ]
         out[key] = {
             "prompt_tps": mean(x["stats"]["prompt_tps"] for x in runs),
             "gen_tps": mean(x["stats"]["generation_tps"] for x in runs),
             "elapsed_s": mean(x["elapsed_s"] for x in runs),
             "prompt_tokens": mean(x["stats"]["prompt_tokens"] for x in runs),
             "gen_tokens": mean(x["stats"]["generation_tokens"] for x in runs),
+            "energy_j": mean(energy_runs) if energy_runs else 0.0,
+            "inference_window_s": mean(window_runs) if window_runs else 0.0,
         }
     return out
 
@@ -366,7 +392,7 @@ def _print_diff(
     prefill_alone = _summarise(prefill_alone_rows)
     keys = set(disagg.keys()) | set(decode_alone.keys()) | set(prefill_alone.keys())
 
-    width = 88
+    width = 110
     for key in sorted(keys):
         pp, tg = key
         logger.info("─" * width)
@@ -375,7 +401,8 @@ def _print_diff(
         logger.info(
             f"  {'phase':<16} {'elapsed':>9}  {'norm':>9}  "
             f"{'prompt_tps':>11}  {'gen_tps':>8}  "
-            f"{'p_tok':>6}  {'g_tok':>6}"
+            f"{'p_tok':>6}  {'g_tok':>6}  "
+            f"{'energy':>9}  {'avg_W':>7}"
         )
         for label, summary in (
             ("disaggregated", disagg.get(key)),
@@ -385,11 +412,17 @@ def _print_diff(
             if summary is None:
                 logger.info(
                     f"  {label:<16} {'—':>9}  {'—':>9}  "
-                    f"{'—':>11}  {'—':>8}  {'—':>6}  {'—':>6}"
+                    f"{'—':>11}  {'—':>8}  {'—':>6}  {'—':>6}  "
+                    f"{'—':>9}  {'—':>7}"
                 )
                 continue
             norm = _normalised_seconds(summary, pp, tg)
             norm_str = f"{norm:>8.2f}s" if norm is not None else f"{'—':>9}"
+            energy = summary.get("energy_j", 0.0)
+            window = summary.get("inference_window_s", 0.0)
+            energy_str = f"{energy:>8.1f}J" if energy > 0 else f"{'—':>9}"
+            avg_w = energy / window if window > 0 else 0.0
+            avg_w_str = f"{avg_w:>6.1f}W" if avg_w > 0 else f"{'—':>7}"
             logger.info(
                 f"  {label:<16} "
                 f"{summary['elapsed_s']:>8.2f}s  "
@@ -397,7 +430,9 @@ def _print_diff(
                 f"{summary['prompt_tps']:>11.1f}  "
                 f"{summary['gen_tps']:>8.2f}  "
                 f"{summary['prompt_tokens']:>6.0f}  "
-                f"{summary['gen_tokens']:>6.0f}"
+                f"{summary['gen_tokens']:>6.0f}  "
+                f"{energy_str}  "
+                f"{avg_w_str}"
             )
 
         d = disagg.get(key)
@@ -717,6 +752,13 @@ def main() -> int:
     link_id = ""
     prefill_alive = False
     decode_alive = False
+    sampler_nodes = sorted(
+        {*node_ids_from_instance(prefill_instance), *node_ids_from_instance(decode_instance)}
+    )
+    sampler = SystemMetricsSampler(
+        ExoClient(args.host, args.port, timeout_s=30), sampler_nodes
+    )
+    sampler.start()
     try:
         logger.info("Creating prefill instance...")
         client.request_json("POST", "/instance", body={"instance": prefill_instance})
@@ -735,6 +777,7 @@ def main() -> int:
                 warmup=args.warmup,
                 repeat=args.repeat,
                 common_meta=common_meta,
+                sampler=sampler,
             )
             all_rows.extend(prefill_alone_rows)
 
@@ -764,6 +807,7 @@ def main() -> int:
             warmup=args.warmup,
             repeat=args.repeat,
             common_meta=common_meta,
+            sampler=sampler,
         )
         all_rows.extend(disagg_rows)
 
@@ -788,11 +832,13 @@ def main() -> int:
                 warmup=args.warmup,
                 repeat=args.repeat,
                 common_meta=common_meta,
+                sampler=sampler,
             )
             all_rows.extend(decode_alone_rows)
 
             _print_diff(disagg_rows, decode_alone_rows, prefill_alone_rows)
     finally:
+        sampler.stop()
         with contextlib.suppress(ExoHttpError):
             if link_id:
                 _delete_instance_link(client, link_id)

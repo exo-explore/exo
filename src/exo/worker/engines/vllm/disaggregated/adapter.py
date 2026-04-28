@@ -81,6 +81,10 @@ def extract_kv_via_slot_mapping(
     backend: either `[2, num_blocks, block_size, H, D]` or `[num_blocks, 2,
     block_size, H, D]`. NHD is enforced via `VLLM_KV_CACHE_LAYOUT=NHD`.
     `slot_mapping` is the per-token slot index; entries `< 0` are padding.
+
+    Returned tensors stay on the GPU — the D2H copy is deferred to the
+    writer thread (`tensor_to_wire_bytes` calls `.cpu()`) so it doesn't
+    block forward of subsequent layers.
     """
     if kv_layer.shape[0] == 2:
         k_all = to_nhd(kv_layer[0])
@@ -94,7 +98,7 @@ def extract_kv_via_slot_mapping(
     safe_sm = slot_mapping.clamp(min=0)
     keys = to_bf16(k_flat[safe_sm][valid])
     values = to_bf16(v_flat[safe_sm][valid])
-    return keys.cpu(), values.cpu()
+    return keys, values
 
 
 def write_kv_layer_chunk(

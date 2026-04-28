@@ -221,8 +221,8 @@ class VllmEngine(Engine):
                 layer_idx, keys, values = item
                 previous = layer_token_counts.get(layer_idx, 0)
                 count = int(keys.shape[0])
-                layer_token_counts[layer_idx] = previous + count
                 new_total = previous + count
+                layer_token_counts[layer_idx] = new_total
 
                 if new_total <= skip_tokens:
                     continue
@@ -230,8 +230,11 @@ class VllmEngine(Engine):
                     trim = skip_tokens - previous
                     keys = keys[trim:]
                     values = values[trim:]
-                if keys.numel() == 0:
-                    continue
+                if chunks_sent[0] == 0:
+                    logger.info(
+                        f"First KV chunk: layer={layer_idx} keys={keys.shape} "
+                        f"keys.dtype={keys.dtype} values.dtype={values.dtype}"
+                    )
                 write_kv_layer_chunk(wfile, layer_idx, keys, values)
                 chunks_sent[0] += 1
 
@@ -269,7 +272,13 @@ class VllmEngine(Engine):
             if writer_thread.is_alive():
                 logger.warning("serve_prefill: writer thread did not exit")
 
-        per_layer_arrays: dict[int, list[torch.Tensor]] = {}
+        # Drain arrays_queue first (full per-layer cache state from
+        # save_kv_layer), then write _gdn_states (per-request conv/ssm slice
+        # captured by the causal_conv1d / delta-rule patches). The consumer
+        # is keyed by layer_idx so the GDN write overwrites the arrays_queue
+        # write — that's intentional, the GDN snapshot is the per-request
+        # state we actually want.
+        arrays_layers = 0
         while not arrays_queue.empty():
             try:
                 arr_item = arrays_queue.get_nowait()
@@ -278,24 +287,19 @@ class VllmEngine(Engine):
             if arr_item is None:
                 continue
             layer_idx, arrays = arr_item
-            per_layer_arrays[layer_idx] = arrays
+            write_layer_arrays(wfile, layer_idx, arrays)
+            arrays_layers += 1
 
         gdn = get_gdn_states()
+        if gdn:
+            torch.cuda.synchronize()
         for layer_idx in sorted(gdn.keys()):
-            if layer_idx in per_layer_arrays:
-                continue
             state = gdn[layer_idx]
             arrs: list[torch.Tensor] = []
             if "conv" in state:
                 arrs.append(state["conv"])
             if "ssm" in state:
                 arrs.append(state["ssm"])
-            if arrs:
-                per_layer_arrays[layer_idx] = arrs
-
-        arrays_layers = 0
-        for layer_idx in sorted(per_layer_arrays.keys()):
-            arrs = per_layer_arrays[layer_idx]
             if arrs:
                 write_layer_arrays(wfile, layer_idx, arrs)
                 arrays_layers += 1
