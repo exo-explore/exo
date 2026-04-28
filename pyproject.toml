@@ -5,31 +5,31 @@ description = "Exo"
 readme = "README.md"
 requires-python = "==3.13.*"
 dependencies = [
-  "aiofiles>=24.1.0",
-  "aiohttp>=3.12.14",
-  "types-aiofiles>=24.1.0.20250708",
-  "pydantic>=2.11.7",
-  "fastapi>=0.116.1",
-  "filelock>=3.18.0",
-  "rustworkx>=0.17.1",
-  "huggingface-hub>=1.8.0",
-  "psutil>=7.0.0",
-  "loguru>=0.7.3",
-  "exo-pyo3-bindings",                         # rust bindings
-  "anyio==4.11.0",
-  "mlx==0.31.2; sys_platform == 'darwin'",
-  "mlx-lm; sys_platform=='darwin'",
-  "tiktoken>=0.12.0",                          # required for kimi k2 tokenizer
-  "hypercorn>=0.18.0",
-  "openai-harmony>=0.0.8",
-  "httpx>=0.28.1",
-  "tomlkit>=0.14.0",
-  "mflux==0.17.2; sys_platform == 'darwin'",
-  "python-multipart>=0.0.21",
-  "msgspec>=0.19.0",
-  "zstandard>=0.23.0",
-  "mlx-vlm>=0.3.11; sys_platform == 'darwin'",
-  "transformers>=5.6.2",
+    "aiofiles>=24.1.0",
+    "aiohttp>=3.12.14",
+    "types-aiofiles>=24.1.0.20250708",
+    "pydantic>=2.11.7",
+    "fastapi>=0.116.1",
+    "filelock>=3.18.0",
+    "rustworkx>=0.17.1",
+    "huggingface-hub>=1.8.0",
+    "psutil>=7.0.0",
+    "loguru>=0.7.3",
+    "exo-pyo3-bindings",                         # rust bindings
+    "anyio==4.11.0",
+    "mlx==0.31.2; sys_platform == 'darwin'",
+    "mlx-lm; sys_platform=='darwin'",
+    "tiktoken>=0.12.0",                          # required for kimi k2 tokenizer
+    "hypercorn>=0.18.0",
+    "openai-harmony>=0.0.8",
+    "httpx>=0.28.1",
+    "tomlkit>=0.14.0",
+    "mflux==0.17.2; sys_platform == 'darwin'",
+    "python-multipart>=0.0.21",
+    "msgspec>=0.19.0",
+    "zstandard>=0.23.0",
+    "mlx-vlm>=0.3.11; sys_platform == 'darwin'",
+    "transformers>=5.6.2",
 ]
 
 [project.scripts]
@@ -38,36 +38,37 @@ exo = "exo.main:main"
 # dependencies only required for development
 [dependency-groups]
 dev = [
-  "basedpyright>=1.29.0",
-  "pyinstaller>=6.17.0",
-  "pytest>=8.4.0",
-  "pytest-asyncio>=1.0.0",
-  "pytest-env",
-  "ruff>=0.11.13",
+    "basedpyright>=1.29.0",
+    "pyinstaller>=6.17.0",
+    "playwright>=1.52.0",
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+    "pytest-env",
+    "ruff>=0.11.13",
 ]
 
 [project.optional-dependencies]
 build = ["nanobind"]
 cpu = [
-  "mlx==0.31.1; sys_platform == 'linux'",
-  "mlx-cpu==0.31.1; sys_platform == 'linux'",
-  "mlx-lm; sys_platform == 'linux'",
-  "mlx-vlm>=0.3.11; sys_platform== 'linux'",
-  "torch>=2.10.0; sys_platform == 'linux'",
+    "mlx==0.31.1; sys_platform == 'linux'",
+    "mlx-cpu==0.31.1; sys_platform == 'linux'",
+    "mlx-lm; sys_platform == 'linux'",
+    "mlx-vlm>=0.3.11; sys_platform== 'linux'",
+    "torch>=2.10.0; sys_platform == 'linux'",
 ]
 cuda12 = [
-  "mlx==0.31.1; sys_platform == 'linux'",
-  "mlx-cuda-12==0.31.1; sys_platform == 'linux'",
-  "mlx-lm; sys_platform == 'linux'",
-  "mlx-vlm>=0.3.11; sys_platform== 'linux'",
-  "torch>=2.10.0; sys_platform == 'linux'",
+    "mlx==0.31.1; sys_platform == 'linux'",
+    "mlx-cuda-12==0.31.1; sys_platform == 'linux'",
+    "mlx-lm; sys_platform == 'linux'",
+    "mlx-vlm>=0.3.11; sys_platform== 'linux'",
+    "torch>=2.10.0; sys_platform == 'linux'",
 ]
 cuda13 = [
-  "mlx==0.31.1; sys_platform == 'linux'",
-  "mlx-cuda-13==0.31.1; sys_platform == 'linux'",
-  "mlx-lm; sys_platform == 'linux'",
-  "mlx-vlm>=0.3.11; sys_platform== 'linux'",
-  "torch>=2.10.0; sys_platform == 'linux'",
+    "mlx==0.31.1; sys_platform == 'linux'",
+    "mlx-cuda-13==0.31.1; sys_platform == 'linux'",
+    "mlx-lm; sys_platform == 'linux'",
+    "mlx-vlm>=0.3.11; sys_platform== 'linux'",
+    "torch>=2.10.0; sys_platform == 'linux'",
 ]
 
 ###
@@ -82,9 +83,9 @@ exo-pyo3-bindings = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
 torch = [
-  { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'cuda13' and extra != 'cpu' and extra != 'cuda12'" },
-  { index = "pytorch-cu120", marker = "sys_platform == 'linux' and extra == 'cuda12' and extra != 'cpu' and extra != 'cuda13'" },
-  { index = "pytorch-cpu", marker = "(extra != 'cuda12' and extra != 'cuda13' and sys_platform == 'linux') or sys_platform == 'darwin'" },
+    { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'cuda13' and extra != 'cpu' and extra != 'cuda12'" },
+    { index = "pytorch-cu120", marker = "sys_platform == 'linux' and extra == 'cuda12' and extra != 'cpu' and extra != 'cuda13'" },
+    { index = "pytorch-cpu", marker = "(extra != 'cuda12' and extra != 'cuda13' and sys_platform == 'linux') or sys_platform == 'darwin'" },
 ]
 vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
 
@@ -129,13 +130,13 @@ pythonVersion = "3.13"
 pythonPlatform = "Darwin"
 
 exclude = [
-  "**/.venv",
-  "**/venv",
-  "**/__pycache__",
-  "**/exo_scripts",
-  "**/.direnv",
-  "**/rust",
-  "**/.github",
+    "**/.venv",
+    "**/venv",
+    "**/__pycache__",
+    "**/exo_scripts",
+    "**/.direnv",
+    "**/rust",
+    "**/.github",
 ]
 stubPath = ".mlx_typings"
 
@@ -159,42 +160,42 @@ environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }, { extra = "cpu" }]]
 constraint-dependencies = ["transformers>=5.6.2"]
 override-dependencies = [
-  "mlx==0.31.1; sys_platform=='linux'",
-  "mlx; sys_platform=='darwin'",
+    "mlx==0.31.1; sys_platform=='linux'",
+    "mlx; sys_platform=='darwin'",
 ]
 
 [tool.uv.extra-build-dependencies]
 miniaudio = ["setuptools", "cffi", "pycparser"]
 mlx = [
-  "setuptools",
-  "typing-extensions",
-  "nanobind",
-  "pybind11",
-  "wheel",
-  "cmake",
-  "ninja",
+    "setuptools",
+    "typing-extensions",
+    "nanobind",
+    "pybind11",
+    "wheel",
+    "cmake",
+    "ninja",
 ]
 mlx-lm = ["setuptools"]
 xgrammar = [
-  "nanobind",
-  "setuptools",
-  "scikit-build-core",
-  "packaging",
-  "pathspec",
+    "nanobind",
+    "setuptools",
+    "scikit-build-core",
+    "packaging",
+    "pathspec",
 ]
 rouge-score = ["setuptools"]
 sacrebleu = ["setuptools"]
 sqlitedict = ["setuptools"]
 word2number = ["setuptools"]
 vllm = [
-  "setuptools",
-  "setuptools-scm",
-  "scikit-build-core",
-  "jinja2",
-  "wheel",
-  "markupsafe",
-  "typing-extensions",
-  "torch",
+    "setuptools",
+    "setuptools-scm",
+    "scikit-build-core",
+    "jinja2",
+    "wheel",
+    "markupsafe",
+    "typing-extensions",
+    "torch",
 ]
 fastsafetensors = ["setuptools", "pybind11"]
 torch = ["typing-extensions"]
@@ -207,9 +208,9 @@ torchaudio = ["torch"]
 
 [tool.ruff]
 extend-exclude = [
-  "*mlx_typings/**",
-  "rust/exo_pyo3_bindings/**",
-  "bench/vendor/**",
+    "*mlx_typings/**",
+    "rust/exo_pyo3_bindings/**",
+    "bench/vendor/**",
 ]
 
 [tool.ruff.lint]
