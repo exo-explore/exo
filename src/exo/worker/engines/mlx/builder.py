@@ -34,7 +34,7 @@ class MlxBuilder(Builder):
     model_id: ModelId
     event_sender: MpSender[Event]
     cancel_receiver: MpReceiver[TaskId]
-    inference_model: Model | None = None
+    model: Model | None = None
     tokenizer: TokenizerWrapper | None = None
     group: mx.distributed.Group | None = None
     vision_processor: VisionProcessor | None = None
@@ -44,7 +44,7 @@ class MlxBuilder(Builder):
 
     def load(self, bound_instance: BoundInstance) -> Generator[ModelLoadingResponse]:
         (
-            self.inference_model,
+            self.model,
             self.tokenizer,
             self.vision_processor,
         ) = yield from load_mlx_items(bound_instance, self.group)
@@ -60,7 +60,7 @@ class MlxBuilder(Builder):
     def build(
         self,
     ) -> Engine:
-        assert self.inference_model
+        assert self.model
         assert self.tokenizer
 
         vision_processor = self.vision_processor
@@ -86,7 +86,7 @@ class MlxBuilder(Builder):
         if os.environ.get("EXO_NO_BATCH"):
             logger.info("using SequentialGenerator (batching disabled)")
             return SequentialGenerator(
-                model=self.inference_model,
+                model=self.model,
                 tokenizer=self.tokenizer,
                 group=self.group,
                 tool_parser=tool_parser,
@@ -100,7 +100,7 @@ class MlxBuilder(Builder):
         else:
             logger.info("using BatchGenerator")
             return BatchGenerator(
-                model=self.inference_model,
+                model=self.model,
                 tokenizer=self.tokenizer,
                 group=self.group,
                 tool_parser=tool_parser,

@@ -2,9 +2,6 @@ from collections.abc import Callable, Generator, Iterator
 from functools import cache
 from typing import Any
 
-from mlx_lm.models.deepseek_v4 import Model as DeepseekV4Model
-from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
-from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     HarmonyEncodingName,
@@ -23,7 +20,6 @@ from exo.shared.types.chunks import (
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
-from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
     detect_thinking_prompt_suffix,
 )
@@ -69,16 +65,15 @@ def apply_all_parsers(
     prompt: str,
     tool_parser: ToolParser | None,
     tokenizer: TokenizerWrapper,
-    model_type: type[Model],
     model_id: ModelId,
     tools: list[dict[str, Any]] | None,
 ) -> Iterator[GenerationChunk | None]:
     generator = receiver
 
-    normalized_id = model_id.normalize().lower()
-    if issubclass(model_type, GptOssModel):
+    normalized_id = model_id.short().lower()
+    if "gpt-oss" in normalized_id:
         generator = parse_gpt_oss(generator)
-    elif issubclass(model_type, DeepseekV32Model) and "deepseek" in normalized_id:
+    elif "deepseek-v3.2" in normalized_id:
         if tokenizer.has_thinking:
             generator = parse_thinking_models(
                 generator,
@@ -87,7 +82,7 @@ def apply_all_parsers(
                 starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
             )
         generator = parse_deepseek_v32(generator)
-    elif issubclass(model_type, DeepseekV4Model) and "deepseek-v4" in normalized_id:
+    elif "deepseek-v4" in normalized_id:
         if tokenizer.has_thinking:
             generator = parse_thinking_models(
                 generator,

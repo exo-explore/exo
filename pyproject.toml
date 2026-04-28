@@ -48,27 +48,27 @@ dev = [
 
 [project.optional-dependencies]
 build = ["nanobind"]
-cpu = [
-  "mlx==0.31.1; sys_platform == 'linux'",
-  "mlx-cpu==0.31.1; sys_platform == 'linux'",
+mlx-none = ["anyio"]
+mlx-cpu = [
+  "mlx==0.31.2; sys_platform == 'linux'",
+  "mlx-cpu==0.31.2; sys_platform == 'linux'",
   "mlx-lm; sys_platform == 'linux'",
   "mlx-vlm>=0.3.11; sys_platform== 'linux'",
-  "torch>=2.10.0; sys_platform == 'linux'",
 ]
-cuda12 = [
+mlx-cuda12 = [
   "mlx==0.31.1; sys_platform == 'linux'",
   "mlx-cuda-12==0.31.1; sys_platform == 'linux'",
   "mlx-lm; sys_platform == 'linux'",
   "mlx-vlm>=0.3.11; sys_platform== 'linux'",
-  "torch>=2.10.0; sys_platform == 'linux'",
 ]
-cuda13 = [
+mlx-cuda13 = [
   "mlx==0.31.1; sys_platform == 'linux'",
   "mlx-cuda-13==0.31.1; sys_platform == 'linux'",
   "mlx-lm; sys_platform == 'linux'",
   "mlx-vlm>=0.3.11; sys_platform== 'linux'",
-  "torch>=2.10.0; sys_platform == 'linux'",
 ]
+vllm-none = ["anyio"]
+vllm-cuda13 = ["vllm[cuda13, fastsafetensors]; sys_platform == 'linux'"]
 
 ###
 # workspace configuration
@@ -82,11 +82,12 @@ exo-pyo3-bindings = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
 torch = [
-  { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'cuda13' and extra != 'cpu' and extra != 'cuda12'" },
-  { index = "pytorch-cu120", marker = "sys_platform == 'linux' and extra == 'cuda12' and extra != 'cpu' and extra != 'cuda13'" },
-  { index = "pytorch-cpu", marker = "(extra != 'cuda12' and extra != 'cuda13' and sys_platform == 'linux') or sys_platform == 'darwin'" },
+  { index = "pytorch-cu130", marker = "(extra == 'mlx-cuda13' or extra == 'vllm-cuda13') and sys_platform == 'linux'" },
+  { index = "pytorch-cu120", marker = "(extra == 'mlx-cuda12' and extra != 'mlx-cuda13' and extra != 'vllm-cuda13') and sys_platform == 'linux'" },
+  { index = "pytorch-cpu", marker = "(extra != 'mlx-cuda12' and extra != 'mlx-cuda13' and extra != 'vllm-cuda13') and sys_platform == 'linux'" },
+  { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
 ]
-vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
+vllm = { git = "http://github.com/evanev7/vllm", branch = "exo" }
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
@@ -156,11 +157,19 @@ root = "src"
 required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
-conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }, { extra = "cpu" }]]
-constraint-dependencies = ["transformers>=5.6.2"]
-override-dependencies = [
-  "mlx==0.31.1; sys_platform=='linux'",
-  "mlx; sys_platform=='darwin'",
+override-dependencies = ["mlx", "opencv-python; python_version < '0'"]
+conflicts = [
+  [
+    { extra = "mlx-cuda13" },
+    { extra = "mlx-cuda12" },
+    { extra = "mlx-cpu" },
+    { extra = "mlx-none" },
+  ],
+  [
+    { extra = "vllm-cuda13" },
+    { extra = "mlx-cuda12" },
+    { extra = "vllm-none" },
+  ],
 ]
 
 [tool.uv.extra-build-dependencies]

@@ -221,7 +221,6 @@ class SequentialGenerator(Engine):
                 apply_chat_template(self.tokenizer, task.task_params),
                 self.tool_parser,
                 self.tokenizer,
-                type(self.model),
                 self.model_id,
                 task.task_params.tools,
             )
@@ -418,7 +417,6 @@ class BatchGenerator(Engine):
                     apply_chat_template(self.tokenizer, task.task_params),
                     self.tool_parser,
                     self.tokenizer,
-                    type(self.model),
                     self.model_id,
                     task.task_params.tools,
                 )
