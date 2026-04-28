@@ -5,6 +5,7 @@
     topologyData,
     isTopologyMinimized,
     debugMode,
+    instances,
     nodeThunderboltBridge,
     nodeRdmaCtl,
     nodeIdentities,
@@ -31,10 +32,68 @@
 
   const isMinimized = $derived(isTopologyMinimized());
   const data = $derived(topologyData());
+  const instanceData = $derived(instances());
   const debugEnabled = $derived(debugMode());
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const rdmaCtlData = $derived(nodeRdmaCtl());
   const identitiesData = $derived(nodeIdentities());
+
+  function getTaggedValue(value: unknown): [string | null, unknown] {
+    if (!value || typeof value !== "object") return [null, null];
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record);
+    if (keys.length !== 1) return [null, value];
+    return [keys[0], record[keys[0]]];
+  }
+
+  function getAsymmetricModelShareByNode(): Map<string, number> {
+    const shares = new Map<string, number>();
+
+    for (const instanceWrapped of Object.values(instanceData)) {
+      const [, instance] = getTaggedValue(instanceWrapped);
+      if (!instance || typeof instance !== "object") continue;
+
+      const shardAssignments = (
+        instance as {
+          shardAssignments?: {
+            nodeToRunner?: Record<string, string>;
+            runnerToShard?: Record<string, unknown>;
+          };
+        }
+      ).shardAssignments;
+      if (!shardAssignments?.nodeToRunner || !shardAssignments.runnerToShard) {
+        continue;
+      }
+
+      for (const [nodeId, runnerId] of Object.entries(
+        shardAssignments.nodeToRunner,
+      )) {
+        const shardWrapped = shardAssignments.runnerToShard[runnerId];
+        const [shardTag, shardValue] = getTaggedValue(shardWrapped);
+        if (
+          shardTag !== "AsymmetricTensorShardMetadata" ||
+          !shardValue ||
+          typeof shardValue !== "object"
+        ) {
+          continue;
+        }
+
+        const shard = shardValue as {
+          deviceRank?: number;
+          ratio?: number;
+          worldSize?: number;
+        };
+        if (shard.worldSize !== 2 || typeof shard.ratio !== "number") {
+          continue;
+        }
+
+        const share = shard.deviceRank === 0 ? shard.ratio : 1 - shard.ratio;
+        shares.set(nodeId, share);
+      }
+    }
+
+    return shares;
+  }
 
   function getNodeLabel(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -166,6 +225,7 @@
     const nodes = data.nodes || {};
     const edges = data.edges || [];
     const nodeIds = Object.keys(nodes);
+    const asymmetricModelShareByNode = getAsymmetricModelShareByNode();
 
     const rect = svgContainer.getBoundingClientRect();
     const width = rect.width;
@@ -562,6 +622,7 @@
       const isFilteredOut =
         filteredNodes.size > 0 && !filteredNodes.has(nodeInfo.id);
       const isHovered = hoveredNodeId === nodeInfo.id && !isInFilter;
+      const asymmetricShare = asymmetricModelShareByNode.get(nodeInfo.id);
 
       // Holographic wireframe colors - bright yellow for filter, subtle yellow for hover, grey for filtered out
       const wireColor = isInFilter
@@ -1137,12 +1198,59 @@
           .text(` (${ramUsagePercent.toFixed(0)}%)`);
       }
 
+      if (asymmetricShare !== undefined) {
+        const sharePercent = Math.round(asymmetricShare * 100);
+        const badgeY =
+          nodeInfo.y +
+          iconBaseHeight / 2 +
+          (showFullLabels ? 34 : showCompactLabels ? 24 : 22);
+        const badgeText = `${sharePercent}% MODEL`;
+        const badgeFontSize = showFullLabels ? 10 : showCompactLabels ? 7 : 7;
+        const badgeWidth = Math.max(
+          showFullLabels ? 70 : 52,
+          badgeText.length * badgeFontSize * 0.62 + 12,
+        );
+        const badgeHeight = showFullLabels ? 16 : 12;
+
+        nodeG
+          .append("rect")
+          .attr("x", nodeInfo.x - badgeWidth / 2)
+          .attr("y", badgeY - badgeHeight / 2)
+          .attr("width", badgeWidth)
+          .attr("height", badgeHeight)
+          .attr("rx", badgeHeight / 2)
+          .attr("fill", "rgba(255,215,0,0.14)")
+          .attr("stroke", "rgba(255,215,0,0.55)")
+          .attr("stroke-width", 1);
+
+        nodeG
+          .append("text")
+          .attr("x", nodeInfo.x)
+          .attr("y", badgeY + 0.5)
+          .attr("text-anchor", "middle")
+          .attr("dominant-baseline", "middle")
+          .attr("fill", "rgba(255,215,0,0.95)")
+          .attr("font-size", badgeFontSize)
+          .attr("font-weight", "700")
+          .attr("font-family", "SF Mono, Monaco, monospace")
+          .attr("letter-spacing", "0.04em")
+          .text(badgeText);
+      }
+
       // Debug mode: Show TB bridge and RDMA status
       if (debugEnabled) {
         let debugLabelY =
           nodeInfo.y +
           iconBaseHeight / 2 +
-          (showFullLabels ? 32 : showCompactLabels ? 26 : 22);
+          (asymmetricShare !== undefined
+            ? showFullLabels
+              ? 52
+              : 38
+            : showFullLabels
+              ? 32
+              : showCompactLabels
+                ? 26
+                : 22);
         const debugFontSize = showFullLabels ? 9 : 7;
         const debugLineHeight = showFullLabels ? 11 : 9;
 
