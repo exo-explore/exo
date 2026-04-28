@@ -342,6 +342,46 @@ def wait_for_cluster_nodes(
     )
 
 
+def wait_for_valid_placement(
+    client: ExoClient,
+    model_id: str = DEFAULT_MODEL,
+    *,
+    sharding: str = "Pipeline",
+    instance_meta: str = "MlxRing",
+    min_nodes: int = 1,
+    timeout: float = 120.0,
+) -> None:
+    """Wait until the cluster can produce a valid placement preview.
+
+    Polls /instance/previews until at least one error-free preview exists
+    that matches the requested sharding/instance_meta and uses >= min_nodes.
+    Useful after cluster topology changes (node disconnect/reconnect).
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            resp = client.request_json(
+                "GET", "/instance/previews", params={"model_id": model_id}
+            )
+            for preview in resp.get("previews", []):
+                if preview.get("error") is not None:
+                    continue
+                if preview.get("sharding") != sharding:
+                    continue
+                if preview.get("instance_meta") != instance_meta:
+                    continue
+                instance = preview.get("instance")
+                if instance and nodes_used_in_instance(instance) >= min_nodes:
+                    return
+        except Exception:
+            pass
+        time.sleep(2.0)
+    raise TimeoutError(
+        f"No valid {sharding}/{instance_meta} placement with >= {min_nodes} nodes "
+        f"after {timeout}s"
+    )
+
+
 def place_and_wait(
     client: ExoClient,
     model_id: str = DEFAULT_MODEL,
