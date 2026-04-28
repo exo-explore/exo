@@ -177,7 +177,7 @@ def mlx_distributed_init(
         if group is None:
             raise RuntimeError("MLX distributed initialization did not return a group")
 
-        return group  # pyright: ignore[reportPossiblyUnboundVariable]
+        return group
 
 
 def initialize_mlx(
@@ -304,7 +304,9 @@ def shard_and_load(
                 f"loading model from {model_path} with asymmetric tensor parallelism "
                 f"(ratios={[f'{r:.0%}' for r in ratios_list]})"
             )
-            model = yield from asymmetric_tensor_auto_parallel(model, group, ratios_list)
+            model = yield from asymmetric_tensor_auto_parallel(
+                model, group, ratios_list
+            )
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = yield from pipeline_auto_parallel(model, group, shard_metadata)

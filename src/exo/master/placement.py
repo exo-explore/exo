@@ -149,8 +149,9 @@ def place_instance(
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError("No cycles found with sufficient memory")
 
-    if sharding == Sharding.AsymmetricTensor and not _supports_asymmetric_tensor_parallel(
-        command.model_card
+    if (
+        sharding == Sharding.AsymmetricTensor
+        and not _supports_asymmetric_tensor_parallel(command.model_card)
     ):
         raise ValueError(
             f"Asymmetric tensor parallelism is not yet supported for "
@@ -190,6 +191,8 @@ def place_instance(
                 and _supports_asymmetric_tensor_parallel(command.model_card)
             ):
                 for cycle in cycles_with_sufficient_memory:
+                    if len(cycle) != 2:
+                        continue
                     equal_share = command.model_card.storage_size.in_bytes / len(cycle)
                     min_node_mem = min(
                         node_memory[nid].ram_available.in_bytes for nid in cycle
@@ -212,9 +215,19 @@ def place_instance(
         cycles_with_sufficient_memory = [
             cycle for cycle in cycles_with_sufficient_memory if len(cycle) == 2
         ]
+        cycles_with_sufficient_memory = [
+            cycle
+            for cycle in cycles_with_sufficient_memory
+            if _asymmetric_tensor_rank_zero_is_socket_reachable(
+                cycle=cycle,
+                node_memory=node_memory,
+                topology=topology,
+            )
+        ]
         if not cycles_with_sufficient_memory:
             raise ValueError(
-                "Asymmetric tensor parallelism currently requires exactly 2 nodes"
+                "Asymmetric tensor parallelism currently requires exactly 2 nodes "
+                "with the largest-memory rank-0 node socket-reachable"
             )
 
     if sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
@@ -223,9 +236,8 @@ def place_instance(
         raise ValueError(
             "Pipeline parallelism is not supported for DeepSeek V3.1 (8-bit)"
         )
-    if (
-        sharding == Sharding.Pipeline
-        and command.model_card.base_model.startswith("Gemma 4")
+    if sharding == Sharding.Pipeline and command.model_card.base_model.startswith(
+        "Gemma 4"
     ):
         cycles_with_sufficient_memory = [
             cycle for cycle in cycles_with_sufficient_memory if len(cycle) == 1
@@ -283,12 +295,10 @@ def place_instance(
     )
     selected_cycle = _prefer_socket_reachable_rank_zero(selected_cycle, topology)
     if sharding == Sharding.AsymmetricTensor:
-        selected_cycle = Cycle(
-            node_ids=sorted(
-                selected_cycle.node_ids,
-                key=lambda node_id: node_memory[node_id].ram_available.in_bytes,
-                reverse=True,
-            )
+        selected_cycle = _order_asymmetric_tensor_cycle(
+            cycle=selected_cycle,
+            node_memory=node_memory,
+            topology=topology,
         )
 
     # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
@@ -381,6 +391,44 @@ def _prefer_socket_reachable_rank_zero(cycle: Cycle, topology: Topology) -> Cycl
     if best_index == 0:
         return cycle
     return Cycle(node_ids=cycle.node_ids[best_index:] + cycle.node_ids[:best_index])
+
+
+def _order_asymmetric_tensor_cycle(
+    cycle: Cycle,
+    node_memory: Mapping[NodeId, MemoryUsage],
+    topology: Topology,
+) -> Cycle:
+    """Order an asymmetric TP cycle with the largest reachable node as rank 0."""
+    ordered_cycle = Cycle(
+        node_ids=sorted(
+            cycle.node_ids,
+            key=lambda node_id: node_memory[node_id].ram_available.in_bytes,
+            reverse=True,
+        )
+    )
+    preferred_cycle = _prefer_socket_reachable_rank_zero(ordered_cycle, topology)
+    if preferred_cycle.node_ids[0] != ordered_cycle.node_ids[0]:
+        raise ValueError(
+            "Asymmetric tensor parallelism requires the largest-memory rank-0 "
+            "node to be socket-reachable"
+        )
+    return ordered_cycle
+
+
+def _asymmetric_tensor_rank_zero_is_socket_reachable(
+    cycle: Cycle,
+    node_memory: Mapping[NodeId, MemoryUsage],
+    topology: Topology,
+) -> bool:
+    try:
+        _order_asymmetric_tensor_cycle(
+            cycle=cycle,
+            node_memory=node_memory,
+            topology=topology,
+        )
+    except ValueError:
+        return False
+    return True
 
 
 def delete_instance(

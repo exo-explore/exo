@@ -287,19 +287,16 @@ def get_shard_assignments_for_asymmetric_tensor_parallel(
     total_layers = model_card.n_layers
     world_size = len(cycle)
 
-    sorted_nodes = sorted(
-        cycle,
-        key=lambda node_id: node_memory[node_id].ram_available.in_bytes,
-        reverse=True,
-    )
+    ordered_nodes = list(cycle)
 
-    # Compute memory fractions with the largest-memory node fixed as rank 0.
+    # The placement layer orders the cycle so rank 0 is both the largest-memory
+    # node and socket-reachable for distributed initialization.
     total_available = sum(
-        node_memory[node_id].ram_available.in_bytes for node_id in sorted_nodes
+        node_memory[node_id].ram_available.in_bytes for node_id in ordered_nodes
     )
     memory_fractions = [
         node_memory[node_id].ram_available.in_bytes / total_available
-        for node_id in sorted_nodes
+        for node_id in ordered_nodes
     ]
 
     from exo.worker.engines.mlx.asymmetric_parallel import find_valid_ratios
@@ -319,7 +316,7 @@ def get_shard_assignments_for_asymmetric_tensor_parallel(
     node_to_runner: dict[NodeId, RunnerId] = {}
     rank_zero_ratio = ratios[0]
 
-    for i, node_id in enumerate(sorted_nodes):
+    for i, node_id in enumerate(ordered_nodes):
         shard = AsymmetricTensorShardMetadata(
             model_card=model_card,
             device_rank=i,

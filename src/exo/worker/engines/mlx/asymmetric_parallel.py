@@ -243,7 +243,6 @@ def _shard_attention(
     attn._asymmetric_tp_group = group
 
 
-
 class AsymmetricShardedMoE(nn.Module):
     def __init__(self, layer: SparseMoeBlock | Qwen3_5SparseMoeBlock):
         super().__init__()
