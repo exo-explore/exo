@@ -648,8 +648,13 @@ def mlx_generate(
     with maybe_vision_ctx:
         if use_remote and task.prefill_endpoint is not None:
             try:
+                # Send the FULL prompt to the producer (not the cache-stripped
+                # suffix). vLLM's APC handles the prefix match internally;
+                # `start_pos` tells our extractor / wire writer how much of the
+                # producer-side capture corresponds to tokens the consumer
+                # already has, so the writer's skip_tokens math aligns.
                 prefill_tps, prefill_tokens, ssm_snapshots_list = remote_prefill(
-                    prompt_tokens[:-1],
+                    all_prompt_tokens[:-1],
                     caches,
                     on_prefill_progress,
                     endpoint=task.prefill_endpoint,

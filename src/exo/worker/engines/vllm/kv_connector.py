@@ -43,6 +43,8 @@ _gdn_states: dict[int, dict[str, torch.Tensor]] = {}
 _gdn_layer_order: list[int] = []
 _gdn_call_idx: list[int] = [0]
 _ssm_call_idx: list[int] = [0]
+# Per-layer save_kv_layer call diagnostics: list of slot_mapping sizes seen.
+_save_kv_layer_diag: dict[int, list[int]] = {}
 
 
 def get_kv_queue() -> "queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None]":
@@ -55,6 +57,10 @@ def get_arrays_queue() -> "queue.Queue[tuple[int, list[torch.Tensor]] | None]":
 
 def get_gdn_states() -> dict[int, dict[str, torch.Tensor]]:
     return _gdn_states
+
+
+def get_save_kv_layer_diag() -> dict[int, list[int]]:
+    return _save_kv_layer_diag
 
 
 def get_captured_layers() -> dict[int, dict[str, torch.Tensor]]:
@@ -81,6 +87,7 @@ def reset_capture_state() -> None:
     _gdn_states.clear()
     _gdn_call_idx[0] = 0
     _ssm_call_idx[0] = 0
+    _save_kv_layer_diag.clear()
 
 
 @dataclass
@@ -123,11 +130,21 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
         **kwargs: Any,
     ) -> None:
         slot_mapping = getattr(attn_metadata, "slot_mapping", None)
+        m = _LAYER_RE.search(layer_name)
+        layer_idx_for_diag = int(m.group(1)) if m else -1
+        slot_size = (
+            int(slot_mapping.shape[0]) if slot_mapping is not None else -1
+        )
+        is_list_kv = isinstance(kv_layer, (list, tuple))
+        # Tag list/tuple as negative so the diag log distinguishes hybrid from
+        # non-hybrid even when slot_size is the same.
+        _save_kv_layer_diag.setdefault(layer_idx_for_diag, []).append(
+            -slot_size if is_list_kv else slot_size
+        )
+
         # Skip decode-step saves (small slot mapping); we only want prefill.
         if slot_mapping is not None and slot_mapping.shape[0] <= 100:
             return
-
-        m = _LAYER_RE.search(layer_name)
         if m is None:
             return
         layer_idx = int(m.group(1))
@@ -147,7 +164,15 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
         # eviction in the block pool, is the only way to ship every prompt
         # token's K/V regardless of attention type.
         if slot_mapping is not None:
-            keys, values = extract_kv_via_slot_mapping(kv_layer, slot_mapping)
+            try:
+                keys, values = extract_kv_via_slot_mapping(kv_layer, slot_mapping)
+            except Exception as exc:
+                logger.warning(
+                    f"save_kv_layer extract failed layer={layer_idx} "
+                    f"kv_layer.shape={getattr(kv_layer, 'shape', None)} "
+                    f"slot_mapping.shape={slot_mapping.shape}: {exc!r}"
+                )
+                return
             _kv_queue.put((layer_idx, keys, values))
 
     def wait_for_save(self) -> None:

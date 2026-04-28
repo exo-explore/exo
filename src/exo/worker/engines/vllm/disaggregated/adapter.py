@@ -126,13 +126,9 @@ def write_kv_layer_chunk(
     )
 
 
-def write_layer_arrays(
-    wfile: BinaryIO,
-    layer_idx: int,
-    arrays: list[torch.Tensor],
-) -> None:
-    """Serialize a layer's auxiliary state (SSM/conv) as `ArraysState`."""
-    blobs = [
+def arrays_to_blobs(arrays: list[torch.Tensor]) -> list[TensorBlob]:
+    """Convert torch tensors (CPU or GPU) to wire-ready `TensorBlob`s."""
+    return [
         TensorBlob(
             dtype=torch_dtype_to_wire(arr.dtype),
             shape=tuple(int(d) for d in arr.shape),
@@ -140,7 +136,23 @@ def write_layer_arrays(
         )
         for arr in arrays
     ]
+
+
+def write_layer_arrays_blobs(
+    wfile: BinaryIO,
+    layer_idx: int,
+    blobs: list[TensorBlob],
+) -> None:
     write_arrays_state(wfile, layer_idx, blobs)
+
+
+def write_layer_arrays(
+    wfile: BinaryIO,
+    layer_idx: int,
+    arrays: list[torch.Tensor],
+) -> None:
+    """Serialize a layer's auxiliary state (SSM/conv) as `ArraysState`."""
+    write_layer_arrays_blobs(wfile, layer_idx, arrays_to_blobs(arrays))
 
 
 def write_prefill_header(

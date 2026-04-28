@@ -35,12 +35,6 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import TaskId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
-
-# todo; move to different file
-from exo.worker.engines.mlx.utils_mlx import get_eos_token_ids_for_model
-from exo.worker.engines.vllm.prompt_format import (
-    make_vllm_sampling_params,
-)
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.tool_parsers import ToolParser, infer_tool_parser
 
@@ -60,6 +54,8 @@ class _EngineRequest:
 
 
 def _stop_token_ids(tokenizer: TokenizerLike, model_id: ModelId) -> set[int]:
+    from exo.worker.engines.mlx.utils_mlx import get_eos_token_ids_for_model
+
     ids: set[int] = set()
     eos_id = getattr(tokenizer, "eos_token_id", None)
     if eos_id is not None:
@@ -176,6 +172,8 @@ class VllmBatchEngine:
         on_prefill_progress: Callable[[int, int], None] | None = None,
         on_generation_token: Callable[[], None] | None = None,
     ) -> TaskId:
+        from exo.worker.engines.vllm.prompt_format import make_vllm_sampling_params
+
         sampling_params = make_vllm_sampling_params(
             self.engine, task_params, self.model_id
         )
@@ -449,7 +447,7 @@ def load_vllm_engine(
                 gpu_memory_utilization=0.05,
                 trust_remote_code=trust_remote_code,
                 load_format="fastsafetensors",
-                enable_prefix_caching=True,
+                enable_prefix_caching=False,
                 attention_backend=backend,
                 compilation_config=CompilationConfig(
                     mode=CompilationMode.NONE,

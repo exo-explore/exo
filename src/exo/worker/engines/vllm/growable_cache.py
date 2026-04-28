@@ -383,35 +383,43 @@ def _grow_tensors(
 
     new_kv_typed = cast("dict[str, torch.Tensor | list[torch.Tensor]]", new_kv_caches)
     for layer_name, new_kv in new_kv_typed.items():
-        old_kv_list = cast(
-            "list[torch.Tensor | list[torch.Tensor]] | torch.Tensor | None",
-            forward_context[layer_name].kv_cache,
-        )
-        if old_kv_list is not None and (
-            not isinstance(old_kv_list, torch.Tensor) or old_kv_list.numel() > 0
-        ):
-            old_entry = old_kv_list[0]
-            if isinstance(old_entry, list) and isinstance(new_kv, list):
-                for old_t, new_t in zip(old_entry, new_kv, strict=True):
+        # vLLM uses different shapes per layer kind (gpu_model_runner.py:5852):
+        #   - full / sliding-window attention: `attn.kv_cache: torch.Tensor`
+        #     (paged storage with K/V stacked along dim 0; consumers call
+        #     `.unbind(0)` so it MUST be a Tensor, not a list)
+        #   - Mamba / hybrid:                  `attn.kv_cache: list[Tensor]`
+        #     ([conv_state, ssm_state])
+        # Preserve that distinction here. In-place .set_() keeps the existing
+        # tensor identities valid for any captured refs (torch.compile graph,
+        # layer module attrs); we only fall back to assignment on first
+        # install or a shape mismatch.
+        old_kv = forward_context[layer_name].kv_cache
+
+        if isinstance(new_kv, list):
+            if (
+                isinstance(old_kv, list)
+                and len(old_kv) == len(new_kv)
+                and all(isinstance(t, torch.Tensor) for t in old_kv)
+            ):
+                for old_t, new_t in zip(old_kv, new_kv, strict=True):
                     old_t.set_(
                         new_t.storage(),
                         new_t.storage_offset(),
                         new_t.shape,
                         new_t.stride(),
                     )
-            elif isinstance(old_entry, torch.Tensor) and isinstance(
-                new_kv, torch.Tensor
-            ):
-                old_entry.set_(
+            else:
+                forward_context[layer_name].kv_cache = new_kv
+        else:
+            if isinstance(old_kv, torch.Tensor) and old_kv.numel() > 0:
+                old_kv.set_(
                     new_kv.storage(),
                     new_kv.storage_offset(),
                     new_kv.shape,
                     new_kv.stride(),
                 )
             else:
-                forward_context[layer_name].kv_cache = [new_kv]
-        else:
-            forward_context[layer_name].kv_cache = [new_kv]
+                forward_context[layer_name].kv_cache = new_kv
 
 
 def _grow_block_pool(

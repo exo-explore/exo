@@ -30,19 +30,20 @@ def remote_prefill(
     t0 = time.perf_counter()
     total_prompt_tokens = int(prompt_tokens.shape[0])
     num_layers: int = 0
+    tokens_received_total: int = 0
 
     def _on_header(header: Header) -> None:
         nonlocal num_layers
         num_layers = header.num_layers
 
-    def _on_chunk(_chunk: KVChunk, chunks_received: int) -> None:
-        nonlocal num_layers
+    def _on_chunk(chunk: KVChunk, chunks_received: int) -> None:
+        nonlocal num_layers, tokens_received_total
+        tokens_received_total += chunk.num_tokens
         if on_prefill_progress is None:
             return
         if num_layers > 0 and chunks_received % num_layers == 0:
-            tokens_so_far = chunks_received // num_layers
             on_prefill_progress(
-                min(tokens_so_far, total_prompt_tokens),
+                min(tokens_received_total // num_layers, total_prompt_tokens),
                 total_prompt_tokens,
             )
 
@@ -63,6 +64,28 @@ def remote_prefill(
     t_done = time.perf_counter()
 
     num_tokens = final_offset - start_pos
+    # The producer strips the last 2 tokens of the prompt (consumer warm-starts
+    # decode from those locally). Anything within `producer_strip` of the full
+    # suffix is the expected outcome, not a bug.
+    producer_strip = 2 if total_prompt_tokens > 2 else 0
+    expected_min = max(0, total_prompt_tokens - start_pos - producer_strip)
+    expected_max = max(0, total_prompt_tokens - start_pos)
+    if num_tokens <= 0:
+        raise RuntimeError(
+            f"Remote prefill returned no KV (start_pos={start_pos}, "
+            f"final_offset={final_offset}, expected={expected_min}, "
+            f"transfer={(t_received - t0) * 1000:.0f}ms)"
+        )
+    if num_tokens < expected_min:
+        logger.warning(
+            f"Remote prefill returned {num_tokens} tokens, expected at least "
+            f"{expected_min} (start_pos={start_pos}, final_offset={final_offset})"
+        )
+    elif num_tokens > expected_max:
+        logger.warning(
+            f"Remote prefill returned {num_tokens} tokens, expected at most "
+            f"{expected_max} (start_pos={start_pos}, final_offset={final_offset})"
+        )
     tps = num_tokens / max(t_done - t0, 0.001)
 
     logger.info(

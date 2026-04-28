@@ -1,11 +1,10 @@
+import contextlib
 import itertools
 import time
 from collections import deque
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from typing import BinaryIO
-
-from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
 from exo.shared.types.chunks import ErrorChunk, GenerationChunk, PrefillProgressChunk
@@ -27,7 +26,6 @@ from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.base import Engine
 from exo.worker.engines.vllm.generator import VllmBatchEngine
-from exo.worker.engines.vllm.prompt_format import format_vllm_prompt
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.model_output_parsers import (
     apply_all_parsers,
@@ -164,9 +162,12 @@ class VllmEngine(Engine):
         import torch
         from vllm import SamplingParams
 
+        from exo.worker.disaggregated.protocol import write_error, write_kv_chunk
         from exo.worker.engines.vllm.disaggregated.adapter import (
-            write_kv_layer_chunk,
-            write_layer_arrays,
+            arrays_to_blobs,
+            tensor_to_wire_bytes,
+            torch_dtype_to_wire,
+            write_layer_arrays_blobs,
             write_prefill_done,
             write_prefill_header,
         )
@@ -175,6 +176,7 @@ class VllmEngine(Engine):
             get_arrays_queue,
             get_gdn_states,
             get_kv_queue,
+            get_save_kv_layer_diag,
             init_gdn_layer_order,
             reset_capture_state,
         )
@@ -182,12 +184,15 @@ class VllmEngine(Engine):
         engine = self._gen.engine
         if engine.has_unfinished_requests():
             logger.warning("serve_prefill: engine busy, refusing prefill request")
+            write_error(wfile, code=503, message="engine busy")
             return
 
         model_runner = get_model_runner()
         if model_runner is None:
             logger.warning("serve_prefill: model runner not initialized")
+            write_error(wfile, code=503, message="model runner not initialized")
             return
+
         init_gdn_layer_order(model_runner.kv_caches)
 
         prefill_token_ids = (
@@ -201,6 +206,18 @@ class VllmEngine(Engine):
         arrays_queue = get_arrays_queue()
         kv_queue = get_kv_queue()
 
+        # vLLM APC is disabled at engine-creation time (enable_prefix_caching=False
+        # in generator.py). Cross-request prefix reuse on the consumer (MLX) side
+        # is handled by its own kv_prefix_cache; the vLLM-side server here is
+        # stateless across requests by design. We still skip the trailing 2
+        # tokens because the consumer warm-starts decode from them.
+        sp = SamplingParams(max_tokens=2, temperature=0.0, detokenize=False)
+        engine.add_request(
+            request.request_id,
+            {"prompt_token_ids": prefill_token_ids},
+            sp,
+        )
+
         write_prefill_header(
             wfile,
             request_id=request.request_id,
@@ -209,48 +226,65 @@ class VllmEngine(Engine):
             start_pos=request.start_pos,
         )
 
-        skip_tokens = max(0, request.start_pos)
+        # Consumer already has KV for [0, request.start_pos); drop those tokens
+        # from the post-forward stream so we only ship the suffix it needs.
+        skip_tokens = request.start_pos
         chunks_sent = [0]
         layer_token_counts: dict[int, int] = {}
 
         def writer_loop() -> None:
-            while True:
-                item = kv_queue.get()
-                if item is None:
-                    break
-                layer_idx, keys, values = item
-                previous = layer_token_counts.get(layer_idx, 0)
-                count = int(keys.shape[0])
-                new_total = previous + count
-                layer_token_counts[layer_idx] = new_total
+            try:
+                while True:
+                    item = kv_queue.get()
+                    if item is None:
+                        break
+                    layer_idx, keys, values = item
+                    previous = layer_token_counts.get(layer_idx, 0)
+                    count = int(keys.shape[0])
+                    new_total = previous + count
+                    layer_token_counts[layer_idx] = new_total
 
-                if new_total <= skip_tokens:
-                    continue
-                if previous < skip_tokens:
-                    trim = skip_tokens - previous
-                    keys = keys[trim:]
-                    values = values[trim:]
-                if chunks_sent[0] == 0:
-                    logger.info(
-                        f"First KV chunk: layer={layer_idx} keys={keys.shape} "
-                        f"keys.dtype={keys.dtype} values.dtype={values.dtype}"
+                    if new_total <= skip_tokens:
+                        continue
+                    if previous < skip_tokens:
+                        trim = skip_tokens - previous
+                        keys = keys[trim:]
+                        values = values[trim:]
+                    if keys.dim() == 4:
+                        keys = keys.reshape(-1, keys.shape[-2], keys.shape[-1])
+                        values = values.reshape(
+                            -1, values.shape[-2], values.shape[-1]
+                        )
+                    num_tokens = int(keys.shape[0])
+                    n_heads = int(keys.shape[1])
+                    head_dim = int(keys.shape[2])
+                    dtype_w = torch_dtype_to_wire(keys.dtype)
+                    if chunks_sent[0] == 0:
+                        logger.info(
+                            f"First KV chunk: layer={layer_idx} keys={keys.shape} "
+                            f"keys.dtype={keys.dtype} values.dtype={values.dtype}"
+                        )
+                    write_kv_chunk(
+                        wfile,
+                        layer_idx=layer_idx,
+                        num_tokens=num_tokens,
+                        n_heads=n_heads,
+                        head_dim=head_dim,
+                        dtype=dtype_w,
+                        keys=tensor_to_wire_bytes(keys),
+                        values=tensor_to_wire_bytes(values),
                     )
-                write_kv_layer_chunk(wfile, layer_idx, keys, values)
-                chunks_sent[0] += 1
-
-        sp = SamplingParams(max_tokens=2, temperature=0.0, detokenize=False)
-        if not request.use_prefix_cache:
-            sp.skip_reading_prefix_cache = True
-        engine.add_request(
-            request.request_id,
-            {"prompt_token_ids": prefill_token_ids},
-            sp,
-        )
+                    chunks_sent[0] += 1
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "serve_prefill writer thread crashed"
+                )
 
         writer_thread = threading.Thread(target=writer_loop, daemon=True)
         writer_thread.start()
 
         t0 = time.perf_counter()
+        forward_error: Exception | None = None
         try:
             while engine.has_unfinished_requests():
                 outputs = engine.step()
@@ -266,18 +300,32 @@ class VllmEngine(Engine):
                 break
             while engine.has_unfinished_requests():
                 _ = engine.step()
+        except Exception as exc:
+            forward_error = exc
+            with contextlib.suppress(Exception):
+                engine.abort_request([request.request_id])
         finally:
+            logger.info(
+                f"serve_prefill {request.request_id}: kv_queue size before sentinel = {kv_queue.qsize()}"
+            )
             kv_queue.put(None)
             writer_thread.join(timeout=30)
             if writer_thread.is_alive():
                 logger.warning("serve_prefill: writer thread did not exit")
 
-        # Drain arrays_queue first (full per-layer cache state from
-        # save_kv_layer), then write _gdn_states (per-request conv/ssm slice
-        # captured by the causal_conv1d / delta-rule patches). The consumer
-        # is keyed by layer_idx so the GDN write overwrites the arrays_queue
-        # write — that's intentional, the GDN snapshot is the per-request
-        # state we actually want.
+        if forward_error is not None:
+            logger.opt(exception=forward_error).error(
+                f"serve_prefill {request.request_id}: engine.step() raised"
+            )
+            with contextlib.suppress(Exception):
+                write_error(wfile, code=500, message=f"engine.step: {forward_error!r}")
+            return
+
+        # Drain arrays_queue first (per-layer cache state from save_kv_layer),
+        # then _gdn_states (per-request conv/ssm slice from kernel patches).
+        # Consumer is keyed by layer_idx with last-write-wins, so GDN
+        # overwrites arrays_queue — that's intentional, GDN is the slice we
+        # actually want; arrays_queue carries the whole batch buffer.
         arrays_layers = 0
         while not arrays_queue.empty():
             try:
@@ -287,7 +335,7 @@ class VllmEngine(Engine):
             if arr_item is None:
                 continue
             layer_idx, arrays = arr_item
-            write_layer_arrays(wfile, layer_idx, arrays)
+            write_layer_arrays_blobs(wfile, layer_idx, arrays_to_blobs(arrays))
             arrays_layers += 1
 
         gdn = get_gdn_states()
@@ -301,17 +349,24 @@ class VllmEngine(Engine):
             if "ssm" in state:
                 arrs.append(state["ssm"])
             if arrs:
-                write_layer_arrays(wfile, layer_idx, arrs)
+                write_layer_arrays_blobs(wfile, layer_idx, arrays_to_blobs(arrs))
                 arrays_layers += 1
 
-        actual_per_layer = max(layer_token_counts.values(), default=0)
-        tokens_sent = max(0, actual_per_layer - skip_tokens)
+        forwarded_per_layer = max(layer_token_counts.values(), default=0)
+        tokens_sent = max(0, forwarded_per_layer - skip_tokens)
         write_prefill_done(wfile, tokens_sent)
         elapsed = time.perf_counter() - t0
+        diag = get_save_kv_layer_diag()
+        diag_summary = sorted(
+            (li, len(calls), [c for c in calls[:4]])
+            for li, calls in diag.items()
+        )
         logger.info(
-            f"serve_prefill {request.request_id}: kv_chunks={chunks_sent[0]} "
-            f"arrays_layers={arrays_layers} tokens={tokens_sent} "
-            f"elapsed_ms={elapsed * 1000:.0f}"
+            f"serve_prefill {request.request_id}: "
+            f"streamed_chunks={chunks_sent[0]} arrays_layers={arrays_layers} "
+            f"tokens={tokens_sent} elapsed_ms={elapsed * 1000:.0f} "
+            f"save_kv_layer_calls(layer,n,first4_slot_sizes)={diag_summary[:8]}..."
+            f"{diag_summary[-4:] if len(diag_summary) > 8 else ''}"
         )
 
     def _start_task(
@@ -321,6 +376,8 @@ class VllmEngine(Engine):
         GeneratorQueue[GenerationResponse],
         Iterator[GenerationChunk | None],
     ]:
+        from exo.worker.engines.vllm.prompt_format import format_vllm_prompt
+
         _check_for_debug_prompts(task.task_params)
 
         token_ids, prompt_text, _ = format_vllm_prompt(
@@ -333,6 +390,8 @@ class VllmEngine(Engine):
                 lambda r: map_responses_to_chunks(r, self.model_id), queue.gen()
             )
         else:
+            from mlx_lm.tokenizer_utils import TokenizerWrapper
+
             output_generator = apply_all_parsers(
                 queue.gen(),
                 prompt_text,

@@ -219,7 +219,7 @@
         Prefill vs Decode
       </summary>
       <div class="mt-2 text-white/80 text-sm leading-relaxed">
-        Prefill is the compute-heavy pass that consumes the entire prompt and
+        Prefill is the compute-bound pass that consumes the entire prompt and
         builds a KV cache. Decode is the memory-bandwidth-bound loop that emits
         tokens sequentially from that cache. The two phases have very different
         bottlenecks, so running them on different hardware can be substantially
