@@ -96,7 +96,11 @@ EXO_OFFLINE = os.getenv("EXO_OFFLINE", "false").lower() == "true"
 
 EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true"
 
-ENABLE_DISAGGREGATION = os.getenv("ENABLE_DISAGGREGATION", "false").lower() == "true"
+DISAGGREGATION_MODE = int(os.getenv("DISAGGREGATION_MODE", "0"))
+if DISAGGREGATION_MODE not in (0, 1, 2):
+    raise ValueError(
+        f"DISAGGREGATION_MODE must be 0 (off), 1 (non-overlapping), or 2 (overlapping); got {DISAGGREGATION_MODE}"
+    )
 
 EXO_MAX_CONCURRENT_REQUESTS = int(os.getenv("EXO_MAX_CONCURRENT_REQUESTS", "8"))
 

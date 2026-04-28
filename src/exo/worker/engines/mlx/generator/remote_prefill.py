@@ -8,10 +8,7 @@ from mlx_lm.models.cache import ArraysCache, KVCache, RotatingKVCache
 from exo.worker.disaggregated.protocol import Header, KVChunk
 from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.mlx.cache import CacheSnapshot, snapshot_ssm_states
-from exo.worker.engines.mlx.disaggregated.client import (
-    ingest_into_mlx_cache,
-    remote_prefill_fetch,
-)
+from exo.worker.engines.mlx.disaggregated.client import remote_prefill_stream
 from exo.worker.engines.mlx.types import KVCacheType
 from exo.worker.runner.bootstrap import logger
 
@@ -51,13 +48,14 @@ def remote_prefill(
         start_pos=start_pos,
         request_id=request_id,
     )
-    result = remote_prefill_fetch(
-        endpoint, request, on_header=_on_header, on_kv_chunk=_on_chunk
-    )
-    t_received = time.perf_counter()
-
     caches = cast(list[KVCache | RotatingKVCache | ArraysCache], list(cache))
-    final_offset = ingest_into_mlx_cache(result, caches, start_pos=start_pos)
+    _, final_offset = remote_prefill_stream(
+        endpoint,
+        request,
+        caches,
+        on_header=_on_header,
+        on_kv_chunk=_on_chunk,
+    )
     t_done = time.perf_counter()
 
     num_tokens = final_offset - start_pos
@@ -66,7 +64,6 @@ def remote_prefill(
     logger.info(
         f"Remote prefill: {num_tokens} tokens (start_pos={start_pos}, "
         f"final_offset={final_offset}) at {tps:.0f} tok/s, "
-        f"transfer={(t_received - t0) * 1000:.0f}ms, "
-        f"inject={(t_done - t_received) * 1000:.0f}ms"
+        f"elapsed={(t_done - t0) * 1000:.0f}ms"
     )
     return tps, num_tokens, [snapshot_ssm_states(cache)]

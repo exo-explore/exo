@@ -208,6 +208,62 @@ def test_serve_prefill_slices_payload_at_client_start_pos(
     assert chunks[0].num_tokens == expected_sent
 
 
+def test_run_prefill_streams_per_step_when_on_step_provided(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify on_step fires per progress callback with correct offsets."""
+    step_size = 4
+
+    def fake_prefill(**kwargs: object) -> tuple[float, int, list[object]]:
+        pt = cast(mx.array, kwargs["prompt_tokens"])
+        cache = cast(list[KVCache], kwargs["cache"])
+        existing = int(cache[0].offset) if cache and cache[0].keys is not None else 0
+        n = int(pt.shape[0])
+        cb = cast(Callable[[int, int], None] | None, kwargs.get("on_prefill_progress"))
+        processed = 0
+        while processed < n:
+            advance = min(step_size, n - processed)
+            processed += advance
+            _populate_cache_in_place(cache, existing + processed)
+            if cb is not None:
+                cb(processed, n)
+        return (0.0, n, [])
+
+    def fake_make_sampler(**_: object) -> Callable[[mx.array], mx.array]:
+        return lambda x: x
+
+    monkeypatch.setattr(mlx_serve_mod, "mlx_prefill", fake_prefill)
+    monkeypatch.setattr(mlx_serve_mod, "make_sampler", fake_make_sampler)
+
+    from exo.worker.engines.mlx.types import KVCacheType
+
+    seen: list[tuple[int, int]] = []
+
+    def on_step(cur: int, ks: KVCacheType) -> None:
+        seen.append((cur, len(ks)))
+
+    n_tokens = 14
+    cache = mlx_serve_mod.run_prefill_for_request(
+        model=cast(Any, _FakeModel()),  # pyright: ignore[reportAny]
+        tokenizer=cast(Any, _FakeTokenizer()),  # pyright: ignore[reportAny]
+        group=None,
+        kv_prefix_cache=None,
+        request=PrefillRequest(
+            request_id="r-stream",
+            model_id="m",
+            token_ids=list(range(n_tokens)),
+            start_pos=0,
+        ),
+        on_step=on_step,
+    )
+
+    assert len(seen) >= 2
+    assert seen == sorted(seen)
+    final_offset = seen[-1][0]
+    assert final_offset == n_tokens - 2
+    assert int(cache[0].offset) == n_tokens - 2
+
+
 def test_serve_prefill_works_without_prefix_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -225,3 +281,53 @@ def test_serve_prefill_works_without_prefix_cache(
 
     _, _, total = _decode(payload)
     assert total == 18
+
+
+def test_stream_prefill_emits_multiple_chunks_when_overlapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io as _io
+
+    import exo.worker.runner.llm_inference.batch_generator as bg
+
+    step_size = 4
+
+    def fake_prefill(**kwargs: object) -> tuple[float, int, list[object]]:
+        pt = cast(mx.array, kwargs["prompt_tokens"])
+        cache = cast(list[KVCache], kwargs["cache"])
+        existing = int(cache[0].offset) if cache and cache[0].keys is not None else 0
+        n = int(pt.shape[0])
+        cb = cast(Callable[[int, int], None] | None, kwargs.get("on_prefill_progress"))
+        processed = 0
+        while processed < n:
+            advance = min(step_size, n - processed)
+            processed += advance
+            _populate_cache_in_place(cache, existing + processed)
+            if cb is not None:
+                cb(processed, n)
+        return (0.0, n, [])
+
+    def fake_make_sampler(**_: object) -> Callable[[mx.array], mx.array]:
+        return lambda x: x
+
+    monkeypatch.setattr(mlx_serve_mod, "mlx_prefill", fake_prefill)
+    monkeypatch.setattr(mlx_serve_mod, "make_sampler", fake_make_sampler)
+
+    n_tokens = 14
+    request = PrefillRequest(
+        request_id="r", model_id="m", token_ids=list(range(n_tokens)), start_pos=0
+    )
+
+    buf = _io.BytesIO()
+    bg.stream_prefill(
+        wfile=buf,
+        request=request,
+        model=cast(Any, _FakeModel()),  # pyright: ignore[reportAny]
+        tokenizer=cast(Any, _FakeTokenizer()),  # pyright: ignore[reportAny]
+        group=None,
+        kv_prefix_cache=None,
+    )
+
+    _, chunks, total = _decode(buf.getvalue())
+    assert total == n_tokens - 2
+    assert len(chunks) >= 2

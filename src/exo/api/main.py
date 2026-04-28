@@ -124,7 +124,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
-    ENABLE_DISAGGREGATION,
+    DISAGGREGATION_MODE,
     EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
@@ -222,12 +222,12 @@ def _ensure_seed(params: AdvancedImageParams | None) -> AdvancedImageParams:
 
 
 def _require_disaggregation_enabled() -> None:
-    if not ENABLE_DISAGGREGATION:
+    if DISAGGREGATION_MODE == 0:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(
                 "Prefill/decode disaggregation is disabled. "
-                "Set ENABLE_DISAGGREGATION=true to enable."
+                "Set DISAGGREGATION_MODE=1 (non-overlapping) or 2 (overlapping) to enable."
             ),
         )
 
@@ -640,10 +640,10 @@ class API:
         )
 
     async def get_feature_flags(self) -> dict[str, bool]:
-        return {"disaggregation": ENABLE_DISAGGREGATION}
+        return {"disaggregation": DISAGGREGATION_MODE != 0}
 
     async def list_instance_links(self) -> list[InstanceLink]:
-        if not ENABLE_DISAGGREGATION:
+        if DISAGGREGATION_MODE == 0:
             return []
         return list(self.state.instance_links.values())
 

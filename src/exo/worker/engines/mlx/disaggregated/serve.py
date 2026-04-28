@@ -1,4 +1,5 @@
 import time
+from collections.abc import Callable
 
 import mlx.core as mx
 from mlx_lm.sample_utils import make_sampler
@@ -16,6 +17,8 @@ from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import fix_unmatched_think_end_tokens
 from exo.worker.runner.bootstrap import logger
 
+OnPrefillStep = Callable[[int, KVCacheType], None]
+
 
 def run_prefill_for_request(
     *,
@@ -24,6 +27,7 @@ def run_prefill_for_request(
     group: mx.distributed.Group | None,
     kv_prefix_cache: KVPrefixCache | None,
     request: PrefillRequest,
+    on_step: OnPrefillStep | None = None,
 ) -> KVCacheType:
     prompt_tokens = mx.array(request.token_ids)
     prompt_tokens = fix_unmatched_think_end_tokens(prompt_tokens, tokenizer)
@@ -46,6 +50,18 @@ def run_prefill_for_request(
     prefill_input = remaining[:new_tokens]
     if int(prefill_input.shape[0]) > 0:
         sampler = make_sampler(temp=1.0)
+        on_prefill_progress: Callable[[int, int], None] | None = None
+        if on_step is not None:
+            captured_cache = cache
+            last_seen = [cache_length(cache)]
+
+            def _step(_processed: int, _total: int) -> None:
+                cur = cache_length(captured_cache)
+                if cur > last_seen[0]:
+                    on_step(cur, captured_cache)
+                    last_seen[0] = cur
+
+            on_prefill_progress = _step
         _ = mlx_prefill(
             model=model,
             tokenizer=tokenizer,
@@ -53,7 +69,7 @@ def run_prefill_for_request(
             prompt_tokens=prefill_input,
             cache=cache,
             group=group,
-            on_prefill_progress=None,
+            on_prefill_progress=on_prefill_progress,
             distributed_prompt_progress_callback=None,
         )
 

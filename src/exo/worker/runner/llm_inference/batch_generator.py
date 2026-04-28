@@ -8,7 +8,10 @@ from typing import BinaryIO
 import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
+from exo.shared.constants import (
+    DISAGGREGATION_MODE,
+    EXO_MAX_CONCURRENT_REQUESTS,
+)
 from exo.shared.types.chunks import ErrorChunk, GenerationChunk, PrefillProgressChunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import ChunkGenerated, Event
@@ -28,7 +31,12 @@ from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.base import Engine
 from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.disaggregated.adapter import write_cache_to_wire
+from exo.worker.engines.mlx.disaggregated.adapter import (
+    write_cache_to_wire,
+    write_prefill_done,
+    write_prefill_header,
+    write_prefill_step,
+)
 from exo.worker.engines.mlx.disaggregated.serve import run_prefill_for_request
 from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
 from exo.worker.engines.mlx.generator.generate import (
@@ -36,7 +44,7 @@ from exo.worker.engines.mlx.generator.generate import (
     mlx_generate,
     warmup_inference,
 )
-from exo.worker.engines.mlx.types import Model
+from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     mx_all_gather_tasks,
@@ -294,20 +302,100 @@ class SequentialGenerator(Engine):
         del self.model, self.tokenizer, self.group
 
     def serve_prefill(self, request: PrefillRequest, wfile: BinaryIO) -> None:
-        cache = run_prefill_for_request(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            group=self.group,
-            kv_prefix_cache=self.kv_prefix_cache,
-            request=request,
-        )
-        write_cache_to_wire(
+        if DISAGGREGATION_MODE == 2:
+            stream_prefill(
+                wfile=wfile,
+                request=request,
+                model=self.model,
+                tokenizer=self.tokenizer,
+                group=self.group,
+                kv_prefix_cache=self.kv_prefix_cache,
+            )
+        else:
+            cache = run_prefill_for_request(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                group=self.group,
+                kv_prefix_cache=self.kv_prefix_cache,
+                request=request,
+            )
+            write_cache_to_wire(
+                wfile,
+                cache,
+                request_id=request.request_id,
+                model_id=request.model_id,
+                start_pos=request.start_pos,
+            )
+
+
+def stream_prefill(
+    *,
+    wfile: BinaryIO,
+    request: PrefillRequest,
+    model: Model,
+    tokenizer: TokenizerWrapper,
+    group: mx.distributed.Group | None,
+    kv_prefix_cache: KVPrefixCache | None,
+) -> None:
+    streamed = [request.start_pos]
+    header_state: dict[str, object] = {"dtype": None}
+
+    def on_step(cur: int, cache: KVCacheType) -> None:
+        if header_state["dtype"] is None:
+            header_state["dtype"] = write_prefill_header(
+                wfile,
+                cache,
+                request_id=request.request_id,
+                model_id=request.model_id,
+                start_pos=request.start_pos,
+            )
+        token_start = streamed[0]
+        if cur > token_start:
+            written = write_prefill_step(
+                wfile,
+                cache,
+                dtype=header_state["dtype"],  # type: ignore
+                token_start=token_start,
+                token_end=cur,
+            )
+            if written > 0:
+                streamed[0] = cur
+
+    cache = run_prefill_for_request(
+        model=model,
+        tokenizer=tokenizer,
+        group=group,
+        kv_prefix_cache=kv_prefix_cache,
+        request=request,
+        on_step=on_step,
+    )
+
+    if header_state["dtype"] is None:
+        header_state["dtype"] = write_prefill_header(
             wfile,
             cache,
             request_id=request.request_id,
             model_id=request.model_id,
             start_pos=request.start_pos,
         )
+
+    final_offset = max(
+        (int(c.offset) for c in cache if hasattr(c, "offset")),
+        default=0,
+    )
+    if final_offset > streamed[0]:
+        written = write_prefill_step(
+            wfile,
+            cache,
+            dtype=header_state["dtype"],  # type: ignore
+            token_start=streamed[0],
+            token_end=final_offset,
+        )
+        if written > 0:
+            streamed[0] = final_offset
+
+    total_tokens = max(0, streamed[0] - request.start_pos)
+    write_prefill_done(wfile, cache, total_tokens=total_tokens)
 
 
 @dataclass(eq=False)
@@ -542,17 +630,27 @@ class BatchGenerator(Engine):
         del self.model, self.tokenizer, self.group
 
     def serve_prefill(self, request: PrefillRequest, wfile: BinaryIO) -> None:
-        cache = run_prefill_for_request(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            group=self.group,
-            kv_prefix_cache=self.kv_prefix_cache,
-            request=request,
-        )
-        write_cache_to_wire(
-            wfile,
-            cache,
-            request_id=request.request_id,
-            model_id=request.model_id,
-            start_pos=request.start_pos,
-        )
+        if DISAGGREGATION_MODE == 2:
+            stream_prefill(
+                wfile=wfile,
+                request=request,
+                model=self.model,
+                tokenizer=self.tokenizer,
+                group=self.group,
+                kv_prefix_cache=self.kv_prefix_cache,
+            )
+        else:
+            cache = run_prefill_for_request(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                group=self.group,
+                kv_prefix_cache=self.kv_prefix_cache,
+                request=request,
+            )
+            write_cache_to_wire(
+                wfile,
+                cache,
+                request_id=request.request_id,
+                model_id=request.model_id,
+                start_pos=request.start_pos,
+            )

@@ -90,14 +90,16 @@ def nhd_to_bhsd(t: mx.array) -> mx.array:
     return mx.expand_dims(mx.transpose(t, (1, 0, 2)), 0)
 
 
-def send_mlx_kv_cache(
+def send_kv_token_range(
     stream: BinaryIO,
     caches: KVCacheType,
     *,
     dtype: DType,
-    start_pos: int = 0,
-    max_tokens: int | None = None,
+    token_start: int,
+    token_end: int,
 ) -> int:
+    if token_end <= token_start:
+        return 0
     tokens_sent = 0
     for layer_idx, c in enumerate(caches):
         match c:
@@ -108,14 +110,12 @@ def send_mlx_kv_cache(
                 values = c.values
                 if keys is None or values is None:
                     continue
-                offset = int(c.offset)
-                if max_tokens is not None:
-                    offset = min(offset, max_tokens)
-                if offset <= start_pos:
+                end = min(token_end, int(c.offset))
+                if end <= token_start:
                     continue
                 with mx.stream(mx.Device(mx.cpu)):
-                    k = mx.array(keys[:, :, start_pos:offset, :])
-                    v = mx.array(values[:, :, start_pos:offset, :])
+                    k = mx.array(keys[:, :, token_start:end, :])
+                    v = mx.array(values[:, :, token_start:end, :])
                     k_nhd = bhsd_to_nhd(k)
                     v_nhd = bhsd_to_nhd(v)
                     mx.eval(k_nhd, v_nhd)
@@ -138,22 +138,47 @@ def send_mlx_kv_cache(
                     )
                 tokens_sent = num_tokens
             case ArraysCache():
-                blobs: list[TensorBlob] = []
-                for a in c.state:
-                    if a is None:
-                        continue
-                    with mx.stream(mx.Device(mx.cpu)):
-                        a_cpu = mx.array(a)
-                        mx.eval(a_cpu)
-                    blobs.append(
-                        TensorBlob(
-                            dtype=mx_dtype_to_str(a_cpu.dtype),
-                            shape=tuple(int(d) for d in a_cpu.shape),
-                            data=array_to_bytes(a_cpu),
-                        )
-                    )
-                if blobs:
-                    write_arrays_state(stream, layer_idx, blobs)
+                pass
+    return tokens_sent
+
+
+def send_arrays_states(stream: BinaryIO, caches: KVCacheType) -> None:
+    for layer_idx, c in enumerate(caches):
+        if not isinstance(c, ArraysCache):
+            continue
+        blobs: list[TensorBlob] = []
+        for a in c.state:
+            if a is None:
+                continue
+            with mx.stream(mx.Device(mx.cpu)):
+                a_cpu = mx.array(a)
+                mx.eval(a_cpu)
+            blobs.append(
+                TensorBlob(
+                    dtype=mx_dtype_to_str(a_cpu.dtype),
+                    shape=tuple(int(d) for d in a_cpu.shape),
+                    data=array_to_bytes(a_cpu),
+                )
+            )
+        if blobs:
+            write_arrays_state(stream, layer_idx, blobs)
+
+
+def send_mlx_kv_cache(
+    stream: BinaryIO,
+    caches: KVCacheType,
+    *,
+    dtype: DType,
+    start_pos: int = 0,
+    max_tokens: int | None = None,
+) -> int:
+    upper = max((int(c.offset) for c in caches if hasattr(c, "offset")), default=0)
+    if max_tokens is not None:
+        upper = min(upper, max_tokens)
+    tokens_sent = send_kv_token_range(
+        stream, caches, dtype=dtype, token_start=start_pos, token_end=upper
+    )
+    send_arrays_states(stream, caches)
     return tokens_sent
 
 
@@ -208,14 +233,14 @@ def inject_arrays_cache(cache: ArraysCache, blobs: list[TensorBlob]) -> None:
     cache.state = [blob_to_mlx(b) for b in blobs]
 
 
-def write_cache_to_wire(
+def write_prefill_header(
     wfile: BinaryIO,
     cache: KVCacheType,
     *,
     request_id: str = "",
     model_id: str = "",
     start_pos: int = 0,
-) -> int:
+) -> DType:
     dtype = wire_dtype_from_cache(cache)
     write_header(
         wfile,
@@ -226,6 +251,47 @@ def write_cache_to_wire(
             dtype=dtype,
             start_pos=start_pos,
         ),
+    )
+    return dtype
+
+
+def write_prefill_step(
+    wfile: BinaryIO,
+    cache: KVCacheType,
+    *,
+    dtype: DType,
+    token_start: int,
+    token_end: int,
+) -> int:
+    tokens_sent = send_kv_token_range(
+        wfile, cache, dtype=dtype, token_start=token_start, token_end=token_end
+    )
+    if tokens_sent > 0:
+        wfile.flush()
+    return tokens_sent
+
+
+def write_prefill_done(
+    wfile: BinaryIO,
+    cache: KVCacheType,
+    *,
+    total_tokens: int,
+) -> None:
+    send_arrays_states(wfile, cache)
+    write_done(wfile, total_tokens)
+    wfile.flush()
+
+
+def write_cache_to_wire(
+    wfile: BinaryIO,
+    cache: KVCacheType,
+    *,
+    request_id: str = "",
+    model_id: str = "",
+    start_pos: int = 0,
+) -> int:
+    dtype = write_prefill_header(
+        wfile, cache, request_id=request_id, model_id=model_id, start_pos=start_pos
     )
     tokens_sent = send_mlx_kv_cache(wfile, cache, dtype=dtype, start_pos=start_pos)
     write_done(wfile, tokens_sent)

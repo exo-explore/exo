@@ -23,6 +23,7 @@ from exo.worker.engines.mlx.disaggregated.adapter import (
     inject_arrays_cache,
     inject_kv_chunk,
     inject_rotating_kv_chunk,
+    nhd_to_bhsd,
 )
 
 _SOCKET_TIMEOUT_SECS = 60
@@ -101,6 +102,121 @@ def remote_prefill_fetch(
         return result
     finally:
         sock.close()
+
+
+def remote_prefill_stream(
+    endpoint: str,
+    request: PrefillRequest,
+    caches: list[KVCache | RotatingKVCache | ArraysCache],
+    *,
+    on_header: Callable[[Header], None] | None = None,
+    on_kv_chunk: Callable[[KVChunk, int], None] | None = None,
+    timeout_secs: float = _SOCKET_TIMEOUT_SECS,
+) -> tuple[Header, int]:
+    host, port = _parse_endpoint(endpoint)
+    logger.info(
+        f"Connecting to prefill server at {host}:{port} "
+        f"({len(request.token_ids)} tokens, start_pos={request.start_pos})"
+    )
+
+    sock = socket.create_connection((host, port), timeout=timeout_secs)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, _RECV_BUFFER_BYTES)
+    try:
+        wfile = sock.makefile("wb", buffering=256 * 1024)
+        wstream: BinaryIO = cast(BinaryIO, cast(object, wfile))
+        write_request(wstream, request)
+
+        raw_stream = sock.makefile("rb", buffering=256 * 1024)
+        stream: BinaryIO = cast(BinaryIO, cast(object, raw_stream))
+
+        header = read_header(stream)
+        if on_header is not None:
+            on_header(header)
+
+        first_seen: set[int] = set()
+        rotating_chunks: dict[int, list[KVChunk]] = defaultdict(list)
+        arrays: dict[int, list[TensorBlob]] = {}
+        per_layer_tokens: dict[int, int] = defaultdict(int)
+        chunks_received = 0
+
+        while True:
+            msg = read_message(stream)
+            if msg is None:
+                break
+            if isinstance(msg, KVChunk):
+                target = caches[msg.layer_idx]
+                if isinstance(target, KVCache):
+                    _stream_inject_kv(
+                        target, msg, first_seen=first_seen, start_pos=request.start_pos
+                    )
+                elif isinstance(target, RotatingKVCache):
+                    rotating_chunks[msg.layer_idx].append(msg)
+                per_layer_tokens[msg.layer_idx] += msg.num_tokens
+                chunks_received += 1
+                if on_kv_chunk is not None:
+                    on_kv_chunk(msg, chunks_received)
+            elif isinstance(msg, ArraysState):
+                arrays[msg.layer_idx] = msg.arrays
+            elif isinstance(msg, Done):
+                break
+            else:
+                raise RuntimeError(f"Prefill server error [{msg.code}]: {msg.message}")
+
+        max_received = max(per_layer_tokens.values(), default=0)
+        final_offset = request.start_pos + max_received
+
+        for i, cache in enumerate(caches):
+            if isinstance(cache, KVCache):
+                if i in first_seen:
+                    cache.offset = final_offset
+            elif isinstance(cache, RotatingKVCache) and i in rotating_chunks:
+                chunks = rotating_chunks[i]
+                if len(chunks) == 1:
+                    k_nhd, v_nhd = chunk_to_mlx_nhd(chunks[0])
+                else:
+                    decoded = [chunk_to_mlx_nhd(c) for c in chunks]
+                    k_nhd = mx.concatenate([k for k, _ in decoded], axis=0)
+                    v_nhd = mx.concatenate([v for _, v in decoded], axis=0)
+                inject_rotating_kv_chunk(cache, k_nhd, v_nhd, final_offset)
+            if isinstance(cache, ArraysCache) and i in arrays:
+                inject_arrays_cache(cache, arrays[i])
+
+        return header, final_offset
+    finally:
+        sock.close()
+
+
+def _stream_inject_kv(
+    cache: KVCache,
+    chunk: KVChunk,
+    *,
+    first_seen: set[int],
+    start_pos: int,
+) -> None:
+    k_nhd, v_nhd = chunk_to_mlx_nhd(chunk)
+    k_bhsd = nhd_to_bhsd(k_nhd)
+    v_bhsd = nhd_to_bhsd(v_nhd)
+    if chunk.layer_idx not in first_seen:
+        first_seen.add(chunk.layer_idx)
+        existing_k = cache.keys
+        existing_v = cache.values
+        if start_pos > 0 and existing_k is not None and existing_v is not None:
+            cache.keys = mx.concatenate(
+                [existing_k[:, :, :start_pos, :], k_bhsd], axis=2
+            )
+            cache.values = mx.concatenate(
+                [existing_v[:, :, :start_pos, :], v_bhsd], axis=2
+            )
+        else:
+            cache.keys = k_bhsd
+            cache.values = v_bhsd
+    else:
+        existing_k = cache.keys
+        existing_v = cache.values
+        assert existing_k is not None and existing_v is not None
+        cache.keys = mx.concatenate([existing_k, k_bhsd], axis=2)
+        cache.values = mx.concatenate([existing_v, v_bhsd], axis=2)
 
 
 def ingest_into_mlx_cache(
