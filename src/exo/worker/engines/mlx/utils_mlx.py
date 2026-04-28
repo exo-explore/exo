@@ -53,10 +53,14 @@ from exo.shared.types.worker.instances import (
 )
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import (
+    AsymmetricTensorShardMetadata,
     CfgShardMetadata,
     PipelineShardMetadata,
     ShardMetadata,
     TensorShardMetadata,
+)
+from exo.worker.engines.mlx.asymmetric_parallel import (
+    asymmetric_tensor_auto_parallel,
 )
 from exo.worker.engines.mlx.auto_parallel import (
     get_inner_model,
@@ -69,6 +73,19 @@ from exo.worker.runner.bootstrap import logger
 
 
 def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
+    if isinstance(model_shard_meta, AsymmetricTensorShardMetadata):
+        rank_weight_fraction = (
+            model_shard_meta.ratio
+            if model_shard_meta.device_rank == 0
+            else 1.0 - model_shard_meta.ratio
+        )
+        return Memory.from_float_kb(
+            (model_shard_meta.end_layer - model_shard_meta.start_layer)
+            / model_shard_meta.n_layers
+            * model_shard_meta.model_card.storage_size.in_kb
+            * rank_weight_fraction
+        )
+
     return Memory.from_float_kb(
         (model_shard_meta.end_layer - model_shard_meta.start_layer)
         / model_shard_meta.n_layers
@@ -100,6 +117,7 @@ def mlx_distributed_init(
         coordination_file = str(
             Path(tmpdir) / f"hosts_{bound_instance.instance.instance_id}_{rank}.json"
         )
+        group: mx.distributed.Group | None = None
         # TODO: singleton instances
         match bound_instance.instance:
             case MlxRingInstance(hosts_by_node=hosts_by_node, ephemeral_port=_):
@@ -156,6 +174,8 @@ def mlx_distributed_init(
                         time.sleep(backoff)
 
         logger.info(f"Rank {rank} mlx distributed initialization complete")
+        if group is None:
+            raise RuntimeError("MLX distributed initialization did not return a group")
 
         return group  # pyright: ignore[reportPossiblyUnboundVariable]
 
@@ -277,6 +297,14 @@ def shard_and_load(
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
             model = yield from tensor_auto_parallel(model, group)
+        case AsymmetricTensorShardMetadata():
+            rank_zero_ratio = shard_metadata.ratio
+            ratios_list = [rank_zero_ratio, 1.0 - rank_zero_ratio]
+            logger.info(
+                f"loading model from {model_path} with asymmetric tensor parallelism "
+                f"(ratios={[f'{r:.0%}' for r in ratios_list]})"
+            )
+            model = yield from asymmetric_tensor_auto_parallel(model, group, ratios_list)
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = yield from pipeline_auto_parallel(model, group, shard_metadata)

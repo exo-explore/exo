@@ -195,7 +195,7 @@ from exo.shared.types.text_generation import (
 )
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import AsymmetricTensorShardMetadata, Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.disk_event_log import DiskEventLog
@@ -587,11 +587,32 @@ class API:
             memory_delta_by_node: dict[str, int] = {}
             if placement_node_ids:
                 total_bytes = model_card.storage_size.in_bytes
-                per_node = total_bytes // len(placement_node_ids)
-                remainder = total_bytes % len(placement_node_ids)
-                for index, node_id in enumerate(sorted(placement_node_ids, key=str)):
-                    extra = 1 if index < remainder else 0
-                    memory_delta_by_node[str(node_id)] = per_node + extra
+                asymmetric_shards: dict[NodeId, AsymmetricTensorShardMetadata] = {}
+                for (
+                    node_id,
+                    runner_id,
+                ) in shard_assignments.node_to_runner.items():
+                    shard_metadata = shard_assignments.runner_to_shard[runner_id]
+                    if isinstance(shard_metadata, AsymmetricTensorShardMetadata):
+                        asymmetric_shards[node_id] = shard_metadata
+                if asymmetric_shards:
+                    for node_id, shard_metadata in asymmetric_shards.items():
+                        rank_weight_fraction = (
+                            shard_metadata.ratio
+                            if shard_metadata.device_rank == 0
+                            else 1.0 - shard_metadata.ratio
+                        )
+                        memory_delta_by_node[str(node_id)] = int(
+                            total_bytes * rank_weight_fraction
+                        )
+                else:
+                    per_node = total_bytes // len(placement_node_ids)
+                    remainder = total_bytes % len(placement_node_ids)
+                    for index, node_id in enumerate(
+                        sorted(placement_node_ids, key=str)
+                    ):
+                        extra = 1 if index < remainder else 0
+                        memory_delta_by_node[str(node_id)] = per_node + extra
 
             if (
                 model_card.model_id,

@@ -1,6 +1,9 @@
 from collections.abc import Mapping
 from copy import deepcopy
+from os import environ
 from typing import Sequence
+
+from loguru import logger
 
 from exo.master.placement_utils import (
     Cycle,
@@ -11,7 +14,7 @@ from exo.master.placement_utils import (
     get_shard_assignments,
     get_smallest_cycles,
 )
-from exo.shared.models.model_cards import ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.topology import Topology
 from exo.shared.types.commands import (
     CancelDownload,
@@ -48,6 +51,26 @@ from exo.shared.types.worker.instances import (
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.ports import random_ephemeral_port
 
+ASYMMETRIC_TENSOR_AUTO_UPGRADE_ENV = "EXO_ENABLE_ASYMMETRIC_TP_AUTO_UPGRADE"
+
+
+def _supports_asymmetric_tensor_parallel(model_card: ModelCard) -> bool:
+    model_id = model_card.model_id.lower()
+    base_model = model_card.base_model.lower()
+    return (
+        base_model.startswith("qwen3.5")
+        or "qwen3.5" in model_id
+        or "qwen-3.5" in model_id
+    )
+
+
+def _asymmetric_tensor_auto_upgrade_enabled() -> bool:
+    return environ.get(ASYMMETRIC_TENSOR_AUTO_UPGRADE_ENV, "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
 
 def add_instance_to_placements(
     command: CreateInstance,
@@ -64,7 +87,7 @@ def _get_node_download_fraction(
     model_id: ModelId,
     download_status: Mapping[NodeId, Sequence[DownloadProgress]],
 ) -> float:
-    """Return the download fraction (0.0–1.0) for a model on a given node."""
+    """Return the download fraction (0.0-1.0) for a model on a given node."""
     for progress in download_status.get(node_id, []):
         if progress.shard_metadata.model_card.model_id != model_id:
             continue
@@ -108,6 +131,8 @@ def place_instance(
     download_status: Mapping[NodeId, Sequence[DownloadProgress]] | None = None,
     node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] | None = None,
 ) -> dict[InstanceId, Instance]:
+    sharding = command.sharding
+    instance_meta = command.instance_meta
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
 
@@ -124,38 +149,82 @@ def place_instance(
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError("No cycles found with sufficient memory")
 
-    if command.sharding == Sharding.Tensor:
+    if sharding == Sharding.AsymmetricTensor and not _supports_asymmetric_tensor_parallel(
+        command.model_card
+    ):
+        raise ValueError(
+            f"Asymmetric tensor parallelism is not yet supported for "
+            f"model '{command.model_card.model_id}'. Supported: Qwen3.5."
+        )
+
+    if sharding in (Sharding.Tensor, Sharding.AsymmetricTensor):
         if not command.model_card.supports_tensor:
             raise ValueError(
                 f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_card.model_id}"
             )
-        # TODO: the condition here for tensor parallel is not correct, but it works good enough for now.
-        # DeepSeek V4 is MQA (num_key_value_heads=1) but its sharding strategy
-        # head-parallelises wq_b/wo_a and shards MoE experts instead of splitting
-        # KV heads, so the kv-head divisibility check doesn't apply.
-        is_deepseek_v4 = command.model_card.base_model.startswith("DeepSeek V4")
-        kv_heads = command.model_card.num_key_value_heads
+        if sharding == Sharding.Tensor:
+            # TODO: the condition here for tensor parallel is not correct, but it works good enough for now.
+            # DeepSeek V4 is MQA (num_key_value_heads=1) but its sharding strategy
+            # head-parallelises wq_b/wo_a and shards MoE experts instead of splitting
+            # KV heads, so the kv-head divisibility check doesn't apply.
+            is_deepseek_v4 = command.model_card.base_model.startswith("DeepSeek V4")
+            kv_heads = command.model_card.num_key_value_heads
+            cycles_with_sufficient_memory = [
+                cycle
+                for cycle in cycles_with_sufficient_memory
+                if command.model_card.hidden_size % len(cycle) == 0
+                and (is_deepseek_v4 or kv_heads is None or kv_heads % len(cycle) == 0)
+            ]
+            if not cycles_with_sufficient_memory:
+                raise ValueError(
+                    f"No tensor sharding found for model with "
+                    f"hidden_size={command.model_card.hidden_size}"
+                    f"{f', num_key_value_heads={kv_heads}' if kv_heads is not None else ''}"
+                    f" across candidate cycles"
+                )
+
+            # Auto-upgrade to AsymmetricTensor when equal TP won't fit on
+            # the smallest node but asymmetric split would.
+            if (
+                _asymmetric_tensor_auto_upgrade_enabled()
+                and _supports_asymmetric_tensor_parallel(command.model_card)
+            ):
+                for cycle in cycles_with_sufficient_memory:
+                    equal_share = command.model_card.storage_size.in_bytes / len(cycle)
+                    min_node_mem = min(
+                        node_memory[nid].ram_available.in_bytes for nid in cycle
+                    )
+                    if equal_share > min_node_mem * 0.9:
+                        # Equal split too tight; try asymmetric.
+                        total_mem = sum(
+                            node_memory[nid].ram_available.in_bytes for nid in cycle
+                        )
+                        if command.model_card.storage_size.in_bytes < total_mem * 0.85:
+                            logger.info(
+                                "Equal tensor split won't fit on smallest node "
+                                f"({min_node_mem / 1e9:.0f}GB available, "
+                                f"needs {equal_share / 1e9:.0f}GB). "
+                                "Auto-upgrading to AsymmetricTensor."
+                            )
+                            sharding = Sharding.AsymmetricTensor
+                        break
+    if sharding == Sharding.AsymmetricTensor:
         cycles_with_sufficient_memory = [
-            cycle
-            for cycle in cycles_with_sufficient_memory
-            if command.model_card.hidden_size % len(cycle) == 0
-            and (is_deepseek_v4 or kv_heads is None or kv_heads % len(cycle) == 0)
+            cycle for cycle in cycles_with_sufficient_memory if len(cycle) == 2
         ]
         if not cycles_with_sufficient_memory:
             raise ValueError(
-                f"No tensor sharding found for model with "
-                f"hidden_size={command.model_card.hidden_size}"
-                f"{f', num_key_value_heads={kv_heads}' if kv_heads is not None else ''}"
-                f" across candidate cycles"
+                "Asymmetric tensor parallelism currently requires exactly 2 nodes"
             )
-    if command.sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
+
+    if sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
         "mlx-community/DeepSeek-V3.1-8bit"
     ):
         raise ValueError(
             "Pipeline parallelism is not supported for DeepSeek V3.1 (8-bit)"
         )
     if (
-        command.sharding == Sharding.Pipeline
+        sharding == Sharding.Pipeline
         and command.model_card.base_model.startswith("Gemma 4")
     ):
         cycles_with_sufficient_memory = [
@@ -182,7 +251,7 @@ def place_instance(
         if topology.is_rdma_cycle(cycle) and _all_rdma_ctl_enabled(cycle)
     ]
 
-    if command.instance_meta == InstanceMeta.MlxJaccl:
+    if instance_meta == InstanceMeta.MlxJaccl:
         if not smallest_rdma_cycles:
             raise ValueError(
                 "Requested RDMA (MlxJaccl) but no RDMA-connected cycles available"
@@ -213,18 +282,22 @@ def place_instance(
         ),
     )
     selected_cycle = _prefer_socket_reachable_rank_zero(selected_cycle, topology)
+    if sharding == Sharding.AsymmetricTensor:
+        selected_cycle = Cycle(
+            node_ids=sorted(
+                selected_cycle.node_ids,
+                key=lambda node_id: node_memory[node_id].ram_available.in_bytes,
+                reverse=True,
+            )
+        )
 
     # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
     if len(selected_cycle) == 1:
-        command = command.model_copy(
-            update={
-                "instance_meta": InstanceMeta.MlxRing,
-                "sharding": Sharding.Pipeline,
-            }
-        )
+        instance_meta = InstanceMeta.MlxRing
+        sharding = Sharding.Pipeline
 
     shard_assignments = get_shard_assignments(
-        command.model_card, selected_cycle, command.sharding, node_memory
+        command.model_card, selected_cycle, sharding, node_memory
     )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)
@@ -232,7 +305,7 @@ def place_instance(
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))
 
-    match command.instance_meta:
+    match instance_meta:
         case InstanceMeta.MlxJaccl:
             # TODO(evan): shard assignments should contain information about ranks, this is ugly
             def get_device_rank(node_id: NodeId) -> int:
