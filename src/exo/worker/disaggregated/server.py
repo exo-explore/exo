@@ -19,7 +19,7 @@ from exo.worker.disaggregated.protocol import (
 class PrefillRequest(msgspec.Struct):
     request_id: str = ""
     model_id: str = ""
-    token_ids: list[int] = []
+    token_ids: list[int] = msgspec.field(default_factory=list)
     start_pos: int = 0
 
 

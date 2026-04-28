@@ -75,7 +75,7 @@ def test_server_client_roundtrip() -> None:
     server = PrefillServer(resolve=resolve, host="127.0.0.1", port=52417)
     try:
         result = remote_prefill_fetch(
-            endpoint=f"127.0.0.1:52417",
+            endpoint="127.0.0.1:52417",
             request=PrefillRequest(
                 model_id="test-model",
                 token_ids=list(range(seq_len)),
@@ -110,7 +110,7 @@ def test_server_reports_pickup_failure() -> None:
     try:
         with pytest.raises(RuntimeError, match="not picked up"):
             _ = remote_prefill_fetch(
-                endpoint=f"127.0.0.1:52418",
+                endpoint="127.0.0.1:52418",
                 request=PrefillRequest(
                     model_id="test-model",
                     token_ids=[1, 2, 3],
@@ -136,7 +136,7 @@ def test_server_client_roundtrip_with_start_pos() -> None:
     server = PrefillServer(resolve=resolve, host="127.0.0.1", port=52419)
     try:
         result = remote_prefill_fetch(
-            endpoint=f"127.0.0.1:52419",
+            endpoint="127.0.0.1:52419",
             request=PrefillRequest(
                 model_id="test-model",
                 token_ids=list(range(seq_len)),
