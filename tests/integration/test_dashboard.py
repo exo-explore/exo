@@ -2,7 +2,7 @@
 """Dashboard end-to-end tests using Playwright (headless Chromium).
 
 Prerequisites:
-    npx --yes playwright install chromium
+    uv run playwright install chromium
 
 Run with:
     uv run pytest tests/integration/test_dashboard.py -v
@@ -14,17 +14,33 @@ import pytest
 
 from .helpers import ClusterInfo, make_client, place_and_wait
 
+try:
+    from playwright.sync_api import sync_playwright
+
+    _HAS_PLAYWRIGHT = True
+except ImportError:
+    _HAS_PLAYWRIGHT = False
+
+# Check if Chromium is installed by attempting a quick launch
+_HAS_CHROMIUM = False
+if _HAS_PLAYWRIGHT:
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            browser.close()
+        _HAS_CHROMIUM = True
+    except Exception:
+        pass
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_PLAYWRIGHT or not _HAS_CHROMIUM,
+    reason="playwright or chromium not installed (run: uv run playwright install chromium)",
+)
+
 
 @pytest.fixture
 def playwright_page(single_node_cluster: ClusterInfo):
     """Create a Playwright browser page pointed at the cluster's dashboard."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        pytest.skip(
-            "playwright not installed (run: pip install playwright && playwright install chromium)"
-        )
-
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1280, "height": 800})
@@ -51,14 +67,8 @@ class TestDashboard:
         page = playwright_page
         page.screenshot(path="/tmp/dashboard_cluster_info.png")
 
-        # The dashboard should show at least one node — look for node-related
-        # content such as memory, model count, or the cluster status section.
-        # We check for known UI elements that indicate the dashboard rendered
-        # cluster data, not just a blank shell.
         body_text = (page.text_content("body") or "").lower()
 
-        # The dashboard should contain some indicator of cluster state:
-        # memory info, node count, model names, or status indicators
         has_cluster_content = any(
             indicator in body_text
             for indicator in [
@@ -78,11 +88,6 @@ class TestDashboard:
 
     def test_dashboard_chat_inference(self, single_node_cluster: ClusterInfo):
         """Full flow: place model via API, then use dashboard to chat."""
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            pytest.skip("playwright not installed")
-
         client = make_client(single_node_cluster)
 
         # Place model via API first (more reliable than clicking through UI)
