@@ -10,7 +10,6 @@ from vllm.v1.request import Request
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
 from exo.shared.logging import logger
-from exo.worker.engines.mlx.cache import KVPrefixCache
 
 INITIAL_FRACTION = 0.05
 GROWTH_HEADROOM_BYTES = 512 * 1024 * 1024
@@ -21,17 +20,7 @@ if TYPE_CHECKING:
 
 
 _patched = False
-_prefix_cache: KVPrefixCache | None = None
 _model_runner: GPUModelRunner | None = None
-
-
-def get_prefix_cache() -> KVPrefixCache | None:
-    return _prefix_cache
-
-
-def set_prefix_cache(cache: KVPrefixCache | None) -> None:
-    global _prefix_cache
-    _prefix_cache = cache
 
 
 def get_model_runner() -> GPUModelRunner | None:
@@ -56,7 +45,6 @@ def patch_vllm() -> None:
     _patch_initialize_from_config()
     _patch_kv_cache_manager_init()
     _patch_allocate_slots()
-    _patch_get_computed_blocks()
     _patch_moe_sum()
     _patch_marlin_w2_thread_config()
     logger.info("vLLM growable KV cache patch applied")
@@ -466,103 +454,3 @@ def _patch_marlin_w2_thread_config() -> None:
     ops.moe_wna16_marlin_gemm = patched_gemm
 
 
-def _patch_get_computed_blocks() -> None:
-    from vllm.v1.core.kv_cache_manager import KVCacheBlocks, KVCacheManager
-    from vllm.v1.core.kv_cache_utils import KVCacheBlock
-    from vllm.v1.request import Request
-
-    original = KVCacheManager.get_computed_blocks
-
-    def patched(
-        self: KVCacheManager,
-        request: Request,
-    ) -> tuple[KVCacheBlocks, int]:
-        prefix_cache = get_prefix_cache()
-        if prefix_cache is None or request.prompt_token_ids is None:
-            return original(self, request)
-
-        try:
-            torch_cache, num_matched, _ = prefix_cache.lookup(
-                list(request.prompt_token_ids)
-            )
-        except Exception:
-            return original(self, request)
-
-        if torch_cache is None or num_matched == 0:
-            return original(self, request)
-
-        from vllm.utils.math_utils import cdiv
-
-        from exo.worker.engines.vllm.generator import build_layer_groups
-
-        num_groups = len(self.kv_cache_config.kv_cache_groups)
-        null_block = self.block_pool.null_block
-        save_offsets = torch_cache.token_offset_per_group or [0] * num_groups
-
-        for gi in range(num_groups):
-            save_off = save_offsets[gi] if gi < len(save_offsets) else 0
-            if save_off > 0:
-                spec = self.kv_cache_config.kv_cache_groups[gi].kv_cache_spec
-                window = getattr(spec, "sliding_window", 0) or 0
-                if window > 0 and num_matched < save_off + window:
-                    return original(self, request)
-
-        real_block_counts: list[int] = []
-        skipped_block_counts: list[int] = []
-        total_needed = 0
-        for gi in range(num_groups):
-            mgr = self.coordinator.single_type_managers[gi]
-            block_size: int = self.kv_cache_config.kv_cache_groups[
-                gi
-            ].kv_cache_spec.block_size
-            num_skipped: int = mgr.get_num_skipped_tokens(num_matched)
-            num_skipped_blocks = num_skipped // block_size
-            num_real = cdiv(num_matched, block_size) - num_skipped_blocks
-            real_block_counts.append(num_real)
-            skipped_block_counts.append(num_skipped_blocks)
-            total_needed += num_real
-
-        if self.block_pool.get_num_free_blocks() < total_needed:
-            return original(self, request)
-
-        blocks_per_group: list[list[KVCacheBlock]] = []
-        token_offset_per_group: list[int] = []
-        for gi in range(num_groups):
-            mgr = self.coordinator.single_type_managers[gi]
-            block_size = self.kv_cache_config.kv_cache_groups[
-                gi
-            ].kv_cache_spec.block_size
-            real_blocks: list[KVCacheBlock] = self.block_pool.get_new_blocks(
-                real_block_counts[gi]
-            )
-            blocks_per_group.append(real_blocks)
-
-            full_block_list = [null_block] * skipped_block_counts[gi] + list(
-                real_blocks
-            )
-            req_blocks = mgr.req_to_blocks[request.request_id]
-            req_blocks.extend(full_block_list)
-
-            token_offset_per_group.append(skipped_block_counts[gi] * block_size)
-
-        block_ids_per_group = [[b.block_id for b in grp] for grp in blocks_per_group]
-        layer_to_group = build_layer_groups(self.kv_cache_config)
-        model_runner = cast(GPUModelRunner | None, self._growable_model_runner)
-        if model_runner is not None:
-            torch_cache.write_to_vllm_blocks(
-                cast(
-                    "list[torch.Tensor | list[torch.Tensor]]",
-                    model_runner.kv_caches,
-                ),
-                block_ids_per_group,
-                layer_to_group,
-                token_offset_per_group,
-            )
-
-        total_blocks = sum(len(g) for g in blocks_per_group)
-        logger.info(
-            f"Prefix cache hit: {num_matched} tokens, {total_blocks} blocks ({num_groups} groups)"
-        )
-        return self.empty_kv_cache_blocks, num_matched
-
-    KVCacheManager.get_computed_blocks = patched

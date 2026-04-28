@@ -2076,6 +2076,7 @@
     let instanceType = "Unknown";
     if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
     else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
+    else if (instanceTag === "VllmInstance") instanceType = "vLLM";
 
     const inst = instance as {
       shardAssignments?: {

@@ -407,12 +407,6 @@ def load_vllm_engine(
     model_path = build_model_path(model_id)
     _patch_weight_loading_progress()
 
-    # todo
-    # if kv_connector_cls is not None:
-    # from exo.disaggregated.prefill_server import _patch_vllm_for_connector
-
-    # _patch_vllm_for_connector(kv_connector_cls)
-
     set_n_layers(n_layers)
 
     kv_transfer_config: KVTransferConfig | None = None
@@ -454,7 +448,9 @@ def load_vllm_engine(
                 load_format="fastsafetensors",
                 enable_prefix_caching=True,
                 attention_backend=backend,
-                compilation_config=CompilationConfig(cudagraph_mode=CUDAGraphMode.NONE),
+                compilation_config=CompilationConfig(
+                    level=0, cudagraph_mode=CUDAGraphMode.NONE
+                ),
                 disable_log_stats=True,
                 max_num_batched_tokens=4096,
                 kv_transfer_config=kv_transfer_config,

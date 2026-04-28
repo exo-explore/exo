@@ -589,7 +589,9 @@ def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
         help="Only consider placements using >= this many nodes.",
     )
     ap.add_argument(
-        "--instance-meta", choices=["ring", "jaccl", "both"], default="both"
+        "--instance-meta",
+        choices=["ring", "jaccl", "vllm", "both"],
+        default="both",
     )
     ap.add_argument(
         "--sharding", choices=["pipeline", "tensor", "both"], default="both"

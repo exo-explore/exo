@@ -20,16 +20,16 @@ warmup = 0
 json_out = "bench/prefill_decode_results.json"
 
 [prefill]
-model = "mlx-community/gpt-oss-20b-MXFP4-Q8"
-node = "mike"
-instance_meta = "ring"
+model = "sakamakismile/Qwen3.6-27B-NVFP4"
+node = "gx10-de89"
+instance_meta = "vllm"
 sharding = "pipeline"
 min_nodes = 1
 max_nodes = 1
 
 [decode]
-model = "mlx-community/gpt-oss-20b-MXFP4-Q8"
-node = "james"
+model = "mlx-community/Qwen3.6-27B-4bit"
+node = "localhost"
 instance_meta = "ring"
 sharding = "pipeline"
 min_nodes = 1
