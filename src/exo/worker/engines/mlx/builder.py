@@ -51,7 +51,7 @@ class MlxBuilder(Builder):
 
     def close(self) -> None:
         with contextlib.suppress(NameError, AttributeError):
-            del self.inference_model
+            del self.model
         with contextlib.suppress(NameError, AttributeError):
             del self.tokenizer
         with contextlib.suppress(NameError, AttributeError):

@@ -283,7 +283,7 @@ class TorchKVCache:
                 bt = block_tables[gi]
                 kv = kv_caches[layer_idx]
                 if isinstance(kv, list):
-                    for ti, (stored, target) in enumerate(zip(layer.arrays, kv)):
+                    for stored, target in zip(layer.arrays, kv, strict=True):
                         if stored is not None and target is not None:
                             n = min(len(bt), stored.shape[0])
                             if n > 0:

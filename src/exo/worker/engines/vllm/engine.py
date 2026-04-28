@@ -24,10 +24,10 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.utils.channels import MpReceiver, MpSender
-from exo.worker.disaggregated.server import PrefillJob
+from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.base import Engine
+from exo.worker.engines.vllm.generator import VllmBatchEngine
 from exo.worker.engines.vllm.prompt_format import format_vllm_prompt
-from exo.worker.engines.vllm.vllm_generator import VllmBatchEngine
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.model_output_parsers import (
     apply_all_parsers,
@@ -157,7 +157,7 @@ class VllmEngine(Engine):
     def close(self) -> None:
         self._gen.close()
 
-    def serve_prefill(self, job: PrefillJob, wfile: BinaryIO) -> None:
+    def serve_prefill(self, request: PrefillRequest, wfile: BinaryIO) -> None:
         raise NotImplementedError("vLLM serve_prefill is not supported yet")
 
     def _start_task(

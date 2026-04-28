@@ -396,7 +396,7 @@ def _grow_tensors(
         ):
             old_entry = old_kv_list[0]
             if isinstance(old_entry, list) and isinstance(new_kv, list):
-                for old_t, new_t in zip(old_entry, new_kv):
+                for old_t, new_t in zip(old_entry, new_kv, strict=True):
                     old_t.set_(
                         new_t.storage(),
                         new_t.storage_offset(),
