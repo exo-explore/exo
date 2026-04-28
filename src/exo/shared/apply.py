@@ -218,6 +218,7 @@ def apply_instance_created(event: InstanceCreated, state: State) -> State:
 
 
 def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
+    deleted_instance = state.instances.get(event.instance_id)
     new_instances: Mapping[InstanceId, Instance] = {
         iid: inst for iid, inst in state.instances.items() if iid != event.instance_id
     }
@@ -235,8 +236,26 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
             new_links[link_id] = link.model_copy(
                 update={"prefill_instances": prefill, "decode_instances": decode}
             )
+
+    if deleted_instance is None:
+        return state.model_copy(
+            update={"instances": new_instances, "instance_links": new_links}
+        )
+
+    # Replay-correctness fix: prune runners assigned to the deleted instance so a
+    # later replay cannot resurrect runners that no longer have an owner instance.
+    deleted_runner_ids = set(deleted_instance.shard_assignments.runner_to_shard)
+    new_runners: Mapping[RunnerId, RunnerStatus] = {
+        runner_id: runner_status
+        for runner_id, runner_status in state.runners.items()
+        if runner_id not in deleted_runner_ids
+    }
     return state.model_copy(
-        update={"instances": new_instances, "instance_links": new_links}
+        update={
+            "instances": new_instances,
+            "instance_links": new_links,
+            "runners": new_runners,
+        }
     )
 
 

@@ -298,7 +298,7 @@ def test_get_transition_events_delete_instance(instance: Instance):
     assert events[0].instance_id == instance_id
 
 
-def test_placement_selects_leaf_nodes(
+def test_placement_uses_leaf_nodes_as_tie_breaker(
     model_card: ModelCard,
 ):
     # arrange
@@ -313,8 +313,8 @@ def test_placement_selects_leaf_nodes(
 
     node_memory = {
         node_id_a: create_node_memory(500),
-        node_id_b: create_node_memory(600),
-        node_id_c: create_node_memory(600),
+        node_id_b: create_node_memory(500),
+        node_id_c: create_node_memory(500),
         node_id_d: create_node_memory(500),
     }
     node_network = {

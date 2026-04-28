@@ -397,6 +397,8 @@ class DownloadCoordinator:
                             status = self._completed_from_path(
                                 progress.shard, found, progress.total
                             )
+                        elif progress.downloaded.in_bytes == 0:
+                            continue
                         elif progress.downloaded_this_session.in_bytes == 0:
                             status = DownloadPending(
                                 node_id=self.node_id,

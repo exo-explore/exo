@@ -16,6 +16,8 @@ from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 
 DEFAULT_ELECTION_TIMEOUT = 3.0
+DEFAULT_CONNECTION_SETTLE_SECONDS = 0.2
+DEFAULT_DROPOUT_GRACE_SECONDS = 1.0
 
 
 class ElectionMessage(FrozenModel):
@@ -86,6 +88,7 @@ class Election:
         self._candidates: list[ElectionMessage] = []
         self._campaign_cancel_scope: CancelScope | None = None
         self._campaign_done: Event | None = None
+        self._connection_state: dict[NodeId, bool] = {}
         self._tg = TaskGroup()
 
     async def run(self):
@@ -170,12 +173,41 @@ class Election:
         with self._cm_receiver as connection_messages:
             async for first in connection_messages:
                 # Delay after connection message for time to symmetrically setup
-                await anyio.sleep(0.2)
+                await anyio.sleep(DEFAULT_CONNECTION_SETTLE_SECONDS)
                 rest = connection_messages.collect()
+                messages = [first, *rest]
 
                 logger.debug(
                     f"Connection messages received: {first} followed by {rest}"
                 )
+                baseline_connection_state = dict(self._connection_state)
+                changed_node_ids = self._apply_connection_messages(messages)
+                if not changed_node_ids:
+                    logger.debug("Connection messages did not change peer state")
+                    continue
+
+                if any(
+                    not self._connection_state[node_id]
+                    for node_id in changed_node_ids
+                ):
+                    await anyio.sleep(DEFAULT_DROPOUT_GRACE_SECONDS)
+                    follow_up_messages = connection_messages.collect()
+                    changed_node_ids.update(
+                        self._apply_connection_messages(follow_up_messages)
+                    )
+
+                net_changed_node_ids = [
+                    node_id
+                    for node_id in changed_node_ids
+                    if baseline_connection_state.get(node_id)
+                    != self._connection_state.get(node_id)
+                ]
+                if not net_changed_node_ids:
+                    logger.info(
+                        "Ignoring transient connection flap; peer state returned to baseline"
+                    )
+                    continue
+
                 logger.debug(f"Current clock: {self.clock}")
                 # These messages are strictly peer to peer
                 self.clock += 1
@@ -188,6 +220,21 @@ class Election:
                 )
                 logger.debug("Campaign started")
                 logger.debug("Connection message added")
+
+    def _apply_connection_messages(
+        self, messages: list[ConnectionMessage]
+    ) -> set[NodeId]:
+        changed_node_ids: set[NodeId] = set()
+        for message in messages:
+            previous = self._connection_state.get(message.node_id)
+            if previous is None and not message.connected:
+                self._connection_state[message.node_id] = False
+                continue
+            if previous == message.connected:
+                continue
+            self._connection_state[message.node_id] = message.connected
+            changed_node_ids.add(message.node_id)
+        return changed_node_ids
 
     async def _command_counter(self) -> None:
         with self._co_receiver as commands:
