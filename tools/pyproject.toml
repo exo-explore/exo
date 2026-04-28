@@ -3,9 +3,7 @@ name = "exo-tools"
 version = "0.1.0"
 description = "Shared tooling for interacting with exo clusters"
 requires-python = ">=3.13"
-dependencies = [
-  "loguru>=0.7.3",
-]
+dependencies = ["loguru>=0.7.3"]
 
 [build-system]
 requires = ["hatchling"]
