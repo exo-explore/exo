@@ -11,13 +11,16 @@ import time
 
 from .helpers import (
     ClusterInfo,
-    ExoHttpError,
+    chat_and_assert,
+    cleanup_all_instances,
     eco_start_hosts,
     eco_stop,
     make_client,
     make_client_from_url,
     place_and_wait,
+    verify_node_count,
     wait_for_cluster_nodes,
+    wait_for_valid_placement,
 )
 
 
@@ -25,73 +28,60 @@ class TestResilience:
     """Tests for cluster resilience during node disconnects."""
 
     def test_disconnect_reconnect(self, two_node_cluster: ClusterInfo):
-        """Disconnect one node, verify cluster survives, reconnect and re-verify."""
-        client = make_client(two_node_cluster)
+        """Full disconnect/reconnect cycle:
 
-        # Place a model on the cluster (single-node placement so it survives disconnect)
-        place_and_wait(client)
+        1. Place a 2-node instance, verify inference
+        2. Stop one node, wait for instance to error out
+        3. Clean up failed instance, place a 1-node instance on remaining node
+        4. Verify inference works with 1 node
+        5. Restart stopped node, wait for it to rejoin
+        6. Clean up 1-node instance, place a 2-node instance again
+        7. Verify inference works with both nodes
+        """
+        cluster = two_node_cluster
+        client = make_client(cluster)
 
-        # Verify both nodes are in the cluster
-        wait_for_cluster_nodes(client, expected_count=2)
+        # --- Phase 1: 2-node inference ---
+        place_and_wait(
+            client, sharding="Pipeline", instance_meta="MlxRing", min_nodes=2
+        )
+        verify_node_count(client, expected=2)
+        chat_and_assert(client)
 
-        # Disconnect the second host (keep reservation so we can restart it)
-        disconnected_host = two_node_cluster.hosts[1]
+        # --- Phase 2: disconnect one node ---
+        disconnected_host = cluster.hosts[1]
         eco_stop([disconnected_host], keep=True)
+        time.sleep(10.0)
 
-        # Wait for cluster to detect the disconnect
-        time.sleep(5.0)
+        # Switch to the remaining node's API endpoint
+        remaining_host = cluster.hosts[0]
+        remaining_url = cluster.api_endpoints[remaining_host]
+        remaining_client = make_client_from_url(remaining_url)
 
-        # Use the first node's endpoint directly
-        first_host = two_node_cluster.hosts[0]
-        first_url = two_node_cluster.api_endpoints[first_host]
-        remaining_client = make_client_from_url(first_url)
+        # Clean up the (now broken) 2-node instance
+        cleanup_all_instances(remaining_client)
 
-        # Verify the remaining node is still running
-        state = remaining_client.request_json("GET", "/state")
-        assert state is not None
+        # --- Phase 3: 1-node inference on remaining node ---
+        place_and_wait(remaining_client, min_nodes=1)
+        chat_and_assert(remaining_client)
 
-        # Reconnect the disconnected host
-        eco_start_hosts([disconnected_host], namespace=two_node_cluster.namespace)
-
-        # Wait for cluster to reform with both nodes
+        # --- Phase 4: reconnect and restore 2-node cluster ---
+        cleanup_all_instances(remaining_client)
+        eco_start_hosts([disconnected_host], namespace=cluster.namespace)
         wait_for_cluster_nodes(remaining_client, expected_count=2, timeout=120.0)
 
-        # Verify the full cluster is operational again
-        state = remaining_client.request_json("GET", "/state")
-        identities = state.get("nodeIdentities", {})
-        assert len(identities) >= 2, (
-            f"Expected 2 nodes after reconnect, got {len(identities)}"
+        # --- Phase 5: 2-node inference again ---
+        wait_for_valid_placement(
+            remaining_client,
+            sharding="Pipeline",
+            instance_meta="MlxRing",
+            min_nodes=2,
         )
-
-    def test_api_resilience_during_disconnect(self, two_node_cluster: ClusterInfo):
-        """Verify the API server stays alive and responds during a node disconnect.
-
-        We specifically check that the remaining node's API server is still
-        reachable (no ConnectionRefusedError) and returns valid responses.
-        HTTP errors from exo are acceptable — crashes/connection refusals are not.
-        """
-        disconnected_host = two_node_cluster.hosts[1]
-        eco_stop([disconnected_host], keep=True)
-
-        time.sleep(3.0)
-
-        first_host = two_node_cluster.hosts[0]
-        first_url = two_node_cluster.api_endpoints[first_host]
-        remaining_client = make_client_from_url(first_url)
-
-        # Server should still be alive — allow HTTP errors but not connection failures
-        try:
-            state = remaining_client.request_json("GET", "/state")
-            assert state is not None, "Expected /state to return a response"
-        except ExoHttpError:
-            pass  # HTTP errors are OK — the server is still responding
-
-        try:
-            models = remaining_client.request_json("GET", "/models")
-            assert models is not None, "Expected /models to return a response"
-        except ExoHttpError:
-            pass  # HTTP errors are OK — the server is still responding
-
-        # Reconnect
-        eco_start_hosts([disconnected_host], namespace=two_node_cluster.namespace)
-        wait_for_cluster_nodes(remaining_client, expected_count=2)
+        place_and_wait(
+            remaining_client,
+            sharding="Pipeline",
+            instance_meta="MlxRing",
+            min_nodes=2,
+        )
+        verify_node_count(remaining_client, expected=2)
+        chat_and_assert(remaining_client)

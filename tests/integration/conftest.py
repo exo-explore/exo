@@ -6,6 +6,10 @@ They are excluded from the default `uv run pytest` run and must be
 invoked explicitly:
 
     uv run pytest tests/integration/ -v
+
+To override host selection (instead of constraint-based reservation):
+
+    uv run pytest tests/integration/ -v --hosts s2,s4,s9,s10
 """
 
 from __future__ import annotations
@@ -23,36 +27,69 @@ from .helpers import (
     make_client,
 )
 
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--hosts",
+        default=None,
+        help="Comma-separated list of hosts to use (e.g. s2,s4,s9,s10). "
+        "Overrides constraint-based reservation. Hosts are allocated "
+        "to fixtures in order: first N for N-node clusters.",
+    )
+
+
+def pytest_report_header(config):
+    """Show the eco user and hosts for this test session."""
+    hosts = config.getoption("--hosts")
+    lines = [f"eco user: {_ECO_USER}"]
+    if hosts:
+        lines.append(f"hosts override: {hosts}")
+    return lines
+
+
+@pytest.fixture(scope="session")
+def _host_pool(request):
+    """Parse --hosts into a list, or None for constraint-based reservation."""
+    raw = request.config.getoption("--hosts")
+    if raw:
+        return [h.strip() for h in raw.split(",") if h.strip()]
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Session-scoped cluster fixtures
 # ---------------------------------------------------------------------------
 
 
-def pytest_report_header():
-    """Show the eco user for this test session."""
-    return f"eco user: {_ECO_USER}"
-
-
 @pytest.fixture(scope="session")
-def single_node_cluster():
+def single_node_cluster(_host_pool):
     """Deploy a single-node cluster."""
-    cluster = eco_start_deploy(count=1, wait=True)
+    if _host_pool:
+        cluster = eco_start_deploy(hosts=_host_pool[:1], wait=True)
+    else:
+        cluster = eco_start_deploy(count=1, wait=True)
     yield cluster
     eco_stop(cluster.hosts)
 
 
 @pytest.fixture(scope="session")
-def two_node_cluster():
+def two_node_cluster(_host_pool):
     """Deploy a 2-node Thunderbolt-connected cluster."""
-    cluster = eco_start_deploy(count=2, thunderbolt=True, wait=True)
+    if _host_pool:
+        cluster = eco_start_deploy(hosts=_host_pool[:2], wait=True)
+    else:
+        cluster = eco_start_deploy(count=2, thunderbolt=True, wait=True)
     yield cluster
     eco_stop(cluster.hosts)
 
 
 @pytest.fixture(scope="session")
-def four_node_cluster():
+def four_node_cluster(_host_pool):
     """Deploy a 4-node Thunderbolt-connected cluster."""
-    cluster = eco_start_deploy(count=4, thunderbolt=True, wait=True)
+    if _host_pool:
+        cluster = eco_start_deploy(hosts=_host_pool[:4], wait=True)
+    else:
+        cluster = eco_start_deploy(count=4, thunderbolt=True, wait=True)
     yield cluster
     eco_stop(cluster.hosts)
 
