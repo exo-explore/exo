@@ -185,6 +185,9 @@ class Node:
 
                 if result.is_new_master:
                     await anyio.sleep(0)
+                    if self.master is not None:
+                        await self.master.shutdown()
+                        self.master = None
                     self.event_router.shutdown()
                     self.event_router = EventRouter(
                         result.session_id,

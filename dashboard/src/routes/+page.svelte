@@ -889,7 +889,7 @@
   type InstanceMeta = "MlxRing" | "MlxJaccl";
 
   // Launch defaults persistence
-  const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults-v2";
+  const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults-v3";
   interface LaunchDefaults {
     modelId: string | null;
     sharding: "Pipeline" | "Tensor";
@@ -929,10 +929,9 @@
     const defaults = loadLaunchDefaults();
     if (!defaults) return;
 
-    // Apply sharding and instance type unconditionally
+    // Apply sharding unconditionally. Runtime stays at the safe default unless
+    // the user explicitly changes it in the current session.
     selectedSharding = defaults.sharding;
-    selectedInstanceType =
-      defaults.instanceType === "MlxRing" ? "MlxRing" : "MlxJaccl";
 
     // Apply minNodes if valid (between 1 and maxNodes)
     if (
@@ -1410,6 +1409,7 @@
   }
 
   function handleModelPickerSelect(modelId: string) {
+    clearPreviewNodeFilter(false);
     selectPreviewModel(modelId);
     setSelectedChatModel(modelId);
     saveLaunchDefaults();
@@ -4990,7 +4990,7 @@
             <!-- Node Filter Indicator (top-right corner) -->
             {#if isFilterActive()}
               <button
-                onclick={clearPreviewNodeFilter}
+                onclick={() => clearPreviewNodeFilter()}
                 class="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-exo-dark-gray/80 border border-exo-yellow/40 rounded text-exo-yellow hover:border-exo-yellow/60 transition-colors cursor-pointer backdrop-blur-sm"
                 title="Clear filter"
               >

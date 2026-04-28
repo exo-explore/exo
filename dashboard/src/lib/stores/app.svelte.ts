@@ -1455,10 +1455,10 @@ class AppStore {
   /**
    * Clear the preview node filter and re-fetch placements
    */
-  clearPreviewNodeFilter() {
+  clearPreviewNodeFilter(refetch = true) {
     this.previewNodeFilter = new Set();
     // Re-fetch with no filter if we have a selected model
-    if (this.selectedPreviewModelId) {
+    if (refetch && this.selectedPreviewModelId) {
       this.fetchPlacementPreviews(this.selectedPreviewModelId, false);
     }
   }
@@ -3543,7 +3543,8 @@ export const selectPreviewModel = (modelId: string | null) =>
   appStore.selectPreviewModel(modelId);
 export const togglePreviewNodeFilter = (nodeId: string) =>
   appStore.togglePreviewNodeFilter(nodeId);
-export const clearPreviewNodeFilter = () => appStore.clearPreviewNodeFilter();
+export const clearPreviewNodeFilter = (refetch = true) =>
+  appStore.clearPreviewNodeFilter(refetch);
 export const previewNodeFilter = () => appStore.previewNodeFilter;
 export const deleteMessage = (messageId: string) =>
   appStore.deleteMessage(messageId);
