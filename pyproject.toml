@@ -30,6 +30,7 @@ dependencies = [
   "zstandard>=0.23.0",
   "mlx-vlm>=0.3.11; sys_platform == 'darwin'",
   "transformers>=5.6.2",
+  "pynvml>=13.0.1",
 ]
 
 [project.scripts]

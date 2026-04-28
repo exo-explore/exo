@@ -65,6 +65,7 @@
     nodeThunderboltBridge,
     nodeIdentities,
     isConnected,
+    featureFlags,
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
@@ -886,7 +887,7 @@
   }
 
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
-  type InstanceMeta = "MlxRing" | "MlxJaccl";
+  type InstanceMeta = "MlxRing" | "MlxJaccl" | "Vllm";
 
   // Launch defaults persistence
   const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults-v2";
@@ -5814,6 +5815,32 @@
                         </span>
                         RDMA (Fast)
                       </button>
+                      {#if featureFlags()["vllm_available"]}
+                        <button
+                          onclick={() => {
+                            selectedInstanceType = "Vllm";
+                            saveLaunchDefaults();
+                          }}
+                          class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
+                          'Vllm'
+                            ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                            : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                        >
+                          <span
+                            class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
+                            'Vllm'
+                              ? 'border-exo-yellow'
+                              : 'border-exo-medium-gray'}"
+                          >
+                            {#if selectedInstanceType === "Vllm"}
+                              <span
+                                class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                              ></span>
+                            {/if}
+                          </span>
+                          vLLM (CUDA)
+                        </button>
+                      {/if}
                     </div>
                   </div>
 

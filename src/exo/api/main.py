@@ -640,7 +640,10 @@ class API:
         )
 
     async def get_feature_flags(self) -> dict[str, bool]:
-        return {"disaggregation": ENABLE_DISAGGREGATION}
+        return {
+            "disaggregation": ENABLE_DISAGGREGATION,
+            "vllm_available": any(self.state.node_vllm.values()),
+        }
 
     async def list_instance_links(self) -> list[InstanceLink]:
         if not ENABLE_DISAGGREGATION:

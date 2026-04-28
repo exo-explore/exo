@@ -59,6 +59,7 @@ from exo.utils.info_gatherer.info_gatherer import (
     NodeConfig,
     NodeDiskUsage,
     NodeNetworkInterfaces,
+    NvmlMetrics,
     RdmaCtlStatus,
     StaticNodeInformation,
     ThunderboltBridgeInfo,
@@ -352,6 +353,11 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 event.node_id: info.system_profile,
             }
             update["node_memory"] = {**state.node_memory, event.node_id: info.memory}
+        case NvmlMetrics():
+            update["node_system"] = {
+                **state.node_system,
+                event.node_id: info.system_profile,
+            }
         case MemoryUsage():
             update["node_memory"] = {**state.node_memory, event.node_id: info}
         case NodeDiskUsage():

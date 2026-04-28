@@ -168,8 +168,10 @@
 
   function getDeviceType(
     name: string,
-  ): "macbook" | "studio" | "mini" | "unknown" {
+  ): "macbook" | "studio" | "mini" | "dgx" | "linux" | "unknown" {
     const lower = name.toLowerCase();
+    if (lower.includes("dgx") || lower.includes("gx10")) return "dgx";
+    if (lower.includes("linux")) return "linux";
     if (lower.includes("macbook")) return "macbook";
     if (lower.includes("studio")) return "studio";
     if (lower.includes("mini")) return "mini";
@@ -983,6 +985,81 @@
                       width={node.iconSize - 8}
                       height={node.iconSize *
                         0.36 *
+                        ((node.newPercent - node.currentPercent) / 100)}
+                      fill="#FFD700"
+                      filter="url(#memGlow-{filterId})"
+                      class="animate-pulse-slow"
+                    />
+                  {/if}
+                </g>
+              {:else if node.deviceType === "dgx"}
+                <!-- DGX Spark icon -->
+                {@const s = node.iconSize}
+                {@const dgxW = s * 1.4}
+                {@const dgxH = s * 0.52}
+                <g transform="translate({-dgxW / 2}, {-dgxH / 2})">
+                  <!-- Chassis -->
+                  <rect
+                    x="0"
+                    y="0"
+                    width={dgxW}
+                    height={dgxH}
+                    rx="2"
+                    fill="#6f6248"
+                    stroke={node.isUsed ? "#FFD700" : "#4B5563"}
+                    stroke-width="1.5"
+                  />
+                  <!-- Side accents -->
+                  <rect
+                    x="0"
+                    y="0"
+                    width={dgxW * 0.02}
+                    height={dgxH}
+                    fill="#8a7a56"
+                  />
+                  <rect
+                    x={dgxW - dgxW * 0.02}
+                    y="0"
+                    width={dgxW * 0.02}
+                    height={dgxH}
+                    fill="#8a7a56"
+                  />
+                  <!-- Left handle -->
+                  <rect
+                    x={dgxW * 0.04}
+                    y={dgxH * 0.08}
+                    width={dgxW * 0.22}
+                    height={dgxH * 0.84}
+                    rx="2"
+                    fill="#b3a170"
+                    stroke="#403723"
+                    stroke-width="0.5"
+                  />
+                  <!-- Right handle -->
+                  <rect
+                    x={dgxW - dgxW * 0.04 - dgxW * 0.22}
+                    y={dgxH * 0.08}
+                    width={dgxW * 0.22}
+                    height={dgxH * 0.84}
+                    rx="2"
+                    fill="#b3a170"
+                    stroke="#403723"
+                    stroke-width="0.5"
+                  />
+                  <!-- Memory fill -->
+                  <rect
+                    x="2"
+                    y={dgxH - dgxH * (node.currentPercent / 100)}
+                    width={dgxW - 4}
+                    height={dgxH * (node.currentPercent / 100)}
+                    fill="rgba(255,215,0,0.35)"
+                  />
+                  {#if node.modelUsageGB > 0 && node.isUsed}
+                    <rect
+                      x="2"
+                      y={dgxH - dgxH * (node.newPercent / 100)}
+                      width={dgxW - 4}
+                      height={dgxH *
                         ((node.newPercent - node.currentPercent) / 100)}
                       fill="#FFD700"
                       filter="url(#memGlow-{filterId})"
