@@ -1,20 +1,15 @@
-import os
 import queue
 import threading
 import time
-from collections.abc import Generator
 from dataclasses import dataclass
 from enum import Enum
 from typing import BinaryIO
 
-import mlx.core as mx
 from anyio import ClosedResourceError, EndOfStream
-from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.constants import ENABLE_DISAGGREGATION
-from exo.shared.models.model_cards import ModelTask
-from exo.shared.types.chunks import GenerationChunk
-from exo.shared.types.common import CommandId, ModelId
+from exo.shared.types.chunks import Chunk
+from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -24,6 +19,9 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.tasks import (
     ConnectToGroup,
+    GenerationTask,
+    ImageEdits,
+    ImageGeneration,
     LoadModel,
     Shutdown,
     StartWarmup,
@@ -34,7 +32,8 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
-    ModelLoadingResponse,
+    CancelledResponse,
+    FinishedResponse,
 )
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -55,22 +54,8 @@ from exo.worker.disaggregated.server import (
     PrefillRequest,
     PrefillServer,
 )
-from exo.worker.engines.mlx.cache import KVPrefixCache
-from exo.worker.engines.mlx.types import Model
-from exo.worker.engines.mlx.utils_mlx import (
-    initialize_mlx,
-    load_mlx_items,
-)
-from exo.worker.engines.mlx.vision import VisionProcessor
+from exo.worker.engines.base import Builder, Engine
 from exo.worker.runner.bootstrap import logger
-from exo.worker.runner.llm_inference.batch_generator import (
-    BatchGenerator,
-    InferenceGenerator,
-    SequentialGenerator,
-)
-
-from .batch_generator import Cancelled, Finished
-from .tool_parsers import make_mlx_parser
 
 PREFILL_PICKUP_TIMEOUT_SECONDS = 3
 PREFILL_FINISH_TIMEOUT_SECONDS = 300
@@ -84,8 +69,11 @@ class PrefillTask:
     done: threading.Event
 
 
-_TaskStreamClosed = object()
-WorkItem = Task | PrefillTask | object
+class _TaskStreamClosed:
+    pass
+
+
+WorkItem = Task | PrefillTask | _TaskStreamClosed
 
 
 class ExitCode(str, Enum):
@@ -97,13 +85,12 @@ class Runner:
     def __init__(
         self,
         bound_instance: BoundInstance,
+        builder: Builder,
         event_sender: MpSender[Event],
         task_receiver: MpReceiver[Task],
-        cancel_receiver: MpReceiver[TaskId],
     ):
         self.event_sender = event_sender
         self.task_receiver = task_receiver
-        self.cancel_receiver = cancel_receiver
         self.bound_instance = bound_instance
 
         self.instance, self.runner_id, self.shard_metadata = (
@@ -122,16 +109,12 @@ class Runner:
 
         self.setup_start_time = time.time()
 
-        self.generator: Builder | InferenceGenerator = Builder(
-            self.model_id,
-            self.event_sender,
-            self.cancel_receiver,
-        )
+        self.generator: Builder | Engine = builder
 
         self.seen: set[TaskId] = set()
         self.active_tasks: dict[
             TaskId,
-            TextGeneration,
+            GenerationTask,
         ] = {}
 
         self._prefill_server: PrefillServer | None = None
@@ -188,7 +171,7 @@ class Runner:
             except (EndOfStream, ClosedResourceError):
                 pass
             finally:
-                self._work_queue.put(_TaskStreamClosed)
+                self._work_queue.put(_TaskStreamClosed())
 
         self._task_reader_thread = threading.Thread(target=loop, name="task-reader")
         self._task_reader_thread.start()
@@ -196,7 +179,7 @@ class Runner:
     def _serve_prefill(self, req: PrefillTask) -> None:
         req.started.set()
         try:
-            assert isinstance(self.generator, InferenceGenerator)
+            assert isinstance(self.generator, Engine)
             self.generator.serve_prefill(req.request, req.wfile)
         except Exception:
             logger.opt(exception=True).warning(
@@ -226,17 +209,16 @@ class Runner:
         try:
             while True:
                 item = self._work_queue.get()
-                if item is _TaskStreamClosed:
+                if isinstance(item, _TaskStreamClosed):
                     break
                 if isinstance(item, PrefillTask):
                     self._serve_prefill(item)
                     continue
-                task: Task = item  # type: ignore
-                if task.task_id in self.seen:
+                if item.task_id in self.seen:
                     logger.warning("repeat task - potential error")
                     continue
-                self.seen.add(task.task_id)
-                self.handle_first_task(task)
+                self.seen.add(item.task_id)
+                self.handle_first_task(item)
                 if isinstance(self.current_status, RunnerShutdown):
                     break
         finally:
@@ -258,7 +240,7 @@ class Runner:
                 self.update_status(RunnerConnecting())
                 self.acknowledge_task(task)
 
-                self.generator.group = initialize_mlx(self.bound_instance)
+                self.generator.connect(self.bound_instance)
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerConnected())
@@ -266,14 +248,7 @@ class Runner:
 
             # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
             case LoadModel() if isinstance(self.generator, Builder) and (
-                (
-                    isinstance(self.current_status, RunnerConnected)
-                    and self.generator.group is not None
-                )
-                or (
-                    isinstance(self.current_status, RunnerIdle)
-                    and self.generator.group is None
-                )
+                isinstance(self.current_status, (RunnerConnected, RunnerIdle))
             ):
                 total_layers = (
                     self.shard_metadata.end_layer - self.shard_metadata.start_layer
@@ -285,26 +260,11 @@ class Runner:
                 )
                 self.acknowledge_task(task)
 
-                assert (
-                    ModelTask.TextGeneration in self.shard_metadata.model_card.tasks
-                ), f"Incorrect model task(s): {self.shard_metadata.model_card.tasks}"
-
-                def load_model() -> Generator[ModelLoadingResponse]:
-                    assert isinstance(self.generator, Builder)
-                    (
-                        self.generator.inference_model,
-                        self.generator.tokenizer,
-                        self.generator.vision_processor,
-                    ) = yield from load_mlx_items(
-                        self.bound_instance,
-                        self.generator.group,
-                    )
-
-                for load_resp in load_model():
+                for load_progress in self.generator.load(self.bound_instance):
                     self.update_status(
                         RunnerLoading(
-                            layers_loaded=load_resp.layers_loaded,
-                            total_layers=load_resp.total,
+                            layers_loaded=load_progress.layers_loaded,
+                            total_layers=load_progress.total,
                         )
                     )
 
@@ -315,7 +275,7 @@ class Runner:
                 logger.info("runner loaded")
 
             case StartWarmup() if isinstance(self.current_status, RunnerLoaded):
-                assert isinstance(self.generator, InferenceGenerator)
+                assert isinstance(self.generator, Engine)
                 logger.info("runner warming up")
 
                 self.update_status(RunnerWarmingUp())
@@ -334,7 +294,9 @@ class Runner:
                 )
                 logger.info("runner ready")
 
-            case TextGeneration() if isinstance(self.current_status, RunnerReady):
+            case TextGeneration() | ImageEdits() | ImageGeneration() if isinstance(
+                self.current_status, RunnerReady
+            ):
                 return_code = self.handle_generation_tasks(starting_task=task)
                 if return_code == ExitCode.Shutdown:
                     return
@@ -352,23 +314,21 @@ class Runner:
         logger.info("runner shutting down")
         self.update_status(RunnerShuttingDown())
         self.acknowledge_task(task)
-        if isinstance(self.generator, InferenceGenerator):
-            self.generator.close()
-        mx.clear_cache()
+        self.generator.close()
         import gc
 
         gc.collect()
         self.send_task_status(task.task_id, TaskStatus.Complete)
         self.update_status(RunnerShutdown())
 
-    def submit_text_generation(self, task: TextGeneration):
-        assert isinstance(self.generator, InferenceGenerator)
+    def submit_generation(self, task: GenerationTask):
+        assert isinstance(self.generator, Engine)
         self.active_tasks[task.task_id] = task
         self.generator.submit(task)
 
-    def handle_generation_tasks(self, starting_task: TextGeneration):
+    def handle_generation_tasks(self, starting_task: GenerationTask):
         assert isinstance(self.current_status, RunnerReady)
-        assert isinstance(self.generator, InferenceGenerator)
+        assert isinstance(self.generator, Engine)
 
         logger.info(f"received chat request: {starting_task}")
         self.update_status(RunnerRunning())
@@ -376,7 +336,7 @@ class Runner:
         self.acknowledge_task(starting_task)
         self.seen.add(starting_task.task_id)
 
-        self.submit_text_generation(starting_task)
+        self.submit_generation(starting_task)
 
         while self.active_tasks:
             results = self.generator.step()
@@ -384,13 +344,13 @@ class Runner:
             finished: list[TaskId] = []
             for task_id, result in results:
                 match result:
-                    case Cancelled():
+                    case CancelledResponse():
                         finished.append(task_id)
-                    case Finished():
+                    case FinishedResponse():
                         self.send_task_status(task_id, TaskStatus.Complete)
                         finished.append(task_id)
-                    case _:
-                        self.send_chunk(result, self.active_tasks[task_id].command_id)
+                    case other:
+                        self.send_chunk(other, self.active_tasks[task_id].command_id)
 
             for task_id in finished:
                 self.active_tasks.pop(task_id, None)
@@ -399,26 +359,25 @@ class Runner:
                 item = self._work_queue.get_nowait()
             except queue.Empty:
                 continue
-            if item is _TaskStreamClosed:
+            if isinstance(item, _TaskStreamClosed):
                 return ExitCode.Shutdown
             if isinstance(item, PrefillTask):
                 self._serve_prefill(item)
                 continue
-            task: Task = item  # type: ignore
-            if task.task_id in self.seen:
+            if item.task_id in self.seen:
                 logger.warning("repeat task - potential error")
                 continue
-            self.seen.add(task.task_id)
-            match task:
-                case TextGeneration():
-                    self.acknowledge_task(task)
-                    self.submit_text_generation(task)
+            self.seen.add(item.task_id)
+            match item:
+                case TextGeneration() | ImageGeneration() | ImageEdits():
+                    self.acknowledge_task(item)
+                    self.submit_generation(item)
                 case Shutdown():
-                    self.shutdown(task)
+                    self.shutdown(item)
                     return ExitCode.Shutdown
                 case _:
                     raise ValueError(
-                        f"Received {task.__class__.__name__} outside of state machine in {self.current_status=}"
+                        f"Received {item.__class__.__name__} outside of state machine in {self.current_status=}"
                     )
 
         self.update_status(RunnerReady(prefill_server_port=self._prefill_server_port))
@@ -428,74 +387,8 @@ class Runner:
 
     def send_chunk(
         self,
-        chunk: GenerationChunk,
+        chunk: Chunk,
         command_id: CommandId,
     ):
         if self.device_rank == 0:
             self.event_sender.send(ChunkGenerated(command_id=command_id, chunk=chunk))
-
-
-@dataclass
-class Builder:
-    model_id: ModelId
-    event_sender: MpSender[Event]
-    cancel_receiver: MpReceiver[TaskId]
-    inference_model: Model | None = None
-    tokenizer: TokenizerWrapper | None = None
-    group: mx.distributed.Group | None = None
-    vision_processor: VisionProcessor | None = None
-
-    def build(
-        self,
-    ) -> InferenceGenerator:
-        assert self.model_id
-        assert self.inference_model
-        assert self.tokenizer
-
-        vision_processor = self.vision_processor
-
-        tool_parser = None
-        logger.info(
-            f"model has_tool_calling={self.tokenizer.has_tool_calling} using tokens {self.tokenizer.tool_call_start}, {self.tokenizer.tool_call_end}"
-        )
-        if (
-            self.tokenizer.tool_call_start
-            and self.tokenizer.tool_call_end
-            and self.tokenizer.tool_parser  # type: ignore
-        ):
-            tool_parser = make_mlx_parser(
-                self.tokenizer.tool_call_start,
-                self.tokenizer.tool_call_end,
-                self.tokenizer.tool_parser,  # type: ignore
-            )
-
-        kv_prefix_cache = KVPrefixCache(self.group)
-
-        device_rank = 0 if self.group is None else self.group.rank()
-        if os.environ.get("EXO_NO_BATCH"):
-            logger.info("using SequentialGenerator (batching disabled)")
-            return SequentialGenerator(
-                model=self.inference_model,
-                tokenizer=self.tokenizer,
-                group=self.group,
-                tool_parser=tool_parser,
-                kv_prefix_cache=kv_prefix_cache,
-                model_id=self.model_id,
-                device_rank=device_rank,
-                cancel_receiver=self.cancel_receiver,
-                event_sender=self.event_sender,
-                vision_processor=vision_processor,
-            )
-        logger.info("using BatchGenerator")
-        return BatchGenerator(
-            model=self.inference_model,
-            tokenizer=self.tokenizer,
-            group=self.group,
-            tool_parser=tool_parser,
-            kv_prefix_cache=kv_prefix_cache,
-            model_id=self.model_id,
-            device_rank=device_rank,
-            cancel_receiver=self.cancel_receiver,
-            event_sender=self.event_sender,
-            vision_processor=vision_processor,
-        )
