@@ -185,7 +185,9 @@ def write_kv_chunk(
     stream.write(header_payload)
     stream.write(keys)
     stream.write(values)
-    stream.flush()
+    # No per-chunk flush: the K/V payload is far larger than the
+    # BufferedWriter's internal buffer so it bypasses to the socket directly.
+    # The trailing `Done` frame's `write_frame` flushes once at the end.
 
 
 def write_arrays_state(

@@ -174,6 +174,7 @@ class VllmEngine(Engine):
         from exo.worker.engines.vllm.growable_cache import get_model_runner
         from exo.worker.engines.vllm.kv_connector import (
             get_arrays_queue,
+            get_gdn_shipped,
             get_gdn_states,
             get_kv_queue,
             get_save_kv_layer_diag,
@@ -230,15 +231,34 @@ class VllmEngine(Engine):
         # from the post-forward stream so we only ship the suffix it needs.
         skip_tokens = request.start_pos
         chunks_sent = [0]
+        arrays_streamed = [0]
         layer_token_counts: dict[int, int] = {}
+        # Both writer threads serialize through this lock — BufferedWriter
+        # is not thread-safe and we don't want partial frames interleaved.
+        wfile_lock = threading.Lock()
+        # Diag for end-of-request bandwidth report.
+        writer_stats = {
+            "bytes_shipped": 0,
+            "wait_event_secs": 0.0,
+            "socket_secs": 0.0,
+            "first_byte_t": 0.0,
+            "last_byte_t": 0.0,
+            "started_t": 0.0,
+        }
 
         def writer_loop() -> None:
+            writer_stats["started_t"] = time.perf_counter()
             try:
                 while True:
                     item = kv_queue.get()
                     if item is None:
                         break
-                    layer_idx, keys, values = item
+                    layer_idx, keys, values, copy_event = item
+                    # Wait for the side-stream D2H to finish populating the
+                    # pinned host buffers. CPU-side wait, doesn't block GPU.
+                    t_wait = time.perf_counter()
+                    copy_event.synchronize()
+                    writer_stats["wait_event_secs"] += time.perf_counter() - t_wait
                     previous = layer_token_counts.get(layer_idx, 0)
                     count = int(keys.shape[0])
                     new_total = previous + count
@@ -259,29 +279,61 @@ class VllmEngine(Engine):
                     n_heads = int(keys.shape[1])
                     head_dim = int(keys.shape[2])
                     dtype_w = torch_dtype_to_wire(keys.dtype)
+                    keys_bytes = tensor_to_wire_bytes(keys)
+                    values_bytes = tensor_to_wire_bytes(values)
+                    payload_bytes = len(keys_bytes) + len(values_bytes)
                     if chunks_sent[0] == 0:
+                        writer_stats["first_byte_t"] = time.perf_counter()
                         logger.info(
                             f"First KV chunk: layer={layer_idx} keys={keys.shape} "
                             f"keys.dtype={keys.dtype} values.dtype={values.dtype}"
                         )
-                    write_kv_chunk(
-                        wfile,
-                        layer_idx=layer_idx,
-                        num_tokens=num_tokens,
-                        n_heads=n_heads,
-                        head_dim=head_dim,
-                        dtype=dtype_w,
-                        keys=tensor_to_wire_bytes(keys),
-                        values=tensor_to_wire_bytes(values),
-                    )
+                    t_sock = time.perf_counter()
+                    with wfile_lock:
+                        write_kv_chunk(
+                            wfile,
+                            layer_idx=layer_idx,
+                            num_tokens=num_tokens,
+                            n_heads=n_heads,
+                            head_dim=head_dim,
+                            dtype=dtype_w,
+                            keys=keys_bytes,
+                            values=values_bytes,
+                        )
+                    writer_stats["socket_secs"] += time.perf_counter() - t_sock
+                    writer_stats["bytes_shipped"] += payload_bytes
+                    writer_stats["last_byte_t"] = time.perf_counter()
                     chunks_sent[0] += 1
             except Exception:
                 logger.opt(exception=True).warning(
                     "serve_prefill writer thread crashed"
                 )
 
+        def arrays_writer_loop() -> None:
+            try:
+                while True:
+                    item = arrays_queue.get()
+                    if item is None:
+                        break
+                    layer_idx, arrays, copy_event = item
+                    if copy_event is not None:
+                        copy_event.synchronize()
+                    with wfile_lock:
+                        write_layer_arrays_blobs(
+                            wfile, layer_idx, arrays_to_blobs(arrays)
+                        )
+                    arrays_streamed[0] += 1
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "serve_prefill arrays writer thread crashed"
+                )
+
         writer_thread = threading.Thread(target=writer_loop, daemon=True)
         writer_thread.start()
+        arrays_writer_thread = threading.Thread(
+            target=arrays_writer_loop, daemon=True
+        )
+        arrays_writer_thread.start()
 
         t0 = time.perf_counter()
         forward_error: Exception | None = None
@@ -306,12 +358,17 @@ class VllmEngine(Engine):
                 engine.abort_request([request.request_id])
         finally:
             logger.info(
-                f"serve_prefill {request.request_id}: kv_queue size before sentinel = {kv_queue.qsize()}"
+                f"serve_prefill {request.request_id}: "
+                f"kv_queue={kv_queue.qsize()} arrays_queue={arrays_queue.qsize()}"
             )
             kv_queue.put(None)
+            arrays_queue.put(None)
             writer_thread.join(timeout=30)
+            arrays_writer_thread.join(timeout=30)
             if writer_thread.is_alive():
-                logger.warning("serve_prefill: writer thread did not exit")
+                logger.warning("serve_prefill: kv writer thread did not exit")
+            if arrays_writer_thread.is_alive():
+                logger.warning("serve_prefill: arrays writer thread did not exit")
 
         if forward_error is not None:
             logger.opt(exception=forward_error).error(
@@ -321,52 +378,59 @@ class VllmEngine(Engine):
                 write_error(wfile, code=500, message=f"engine.step: {forward_error!r}")
             return
 
-        # Drain arrays_queue first (per-layer cache state from save_kv_layer),
-        # then _gdn_states (per-request conv/ssm slice from kernel patches).
-        # Consumer is keyed by layer_idx with last-write-wins, so GDN
-        # overwrites arrays_queue — that's intentional, GDN is the slice we
-        # actually want; arrays_queue carries the whole batch buffer.
-        arrays_layers = 0
-        while not arrays_queue.empty():
-            try:
-                arr_item = arrays_queue.get_nowait()
-            except Exception:
-                break
-            if arr_item is None:
-                continue
-            layer_idx, arrays = arr_item
-            write_layer_arrays_blobs(wfile, layer_idx, arrays_to_blobs(arrays))
-            arrays_layers += 1
-
+        # The K/V writer and arrays writer both drained their queues during
+        # forward (see writer_loop / arrays_writer_loop above). What remains
+        # here is the fallback for any GDN layer whose conv+ssm pair never
+        # reached `_try_ship_gdn` — e.g., ssm captured but not conv. We skip
+        # layers already shipped by the streaming path.
         gdn = get_gdn_states()
-        if gdn:
+        gdn_shipped = get_gdn_shipped()
+        unshipped = [li for li in sorted(gdn.keys()) if li not in gdn_shipped]
+        arrays_layers = arrays_streamed[0]
+        if unshipped:
             torch.cuda.synchronize()
-        for layer_idx in sorted(gdn.keys()):
-            state = gdn[layer_idx]
-            arrs: list[torch.Tensor] = []
-            if "conv" in state:
-                arrs.append(state["conv"])
-            if "ssm" in state:
-                arrs.append(state["ssm"])
-            if arrs:
-                write_layer_arrays_blobs(wfile, layer_idx, arrays_to_blobs(arrs))
-                arrays_layers += 1
+            for layer_idx in unshipped:
+                state = gdn[layer_idx]
+                arrs: list[torch.Tensor] = []
+                if "conv" in state:
+                    arrs.append(state["conv"])
+                if "ssm" in state:
+                    arrs.append(state["ssm"])
+                if arrs:
+                    write_layer_arrays_blobs(
+                        wfile, layer_idx, arrays_to_blobs(arrs)
+                    )
+                    arrays_layers += 1
 
         forwarded_per_layer = max(layer_token_counts.values(), default=0)
         tokens_sent = max(0, forwarded_per_layer - skip_tokens)
         write_prefill_done(wfile, tokens_sent)
         elapsed = time.perf_counter() - t0
-        diag = get_save_kv_layer_diag()
-        diag_summary = sorted(
-            (li, len(calls), [c for c in calls[:4]])
-            for li, calls in diag.items()
+        _ = get_save_kv_layer_diag  # (kept for ad-hoc debug; not logged here)
+        # Bandwidth + per-stage breakdown for the writer thread.
+        bytes_shipped = writer_stats["bytes_shipped"]
+        wait_secs = writer_stats["wait_event_secs"]
+        sock_secs = writer_stats["socket_secs"]
+        first_byte_dt = (
+            writer_stats["first_byte_t"] - t0
+            if writer_stats["first_byte_t"]
+            else 0.0
         )
+        ship_secs = (
+            writer_stats["last_byte_t"] - writer_stats["first_byte_t"]
+            if writer_stats["last_byte_t"]
+            else 0.0
+        )
+        eff_bw_mbps = (bytes_shipped / 1e6 / ship_secs) if ship_secs > 0 else 0.0
+        peak_bw_mbps = (bytes_shipped / 1e6 / sock_secs) if sock_secs > 0 else 0.0
         logger.info(
             f"serve_prefill {request.request_id}: "
             f"streamed_chunks={chunks_sent[0]} arrays_layers={arrays_layers} "
             f"tokens={tokens_sent} elapsed_ms={elapsed * 1000:.0f} "
-            f"save_kv_layer_calls(layer,n,first4_slot_sizes)={diag_summary[:8]}..."
-            f"{diag_summary[-4:] if len(diag_summary) > 8 else ''}"
+            f"bytes={bytes_shipped / 1e6:.0f}MB ttfb_ms={first_byte_dt * 1000:.0f} "
+            f"ship_ms={ship_secs * 1000:.0f} "
+            f"wait_event_ms={wait_secs * 1000:.0f} sock_ms={sock_secs * 1000:.0f} "
+            f"eff_bw={eff_bw_mbps:.0f}MB/s peak_bw={peak_bw_mbps:.0f}MB/s"
         )
 
     def _start_task(

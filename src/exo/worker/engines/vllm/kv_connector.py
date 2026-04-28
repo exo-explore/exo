@@ -34,8 +34,22 @@ _LOG_PREFIX = "[exo-pd vllm-connector]"
 #
 # `_kv_queue` is the original streaming-connector path ported into this module.
 # We defer prefix reuse to vLLM APC and do not keep a separate TorchKVCache.
-_kv_queue: "queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None]" = queue.Queue()
-_arrays_queue: "queue.Queue[tuple[int, list[torch.Tensor]] | None]" = queue.Queue()
+# 4-tuple: (layer_idx, keys_host_pinned, values_host_pinned, copy_done_event)
+# The writer thread does `event.synchronize()` (CPU-side, doesn't block GPU)
+# before reading the pinned host bytes.
+_kv_queue: (
+    "queue.Queue[tuple[int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None]"
+) = queue.Queue()
+# 3-tuple: (layer_idx, arrays_host_or_gpu, copy_done_event_or_none)
+# - From save_kv_layer hybrid path: tensors are GPU, event=None (writer .cpu()s)
+# - From GDN capture (after both conv+ssm ready): tensors are pinned host,
+#   event is a CUDA event the writer must synchronize on before reading
+_arrays_queue: (
+    "queue.Queue[tuple[int, list[torch.Tensor], torch.cuda.Event | None] | None]"
+) = queue.Queue()
+# Per-layer tracking of which layers' GDN states have been shipped via the
+# async pipeline. Entries here are excluded from the post-writer fallback drain.
+_gdn_shipped: set[int] = set()
 _captured_layers: dict[int, dict[str, torch.Tensor]] = {}
 _captured_arrays: dict[int, list[torch.Tensor]] = {}
 # Hybrid-model SSM/conv state captured via causal_conv1d + delta-rule patches.
@@ -45,18 +59,70 @@ _gdn_call_idx: list[int] = [0]
 _ssm_call_idx: list[int] = [0]
 # Per-layer save_kv_layer call diagnostics: list of slot_mapping sizes seen.
 _save_kv_layer_diag: dict[int, list[int]] = {}
+# Side CUDA stream for K/V extract + async D2H, so vLLM's compute stream
+# isn't blocked on D2H/extract during forward.
+_save_stream: "torch.cuda.Stream | None" = None
 
 
-def get_kv_queue() -> "queue.Queue[tuple[int, torch.Tensor, torch.Tensor] | None]":
+def _get_save_stream() -> "torch.cuda.Stream":
+    global _save_stream
+    if _save_stream is None:
+        _save_stream = torch.cuda.Stream()
+    return _save_stream
+
+
+def get_kv_queue() -> (
+    "queue.Queue[tuple[int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None]"
+):
     return _kv_queue
 
 
-def get_arrays_queue() -> "queue.Queue[tuple[int, list[torch.Tensor]] | None]":
+def get_arrays_queue() -> (
+    "queue.Queue[tuple[int, list[torch.Tensor], torch.cuda.Event | None] | None]"
+):
     return _arrays_queue
 
 
 def get_gdn_states() -> dict[int, dict[str, torch.Tensor]]:
     return _gdn_states
+
+
+def get_gdn_shipped() -> set[int]:
+    return _gdn_shipped
+
+
+def _try_ship_gdn(layer_idx: int) -> None:
+    """If both conv and ssm have been captured for `layer_idx`, kick off an
+    async pinned D2H on the side stream and enqueue an arrays-state item so
+    the writer thread can ship the bytes during forward instead of after.
+
+    Called from BOTH the conv and ssm capture patches. Conv always fires
+    before ssm in a Mamba layer's forward, so this is a no-op after conv
+    (state lacks ssm) and ships once after ssm. For chunked prefill the
+    pair fires once per chunk: we ship every time, and the consumer's
+    `arrays[layer_idx] = ...` last-write-wins keeps the final-chunk state
+    (Mamba state is cumulative, only the final state matters).
+    """
+    state = _gdn_states.get(layer_idx)
+    if state is None or "conv" not in state or "ssm" not in state:
+        return
+    conv_gpu = state["conv"]
+    ssm_gpu = state["ssm"]
+    side_stream = _get_save_stream()
+    side_stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side_stream):
+        conv_host = torch.empty(
+            conv_gpu.shape, dtype=conv_gpu.dtype, pin_memory=True
+        )
+        ssm_host = torch.empty(
+            ssm_gpu.shape, dtype=ssm_gpu.dtype, pin_memory=True
+        )
+        conv_host.copy_(conv_gpu, non_blocking=True)
+        ssm_host.copy_(ssm_gpu, non_blocking=True)
+    event = torch.cuda.Event()
+    event.record(side_stream)
+    _arrays_queue.put((layer_idx, [conv_host, ssm_host], event))
+    _gdn_shipped.add(layer_idx)
 
 
 def get_save_kv_layer_diag() -> dict[int, list[int]]:
@@ -85,6 +151,7 @@ def reset_capture_state() -> None:
     _captured_layers.clear()
     _captured_arrays.clear()
     _gdn_states.clear()
+    _gdn_shipped.clear()
     _gdn_call_idx[0] = 0
     _ssm_call_idx[0] = 0
     _save_kv_layer_diag.clear()
@@ -155,7 +222,7 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
         # thread does the D2H copy via `tensor_to_wire_bytes`.
         if isinstance(kv_layer, (list, tuple)):
             arrays = [to_bf16(t) for t in kv_layer]
-            _arrays_queue.put((layer_idx, arrays))
+            _arrays_queue.put((layer_idx, arrays, None))
             return
 
         # Standard attention layers (full or sliding-window): extract K/V
@@ -163,9 +230,31 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
         # forward step's tokens. Capturing here, before sliding-window
         # eviction in the block pool, is the only way to ship every prompt
         # token's K/V regardless of attention type.
+        #
+        # All of this work — gather + bf16 cast + D2H — runs on a side
+        # CUDA stream into pinned host memory. vLLM's compute stream is
+        # never blocked: it only has to record-event for our side stream
+        # to wait on, then it continues into the next layer's forward.
+        # The writer thread later waits on the CUDA event (CPU-side wait,
+        # doesn't block GPU) and ships the already-on-host bytes.
         if slot_mapping is not None:
             try:
-                keys, values = extract_kv_via_slot_mapping(kv_layer, slot_mapping)
+                save_stream = _get_save_stream()
+                save_stream.wait_stream(torch.cuda.current_stream())
+                with torch.cuda.stream(save_stream):
+                    keys_gpu, values_gpu = extract_kv_via_slot_mapping(
+                        kv_layer, slot_mapping
+                    )
+                    keys_host = torch.empty(
+                        keys_gpu.shape, dtype=keys_gpu.dtype, pin_memory=True
+                    )
+                    values_host = torch.empty(
+                        values_gpu.shape, dtype=values_gpu.dtype, pin_memory=True
+                    )
+                    keys_host.copy_(keys_gpu, non_blocking=True)
+                    values_host.copy_(values_gpu, non_blocking=True)
+                event = torch.cuda.Event()
+                event.record(save_stream)
             except Exception as exc:
                 logger.warning(
                     f"save_kv_layer extract failed layer={layer_idx} "
@@ -173,7 +262,7 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
                     f"slot_mapping.shape={slot_mapping.shape}: {exc!r}"
                 )
                 return
-            _kv_queue.put((layer_idx, keys, values))
+            _kv_queue.put((layer_idx, keys_host, values_host, event))
 
     def wait_for_save(self) -> None:
         return
@@ -389,6 +478,11 @@ def _patch_gdn_capture() -> None:
                 conv_at_ci = conv_states[ci : ci + 1].transpose(-1, -2).contiguous()
                 _gdn_states.setdefault(layer_idx, {})["conv"] = conv_at_ci
                 _gdn_states[layer_idx]["ci"] = ci
+                # Don't ship from here: conv fires before ssm in a Mamba
+                # forward, so state["ssm"] is either missing (chunk 1) or
+                # stale from the previous chunk (chunk N>=2). Shipping here
+                # would emit a mismatched (conv_N, ssm_{N-1}) pair that the
+                # ssm patch's later ship would overwrite. Just wait for ssm.
             _gdn_call_idx[0] += 1
         return result
 
@@ -439,6 +533,7 @@ def _patch_gdn_capture() -> None:
                             _gdn_states.setdefault(layer_idx, {})["ssm"] = (
                                 ssm_state
                             )
+                            _try_ship_gdn(layer_idx)
                         _ssm_call_idx[0] += 1
                     return result
 

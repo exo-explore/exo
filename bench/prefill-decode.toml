@@ -12,8 +12,8 @@ timeout = 7200.0
 settle_timeout = 60.0
 
 # Workload
-pp = [4096]
-tg = [512]
+pp = [4096, 8192]
+tg = [128]
 repeat = 1
 warmup = 0
 
