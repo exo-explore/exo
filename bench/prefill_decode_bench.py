@@ -10,9 +10,10 @@ the worker decides per-request whether to ship prefill remotely
 (uncached_count > REMOTE_PREFILL_MIN_TOKENS).
 
 Usage:
-    uv run python bench/prefill_decode_bench.py --model <id> --pp 2048,8192 --tg 128
-    uv run python bench/prefill_decode_bench.py --model <id> --pp 4096 --tg 128 --repeat 3
-    uv run python bench/prefill_decode_bench.py --model <id> --pp 2048 --tg 128 --dry-run
+    uv run bench/prefill_decode_bench.py --model <id> --pp 2048,8192 --tg 128
+    uv run bench/prefill_decode_bench.py --model <id> --pp 4096 --tg 128 --repeat 3
+    uv run bench/prefill_decode_bench.py --model <id> --pp 2048 --tg 128 --dry-run
+    uv run python bench/prefill_decode_bench.py --config bench/prefill-decode.toml
 """
 
 from __future__ import annotations

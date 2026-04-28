@@ -22,7 +22,6 @@ from exo.worker.disaggregated.protocol import (
     write_kv_chunk,
 )
 from exo.worker.engines.mlx.types import KVCacheType
-from exo.worker.runner.bootstrap import logger
 
 _STR_TO_MX: dict[DType, mx.Dtype] = {
     "bfloat16": mx.bfloat16,
@@ -90,17 +89,22 @@ def nhd_to_bhsd(t: mx.array) -> mx.array:
     return mx.expand_dims(mx.transpose(t, (1, 0, 2)), 0)
 
 
-def send_kv_token_range(
-    stream: BinaryIO,
+def materialize_kv_token_range(
     caches: KVCacheType,
     *,
-    dtype: DType,
     token_start: int,
     token_end: int,
-) -> int:
+) -> list[tuple[int, mx.array, mx.array]]:
+    """Slice [token_start, token_end) from each KV layer and materialize on CPU.
+
+    Returns a list of (layer_idx, k_nhd, v_nhd) tuples ready for serialization.
+    Calls mx.eval to ensure the slice is a snapshot (cache.keys is mutated in
+    place by subsequent prefill steps, so the slice must be evaluated before
+    returning to keep correctness).
+    """
     if token_end <= token_start:
-        return 0
-    tokens_sent = 0
+        return []
+    out: list[tuple[int, mx.array, mx.array]] = []
     for layer_idx, c in enumerate(caches):
         match c:
             case QuantizedKVCache() | CacheList() | DeepseekV4Cache():
@@ -119,26 +123,55 @@ def send_kv_token_range(
                     k_nhd = bhsd_to_nhd(k)
                     v_nhd = bhsd_to_nhd(v)
                     mx.eval(k_nhd, v_nhd)
-                num_tokens = int(k_nhd.shape[0])
-                n_heads = int(k_nhd.shape[1])
-                head_dim = int(k_nhd.shape[2])
-                write_kv_chunk(
-                    stream,
-                    layer_idx=layer_idx,
-                    num_tokens=num_tokens,
-                    n_heads=n_heads,
-                    head_dim=head_dim,
-                    dtype=dtype,
-                    keys=array_to_bytes(k_nhd),
-                    values=array_to_bytes(v_nhd),
-                )
-                if tokens_sent != 0 and num_tokens != tokens_sent:
-                    logger.critical(
-                        f"Unexpected number of tokens sent {num_tokens} != {tokens_sent}"
-                    )
-                tokens_sent = num_tokens
+                if int(k_nhd.shape[0]) == 0:
+                    continue
+                out.append((layer_idx, k_nhd, v_nhd))
             case ArraysCache():
                 pass
+    return out
+
+
+def write_materialized_kv_chunk(
+    stream: BinaryIO,
+    *,
+    layer_idx: int,
+    k_nhd: mx.array,
+    v_nhd: mx.array,
+    dtype: DType,
+) -> int:
+    num_tokens = int(k_nhd.shape[0])
+    n_heads = int(k_nhd.shape[1])
+    head_dim = int(k_nhd.shape[2])
+    write_kv_chunk(
+        stream,
+        layer_idx=layer_idx,
+        num_tokens=num_tokens,
+        n_heads=n_heads,
+        head_dim=head_dim,
+        dtype=dtype,
+        keys=array_to_bytes(k_nhd),
+        values=array_to_bytes(v_nhd),
+    )
+    return num_tokens
+
+
+def send_kv_token_range(
+    stream: BinaryIO,
+    caches: KVCacheType,
+    *,
+    dtype: DType,
+    token_start: int,
+    token_end: int,
+) -> int:
+    materialized = materialize_kv_token_range(
+        caches, token_start=token_start, token_end=token_end
+    )
+    tokens_sent = 0
+    for layer_idx, k_nhd, v_nhd in materialized:
+        n = write_materialized_kv_chunk(
+            stream, layer_idx=layer_idx, k_nhd=k_nhd, v_nhd=v_nhd, dtype=dtype
+        )
+        tokens_sent = max(tokens_sent, n)
     return tokens_sent
 
 
