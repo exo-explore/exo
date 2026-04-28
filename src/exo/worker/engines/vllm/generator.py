@@ -22,6 +22,7 @@ from vllm.sampling_params import SamplingParams
 from vllm.tokenizers import TokenizerLike
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
 from vllm.v1.engine.llm_engine import LLMEngine
+from vllm.v1.kv_cache_interface import KVCacheConfig
 
 from exo.api.types import (
     CompletionTokensDetails,
@@ -381,6 +382,19 @@ def _patch_weight_loading_progress() -> None:
         for attr in list(vars(mod)):
             if vars(mod)[attr] is original_metadata:
                 setattr(mod, attr, _noop_metadata)
+
+
+def build_layer_groups(kv_cache_config: KVCacheConfig) -> list[int]:
+    group_lookup: dict[str, int] = {}
+    for group_idx, group_spec in enumerate(kv_cache_config.kv_cache_groups):
+        for layer_name in group_spec.layer_names:
+            group_lookup[layer_name] = group_idx
+
+    layer_to_group: list[int] = []
+    for tensor_spec in kv_cache_config.kv_cache_tensors:
+        for name in tensor_spec.shared_by:
+            layer_to_group.append(group_lookup[name])
+    return layer_to_group
 
 
 def load_vllm_engine(

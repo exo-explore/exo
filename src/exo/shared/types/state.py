@@ -58,6 +58,7 @@ class State(FrozenModel):
     node_thunderbolt: Mapping[NodeId, NodeThunderboltInfo] = {}
     node_thunderbolt_bridge: Mapping[NodeId, ThunderboltBridgeStatus] = {}
     node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] = {}
+    node_vllm: Mapping[NodeId, bool] = {}
 
     # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
     thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []

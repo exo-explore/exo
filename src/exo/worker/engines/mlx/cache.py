@@ -28,6 +28,7 @@ from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
     from exo.worker.engines.mlx.vision import MediaRegion
+    from exo.worker.engines.vllm.kv_cache import TorchKVCache
 
 
 # Fraction of device memory above which LRU eviction kicks in.
@@ -425,6 +426,44 @@ class KVPrefixCache:
                 break
 
         return match_length
+
+    def lookup(
+        self, prompt_token_ids: list[int]
+    ) -> tuple["TorchKVCache | None", int, int | None]:
+        from exo.worker.engines.vllm.kv_cache import TorchKVCache
+
+        prompt_mx = mx.array(prompt_token_ids)
+        max_length = len(prompt_token_ids)
+        best_index: int | None = None
+        best_length = 0
+
+        for i, cached_prompt in enumerate(self.prompts):
+            length = get_prefix_length(prompt_mx, cached_prompt)
+            if length >= max_length - 1:
+                best_index, best_length = i, length
+                break
+            if length > best_length:
+                best_index, best_length = i, length
+
+        if best_index is None or best_length == 0:
+            return None, 0, None
+
+        best_length = min(best_length, max_length - 1)
+
+        self._access_counter += 1
+        self._last_used[best_index] = self._access_counter
+
+        cached = self.caches[best_index]
+        compatible: list[
+            KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList
+        ] = []
+        for c in cached:
+            if isinstance(c, DeepseekV4Cache):
+                return None, 0, None
+            compatible.append(c)
+
+        torch_cache = TorchKVCache.from_mlx_cache(compatible)
+        return torch_cache.trim_to(best_length), best_length, best_index
 
     def _evict_if_needed(self):
         """Evict least recently used entries while memory usage is high."""

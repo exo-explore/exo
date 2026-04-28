@@ -1,6 +1,7 @@
 from collections.abc import Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
+from typing import cast
 
 import mlx.core as mx
 import numpy as np
@@ -41,15 +42,15 @@ LayerState = KVLayerState | RotatingKVLayerState | ArraysLayerState
 def _mx_to_torch(arr: mx.array) -> torch.Tensor:
     mx.eval(arr)
     if arr.dtype == mx.bfloat16:
-        return torch.from_numpy(np.array(arr.astype(mx.float32))).to(torch.bfloat16)
-    return torch.from_numpy(np.array(arr))
+        return torch.from_numpy(np.array(arr.astype(mx.float32))).to(torch.bfloat16)  # pyright: ignore[reportUnknownMemberType]
+    return torch.from_numpy(np.array(arr))  # pyright: ignore[reportUnknownMemberType]
 
 
 def _torch_to_mx(t: torch.Tensor) -> mx.array:
     t = t.detach().cpu()
     if t.dtype == torch.bfloat16:
-        return mx.array(t.float().numpy()).astype(mx.bfloat16)  # pyright: ignore[reportAny]
-    return mx.array(t.numpy())  # pyright: ignore[reportAny]
+        return mx.array(t.float().numpy()).astype(mx.bfloat16)
+    return mx.array(t.numpy())
 
 
 def _split_kv(
@@ -165,7 +166,7 @@ class TorchKVCache:
                 else:
                     k, v = c.state
                     kt, vt = _kv_to_nhd(k, v)  # pyright: ignore[reportArgumentType]
-                    keep, max_size, offset, idx = (int(x) for x in c.meta_state)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType, reportUnknownArgumentType]
+                    keep, max_size, offset, idx = (int(x) for x in c.meta_state)
                     layers.append(
                         RotatingKVLayerState(
                             keys=kt,
@@ -182,7 +183,7 @@ class TorchKVCache:
                     arrays.append(_mx_to_torch(arr) if arr is not None else None)
                 layers.append(ArraysLayerState(arrays=arrays))
             else:
-                if c.keys is None:  # pyright: ignore[reportUnnecessaryComparison]
+                if c.keys is None:
                     layers.append(
                         KVLayerState(keys=torch.empty(0), values=torch.empty(0))
                     )
@@ -251,8 +252,9 @@ class TorchKVCache:
                 sched_block_size = block_sizes_per_group[gi]
                 pages_per_block = sched_block_size // page_size
                 if pages_per_block > 1:
-                    expanded = []
-                    for b in bt.tolist():
+                    expanded: list[int] = []
+                    block_indices = cast(list[int], bt.tolist())  # pyright: ignore[reportUnknownMemberType]
+                    for b in block_indices:
                         start_page = b * pages_per_block
                         end_page = min(start_page + pages_per_block, k_all.shape[0])
                         expanded.extend(range(start_page, end_page))
@@ -284,7 +286,7 @@ class TorchKVCache:
                 kv = kv_caches[layer_idx]
                 if isinstance(kv, list):
                     for stored, target in zip(layer.arrays, kv, strict=True):
-                        if stored is not None and target is not None:
+                        if stored is not None:
                             n = min(len(bt), stored.shape[0])
                             if n > 0:
                                 target[bt[:n]] = stored[:n].to(

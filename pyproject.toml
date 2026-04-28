@@ -15,11 +15,11 @@ dependencies = [
   "huggingface-hub>=1.8.0",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
-  "exo-pyo3-bindings",                         # rust bindings
+  "exo-pyo3-bindings",                     # rust bindings
   "anyio==4.11.0",
   "mlx==0.31.2; sys_platform == 'darwin'",
   "mlx-lm; sys_platform=='darwin'",
-  "tiktoken>=0.12.0",                          # required for kimi k2 tokenizer
+  "tiktoken>=0.12.0",                      # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",

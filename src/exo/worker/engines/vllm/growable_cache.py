@@ -1,4 +1,5 @@
 # pyright: reportPrivateUsage=false, reportAttributeAccessIssue=false
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 import torch
@@ -66,14 +67,14 @@ def _patch_nogds() -> None:
 
     original = weight_utils._init_fastsafetensors_loader
 
-    def patched(  # pyright: ignore[reportUnknownParameterType]
+    def patched(
         pg: "torch.distributed.ProcessGroup",
         device: "torch.device",
         f_list: list[str],
         *,
         nogds: bool = False,
-    ):
-        return original(pg, device, f_list, nogds=True)  # pyright: ignore[reportUnknownVariableType]
+    ) -> object:
+        return original(pg, device, f_list, nogds=True)
 
     weight_utils._init_fastsafetensors_loader = patched
 
@@ -247,7 +248,10 @@ def _patch_allocate_slots() -> None:
     KVCacheManager.allocate_slots = patched
 
     if hasattr(KVCacheManager, "can_fit_full_sequence"):
-        original_can_fit = KVCacheManager.can_fit_full_sequence
+        original_can_fit = cast(
+            Callable[..., bool],
+            KVCacheManager.can_fit_full_sequence,
+        )
 
         def patched_can_fit(
             self: KVCacheManager,
@@ -257,7 +261,7 @@ def _patch_allocate_slots() -> None:
             num_external_computed_tokens: int = 0,
             num_encoder_tokens: int = 0,
         ) -> bool:
-            result = original_can_fit(
+            result: bool = original_can_fit(
                 self,
                 request,
                 num_new_computed_tokens,
@@ -389,8 +393,12 @@ def _grow_tensors(
         else:
             runner_kv_caches.append(new_kv)
 
-    for layer_name, new_kv in new_kv_caches.items():
-        old_kv_list = forward_context[layer_name].kv_cache
+    new_kv_typed = cast("dict[str, torch.Tensor | list[torch.Tensor]]", new_kv_caches)
+    for layer_name, new_kv in new_kv_typed.items():
+        old_kv_list = cast(
+            "list[torch.Tensor | list[torch.Tensor]] | torch.Tensor | None",
+            forward_context[layer_name].kv_cache,
+        )
         if old_kv_list is not None and (
             not isinstance(old_kv_list, torch.Tensor) or old_kv_list.numel() > 0
         ):
@@ -448,9 +456,9 @@ def _patch_marlin_w2_thread_config() -> None:
     except ImportError:
         return
 
-    original_gemm = ops.moe_wna16_marlin_gemm
+    original_gemm = cast(Callable[..., object], ops.moe_wna16_marlin_gemm)
 
-    def patched_gemm(*args: "object", **kwargs: "object") -> "object":
+    def patched_gemm(*args: object, **kwargs: object) -> object:
         kwargs["thread_k"] = 64
         kwargs["thread_n"] = 128
         return original_gemm(*args, **kwargs)
@@ -473,10 +481,6 @@ def _patch_get_computed_blocks() -> None:
         if prefix_cache is None or request.prompt_token_ids is None:
             return original(self, request)
 
-        from exo.worker.engines.vllm.kv_cache import (
-            TorchKVCache as _TorchKVCache,  # noqa: F811
-        )
-
         try:
             torch_cache, num_matched, _ = prefix_cache.lookup(
                 list(request.prompt_token_ids)
@@ -484,16 +488,12 @@ def _patch_get_computed_blocks() -> None:
         except Exception:
             return original(self, request)
 
-        if (
-            torch_cache is None
-            or not isinstance(torch_cache, _TorchKVCache)
-            or num_matched == 0
-        ):
+        if torch_cache is None or num_matched == 0:
             return original(self, request)
 
         from vllm.utils.math_utils import cdiv
 
-        from exo.worker.engines.vllm.generator import _build_layer_groups
+        from exo.worker.engines.vllm.generator import build_layer_groups
 
         num_groups = len(self.kv_cache_config.kv_cache_groups)
         null_block = self.block_pool.null_block
@@ -546,13 +546,16 @@ def _patch_get_computed_blocks() -> None:
             token_offset_per_group.append(skipped_block_counts[gi] * block_size)
 
         block_ids_per_group = [[b.block_id for b in grp] for grp in blocks_per_group]
-        layer_to_group = _build_layer_groups(self.kv_cache_config)
-        model_runner = self._growable_model_runner  # type: ignore[reportAttributeAccessIssue]
+        layer_to_group = build_layer_groups(self.kv_cache_config)
+        model_runner = cast(GPUModelRunner | None, self._growable_model_runner)
         if model_runner is not None:
             torch_cache.write_to_vllm_blocks(
-                model_runner.kv_caches,
+                cast(
+                    "list[torch.Tensor | list[torch.Tensor]]",
+                    model_runner.kv_caches,
+                ),
                 block_ids_per_group,
-                layer_to_group,  # type: ignore
+                layer_to_group,
                 token_offset_per_group,
             )
 
