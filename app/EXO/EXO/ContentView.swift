@@ -22,7 +22,6 @@ struct ContentView: View {
     @State private var showAllInstances = false
     @State private var baseURLCopied = false
     @State private var showAdvanced = false
-    @State private var showDebugInfo = false
     private enum BugReportPhase: Equatable {
         case idle
         case prompting
@@ -40,6 +39,9 @@ struct ContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             statusSection
+            if bugReportPhase != .idle {
+                sendBugReportButton
+            }
             if shouldShowLocalNetworkWarning {
                 localNetworkWarningBanner
             }
@@ -294,6 +296,14 @@ struct ContentView: View {
             ) {
                 updater.checkForUpdates()
             }
+            HoverButton(
+                title: "Share bug report",
+                tint: .primary,
+                trailingSystemImage: "ladybug"
+            ) {
+                bugReportPhase = .prompting
+                bugReportUserDescription = ""
+            }
             .padding(.bottom, 8)
             HoverButton(title: "Quit", tint: .secondary) {
                 controller.stop()
@@ -477,40 +487,6 @@ struct ContentView: View {
         }
     }
 
-    private var debugSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HoverButton(
-                title: "Debug Info",
-                tint: .primary,
-                trailingSystemImage: showDebugInfo ? "chevron.up" : "chevron.down",
-                small: true
-            ) {
-                showDebugInfo.toggle()
-            }
-            if showDebugInfo {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Version: \(buildTag)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Text("Commit: \(buildCommit)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Text(thunderboltStatusText)
-                        .font(.caption2)
-                        .foregroundColor(thunderboltStatusColor)
-                    clusterThunderboltBridgeView
-                    interfaceIpList
-                    rdmaStatusView
-                    sendBugReportButton
-                        .padding(.top, 6)
-                }
-                .padding(.leading, 8)
-                .transition(.opacity)
-            }
-        }
-        .animation(.easeInOut(duration: 0.25), value: showDebugInfo)
-    }
-
     private var rdmaStatusView: some View {
         let rdmaStatuses = stateService.latestSnapshot?.nodeRdmaCtl ?? [:]
         let localNodeId = stateService.localNodeId
@@ -563,24 +539,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             switch bugReportPhase {
             case .idle:
-                Button {
-                    bugReportPhase = .prompting
-                    bugReportUserDescription = ""
-                } label: {
-                    HStack {
-                        Text("Send Bug Report")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                        Spacer()
-                    }
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.accentColor.opacity(0.12))
-                    )
-                }
-                .buttonStyle(.plain)
+                EmptyView()
 
             case .prompting:
                 VStack(alignment: .leading, spacing: 6) {
