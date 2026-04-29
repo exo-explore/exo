@@ -35,8 +35,13 @@ _LAYER_RE = re.compile(r"layers\.(\d+)\.")
 # 4-tuple: (layer_idx, keys_host_pinned, values_host_pinned, copy_done_event)
 # The writer thread does `event.synchronize()` (CPU-side, doesn't block GPU)
 # before reading the pinned host bytes.
+# 5-tuple: (layer_idx, num_tokens, keys_host_pinned, values_host_pinned, copy_done_event)
+# `num_tokens` is the authoritative token count for this item. The writer uses
+# it for skip_tokens accounting *and* to slice the keys/values tensors before
+# writing to wire — never trusts `keys.shape[0]`, since shape can disagree with
+# token count when the source path packs/reshapes (e.g. NVFP4 layouts).
 _kv_queue: queue.Queue[
-    tuple[int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None
+    tuple[int, int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None
 ] = queue.Queue()
 # 3-tuple: (layer_idx, arrays_host_or_gpu, copy_done_event_or_none)
 # - From save_kv_layer hybrid path: tensors are GPU, event=None (writer .cpu()s)
@@ -78,7 +83,7 @@ def _get_save_stream() -> torch.cuda.Stream:
 
 
 def get_kv_queue() -> queue.Queue[
-    tuple[int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None
+    tuple[int, int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None
 ]:
     return _kv_queue
 
@@ -260,6 +265,7 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
                     )
                     keys_host.copy_(keys_gpu, non_blocking=True)
                     values_host.copy_(values_gpu, non_blocking=True)
+                    num_tokens = int(keys_gpu.shape[0])
                 event = torch.cuda.Event()
                 event.record(save_stream)
             except Exception as exc:
@@ -269,7 +275,7 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
                     f"slot_mapping.shape={slot_mapping.shape}: {exc!r}"
                 )
                 return
-            _kv_queue.put((layer_idx, keys_host, values_host, event))
+            _kv_queue.put((layer_idx, num_tokens, keys_host, values_host, event))
 
     def wait_for_save(self) -> None:
         return
@@ -605,7 +611,9 @@ def _patch_vllm_for_connector(connector_class: type[Any]) -> None:
                         values_host.copy_(values_gpu, non_blocking=True)
                         event = torch.cuda.Event()
                         event.record(save_stream)
-                        _kv_queue.put((layer_idx, keys_host, values_host, event))
+                        _kv_queue.put(
+                            (layer_idx, num_apc, keys_host, values_host, event)
+                        )
                         pre_layers_shipped += 1
                         pre_bytes_shipped += (
                             keys_host.numel() * keys_host.element_size()

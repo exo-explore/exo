@@ -272,26 +272,34 @@ class VllmEngine(Engine):
                         continue
                     if item is None:
                         break
-                    layer_idx, keys, values, copy_event = item
+                    layer_idx, count, keys, values, copy_event = item
                     # Wait for the side-stream D2H to finish populating the
                     # pinned host buffers. CPU-side wait, doesn't block GPU.
                     t_wait = time.perf_counter()
                     copy_event.synchronize()
                     writer_stats["wait_event_secs"] += time.perf_counter() - t_wait
                     previous = layer_token_counts.get(layer_idx, 0)
-                    count = int(keys.shape[0])
                     new_total = previous + count
                     layer_token_counts[layer_idx] = new_total
 
                     if new_total <= skip_tokens:
                         continue
+                    # Reshape paged 4-D layouts to per-token 3-D up front so
+                    # the trim slice operates on the token axis.
+                    if keys.dim() == 4:
+                        keys = keys.reshape(-1, keys.shape[-2], keys.shape[-1])
+                        values = values.reshape(-1, values.shape[-2], values.shape[-1])
+                    # Slice keys/values to exactly `count` tokens — the source
+                    # tensor may be larger if shape disagrees with logical
+                    # token count (e.g. paged storage gathered over more
+                    # blocks than tokens consumed).
+                    if int(keys.shape[0]) > count:
+                        keys = keys[:count]
+                        values = values[:count]
                     if previous < skip_tokens:
                         trim = skip_tokens - previous
                         keys = keys[trim:]
                         values = values[trim:]
-                    if keys.dim() == 4:
-                        keys = keys.reshape(-1, keys.shape[-2], keys.shape[-1])
-                        values = values.reshape(-1, values.shape[-2], values.shape[-1])
                     num_tokens = int(keys.shape[0])
                     n_heads = int(keys.shape[1])
                     head_dim = int(keys.shape[2])
