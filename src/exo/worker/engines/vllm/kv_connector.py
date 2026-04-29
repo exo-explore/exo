@@ -633,6 +633,26 @@ def _patch_vllm_for_connector(connector_class: type[Any]) -> None:
     sched_mod.Scheduler.schedule = patched_schedule
     # Reset the per-request-extracted set when reset_capture_state runs.
     _apc_extracted_set_ref["set"] = _scheduled_apc_extracted
+
+    # Patch Scheduler._mamba_block_aligned_split to a no-op. With APC=True +
+    # hybrid models, vLLM forces mamba_cache_mode="align" which makes the
+    # scheduler split prefill at cache_config.block_size boundaries (e.g.
+    # 4093-token prefill becomes 3920+173). That doubles save_kv_layer
+    # firings and arrays ships, doubles per-chunk scheduler overhead, and
+    # blows the writer's per-item Python budget — drain after compute extends
+    # by ~500ms. With APC=False, mamba_cache_mode="none" and this split
+    # doesn't fire, so prefill stays a single chunk.
+    def _no_split(
+        self: sched_mod.Scheduler,
+        request: Request,
+        num_new_tokens: int,
+        num_new_local_computed_tokens: int = 0,
+        num_external_computed_tokens: int = 0,
+    ) -> int:
+        return num_new_tokens
+
+    sched_mod.Scheduler._mamba_block_aligned_split = _no_split  # pyright: ignore[reportPrivateUsage,reportAttributeAccessIssue]
+
     logger.info("Installed vLLM connector bypass patches")
 
 

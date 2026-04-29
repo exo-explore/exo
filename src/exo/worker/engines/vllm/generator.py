@@ -444,7 +444,7 @@ def load_vllm_engine(
             engine_args = EngineArgs(
                 model=str(model_path.expanduser().resolve()),
                 served_model_name=str(model_id),
-                gpu_memory_utilization=0.05,
+                gpu_memory_utilization=0.1,
                 trust_remote_code=trust_remote_code,
                 load_format="fastsafetensors",
                 enable_prefix_caching=True,
