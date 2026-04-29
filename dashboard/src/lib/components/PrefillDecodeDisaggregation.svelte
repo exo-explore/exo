@@ -207,57 +207,6 @@
 </script>
 
 <div class="font-mono text-foreground">
-  <div class="mb-6 space-y-4">
-    <details open class="group [&_summary::-webkit-details-marker]:hidden">
-      <summary
-        class="cursor-pointer list-none text-exo-yellow text-xs font-mono tracking-widest uppercase flex items-center gap-2 hover:opacity-80 transition-opacity"
-      >
-        <span
-          class="inline-block transition-transform group-open:rotate-90 text-exo-light-gray"
-          >▶</span
-        >
-        Prefill vs Decode
-      </summary>
-      <div class="mt-2 text-white/80 text-sm leading-relaxed">
-        Prefill is the compute-heavy pass that consumes the entire prompt and
-        builds a KV cache. Decode is the memory-bandwidth-bound loop that emits
-        tokens sequentially from that cache. The two phases have very different
-        bottlenecks, so running them on different hardware can be substantially
-        faster than doing both on one node.
-      </div>
-    </details>
-    <details class="group [&_summary::-webkit-details-marker]:hidden">
-      <summary
-        class="cursor-pointer list-none text-exo-yellow text-xs font-mono tracking-widest uppercase flex items-center gap-2 hover:opacity-80 transition-opacity"
-      >
-        <span
-          class="inline-block transition-transform group-open:rotate-90 text-exo-light-gray"
-          >▶</span
-        >
-        Linking Instances
-      </summary>
-      <div class="mt-2 text-white/80 text-sm leading-relaxed space-y-2">
-        <p>
-          A linked route here tells the cluster: when a request is sent to a
-          model in that cluster, the decode node (or the least active one if
-          there are multiple) will handle it. If it decides it must do a lot of
-          prefill not already cached in the prefix cache, it routes the request
-          to the prefill node over TCP IP. The prefill node streams the KV cache
-          back to the decode node which picks up from there.
-        </p>
-        <p>
-          Linked instances must be running the same model family — KV layouts
-          differ across architectures. More on the <a
-            class="text-exo-yellow underline underline-offset-2 hover:text-exo-yellow-darker transition-colors"
-            href="https://blog.exolabs.net/nvidia-dgx-spark/"
-            target="_blank"
-            rel="noreferrer noopener">blog</a
-          >.
-        </p>
-      </div>
-    </details>
-  </div>
-
   {#if errorMessage}
     <div
       class="mb-4 px-4 py-3 bg-red-500/10 border border-red-500/40 text-red-300 text-sm"
@@ -280,7 +229,7 @@
             No routes yet. Create one to enable remote prefill.
           </p>
           <button
-            class="px-3 py-1.5 text-xs font-mono tracking-wider uppercase bg-exo-yellow/15 border border-exo-yellow/50 text-exo-yellow hover:bg-exo-yellow/25 hover:border-exo-yellow/80 transition-colors"
+            class="px-3 py-1.5 text-xs font-mono tracking-wider uppercase bg-exo-yellow/15 border border-exo-yellow/50 text-exo-yellow hover:bg-exo-yellow/25 hover:border-exo-yellow/80 cursor-pointer transition-colors"
             onclick={startCreate}
           >
             + New route
@@ -291,7 +240,7 @@
       {#if editingLinkId === null}
         <div class="flex justify-end mb-3">
           <button
-            class="px-3 py-1.5 text-xs font-mono tracking-wider uppercase bg-exo-yellow/15 border border-exo-yellow/50 text-exo-yellow hover:bg-exo-yellow/25 hover:border-exo-yellow/80 transition-colors"
+            class="px-3 py-1.5 text-xs font-mono tracking-wider uppercase bg-exo-yellow/15 border border-exo-yellow/50 text-exo-yellow hover:bg-exo-yellow/25 hover:border-exo-yellow/80 cursor-pointer transition-colors"
             onclick={startCreate}
           >
             + New route
@@ -326,12 +275,12 @@
                 class="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-x-3 gap-y-2"
               >
                 <span
-                  class="inline-block justify-self-start text-[10px] font-mono tracking-widest uppercase px-2 py-0.5 bg-exo-yellow/15 border border-exo-yellow/40 text-exo-yellow"
+                  class="inline-block justify-self-start text-[10px] font-mono tracking-widest uppercase px-2 py-0.5 bg-orange-400/15 border border-orange-400/40 text-orange-300"
                   >Prefill</span
                 >
                 <span></span>
                 <span
-                  class="inline-block justify-self-start text-[10px] font-mono tracking-widest uppercase px-2 py-0.5 bg-exo-medium-gray/40 border border-exo-medium-gray/60 text-foreground"
+                  class="inline-block justify-self-start text-[10px] font-mono tracking-widest uppercase px-2 py-0.5 bg-cyan-400/15 border border-cyan-400/40 text-cyan-300"
                   >Decode</span
                 >
                 <span></span>
@@ -346,9 +295,9 @@
                           <FamilyLogos family={r.family} />
                           <div class="min-w-0 flex-1">
                             <div
-                              class="text-exo-yellow text-xs font-mono truncate"
+                              class="text-exo-yellow text-xs font-mono break-all leading-snug"
                             >
-                              {r.baseModel || r.modelId}
+                              {r.modelId}
                             </div>
                             <div
                               class="text-exo-light-gray text-[11px] truncate"
@@ -358,10 +307,10 @@
                                 : ""}
                             </div>
                             <div
-                              class="text-exo-light-gray/40 text-[10px] font-mono truncate"
+                              class="text-exo-light-gray/80 text-[11px] font-mono break-all leading-snug"
                               title={r.id}
                             >
-                              {r.id.slice(0, 8)}
+                              {r.id}
                             </div>
                           </div>
                         </li>
@@ -383,9 +332,9 @@
                           <FamilyLogos family={r.family} />
                           <div class="min-w-0 flex-1">
                             <div
-                              class="text-exo-yellow text-xs font-mono truncate"
+                              class="text-exo-yellow text-xs font-mono break-all leading-snug"
                             >
-                              {r.baseModel || r.modelId}
+                              {r.modelId}
                             </div>
                             <div
                               class="text-exo-light-gray text-[11px] truncate"
@@ -395,10 +344,10 @@
                                 : ""}
                             </div>
                             <div
-                              class="text-exo-light-gray/40 text-[10px] font-mono truncate"
+                              class="text-exo-light-gray/80 text-[11px] font-mono break-all leading-snug"
                               title={r.id}
                             >
-                              {r.id.slice(0, 8)}
+                              {r.id}
                             </div>
                           </div>
                         </li>
@@ -408,14 +357,14 @@
                 </div>
                 <div class="flex gap-2 pl-3">
                   <button
-                    class="px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase bg-exo-medium-gray/30 border border-exo-medium-gray/60 rounded text-foreground hover:border-exo-yellow/60 hover:text-exo-yellow disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    class="px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase bg-exo-medium-gray/30 border border-exo-medium-gray/60 rounded text-foreground hover:border-exo-yellow/60 hover:text-exo-yellow disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
                     onclick={() => startEdit(row)}
                     disabled={editingLinkId !== null}
                   >
                     Edit
                   </button>
                   <button
-                    class="px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase bg-red-500/15 border border-red-500/40 rounded text-red-300 hover:bg-red-500/25 transition-colors"
+                    class="px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase bg-red-500/15 border border-red-500/40 rounded text-red-300 hover:bg-red-500/25 cursor-pointer transition-colors"
                     onclick={() => remove(row.linkId)}
                   >
                     Remove
@@ -437,7 +386,7 @@
         >No instances available.</span
       >
       <button
-        class="px-3 py-1 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 border border-exo-medium-gray/60 rounded text-foreground hover:border-exo-yellow/60 transition-colors"
+        class="px-3 py-1 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 border border-exo-medium-gray/60 rounded text-foreground hover:border-exo-yellow/60 cursor-pointer transition-colors"
         onclick={cancelEdit}
       >
         Cancel
@@ -472,12 +421,6 @@
         </div>
       {/if}
 
-      <p class="text-exo-light-gray text-xs mb-4">
-        Pick a role for each instance:
-        <span class="text-exo-yellow">Prefill</span>
-        serves KV cache,
-        <span class="text-foreground">Decode</span> consumes it.
-      </p>
       <div
         class="grid gap-2.5"
         style="grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));"
@@ -487,16 +430,18 @@
           <div
             class="border p-3 flex flex-col gap-2.5 transition-colors {role ===
             'prefill'
-              ? 'border-exo-yellow/60 bg-exo-dark-gray/60'
+              ? 'border-orange-400/60 bg-exo-dark-gray/60'
               : role === 'decode'
-                ? 'border-exo-light-gray/60 bg-exo-dark-gray/60'
+                ? 'border-cyan-400/60 bg-exo-dark-gray/60'
                 : 'border-exo-medium-gray/40 bg-exo-dark-gray/40'}"
           >
-            <div class="flex items-center gap-2">
+            <div class="flex items-start gap-2">
               <FamilyLogos family={row.family} />
               <div class="min-w-0 flex-1">
-                <div class="text-exo-yellow text-xs font-mono truncate">
-                  {row.baseModel || row.modelId}
+                <div
+                  class="text-exo-yellow text-xs font-mono break-all leading-snug"
+                >
+                  {row.modelId}
                 </div>
                 <div class="text-exo-light-gray text-[11px] truncate">
                   {row.nodeNames.join(", ") || "?"}{row.nodeCount > 1
@@ -504,10 +449,10 @@
                     : ""}
                 </div>
                 <div
-                  class="text-exo-light-gray/40 text-[10px] font-mono truncate"
+                  class="text-exo-light-gray/80 text-[11px] font-mono break-all leading-snug"
                   title={row.id}
                 >
-                  {row.id.slice(0, 8)}
+                  {row.id}
                 </div>
               </div>
               {#if row.nodeCount > 1}
@@ -522,19 +467,19 @@
               class="flex rounded-md overflow-hidden border border-exo-light-gray/40 divide-x divide-exo-light-gray/40"
             >
               <button
-                class="flex-1 px-2 py-1 text-[11px] font-mono tracking-wider uppercase transition-colors {role ===
+                class="flex-1 px-2 py-1 text-[11px] font-mono tracking-wider uppercase cursor-pointer transition-colors {role ===
                 'prefill'
-                  ? 'bg-exo-yellow/20 text-exo-yellow'
-                  : 'bg-transparent text-white/80 hover:text-exo-yellow'}"
+                  ? 'bg-orange-400/20 text-orange-300'
+                  : 'bg-transparent text-white/80 hover:bg-white/5 hover:text-orange-300'}"
                 onclick={() =>
                   setRole(row.id, role === "prefill" ? "none" : "prefill")}
                 >Prefill</button
               >
               <button
-                class="flex-1 px-2 py-1 text-[11px] font-mono tracking-wider uppercase transition-colors {role ===
+                class="flex-1 px-2 py-1 text-[11px] font-mono tracking-wider uppercase cursor-pointer transition-colors {role ===
                 'decode'
-                  ? 'bg-exo-medium-gray/50 text-foreground'
-                  : 'bg-transparent text-white/80 hover:text-foreground'}"
+                  ? 'bg-cyan-400/20 text-cyan-300'
+                  : 'bg-transparent text-white/80 hover:bg-white/5 hover:text-cyan-300'}"
                 onclick={() =>
                   setRole(row.id, role === "decode" ? "none" : "decode")}
                 >Decode</button
@@ -546,14 +491,14 @@
 
       <div class="flex gap-2 mt-5 justify-end">
         <button
-          class="px-3 py-1.5 text-xs font-mono tracking-wider uppercase bg-exo-yellow/15 border border-exo-yellow/50 text-exo-yellow hover:bg-exo-yellow/25 hover:border-exo-yellow/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          class="px-3 py-1.5 text-xs font-mono tracking-wider uppercase bg-exo-yellow/15 border border-exo-yellow/50 text-exo-yellow hover:bg-exo-yellow/25 hover:border-exo-yellow/80 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
           onclick={save}
           disabled={!canSave}
         >
           {saving ? "Saving..." : "Save route"}
         </button>
         <button
-          class="px-3 py-1.5 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 border border-exo-medium-gray/60 text-foreground hover:border-exo-yellow/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          class="px-3 py-1.5 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 border border-exo-medium-gray/60 text-foreground hover:border-exo-yellow/60 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
           onclick={cancelEdit}
           disabled={saving}
         >
@@ -562,4 +507,62 @@
       </div>
     </section>
   {/if}
+
+  <section class="mt-12 pt-6 border-t border-exo-medium-gray/40">
+    <h2
+      class="text-exo-yellow text-xs font-mono tracking-widest uppercase m-0 mb-3"
+    >
+      FAQ
+    </h2>
+    <div class="space-y-3">
+      <details class="group [&_summary::-webkit-details-marker]:hidden">
+        <summary
+          class="cursor-pointer list-none text-exo-yellow text-xs font-mono tracking-widest uppercase flex items-center gap-2 hover:opacity-80 transition-opacity"
+        >
+          <span
+            class="inline-block transition-transform group-open:rotate-90 text-exo-light-gray"
+            >▶</span
+          >
+          Prefill vs Decode
+        </summary>
+        <div class="mt-2 text-white/80 text-sm leading-relaxed">
+          Prefill is the compute-bound pass that consumes the entire prompt and
+          builds a KV cache. Decode is the memory-bandwidth-bound loop that
+          emits tokens sequentially from that cache. The two phases have very
+          different bottlenecks, so running them on different hardware can be
+          substantially faster than doing both on one node.
+        </div>
+      </details>
+      <details class="group [&_summary::-webkit-details-marker]:hidden">
+        <summary
+          class="cursor-pointer list-none text-exo-yellow text-xs font-mono tracking-widest uppercase flex items-center gap-2 hover:opacity-80 transition-opacity"
+        >
+          <span
+            class="inline-block transition-transform group-open:rotate-90 text-exo-light-gray"
+            >▶</span
+          >
+          Linking Instances
+        </summary>
+        <div class="mt-2 text-white/80 text-sm leading-relaxed space-y-2">
+          <p>
+            A linked route here tells the cluster: when a request is sent to a
+            model in that cluster, the decode node (or the least active one if
+            there are multiple) will handle it. If it decides it must do a lot
+            of prefill not already cached in the prefix cache, it routes the
+            request to the prefill node over TCP IP. The prefill node streams
+            the KV cache back to the decode node which picks up from there.
+          </p>
+          <p>
+            Linked instances must be running the same model family — KV layouts
+            differ across architectures. More on the <a
+              class="text-exo-yellow underline underline-offset-2 hover:text-exo-yellow-darker transition-colors"
+              href="https://blog.exolabs.net/nvidia-dgx-spark/"
+              target="_blank"
+              rel="noreferrer noopener">blog</a
+            >.
+          </p>
+        </div>
+      </details>
+    </div>
+  </section>
 </div>

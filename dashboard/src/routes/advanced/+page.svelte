@@ -50,9 +50,6 @@
         >
           Advanced
         </h1>
-        <p class="text-exo-light-gray/60 text-sm">
-          Cluster-level configuration. Most users don't need anything here.
-        </p>
       </div>
 
       <div
