@@ -1,0 +1,27 @@
+model_id = "nvidia/Qwen3-30B-A3B-NVFP4"
+n_layers = 48
+hidden_size = 2048
+num_key_value_heads = 4
+supports_tensor = false
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "nvfp4"
+base_model = "Qwen3 30B"
+capabilities = ["text", "thinking", "thinking_toggle"]
+context_length = 32768
+requires_vllm = true
+
+[storage_size]
+in_bytes = 18087458688
+
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+
+[sampling_defaults.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0

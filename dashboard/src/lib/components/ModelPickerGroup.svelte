@@ -9,6 +9,7 @@
     capabilities?: string[];
     family?: string;
     is_custom?: boolean;
+    requires_vllm?: boolean;
   }
 
   interface ModelGroup {
@@ -19,6 +20,7 @@
     variants: ModelInfo[];
     smallestVariant: ModelInfo;
     hasMultipleVariants: boolean;
+    requiresVllm: boolean;
   }
 
   type DownloadAvailability = {
@@ -213,6 +215,14 @@
         <span class="font-mono text-sm text-white truncate">
           {group.name}
         </span>
+        {#if group.requiresVllm}
+          <span
+            class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-300 border border-orange-400/30 flex-shrink-0 tracking-wider uppercase"
+            title="Requires vLLM runtime"
+          >
+            vLLM
+          </span>
+        {/if}
         <!-- Capability icons -->
         {#each group.capabilities.filter((c) => c !== "text") as cap}
           {#if cap === "thinking"}
@@ -523,6 +533,15 @@
             {variant.quantization || "default"}
           </span>
 
+          {#if variant.requires_vllm}
+            <span
+              class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-300 border border-orange-400/30 flex-shrink-0 tracking-wider uppercase"
+              title="Requires vLLM runtime"
+            >
+              vLLM
+            </span>
+          {/if}
+
           <!-- Size -->
           <span
             class="text-xs font-mono flex-1 {getSizeClassForFitStatus(
@@ -628,6 +647,7 @@
                 variants: [variant],
                 smallestVariant: variant,
                 hasMultipleVariants: false,
+                requiresVllm: variant.requires_vllm === true,
               });
             }}
             title="View variant details"

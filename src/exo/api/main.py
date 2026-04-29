@@ -1751,6 +1751,7 @@ class API:
                     capabilities=card.capabilities,
                     reasoning_dialect=card.reasoning_dialect,
                     context_length=card.context_length,
+                    requires_vllm=card.requires_vllm,
                 )
                 for card in cards
             ]

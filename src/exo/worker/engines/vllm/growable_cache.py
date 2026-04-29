@@ -82,7 +82,22 @@ def _patch_determine_available_memory() -> None:
             shutil.rmtree(compile_cache, ignore_errors=True)
 
         free_bytes, _ = torch.cuda.mem_get_info()
-        initial = max(int(free_bytes * INITIAL_FRACTION), 1)
+        # vLLM's get_kv_cache_configs computes per-group block counts via
+        # `tensor.size // num_blocks_old` and asserts the result divides
+        # evenly. With a small `available_kv_cache_memory_bytes` and
+        # multi-MiB-per-slot Mamba/hybrid groups, num_blocks_old can come
+        # back as 0 → ZeroDivisionError. Floor the initial budget so each
+        # group lands at least one block at init; growth picks up from
+        # there.
+        min_initial = 1024 * 1024 * 1024  # 1 GiB
+        if free_bytes < min_initial:
+            raise RuntimeError(
+                f"Insufficient GPU memory for KV cache initialization: "
+                f"{free_bytes / (1024**3):.2f} GiB free, need at least "
+                f"{min_initial / (1024**3):.2f} GiB. Stop other GPU "
+                f"processes (check `nvidia-smi`)."
+            )
+        initial = max(int(free_bytes * INITIAL_FRACTION), min_initial)
         self._growable_max_kv_bytes = free_bytes
         self.available_kv_cache_memory_bytes = initial
         logger.info(
