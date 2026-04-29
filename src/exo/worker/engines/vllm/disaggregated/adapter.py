@@ -213,11 +213,15 @@ def gather_layer_kv_from_blocks(
     `layer_kv` shapes (NHD, set via `VLLM_KV_CACHE_LAYOUT=NHD`):
         - `[2, num_pool_blocks, block_size, n_kv_heads, head_dim]`, or
         - `[num_pool_blocks, 2, block_size, n_kv_heads, head_dim]`.
-    Returns NHD-shaped K and V of shape `[num_tokens, n_kv_heads, head_dim]`,
-    on CPU.
+    Returns NHD-shaped K and V of shape `[num_tokens, n_kv_heads, head_dim]`
+    on the same CUDA device as `layer_kv`. The caller is responsible for
+    issuing the D2H copy on a side stream so the scheduler thread isn't
+    blocked.
     """
     if not block_ids:
-        return torch.empty(0), torch.empty(0)
+        return torch.empty(0, device=layer_kv.device), torch.empty(
+            0, device=layer_kv.device
+        )
     block_idx_tensor = torch.tensor(block_ids, dtype=torch.long, device=layer_kv.device)
     if layer_kv.shape[0] == 2:
         # [2, blocks, block, H, D]
@@ -231,4 +235,4 @@ def gather_layer_kv_from_blocks(
     # gathered_k/v: [num_blocks, block_size, H, D]. Concat blocks along seq.
     keys = gathered_k.reshape(-1, *gathered_k.shape[-2:])[:num_tokens]
     values = gathered_v.reshape(-1, *gathered_v.shape[-2:])[:num_tokens]
-    return to_bf16(keys).cpu(), to_bf16(values).cpu()
+    return to_bf16(keys), to_bf16(values)
