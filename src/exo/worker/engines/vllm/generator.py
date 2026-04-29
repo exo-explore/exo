@@ -313,11 +313,11 @@ def set_n_layers(n: int) -> None:
 
 
 def _wrap_weights_iterator(
-    original: Callable[..., Generator[tuple[str, "torch.Tensor"], None, None]],
-) -> Callable[..., Generator[tuple[str, "torch.Tensor"], None, None]]:
+    original: Callable[..., Generator[tuple[str, torch.Tensor], None, None]],
+) -> Callable[..., Generator[tuple[str, torch.Tensor], None, None]]:
     def patched(
         hf_weights_files: list[str], *args: object, **kwargs: object
-    ) -> Generator[tuple[str, "torch.Tensor"], None, None]:
+    ) -> Generator[tuple[str, torch.Tensor], None, None]:
         callback = get_weight_loading_callback()
         if callback is not None and hf_weights_files:
             total_layers = get_n_layers()
@@ -455,7 +455,7 @@ def load_vllm_engine(
                 ),
                 disable_log_stats=True,
                 max_num_batched_tokens=4096,
-                kv_transfer_config=kv_transfer_config, # pyright: ignore[reportArgumentType]
+                kv_transfer_config=kv_transfer_config,  # pyright: ignore[reportArgumentType]
                 disable_hybrid_kv_cache_manager=False,
                 kv_cache_dtype="auto",
             )

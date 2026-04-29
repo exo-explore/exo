@@ -461,7 +461,7 @@ def _patch_vllm_for_connector(connector_class: type[Any]) -> None:
     # `apc_hit + first_chunk` and would cause us to extract bytes from blocks
     # that haven't been written yet for the first-chunk tail.
     try:
-        from vllm.v1.core.kv_cache_manager import (  # pyright: ignore[reportMissingImports]
+        from vllm.v1.core.kv_cache_manager import (
             KVCacheManager,
         )
     except ImportError:
@@ -475,10 +475,7 @@ def _patch_vllm_for_connector(connector_class: type[Any]) -> None:
             try:
                 req_id = getattr(request, "request_id", None)
                 if req_id is not None:
-                    if isinstance(result, tuple) and len(result) >= 2:  # pyright: ignore[reportUnknownArgumentType]
-                        num = int(result[1])  # pyright: ignore[reportUnknownArgumentType]
-                    else:
-                        num = 0
+                    num = int(result[1]) if len(result) >= 2 else 0
                     total = int(getattr(request, "num_tokens", 0) or 0)
                     logger.info(
                         f"APC get_computed_blocks: req={req_id} hit={num} total={total}"
@@ -491,7 +488,7 @@ def _patch_vllm_for_connector(connector_class: type[Any]) -> None:
                 )
             return result
 
-        KVCacheManager.get_computed_blocks = patched_get_computed_blocks  # pyright: ignore[reportAttributeAccessIssue]
+        KVCacheManager.get_computed_blocks = patched_get_computed_blocks
 
     # Patch Scheduler.schedule so APC-cached prefix blocks are extracted out
     # of the paged pool and pushed to _kv_queue at scheduling time — BEFORE
@@ -505,7 +502,7 @@ def _patch_vllm_for_connector(connector_class: type[Any]) -> None:
     def patched_schedule(self: sched_mod.Scheduler) -> Any:
         scheduler_output = original_schedule(self)
         try:
-            new_reqs = getattr(scheduler_output, "scheduled_new_reqs", None) or []
+            new_reqs = scheduler_output.scheduled_new_reqs
             if not new_reqs:
                 return scheduler_output
             from exo.worker.engines.vllm.disaggregated.adapter import (
@@ -648,13 +645,16 @@ def _patch_gdn_capture() -> None:
     try:
         import vllm.model_executor.layers.mamba.ops.causal_conv1d as cc_mod
         from vllm.model_executor.layers.mamba.ops.causal_conv1d import (
-            causal_conv1d_fn as orig_fn,
+            causal_conv1d_fn as orig_fn,  # pyright: ignore[reportUnknownVariableType]
         )
     except ImportError:
         return
 
     def patched_fn(
-        *args: Any, conv_states: Any = None, cache_indices: Any = None, **kwargs: Any
+        *args: Any,
+        conv_states: torch.Tensor | None = None,
+        cache_indices: torch.Tensor | None = None,
+        **kwargs: Any,
     ) -> Any:
         result = orig_fn(
             *args, conv_states=conv_states, cache_indices=cache_indices, **kwargs
@@ -663,7 +663,7 @@ def _patch_gdn_capture() -> None:
             x = args[0] if args else None
             if x is not None and x.shape[0] <= 100:
                 return result
-            ci: int = cache_indices[0].item() if cache_indices.numel() > 0 else 0
+            ci = cache_indices[0].item() if cache_indices.numel() > 0 else 0
             idx = _gdn_call_idx[0]
             if _gdn_layer_order and idx < len(_gdn_layer_order) * 100:
                 layer_idx = _gdn_layer_order[idx % len(_gdn_layer_order)]

@@ -159,8 +159,8 @@ def write_kv_chunk(
     n_heads: int,
     head_dim: int,
     dtype: DType,
-    keys: "bytes | memoryview",
-    values: "bytes | memoryview",
+    keys: bytes | memoryview,
+    values: bytes | memoryview,
 ) -> None:
     """Stream KV chunk metadata + raw key/value bytes to the wire.
 
