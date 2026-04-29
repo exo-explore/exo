@@ -1,36 +1,14 @@
-import threading
-
-import torch
-from vllm import SamplingParams
-
-from exo.worker.disaggregated.protocol import write_error, write_kv_chunk
-from exo.worker.engines.vllm.disaggregated.adapter import (
-    arrays_to_blobs,
-    tensor_to_wire_bytes,
-    torch_dtype_to_wire,
-    write_layer_arrays_blobs,
-    write_prefill_done,
-    write_prefill_header,
-)
-from exo.worker.engines.vllm.growable_cache import get_model_runner
-from exo.worker.engines.vllm.kv_connector import (
-    get_arrays_queue,
-    get_gdn_shipped,
-    get_gdn_states,
-    get_kv_queue,
-    get_save_kv_layer_diag,
-    init_gdn_layer_order,
-    reset_capture_state,
-)
-
 import contextlib
 import itertools
+import threading
 import time
 from collections import deque
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from typing import BinaryIO
 
+import torch
+from vllm import SamplingParams
 from vllm.outputs import RequestOutput
 
 from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
@@ -50,9 +28,28 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.utils.channels import MpReceiver, MpSender
+from exo.worker.disaggregated.protocol import write_error, write_kv_chunk
 from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.base import Engine
+from exo.worker.engines.vllm.disaggregated.adapter import (
+    arrays_to_blobs,
+    tensor_to_wire_bytes,
+    torch_dtype_to_wire,
+    write_layer_arrays_blobs,
+    write_prefill_done,
+    write_prefill_header,
+)
 from exo.worker.engines.vllm.generator import VllmBatchEngine
+from exo.worker.engines.vllm.growable_cache import get_model_runner
+from exo.worker.engines.vllm.kv_connector import (
+    get_arrays_queue,
+    get_gdn_shipped,
+    get_gdn_states,
+    get_kv_queue,
+    get_save_kv_layer_diag,
+    init_gdn_layer_order,
+    reset_capture_state,
+)
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.model_output_parsers import (
     apply_all_parsers,
@@ -208,11 +205,8 @@ class VllmEngine(Engine):
         arrays_queue = get_arrays_queue()
         kv_queue = get_kv_queue()
 
-        # vLLM APC is disabled at engine-creation time (enable_prefix_caching=False
-        # in generator.py). Cross-request prefix reuse on the consumer (MLX) side
-        # is handled by its own kv_prefix_cache; the vLLM-side server here is
-        # stateless across requests by design. We still skip the trailing 2
-        # tokens because the consumer warm-starts decode from them.
+        # We strip the trailing 2 tokens because the consumer warm-starts
+        # decode from them locally.
         sp = SamplingParams(max_tokens=2, temperature=0.0, detokenize=False)
         engine.add_request(
             request.request_id,
@@ -228,8 +222,6 @@ class VllmEngine(Engine):
             start_pos=request.start_pos,
         )
 
-        # Consumer already has KV for [0, request.start_pos); drop those tokens
-        # from the post-forward stream so we only ship the suffix it needs.
         skip_tokens = request.start_pos
         chunks_sent = 0
         arrays_streamed = 0
@@ -250,31 +242,54 @@ class VllmEngine(Engine):
         def writer_loop() -> None:
             nonlocal chunks_sent
             writer_stats["started_t"] = time.perf_counter()
+            last_hb = time.perf_counter()
             try:
                 while True:
-                    item = kv_queue.get()
+                    try:
+                        item = kv_queue.get(timeout=3.0)
+                    except Exception:
+                        item = ...  # sentinel for "no item yet"
+                    if item is ...:
+                        now = time.perf_counter()
+                        if now - last_hb > 3.0:
+                            logger.info(
+                                f"serve_prefill writer idle: "
+                                f"chunks_sent={chunks_sent} "
+                                f"kv_queue_size={kv_queue.qsize()} "
+                                f"arrays_queue_size={arrays_queue.qsize()}"
+                            )
+                            last_hb = now
+                        continue
                     if item is None:
                         break
-                    layer_idx, keys, values, copy_event = item
+                    layer_idx, count, keys, values, copy_event = item
                     # Wait for the side-stream D2H to finish populating the
                     # pinned host buffers. CPU-side wait, doesn't block GPU.
                     t_wait = time.perf_counter()
                     copy_event.synchronize()
                     writer_stats["wait_event_secs"] += time.perf_counter() - t_wait
                     previous = layer_token_counts.get(layer_idx, 0)
-                    count = int(keys.shape[0])
                     new_total = previous + count
                     layer_token_counts[layer_idx] = new_total
 
                     if new_total <= skip_tokens:
                         continue
+                    # Reshape paged 4-D layouts to per-token 3-D up front so
+                    # the trim slice operates on the token axis.
+                    if keys.dim() == 4:
+                        keys = keys.reshape(-1, keys.shape[-2], keys.shape[-1])
+                        values = values.reshape(-1, values.shape[-2], values.shape[-1])
+                    # Slice keys/values to exactly `count` tokens — the source
+                    # tensor may be larger if shape disagrees with logical
+                    # token count (e.g. paged storage gathered over more
+                    # blocks than tokens consumed).
+                    if int(keys.shape[0]) > count:
+                        keys = keys[:count]
+                        values = values[:count]
                     if previous < skip_tokens:
                         trim = skip_tokens - previous
                         keys = keys[trim:]
                         values = values[trim:]
-                    if keys.dim() == 4:
-                        keys = keys.reshape(-1, keys.shape[-2], keys.shape[-1])
-                        values = values.reshape(-1, values.shape[-2], values.shape[-1])
                     num_tokens = int(keys.shape[0])
                     n_heads = int(keys.shape[1])
                     head_dim = int(keys.shape[2])
@@ -336,22 +351,60 @@ class VllmEngine(Engine):
 
         t0 = time.perf_counter()
         forward_error: Exception | None = None
+        step_count = 0
+        last_step_log = time.perf_counter()
+        first_output_logged = False
         try:
             while engine.has_unfinished_requests():
                 outputs = engine.step()
+                step_count += 1
+                now = time.perf_counter()
+                if now - last_step_log > 3.0:
+                    logger.info(
+                        f"serve_prefill {request.request_id}: "
+                        f"step #{step_count} (kv_queue={kv_queue.qsize()})"
+                    )
+                    last_step_log = now
+                aborted = False
                 for output in outputs:
+                    if not first_output_logged:
+                        first_output_logged = True
+                        logger.info(
+                            f"serve_prefill {request.request_id}: first output "
+                            f"id={output.request_id!r} "
+                            f"tokens={len(output.outputs[0].token_ids) if isinstance(output, RequestOutput) and output.outputs else 0}"
+                        )
+                    # Match either the external id we passed or the
+                    # internal-suffixed id vLLM may surface ('-XXXXXXXX').
                     if (
-                        output.request_id == request.request_id
-                        and isinstance(output, RequestOutput)
+                        isinstance(output, RequestOutput)
+                        and (
+                            output.request_id == request.request_id
+                            or output.request_id.startswith(request.request_id)
+                        )
+                        and output.outputs
                         and output.outputs[0].token_ids
                     ):
                         engine.abort_request([request.request_id])
+                        aborted = True
                         break
-                else:
-                    continue
-                break
+                if aborted:
+                    break
+            # Post-abort drain. Bail out hard after 5s — if the request
+            # didn't finish by then something is wrong upstream and we'd
+            # otherwise spin forever in a no-op step loop.
+            drain_deadline = time.perf_counter() + 5.0
             while engine.has_unfinished_requests():
+                if time.perf_counter() > drain_deadline:
+                    logger.warning(
+                        f"serve_prefill {request.request_id}: post-abort drain "
+                        f"timeout, force-aborting and breaking out"
+                    )
+                    with contextlib.suppress(Exception):
+                        engine.abort_request([request.request_id])
+                    break
                 _ = engine.step()
+                step_count += 1
         except Exception as exc:
             forward_error = exc
             with contextlib.suppress(Exception):
@@ -404,7 +457,19 @@ class VllmEngine(Engine):
         tokens_sent = max(0, forwarded_per_layer - skip_tokens)
         write_prefill_done(wfile, tokens_sent)
         elapsed = time.perf_counter() - t0
-        _ = get_save_kv_layer_diag  # (kept for ad-hoc debug; not logged here)
+        diag = get_save_kv_layer_diag()
+        diag_summary = ", ".join(
+            f"L{li}:{','.join(str(s) for s in sizes)}"
+            for li, sizes in sorted(diag.items())
+        )
+        logger.info(
+            f"serve_prefill {request.request_id}: save_kv_layer calls per layer "
+            f"(positive=non-list/tuple kv, negative=list/tuple kv) → {diag_summary}"
+        )
+        logger.info(
+            f"serve_prefill {request.request_id}: layer_token_counts="
+            f"{dict(sorted(layer_token_counts.items()))}"
+        )
         # Bandwidth + per-stage breakdown for the writer thread.
         bytes_shipped = writer_stats["bytes_shipped"]
         wait_secs = writer_stats["wait_event_secs"]

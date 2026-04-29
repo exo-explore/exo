@@ -35,8 +35,13 @@ _LAYER_RE = re.compile(r"layers\.(\d+)\.")
 # 4-tuple: (layer_idx, keys_host_pinned, values_host_pinned, copy_done_event)
 # The writer thread does `event.synchronize()` (CPU-side, doesn't block GPU)
 # before reading the pinned host bytes.
+# 5-tuple: (layer_idx, num_tokens, keys_host_pinned, values_host_pinned, copy_done_event)
+# `num_tokens` is the authoritative token count for this item. The writer uses
+# it for skip_tokens accounting *and* to slice the keys/values tensors before
+# writing to wire — never trusts `keys.shape[0]`, since shape can disagree with
+# token count when the source path packs/reshapes (e.g. NVFP4 layouts).
 _kv_queue: queue.Queue[
-    tuple[int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None
+    tuple[int, int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None
 ] = queue.Queue()
 # 3-tuple: (layer_idx, arrays_host_or_gpu, copy_done_event_or_none)
 # - From save_kv_layer hybrid path: tensors are GPU, event=None (writer .cpu()s)
@@ -60,6 +65,14 @@ _save_kv_layer_diag: dict[int, list[int]] = {}
 # Side CUDA stream for K/V extract + async D2H, so vLLM's compute stream
 # isn't blocked on D2H/extract during forward.
 _save_stream: torch.cuda.Stream | None = None
+# Holds a reference to the set tracked by patched_schedule so
+# `reset_capture_state` can clear it between requests.
+_apc_extracted_set_ref: dict[str, set[str]] = {}
+# request_id → actual APC hit token count (captured at the moment vLLM's
+# kv_cache_manager.get_computed_blocks runs, before scheduler chunks the
+# remaining tokens). Used by patched_schedule to pre-extract exactly the
+# matched portion, not the matched+about-to-forward portion.
+_apc_hit_tokens: dict[str, int] = {}
 
 
 def _get_save_stream() -> torch.cuda.Stream:
@@ -70,7 +83,7 @@ def _get_save_stream() -> torch.cuda.Stream:
 
 
 def get_kv_queue() -> queue.Queue[
-    tuple[int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None
+    tuple[int, int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None
 ]:
     return _kv_queue
 
@@ -149,6 +162,10 @@ def reset_capture_state() -> None:
     _gdn_call_idx[0] = 0
     _ssm_call_idx[0] = 0
     _save_kv_layer_diag.clear()
+    _apc_hit_tokens.clear()
+    apc_set = _apc_extracted_set_ref.get("set")
+    if apc_set is not None:
+        apc_set.clear()
 
 
 @dataclass
@@ -248,6 +265,7 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
                     )
                     keys_host.copy_(keys_gpu, non_blocking=True)
                     values_host.copy_(values_gpu, non_blocking=True)
+                    num_tokens = int(keys_gpu.shape[0])
                 event = torch.cuda.Event()
                 event.record(save_stream)
             except Exception as exc:
@@ -257,7 +275,7 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
                     f"slot_mapping.shape={slot_mapping.shape}: {exc!r}"
                 )
                 return
-            _kv_queue.put((layer_idx, keys_host, values_host, event))
+            _kv_queue.put((layer_idx, num_tokens, keys_host, values_host, event))
 
     def wait_for_save(self) -> None:
         return
@@ -441,6 +459,183 @@ def _patch_vllm_for_connector(connector_class: type[Any]) -> None:
         return original_get(kv_transfer_config)
 
     factory.KVConnectorFactory._get_connector_class_with_compat = patched_get  # pyright: ignore[reportPrivateUsage]
+
+    # Patch KVCacheManager.get_computed_blocks so we capture the actual APC-hit
+    # token count for each request at the moment vLLM looks it up — *before*
+    # the scheduler bumps `req.num_computed_tokens` with the chunked-prefill
+    # first-chunk size. Reading `req.num_computed_tokens` post-schedule yields
+    # `apc_hit + first_chunk` and would cause us to extract bytes from blocks
+    # that haven't been written yet for the first-chunk tail.
+    try:
+        from vllm.v1.core.kv_cache_manager import (  # pyright: ignore[reportMissingImports]
+            KVCacheManager,
+        )
+    except ImportError:
+        KVCacheManager = None  # noqa: N806
+
+    if KVCacheManager is not None:
+        original_get_computed_blocks = KVCacheManager.get_computed_blocks
+
+        def patched_get_computed_blocks(self: Any, request: Any) -> Any:
+            result = original_get_computed_blocks(self, request)
+            try:
+                req_id = getattr(request, "request_id", None)
+                if req_id is not None:
+                    if isinstance(result, tuple) and len(result) >= 2:  # pyright: ignore[reportUnknownArgumentType]
+                        num = int(result[1])  # pyright: ignore[reportUnknownArgumentType]
+                    else:
+                        num = 0
+                    total = int(getattr(request, "num_tokens", 0) or 0)
+                    logger.info(
+                        f"APC get_computed_blocks: req={req_id} hit={num} total={total}"
+                    )
+                    if num > 0:
+                        _apc_hit_tokens[req_id] = num
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "patched_get_computed_blocks: capture failed"
+                )
+            return result
+
+        KVCacheManager.get_computed_blocks = patched_get_computed_blocks  # pyright: ignore[reportAttributeAccessIssue]
+
+    # Patch Scheduler.schedule so APC-cached prefix blocks are extracted out
+    # of the paged pool and pushed to _kv_queue at scheduling time — BEFORE
+    # forward runs. Forward will only execute the suffix (vLLM's own APC
+    # behavior). save_kv_layer fires for the suffix as usual. The writer
+    # thread sees: prefix items from this hook + suffix items from save_kv_layer
+    # and ships them in arrival order (prefix before suffix per layer).
+    original_schedule = sched_mod.Scheduler.schedule
+    _scheduled_apc_extracted: set[str] = set()
+
+    def patched_schedule(self: sched_mod.Scheduler) -> Any:
+        scheduler_output = original_schedule(self)
+        try:
+            new_reqs = getattr(scheduler_output, "scheduled_new_reqs", None) or []
+            if not new_reqs:
+                return scheduler_output
+            from exo.worker.engines.vllm.disaggregated.adapter import (
+                build_layer_to_group,
+                gather_layer_kv_from_blocks,
+            )
+            from exo.worker.engines.vllm.growable_cache import get_model_runner
+
+            mr = get_model_runner()
+            if mr is None:
+                return scheduler_output
+            cfg = getattr(mr, "_growable_kv_cache_config", None)
+            if cfg is None:
+                return scheduler_output
+            layer_to_group = build_layer_to_group(cfg)
+            n_layers = len(mr.kv_caches)
+
+            for new_req in new_reqs:
+                req_id = getattr(new_req, "req_id", None)
+                if req_id is None or req_id in _scheduled_apc_extracted:
+                    continue
+                pre_layers_shipped = 0
+                pre_bytes_shipped = 0
+                req = self.requests.get(req_id)
+                if req is None:
+                    continue
+                # Use the count captured by patched_get_computed_blocks (the
+                # actual APC hit), NOT req.num_computed_tokens — that field has
+                # already been bumped by the scheduler with the first chunk's
+                # about-to-forward token count and would over-extract.
+                num_apc = _apc_hit_tokens.get(req_id, 0)
+                req_total = int(getattr(req, "num_tokens", 0) or 0)
+                req_computed = int(getattr(req, "num_computed_tokens", 0) or 0)
+                logger.info(
+                    f"APC patched_schedule: req={req_id} apc_hit={num_apc} "
+                    f"req.num_computed_tokens={req_computed} req.num_tokens={req_total}"
+                )
+                if num_apc <= 0:
+                    _scheduled_apc_extracted.add(req_id)
+                    continue
+                # Pull the request's full per-group block list from
+                # scheduler_output.scheduled_new_reqs[i].block_ids — that field
+                # includes APC-cached prefix blocks. The KVCacheManager's
+                # `req_to_blocks` only tracks newly-allocated blocks for this
+                # step's suffix, so reading from there misses the prefix and
+                # makes gather return ~bock_count_suffix tokens of garbage.
+                req_block_ids_per_group: tuple[list[int], ...] | None = getattr(
+                    new_req, "block_ids", None
+                )
+                if not req_block_ids_per_group:
+                    logger.warning(
+                        f"APC pre-extract: new_req.block_ids missing for {req_id}"
+                    )
+                    _scheduled_apc_extracted.add(req_id)
+                    continue
+                save_stream = _get_save_stream()
+                save_stream.wait_stream(torch.cuda.current_stream())  # pyright: ignore[reportUnknownMemberType]
+                first_log_done = False
+                for layer_idx in range(n_layers):
+                    kv_layer = mr.kv_caches[layer_idx]
+                    if isinstance(kv_layer, (list, tuple)):
+                        continue
+                    gi = (
+                        layer_to_group[layer_idx]
+                        if layer_idx < len(layer_to_group)
+                        else 0
+                    )
+                    if gi >= len(req_block_ids_per_group):
+                        continue
+                    block_ids = list(req_block_ids_per_group[gi])
+                    if not block_ids:
+                        continue
+                    keys_gpu, values_gpu = gather_layer_kv_from_blocks(
+                        kv_layer, block_ids, num_apc
+                    )
+                    if not first_log_done:
+                        first_log_done = True
+                        logger.info(
+                            f"APC pre-extract layer={layer_idx}: "
+                            f"kv_layer.shape={tuple(kv_layer.shape)} "
+                            f"kv_layer.dtype={kv_layer.dtype} "
+                            f"len(block_ids)={len(block_ids)} num_apc={num_apc} "
+                            f"keys_gpu.shape={tuple(keys_gpu.shape)} "
+                            f"keys_gpu.dtype={keys_gpu.dtype}"
+                        )
+                    if keys_gpu.numel() == 0:
+                        continue
+                    with torch.cuda.stream(save_stream):
+                        keys_host = torch.empty(
+                            keys_gpu.shape,
+                            dtype=keys_gpu.dtype,
+                            pin_memory=True,
+                        )
+                        values_host = torch.empty(
+                            values_gpu.shape,
+                            dtype=values_gpu.dtype,
+                            pin_memory=True,
+                        )
+                        keys_host.copy_(keys_gpu, non_blocking=True)
+                        values_host.copy_(values_gpu, non_blocking=True)
+                    event = torch.cuda.Event()
+                    event.record(save_stream)
+                    _kv_queue.put(
+                        (layer_idx, num_apc, keys_host, values_host, event)
+                    )
+                    pre_layers_shipped += 1
+                    pre_bytes_shipped += (
+                        keys_host.numel() * keys_host.element_size()
+                        + values_host.numel() * values_host.element_size()
+                    )
+                logger.info(
+                    f"APC pre-extract done: req={req_id} layers={pre_layers_shipped} "
+                    f"tokens={num_apc} bytes={pre_bytes_shipped}"
+                )
+                _scheduled_apc_extracted.add(req_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "patched_schedule: APC pre-extract failed; continuing"
+            )
+        return scheduler_output
+
+    sched_mod.Scheduler.schedule = patched_schedule
+    # Reset the per-request-extracted set when reset_capture_state runs.
+    _apc_extracted_set_ref["set"] = _scheduled_apc_extracted
     logger.info("Installed vLLM connector bypass patches")
 
 
