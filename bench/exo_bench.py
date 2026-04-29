@@ -491,6 +491,11 @@ def main() -> int:
         action="store_true",
         help="Enable KV prefix cache during bench (default: disabled for cold-cache measurements).",
     )
+    ap.add_argument(
+        "--cleanup-stale",
+        action="store_true",
+        help="Delete pre-existing instances before placing this bench's instance. Unsafe when running multiple benches against the same cluster.",
+    )
     args = ap.parse_args()
 
     pp_list = parse_int_list(args.pp)
@@ -625,17 +630,17 @@ def main() -> int:
                 f"PLACEMENT: {sharding} / {instance_meta} / nodes={n_nodes} / instance_id={instance_id}"
             )
 
-            # Delete any existing instances to free resources before placing
-            try:
-                state = client.request_json("GET", "/state")
-                for old_id in list(state.get("instances", {}).keys()):
-                    logger.info(f"Deleting stale instance {old_id}")
-                    with contextlib.suppress(ExoHttpError):
-                        client.request_json("DELETE", f"/instance/{old_id}")
-                if state.get("instances"):
-                    time.sleep(2)
-            except Exception as e:
-                logger.warning(f"Failed to clean up stale instances: {e}")
+            if args.cleanup_stale:
+                try:
+                    state = client.request_json("GET", "/state")
+                    for old_id in list(state.get("instances", {}).keys()):
+                        logger.info(f"Deleting stale instance {old_id}")
+                        with contextlib.suppress(ExoHttpError):
+                            client.request_json("DELETE", f"/instance/{old_id}")
+                    if state.get("instances"):
+                        time.sleep(2)
+                except Exception as e:
+                    logger.warning(f"Failed to clean up stale instances: {e}")
 
             client.request_json("POST", "/instance", body={"instance": instance})
             try:

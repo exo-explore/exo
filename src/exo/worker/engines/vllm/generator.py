@@ -75,6 +75,7 @@ def _build_generation_response(
     start_time: float,
     first_token_time: float | None,
     suppress_text: bool = False,
+    num_cached_tokens: int = 0,
 ) -> GenerationResponse:
     token_text: str = "" if suppress_text else tokenizer.decode([token_id])
     finish_usage: Usage | None = None
@@ -84,15 +85,16 @@ def _build_generation_response(
         now = time.perf_counter()
         prefill_elapsed = (first_token_time or now) - start_time
         decode_elapsed = now - (first_token_time or now)
+        prefill_tokens = max(prompt_token_count - num_cached_tokens, 0)
         finish_usage = Usage(
             prompt_tokens=prompt_token_count,
             completion_tokens=completion_tokens,
             total_tokens=prompt_token_count + completion_tokens,
-            prompt_tokens_details=PromptTokensDetails(),
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=num_cached_tokens),
             completion_tokens_details=CompletionTokensDetails(),
         )
         finish_stats = GenerationStats(
-            prompt_tps=prompt_token_count / prefill_elapsed
+            prompt_tps=prefill_tokens / prefill_elapsed
             if prefill_elapsed > 0
             else 0.0,
             generation_tps=completion_tokens / decode_elapsed
@@ -211,6 +213,7 @@ class VllmBatchEngine:
             new_token_count = len(completion.token_ids)
             new_tokens = completion.token_ids[req.prev_token_count :]
             finish_reason = completion.finish_reason
+            num_cached_tokens = int(output.num_cached_tokens or 0)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
             req.prev_token_count = new_token_count
 
             if not req.prefill_done and not new_tokens:
@@ -245,6 +248,7 @@ class VllmBatchEngine:
                             req.start_time,
                             req.first_token_time,
                             suppress_text=bool(is_final_stop),
+                            num_cached_tokens=num_cached_tokens,
                         ),
                     )
                 )
