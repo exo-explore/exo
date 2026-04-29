@@ -17,7 +17,7 @@ final class ClusterStateService: ObservableObject {
 
     init(
         baseURL: URL = URL(string: "http://127.0.0.1:52415")!,
-        session: URLSession = .shared
+        session: URLSession = ClusterStateService.makeNonCachingSession()
     ) {
         self.baseURL = baseURL
         self.endpoint = baseURL.appendingPathComponent("state")
@@ -25,6 +25,23 @@ final class ClusterStateService: ObservableObject {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         self.decoder = decoder
+    }
+
+    /// `URLSession.shared` carries an on-disk `URLCache` that persists every
+    /// response body under `~/Library/Caches/exolabs.EXO/`. We poll `/state`
+    /// at 2 Hz from `startPolling`, so leaving the shared cache attached
+    /// dirties ~500–620 KB/sec of file-backed memory and trips macOS's
+    /// per-process `disk writes` resource limit (microstackshot reports
+    /// observed on M3 Ultra producing GBs of cached responses per hour).
+    /// Cluster-state polling responses are time-sensitive and small; they
+    /// gain nothing from being cached on disk. Use an ephemeral session
+    /// with `urlCache = nil` so neither response bodies nor metadata
+    /// touch disk.
+    private static func makeNonCachingSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: config)
     }
 
     func startPolling(interval: TimeInterval = 0.5) {
