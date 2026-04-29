@@ -15,9 +15,9 @@ dependencies = [
   "huggingface-hub>=1.8.0",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
-  "exo-pyo3-bindings",                     # rust bindings
+  "exo-pyo3-bindings",               # rust bindings
   "anyio==4.11.0",
-  "tiktoken>=0.12.0",                      # required for kimi k2 tokenizer
+  "tiktoken>=0.12.0",                # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",
@@ -26,7 +26,7 @@ dependencies = [
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
   "transformers>=5.6.2",
-  "pynvml>=13.0.1",
+  "nvidia-ml-py>=13.595.45",
 ]
 
 [project.scripts]
@@ -51,25 +51,24 @@ mlx = [
   "mlx-lm",
   "mlx-vlm>=0.3.11",
   "mflux==0.17.5",
+  # pinning vllms versions for consistency.
   "torch==2.10.0; sys_platform == 'darwin'",
   "torch==2.10.0; sys_platform == 'linux'",
+  "torchaudio==2.10.0; sys_platform == 'darwin'",
+  "torchaudio==2.10.0; sys_platform == 'linux'",
+  "torchvision==0.25.0; sys_platform == 'darwin'",
+  "torchvision==0.25.0; sys_platform == 'linux'",
+
 ]
-mlx-cpu = [
-  "exo[mlx]",
-  "mlx-cpu==0.31.2; sys_platform == 'linux'",
-]
-mlx-cuda12 = [
-  "exo[mlx]",
-  "mlx-cuda-12==0.31.1; sys_platform == 'linux'",
-]
-mlx-cuda13 = [
-  "exo[mlx]",
-  "mlx-cuda-13==0.31.1; sys_platform == 'linux'",
-]
+mlx-cpu = ["exo[mlx]", "mlx-cpu==0.31.2; sys_platform == 'linux'"]
+mlx-cuda12 = ["exo[mlx]", "mlx-cuda-12==0.31.1; sys_platform == 'linux'"]
+mlx-cuda13 = ["exo[mlx]", "mlx-cuda-13==0.31.1; sys_platform == 'linux'"]
 vllm-none = ["anyio"]
 vllm-cuda13 = [
   "vllm[cuda13, fastsafetensors]; sys_platform == 'linux'",
   "torch==2.10.0; sys_platform == 'linux'",
+  "torchaudio==2.10.0; sys_platform == 'linux'",
+  "torchvision==0.25.0; sys_platform == 'linux'",
 ]
 
 ###
@@ -169,9 +168,7 @@ root = "src"
 required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
-override-dependencies = [
-  "opencv-python; python_version < '0'",
-]
+override-dependencies = ["opencv-python; python_version < '0'"]
 conflicts = [
   [
     { extra = "mlx-cuda13" },
@@ -198,6 +195,7 @@ mlx = [
   "ninja",
 ]
 mlx-lm = ["setuptools"]
+mflux = ["uv_build"]
 xgrammar = [
   "nanobind",
   "setuptools",
@@ -217,6 +215,7 @@ vllm = [
   "wheel",
   "markupsafe",
   "typing-extensions",
+  "torch",
 ]
 fastsafetensors = ["setuptools", "pybind11"]
 torch = ["typing-extensions"]

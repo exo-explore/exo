@@ -1,4 +1,3 @@
-# type: ignore
 """vLLM-side disaggregation adapter.
 
 Mirrors `engines/mlx/disaggregated/adapter.py` for the vLLM engine: owns
@@ -14,6 +13,7 @@ import os
 from typing import BinaryIO
 
 import torch
+from vllm.v1.kv_cache_interface import KVCacheConfig
 
 from exo.worker.disaggregated.protocol import (
     DType,
@@ -180,7 +180,7 @@ def write_prefill_done(wfile: BinaryIO, total_tokens: int) -> None:
     write_done(wfile, total_tokens)
 
 
-def build_layer_to_group(kv_cache_config: object) -> list[int]:
+def build_layer_to_group(kv_cache_config: KVCacheConfig) -> list[int]:
     """Map each layer index (model_runner.kv_caches order) to its kv_cache group.
 
     vLLM's hybrid models split layers across multiple KV cache groups (e.g.
@@ -189,12 +189,12 @@ def build_layer_to_group(kv_cache_config: object) -> list[int]:
     when reading a layer's blocks.
     """
     group_lookup: dict[str, int] = {}
-    for group_idx, group_spec in enumerate(kv_cache_config.kv_cache_groups):  # type: ignore[attr-defined]
+    for group_idx, group_spec in enumerate(kv_cache_config.kv_cache_groups):
         for layer_name in group_spec.layer_names:
             group_lookup[layer_name] = group_idx
 
     layer_to_group: list[int] = []
-    for tensor_spec in kv_cache_config.kv_cache_tensors:  # type: ignore[attr-defined]
+    for tensor_spec in kv_cache_config.kv_cache_tensors:
         for name in tensor_spec.shared_by:
             layer_to_group.append(group_lookup[name])
     return layer_to_group
@@ -218,9 +218,7 @@ def gather_layer_kv_from_blocks(
     """
     if not block_ids:
         return torch.empty(0), torch.empty(0)
-    block_idx_tensor = torch.tensor(
-        block_ids, dtype=torch.long, device=layer_kv.device
-    )
+    block_idx_tensor = torch.tensor(block_ids, dtype=torch.long, device=layer_kv.device)
     if layer_kv.shape[0] == 2:
         # [2, blocks, block, H, D]
         gathered_k = layer_kv[0][block_idx_tensor]

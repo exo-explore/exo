@@ -1,3 +1,28 @@
+import threading
+
+import torch
+from vllm import SamplingParams
+
+from exo.worker.disaggregated.protocol import write_error, write_kv_chunk
+from exo.worker.engines.vllm.disaggregated.adapter import (
+    arrays_to_blobs,
+    tensor_to_wire_bytes,
+    torch_dtype_to_wire,
+    write_layer_arrays_blobs,
+    write_prefill_done,
+    write_prefill_header,
+)
+from exo.worker.engines.vllm.growable_cache import get_model_runner
+from exo.worker.engines.vllm.kv_connector import (
+    get_arrays_queue,
+    get_gdn_shipped,
+    get_gdn_states,
+    get_kv_queue,
+    get_save_kv_layer_diag,
+    init_gdn_layer_order,
+    reset_capture_state,
+)
+
 import contextlib
 import itertools
 import time
@@ -5,6 +30,8 @@ from collections import deque
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from typing import BinaryIO
+
+from vllm.outputs import RequestOutput
 
 from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
 from exo.shared.types.chunks import ErrorChunk, GenerationChunk, PrefillProgressChunk
@@ -156,32 +183,6 @@ class VllmEngine(Engine):
         self._gen.close()
 
     def serve_prefill(self, request: PrefillRequest, wfile: BinaryIO) -> None:
-        import threading
-        import time
-
-        import torch
-        from vllm import SamplingParams
-
-        from exo.worker.disaggregated.protocol import write_error, write_kv_chunk
-        from exo.worker.engines.vllm.disaggregated.adapter import (
-            arrays_to_blobs,
-            tensor_to_wire_bytes,
-            torch_dtype_to_wire,
-            write_layer_arrays_blobs,
-            write_prefill_done,
-            write_prefill_header,
-        )
-        from exo.worker.engines.vllm.growable_cache import get_model_runner
-        from exo.worker.engines.vllm.kv_connector import (
-            get_arrays_queue,
-            get_gdn_shipped,
-            get_gdn_states,
-            get_kv_queue,
-            get_save_kv_layer_diag,
-            init_gdn_layer_order,
-            reset_capture_state,
-        )
-
         engine = self._gen.engine
         if engine.has_unfinished_requests():
             logger.warning("serve_prefill: engine busy, refusing prefill request")
@@ -230,8 +231,8 @@ class VllmEngine(Engine):
         # Consumer already has KV for [0, request.start_pos); drop those tokens
         # from the post-forward stream so we only ship the suffix it needs.
         skip_tokens = request.start_pos
-        chunks_sent = [0]
-        arrays_streamed = [0]
+        chunks_sent = 0
+        arrays_streamed = 0
         layer_token_counts: dict[int, int] = {}
         # Both writer threads serialize through this lock — BufferedWriter
         # is not thread-safe and we don't want partial frames interleaved.
@@ -247,6 +248,7 @@ class VllmEngine(Engine):
         }
 
         def writer_loop() -> None:
+            nonlocal chunks_sent
             writer_stats["started_t"] = time.perf_counter()
             try:
                 while True:
@@ -272,9 +274,7 @@ class VllmEngine(Engine):
                         values = values[trim:]
                     if keys.dim() == 4:
                         keys = keys.reshape(-1, keys.shape[-2], keys.shape[-1])
-                        values = values.reshape(
-                            -1, values.shape[-2], values.shape[-1]
-                        )
+                        values = values.reshape(-1, values.shape[-2], values.shape[-1])
                     num_tokens = int(keys.shape[0])
                     n_heads = int(keys.shape[1])
                     head_dim = int(keys.shape[2])
@@ -282,7 +282,7 @@ class VllmEngine(Engine):
                     keys_bytes = tensor_to_wire_bytes(keys)
                     values_bytes = tensor_to_wire_bytes(values)
                     payload_bytes = len(keys_bytes) + len(values_bytes)
-                    if chunks_sent[0] == 0:
+                    if chunks_sent == 0:
                         writer_stats["first_byte_t"] = time.perf_counter()
                         logger.info(
                             f"First KV chunk: layer={layer_idx} keys={keys.shape} "
@@ -303,13 +303,14 @@ class VllmEngine(Engine):
                     writer_stats["socket_secs"] += time.perf_counter() - t_sock
                     writer_stats["bytes_shipped"] += payload_bytes
                     writer_stats["last_byte_t"] = time.perf_counter()
-                    chunks_sent[0] += 1
+                    chunks_sent += 1
             except Exception:
                 logger.opt(exception=True).warning(
                     "serve_prefill writer thread crashed"
                 )
 
         def arrays_writer_loop() -> None:
+            nonlocal arrays_streamed
             try:
                 while True:
                     item = arrays_queue.get()
@@ -322,7 +323,7 @@ class VllmEngine(Engine):
                         write_layer_arrays_blobs(
                             wfile, layer_idx, arrays_to_blobs(arrays)
                         )
-                    arrays_streamed[0] += 1
+                    arrays_streamed += 1
             except Exception:
                 logger.opt(exception=True).warning(
                     "serve_prefill arrays writer thread crashed"
@@ -330,9 +331,7 @@ class VllmEngine(Engine):
 
         writer_thread = threading.Thread(target=writer_loop, daemon=True)
         writer_thread.start()
-        arrays_writer_thread = threading.Thread(
-            target=arrays_writer_loop, daemon=True
-        )
+        arrays_writer_thread = threading.Thread(target=arrays_writer_loop, daemon=True)
         arrays_writer_thread.start()
 
         t0 = time.perf_counter()
@@ -342,7 +341,8 @@ class VllmEngine(Engine):
                 outputs = engine.step()
                 for output in outputs:
                     if (
-                        getattr(output, "request_id", None) == request.request_id
+                        output.request_id == request.request_id
+                        and isinstance(output, RequestOutput)
                         and output.outputs[0].token_ids
                     ):
                         engine.abort_request([request.request_id])
@@ -386,7 +386,7 @@ class VllmEngine(Engine):
         gdn = get_gdn_states()
         gdn_shipped = get_gdn_shipped()
         unshipped = [li for li in sorted(gdn.keys()) if li not in gdn_shipped]
-        arrays_layers = arrays_streamed[0]
+        arrays_layers = arrays_streamed
         if unshipped:
             torch.cuda.synchronize()
             for layer_idx in unshipped:
@@ -397,9 +397,7 @@ class VllmEngine(Engine):
                 if "ssm" in state:
                     arrs.append(state["ssm"])
                 if arrs:
-                    write_layer_arrays_blobs(
-                        wfile, layer_idx, arrays_to_blobs(arrs)
-                    )
+                    write_layer_arrays_blobs(wfile, layer_idx, arrays_to_blobs(arrs))
                     arrays_layers += 1
 
         forwarded_per_layer = max(layer_token_counts.values(), default=0)
@@ -412,9 +410,7 @@ class VllmEngine(Engine):
         wait_secs = writer_stats["wait_event_secs"]
         sock_secs = writer_stats["socket_secs"]
         first_byte_dt = (
-            writer_stats["first_byte_t"] - t0
-            if writer_stats["first_byte_t"]
-            else 0.0
+            writer_stats["first_byte_t"] - t0 if writer_stats["first_byte_t"] else 0.0
         )
         ship_secs = (
             writer_stats["last_byte_t"] - writer_stats["first_byte_t"]
@@ -425,7 +421,7 @@ class VllmEngine(Engine):
         peak_bw_mbps = (bytes_shipped / 1e6 / sock_secs) if sock_secs > 0 else 0.0
         logger.info(
             f"serve_prefill {request.request_id}: "
-            f"streamed_chunks={chunks_sent[0]} arrays_layers={arrays_layers} "
+            f"streamed_chunks={chunks_sent} arrays_layers={arrays_layers} "
             f"tokens={tokens_sent} elapsed_ms={elapsed * 1000:.0f} "
             f"bytes={bytes_shipped / 1e6:.0f}MB ttfb_ms={first_byte_dt * 1000:.0f} "
             f"ship_ms={ship_secs * 1000:.0f} "

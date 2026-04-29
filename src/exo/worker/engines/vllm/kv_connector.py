@@ -1,17 +1,21 @@
-# type: ignore
+# pyright: reportAny = false
 import contextlib
 import queue
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
 import torch
+from vllm.config import VllmConfig
+from vllm.config.kv_transfer import KVTransferConfig
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorBase_V1,
     KVConnectorMetadata,
     KVConnectorRole,
     SupportsHMA,
 )
+from vllm.v1.kv_cache_interface import KVCacheConfig
+from vllm.v1.request import Request
 
 from exo.worker.engines.vllm.disaggregated.adapter import (
     extract_kv_via_slot_mapping,
@@ -19,13 +23,7 @@ from exo.worker.engines.vllm.disaggregated.adapter import (
 )
 from exo.worker.runner.bootstrap import logger
 
-if TYPE_CHECKING:
-    from vllm.config import VllmConfig
-    from vllm.v1.kv_cache_interface import KVCacheConfig
-
-
 _LAYER_RE = re.compile(r"layers\.(\d+)\.")
-_LOG_PREFIX = "[exo-pd vllm-connector]"
 
 
 # Module-level shared state. Populated by the connector's hooks (running inside
@@ -37,16 +35,16 @@ _LOG_PREFIX = "[exo-pd vllm-connector]"
 # 4-tuple: (layer_idx, keys_host_pinned, values_host_pinned, copy_done_event)
 # The writer thread does `event.synchronize()` (CPU-side, doesn't block GPU)
 # before reading the pinned host bytes.
-_kv_queue: (
-    "queue.Queue[tuple[int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None]"
-) = queue.Queue()
+_kv_queue: queue.Queue[
+    tuple[int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None
+] = queue.Queue()
 # 3-tuple: (layer_idx, arrays_host_or_gpu, copy_done_event_or_none)
 # - From save_kv_layer hybrid path: tensors are GPU, event=None (writer .cpu()s)
 # - From GDN capture (after both conv+ssm ready): tensors are pinned host,
 #   event is a CUDA event the writer must synchronize on before reading
-_arrays_queue: (
-    "queue.Queue[tuple[int, list[torch.Tensor], torch.cuda.Event | None] | None]"
-) = queue.Queue()
+_arrays_queue: queue.Queue[
+    tuple[int, list[torch.Tensor], torch.cuda.Event | None] | None
+] = queue.Queue()
 # Per-layer tracking of which layers' GDN states have been shipped via the
 # async pipeline. Entries here are excluded from the post-writer fallback drain.
 _gdn_shipped: set[int] = set()
@@ -61,25 +59,25 @@ _ssm_call_idx: list[int] = [0]
 _save_kv_layer_diag: dict[int, list[int]] = {}
 # Side CUDA stream for K/V extract + async D2H, so vLLM's compute stream
 # isn't blocked on D2H/extract during forward.
-_save_stream: "torch.cuda.Stream | None" = None
+_save_stream: torch.cuda.Stream | None = None
 
 
-def _get_save_stream() -> "torch.cuda.Stream":
+def _get_save_stream() -> torch.cuda.Stream:
     global _save_stream
     if _save_stream is None:
         _save_stream = torch.cuda.Stream()
     return _save_stream
 
 
-def get_kv_queue() -> (
-    "queue.Queue[tuple[int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None]"
-):
+def get_kv_queue() -> queue.Queue[
+    tuple[int, torch.Tensor, torch.Tensor, torch.cuda.Event] | None
+]:
     return _kv_queue
 
 
-def get_arrays_queue() -> (
-    "queue.Queue[tuple[int, list[torch.Tensor], torch.cuda.Event | None] | None]"
-):
+def get_arrays_queue() -> queue.Queue[
+    tuple[int, list[torch.Tensor], torch.cuda.Event | None] | None
+]:
     return _arrays_queue
 
 
@@ -109,14 +107,10 @@ def _try_ship_gdn(layer_idx: int) -> None:
     conv_gpu = state["conv"]
     ssm_gpu = state["ssm"]
     side_stream = _get_save_stream()
-    side_stream.wait_stream(torch.cuda.current_stream())
+    side_stream.wait_stream(torch.cuda.current_stream())  # pyright: ignore[reportUnknownMemberType]
     with torch.cuda.stream(side_stream):
-        conv_host = torch.empty(
-            conv_gpu.shape, dtype=conv_gpu.dtype, pin_memory=True
-        )
-        ssm_host = torch.empty(
-            ssm_gpu.shape, dtype=ssm_gpu.dtype, pin_memory=True
-        )
+        conv_host = torch.empty(conv_gpu.shape, dtype=conv_gpu.dtype, pin_memory=True)
+        ssm_host = torch.empty(ssm_gpu.shape, dtype=ssm_gpu.dtype, pin_memory=True)
         conv_host.copy_(conv_gpu, non_blocking=True)
         ssm_host.copy_(ssm_gpu, non_blocking=True)
     event = torch.cuda.Event()
@@ -172,9 +166,9 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
 
     def __init__(
         self,
-        vllm_config: "VllmConfig",
+        vllm_config: VllmConfig,
         role: KVConnectorRole,
-        kv_cache_config: "KVCacheConfig | None" = None,
+        kv_cache_config: KVCacheConfig | None = None,
     ) -> None:
         super().__init__(vllm_config, role, kv_cache_config)
         self._save_count = 0
@@ -199,9 +193,7 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
         slot_mapping = getattr(attn_metadata, "slot_mapping", None)
         m = _LAYER_RE.search(layer_name)
         layer_idx_for_diag = int(m.group(1)) if m else -1
-        slot_size = (
-            int(slot_mapping.shape[0]) if slot_mapping is not None else -1
-        )
+        slot_size = int(slot_mapping.shape[0]) if slot_mapping is not None else -1
         is_list_kv = isinstance(kv_layer, (list, tuple))
         # Tag list/tuple as negative so the diag log distinguishes hybrid from
         # non-hybrid even when slot_size is the same.
@@ -221,7 +213,10 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
         # they don't live in the paged KV cache. Stay on GPU; the writer
         # thread does the D2H copy via `tensor_to_wire_bytes`.
         if isinstance(kv_layer, (list, tuple)):
-            arrays = [to_bf16(t) for t in kv_layer]
+            arrays = [
+                to_bf16(t)
+                for t in cast(list[torch.Tensor] | tuple[torch.Tensor, ...], kv_layer)
+            ]
             _arrays_queue.put((layer_idx, arrays, None))
             return
 
@@ -240,7 +235,7 @@ class StreamingConnector(KVConnectorBase_V1, SupportsHMA):
         if slot_mapping is not None:
             try:
                 save_stream = _get_save_stream()
-                save_stream.wait_stream(torch.cuda.current_stream())
+                save_stream.wait_stream(torch.cuda.current_stream())  # pyright: ignore[reportUnknownMemberType] # TODO: stub
                 with torch.cuda.stream(save_stream):
                     keys_gpu, values_gpu = extract_kv_via_slot_mapping(
                         kv_layer, slot_mapping
@@ -300,9 +295,9 @@ class BatchConnector(KVConnectorBase_V1, SupportsHMA):
 
     def __init__(
         self,
-        vllm_config: "VllmConfig",
+        vllm_config: VllmConfig,
         role: KVConnectorRole,
-        kv_cache_config: "KVCacheConfig | None" = None,
+        kv_cache_config: KVCacheConfig | None = None,
     ) -> None:
         super().__init__(vllm_config, role, kv_cache_config)
 
@@ -329,7 +324,10 @@ class BatchConnector(KVConnectorBase_V1, SupportsHMA):
         layer_idx = int(m.group(1))
 
         if isinstance(kv_layer, (list, tuple)):
-            _captured_arrays[layer_idx] = [to_bf16(t).cpu() for t in kv_layer]
+            _captured_arrays[layer_idx] = [
+                to_bf16(t).cpu()
+                for t in cast(list[torch.Tensor] | tuple[torch.Tensor, ...], kv_layer)
+            ]
             return
 
         if slot_mapping is None:
@@ -411,33 +409,38 @@ def _patch_vllm_for_connector(connector_class: type[Any]) -> None:
 
     from vllm.v1.core.sched import scheduler as sched_mod
 
-    def patched_connector_finished(_self: Any, _request: Any) -> tuple[bool, Any]:
+    def patched_connector_finished(
+        self: sched_mod.Scheduler, request: Request
+    ) -> tuple[bool, dict[str, Any] | None]:
         return False, None
 
-    sched_mod.Scheduler._connector_finished = patched_connector_finished
+    sched_mod.Scheduler._connector_finished = patched_connector_finished  # pyright: ignore[reportPrivateUsage]
 
     from vllm.distributed.kv_transfer.kv_connector import factory
 
-    original_get = factory.KVConnectorFactory._get_connector_class_with_compat
+    original_get = factory.KVConnectorFactory._get_connector_class_with_compat  # pyright: ignore[reportPrivateUsage]
 
-    @classmethod
-    def patched_get(cls: Any, kv_transfer_config: Any) -> tuple[Any, Any]:
-        kv_conn = getattr(kv_transfer_config, "kv_connector", None) or ""
+    def patched_get(kv_transfer_config: KVTransferConfig) -> tuple[Any, Any]:
+        kv_conn = kv_transfer_config.kv_connector or ""
         kv_conn_lower = kv_conn.lower()
-        if kv_conn in {
-            connector_class.__name__,
-            f"{connector_class.__module__}:{connector_class.__name__}",
-            "ExoKVProducerConnector",
-            f"{__name__}:ExoKVProducerConnector",
-            "StreamingConnector",
-            f"{__name__}:StreamingConnector",
-        } or "streaming_connector" in kv_conn_lower:
+        if (
+            kv_conn
+            in {
+                connector_class.__name__,
+                f"{connector_class.__module__}:{connector_class.__name__}",
+                "ExoKVProducerConnector",
+                f"{__name__}:ExoKVProducerConnector",
+                "StreamingConnector",
+                f"{__name__}:StreamingConnector",
+            }
+            or "streaming_connector" in kv_conn_lower
+        ):
             return connector_class, None
         if "batch_connector" in kv_conn_lower:
             return BatchConnector, None
-        return original_get.__func__(cls, kv_transfer_config)
+        return original_get(kv_transfer_config)
 
-    factory.KVConnectorFactory._get_connector_class_with_compat = patched_get
+    factory.KVConnectorFactory._get_connector_class_with_compat = patched_get  # pyright: ignore[reportPrivateUsage]
     logger.info("Installed vLLM connector bypass patches")
 
 
@@ -463,8 +466,12 @@ def _patch_gdn_capture() -> None:
     except ImportError:
         return
 
-    def patched_fn(*args: Any, conv_states: Any = None, cache_indices: Any = None, **kwargs: Any) -> Any:
-        result = orig_fn(*args, conv_states=conv_states, cache_indices=cache_indices, **kwargs)
+    def patched_fn(
+        *args: Any, conv_states: Any = None, cache_indices: Any = None, **kwargs: Any
+    ) -> Any:
+        result = orig_fn(
+            *args, conv_states=conv_states, cache_indices=cache_indices, **kwargs
+        )
         if conv_states is not None and cache_indices is not None:
             x = args[0] if args else None
             if x is not None and x.shape[0] <= 100:
@@ -490,7 +497,7 @@ def _patch_gdn_capture() -> None:
     import sys
 
     for mod in list(sys.modules.values()):
-        if mod is None or mod is cc_mod:
+        if mod is cc_mod:
             continue
         if hasattr(mod, "causal_conv1d_fn") and mod.causal_conv1d_fn is orig_fn:
             mod.causal_conv1d_fn = patched_fn
@@ -524,18 +531,16 @@ def _patch_gdn_capture() -> None:
                     if (
                         output_final_state
                         and isinstance(result, tuple)
-                        and len(result) == 2
+                        and len(result) == 2  # pyright: ignore[reportUnknownArgumentType]
                     ):
-                        _, ssm_state = result
+                        _, ssm_state = result  # pyright: ignore[reportUnknownVariableType]
                         idx = _ssm_call_idx[0]
                         if _gdn_layer_order and idx < len(_gdn_layer_order) * 100:
                             layer_idx = _gdn_layer_order[idx % len(_gdn_layer_order)]
-                            _gdn_states.setdefault(layer_idx, {})["ssm"] = (
-                                ssm_state
-                            )
+                            _gdn_states.setdefault(layer_idx, {})["ssm"] = ssm_state
                             _try_ship_gdn(layer_idx)
                         _ssm_call_idx[0] += 1
-                    return result
+                    return result  # pyright: ignore[reportUnknownVariableType]
 
                 return patched_chunk
 
@@ -546,13 +551,11 @@ def _patch_gdn_capture() -> None:
             import sys as _sys
 
             for other in list(_sys.modules.values()):
-                if other is None or other is mod:
+                if other is mod:
                     continue
                 if getattr(other, fn_name, None) is orig:
                     setattr(other, fn_name, patched_fn)
-                    patched_targets.append(
-                        f"{other.__name__}.{fn_name} (propagated)"
-                    )
+                    patched_targets.append(f"{other.__name__}.{fn_name} (propagated)")
     if patched_targets:
         logger.info(f"Patched delta-rule fns for SSM capture: {patched_targets}")
     else:
@@ -566,9 +569,7 @@ def init_gdn_layer_order(kv_caches: Any) -> None:
     _gdn_layer_order.clear()
     for li in range(len(kv_caches)):
         kv = kv_caches[li]
-        if isinstance(kv, (list, tuple)) and len(kv) > 1:
+        if isinstance(kv, (list, tuple)) and len(kv) > 1:  # pyright: ignore[reportUnknownArgumentType]
             _gdn_layer_order.append(li)
     if _gdn_layer_order:
-        logger.info(
-            f"GDN layer order: {len(_gdn_layer_order)} hybrid layers detected"
-        )
+        logger.info(f"GDN layer order: {len(_gdn_layer_order)} hybrid layers detected")

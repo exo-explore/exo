@@ -55,9 +55,9 @@ def _make_token_ids(n: int) -> list[int]:
     return [(i * 1009 + 17) % 30000 + 100 for i in range(n)]
 
 
-def _decode(payload: bytes) -> tuple[
-    list[KVChunk], list[ArraysState], Done | None, ErrorMessage | None
-]:
+def _decode(
+    payload: bytes,
+) -> tuple[list[KVChunk], list[ArraysState], Done | None, ErrorMessage | None]:
     buf = io.BytesIO(payload)
     _ = read_header(buf)
     chunks: list[KVChunk] = []

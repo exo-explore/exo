@@ -455,7 +455,7 @@ def load_vllm_engine(
                 ),
                 disable_log_stats=True,
                 max_num_batched_tokens=4096,
-                kv_transfer_config=kv_transfer_config,
+                kv_transfer_config=kv_transfer_config, # pyright: ignore[reportArgumentType]
                 disable_hybrid_kv_cache_manager=False,
                 kv_cache_dtype="auto",
             )
