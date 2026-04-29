@@ -82,8 +82,8 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 exo-pyo3-bindings = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
-mflux = { git = "http://github.com/evanev7/mflux", branch = "exo" }
-vllm = { git = "http://github.com/evanev7/vllm", branch = "exo2" }
+mflux = { git = "https://github.com/evanev7/mflux", branch = "exo" }
+vllm = { git = "https://github.com/evanev7/vllm", branch = "exo2" }
 torch = [
   { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'mlx-cpu' and extra != 'vllm-cuda13' and extra != 'mlx-cuda13' and extra != 'mlx-cuda12'" },
   { index = "pytorch-cu128", marker = "sys_platform == 'linux' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13' and extra != 'vllm-cuda13'" },
