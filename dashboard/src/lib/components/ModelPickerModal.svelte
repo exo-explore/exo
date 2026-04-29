@@ -22,6 +22,7 @@
     is_custom?: boolean;
     tasks?: string[];
     hugging_face_id?: string;
+    requires_vllm?: boolean;
   }
 
   interface ModelGroup {
@@ -32,6 +33,7 @@
     variants: ModelInfo[];
     smallestVariant: ModelInfo;
     hasMultipleVariants: boolean;
+    requiresVllm: boolean;
   }
 
   interface FilterState {
@@ -396,6 +398,7 @@
           variants: [],
           smallestVariant: model,
           hasMultipleVariants: false,
+          requiresVllm: true,
         });
       }
 
@@ -430,6 +433,7 @@
           (a.storage_size_megabytes || 0) - (b.storage_size_megabytes || 0),
       );
       group.hasMultipleVariants = group.variants.length > 1;
+      group.requiresVllm = group.variants.every((v) => v.requires_vllm);
     }
 
     // Convert to array and sort by smallest variant size (biggest first)
@@ -587,6 +591,7 @@
           variants: [model],
           smallestVariant: model,
           hasMultipleVariants: false,
+          requiresVllm: model.requires_vllm === true,
         });
       }
     }
@@ -1165,6 +1170,17 @@
           <span class="text-white/40">Variants:</span>
           <span class="text-white/70">{infoGroup.variants.length}</span>
         </div>
+        {#if infoGroup.requiresVllm}
+          <div class="flex items-center gap-2">
+            <span class="text-white/40">Runtime:</span>
+            <span
+              class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-300 border border-orange-400/30 tracking-wider uppercase"
+            >
+              vLLM
+            </span>
+            <span class="text-white/40 text-[11px]">required</span>
+          </div>
+        {/if}
         {#if infoGroup.variants.length > 0}
           <div class="mt-3 pt-3 border-t border-exo-yellow/10">
             <span class="text-white/40">Available quantizations:</span>

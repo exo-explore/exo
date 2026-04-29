@@ -49,6 +49,7 @@ class ModelListModel(BaseModel):
     base_model: str = Field(default="")
     capabilities: list[str] = Field(default_factory=list)
     reasoning_dialect: ReasoningDialect = "none"
+    requires_vllm: bool = Field(default=False)
 
 
 class ModelList(BaseModel):

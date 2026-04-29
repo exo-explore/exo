@@ -116,6 +116,7 @@ _TOP_LEVEL_TOML_KEYS = {
     "force_download",
     "danger_delete_downloads",
     "all_combinations",
+    "use_prefix_cache",
 }
 
 
@@ -243,6 +244,8 @@ def run_one(
     pp_hint: int,
     tg: int,
     prompt_sizer: PromptSizer,
+    *,
+    use_prefix_cache: bool = False,
 ) -> tuple[dict[str, Any], int]:
     content, pp_tokens = prompt_sizer.build(pp_hint)
     payload: dict[str, Any] = {
@@ -250,6 +253,7 @@ def run_one(
         "messages": [{"role": "user", "content": content}],
         "stream": False,
         "max_tokens": tg,
+        "use_prefix_cache": use_prefix_cache,
     }
 
     t0 = time.perf_counter()
@@ -280,11 +284,19 @@ def _run_phase(
     repeat: int,
     common_meta: dict[str, Any],
     sampler: SystemMetricsSampler | None = None,
+    use_prefix_cache: bool = False,
 ) -> list[dict[str, Any]]:
     logger.info(f"=== phase: {label} (model={model_id}) ===")
     rows: list[dict[str, Any]] = []
     for i in range(warmup):
-        run_one(client, model_id, pp_tg_pairs[0][0], pp_tg_pairs[0][1], prompt_sizer)
+        run_one(
+            client,
+            model_id,
+            pp_tg_pairs[0][0],
+            pp_tg_pairs[0][1],
+            prompt_sizer,
+            use_prefix_cache=use_prefix_cache,
+        )
         logger.debug(f"  warmup {i + 1}/{warmup} done")
 
     for pp, tg in pp_tg_pairs:
@@ -295,7 +307,14 @@ def _run_phase(
             time.sleep(2)
             try:
                 inf_t0 = time.monotonic()
-                row, actual_pp_tokens = run_one(client, model_id, pp, tg, prompt_sizer)
+                row, actual_pp_tokens = run_one(
+                    client,
+                    model_id,
+                    pp,
+                    tg,
+                    prompt_sizer,
+                    use_prefix_cache=use_prefix_cache,
+                )
                 inference_windows.append((inf_t0, time.monotonic()))
             except Exception as e:
                 logger.error(e)
@@ -526,6 +545,11 @@ def main() -> int:
         help="Also run each (pp,tg) pair without the prefill/decode link "
         "(decode instance does its own prefill) and report the diff.",
     )
+    ap.add_argument(
+        "--use-prefix-cache",
+        action="store_true",
+        help="Enable KV prefix cache during bench (default: disabled for cold-cache measurements).",
+    )
     args = ap.parse_args()
     cfg = _load_toml(args.config) if args.config else {}
     _merge_toml_into_args(args, cfg)
@@ -554,6 +578,11 @@ def main() -> int:
     if args.repeat <= 0:
         logger.error("--repeat must be >= 1")
         return 2
+
+    if args.use_prefix_cache:
+        logger.warning(
+            "--use-prefix-cache: prompt TPS will be approximate. See METHODOLOGY.md for details."
+        )
 
     use_combinations = args.all_combinations or len(pp_list) != len(tg_list)
     if use_combinations:
@@ -753,7 +782,10 @@ def main() -> int:
     prefill_alive = False
     decode_alive = False
     sampler_nodes = sorted(
-        {*node_ids_from_instance(prefill_instance), *node_ids_from_instance(decode_instance)}
+        {
+            *node_ids_from_instance(prefill_instance),
+            *node_ids_from_instance(decode_instance),
+        }
     )
     sampler = SystemMetricsSampler(
         ExoClient(args.host, args.port, timeout_s=30), sampler_nodes
@@ -778,6 +810,7 @@ def main() -> int:
                 repeat=args.repeat,
                 common_meta=common_meta,
                 sampler=sampler,
+                use_prefix_cache=args.use_prefix_cache,
             )
             all_rows.extend(prefill_alone_rows)
 
@@ -808,6 +841,7 @@ def main() -> int:
             repeat=args.repeat,
             common_meta=common_meta,
             sampler=sampler,
+            use_prefix_cache=args.use_prefix_cache,
         )
         all_rows.extend(disagg_rows)
 
@@ -833,6 +867,7 @@ def main() -> int:
                 repeat=args.repeat,
                 common_meta=common_meta,
                 sampler=sampler,
+                use_prefix_cache=args.use_prefix_cache,
             )
             all_rows.extend(decode_alone_rows)
 

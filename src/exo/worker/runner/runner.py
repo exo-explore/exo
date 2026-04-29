@@ -178,6 +178,10 @@ class Runner:
 
     def _serve_prefill(self, req: PrefillTask) -> None:
         req.started.set()
+        nested = isinstance(self.current_status, RunnerRunning)
+        if not nested:
+            self.update_status(RunnerRunning())
+            logger.info("runner running")
         try:
             assert isinstance(self.generator, Engine)
             self.generator.serve_prefill(req.request, req.wfile)
@@ -187,6 +191,11 @@ class Runner:
             )
         finally:
             req.done.set()
+            if not nested:
+                self.update_status(
+                    RunnerReady(prefill_server_port=self._prefill_server_port)
+                )
+                logger.info("runner ready")
 
     def update_status(self, status: RunnerStatus):
         self.current_status = status

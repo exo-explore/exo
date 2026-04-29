@@ -42,7 +42,8 @@ build-app: rust-rebuild sync-clean package
 
 sync-cuda:
     #!/usr/bin/env bash
-    uv sync --extra vllm-cuda13 --extra mlx-cuda13 --no-install-package vllm
+    set -euo pipefail
+    uv sync --extra vllm-cuda13 --extra mlx-cpu --no-install-package vllm
     dest=".venv/lib/python3.13/site-packages"
     [[ -d $dest/vllm ]] || {
         nix build .#exo-cuda-13.passthru.evenv

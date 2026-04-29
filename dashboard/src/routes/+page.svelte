@@ -787,6 +787,7 @@
       quantization?: string;
       base_model?: string;
       capabilities?: string[];
+      requires_vllm?: boolean;
     }>
   >([]);
   type ModelMemoryFitStatus =
@@ -966,6 +967,17 @@
   let userPickedInstanceType = $state(false);
   $effect(() => {
     if (!userPickedInstanceType && featureFlags()["vllm_available"]) {
+      selectedInstanceType = "Vllm";
+    }
+  });
+  const selectedModelRequiresVllm = $derived.by((): boolean => {
+    const id = selectedPreviewModelId();
+    if (!id) return false;
+    const model = models.find((m) => m.id === id);
+    return model?.requires_vllm === true;
+  });
+  $effect(() => {
+    if (selectedModelRequiresVllm) {
       selectedInstanceType = "Vllm";
     }
   });
@@ -5783,15 +5795,18 @@
                     </div>
                     <div class="flex gap-2">
                       <button
+                        disabled={selectedModelRequiresVllm}
                         onclick={() => {
+                          if (selectedModelRequiresVllm) return;
                           selectedInstanceType = "MlxRing";
                           userPickedInstanceType = true;
                           saveLaunchDefaults();
                         }}
-                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
-                        'MlxRing'
-                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 {selectedModelRequiresVllm
+                          ? 'opacity-40 cursor-not-allowed bg-transparent text-white/40 border-exo-medium-gray/30'
+                          : selectedInstanceType === 'MlxRing'
+                            ? 'cursor-pointer bg-transparent text-exo-yellow border-exo-yellow'
+                            : 'cursor-pointer bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
                       >
                         <span
                           class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
@@ -5807,15 +5822,18 @@
                         TCP/IP
                       </button>
                       <button
+                        disabled={selectedModelRequiresVllm}
                         onclick={() => {
+                          if (selectedModelRequiresVllm) return;
                           selectedInstanceType = "MlxJaccl";
                           userPickedInstanceType = true;
                           saveLaunchDefaults();
                         }}
-                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
-                        'MlxJaccl'
-                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 {selectedModelRequiresVllm
+                          ? 'opacity-40 cursor-not-allowed bg-transparent text-white/40 border-exo-medium-gray/30'
+                          : selectedInstanceType === 'MlxJaccl'
+                            ? 'cursor-pointer bg-transparent text-exo-yellow border-exo-yellow'
+                            : 'cursor-pointer bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
                       >
                         <span
                           class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
@@ -5830,7 +5848,7 @@
                         </span>
                         RDMA (Fast)
                       </button>
-                      {#if featureFlags()["vllm_available"]}
+                      {#if featureFlags()["vllm_available"] || selectedModelRequiresVllm}
                         <button
                           onclick={() => {
                             selectedInstanceType = "Vllm";
@@ -5858,6 +5876,13 @@
                         </button>
                       {/if}
                     </div>
+                    {#if selectedModelRequiresVllm}
+                      <div
+                        class="mt-2 text-[11px] font-mono text-orange-300/80"
+                      >
+                        This model requires vLLM.
+                      </div>
+                    {/if}
                   </div>
 
                   <!-- Minimum Devices -->

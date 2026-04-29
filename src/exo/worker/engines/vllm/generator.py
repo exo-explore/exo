@@ -35,12 +35,6 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import TaskId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
-
-# todo; move to different file
-from exo.worker.engines.mlx.utils_mlx import get_eos_token_ids_for_model
-from exo.worker.engines.vllm.prompt_format import (
-    make_vllm_sampling_params,
-)
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.tool_parsers import ToolParser, infer_tool_parser
 
@@ -60,6 +54,8 @@ class _EngineRequest:
 
 
 def _stop_token_ids(tokenizer: TokenizerLike, model_id: ModelId) -> set[int]:
+    from exo.worker.engines.mlx.utils_mlx import get_eos_token_ids_for_model
+
     ids: set[int] = set()
     eos_id = getattr(tokenizer, "eos_token_id", None)
     if eos_id is not None:
@@ -79,6 +75,7 @@ def _build_generation_response(
     start_time: float,
     first_token_time: float | None,
     suppress_text: bool = False,
+    num_cached_tokens: int = 0,
 ) -> GenerationResponse:
     token_text: str = "" if suppress_text else tokenizer.decode([token_id])
     finish_usage: Usage | None = None
@@ -88,15 +85,16 @@ def _build_generation_response(
         now = time.perf_counter()
         prefill_elapsed = (first_token_time or now) - start_time
         decode_elapsed = now - (first_token_time or now)
+        prefill_tokens = max(prompt_token_count - num_cached_tokens, 0)
         finish_usage = Usage(
             prompt_tokens=prompt_token_count,
             completion_tokens=completion_tokens,
             total_tokens=prompt_token_count + completion_tokens,
-            prompt_tokens_details=PromptTokensDetails(),
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=num_cached_tokens),
             completion_tokens_details=CompletionTokensDetails(),
         )
         finish_stats = GenerationStats(
-            prompt_tps=prompt_token_count / prefill_elapsed
+            prompt_tps=prefill_tokens / prefill_elapsed
             if prefill_elapsed > 0
             else 0.0,
             generation_tps=completion_tokens / decode_elapsed
@@ -176,6 +174,8 @@ class VllmBatchEngine:
         on_prefill_progress: Callable[[int, int], None] | None = None,
         on_generation_token: Callable[[], None] | None = None,
     ) -> TaskId:
+        from exo.worker.engines.vllm.prompt_format import make_vllm_sampling_params
+
         sampling_params = make_vllm_sampling_params(
             self.engine, task_params, self.model_id
         )
@@ -213,6 +213,7 @@ class VllmBatchEngine:
             new_token_count = len(completion.token_ids)
             new_tokens = completion.token_ids[req.prev_token_count :]
             finish_reason = completion.finish_reason
+            num_cached_tokens = int(output.num_cached_tokens or 0)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
             req.prev_token_count = new_token_count
 
             if not req.prefill_done and not new_tokens:
@@ -247,6 +248,7 @@ class VllmBatchEngine:
                             req.start_time,
                             req.first_token_time,
                             suppress_text=bool(is_final_stop),
+                            num_cached_tokens=num_cached_tokens,
                         ),
                     )
                 )
@@ -315,11 +317,11 @@ def set_n_layers(n: int) -> None:
 
 
 def _wrap_weights_iterator(
-    original: Callable[..., Generator[tuple[str, "torch.Tensor"], None, None]],
-) -> Callable[..., Generator[tuple[str, "torch.Tensor"], None, None]]:
+    original: Callable[..., Generator[tuple[str, torch.Tensor], None, None]],
+) -> Callable[..., Generator[tuple[str, torch.Tensor], None, None]]:
     def patched(
         hf_weights_files: list[str], *args: object, **kwargs: object
-    ) -> Generator[tuple[str, "torch.Tensor"], None, None]:
+    ) -> Generator[tuple[str, torch.Tensor], None, None]:
         callback = get_weight_loading_callback()
         if callback is not None and hf_weights_files:
             total_layers = get_n_layers()
@@ -446,7 +448,7 @@ def load_vllm_engine(
             engine_args = EngineArgs(
                 model=str(model_path.expanduser().resolve()),
                 served_model_name=str(model_id),
-                gpu_memory_utilization=0.05,
+                gpu_memory_utilization=0.1,
                 trust_remote_code=trust_remote_code,
                 load_format="fastsafetensors",
                 enable_prefix_caching=True,
@@ -457,7 +459,7 @@ def load_vllm_engine(
                 ),
                 disable_log_stats=True,
                 max_num_batched_tokens=4096,
-                kv_transfer_config=kv_transfer_config,
+                kv_transfer_config=kv_transfer_config,  # pyright: ignore[reportArgumentType]
                 disable_hybrid_kv_cache_manager=False,
                 kv_cache_dtype="auto",
             )

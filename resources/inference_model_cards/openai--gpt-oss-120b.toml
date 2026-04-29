@@ -1,0 +1,20 @@
+model_id = "openai/gpt-oss-120b"
+n_layers = 36
+hidden_size = 2880
+num_key_value_heads = 8
+supports_tensor = false
+tasks = ["TextGeneration"]
+family = "gpt-oss"
+quantization = "mxfp4"
+base_model = "GPT-OSS 120B"
+capabilities = ["text", "thinking"]
+reasoning_dialect = "channel"
+context_length = 131072
+
+[storage_size]
+in_bytes = 65248815744
+
+[sampling_defaults]
+temperature = 1.0
+top_p = 1.0
+top_k = 0

@@ -215,8 +215,11 @@ class ExoBatchGenerator:
         with vision_ctx:
             if use_remote and task_params.prefill_endpoint is not None:
                 try:
+                    # Send full prompt; producer's vLLM APC handles the prefix
+                    # match. `start_pos` aligns the writer's skip_tokens with
+                    # the consumer's locally-cached prefix.
                     _prefill_tps, _prefill_tokens, cache_snapshots = remote_prefill(
-                        prompt_tokens[:-1],
+                        all_prompt_tokens[:-1],
                         cache,
                         on_prefill_progress,
                         endpoint=task_params.prefill_endpoint,

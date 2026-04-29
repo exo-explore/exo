@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import BinaryIO, Literal
 
 import msgspec
@@ -23,7 +24,28 @@ class TensorBlob(msgspec.Struct):
     data: bytes
 
 
-class KVChunk(msgspec.Struct, tag="kv_chunk"):
+class _KVChunkHeader(msgspec.Struct, tag="kv_chunk"):
+    """Wire-side KV chunk metadata. Raw `keys` then `values` bytes follow on
+    the stream, lengths given by `keys_len` / `values_len`. Splitting them out
+    of the msgpack frame lets the producer pass tensor buffers via the buffer
+    protocol straight into the socket (one host-side memcpy total).
+    """
+
+    layer_idx: int
+    num_tokens: int
+    n_heads: int
+    head_dim: int
+    dtype: DType
+    keys_len: int
+    values_len: int
+
+
+@dataclass(frozen=True)
+class KVChunk:
+    """In-memory KV chunk reconstructed by `read_message` from
+    `_KVChunkHeader` + the raw bytes that follow on the wire.
+    """
+
     layer_idx: int
     num_tokens: int
     n_heads: int
@@ -51,10 +73,13 @@ class ErrorMessage(msgspec.Struct, tag="error"):
     message: str
 
 
+_WireMessage = _KVChunkHeader | ArraysState | Done | ErrorMessage
 Message = KVChunk | ArraysState | Done | ErrorMessage
 
 _msg_encoder = msgspec.msgpack.Encoder()
-_msg_decoder: msgspec.msgpack.Decoder[Message] = msgspec.msgpack.Decoder(Message)
+_msg_decoder: msgspec.msgpack.Decoder[_WireMessage] = msgspec.msgpack.Decoder(
+    _WireMessage
+)
 _header_encoder = msgspec.msgpack.Encoder()
 _header_decoder: msgspec.msgpack.Decoder[Header] = msgspec.msgpack.Decoder(Header)
 
@@ -99,7 +124,7 @@ def read_header(stream: BinaryIO) -> Header:
         raise ProtocolError(f"Bad header: {exc}") from exc
 
 
-def write_message(stream: BinaryIO, msg: Message) -> None:
+def write_message(stream: BinaryIO, msg: _WireMessage) -> None:
     write_frame(stream, _msg_encoder.encode(msg))
 
 
@@ -108,9 +133,22 @@ def read_message(stream: BinaryIO) -> Message | None:
     if not payload:
         return None
     try:
-        return _msg_decoder.decode(payload)
+        msg = _msg_decoder.decode(payload)
     except msgspec.DecodeError as exc:
         raise ProtocolError(f"Bad message: {exc}") from exc
+    if isinstance(msg, _KVChunkHeader):
+        keys = _read_exactly(stream, msg.keys_len)
+        values = _read_exactly(stream, msg.values_len)
+        return KVChunk(
+            layer_idx=msg.layer_idx,
+            num_tokens=msg.num_tokens,
+            n_heads=msg.n_heads,
+            head_dim=msg.head_dim,
+            dtype=msg.dtype,
+            keys=keys,
+            values=values,
+        )
+    return msg
 
 
 def write_kv_chunk(
@@ -121,21 +159,35 @@ def write_kv_chunk(
     n_heads: int,
     head_dim: int,
     dtype: DType,
-    keys: bytes,
-    values: bytes,
+    keys: bytes | memoryview,
+    values: bytes | memoryview,
 ) -> None:
-    write_message(
-        stream,
-        KVChunk(
+    """Stream KV chunk metadata + raw key/value bytes to the wire.
+
+    `keys` / `values` may be bytes-like (bytes, bytearray, memoryview) — the
+    raw payload is written directly to the buffered stream after the
+    msgpack-framed header, avoiding a memcpy through the msgpack encoder.
+    """
+    keys_len = len(keys)
+    values_len = len(values)
+    header_payload = _msg_encoder.encode(
+        _KVChunkHeader(
             layer_idx=layer_idx,
             num_tokens=num_tokens,
             n_heads=n_heads,
             head_dim=head_dim,
             dtype=dtype,
-            keys=keys,
-            values=values,
-        ),
+            keys_len=keys_len,
+            values_len=values_len,
+        )
     )
+    stream.write(len(header_payload).to_bytes(4, "big"))
+    stream.write(header_payload)
+    stream.write(keys)
+    stream.write(values)
+    # No per-chunk flush: the K/V payload is far larger than the
+    # BufferedWriter's internal buffer so it bypasses to the socket directly.
+    # The trailing `Done` frame's `write_frame` flushes once at the end.
 
 
 def write_arrays_state(

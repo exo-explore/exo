@@ -28,21 +28,45 @@ EOF
 
 while (($#)); do
   case "$1" in
-    --iface) shift; IFACE="${1:?}" ;;
-    --self-ip) shift; SELF_IP="${1:?}" ;;
-    --peer-ip) shift; PEER_IP="${1:?}" ;;
-    --netmask) shift; NETMASK="${1:?}" ;;
-    --dry-run) DRY_RUN=1 ;;
-    -h|--help) usage; exit 0 ;;
-    *) echo "Unknown arg: $1" >&2; usage >&2; exit 1 ;;
+  --iface)
+    shift
+    IFACE="${1:?}"
+    ;;
+  --self-ip)
+    shift
+    SELF_IP="${1:?}"
+    ;;
+  --peer-ip)
+    shift
+    PEER_IP="${1:?}"
+    ;;
+  --netmask)
+    shift
+    NETMASK="${1:?}"
+    ;;
+  --dry-run) DRY_RUN=1 ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "Unknown arg: $1" >&2
+    usage >&2
+    exit 1
+    ;;
   esac
   shift
 done
 
-[[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
+[[ $EUID -eq 0 ]] || {
+  echo "Run with sudo." >&2
+  exit 1
+}
 
 run() {
-  printf '+'; printf ' %q' "$@"; printf '\n'
+  printf '+'
+  printf ' %q' "$@"
+  printf '\n'
   ((DRY_RUN)) || "$@"
 }
 
@@ -54,43 +78,60 @@ target_subnet_prefix() {
 iface_score() {
   local iface="$1" info subnet
   info="$(ifconfig "$iface" 2>/dev/null || true)"
-  [[ -n "$info" ]] || { echo 0; return; }
-  grep -q 'status: active' <<<"$info" || { echo 0; return; }
+  [[ -n $info ]] || {
+    echo 0
+    return
+  }
+  grep -q 'status: active' <<<"$info" || {
+    echo 0
+    return
+  }
   subnet="$(target_subnet_prefix "$SELF_IP")"
-  if grep -qE "inet ${subnet//./\\.}" <<<"$info"; then echo 100; return; fi
-  if grep -qE 'inet 169\.254\.' <<<"$info"; then echo 80; return; fi
-  if ! grep -qE '^[[:space:]]*inet ' <<<"$info"; then echo 60; return; fi
+  if grep -qE "inet ${subnet//./\\.}" <<<"$info"; then
+    echo 100
+    return
+  fi
+  if grep -qE 'inet 169\.254\.' <<<"$info"; then
+    echo 80
+    return
+  fi
+  if ! grep -qE '^[[:space:]]*inet ' <<<"$info"; then
+    echo 60
+    return
+  fi
   echo 10
 }
 
 detect_iface() {
   local best="" best_score=0 iface score
   for iface in $(ifconfig -l); do
-    [[ "$iface" =~ ^en[0-9]+$ ]] || continue
+    [[ $iface =~ ^en[0-9]+$ ]] || continue
     score="$(iface_score "$iface")"
-    if (( score > best_score )); then
-      best="$iface"; best_score="$score"
+    if ((score > best_score)); then
+      best="$iface"
+      best_score="$score"
     fi
   done
-  (( best_score >= 60 )) || return 1
+  ((best_score >= 60)) || return 1
   printf '%s\n' "$best"
 }
 
 iface_to_service() {
   local iface="$1" line port=""
   while IFS= read -r line; do
-    if [[ "$line" == "Hardware Port: "* ]]; then
+    if [[ $line == "Hardware Port: "* ]]; then
       port="${line#Hardware Port: }"
-    elif [[ "$line" == "Device: $iface" ]]; then
-      printf '%s\n' "$port"; return 0
+    elif [[ $line == "Device: $iface" ]]; then
+      printf '%s\n' "$port"
+      return 0
     fi
   done < <(networksetup -listallhardwareports)
   return 1
 }
 
-if [[ -z "$IFACE" ]]; then
+if [[ -z $IFACE ]]; then
   IFACE="$(detect_iface || true)"
-  [[ -n "$IFACE" ]] || {
+  [[ -n $IFACE ]] || {
     echo "Could not auto-detect a wired interface. Pass --iface enX." >&2
     echo "Active interfaces:" >&2
     ifconfig -l | tr ' ' '\n' | grep -E '^en[0-9]+$' | while read -r i; do
@@ -101,10 +142,13 @@ if [[ -z "$IFACE" ]]; then
   echo "Auto-detected interface: $IFACE"
 fi
 
-ifconfig "$IFACE" >/dev/null 2>&1 || { echo "Interface $IFACE does not exist." >&2; exit 1; }
+ifconfig "$IFACE" >/dev/null 2>&1 || {
+  echo "Interface $IFACE does not exist." >&2
+  exit 1
+}
 
 SERVICE="$(iface_to_service "$IFACE" || true)"
-[[ -n "$SERVICE" ]] || {
+[[ -n $SERVICE ]] || {
   echo "No network service maps to $IFACE. Check System Settings -> Network." >&2
   exit 1
 }

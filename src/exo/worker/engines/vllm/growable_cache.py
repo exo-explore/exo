@@ -56,8 +56,8 @@ def _patch_nogds() -> None:
     original = weight_utils._init_fastsafetensors_loader
 
     def patched(
-        pg: "torch.distributed.ProcessGroup",
-        device: "torch.device",
+        pg: torch.distributed.ProcessGroup,
+        device: torch.device,
         f_list: list[str],
         *,
         nogds: bool = False,
@@ -73,7 +73,7 @@ def _patch_determine_available_memory() -> None:
     # original = Worker.determine_available_memory
 
     @torch.inference_mode()
-    def patched(self: "Worker") -> int:
+    def patched(self: Worker) -> int:
         import pathlib
         import shutil
 
@@ -82,7 +82,22 @@ def _patch_determine_available_memory() -> None:
             shutil.rmtree(compile_cache, ignore_errors=True)
 
         free_bytes, _ = torch.cuda.mem_get_info()
-        initial = max(int(free_bytes * INITIAL_FRACTION), 1)
+        # vLLM's get_kv_cache_configs computes per-group block counts via
+        # `tensor.size // num_blocks_old` and asserts the result divides
+        # evenly. With a small `available_kv_cache_memory_bytes` and
+        # multi-MiB-per-slot Mamba/hybrid groups, num_blocks_old can come
+        # back as 0 → ZeroDivisionError. Floor the initial budget so each
+        # group lands at least one block at init; growth picks up from
+        # there.
+        min_initial = 1024 * 1024 * 1024  # 1 GiB
+        if free_bytes < min_initial:
+            raise RuntimeError(
+                f"Insufficient GPU memory for KV cache initialization: "
+                f"{free_bytes / (1024**3):.2f} GiB free, need at least "
+                f"{min_initial / (1024**3):.2f} GiB. Stop other GPU "
+                f"processes (check `nvidia-smi`)."
+            )
+        initial = max(int(free_bytes * INITIAL_FRACTION), min_initial)
         self._growable_max_kv_bytes = free_bytes
         self.available_kv_cache_memory_bytes = initial
         logger.info(
@@ -97,7 +112,7 @@ def _patch_determine_available_memory() -> None:
 def _patch_check_enough_kv_cache_memory() -> None:
     from vllm.v1.core import kv_cache_utils
 
-    def noop(*_args: "object", **_kwargs: "object") -> None:
+    def noop(*_args: object, **_kwargs: object) -> None:
         pass
 
     kv_cache_utils._check_enough_kv_cache_memory = noop
@@ -381,37 +396,48 @@ def _grow_tensors(
         else:
             runner_kv_caches.append(new_kv)
 
-    new_kv_typed = cast("dict[str, torch.Tensor | list[torch.Tensor]]", new_kv_caches)
+    new_kv_typed = cast(dict[str, torch.Tensor | list[torch.Tensor]], new_kv_caches)
     for layer_name, new_kv in new_kv_typed.items():
-        old_kv_list = cast(
-            "list[torch.Tensor | list[torch.Tensor]] | torch.Tensor | None",
+        # vLLM uses different shapes per layer kind (gpu_model_runner.py:5852):
+        #   - full / sliding-window attention: `attn.kv_cache: torch.Tensor`
+        #     (paged storage with K/V stacked along dim 0; consumers call
+        #     `.unbind(0)` so it MUST be a Tensor, not a list)
+        #   - Mamba / hybrid:                  `attn.kv_cache: list[Tensor]`
+        #     ([conv_state, ssm_state])
+        # Preserve that distinction here. In-place .set_() keeps the existing
+        # tensor identities valid for any captured refs (torch.compile graph,
+        # layer module attrs); we only fall back to assignment on first
+        # install or a shape mismatch.
+        old_kv = cast(
+            list[Any] | list[torch.Tensor] | torch.Tensor,
             forward_context[layer_name].kv_cache,
         )
-        if old_kv_list is not None and (
-            not isinstance(old_kv_list, torch.Tensor) or old_kv_list.numel() > 0
-        ):
-            old_entry = old_kv_list[0]
-            if isinstance(old_entry, list) and isinstance(new_kv, list):
-                for old_t, new_t in zip(old_entry, new_kv, strict=True):
+
+        if isinstance(new_kv, list):
+            if (
+                isinstance(old_kv, list)
+                and len(old_kv) == len(new_kv)
+                and all(isinstance(t, torch.Tensor) for t in old_kv)
+            ):
+                for old_t, new_t in zip(old_kv, new_kv, strict=True):
                     old_t.set_(
                         new_t.storage(),
                         new_t.storage_offset(),
                         new_t.shape,
                         new_t.stride(),
                     )
-            elif isinstance(old_entry, torch.Tensor) and isinstance(
-                new_kv, torch.Tensor
-            ):
-                old_entry.set_(
+            else:
+                forward_context[layer_name].kv_cache = new_kv
+        else:
+            if isinstance(old_kv, torch.Tensor) and old_kv.numel() > 0:
+                old_kv.set_(
                     new_kv.storage(),
                     new_kv.storage_offset(),
                     new_kv.shape,
                     new_kv.stride(),
                 )
             else:
-                forward_context[layer_name].kv_cache = [new_kv]
-        else:
-            forward_context[layer_name].kv_cache = [new_kv]
+                forward_context[layer_name].kv_cache = new_kv
 
 
 def _grow_block_pool(
@@ -432,7 +458,7 @@ def _grow_block_pool(
 def _patch_moe_sum() -> None:
     import vllm._custom_ops as ops
 
-    def moe_sum_f32(x: "torch.Tensor", output: "torch.Tensor") -> None:
+    def moe_sum_f32(x: torch.Tensor, output: torch.Tensor) -> None:
         output[:] = x.to(torch.float32).sum(dim=1).to(output.dtype)
 
     ops.moe_sum = moe_sum_f32
@@ -452,5 +478,3 @@ def _patch_marlin_w2_thread_config() -> None:
         return original_gemm(*args, **kwargs)
 
     ops.moe_wna16_marlin_gemm = patched_gemm
-
-

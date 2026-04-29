@@ -79,6 +79,7 @@ def remote_prefill_fetch(
         result = PrefillResult(header=header)
         kv_by_layer: dict[int, list[KVChunk]] = defaultdict(list)
         chunks_received = 0
+        done_seen = False
 
         while True:
             msg = read_message(stream)
@@ -93,9 +94,16 @@ def remote_prefill_fetch(
                 result.arrays[msg.layer_idx] = msg.arrays
             elif isinstance(msg, Done):
                 result.total_tokens = msg.total_tokens
+                done_seen = True
                 break
             else:
                 raise RuntimeError(f"Prefill server error [{msg.code}]: {msg.message}")
+
+        if not done_seen:
+            raise ConnectionError(
+                "Prefill server closed before Done frame "
+                f"(received {chunks_received} kv chunks, {len(result.arrays)} arrays)"
+            )
 
         result.kv_chunks = dict(kv_by_layer)
         return result
