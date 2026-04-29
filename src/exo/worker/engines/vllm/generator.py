@@ -447,7 +447,7 @@ def load_vllm_engine(
                 gpu_memory_utilization=0.05,
                 trust_remote_code=trust_remote_code,
                 load_format="fastsafetensors",
-                enable_prefix_caching=False,
+                enable_prefix_caching=True,
                 attention_backend=backend,
                 compilation_config=CompilationConfig(
                     mode=CompilationMode.NONE,
