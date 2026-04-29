@@ -570,36 +570,36 @@ def _patch_vllm_for_connector(connector_class: type[Any]) -> None:
                 save_stream = _get_save_stream()
                 save_stream.wait_stream(torch.cuda.current_stream())  # pyright: ignore[reportUnknownMemberType]
                 first_log_done = False
-                for layer_idx in range(n_layers):
-                    kv_layer = mr.kv_caches[layer_idx]
-                    if isinstance(kv_layer, (list, tuple)):
-                        continue
-                    gi = (
-                        layer_to_group[layer_idx]
-                        if layer_idx < len(layer_to_group)
-                        else 0
-                    )
-                    if gi >= len(req_block_ids_per_group):
-                        continue
-                    block_ids = list(req_block_ids_per_group[gi])
-                    if not block_ids:
-                        continue
-                    keys_gpu, values_gpu = gather_layer_kv_from_blocks(
-                        kv_layer, block_ids, num_apc
-                    )
-                    if not first_log_done:
-                        first_log_done = True
-                        logger.info(
-                            f"APC pre-extract layer={layer_idx}: "
-                            f"kv_layer.shape={tuple(kv_layer.shape)} "
-                            f"kv_layer.dtype={kv_layer.dtype} "
-                            f"len(block_ids)={len(block_ids)} num_apc={num_apc} "
-                            f"keys_gpu.shape={tuple(keys_gpu.shape)} "
-                            f"keys_gpu.dtype={keys_gpu.dtype}"
+                with torch.cuda.stream(save_stream):
+                    for layer_idx in range(n_layers):
+                        kv_layer = mr.kv_caches[layer_idx]
+                        if isinstance(kv_layer, (list, tuple)):
+                            continue
+                        gi = (
+                            layer_to_group[layer_idx]
+                            if layer_idx < len(layer_to_group)
+                            else 0
                         )
-                    if keys_gpu.numel() == 0:
-                        continue
-                    with torch.cuda.stream(save_stream):
+                        if gi >= len(req_block_ids_per_group):
+                            continue
+                        block_ids = list(req_block_ids_per_group[gi])
+                        if not block_ids:
+                            continue
+                        keys_gpu, values_gpu = gather_layer_kv_from_blocks(
+                            kv_layer, block_ids, num_apc
+                        )
+                        if not first_log_done:
+                            first_log_done = True
+                            logger.info(
+                                f"APC pre-extract layer={layer_idx}: "
+                                f"kv_layer.shape={tuple(kv_layer.shape)} "
+                                f"kv_layer.dtype={kv_layer.dtype} "
+                                f"len(block_ids)={len(block_ids)} num_apc={num_apc} "
+                                f"keys_gpu.shape={tuple(keys_gpu.shape)} "
+                                f"keys_gpu.dtype={keys_gpu.dtype}"
+                            )
+                        if keys_gpu.numel() == 0:
+                            continue
                         keys_host = torch.empty(
                             keys_gpu.shape,
                             dtype=keys_gpu.dtype,
@@ -612,16 +612,16 @@ def _patch_vllm_for_connector(connector_class: type[Any]) -> None:
                         )
                         keys_host.copy_(keys_gpu, non_blocking=True)
                         values_host.copy_(values_gpu, non_blocking=True)
-                    event = torch.cuda.Event()
-                    event.record(save_stream)
-                    _kv_queue.put(
-                        (layer_idx, num_apc, keys_host, values_host, event)
-                    )
-                    pre_layers_shipped += 1
-                    pre_bytes_shipped += (
-                        keys_host.numel() * keys_host.element_size()
-                        + values_host.numel() * values_host.element_size()
-                    )
+                        event = torch.cuda.Event()
+                        event.record(save_stream)
+                        _kv_queue.put(
+                            (layer_idx, num_apc, keys_host, values_host, event)
+                        )
+                        pre_layers_shipped += 1
+                        pre_bytes_shipped += (
+                            keys_host.numel() * keys_host.element_size()
+                            + values_host.numel() * values_host.element_size()
+                        )
                 logger.info(
                     f"APC pre-extract done: req={req_id} layers={pre_layers_shipped} "
                     f"tokens={num_apc} bytes={pre_bytes_shipped}"

@@ -208,6 +208,13 @@ class VllmEngine(Engine):
         # We strip the trailing 2 tokens because the consumer warm-starts
         # decode from them locally.
         sp = SamplingParams(max_tokens=2, temperature=0.0, detokenize=False)
+        # Honor consumer's `use_prefix_cache=False` (set by the bench harness):
+        # tell vLLM to skip APC matching for this request so forward runs over
+        # the entire prompt and `save_kv_layer` ships the full K/V instead of
+        # vLLM short-circuiting on cached blocks. APC stays enabled at the
+        # engine level so unrelated concurrent requests still benefit.
+        if not request.use_prefix_cache:
+            sp.skip_reading_prefix_cache = True  # pyright: ignore[reportAttributeAccessIssue]
         engine.add_request(
             request.request_id,
             {"prompt_token_ids": prefill_token_ids},
