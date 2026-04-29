@@ -753,7 +753,10 @@ def main() -> int:
     prefill_alive = False
     decode_alive = False
     sampler_nodes = sorted(
-        {*node_ids_from_instance(prefill_instance), *node_ids_from_instance(decode_instance)}
+        {
+            *node_ids_from_instance(prefill_instance),
+            *node_ids_from_instance(decode_instance),
+        }
     )
     sampler = SystemMetricsSampler(
         ExoClient(args.host, args.port, timeout_s=30), sampler_nodes

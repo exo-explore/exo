@@ -30,28 +30,55 @@ EOF
 
 while (($#)); do
   case "$1" in
-    --iface) shift; IFACE="${1:?}" ;;
-    --self-ip) shift; SELF_IP="${1:?}" ;;
-    --peer-ip) shift; PEER_IP="${1:?}" ;;
-    --prefix) shift; PREFIX="${1:?}" ;;
-    --no-nm) USE_NM=no ;;
-    --dry-run) DRY_RUN=1 ;;
-    -h|--help) usage; exit 0 ;;
-    *) echo "Unknown arg: $1" >&2; usage >&2; exit 1 ;;
+  --iface)
+    shift
+    IFACE="${1:?}"
+    ;;
+  --self-ip)
+    shift
+    SELF_IP="${1:?}"
+    ;;
+  --peer-ip)
+    shift
+    PEER_IP="${1:?}"
+    ;;
+  --prefix)
+    shift
+    PREFIX="${1:?}"
+    ;;
+  --no-nm) USE_NM=no ;;
+  --dry-run) DRY_RUN=1 ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "Unknown arg: $1" >&2
+    usage >&2
+    exit 1
+    ;;
   esac
   shift
 done
 
-[[ $EUID -eq 0 ]] || { echo "Run as root." >&2; exit 1; }
+[[ $EUID -eq 0 ]] || {
+  echo "Run as root." >&2
+  exit 1
+}
 
 run() {
-  printf '+'; printf ' %q' "$@"; printf '\n'
+  printf '+'
+  printf ' %q' "$@"
+  printf '\n'
   ((DRY_RUN)) || "$@"
 }
 
-ip link show "$IFACE" >/dev/null 2>&1 || { echo "Interface $IFACE does not exist." >&2; exit 1; }
+ip link show "$IFACE" >/dev/null 2>&1 || {
+  echo "Interface $IFACE does not exist." >&2
+  exit 1
+}
 
-if [[ "$USE_NM" == "auto" ]]; then
+if [[ $USE_NM == "auto" ]]; then
   if command -v nmcli >/dev/null 2>&1 && systemctl is-active --quiet NetworkManager 2>/dev/null; then
     USE_NM=yes
   else
@@ -59,9 +86,9 @@ if [[ "$USE_NM" == "auto" ]]; then
   fi
 fi
 
-if [[ "$USE_NM" == "yes" ]]; then
+if [[ $USE_NM == "yes" ]]; then
   CONN="$(nmcli -g GENERAL.CONNECTION device show "$IFACE" 2>/dev/null | head -n1 || true)"
-  if [[ -z "$CONN" || "$CONN" == "--" ]]; then
+  if [[ -z $CONN || $CONN == "--" ]]; then
     CONN="static-${IFACE}"
     run nmcli connection add type ethernet ifname "$IFACE" con-name "$CONN"
   fi

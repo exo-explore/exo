@@ -26,7 +26,7 @@ dependencies = [
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
   "transformers>=5.6.2",
-  "pynvml>=13.0.1",
+  "nvidia-ml-py>=13.595.45",
 ]
 
 [project.scripts]

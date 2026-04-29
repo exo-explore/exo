@@ -56,8 +56,8 @@ def _patch_nogds() -> None:
     original = weight_utils._init_fastsafetensors_loader
 
     def patched(
-        pg: "torch.distributed.ProcessGroup",
-        device: "torch.device",
+        pg: torch.distributed.ProcessGroup,
+        device: torch.device,
         f_list: list[str],
         *,
         nogds: bool = False,
@@ -73,7 +73,7 @@ def _patch_determine_available_memory() -> None:
     # original = Worker.determine_available_memory
 
     @torch.inference_mode()
-    def patched(self: "Worker") -> int:
+    def patched(self: Worker) -> int:
         import pathlib
         import shutil
 
@@ -97,7 +97,7 @@ def _patch_determine_available_memory() -> None:
 def _patch_check_enough_kv_cache_memory() -> None:
     from vllm.v1.core import kv_cache_utils
 
-    def noop(*_args: "object", **_kwargs: "object") -> None:
+    def noop(*_args: object, **_kwargs: object) -> None:
         pass
 
     kv_cache_utils._check_enough_kv_cache_memory = noop
@@ -381,7 +381,7 @@ def _grow_tensors(
         else:
             runner_kv_caches.append(new_kv)
 
-    new_kv_typed = cast("dict[str, torch.Tensor | list[torch.Tensor]]", new_kv_caches)
+    new_kv_typed = cast(dict[str, torch.Tensor | list[torch.Tensor]], new_kv_caches)
     for layer_name, new_kv in new_kv_typed.items():
         # vLLM uses different shapes per layer kind (gpu_model_runner.py:5852):
         #   - full / sliding-window attention: `attn.kv_cache: torch.Tensor`
@@ -393,7 +393,10 @@ def _grow_tensors(
         # tensor identities valid for any captured refs (torch.compile graph,
         # layer module attrs); we only fall back to assignment on first
         # install or a shape mismatch.
-        old_kv = forward_context[layer_name].kv_cache
+        old_kv = cast(
+            list[Any] | list[torch.Tensor] | torch.Tensor,
+            forward_context[layer_name].kv_cache,
+        )
 
         if isinstance(new_kv, list):
             if (
@@ -440,7 +443,7 @@ def _grow_block_pool(
 def _patch_moe_sum() -> None:
     import vllm._custom_ops as ops
 
-    def moe_sum_f32(x: "torch.Tensor", output: "torch.Tensor") -> None:
+    def moe_sum_f32(x: torch.Tensor, output: torch.Tensor) -> None:
         output[:] = x.to(torch.float32).sum(dim=1).to(output.dtype)
 
     ops.moe_sum = moe_sum_f32
@@ -460,5 +463,3 @@ def _patch_marlin_w2_thread_config() -> None:
         return original_gemm(*args, **kwargs)
 
     ops.moe_wna16_marlin_gemm = patched_gemm
-
-

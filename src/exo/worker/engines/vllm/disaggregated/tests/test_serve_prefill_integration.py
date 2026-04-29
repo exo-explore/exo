@@ -40,6 +40,8 @@ from exo.worker.disaggregated.protocol import (
     read_message,
 )
 from exo.worker.disaggregated.server import PrefillRequest
+from exo.worker.engines.base import Engine
+from exo.worker.engines.vllm.engine import VllmEngine
 
 
 def _has_cuda() -> bool:
@@ -66,19 +68,19 @@ def _decode_stream(
     done: Done | None = None
     error: ErrorMessage | None = None
     while True:
-        msg = read_message(buf)
-        if msg is None:
-            break
-        if isinstance(msg, KVChunk):
-            chunks.append(msg)
-        elif isinstance(msg, ArraysState):
-            arrays.append(msg)
-        elif isinstance(msg, Done):
-            done = msg
-            break
-        elif isinstance(msg, ErrorMessage):
-            error = msg
-            break
+        match msg := read_message(buf):
+            case None:
+                break
+            case KVChunk():
+                chunks.append(msg)
+            case ArraysState():
+                arrays.append(msg)
+            case Done():
+                done = msg
+                break
+            case ErrorMessage():
+                error = msg
+                break
     return chunks, arrays, done, error
 
 
@@ -87,18 +89,17 @@ def vllm_engine(request: pytest.FixtureRequest) -> Iterator[object]:
     """Build a real VllmEngine pointed at a downloaded HF model."""
     if not _has_cuda():
         pytest.skip("CUDA not available")
-    model_id_str = request.config.getoption("--model-id")
+    model_id_str = cast(str, request.config.getoption("--model-id"))
     if not model_id_str:
         pytest.skip("pass --model-id <hf-id> to run this test")
 
-    model_id = ModelId(cast(str, model_id_str))
+    model_id = ModelId(model_id_str)
 
     from exo.download.download_utils import build_model_path
 
     if not build_model_path(model_id).exists():
         pytest.skip(f"model {model_id} not downloaded locally")
 
-    from exo.worker.engines.vllm.engine import VllmEngine
     from exo.worker.engines.vllm.generator import (
         VllmBatchEngine,
         load_vllm_engine,
@@ -133,8 +134,8 @@ def vllm_engine(request: pytest.FixtureRequest) -> Iterator[object]:
     engine = VllmEngine(
         tool_parser=tool_parser,
         model_id=model_id,
-        cancel_receiver=cast("object", _DummyReceiver()),  # pyright: ignore[reportArgumentType]
-        event_sender=cast("object", _DummySender()),  # pyright: ignore[reportArgumentType]
+        cancel_receiver=_DummyReceiver(),  # pyright: ignore[reportArgumentType]
+        event_sender=_DummySender(),  # pyright: ignore[reportArgumentType]
         _gen=gen,
         max_concurrent_requests=1,
     )
@@ -145,7 +146,7 @@ def vllm_engine(request: pytest.FixtureRequest) -> Iterator[object]:
             engine.close()
 
 
-def _run_one(engine: object, n_tokens: int, label: str) -> Done:
+def _run_one(engine: Engine, n_tokens: int, label: str) -> Done:
     request = PrefillRequest(
         request_id=f"itest-{label}",
         model_id="ignored",
@@ -154,14 +155,16 @@ def _run_one(engine: object, n_tokens: int, label: str) -> Done:
         use_prefix_cache=True,
     )
     buf = io.BytesIO()
-    engine.serve_prefill(request, buf)  # pyright: ignore[reportAttributeAccessIssue]
+    engine.serve_prefill(request, buf)
 
     payload = buf.getvalue()
     assert payload, f"{label}: server wrote nothing"
 
     chunks, arrays, done, error = _decode_stream(payload)
     if error is not None:
-        pytest.fail(f"{label}: server returned ErrorMessage [{error.code}]: {error.message}")
+        pytest.fail(
+            f"{label}: server returned ErrorMessage [{error.code}]: {error.message}"
+        )
     assert done is not None, (
         f"{label}: stream did not end with Done "
         f"(received {len(chunks)} kv chunks, {len(arrays)} arrays)"
@@ -175,7 +178,7 @@ def _run_one(engine: object, n_tokens: int, label: str) -> Done:
     return done
 
 
-def test_serve_prefill_two_runs_no_apc_assert(vllm_engine: object) -> None:
+def test_serve_prefill_two_runs_no_apc_assert(vllm_engine: VllmEngine) -> None:
     """Two consecutive prefills against the same engine must both succeed.
 
     Before the fix, the second call hit a CUDA assert (vLLM APC + chunked
@@ -189,7 +192,7 @@ def test_serve_prefill_two_runs_no_apc_assert(vllm_engine: object) -> None:
     )
 
 
-def test_serve_prefill_different_lengths(vllm_engine: object) -> None:
+def test_serve_prefill_different_lengths(vllm_engine: VllmEngine) -> None:
     """A second prefill with a different prompt length still succeeds."""
     a = _run_one(vllm_engine, n_tokens=256, label="run-256")
     b = _run_one(vllm_engine, n_tokens=768, label="run-768")

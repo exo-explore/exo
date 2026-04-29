@@ -527,9 +527,7 @@ class API:
                     ]
                 )
         if any(self.state.node_vllm.values()):
-            instance_combinations.append(
-                (Sharding.Pipeline, InstanceMeta.Vllm, 1)
-            )
+            instance_combinations.append((Sharding.Pipeline, InstanceMeta.Vllm, 1))
 
         for sharding, instance_meta, min_nodes in instance_combinations:
             try:
