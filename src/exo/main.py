@@ -17,7 +17,7 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_id_keypair
-from exo.shared.constants import EXO_LOG
+from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
@@ -276,6 +276,13 @@ def main():
     logger.info(f"Starting EXO | pid={os.getpid()}")
     logger.info(f"{'=' * 40}")
     logger.info(f"EXO_LIBP2P_NAMESPACE: {os.getenv('EXO_LIBP2P_NAMESPACE')}")
+
+    try:
+        EXO_DEFAULT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exception:
+        logger.opt(exception=exception).warning(
+            f"Could not create models directory at {EXO_DEFAULT_MODELS_DIR}"
+        )
 
     if args.offline:
         logger.info("Running in OFFLINE mode — no internet checks, local models only")
