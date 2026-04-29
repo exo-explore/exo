@@ -499,7 +499,17 @@ def _patch_gdn_capture() -> None:
     for mod in list(sys.modules.values()):
         if mod is cc_mod:
             continue
-        if hasattr(mod, "causal_conv1d_fn") and mod.causal_conv1d_fn is orig_fn:
+        # transformers' image_processing_* shims have a lazy __getattr__
+        # that emits a noisy deprecation warning on every attribute probe.
+        # They never use causal_conv1d_fn, so skip them.
+        mod_name = getattr(mod, "__name__", "") or ""
+        if mod_name.startswith("transformers."):
+            continue
+        if (
+            mod.__dict__.get("causal_conv1d_fn") is orig_fn
+            if hasattr(mod, "__dict__")
+            else False
+        ):
             mod.causal_conv1d_fn = patched_fn
     logger.info("Patched causal_conv1d_fn for GDN conv-state capture")
 
@@ -553,7 +563,11 @@ def _patch_gdn_capture() -> None:
             for other in list(_sys.modules.values()):
                 if other is mod:
                     continue
-                if getattr(other, fn_name, None) is orig:
+                other_name = getattr(other, "__name__", "") or ""
+                # Skip transformers — see causal_conv1d_fn loop above.
+                if other_name.startswith("transformers."):
+                    continue
+                if other.__dict__.get(fn_name) is orig:
                     setattr(other, fn_name, patched_fn)
                     patched_targets.append(f"{other.__name__}.{fn_name} (propagated)")
     if patched_targets:

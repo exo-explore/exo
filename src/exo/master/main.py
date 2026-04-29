@@ -180,10 +180,31 @@ class Master:
                             for link in self.state.instance_links.values():
                                 prefill_only.difference_update(link.decode_instances)
 
+                            # If the user typed a prefill-only model id (e.g.
+                            # the vLLM-side producer of a P/D pair), the
+                            # candidate decode side is whatever it's linked
+                            # to. Expand the requested model id to also
+                            # include those linked decode instances.
+                            requested_model = command.task_params.model
+                            linked_decode_ids: set[InstanceId] = set()
+                            for link in self.state.instance_links.values():
+                                if any(
+                                    self.state.instances.get(pid) is not None
+                                    and self.state.instances[
+                                        pid
+                                    ].shard_assignments.model_id
+                                    == requested_model
+                                    for pid in link.prefill_instances
+                                ):
+                                    linked_decode_ids.update(link.decode_instances)
+
                             for instance in self.state.instances.values():
-                                if (
+                                model_match = (
                                     instance.shard_assignments.model_id
-                                    == command.task_params.model
+                                    == requested_model
+                                ) or (instance.instance_id in linked_decode_ids)
+                                if (
+                                    model_match
                                     and instance.instance_id not in prefill_only
                                 ):
                                     in_flight = {TaskStatus.Pending, TaskStatus.Running}
