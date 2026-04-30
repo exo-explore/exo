@@ -11,7 +11,9 @@ from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
+    NodeGpuProfile,
     NodeIdentity,
+    NodeLinkProfile,
     NodeNetworkInfo,
     NodeRdmaCtlStatus,
     NodeThunderboltInfo,
@@ -58,6 +60,14 @@ class State(FrozenModel):
     node_thunderbolt: Mapping[NodeId, NodeThunderboltInfo] = {}
     node_thunderbolt_bridge: Mapping[NodeId, ThunderboltBridgeStatus] = {}
     node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] = {}
+
+    # Profiler results.
+    # node_gpu_profile: per-node GPU TFLOPS / memory bandwidth measurement.
+    # node_link_profiles: per-edge link probe; outer key = source node, inner
+    # key = sink node. May contain both a socket and an RDMA profile to the
+    # same peer, so the inner value is a sequence.
+    node_gpu_profile: Mapping[NodeId, NodeGpuProfile] = {}
+    node_link_profiles: Mapping[NodeId, Mapping[NodeId, Sequence[NodeLinkProfile]]] = {}
 
     # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
     thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []

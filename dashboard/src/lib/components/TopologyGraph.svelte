@@ -8,8 +8,17 @@
     nodeThunderboltBridge,
     nodeRdmaCtl,
     nodeIdentities,
+    nodeGpuProfile,
+    nodeLinkProfiles,
+    nodeNetworkRaw,
+    nodeThunderbolt,
     type NodeInfo,
   } from "$lib/stores/app.svelte";
+  import {
+    inferRdmaConnectionType,
+    inferSocketConnectionType,
+    type ConnectionType,
+  } from "$lib/utils/connection-type";
 
   interface Props {
     class?: string;
@@ -35,6 +44,102 @@
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const rdmaCtlData = $derived(nodeRdmaCtl());
   const identitiesData = $derived(nodeIdentities());
+  const gpuProfileData = $derived(nodeGpuProfile());
+  const linkProfilesData = $derived(nodeLinkProfiles());
+  const nodeNetworkData = $derived(nodeNetworkRaw());
+  const nodeThunderboltData = $derived(nodeThunderbolt());
+
+  // Hover state for edge tooltips. We render the tooltip as plain HTML
+  // overlaid on the SVG so it picks up the existing dashboard typography.
+  let hoveredPair = $state<{
+    a: string;
+    b: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  function formatBandwidthMbps(value: number | null | undefined): string {
+    if (value == null || !isFinite(value)) return "—";
+    if (value >= 1000) return `${(value / 1000).toFixed(2)} Gbps`;
+    return `${value.toFixed(0)} Mbps`;
+  }
+
+  function formatLatencyMs(value: number | null | undefined): string {
+    if (value == null || !isFinite(value)) return "—";
+    if (value < 1) return `${(value * 1000).toFixed(0)} µs`;
+    return `${value.toFixed(2)} ms`;
+  }
+
+  interface PairProfileEntry {
+    fromId: string;
+    toId: string;
+    transport: "socket" | "rdma";
+    uploadMbps: number | null;   // fromId -> toId (this row's source uploads)
+    downloadMbps: number | null; // toId -> fromId (this row's source downloads)
+    latencyMs: number | null;    // round-trip; one-way ≈ RTT/2 (no clock sync)
+    type: ConnectionType;
+    detail: string;
+  }
+
+  /** Collect every measured profile in either direction between two nodes. */
+  function collectPairProfiles(a: string, b: string): PairProfileEntry[] {
+    const result: PairProfileEntry[] = [];
+    const ctx = {
+      nodeNetwork: nodeNetworkData,
+      nodeThunderbolt: nodeThunderboltData,
+    };
+    for (const [fromId, toId] of [
+      [a, b],
+      [b, a],
+    ] as const) {
+      const profiles = linkProfilesData[fromId]?.[toId];
+      if (!profiles) continue;
+      for (const profile of profiles) {
+        if (profile.transport === "socket") {
+          const type = inferSocketConnectionType(toId, profile.sinkIp, ctx);
+          result.push({
+            fromId,
+            toId,
+            transport: "socket",
+            uploadMbps: profile.uploadMbps,
+            downloadMbps: profile.downloadMbps,
+            latencyMs: profile.latencyMs,
+            type,
+            detail: profile.sinkIp,
+          });
+        } else {
+          const type = inferRdmaConnectionType(
+            fromId,
+            {
+              sourceRdmaIface: profile.sourceRdmaIface,
+              sinkRdmaIface: profile.sinkRdmaIface,
+            },
+            ctx,
+          );
+          result.push({
+            fromId,
+            toId,
+            transport: "rdma",
+            uploadMbps: profile.uploadMbps,
+            downloadMbps: profile.downloadMbps,
+            latencyMs: profile.latencyMs,
+            type,
+            detail: `${profile.sourceRdmaIface} → ${profile.sinkRdmaIface}`,
+          });
+        }
+      }
+    }
+    return result;
+  }
+
+  const hoveredPairProfiles = $derived.by(() => {
+    if (!hoveredPair) return [] as PairProfileEntry[];
+    return collectPairProfiles(hoveredPair.a, hoveredPair.b);
+  });
+
+  function nodeLabel(nodeId: string): string {
+    return data?.nodes?.[nodeId]?.friendly_name || nodeId.slice(0, 8);
+  }
 
   function getNodeLabel(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -416,6 +521,106 @@
           .attr("fill", "none")
           .attr("marker-end", "url(#arrowhead)");
       }
+
+      // Aggregate link profiles for the edge label (best up/down, lowest RTT).
+      // Hover hit-target attached below for the tooltip breakdown.
+      const pairProfiles = collectPairProfiles(entry.a, entry.b);
+      if (pairProfiles.length > 0) {
+        let maxUp: number | null = null;
+        let maxDown: number | null = null;
+        let minLat: number | null = null;
+        for (const p of pairProfiles) {
+          if (p.uploadMbps != null && (maxUp == null || p.uploadMbps > maxUp)) {
+            maxUp = p.uploadMbps;
+          }
+          if (
+            p.downloadMbps != null &&
+            (maxDown == null || p.downloadMbps > maxDown)
+          ) {
+            maxDown = p.downloadMbps;
+          }
+          if (p.latencyMs != null && (minLat == null || p.latencyMs < minLat)) {
+            minLat = p.latencyMs;
+          }
+        }
+
+        // Offset the metrics label perpendicular to the edge so arrows stay
+        // legible; pick whichever side puts the label closer to viewport center.
+        const px = -uy;
+        const py = ux;
+        const towardCenter =
+          (centerX - mx) * px + (centerY - my) * py >= 0 ? 1 : -1;
+        const offset = 14;
+        const labelX = mx + px * offset * towardCenter;
+        const labelY = my + py * offset * towardCenter;
+        const labelFontSize = isMinimized ? 9 : 11;
+
+        const metricsLabel = linksGroup
+          .append("text")
+          .attr("x", labelX)
+          .attr("y", labelY)
+          .attr("text-anchor", "middle")
+          .attr("dominant-baseline", "middle")
+          .attr("font-size", labelFontSize)
+          .attr("font-family", "SF Mono, Monaco, monospace")
+          .attr("pointer-events", "none");
+
+        const dim = "rgba(179,179,179,0.55)";
+        let needsSep = false;
+        if (maxUp != null) {
+          metricsLabel
+            .append("tspan")
+            .attr("fill", "rgba(255,215,0,0.95)")
+            .text(`↑${formatBandwidthMbps(maxUp)}`);
+          needsSep = true;
+        }
+        if (maxDown != null) {
+          if (needsSep) {
+            metricsLabel.append("tspan").attr("fill", dim).text("  ");
+          }
+          metricsLabel
+            .append("tspan")
+            .attr("fill", "rgba(255,215,0,0.95)")
+            .text(`↓${formatBandwidthMbps(maxDown)}`);
+          needsSep = true;
+        }
+        if (minLat != null) {
+          if (needsSep) {
+            metricsLabel.append("tspan").attr("fill", dim).text("  ·  ");
+          }
+          metricsLabel
+            .append("tspan")
+            .attr("fill", "rgba(74,222,128,0.95)")
+            .text(`${formatLatencyMs(minLat)} RTT`);
+        }
+      }
+
+      // Wide invisible hit target for hover, even when no profiles exist —
+      // makes "no measurements yet" debuggable from the UI.
+      const hitTarget = linksGroup
+        .append("line")
+        .attr("x1", posA.x)
+        .attr("y1", posA.y)
+        .attr("x2", posB.x)
+        .attr("y2", posB.y)
+        .attr("stroke", "transparent")
+        .attr("stroke-width", 18)
+        .attr("pointer-events", "stroke")
+        .style("cursor", "help");
+      hitTarget.on("mousemove", (event: MouseEvent) => {
+        const rect = svgContainer!.getBoundingClientRect();
+        hoveredPair = {
+          a: entry.a,
+          b: entry.b,
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+        };
+      });
+      hitTarget.on("mouseleave", () => {
+        if (hoveredPair && hoveredPair.a === entry.a && hoveredPair.b === entry.b) {
+          hoveredPair = null;
+        }
+      });
 
       // Collect debug labels for later positioning at edges
       if (debugEnabled && entry.connections.length > 0) {
@@ -1012,6 +1217,10 @@
           .text(powerText);
       }
 
+      // GPU profile (TFLOPS + memory bandwidth) — only shown when we have a
+      // measurement; otherwise the slot collapses.
+      const gpuProfile = gpuProfileData[nodeInfo.id];
+
       // Labels - adapt based on mode
       if (showFullLabels) {
         // FULL MODE: Name above, memory info below (1-4 nodes)
@@ -1060,6 +1269,29 @@
           .append("tspan")
           .attr("fill", "rgba(179,179,179,0.7)")
           .text(` (${ramUsagePercent.toFixed(0)}%)`);
+
+        if (gpuProfile) {
+          const profileY = infoY + fontSize * 1.05;
+          const profileText = nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", profileY)
+            .attr("text-anchor", "middle")
+            .attr("font-size", fontSize * 0.8)
+            .attr("font-family", "SF Mono, Monaco, monospace");
+          profileText
+            .append("tspan")
+            .attr("fill", "rgba(74,222,128,0.95)")
+            .text(`${gpuProfile.tflopsFp16.toFixed(1)} TFLOPS`);
+          profileText
+            .append("tspan")
+            .attr("fill", "rgba(179,179,179,0.6)")
+            .text("  ·  ");
+          profileText
+            .append("tspan")
+            .attr("fill", "rgba(255,215,0,0.8)")
+            .text(`${gpuProfile.memoryBandwidthGbps.toFixed(0)} GB/s`);
+        }
       } else if (showCompactLabels) {
         // COMPACT MODE: Just name and basic info (4+ nodes)
         const fontSize = Math.max(7, nodeRadius * 0.11);
@@ -1093,6 +1325,21 @@
           .text(
             `${ramUsagePercent.toFixed(0)}%${!isNaN(gpuTemp) ? " " + gpuTemp.toFixed(0) + "°C" : ""}`,
           );
+
+        if (gpuProfile) {
+          const profileY = statsY + 9;
+          nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", profileY)
+            .attr("text-anchor", "middle")
+            .attr("fill", "rgba(74,222,128,0.95)")
+            .attr("font-size", fontSize * 0.85)
+            .attr("font-family", "SF Mono, Monaco, monospace")
+            .text(
+              `${gpuProfile.tflopsFp16.toFixed(0)} TFLOPS · ${gpuProfile.memoryBandwidthGbps.toFixed(0)} GB/s`,
+            );
+        }
       } else {
         // MINIMIZED MODE: Show name above and memory info below (like main topology)
         const fontSize = 8;
@@ -1135,6 +1382,21 @@
           .append("tspan")
           .attr("fill", "rgba(179,179,179,0.7)")
           .text(` (${ramUsagePercent.toFixed(0)}%)`);
+
+        if (gpuProfile) {
+          const profileY = infoY + 8;
+          nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", profileY)
+            .attr("text-anchor", "middle")
+            .attr("fill", "rgba(74,222,128,0.95)")
+            .attr("font-size", fontSize * 0.85)
+            .attr("font-family", "SF Mono, Monaco, monospace")
+            .text(
+              `${gpuProfile.tflopsFp16.toFixed(0)}T · ${gpuProfile.memoryBandwidthGbps.toFixed(0)}GB/s`,
+            );
+        }
       }
 
       // Debug mode: Show TB bridge and RDMA status
@@ -1206,6 +1468,10 @@
     const _hoveredNodeId = hoveredNodeId;
     const _filteredNodes = filteredNodes;
     const _highlightedNodes = highlightedNodes;
+    const _gpu = gpuProfileData;
+    const _links = linkProfilesData;
+    const _network = nodeNetworkData;
+    const _tb = nodeThunderboltData;
     if (_data) {
       renderGraph();
     }
@@ -1225,7 +1491,55 @@
   });
 </script>
 
-<svg bind:this={svgContainer} class="w-full h-full {className}"></svg>
+<div class="topology-root {className}">
+  <svg bind:this={svgContainer} class="w-full h-full"></svg>
+
+  {#if hoveredPair && hoveredPairProfiles.length > 0}
+    <div
+      class="link-tooltip"
+      style="left: {hoveredPair.x + 14}px; top: {hoveredPair.y + 14}px;"
+    >
+      <div class="tooltip-header">
+        {nodeLabel(hoveredPair.a)} ↔ {nodeLabel(hoveredPair.b)}
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Direction</th>
+            <th>Type</th>
+            <th>↑ Upload</th>
+            <th>↓ Download</th>
+            <th>RTT</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each hoveredPairProfiles as profile (profile.fromId + profile.toId + profile.transport + profile.detail)}
+            <tr>
+              <td class="direction">
+                {nodeLabel(profile.fromId)} → {nodeLabel(profile.toId)}
+                <span class="detail">{profile.detail}</span>
+              </td>
+              <td class="type">{profile.type.label}</td>
+              <td class="bandwidth">{formatBandwidthMbps(profile.uploadMbps)}</td>
+              <td class="bandwidth">{formatBandwidthMbps(profile.downloadMbps)}</td>
+              <td class="latency">{formatLatencyMs(profile.latencyMs)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else if hoveredPair}
+    <div
+      class="link-tooltip empty"
+      style="left: {hoveredPair.x + 14}px; top: {hoveredPair.y + 14}px;"
+    >
+      <div class="tooltip-header">
+        {nodeLabel(hoveredPair.a)} ↔ {nodeLabel(hoveredPair.b)}
+      </div>
+      <div class="empty-message">No link measurements yet</div>
+    </div>
+  {/if}
+</div>
 
 <style>
   :global(.graph-node) {
@@ -1246,5 +1560,87 @@
     to {
       stroke-dashoffset: -10;
     }
+  }
+
+  .topology-root {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
+  .link-tooltip {
+    position: absolute;
+    z-index: 30;
+    pointer-events: none;
+    background: rgba(15, 15, 15, 0.95);
+    border: 1px solid rgba(255, 215, 0, 0.3);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: "SF Mono", Monaco, monospace;
+    font-size: 11px;
+    color: rgba(230, 230, 230, 0.95);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(6px);
+    max-width: 460px;
+  }
+
+  .tooltip-header {
+    color: rgba(255, 215, 0, 0.95);
+    font-size: 12px;
+    margin-bottom: 6px;
+    letter-spacing: 0.04em;
+  }
+
+  .link-tooltip table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+
+  .link-tooltip th,
+  .link-tooltip td {
+    text-align: left;
+    padding: 3px 8px 3px 0;
+    vertical-align: top;
+  }
+
+  .link-tooltip th {
+    color: rgba(179, 179, 179, 0.65);
+    font-weight: 500;
+    text-transform: uppercase;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid rgba(255, 215, 0, 0.18);
+  }
+
+  .link-tooltip .direction {
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  .link-tooltip .detail {
+    display: block;
+    color: rgba(179, 179, 179, 0.65);
+    font-size: 10px;
+  }
+
+  .link-tooltip .type {
+    color: rgba(74, 222, 128, 0.95);
+  }
+
+  .link-tooltip .bandwidth {
+    color: rgba(255, 215, 0, 0.95);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .link-tooltip .latency {
+    color: rgba(74, 222, 128, 0.95);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .link-tooltip.empty {
+    color: rgba(179, 179, 179, 0.7);
+  }
+
+  .empty-message {
+    font-size: 11px;
   }
 </style>

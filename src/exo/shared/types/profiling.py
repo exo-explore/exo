@@ -1,5 +1,6 @@
 import shutil
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Literal, Self
 
@@ -109,3 +110,48 @@ class ThunderboltBridgeStatus(FrozenModel):
     enabled: bool
     exists: bool
     service_name: str | None = None
+
+
+class NodeGpuProfile(FrozenModel):
+    """Measured GPU compute throughput and memory bandwidth for a node."""
+
+    engine: Literal["mlx"]
+    tflops_fp16: float
+    memory_bandwidth_gbps: float
+    measured_at: datetime
+
+
+class NodeSocketLinkProfile(FrozenModel):
+    """Per-direction TCP/IP bandwidth + round-trip latency to a peer.
+
+    `upload_mbps` is source -> sink (this node sending), `download_mbps` is
+    sink -> source. Captures path / queue asymmetries that a single
+    round-trip number would average away.
+    """
+
+    transport: Literal["socket"] = "socket"
+    sink_ip: str
+    latency_ms: float
+    upload_mbps: float
+    download_mbps: float
+    measured_at: datetime
+
+
+class NodeRdmaLinkProfile(FrozenModel):
+    """Per-direction RDMA bandwidth + round-trip latency over a TB edge.
+
+    All numeric fields are None when the most recent probe was skipped (peer
+    busy) or failed. We never substitute synthetic numbers.
+    """
+
+    transport: Literal["rdma"] = "rdma"
+    source_rdma_iface: str
+    sink_rdma_iface: str
+    upload_mbps: float | None
+    download_mbps: float | None
+    payload_bytes: int | None
+    latency_ms: float | None = None
+    measured_at: datetime
+
+
+NodeLinkProfile = NodeSocketLinkProfile | NodeRdmaLinkProfile

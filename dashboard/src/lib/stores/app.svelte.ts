@@ -104,6 +104,13 @@ interface RawSystemPerformanceProfile {
   ecpuUsage?: number;
 }
 
+type RawInterfaceType =
+  | "wifi"
+  | "ethernet"
+  | "maybe_ethernet"
+  | "thunderbolt"
+  | "unknown";
+
 interface RawNetworkInterfaceInfo {
   name?: string;
   ipAddress?: string;
@@ -112,11 +119,48 @@ interface RawNetworkInterfaceInfo {
   ipv6?: string;
   ipAddresses?: string[];
   ips?: string[];
+  interfaceType?: RawInterfaceType;
 }
 
 interface RawNodeNetworkInfo {
   interfaces?: RawNetworkInterfaceInfo[];
 }
+
+export interface RawNodeGpuProfile {
+  engine: "mlx";
+  tflopsFp16: number;
+  memoryBandwidthGbps: number;
+  measuredAt: string;
+}
+
+export interface RawNodeSocketLinkProfile {
+  transport: "socket";
+  sinkIp: string;
+  latencyMs: number;
+  uploadMbps: number;
+  downloadMbps: number;
+  measuredAt: string;
+}
+
+export interface RawNodeRdmaLinkProfile {
+  transport: "rdma";
+  sourceRdmaIface: string;
+  sinkRdmaIface: string;
+  uploadMbps: number | null;
+  downloadMbps: number | null;
+  payloadBytes: number | null;
+  latencyMs: number | null;
+  measuredAt: string;
+}
+
+export type RawNodeLinkProfile =
+  | RawNodeSocketLinkProfile
+  | RawNodeRdmaLinkProfile;
+
+export type RawNodeLinkProfiles = Record<
+  string,
+  Record<string, RawNodeLinkProfile[]>
+>;
 
 interface RawSocketConnection {
   sinkMultiaddr?: {
@@ -261,6 +305,10 @@ interface RawStateResponse {
     string,
     { total: { inBytes: number }; available: { inBytes: number } }
   >;
+  // Per-node GPU compute + memory bandwidth profile.
+  nodeGpuProfile?: Record<string, RawNodeGpuProfile>;
+  // Per-edge link probe results, keyed source -> sink -> [profiles].
+  nodeLinkProfiles?: RawNodeLinkProfiles;
 }
 
 export interface MessageAttachment {
@@ -583,6 +631,9 @@ class AppStore {
       { enabled: boolean; exists: boolean; serviceName?: string | null }
     >
   >({});
+  nodeGpuProfile = $state<Record<string, RawNodeGpuProfile>>({});
+  nodeLinkProfiles = $state<RawNodeLinkProfiles>({});
+  nodeNetworkRaw = $state<Record<string, RawNodeNetworkInfo>>({});
 
   // UI state
   isTopologyMinimized = $state(false);
@@ -1351,6 +1402,13 @@ class AppStore {
       this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
       // Thunderbolt bridge status per node
       this.nodeThunderboltBridge = data.nodeThunderboltBridge ?? {};
+      // Profiler outputs
+      this.nodeGpuProfile = data.nodeGpuProfile ?? {};
+      this.nodeLinkProfiles = data.nodeLinkProfiles ?? {};
+      // Raw network info — kept so the connection-type inference can use
+      // interfaceType, which the topology-shaped `NodeInfo.network_interfaces`
+      // drops in its flattening step.
+      this.nodeNetworkRaw = data.nodeNetwork ?? {};
       this.lastUpdate = Date.now();
       // Connection recovered
       if (!this.isConnected) {
@@ -3608,6 +3666,11 @@ export const nodeThunderbolt = () => appStore.nodeThunderbolt;
 export const nodeRdmaCtl = () => appStore.nodeRdmaCtl;
 export const thunderboltBridgeCycles = () => appStore.thunderboltBridgeCycles;
 export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
+
+// Profiler outputs
+export const nodeGpuProfile = () => appStore.nodeGpuProfile;
+export const nodeLinkProfiles = () => appStore.nodeLinkProfiles;
+export const nodeNetworkRaw = () => appStore.nodeNetworkRaw;
 
 // Image generation params
 export const imageGenerationParams = () => appStore.getImageGenerationParams();
