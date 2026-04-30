@@ -130,7 +130,7 @@ class EcoSession:
         if count is not None:
             cmd.extend(["--count", str(count)])
         if thunderbolt:
-            cmd.append("--thunderbolt")
+            cmd.append("--tb-a2a")
         if wait:
             cmd.append("--wait")
         if ref:
