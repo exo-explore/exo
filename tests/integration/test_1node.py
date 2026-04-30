@@ -12,7 +12,7 @@ from .helpers import (
     ClusterInfo,
     capture_cluster_snapshot,
     chat_completion,
-    eco_exec,
+    eco,
     get_instance_ids,
     make_client,
     place_and_wait,
@@ -103,7 +103,7 @@ class TestSingleNodeDownload:
 
         # Clear the model cache on the host
         cache_name = model.replace("/", "--")
-        eco_exec(
+        eco.exec(
             single_node_cluster.hosts,
             f"rm -rf ~/.cache/huggingface/hub/models--{cache_name}",
         )

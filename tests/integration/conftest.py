@@ -18,14 +18,7 @@ import json
 
 import pytest
 
-from .helpers import (
-    _ECO_USER,
-    cleanup_all_instances,
-    eco_logs,
-    eco_start_deploy,
-    eco_stop,
-    make_client,
-)
+from .helpers import cleanup_all_instances, eco, make_client
 
 
 def pytest_addoption(parser):
@@ -41,7 +34,7 @@ def pytest_addoption(parser):
 def pytest_report_header(config):
     """Show the eco user and hosts for this test session."""
     hosts = config.getoption("--hosts")
-    lines = [f"eco user: {_ECO_USER}"]
+    lines = [f"eco user: {eco.user}"]
     if hosts:
         lines.append(f"hosts override: {hosts}")
     return lines
@@ -65,33 +58,33 @@ def _host_pool(request):
 def single_node_cluster(_host_pool):
     """Deploy a single-node cluster."""
     if _host_pool:
-        cluster = eco_start_deploy(hosts=_host_pool[:1], wait=True)
+        cluster = eco.start_deploy(hosts=_host_pool[:1], wait=True)
     else:
-        cluster = eco_start_deploy(count=1, wait=True)
+        cluster = eco.start_deploy(count=1, wait=True)
     yield cluster
-    eco_stop(cluster.hosts)
+    eco.stop(cluster.hosts)
 
 
 @pytest.fixture(scope="session")
 def two_node_cluster(_host_pool):
     """Deploy a 2-node Thunderbolt-connected cluster."""
     if _host_pool:
-        cluster = eco_start_deploy(hosts=_host_pool[:2], wait=True)
+        cluster = eco.start_deploy(hosts=_host_pool[:2], wait=True)
     else:
-        cluster = eco_start_deploy(count=2, thunderbolt=True, wait=True)
+        cluster = eco.start_deploy(count=2, thunderbolt=True, wait=True)
     yield cluster
-    eco_stop(cluster.hosts)
+    eco.stop(cluster.hosts)
 
 
 @pytest.fixture(scope="session")
 def four_node_cluster(_host_pool):
     """Deploy a 4-node Thunderbolt-connected cluster."""
     if _host_pool:
-        cluster = eco_start_deploy(hosts=_host_pool[:4], wait=True)
+        cluster = eco.start_deploy(hosts=_host_pool[:4], wait=True)
     else:
-        cluster = eco_start_deploy(count=4, thunderbolt=True, wait=True)
+        cluster = eco.start_deploy(count=4, thunderbolt=True, wait=True)
     yield cluster
-    eco_stop(cluster.hosts)
+    eco.stop(cluster.hosts)
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +132,7 @@ def pytest_runtest_makereport(item, call):
         cluster = item.funcargs.get(fixture_name)
         if cluster is not None:
             try:
-                logs = eco_logs(cluster.hosts, lines=200)
+                logs = eco.logs(cluster.hosts, lines=200)
                 item.add_report_section(
                     "call", "Cluster Logs", json.dumps(logs, indent=2)
                 )
