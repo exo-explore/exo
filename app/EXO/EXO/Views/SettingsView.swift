@@ -21,8 +21,6 @@ struct SettingsView: View {
     @State private var pendingReadOnlyModelsDirs: String = ""
     @State private var pendingCustomEnvironmentVariables: [CustomEnvironmentVariable] = []
     @State private var needsRestart = false
-    @State private var bugReportInFlight = false
-    @State private var bugReportMessage: String?
     @State private var uninstallInProgress = false
 
     var body: some View {
@@ -202,8 +200,6 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     rdmaStatusView
                 }
-
-                sendBugReportButton
             }
 
             Section("Danger Zone") {
@@ -504,49 +500,7 @@ struct SettingsView: View {
         }
     }
 
-    private var sendBugReportButton: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                Task {
-                    await sendBugReport()
-                }
-            } label: {
-                HStack {
-                    if bugReportInFlight {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                    }
-                    Text("Send Bug Report")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                    Spacer()
-                }
-            }
-            .disabled(bugReportInFlight)
-
-            if let message = bugReportMessage {
-                Text(message)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
     // MARK: - Actions
-
-    private func sendBugReport() async {
-        bugReportInFlight = true
-        bugReportMessage = "Collecting logs..."
-        let service = BugReportService()
-        do {
-            let outcome = try await service.sendReport(isManual: true)
-            bugReportMessage = outcome.message
-        } catch {
-            bugReportMessage = error.localizedDescription
-        }
-        bugReportInFlight = false
-    }
 
     private func showUninstallConfirmationAlert() {
         let alert = NSAlert()
