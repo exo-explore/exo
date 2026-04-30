@@ -8,9 +8,10 @@ This module owns:
 
 - `RdmaProbeParams`  — request body for both ends
 - `RdmaProbeResult`  — what the source side parses out of the subprocess stdout
-- `_rdma_probe_lock` — process‑global lock; ensures we never have two probes
-                       in flight on the same node, regardless of whether the
-                       reconciler kicked one off or a peer's HTTP request did.
+- (Note: there is no per-node single-flight lock; jaccl + Apple's
+                       Thunderbolt RDMA handle concurrent QPs fine, so the
+                       reconciler tick and peer-initiated probes can run
+                       simultaneously.)
 - `run_rdma_probe_source_side`  — issued by `RDMALinkProfile.measure()`
 - `handle_rdma_probe_sink_request` — invoked by the `/profile/rdma_probe` API
 """
@@ -32,11 +33,13 @@ SUBPROCESS_TIMEOUT_SECONDS = 60.0
 SINK_HTTP_CONNECT_TIMEOUT_SECONDS = 10.0
 
 
-# Single-flight lock for any RDMA probe activity on this node, sourced or
-# sinked. Module-global because both the reconciler (Worker) and the FastAPI
-# handler (API) must respect the same exclusion zone, and they live in the same
-# process.
-_rdma_probe_lock: anyio.Lock = anyio.Lock()
+# Note: there used to be a process-global single-flight lock here, on the
+# theory that two simultaneous jaccl probes on the same machine would step
+# on each other at the RDMA hardware level. Empirically jaccl + Apple's
+# Thunderbolt RDMA implementation handle multiple concurrent QPs fine, so
+# we let probes run in parallel — no lock. The reconciler still gates RDMA
+# probes on `state.runners` being empty so we don't compete with active
+# inference traffic.
 
 
 @final
@@ -102,18 +105,14 @@ async def run_rdma_probe_source_side(
 
     Both ranks must run *concurrently* — jaccl init blocks each side until the
     other rendezvous over the coordinator socket. So we kick off our own
-    rank‑0 subprocess and the peer's rank‑1 subprocess in parallel, with the
+    rank-0 subprocess and the peer's rank-1 subprocess in parallel, with the
     coordinator bound on the source. If the peer refuses (busy / error), we
     cancel the local subprocess to avoid waiting on a rendezvous that will
     never happen.
 
     Returns None when the probe was skipped (peer busy) or failed (timeout,
-    subprocess crash, parse error). Raises RdmaProbeBusyError if the local lock is
-    already held — the reconciler treats that as "try again next tick".
+    subprocess crash, parse error).
     """
-    if _rdma_probe_lock.locked():
-        raise RdmaProbeBusyError("rdma probe already in flight on this node")
-
     coordinator_port = params.coordinator_port or random_ephemeral_port()
     sink_params = params.model_copy(update={"coordinator_port": coordinator_port})
     result_holder: list[RdmaProbeResult | None] = [None]
@@ -140,7 +139,7 @@ async def run_rdma_probe_source_side(
             )
             cancel_scope.cancel()
 
-    async with _rdma_probe_lock, anyio.create_task_group() as tg:
+    async with anyio.create_task_group() as tg:
         tg.start_soon(_run_source)
         tg.start_soon(_ask_sink, tg.cancel_scope)
 
@@ -152,19 +151,16 @@ async def handle_rdma_probe_sink_request(
 ) -> RdmaProbeResult:
     """Run the sink side of an RDMA probe in response to an HTTP request.
 
-    Raises RdmaProbeBusyError if a probe is already in flight or if runners are
-    active. The caller (FastAPI handler) translates that to 409.
+    Raises RdmaProbeBusyError when runners are active (would compete with
+    inference for the same RDMA NIC). The caller translates that to 409.
     """
     if is_node_busy(runners):
         raise RdmaProbeBusyError("node has active runners")
-    if _rdma_probe_lock.locked():
-        raise RdmaProbeBusyError("rdma probe already in flight on this node")
 
-    async with _rdma_probe_lock:
-        result = await _spawn_probe_subprocess(rank=1, params=params)
-        if result is None:
-            raise RdmaProbeError("rdma probe subprocess produced no result")
-        return result
+    result = await _spawn_probe_subprocess(rank=1, params=params)
+    if result is None:
+        raise RdmaProbeError("rdma probe subprocess produced no result")
+    return result
 
 
 async def _spawn_probe_subprocess(
