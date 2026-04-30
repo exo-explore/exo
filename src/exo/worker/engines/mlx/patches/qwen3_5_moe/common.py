@@ -51,6 +51,17 @@ def _patch_swiglu_weights(moe):
             moe.switch_mlp._fused_s_gu,
             moe.switch_mlp._fused_b_gu)
 
+    # Alias originals to slices of the stacked tensor so prefill (which still
+    # calls switch_mlp.{gate,up}_proj) reads from the same memory. Lets the
+    # original (E, N_INTER, K/4) tensors be GC-d, removing ~20 GB / 40 layers.
+    N_INTER = gate_proj.output_dims
+    gate_proj.weight = moe.switch_mlp._fused_w_gu[:, :N_INTER, :]
+    gate_proj.scales = moe.switch_mlp._fused_s_gu[:, :N_INTER, :]
+    gate_proj.biases = moe.switch_mlp._fused_b_gu[:, :N_INTER, :]
+    up_proj.weight   = moe.switch_mlp._fused_w_gu[:, N_INTER:, :]
+    up_proj.scales   = moe.switch_mlp._fused_s_gu[:, N_INTER:, :]
+    up_proj.biases   = moe.switch_mlp._fused_b_gu[:, N_INTER:, :]
+
 
 def _patch_shared_expert(moe):
     """Prepare shared expert quantized weights for fused 8-bit path.
@@ -81,6 +92,16 @@ def _patch_shared_expert(moe):
 
     mx.eval(moe._shared_w_gu, moe._shared_s_gu, moe._shared_b_gu,
             moe._shared_down_w, moe._shared_down_s, moe._shared_down_b)
+
+    # Alias shared gate/up originals to slices of the stacked tensor.
+    # Concat is along axis=0, so slices are contiguous.
+    SI = moe._shared_inter
+    gp.weight = moe._shared_w_gu[:SI]
+    gp.scales = moe._shared_s_gu[:SI]
+    gp.biases = moe._shared_b_gu[:SI]
+    up.weight = moe._shared_w_gu[SI:]
+    up.scales = moe._shared_s_gu[SI:]
+    up.biases = moe._shared_b_gu[SI:]
 
 
 def _patch_down_proj(moe):
