@@ -1,4 +1,6 @@
+import shutil
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import anyio
 from loguru import logger
@@ -74,6 +76,8 @@ from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
 
+_MAX_MASTER_SESSION_LOG_DIRS = 5
+
 
 def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
     decode = state.instances.get(decode_instance_id)
@@ -126,6 +130,7 @@ class Master:
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
         download_command_sender: Sender[ForwarderDownloadCommand],
+        event_log_root: Path = EXO_EVENT_LOG_DIR,
     ):
         self.node_id = node_id
         self.session_id = session_id
@@ -139,7 +144,12 @@ class Master:
         self.event_sender = event_sender
         self._system_id = SystemId()
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
-        self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
+        _prune_master_session_log_dirs(
+            event_log_root / "master", _session_log_dir_name(session_id)
+        )
+        self._event_log = DiskEventLog(
+            event_log_root / "master" / _session_log_dir_name(session_id)
+        )
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
 
@@ -540,7 +550,31 @@ class Master:
         await self.event_sender.send(
             TracesMerged(task_id=task_id, traces=all_trace_data)
         )
-
         del self._pending_traces[task_id]
         if task_id in self._expected_ranks:
             del self._expected_ranks[task_id]
+
+
+def _session_log_dir_name(session_id: SessionId) -> str:
+    return f"{session_id.master_node_id}-{session_id.election_clock}"
+
+
+def _prune_master_session_log_dirs(master_log_root: Path, current_session_dir: str) -> None:
+    """Keep master session log directories bounded across elections."""
+    if not master_log_root.exists():
+        return
+
+    session_dirs = [
+        path
+        for path in master_log_root.iterdir()
+        if path.is_dir() and path.name != current_session_dir
+    ]
+    session_dirs.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    for old_dir in session_dirs[_MAX_MASTER_SESSION_LOG_DIRS - 1 :]:
+        try:
+            shutil.rmtree(old_dir)
+            logger.info(f"Pruned old master event log directory: {old_dir}")
+        except OSError as exc:
+            logger.opt(exception=exc).warning(
+                f"Failed to prune old master event log directory: {old_dir}"
+            )
