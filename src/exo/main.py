@@ -3,7 +3,9 @@ import multiprocessing as mp
 import os
 import resource
 import signal
+import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Self
 
 import anyio
@@ -19,8 +21,9 @@ from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_id_keypair
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
-from exo.shared.logging import logger_cleanup, logger_setup
+from exo.shared.logging import logger_cleanup, logger_set_context, logger_setup
 from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.state import State
 from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
@@ -129,7 +132,7 @@ class Node:
             election_result_sender=er_send,
         )
 
-        return cls(
+        self = cls(
             router,
             event_router,
             download_coordinator,
@@ -142,6 +145,14 @@ class Node:
             args.offline,
             args.api_port,
         )
+        logger_set_context(
+            node_id=node_id, role="master" if args.force_master else "node"
+        )
+        logger.info(
+            f"Node components created node_id={node_id} api_port={args.api_port} "
+            f"libp2p_port={args.libp2p_port} bootstrap_peers={args.bootstrap_peers}"
+        )
+        return self
 
     async def run(self):
         async with self._tg as tg:
@@ -159,6 +170,7 @@ class Node:
             if self.api:
                 tg.start_soon(self.api.run)
             tg.start_soon(self._elect_loop)
+            tg.start_soon(self._diagnostic_snapshot_loop)
 
     def shutdown(self):
         # if this is our second call to shutdown, just sys.exit
@@ -197,11 +209,13 @@ class Node:
                     result.session_id.master_node_id == self.node_id
                     and self.master is not None
                 ):
+                    logger_set_context(role="master", session_id=str(result.session_id))
                     logger.info("Node elected Master")
                 elif (
                     result.session_id.master_node_id == self.node_id
                     and self.master is None
                 ):
+                    logger_set_context(role="master", session_id=str(result.session_id))
                     logger.info("Node elected Master - promoting self")
                     self.master = Master(
                         self.node_id,
@@ -219,12 +233,14 @@ class Node:
                     result.session_id.master_node_id != self.node_id
                     and self.master is not None
                 ):
+                    logger_set_context(role="worker", session_id=str(result.session_id))
                     logger.info(
                         f"Node {result.session_id.master_node_id} elected master - demoting self"
                     )
                     await self.master.shutdown()
                     self.master = None
                 else:
+                    logger_set_context(role="worker", session_id=str(result.session_id))
                     logger.info(
                         f"Node {result.session_id.master_node_id} elected master"
                     )
@@ -262,6 +278,85 @@ class Node:
                     if self.api:
                         self.api.unpause(result.won_clock)
 
+    async def _diagnostic_snapshot_loop(self) -> None:
+        interval_value = os.getenv("EXO_DIAGNOSTIC_SNAPSHOT_SECONDS", "15")
+        try:
+            interval_seconds = float(interval_value)
+        except ValueError:
+            logger.warning(
+                "Invalid EXO_DIAGNOSTIC_SNAPSHOT_SECONDS value "
+                f"{interval_value!r}; using default 15s"
+            )
+            interval_seconds = 15.0
+        if interval_seconds <= 0:
+            logger.info("Cluster diagnostic snapshots disabled")
+            return
+        while True:
+            await anyio.sleep(interval_seconds)
+            self._log_diagnostic_snapshot()
+
+    def _log_diagnostic_snapshot(self) -> None:
+        state_source = "none"
+        state: State | None = None
+        if self.master is not None:
+            state_source = "master"
+            state = self.master.state
+        elif self.worker is not None:
+            state_source = "worker"
+            state = self.worker.state
+
+        if state is None:
+            logger.info("Cluster diagnostic snapshot state_source=none")
+            return
+
+        node_names = self._topology_node_names(state)
+        runner_states = [
+            f"{runner_id}:{type(runner_status).__name__}"
+            for runner_id, runner_status in state.runners.items()
+        ]
+        instance_models = [
+            (
+                f"{instance_id}:"
+                f"{instance.shard_assignments.model_id}:"
+                f"{len(instance.shard_assignments.node_to_runner)}-node"
+            )
+            for instance_id, instance in state.instances.items()
+        ]
+        last_seen_ages = self._last_seen_ages(state)
+        local_runner_processes = (
+            len(self.worker.runners) if self.worker is not None else 0
+        )
+        outbound_events = len(self.event_router.out_for_delivery)
+        logger.info(
+            "Cluster diagnostic snapshot "
+            f"state_source={state_source} "
+            f"last_event_applied_idx={state.last_event_applied_idx} "
+            f"topology_nodes={node_names} "
+            f"last_seen_ages_seconds={last_seen_ages} "
+            f"state_runners={runner_states} "
+            f"state_instances={instance_models} "
+            f"local_runner_processes={local_runner_processes} "
+            f"out_for_delivery={outbound_events}"
+        )
+
+    def _topology_node_names(self, state: State) -> list[str]:
+        names: list[str] = []
+        for node_id in state.topology.list_nodes():
+            identity = state.node_identities.get(node_id)
+            names.append(
+                identity.friendly_name if identity is not None else str(node_id)
+            )
+        return names
+
+    def _last_seen_ages(self, state: State) -> dict[str, float]:
+        now = datetime.now(tz=timezone.utc)
+        ages: dict[str, float] = {}
+        for node_id, last_seen in state.last_seen.items():
+            identity = state.node_identities.get(node_id)
+            name = identity.friendly_name if identity is not None else str(node_id)
+            ages[name] = round((now - last_seen).total_seconds(), 3)
+        return ages
+
 
 def main():
     args = Args.parse()
@@ -272,6 +367,7 @@ def main():
     mp.set_start_method("spawn", force=True)
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
+    logger_set_context(git_commit=_git_commit())
     logger.info(f"{'=' * 40}")
     logger.info(f"Starting EXO | pid={os.getpid()}")
     logger.info(f"{'=' * 40}")
@@ -306,6 +402,21 @@ def main():
     finally:
         logger.info("EXO Shutdown complete")
         logger_cleanup()
+
+
+def _git_commit() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError:
+        return "unknown"
+    commit = result.stdout.strip()
+    return commit if result.returncode == 0 and commit else "unknown"
 
 
 class Args(FrozenModel):

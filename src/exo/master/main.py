@@ -460,6 +460,14 @@ class Master:
             for instance_id, instance in self.state.instances.items():
                 for node_id in instance.shard_assignments.node_to_runner:
                     if node_id not in connected_node_ids:
+                        logger.warning(
+                            "Deleting instance because a shard node is disconnected "
+                            f"instance_id={instance_id} "
+                            f"model_id={instance.shard_assignments.model_id} "
+                            f"missing_node={node_id} "
+                            f"missing_node_name={self._friendly_name(node_id)} "
+                            f"connected_nodes={self._topology_node_names()}"
+                        )
                         await self.event_sender.send(
                             InstanceDeleted(instance_id=instance_id)
                         )
@@ -469,7 +477,20 @@ class Master:
             for node_id, time in self.state.last_seen.items():
                 now = datetime.now(tz=timezone.utc)
                 if now - time > timedelta(seconds=30):
-                    logger.info(f"Manually removing node {node_id} due to inactivity")
+                    impacted_instances = [
+                        str(instance_id)
+                        for instance_id, instance in self.state.instances.items()
+                        if node_id in instance.shard_assignments.node_to_runner
+                    ]
+                    logger.warning(
+                        "Timing out inactive node "
+                        f"node_id={node_id} node_name={self._friendly_name(node_id)} "
+                        f"last_seen={time.isoformat()} "
+                        f"age_seconds={(now - time).total_seconds():.3f} "
+                        f"last_event_applied_idx={self.state.last_event_applied_idx} "
+                        f"topology_nodes={self._topology_node_names()} "
+                        f"impacted_instances={impacted_instances}"
+                    )
                     await self.event_sender.send(NodeTimedOut(node_id=node_id))
 
             await anyio.sleep(10)
@@ -517,6 +538,15 @@ class Master:
                 event=event.event,
             )
         )
+
+    def _friendly_name(self, node_id: NodeId) -> str:
+        identity = self.state.node_identities.get(node_id)
+        return identity.friendly_name if identity is not None else str(node_id)
+
+    def _topology_node_names(self) -> list[str]:
+        return [
+            self._friendly_name(node_id) for node_id in self.state.topology.list_nodes()
+        ]
 
     async def _handle_traces_collected(self, event: TracesCollected) -> None:
         task_id = event.task_id

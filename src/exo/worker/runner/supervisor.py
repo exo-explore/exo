@@ -5,9 +5,11 @@ from dataclasses import dataclass, field
 from typing import Self
 
 import anyio
+import psutil
 from anyio import (
     BrokenResourceError,
     ClosedResourceError,
+    current_time,
     to_thread,
 )
 from loguru import logger
@@ -65,6 +67,7 @@ class RunnerSupervisor:
     in_progress: dict[TaskId, Task] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
     cancelled: set[TaskId] = field(default_factory=set, init=False)
+    _started_at: float | None = field(default=None, init=False)
     _cancel_watch_runner: anyio.CancelScope = field(
         default_factory=anyio.CancelScope, init=False
     )
@@ -105,17 +108,31 @@ class RunnerSupervisor:
             _cancel_sender=cancel_sender,
             _event_sender=event_sender,
         )
+        logger.info(
+            "Created runner supervisor "
+            f"{self._runner_context()} model_id={self.shard_metadata.model_card.model_id}"
+        )
 
         return self
 
     async def run(self):
         self.runner_process.start()
+        self._started_at = current_time()
+        logger.info(
+            "Runner process started "
+            f"{self._runner_context()} pid={self.runner_process.pid} "
+            f"model_id={self.shard_metadata.model_card.model_id}"
+        )
         try:
             async with self._tg as tg:
                 tg.start_soon(self._watch_runner)
                 tg.start_soon(self._forward_events)
         finally:
-            logger.info("Runner supervisor shutting down")
+            logger.info(
+                "Runner supervisor shutting down "
+                f"{self._runner_context()} pid={self.runner_process.pid} "
+                f"rss_mb={self._runner_rss_mb()}"
+            )
             if not self._cancel_watch_runner.cancel_called:
                 self._cancel_watch_runner.cancel()
             with contextlib.suppress(ClosedResourceError):
@@ -133,13 +150,18 @@ class RunnerSupervisor:
 
             if self.runner_process.is_alive():
                 logger.warning(
-                    "Runner process didn't shutdown succesfully, terminating"
+                    "Runner process did not shutdown successfully, terminating "
+                    f"{self._runner_context()} pid={self.runner_process.pid} "
+                    f"rss_mb={self._runner_rss_mb()}"
                 )
                 self.runner_process.terminate()
                 self.runner_process.join(timeout=10)
 
                 if not self.runner_process.is_alive():
-                    logger.warning("Terminated nicely in the first attempt!")
+                    logger.warning(
+                        "Runner terminated after first SIGTERM "
+                        f"{self._runner_context()} pid={self.runner_process.pid}"
+                    )
 
                 else:
                     # Try really hard to terminate
@@ -147,21 +169,35 @@ class RunnerSupervisor:
                         self.runner_process.terminate()
                         self.runner_process.join(timeout=2)
                         if not self.runner_process.is_alive():
-                            logger.warning(f"That took {i} attempts :)")
+                            logger.warning(
+                                "Runner terminated after repeated SIGTERM "
+                                f"{self._runner_context()} attempts={i} "
+                                f"pid={self.runner_process.pid}"
+                            )
                             break
                     # Try even harder to kill
                     else:
                         logger.critical(
-                            "Runner process didn't respond to SIGTERM, killing"
+                            "Runner process did not respond to SIGTERM, killing "
+                            f"{self._runner_context()} pid={self.runner_process.pid} "
+                            f"rss_mb={self._runner_rss_mb()}"
                         )
                         j = 0
                         while self.runner_process.is_alive():
                             j += 1
                             self.runner_process.kill()
                             self.runner_process.join(timeout=5)
-                            logger.warning(f"That took {j} attempts :(")
+                            logger.warning(
+                                "Runner kill attempt completed "
+                                f"{self._runner_context()} attempts={j} "
+                                f"pid={self.runner_process.pid}"
+                            )
             else:
-                logger.info("Runner process succesfully terminated")
+                logger.info(
+                    "Runner process successfully terminated "
+                    f"{self._runner_context()} exitcode={self.runner_process.exitcode} "
+                    f"runtime_seconds={self._runtime_seconds()}"
+                )
 
             self.runner_process.close()
 
@@ -179,7 +215,11 @@ class RunnerSupervisor:
                 f"Skipping invalid task {task} as it has already been completed"
             )
             return
-        logger.info(f"Starting task {task}")
+        logger.info(
+            "Starting runner task "
+            f"{self._runner_context()} task_id={task.task_id} "
+            f"task_type={type(task).__name__} status={type(self.status).__name__}"
+        )
         event = anyio.Event()
         self.pending[task.task_id] = event
         self.in_progress[task.task_id] = task
@@ -214,6 +254,13 @@ class RunnerSupervisor:
             with self._ev_recv as events:
                 async for event in events:
                     if isinstance(event, RunnerStatusUpdated):
+                        logger.info(
+                            "Runner status update "
+                            f"{self._runner_context()} "
+                            f"old_status={type(self.status).__name__} "
+                            f"new_status={type(event.runner_status).__name__} "
+                            f"pid={self.runner_process.pid} rss_mb={self._runner_rss_mb()}"
+                        )
                         self.status = event.runner_status
                     if isinstance(event, TaskAcknowledged):
                         self.pending.pop(event.task_id).set()
@@ -252,12 +299,23 @@ class RunnerSupervisor:
     async def _check_runner(self, e: Exception) -> None:
         if not self._cancel_watch_runner.cancel_called:
             self._cancel_watch_runner.cancel()
-        logger.info("Checking runner's status")
+        logger.info(
+            "Checking runner status "
+            f"{self._runner_context()} pid={self.runner_process.pid} "
+            f"rss_mb={self._runner_rss_mb()}"
+        )
         if self.runner_process.is_alive():
-            logger.info("Runner was found to be alive, attempting to join process")
+            logger.info(
+                "Runner was found alive, attempting to join process "
+                f"{self._runner_context()} pid={self.runner_process.pid}"
+            )
             await to_thread.run_sync(self.runner_process.join, 5)
         rc = self.runner_process.exitcode
-        logger.info(f"Runner exited with exit code {rc}")
+        logger.info(
+            "Runner exited "
+            f"{self._runner_context()} exitcode={rc} "
+            f"runtime_seconds={self._runtime_seconds()}"
+        )
         if rc == 0:
             return
 
@@ -270,7 +328,9 @@ class RunnerSupervisor:
         else:
             cause = f"exitcode={rc}"
 
-        logger.opt(exception=e).error(f"Runner terminated with {cause}")
+        logger.opt(exception=e).error(
+            f"Runner terminated with {cause} {self._runner_context()}"
+        )
 
         for task in self.in_progress.values():
             if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
@@ -302,3 +362,24 @@ class RunnerSupervisor:
                 "Event sender already closed, unable to report runner failure"
             )
         self.shutdown()
+
+    def _runner_context(self) -> str:
+        return (
+            f"instance_id={self.bound_instance.instance.instance_id} "
+            f"runner_id={self.bound_instance.bound_runner_id} "
+            f"node_id={self.bound_instance.bound_node_id}"
+        )
+
+    def _runner_rss_mb(self) -> float | None:
+        pid = self.runner_process.pid
+        if pid is None:
+            return None
+        try:
+            return round(psutil.Process(pid).memory_info().rss / (1024 * 1024), 3)
+        except psutil.Error:
+            return None
+
+    def _runtime_seconds(self) -> float | None:
+        if self._started_at is None:
+            return None
+        return round(current_time() - self._started_at, 3)

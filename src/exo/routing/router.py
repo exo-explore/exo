@@ -9,6 +9,7 @@ from typing import cast
 from anyio import (
     BrokenResourceError,
     ClosedResourceError,
+    current_time,
     move_on_after,
     sleep_forever,
 )
@@ -121,6 +122,8 @@ class Router:
         self._tmp_networking_sender: Sender[tuple[str, bytes]] | None = send
         self._id_count = count()
         self._tg: TaskGroup = TaskGroup()
+        self._publish_failure_counts: dict[str, int] = {}
+        self._publish_failure_first_seen: dict[str, float] = {}
 
     async def register_topic[T: FrozenModel](self, topic: TypedTopic[T]):
         send = self._tmp_networking_sender
@@ -229,17 +232,63 @@ class Router:
                     logger.trace(f"Sending message on {topic} with payload {data}")
                     if len(data) > 1024 * 1024:
                         logger.warning(
-                            "Sending overlarge payload, network performance may be temporarily degraded"
+                            "Sending overlarge payload, network performance may be "
+                            f"temporarily degraded topic={topic} payload_bytes={len(data)}"
                         )
                     await self._net.gossipsub_publish(topic, data)
+                    self._clear_publish_failures(topic)
                 except NoPeersSubscribedToTopicError:
-                    pass
-                except AllQueuesFullError:
-                    logger.warning(f"All peer queues full, dropping message on {topic}")
-                except MessageTooLargeError:
-                    logger.warning(
-                        f"Message too large for gossipsub on {topic} ({len(data)} bytes), dropping"
+                    self._record_publish_failure(
+                        topic=topic,
+                        payload_bytes=len(data),
+                        reason="no_peers_subscribed",
+                        log_level="DEBUG",
                     )
+                except AllQueuesFullError:
+                    self._record_publish_failure(
+                        topic=topic,
+                        payload_bytes=len(data),
+                        reason="all_peer_queues_full",
+                        log_level="WARNING",
+                    )
+                except MessageTooLargeError:
+                    self._record_publish_failure(
+                        topic=topic,
+                        payload_bytes=len(data),
+                        reason="message_too_large",
+                        log_level="WARNING",
+                    )
+
+    def _record_publish_failure(
+        self, *, topic: str, payload_bytes: int, reason: str, log_level: str
+    ) -> None:
+        key = f"{topic}:{reason}"
+        count = self._publish_failure_counts.get(key, 0) + 1
+        self._publish_failure_counts[key] = count
+        first_seen = self._publish_failure_first_seen.setdefault(key, current_time())
+        elapsed_seconds = current_time() - first_seen
+        if count == 1 or count % 10 == 0:
+            logger.log(
+                log_level,
+                "Gossipsub publish failed "
+                f"topic={topic} reason={reason} payload_bytes={payload_bytes} "
+                f"consecutive_failures={count} "
+                f"failure_window_seconds={elapsed_seconds:.3f}",
+            )
+
+    def _clear_publish_failures(self, topic: str) -> None:
+        cleared = [
+            key for key in self._publish_failure_counts if key.startswith(f"{topic}:")
+        ]
+        for key in cleared:
+            count = self._publish_failure_counts.pop(key)
+            first_seen = self._publish_failure_first_seen.pop(key, current_time())
+            logger.info(
+                "Gossipsub publish recovered "
+                f"topic={topic} reason={key.removeprefix(f'{topic}:')} "
+                f"previous_failures={count} "
+                f"failure_window_seconds={current_time() - first_seen:.3f}"
+            )
 
 
 def get_node_id_keypair(
