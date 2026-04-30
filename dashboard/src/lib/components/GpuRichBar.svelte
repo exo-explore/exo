@@ -108,7 +108,10 @@
   <div class="track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow={fillPercent.toFixed(0)}>
     <div class="gradient"></div>
     {#if hasAnyProfile}
-      <div class="thumb" style="left: {fillPercent}%;"></div>
+      <!-- Past the marker the gradient dims so the marker reads as the
+           current value, not just a tick on a static spectrum. -->
+      <div class="dim-past" style="left: {fillPercent}%;"></div>
+      <div class="marker" style="left: {fillPercent}%;"></div>
     {/if}
   </div>
 
@@ -176,17 +179,34 @@
     opacity: 0.95;
   }
 
-  .thumb {
+  /* Marker line — a passive "you are here" indicator, never a draggable
+     thumb. Two layered rules keep it visible against any portion of the
+     gradient: a hairline white core flanked by a dark halo for contrast on
+     yellow/green sections. Shows past the bar's top and bottom edges by a
+     few px so it reads as a tick mark, not a fill. */
+  .marker {
     position: absolute;
-    top: 50%;
-    width: 14px;
-    height: 14px;
-    background: #ffffff;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
+    top: -3px;
+    bottom: -3px;
+    width: 2px;
+    transform: translateX(-50%);
+    background: rgba(255, 255, 255, 0.95);
     box-shadow:
-      0 0 0 2px rgba(0, 0, 0, 0.4),
-      0 2px 4px rgba(0, 0, 0, 0.5);
+      0 0 0 1px rgba(0, 0, 0, 0.55),
+      0 0 4px rgba(0, 0, 0, 0.5);
+    border-radius: 1px;
+    pointer-events: none;
+  }
+
+  .dim-past {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    background: rgba(0, 0, 0, 0.35);
+    border-top-right-radius: 999px;
+    border-bottom-right-radius: 999px;
+    pointer-events: none;
   }
 
   .footer {
