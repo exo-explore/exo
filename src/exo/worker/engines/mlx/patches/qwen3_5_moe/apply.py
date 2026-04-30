@@ -5,6 +5,7 @@ Entry point called from patches/__init__.py after model type detection.
 
 import time
 
+import mlx.core as mx
 import mlx.nn as nn
 from loguru import logger
 
@@ -51,6 +52,8 @@ def apply_qwen35_batched_fused_patches(model: nn.Module) -> None:
             else:
                 _patch_gqa_proj_weights(layer.self_attn)
                 n_gqa += 1
+
+            mx.clear_cache()  # release freed originals back to OS each layer
 
             if (li + 1) % 10 == 0 or li == 0:
                 logger.info(f"  Patched layer {li+1}/{n_layers}")
