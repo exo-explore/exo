@@ -18,17 +18,12 @@ final class BugReportWindowController: ObservableObject {
             self?.window?.close()
         })
 
-        let hostingView = NSHostingView(rootView: view)
+        let hostingController = NSHostingController(rootView: view)
+        hostingController.sizingOptions = [.preferredContentSize, .minSize]
 
-        let newWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 380),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
+        let newWindow = NSWindow(contentViewController: hostingController)
+        newWindow.styleMask = [.titled, .closable, .resizable]
         newWindow.title = "Send a Bug Report"
-        newWindow.contentView = hostingView
-        newWindow.contentMinSize = NSSize(width: 420, height: 320)
         newWindow.center()
         newWindow.setFrameAutosaveName("ExoBugReportWindow")
         newWindow.isReleasedWhenClosed = false
@@ -54,7 +49,7 @@ private struct BugReportView: View {
     @FocusState private var descriptionFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             switch phase {
             case .prompting:
                 promptingView
@@ -66,39 +61,45 @@ private struct BugReportView: View {
                 failureView(message: message)
             }
         }
-        .padding(20)
-        .frame(minWidth: 420, minHeight: 320)
+        .padding(16)
+        .frame(minWidth: 380)
         .animation(.easeInOut(duration: 0.2), value: phase)
         .onAppear { descriptionFocused = true }
     }
 
     private var promptingView: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Tell us what went wrong")
-                    .font(.headline)
-                Text(
-                    "A short description of what you were doing and what happened helps us track down the bug. This is optional — diagnostic logs will be sent either way."
-                )
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Description (optional)")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            ZStack(alignment: .topLeading) {
+                if userDescription.isEmpty {
+                    Text("What were you doing when it broke?")
+                        .font(.body)
+                        .foregroundColor(Color(nsColor: .placeholderTextColor))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $userDescription)
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+                    .padding(4)
+                    .frame(height: 72)
+                    .focused($descriptionFocused)
             }
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(nsColor: .textBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+            )
 
-            TextEditor(text: $userDescription)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .padding(6)
-                .frame(minHeight: 120)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(nsColor: .textBackgroundColor))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
-                )
-                .focused($descriptionFocused)
+            Text("Diagnostic logs will be uploaded with your report.")
+                .font(.caption)
+                .foregroundColor(.secondary)
 
             HStack {
                 Spacer()
@@ -109,6 +110,7 @@ private struct BugReportView: View {
                 }
                 .keyboardShortcut(.defaultAction)
             }
+            .padding(.top, 4)
         }
     }
 
