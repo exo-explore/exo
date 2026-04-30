@@ -13,8 +13,7 @@ from .helpers import (
     ClusterInfo,
     chat_and_assert,
     cleanup_all_instances,
-    eco_start_hosts,
-    eco_stop,
+    eco,
     make_client,
     make_client_from_url,
     place_and_wait,
@@ -50,7 +49,7 @@ class TestResilience:
 
         # --- Phase 2: disconnect one node ---
         disconnected_host = cluster.hosts[1]
-        eco_stop([disconnected_host], keep=True)
+        eco.stop([disconnected_host], keep=True)
         time.sleep(10.0)
 
         # Switch to the remaining node's API endpoint
@@ -67,7 +66,7 @@ class TestResilience:
 
         # --- Phase 4: reconnect and restore 2-node cluster ---
         cleanup_all_instances(remaining_client)
-        eco_start_hosts([disconnected_host], namespace=cluster.namespace)
+        eco.start_hosts([disconnected_host], namespace=cluster.namespace)
         wait_for_cluster_nodes(remaining_client, expected_count=2, timeout=120.0)
 
         # --- Phase 5: 2-node inference again ---

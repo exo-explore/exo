@@ -1,25 +1,23 @@
 # type: ignore
 """Shared helpers for exo integration tests.
 
-eco subprocess wrappers, cluster management utilities, and common test helpers.
-ExoClient and related utilities are imported from exo.client.
+Test-specific helpers built on top of exo_tools.cluster and exo_tools.harness.
 """
 
 from __future__ import annotations
 
-import atexit
 import contextlib
-import json
 import logging
-import os
-import signal
-import subprocess
 import time
-import uuid
-from dataclasses import dataclass, field
 
 from exo_tools.client import ExoClient
 from exo_tools.client import ExoHttpError as ExoHttpError  # re-exported
+from exo_tools.cluster import ClusterInfo as ClusterInfo  # re-exported
+from exo_tools.cluster import EcoSession
+from exo_tools.cluster import make_client as make_client  # re-exported
+from exo_tools.cluster import (
+    make_client_from_url as make_client_from_url,  # re-exported
+)
 from exo_tools.harness import (
     capture_cluster_snapshot as capture_cluster_snapshot,  # re-exported
 )
@@ -34,227 +32,13 @@ logger = logging.getLogger("integration_tests")
 
 DEFAULT_MODEL = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 
-# Each test session gets a unique eco user to isolate reservations.
-_SESSION_ID = uuid.uuid4().hex[:8]
-_ECO_USER = f"test-{_SESSION_ID}"
-_ECO_ENV = {**os.environ, "USER": _ECO_USER}
-
-# When set, deploy from a GitHub branch/tag instead of local source (rsync).
-# Useful for CI where the local worktree may not be the code under test.
-_EXO_REF = os.environ.get("EXO_REF")
-
-
-def _release_all_reservations() -> None:
-    """Stop all clusters and release all reservations for this test session."""
-    with contextlib.suppress(Exception):
-        subprocess.run(
-            ["eco", "stop"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=_ECO_ENV,
-        )
-
-
-# atexit covers normal exit and uncaught exceptions.
-# SIGTERM/SIGHUP get explicit handlers for external kills.
-# SIGINT is left to pytest so KeyboardInterrupt aborts tests naturally.
-atexit.register(_release_all_reservations)
-
-
-def _signal_handler(signum: int, _frame: object) -> None:
-    _release_all_reservations()
-    raise SystemExit(128 + signum)
-
-
-for _sig in (signal.SIGTERM, signal.SIGHUP):
-    signal.signal(_sig, _signal_handler)
-
-
-@dataclass
-class ClusterInfo:
-    """Holds the result of an `eco start --deploy` invocation."""
-
-    hosts: list[str]
-    namespace: str
-    api_endpoints: dict[str, str]  # host -> url
-    api_url: str  # primary endpoint for ExoClient
-
-    primary_host: str = ""
-    _host: str = field(init=False, repr=False, default="")
-    _port: int = field(init=False, repr=False, default=52415)
-
-    def __post_init__(self) -> None:
-        if not self.primary_host:
-            self.primary_host = self.hosts[0]
-        url = self.api_url.replace("http://", "").replace("https://", "")
-        parts = url.split(":")
-        self._host = parts[0]
-        self._port = int(parts[1]) if len(parts) > 1 else 52415
-
-    def make_client(self, timeout_s: float = 7200.0) -> ExoClient:
-        return ExoClient(self._host, self._port, timeout_s=timeout_s)
+# Single eco session for the entire test process.
+eco = EcoSession(user_prefix="test")
 
 
 # ---------------------------------------------------------------------------
-# eco subprocess wrappers
+# Instance helpers
 # ---------------------------------------------------------------------------
-
-
-def _run_eco(
-    args: list[str], *, check: bool = True, timeout: int = 120
-) -> subprocess.CompletedProcess[str]:
-    """Run an eco command with USER=test.
-
-    stdout is captured (JSON output), stderr is passed through to the
-    console so eco's progress messages are visible during test runs.
-    """
-    logger.info(f"eco: {' '.join(args)}")
-    return subprocess.run(
-        args,
-        stdout=subprocess.PIPE,
-        stderr=None,
-        text=True,
-        check=check,
-        timeout=timeout,
-        env=_ECO_ENV,
-    )
-
-
-def eco_start_deploy(
-    hosts: list[str] | None = None,
-    *,
-    count: int | None = None,
-    thunderbolt: bool = False,
-    wait: bool = True,
-    ref: str | None = _EXO_REF,
-    timeout: int = 600,
-) -> ClusterInfo:
-    """Start and deploy exo on a set of hosts via eco.
-
-    By default, deploys from local source via rsync. Set EXO_REF
-    or pass ref= to deploy from a GitHub branch/tag instead (for CI).
-    """
-    cmd: list[str] = ["eco", "--json", "start", "--deploy"]
-    if hosts:
-        cmd.extend(hosts)
-    if count is not None:
-        cmd.extend(["--count", str(count)])
-    if thunderbolt:
-        cmd.append("--thunderbolt")
-    if wait:
-        cmd.append("--wait")
-    if ref:
-        cmd.extend(["--ref", ref])
-
-    result = _run_eco(cmd, timeout=timeout)
-    data = json.loads(result.stdout)["data"]
-    endpoints: dict[str, str] = data["api_endpoints"]
-    primary_host = data["hosts"][0]
-
-    return ClusterInfo(
-        hosts=data["hosts"],
-        namespace=data["namespace"],
-        api_endpoints=endpoints,
-        api_url=endpoints[primary_host],
-        primary_host=primary_host,
-    )
-
-
-def eco_stop(hosts: list[str], *, keep: bool = False, timeout: int = 120) -> None:
-    """Stop exo on the given hosts. If keep=True, keep the reservation."""
-    cmd: list[str] = ["eco", "stop"]
-    cmd.extend(hosts)
-    if keep:
-        cmd.append("--keep")
-    _run_eco(cmd, timeout=timeout)
-
-
-def eco_start_hosts(hosts: list[str], *, namespace: str, timeout: int = 300) -> None:
-    """Start (previously stopped) hosts back into an existing namespace."""
-    cmd: list[str] = ["eco", "--json", "start"]
-    cmd.extend(hosts)
-    cmd.extend(["--namespace", namespace])
-    _run_eco(cmd, timeout=timeout)
-
-
-def eco_release(hosts: list[str], timeout: int = 120) -> None:
-    """Release hosts from the reservation."""
-    cmd: list[str] = ["eco", "release"]
-    cmd.extend(hosts)
-    _run_eco(cmd, timeout=timeout)
-
-
-def eco_logs(
-    hosts: list[str], lines: int = 500, timeout: int = 60
-) -> dict[str, list[str]]:
-    """Fetch recent logs from cluster hosts."""
-    cmd: list[str] = ["eco", "--json", "logs"]
-    cmd.extend(hosts)
-    cmd.extend(["-n", str(lines), "--raw"])
-    result = _run_eco(cmd, check=False, timeout=timeout)
-    if result.returncode != 0:
-        return {"_error": [result.stderr]}
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {"_raw": result.stdout.splitlines()}
-
-
-def eco_exec(hosts: list[str], command: str, timeout: int = 120) -> str:
-    """Run an arbitrary command on the given hosts via eco."""
-    cmd: list[str] = ["eco", "exec"]
-    cmd.extend(hosts)
-    cmd.append("--")
-    cmd.extend(command.split())
-    result = _run_eco(cmd, check=False, timeout=timeout)
-    return result.stdout
-
-
-# ---------------------------------------------------------------------------
-# Client helpers
-# ---------------------------------------------------------------------------
-
-
-def log_state(client: ExoClient, label: str) -> None:
-    """Print a concise cluster state snapshot for debugging."""
-    try:
-        state = client.request_json("GET", "/state")
-        if not state:
-            print(f"[{label}] state=None")
-            return
-        ni = len(state.get("nodeIdentities", {}))
-        nm = len(state.get("nodeMemory", {}))
-        inst = len(state.get("instances", {}))
-        topo = len(state.get("topology", {}).get("connections", []))
-        print(f"[{label}] nodes={ni} memory={nm} instances={inst} topo_conns={topo}")
-    except Exception as e:
-        print(f"[{label}] ERROR: {e}")
-
-
-def log_node_ids(cluster: ClusterInfo, label: str) -> None:
-    """Print node IDs from each endpoint."""
-    for host, url in cluster.api_endpoints.items():
-        c = make_client_from_url(url)
-        try:
-            nid = c.request_json("GET", "/node_id")
-            print(f"[{label}] {host} node_id={nid}")
-        except Exception as e:
-            print(f"[{label}] {host} UNREACHABLE: {e}")
-
-
-def make_client(cluster: ClusterInfo, timeout_s: float = 7200.0) -> ExoClient:
-    """Create an ExoClient from a ClusterInfo."""
-    return cluster.make_client(timeout_s=timeout_s)
-
-
-def make_client_from_url(url: str, timeout_s: float = 7200.0) -> ExoClient:
-    """Create an ExoClient from a URL string like 'http://host:port'."""
-    url_clean = url.replace("http://", "").replace("https://", "")
-    parts = url_clean.split(":")
-    host = parts[0]
-    port = int(parts[1]) if len(parts) > 1 else 52415
-    return ExoClient(host, port, timeout_s=timeout_s)
 
 
 def cleanup_all_instances(client: ExoClient) -> None:
@@ -272,11 +56,6 @@ def cleanup_all_instances(client: ExoClient) -> None:
             logger.warning("Failed to clean up instance %s: %s", _id, exc)
 
 
-# ---------------------------------------------------------------------------
-# Instance helpers
-# ---------------------------------------------------------------------------
-
-
 def get_instance_ids(client: ExoClient) -> set[str]:
     """Get the set of current instance IDs from cluster state."""
     state = client.request_json("GET", "/state")
@@ -288,6 +67,11 @@ def get_instance_ids(client: ExoClient) -> set[str]:
         with contextlib.suppress(Exception):
             result.add(instance_id_from_instance(instance))
     return result
+
+
+# ---------------------------------------------------------------------------
+# Cluster readiness helpers
+# ---------------------------------------------------------------------------
 
 
 def wait_for_cluster_ready(
@@ -380,6 +164,11 @@ def wait_for_valid_placement(
         f"No valid {sharding}/{instance_meta} placement with >= {min_nodes} nodes "
         f"after {timeout}s"
     )
+
+
+# ---------------------------------------------------------------------------
+# Placement + inference helpers
+# ---------------------------------------------------------------------------
 
 
 def place_and_wait(
