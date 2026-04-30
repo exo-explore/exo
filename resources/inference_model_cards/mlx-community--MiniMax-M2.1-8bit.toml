@@ -8,7 +8,7 @@ family = "minimax"
 quantization = "8bit"
 base_model = "MiniMax M2.1"
 capabilities = ["text", "thinking", "thinking_toggle"]
-
+reasoning_dialect = "post_last_user"
 context_length = 196608
 
 [storage_size]

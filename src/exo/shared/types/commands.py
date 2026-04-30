@@ -7,6 +7,7 @@ from exo.api.types import (
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, NodeId, SystemId
+from exo.shared.types.instance_link import InstanceLinkId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
@@ -89,6 +90,16 @@ class DeleteCustomModelCard(BaseCommand):
     model_id: ModelId
 
 
+class SetInstanceLink(BaseCommand):
+    link_id: InstanceLinkId
+    prefill_instances: list[InstanceId]
+    decode_instances: list[InstanceId]
+
+
+class DeleteInstanceLink(BaseCommand):
+    link_id: InstanceLinkId
+
+
 DownloadCommand = StartDownload | DeleteDownload | CancelDownload
 
 
@@ -106,6 +117,8 @@ Command = (
     | SendInputChunk
     | AddCustomModelCard
     | DeleteCustomModelCard
+    | SetInstanceLink
+    | DeleteInstanceLink
 )
 
 

@@ -34,6 +34,8 @@ from .api import ImageGenerationTaskParams as ImageGenerationTaskParams
 from .api import ImageListItem as ImageListItem
 from .api import ImageListResponse as ImageListResponse
 from .api import ImageSize as ImageSize
+from .api import InstanceLinkBody as InstanceLinkBody
+from .api import InstanceLinkResponse as InstanceLinkResponse
 from .api import Logprobs as Logprobs
 from .api import LogprobsContentItem as LogprobsContentItem
 from .api import ModelList as ModelList

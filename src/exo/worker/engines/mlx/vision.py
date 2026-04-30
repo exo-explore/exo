@@ -25,9 +25,9 @@ from transformers import AutoImageProcessor
 from exo.download.download_utils import build_model_path
 from exo.shared.models.model_cards import VisionCardConfig
 from exo.shared.types.common import ModelId
-from exo.shared.types.mlx import Model
 from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
 from exo.worker.engines.mlx.cache import encode_prompt
+from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
     fix_unmatched_think_end_tokens,
     render_chat_template,
