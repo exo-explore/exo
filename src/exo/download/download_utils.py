@@ -1,11 +1,12 @@
 import asyncio
 import hashlib
 import os
+import random
 import shutil
 import ssl
 import time
 import traceback
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Mapping
 from datetime import timedelta
 from pathlib import Path
 from typing import Callable, Literal
@@ -54,6 +55,36 @@ class HuggingFaceAuthenticationError(Exception):
 
 class HuggingFaceRateLimitError(Exception):
     """429 Huggingface code"""
+
+    def __init__(self, msg: str, retry_after: float | None = None) -> None:
+        super().__init__(msg)
+        self.retry_after = retry_after
+
+
+def _parse_retry_after(headers: Mapping[str, str]) -> float | None:
+    """Parse seconds-to-reset from HF's RateLimit header.
+
+    HF sends e.g. ``ratelimit: "api";r=0;t=52`` on 429s; ``t`` is the wait.
+    Returns ``None`` if the header is missing or has no ``t`` field.
+    """
+    raw = headers.get("RateLimit") or headers.get("ratelimit")
+    if raw is None:
+        return None
+    for part in raw.split(";"):
+        key, _, val = part.strip().partition("=")
+        if key == "t":
+            try:
+                return float(val)
+            except ValueError:
+                return None
+    return None
+
+
+# reset window is 5 min
+_RATE_LIMIT_MAX_SLEEP_SECS = 300.0
+
+# 24h. Manually clear the cache (or `delete_model`) to force a refresh.
+_FILE_LIST_CACHE_TTL_SECS = 24 * 60 * 60
 
 
 async def _build_auth_error_message(status_code: int, model_id: ModelId) -> str:
@@ -348,9 +379,6 @@ async def _build_file_list_from_local_directory(
     return None
 
 
-_fetched_file_lists_this_session: set[str] = set()
-
-
 async def fetch_file_list_with_cache(
     model_id: ModelId,
     revision: str = "main",
@@ -360,13 +388,16 @@ async def fetch_file_list_with_cache(
 ) -> list[FileListEntry]:
     target_dir = await ensure_cache_dir(model_id)
     cache_file = target_dir / f"{model_id.normalize()}--{revision}--file_list.json"
-    cache_key = f"{model_id.normalize()}--{revision}"
 
-    if cache_key in _fetched_file_lists_this_session and await aios.path.exists(
-        cache_file
-    ):
-        async with aiofiles.open(cache_file, "r") as f:
-            return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
+    # cache survives process restarts so cold starts don't re-burst HF
+    if await aios.path.exists(cache_file):
+        try:
+            cache_age = time.time() - (await aios.stat(cache_file)).st_mtime
+        except OSError:
+            cache_age = float("inf")
+        if cache_age < _FILE_LIST_CACHE_TTL_SECS:
+            async with aiofiles.open(cache_file, "r") as f:
+                return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
 
     if skip_internet:
         if await aios.path.exists(cache_file):
@@ -395,7 +426,6 @@ async def fetch_file_list_with_cache(
             await f.write(
                 TypeAdapter(list[FileListEntry]).dump_json(file_list).decode()
             )
-        _fetched_file_lists_this_session.add(cache_key)
         return file_list
     except Exception as e:
         logger.opt(exception=e).warning(
@@ -426,17 +456,29 @@ async def fetch_file_list_with_retry(
     recursive: bool = False,
     on_connection_lost: Callable[[], None] = lambda: None,
 ) -> list[FileListEntry]:
-    n_attempts = 3
+    n_attempts = 5
     for attempt in range(n_attempts):
         try:
             return await _fetch_file_list(model_id, revision, path, recursive)
         except HuggingFaceAuthenticationError:
             raise
+        except HuggingFaceRateLimitError as e:
+            if attempt == n_attempts - 1:
+                raise
+            sleep_for = e.retry_after if e.retry_after is not None else 2.0**attempt
+            sleep_for = min(sleep_for, _RATE_LIMIT_MAX_SLEEP_SECS) + random.uniform(
+                0, 1
+            )
+            logger.warning(
+                f"Rate limited by HuggingFace fetching file list for {model_id}; "
+                f"sleeping {sleep_for:.1f}s before retry {attempt + 2}/{n_attempts}"
+            )
+            await asyncio.sleep(sleep_for)
         except Exception as e:
             on_connection_lost()
             if attempt == n_attempts - 1:
                 raise e
-            await asyncio.sleep(2.0**attempt)
+            await asyncio.sleep(2.0**attempt + random.uniform(0, 1))
     raise Exception(
         f"Failed to fetch file list for {model_id=} {revision=} {path=} {recursive=}"
     )
@@ -447,6 +489,9 @@ async def _fetch_file_list(
 ) -> list[FileListEntry]:
     api_url = f"{get_hf_endpoint()}/api/models/{model_id}/tree/{revision}"
     url = f"{api_url}/{path}" if path else api_url
+    # ?recursive=true returns the whole subtree in one request
+    if recursive:
+        url = f"{url}?recursive=true"
 
     headers = await get_download_headers()
     async with (
@@ -458,7 +503,8 @@ async def _fetch_file_list(
             raise HuggingFaceAuthenticationError(msg)
         elif response.status == 429:
             raise HuggingFaceRateLimitError(
-                f"Couldn't download {model_id} because of HuggingFace rate limit."
+                f"HuggingFace rate limit hit fetching file list for {model_id}",
+                retry_after=_parse_retry_after(response.headers),
             )
         elif response.status == 200:
             data_json = await response.text()
@@ -468,10 +514,14 @@ async def _fetch_file_list(
                 if item.type == "file":
                     files.append(FileListEntry.model_validate(item))
                 elif item.type == "directory" and recursive:
-                    subfiles = await _fetch_file_list(
-                        model_id, revision, item.path, recursive
-                    )
-                    files.extend(subfiles)
+                    # already inlined by ?recursive=true
+                    continue
+            if recursive and len(data) >= 1000:
+                # HF tree endpoint paginates at 1000; we don't follow cursors
+                logger.warning(
+                    f"File list for {model_id} hit the 1000-entry page cap "
+                    "and may be truncated; cursor pagination is not implemented"
+                )
             return files
         else:
             raise Exception(f"Failed to fetch file list: {response.status}")
@@ -552,6 +602,11 @@ async def file_meta(
         if r.status in [401, 403]:
             msg = await _build_auth_error_message(r.status, model_id)
             raise HuggingFaceAuthenticationError(msg)
+        if r.status == 429:
+            raise HuggingFaceRateLimitError(
+                f"HuggingFace rate limit hit fetching metadata for {model_id}/{path}",
+                retry_after=_parse_retry_after(r.headers),
+            )
         content_length = int(
             r.headers.get("x-linked-size") or r.headers.get("content-length") or 0
         )
@@ -571,7 +626,7 @@ async def download_file_with_retry(
     on_connection_lost: Callable[[], None] = lambda: None,
     skip_internet: bool = False,
 ) -> Path:
-    n_attempts = 3
+    n_attempts = 5
     for attempt in range(n_attempts):
         try:
             return await _download_file(
@@ -583,12 +638,16 @@ async def download_file_with_retry(
             raise
         except HuggingFaceRateLimitError as e:
             if attempt == n_attempts - 1:
-                raise e
-            logger.error(
-                f"Download error on attempt {attempt}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
+                raise
+            sleep_for = e.retry_after if e.retry_after is not None else 2.0**attempt
+            sleep_for = min(sleep_for, _RATE_LIMIT_MAX_SLEEP_SECS) + random.uniform(
+                0, 1
             )
-            logger.error(traceback.format_exc())
-            await asyncio.sleep(2.0**attempt)
+            logger.warning(
+                f"Rate limited by HuggingFace downloading {model_id}/{path}; "
+                f"sleeping {sleep_for:.1f}s before retry {attempt + 2}/{n_attempts}"
+            )
+            await asyncio.sleep(sleep_for)
         except Exception as e:
             if attempt == n_attempts - 1:
                 on_connection_lost()
@@ -597,7 +656,7 @@ async def download_file_with_retry(
                 f"Download error on attempt {attempt + 1}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
             )
             logger.error(traceback.format_exc())
-            await asyncio.sleep(2.0**attempt)
+            await asyncio.sleep(2.0**attempt + random.uniform(0, 1))
     raise Exception(
         f"Failed to download file {model_id=} {revision=} {path=} {target_dir=}"
     )
@@ -665,6 +724,11 @@ async def _download_file(
             if r.status in [401, 403]:
                 msg = await _build_auth_error_message(r.status, model_id)
                 raise HuggingFaceAuthenticationError(msg)
+            if r.status == 429:
+                raise HuggingFaceRateLimitError(
+                    f"HuggingFace rate limit hit downloading {model_id}/{path}",
+                    retry_after=_parse_retry_after(r.headers),
+                )
             assert r.status in [200, 206], (
                 f"Failed to download {path} from {url}: {r.status}"
             )
