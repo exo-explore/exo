@@ -79,6 +79,8 @@ from exo.api.types import (
     ImageListItem,
     ImageListResponse,
     ImageSize,
+    InstanceLinkBody,
+    InstanceLinkResponse,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -123,6 +125,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
+    ENABLE_DISAGGREGATION,
     EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
@@ -155,6 +158,7 @@ from exo.shared.types.commands import (
     DeleteCustomModelCard,
     DeleteDownload,
     DeleteInstance,
+    DeleteInstanceLink,
     DownloadCommand,
     ForwarderCommand,
     ForwarderDownloadCommand,
@@ -162,6 +166,7 @@ from exo.shared.types.commands import (
     ImageGeneration,
     PlaceInstance,
     SendInputChunk,
+    SetInstanceLink,
     StartDownload,
     TaskCancelled,
     TaskFinished,
@@ -175,6 +180,7 @@ from exo.shared.types.events import (
     InstanceDeleted,
     TracesMerged,
 )
+from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
@@ -214,6 +220,17 @@ def _ensure_seed(params: AdvancedImageParams | None) -> AdvancedImageParams:
     if params.seed is None:
         return params.model_copy(update={"seed": random.randint(0, 2**32 - 1)})
     return params
+
+
+def _require_disaggregation_enabled() -> None:
+    if not ENABLE_DISAGGREGATION:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail=(
+                "Prefill/decode disaggregation is disabled. "
+                "Set ENABLE_DISAGGREGATION=true to enable."
+            ),
+        )
 
 
 class API:
@@ -329,6 +346,11 @@ class API:
         self.app.get("/instance/previews")(self.get_placement_previews)
         self.app.get("/instance/{instance_id}")(self.get_instance)
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
+        self.app.get("/v1/instance-links")(self.list_instance_links)
+        self.app.post("/v1/instance-links")(self.create_instance_link)
+        self.app.put("/v1/instance-links/{link_id}")(self.update_instance_link)
+        self.app.delete("/v1/instance-links/{link_id}")(self.delete_instance_link)
+        self.app.get("/v1/feature-flags")(self.get_feature_flags)
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/models/add")(self.add_custom_model)
@@ -337,7 +359,9 @@ class API:
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
         )
-        self.app.post("/bench/chat/completions")(self.bench_chat_completions)
+        self.app.post("/bench/chat/completions", response_model=None)(
+            self.bench_chat_completions
+        )
         self.app.post("/v1/images/generations", response_model=None)(
             self.image_generations
         )
@@ -616,6 +640,49 @@ class API:
             instance_id=instance_id,
         )
 
+    async def get_feature_flags(self) -> dict[str, bool]:
+        return {"disaggregation": ENABLE_DISAGGREGATION}
+
+    async def list_instance_links(self) -> list[InstanceLink]:
+        if not ENABLE_DISAGGREGATION:
+            return []
+        return list(self.state.instance_links.values())
+
+    async def create_instance_link(
+        self, body: InstanceLinkBody
+    ) -> InstanceLinkResponse:
+        _require_disaggregation_enabled()
+        return await self._set_instance_link(InstanceLinkId(), body)
+
+    async def update_instance_link(
+        self, link_id: InstanceLinkId, body: InstanceLinkBody
+    ) -> InstanceLinkResponse:
+        _require_disaggregation_enabled()
+        return await self._set_instance_link(link_id, body)
+
+    async def _set_instance_link(
+        self, link_id: InstanceLinkId, body: InstanceLinkBody
+    ) -> InstanceLinkResponse:
+        command = SetInstanceLink(
+            link_id=link_id,
+            prefill_instances=list(body.prefill_instances),
+            decode_instances=list(body.decode_instances),
+        )
+        await self._send(command)
+        return InstanceLinkResponse(
+            message="Command received.", command_id=command.command_id
+        )
+
+    async def delete_instance_link(
+        self, link_id: InstanceLinkId
+    ) -> InstanceLinkResponse:
+        _require_disaggregation_enabled()
+        command = DeleteInstanceLink(link_id=link_id)
+        await self._send(command)
+        return InstanceLinkResponse(
+            message="Command received.", command_id=command.command_id
+        )
+
     async def cancel_command(self, command_id: CommandId) -> CancelCommandResponse:
         """Cancel an active command by closing its stream and notifying workers."""
         sender = self._text_generation_queues.get(
@@ -830,7 +897,7 @@ class API:
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
-    ) -> BenchChatCompletionResponse:
+    ) -> BenchChatCompletionResponse | StreamingResponse:
         task_params = await chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
@@ -846,6 +913,22 @@ class API:
         )
 
         command = await self._send_text_generation_with_images(task_params)
+
+        if payload.stream:
+            return StreamingResponse(
+                with_sse_keepalive(
+                    generate_chat_stream(
+                        command.command_id,
+                        self._token_chunk_stream(command.command_id),
+                    ),
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "close",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
         return await self._collect_text_generation_with_stats(command.command_id)
 
@@ -1671,6 +1754,7 @@ class API:
                     quantization=card.quantization,
                     base_model=card.base_model,
                     capabilities=card.capabilities,
+                    reasoning_dialect=card.reasoning_dialect,
                     context_length=card.context_length,
                 )
                 for card in cards

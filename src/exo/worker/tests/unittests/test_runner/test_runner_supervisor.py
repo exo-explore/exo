@@ -17,7 +17,7 @@ from exo.shared.types.text_generation import (
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerFailed, RunnerId
 from exo.utils.channels import channel, mp_channel
-from exo.worker.runner.runner_supervisor import RunnerSupervisor
+from exo.worker.runner.supervisor import RunnerSupervisor
 from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance
 
 

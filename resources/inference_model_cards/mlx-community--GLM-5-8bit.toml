@@ -8,7 +8,7 @@ family = "glm"
 quantization = "8bit"
 base_model = "GLM-5"
 capabilities = ["text", "thinking"]
-
+reasoning_dialect = "post_last_user"
 context_length = 202752
 
 [storage_size]

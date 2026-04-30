@@ -552,15 +552,24 @@ struct SettingsView: View {
         let alert = NSAlert()
         alert.messageText = "Uninstall EXO"
         alert.informativeText = """
-            This will remove EXO and all its system components:
+            This will remove EXO and all its components:
 
             • Network configuration daemon
             • Launch at login registration
             • EXO network location
+            • EXO data directory (~/.exo)
 
             The app will be moved to Trash.
             """
         alert.alertStyle = .warning
+
+        let checkbox = NSButton(
+            checkboxWithTitle: "Keep downloaded models (~/.exo/models)",
+            target: nil, action: nil)
+        checkbox.state = .off
+        checkbox.sizeToFit()
+        alert.accessoryView = checkbox
+
         alert.addButton(withTitle: "Uninstall")
         alert.addButton(withTitle: "Cancel")
 
@@ -570,11 +579,11 @@ struct SettingsView: View {
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            performUninstall()
+            performUninstall(keepModels: checkbox.state == .on)
         }
     }
 
-    private func performUninstall() {
+    private func performUninstall(keepModels: Bool) {
         uninstallInProgress = true
 
         controller.cancelPendingLaunch()
@@ -584,6 +593,7 @@ struct SettingsView: View {
         DispatchQueue.global(qos: .utility).async {
             do {
                 try NetworkSetupHelper.uninstall()
+                try Self.removeExoDirectory(keepModels: keepModels)
 
                 DispatchQueue.main.async {
                     LaunchAtLoginHelper.disable()
@@ -604,6 +614,23 @@ struct SettingsView: View {
                     self.uninstallInProgress = false
                 }
             }
+        }
+    }
+
+    private static func removeExoDirectory(keepModels: Bool) throws {
+        let fm = FileManager.default
+        let exoDir = ExoProcessController.exoDirectoryURL
+        guard fm.fileExists(atPath: exoDir.path) else { return }
+
+        if !keepModels {
+            try fm.removeItem(at: exoDir)
+            return
+        }
+
+        let contents = try fm.contentsOfDirectory(
+            at: exoDir, includingPropertiesForKeys: nil, options: [])
+        for entry in contents where entry.lastPathComponent != "models" {
+            try? fm.removeItem(at: entry)
         }
     }
 

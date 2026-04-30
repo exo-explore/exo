@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.text_generation import ReasoningEffort
+from exo.shared.types.text_generation import ReasoningDialect, ReasoningEffort
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
 from exo.utils.pydantic_ext import FrozenModel
@@ -48,6 +48,7 @@ class ModelListModel(BaseModel):
     quantization: str = Field(default="")
     base_model: str = Field(default="")
     capabilities: list[str] = Field(default_factory=list)
+    reasoning_dialect: ReasoningDialect = "none"
 
 
 class ModelList(BaseModel):
@@ -291,6 +292,16 @@ class DeleteInstanceResponse(BaseModel):
 
 
 class CancelCommandResponse(BaseModel):
+    message: str
+    command_id: CommandId
+
+
+class InstanceLinkBody(BaseModel):
+    prefill_instances: list[InstanceId]
+    decode_instances: list[InstanceId]
+
+
+class InstanceLinkResponse(BaseModel):
     message: str
     command_id: CommandId
 

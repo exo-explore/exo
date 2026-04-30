@@ -8,6 +8,7 @@ from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.worker.engines.base import Builder
 
 logger: "loguru.Logger" = loguru.logger
 
@@ -35,23 +36,32 @@ def entrypoint(
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
-        if bound_instance.is_image_model:
-            from exo.worker.runner.image_models.runner import Runner as ImageRunner
+        from exo.worker.runner.runner import Runner
 
-            runner = ImageRunner(
-                bound_instance, event_sender, task_receiver, cancel_receiver
+        builder: Builder
+
+        if bound_instance.is_image_model:
+            from exo.worker.engines.image.builder import MfluxBuilder
+
+            builder = MfluxBuilder(
+                event_sender, cancel_receiver, bound_instance.bound_shard
             )
-            runner.main()
         else:
             from exo.worker.engines.mlx.patches import apply_mlx_patches
-            from exo.worker.runner.llm_inference.runner import Runner
 
             apply_mlx_patches()
 
-            runner = Runner(
-                bound_instance, event_sender, task_receiver, cancel_receiver
+            from exo.worker.engines.mlx.builder import MlxBuilder
+
+            # evil sharing of the event sender
+            builder = MlxBuilder(
+                model_id=bound_instance.bound_shard.model_card.model_id,
+                event_sender=event_sender,
+                cancel_receiver=cancel_receiver,
             )
-            runner.main()
+
+        runner = Runner(bound_instance, builder, event_sender, task_receiver)
+        runner.main()
 
     except ClosedResourceError:
         logger.warning("Runner communication closed unexpectedly")

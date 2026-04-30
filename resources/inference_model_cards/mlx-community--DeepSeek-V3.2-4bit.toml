@@ -8,6 +8,7 @@ family = "deepseek"
 quantization = "4bit"
 base_model = "DeepSeek V3.2"
 capabilities = ["text", "thinking", "thinking_toggle"]
+reasoning_dialect = "tool_conditional"
 
 context_length = 131072
 

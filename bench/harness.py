@@ -6,6 +6,7 @@ import http.client
 import json
 import os
 import time
+from collections.abc import Iterator
 from typing import Any
 from urllib.parse import urlencode
 
@@ -68,6 +69,30 @@ class ExoClient:
 
     def post_bench_chat_completions(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request_json("POST", "/bench/chat/completions", body=payload)
+
+    def stream_bench_chat_completions(self, payload: dict[str, Any]) -> Iterator[str]:
+        """POST /bench/chat/completions with stream=True, yielding raw SSE lines."""
+        payload = {**payload, "stream": True}
+        data = json.dumps(payload).encode("utf-8")
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=self.timeout_s)
+        try:
+            conn.request(
+                "POST",
+                "/bench/chat/completions",
+                body=data,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+            )
+            resp = conn.getresponse()
+            if resp.status >= 400:
+                raw = resp.read().decode("utf-8", errors="replace")
+                raise ExoHttpError(resp.status, resp.reason, raw[:300])
+            for line in resp:
+                yield line.decode("utf-8", errors="replace")
+        finally:
+            conn.close()
 
     def get_state_path(self, path: str) -> Any:
         try:
@@ -268,11 +293,15 @@ def sharding_filter(sharding: str, wanted: str) -> bool:
 
 
 def fetch_and_filter_placements(
-    client: ExoClient, full_model_id: str, args: argparse.Namespace
+    client: ExoClient,
+    full_model_id: str,
+    args: argparse.Namespace,
+    node_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    previews_resp = client.request_json(
-        "GET", "/instance/previews", params={"model_id": full_model_id}
-    )
+    params: dict[str, str] = {"model_id": full_model_id}
+    if node_id is not None:
+        params["node_ids"] = node_id
+    previews_resp = client.request_json("GET", "/instance/previews", params=params)
     previews = previews_resp.get("previews") or []
 
     selected: list[dict[str, Any]] = []
@@ -332,8 +361,9 @@ def settle_and_fetch_placements(
     full_model_id: str,
     args: argparse.Namespace,
     settle_timeout: float = 0,
+    node_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    selected = fetch_and_filter_placements(client, full_model_id, args)
+    selected = fetch_and_filter_placements(client, full_model_id, args, node_id=node_id)
 
     if not selected and settle_timeout > 0:
         backoff = _SETTLE_INITIAL_BACKOFF_S
@@ -346,7 +376,9 @@ def settle_and_fetch_placements(
             )
             time.sleep(min(backoff, remaining))
             backoff = min(backoff * _SETTLE_BACKOFF_MULTIPLIER, _SETTLE_MAX_BACKOFF_S)
-            selected = fetch_and_filter_placements(client, full_model_id, args)
+            selected = fetch_and_filter_placements(
+                client, full_model_id, args, node_id=node_id
+            )
 
     return selected
 
@@ -462,9 +494,8 @@ def run_planning_phase(
         )
         logger.info(f"Started download on {node_id}")
 
-    # Wait for downloads
-    start = time.time()
-    while time.time() - start < timeout:
+    # Wait for downloads (no timeout — poll until complete or failed)
+    while True:
         all_done = True
         for node_id in node_ids:
             node_downloads = client.get_node_downloads(node_id) or []
@@ -514,9 +545,24 @@ def run_planning_phase(
             if download_t0 is not None:
                 return time.perf_counter() - download_t0
             return None
-        time.sleep(1)
+        time.sleep(10)
 
-    raise TimeoutError("Downloads did not complete in time")
+
+def find_existing_instance(client: ExoClient, model_id: str) -> str | None:
+    """Find an existing running instance for the given model."""
+    try:
+        state = client.request_json("GET", "/state")
+    except Exception:
+        return None
+    for inst_id, inst in state.get("instances", {}).items():
+        # Instance structure is nested: {"MlxJacclInstance": {"shardAssignments": {"modelId": ...}}}
+        for _inst_type, inner in inst.items():
+            if not isinstance(inner, dict):
+                continue
+            sa = inner.get("shardAssignments", {})
+            if sa.get("modelId") == model_id:
+                return inst_id
+    return None
 
 
 def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
@@ -571,4 +617,9 @@ def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
         "--danger-delete-downloads",
         action="store_true",
         help="Delete existing models from smallest to largest to make room for benchmark model.",
+    )
+    ap.add_argument(
+        "--reuse-instance",
+        action="store_true",
+        help="Reuse an existing running instance for this model instead of creating a new one.",
     )

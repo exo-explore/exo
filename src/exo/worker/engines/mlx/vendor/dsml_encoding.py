@@ -34,11 +34,17 @@ def encode_messages(
     add_default_bos_token: bool = True,
     tools: Any = None,  # pyright: ignore[reportAny]
 ) -> str:
+    # V3.2 (like V4) is `tool_conditional`: when tools are in play, prior-turn
+    # reasoning_content must be retained so multi-step tool chains stay
+    # coherent.
+    effective_drop_thinking = drop_thinking
+    if tools:
+        effective_drop_thinking = False
     prompt: str = deepseek_v32.encode_messages(
         messages,
         thinking_mode=thinking_mode,
         context=context,
-        drop_thinking=drop_thinking,
+        drop_thinking=effective_drop_thinking,
         add_default_bos_token=add_default_bos_token,
         tools=tools,
     )
