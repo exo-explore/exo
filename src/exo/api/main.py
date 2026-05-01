@@ -121,6 +121,8 @@ from exo.api.types.openai_responses import (
 )
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
+from exo.routing.event_router import EventRouter
+from exo.routing.snapshot_receiver import SnapshotReceiver
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
@@ -164,6 +166,7 @@ from exo.shared.types.commands import (
     ImageEdits,
     ImageGeneration,
     PlaceInstance,
+    RequestSnapshot,
     SendInputChunk,
     SetInstanceLink,
     StartDownload,
@@ -171,16 +174,17 @@ from exo.shared.types.commands import (
     TaskFinished,
     TextGeneration,
 )
-from exo.shared.types.common import CommandId, Id, NodeId, SystemId
+from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
     IndexedEvent,
-    InstanceDeleted,
     TracesMerged,
+    TransientEvent,
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.memory import Memory
+from exo.shared.types.snapshots import SnapshotChunk
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -206,6 +210,8 @@ from exo.utils.task_group import TaskGroup
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
+
+_SNAPSHOT_FETCH_TIMEOUT_SECONDS = 30
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
@@ -236,9 +242,13 @@ class API:
     def __init__(
         self,
         node_id: NodeId,
+        session_id: SessionId,
         *,
         port: int,
+        event_router: EventRouter,
         event_receiver: Receiver[IndexedEvent],
+        transient_event_receiver: Receiver[TransientEvent],
+        snapshot_chunk_receiver: Receiver[SnapshotChunk],
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
@@ -247,9 +257,13 @@ class API:
         self.state = State()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self._system_id = SystemId()
+        self.session_id = session_id
+        self.event_router = event_router
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.event_receiver = event_receiver
+        self.transient_event_receiver = transient_event_receiver
+        self.snapshot_chunk_receiver = snapshot_chunk_receiver
         self.election_receiver = election_receiver
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
@@ -292,18 +306,34 @@ class API:
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
 
-    def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):
+    def reset(
+        self,
+        result_clock: int,
+        session_id: SessionId,
+        event_router: EventRouter,
+        event_receiver: Receiver[IndexedEvent],
+        transient_event_receiver: Receiver[TransientEvent],
+        snapshot_chunk_receiver: Receiver[SnapshotChunk],
+    ):
         logger.info("Resetting API State")
         self._event_log.close()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self.state = State()
         self._system_id = SystemId()
+        self.session_id = session_id
+        self.event_router = event_router
         self._text_generation_queues = {}
         self._image_generation_queues = {}
         self.unpause(result_clock)
         self.event_receiver.close()
         self.event_receiver = event_receiver
-        self._tg.start_soon(self._apply_state)
+        self.transient_event_receiver.close()
+        self.transient_event_receiver = transient_event_receiver
+        self.snapshot_chunk_receiver.close()
+        self.snapshot_chunk_receiver = snapshot_chunk_receiver
+        self._tg.start_soon(self._bootstrap_then_apply_state)
+        self._tg.start_soon(self._apply_transient)
+        self._tg.start_soon(self._reconcile_streams)
         self._sent_image_hashes = set()
 
     def unpause(self, result_clock: int):
@@ -1848,7 +1878,9 @@ class API:
         try:
             async with self._tg as tg:
                 logger.info("Starting API")
-                tg.start_soon(self._apply_state)
+                tg.start_soon(self._bootstrap_then_apply_state)
+                tg.start_soon(self._apply_transient)
+                tg.start_soon(self._reconcile_streams)
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)
                 print_startup_banner(self.port)
@@ -1862,6 +1894,8 @@ class API:
             self._event_log.close()
             self.command_sender.close()
             self.event_receiver.close()
+            self.transient_event_receiver.close()
+            self.snapshot_chunk_receiver.close()
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
@@ -1877,48 +1911,103 @@ class API:
                 shutdown_trigger=ev.wait,
             )
 
+    async def _bootstrap_then_apply_state(self):
+        """Pull a snapshot from the master before draining events.
+
+        Mirrors the Worker bootstrap flow: events queued in the EventRouter
+        wait until either the snapshot lands (and we fast-forward the
+        buffer) or the fetch times out (and we replay from idx 0).
+        """
+        await self._fetch_snapshot()
+        await self._apply_state()
+
+    async def _fetch_snapshot(self) -> None:
+        receiver = SnapshotReceiver(self.node_id, self.session_id)
+        await self.command_sender.send(
+            ForwarderCommand(
+                origin=self._system_id,
+                command=RequestSnapshot(requester_node_id=self.node_id),
+            )
+        )
+
+        with anyio.move_on_after(_SNAPSHOT_FETCH_TIMEOUT_SECONDS):
+            with self.snapshot_chunk_receiver as chunks:
+                async for chunk in chunks:
+                    received = receiver.ingest(chunk)
+                    if received is not None:
+                        self.state = received.state
+                        self.event_router.set_buffer_start(
+                            received.last_event_applied_idx + 1
+                        )
+                        logger.info(
+                            f"API bootstrapped from snapshot at idx "
+                            f"{received.last_event_applied_idx}"
+                        )
+                        return
+        logger.info(
+            "API: no snapshot received before timeout; "
+            "falling back to full event-log replay"
+        )
+
     async def _apply_state(self):
         with self.event_receiver as events:
             async for i_event in events:
+                # Drop anything already covered by a snapshot we've applied.
+                if i_event.idx <= self.state.last_event_applied_idx:
+                    continue
                 self._event_log.append(i_event.event)
                 self.state = apply(self.state, i_event)
-                event = i_event.event
 
+    async def _apply_transient(self):
+        with self.transient_event_receiver as events:
+            async for event in events:
                 if isinstance(event, ChunkGenerated):
-                    if queue := self._image_generation_queues.get(
-                        event.command_id, None
-                    ):
-                        assert isinstance(event.chunk, ImageChunk)
-                        try:
-                            await queue.send(event.chunk)
-                        except (BrokenResourceError, ClosedResourceError):
-                            self._image_generation_queues.pop(event.command_id, None)
-                    if queue := self._text_generation_queues.get(
-                        event.command_id, None
-                    ):
-                        assert not isinstance(event.chunk, ImageChunk)
-                        try:
-                            await queue.send(event.chunk)
-                        except (BrokenResourceError, ClosedResourceError):
-                            self._text_generation_queues.pop(event.command_id, None)
-                if isinstance(event, InstanceDeleted):
-                    self._close_streams_for_instance(event.instance_id)
-                if isinstance(event, TracesMerged):
+                    await self._dispatch_chunk(event)
+                elif isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
 
-    def _close_streams_for_instance(self, instance_id: InstanceId) -> None:
-        """Close any active generation streams for commands running on the given instance."""
-        for task in self.state.tasks.values():
-            if task.instance_id != instance_id:
-                continue
-            if not isinstance(
-                task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
-            ):
-                continue
-            if sender := self._text_generation_queues.pop(task.command_id, None):
-                sender.close()
-            if sender := self._image_generation_queues.pop(task.command_id, None):
-                sender.close()
+    async def _reconcile_streams(self):
+        """Close streaming queues for command_ids whose instance is gone.
+
+        Reconciling from state (rather than reacting to InstanceDeleted) keeps
+        clients well-behaved after snapshot catch-up — without this, queues for
+        an evicted instance could linger forever if the deletion event arrived
+        before the API came up.
+        """
+        while True:
+            await anyio.sleep(1)
+            live_command_ids: set[CommandId] = {
+                task.command_id
+                for task in self.state.tasks.values()
+                if isinstance(
+                    task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
+                )
+                and task.instance_id in self.state.instances
+            }
+            self._close_streams_not_in(live_command_ids)
+
+    def _close_streams_not_in(self, live_command_ids: set[CommandId]) -> None:
+        for cmd_id in list(self._text_generation_queues):
+            if cmd_id not in live_command_ids:
+                self._text_generation_queues.pop(cmd_id).close()
+        for cmd_id in list(self._image_generation_queues):
+            if cmd_id not in live_command_ids:
+                self._image_generation_queues.pop(cmd_id).close()
+
+    async def _dispatch_chunk(self, event: ChunkGenerated) -> None:
+        """Forward a generated chunk to whichever client request is awaiting it."""
+        if queue := self._image_generation_queues.get(event.command_id, None):
+            assert isinstance(event.chunk, ImageChunk)
+            try:
+                await queue.send(event.chunk)
+            except (BrokenResourceError, ClosedResourceError):
+                self._image_generation_queues.pop(event.command_id, None)
+        if queue := self._text_generation_queues.get(event.command_id, None):
+            assert not isinstance(event.chunk, ImageChunk)
+            try:
+                await queue.send(event.chunk)
+            except (BrokenResourceError, ClosedResourceError):
+                self._text_generation_queues.pop(event.command_id, None)
 
     def _save_merged_trace(self, event: TracesMerged) -> None:
         traces = [

@@ -67,6 +67,17 @@ class RequestEventLog(BaseCommand):
     since_idx: int
 
 
+class RequestSnapshot(BaseCommand):
+    """Sent by a joining node asking the master to deliver a snapshot.
+
+    The master reads its latest persisted snapshot, slices it into chunks,
+    and publishes those on the SNAPSHOT_RESPONSES topic. Chunks include the
+    `requester_node_id` so other nodes know to ignore them.
+    """
+
+    requester_node_id: NodeId
+
+
 class StartDownload(BaseCommand):
     target_node_id: NodeId
     shard_metadata: ShardMetadata
@@ -106,6 +117,7 @@ DownloadCommand = StartDownload | DeleteDownload | CancelDownload
 Command = (
     TestCommand
     | RequestEventLog
+    | RequestSnapshot
     | TextGeneration
     | ImageGeneration
     | ImageEdits

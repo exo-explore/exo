@@ -15,6 +15,7 @@ from exo.shared.types.events import (
     Event,
     TraceEventData,
     TracesCollected,
+    TransientEvent,
 )
 from exo.shared.types.tasks import (
     GenerationTask,
@@ -66,7 +67,7 @@ def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
 
 
 def _send_traces_if_enabled(
-    event_sender: MpSender[Event],
+    event_sender: MpSender[Event | TransientEvent],
     task_id: TaskId,
     rank: int,
 ) -> None:
@@ -97,7 +98,7 @@ def _send_traces_if_enabled(
 
 @dataclass
 class MfluxBuilder(Builder):
-    event_sender: MpSender[Event]
+    event_sender: MpSender[Event | TransientEvent]
     cancel_receiver: MpReceiver[TaskId]
     shard_metadata: ShardMetadata | None = None
     image_model: DistributedImageModel | None = None
@@ -137,7 +138,7 @@ class MfluxBuilder(Builder):
 class ImageEngine(Engine):
     image_model: DistributedImageModel
     shard_metadata: ShardMetadata
-    event_sender: MpSender[Event]
+    event_sender: MpSender[Event | TransientEvent]
     cancel_receiver: MpReceiver[TaskId]
     current_gen: (
         Generator[tuple[TaskId, Chunk | FinishedResponse | CancelledResponse]] | None

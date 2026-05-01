@@ -33,3 +33,11 @@ class KeyedBackoff[K]:
         """Reset backoff state for a key (e.g., on success)."""
         self._attempts.pop(key, None)
         self._last_time.pop(key, None)
+
+    def tracked_keys(self) -> list[K]:
+        """Snapshot of every key with recorded backoff state.
+
+        Returns a fresh list rather than a live view so callers can safely
+        mutate the backoff (e.g. reset entries) while iterating.
+        """
+        return list(self._attempts.keys() | self._last_time.keys())

@@ -24,11 +24,13 @@ from exo.shared.types.events import (
     LocalForwarderEvent,
     NodeGatheredInfo,
     TaskCreated,
+    TransientEvent,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     MemoryUsage,
 )
+from exo.shared.types.snapshots import SnapshotChunk
 from exo.shared.types.tasks import TaskStatus
 from exo.shared.types.tasks import TextGeneration as TextGenerationTask
 from exo.shared.types.text_generation import (
@@ -56,6 +58,8 @@ async def test_master():
     local_event_sender, le_receiver = channel[LocalForwarderEvent]()
     fcds, _fcdr = channel[ForwarderDownloadCommand]()
     ev_send, ev_recv = channel[Event]()
+    transient_send, transient_recv = channel[TransientEvent]()
+    snapshot_chunk_send, _snapshot_chunk_recv = channel[SnapshotChunk]()
 
     async def mock_event_router():
         idx = 0
@@ -89,9 +93,12 @@ async def test_master():
         node_id,
         session_id,
         event_sender=ev_send,
+        transient_event_receiver=transient_recv,
+        transient_event_sender=transient_send,
         global_event_sender=ge_sender,
         local_event_receiver=le_receiver,
         command_receiver=co_receiver,
+        snapshot_chunk_sender=snapshot_chunk_send,
         download_command_sender=fcds,
     )
     logger.info("run the master")

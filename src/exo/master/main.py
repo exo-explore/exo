@@ -1,6 +1,8 @@
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import anyio
+from anyio import to_thread
 from loguru import logger
 
 from exo.master.placement import (
@@ -25,6 +27,7 @@ from exo.shared.types.commands import (
     ImageGeneration,
     PlaceInstance,
     RequestEventLog,
+    RequestSnapshot,
     SendInputChunk,
     SetInstanceLink,
     TaskCancelled,
@@ -52,8 +55,10 @@ from exo.shared.types.events import (
     TraceEventData,
     TracesCollected,
     TracesMerged,
+    TransientEvent,
 )
 from exo.shared.types.instance_link import InstanceLink
+from exo.shared.types.snapshots import SnapshotChunk, SnapshotTransferId
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -73,6 +78,25 @@ from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
+
+# Roughly 512 KiB per chunk. The gossipsub message ceiling is around 1 MiB;
+# we leave a comfortable margin for pydantic JSON+base64 inflation.
+_SNAPSHOT_CHUNK_BYTES = 512 * 1024
+
+# Per-call cap on a single RequestEventLog response. The worker will NACK
+# again for the next chunk; the cap exists to bound how many gossipsub
+# messages we publish in one go (each event is its own message, so without
+# a cap a fresh joiner would dump the entire log in a burst that gossipsub
+# doesn't take well to). With snapshots in place the post-snapshot tail
+# this branch serves should be tiny, so the cap is rarely hit anyway.
+_MAX_EVENT_LOG_REPLAY_BATCH = 1000
+
+
+def _encode_state_for_transfer(state: State) -> bytes:
+    """zstd-compressed JSON dump of State — the wire format for snapshots."""
+    import zstandard
+
+    return zstandard.ZstdCompressor().compress(state.model_dump_json().encode("utf-8"))
 
 
 def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
@@ -123,8 +147,11 @@ class Master:
         *,
         command_receiver: Receiver[ForwarderCommand],
         event_sender: Sender[Event],
+        transient_event_receiver: Receiver[TransientEvent],
+        transient_event_sender: Sender[TransientEvent],
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
+        snapshot_chunk_sender: Sender[SnapshotChunk],
         download_command_sender: Sender[ForwarderDownloadCommand],
     ):
         self.node_id = node_id
@@ -134,7 +161,10 @@ class Master:
         self.command_task_mapping: dict[CommandId, TaskId] = {}
         self.command_receiver = command_receiver
         self.local_event_receiver = local_event_receiver
+        self.transient_event_receiver = transient_event_receiver
+        self.transient_event_sender = transient_event_sender
         self.global_event_sender = global_event_sender
+        self.snapshot_chunk_sender = snapshot_chunk_sender
         self.download_command_sender = download_command_sender
         self.event_sender = event_sender
         self._system_id = SystemId()
@@ -149,12 +179,16 @@ class Master:
         try:
             async with self._tg as tg:
                 tg.start_soon(self._event_processor)
+                tg.start_soon(self._transient_event_processor)
                 tg.start_soon(self._command_processor)
                 tg.start_soon(self._plan)
         finally:
             self._event_log.close()
             self.global_event_sender.close()
             self.local_event_receiver.close()
+            self.transient_event_receiver.close()
+            self.transient_event_sender.close()
+            self.snapshot_chunk_sender.close()
             self.command_receiver.close()
 
     async def shutdown(self):
@@ -381,7 +415,10 @@ class Master:
                             )
                             generated_events.extend(transition_events)
                         case SendInputChunk(chunk=chunk):
-                            generated_events.append(
+                            # Image-upload chunks are per-request transients —
+                            # publish on the transient channel rather than the
+                            # durable event log so they are not replayed.
+                            await self.transient_event_sender.send(
                                 InputChunkReceived(
                                     command_id=chunk.command_id,
                                     chunk=chunk,
@@ -439,14 +476,24 @@ class Master:
                                 InstanceLinkDeleted(link_id=command.link_id)
                             )
                         case RequestEventLog():
-                            # We should just be able to send everything, since other buffers will ignore old messages
-                            # rate limit to 1000 at a time
-                            end = min(command.since_idx + 1000, len(self._event_log))
+                            # Send the full requested range. Snapshot-based
+                            # bootstrap should keep this tail small; the soft
+                            # cap protects against pathologically large
+                            # responses if a node ever hits the no-snapshot
+                            # fallback path against a long-running cluster.
+                            end = min(
+                                command.since_idx + _MAX_EVENT_LOG_REPLAY_BATCH,
+                                len(self._event_log),
+                            )
                             for i, event in enumerate(
                                 self._event_log.read_range(command.since_idx, end),
                                 start=command.since_idx,
                             ):
                                 await self._send_event(IndexedEvent(idx=i, event=event))
+                        case RequestSnapshot():
+                            self._tg.start_soon(
+                                self._serve_snapshot, command.requester_node_id
+                            )
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except ValueError as e:
@@ -454,6 +501,14 @@ class Master:
 
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
+        # Workers emit NodeGatheredInfo via the InfoGatherer's memory poll
+        # roughly once per second. A 5s timeout is therefore ~5x the natural
+        # heartbeat rate — fast enough that topology updates feel live, with
+        # enough headroom to absorb a missed heartbeat or two without false
+        # positives. The tick interval bounds detection latency from above.
+        node_inactivity_timeout = timedelta(seconds=5)
+        tick_interval_seconds = 1.0
+
         while True:
             # kill broken instances
             connected_node_ids = set(self.state.topology.list_nodes())
@@ -468,11 +523,11 @@ class Master:
             # time out dead nodes
             for node_id, time in self.state.last_seen.items():
                 now = datetime.now(tz=timezone.utc)
-                if now - time > timedelta(seconds=30):
+                if now - time > node_inactivity_timeout:
                     logger.info(f"Manually removing node {node_id} due to inactivity")
                     await self.event_sender.send(NodeTimedOut(node_id=node_id))
 
-            await anyio.sleep(10)
+            await anyio.sleep(tick_interval_seconds)
 
     async def _event_processor(self) -> None:
         with self.local_event_receiver as local_events:
@@ -486,10 +541,6 @@ class Master:
                     local_event.origin,
                 )
                 for event in self._multi_buffer.drain():
-                    if isinstance(event, TracesCollected):
-                        await self._handle_traces_collected(event)
-                        continue
-
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
 
                     event = event.model_copy(
@@ -505,6 +556,59 @@ class Master:
 
                     self._event_log.append(event)
                     await self._send_event(indexed)
+
+    async def _serve_snapshot(self, requester_node_id: NodeId) -> None:
+        """Encode the master's current State and stream it as chunks.
+
+        Runs as a background task so the encode (which is bounded by State
+        size and CPU, not IO) doesn't block the command processor. The State
+        is captured by reference: it's a frozen Pydantic model, so the
+        encoder thread sees a consistent snapshot even as new events get
+        applied to `self.state` concurrently.
+        """
+        state = self.state
+        if state.last_event_applied_idx < 0:
+            logger.info(
+                f"RequestSnapshot from {requester_node_id} but master has no events "
+                f"yet; requester will fall back to full event-log replay"
+            )
+            return
+
+        body = await to_thread.run_sync(_encode_state_for_transfer, state)
+        sha256 = hashlib.sha256(body).hexdigest()
+        chunks = [
+            body[i : i + _SNAPSHOT_CHUNK_BYTES]
+            for i in range(0, len(body), _SNAPSHOT_CHUNK_BYTES)
+        ] or [b""]
+        transfer_id = SnapshotTransferId()
+
+        logger.info(
+            f"Serving snapshot to {requester_node_id}: "
+            f"idx={state.last_event_applied_idx}, "
+            f"{len(chunks)} chunk(s), {len(body)} bytes total"
+        )
+        for i, chunk in enumerate(chunks):
+            await self.snapshot_chunk_sender.send(
+                SnapshotChunk.from_data(
+                    data=chunk,
+                    transfer_id=transfer_id,
+                    requester_node_id=requester_node_id,
+                    session_id=self.session_id,
+                    schema_version=state.schema_version,
+                    last_event_applied_idx=state.last_event_applied_idx,
+                    chunk_index=i,
+                    total_chunks=len(chunks),
+                    sha256_hex=sha256,
+                )
+            )
+
+    async def _transient_event_processor(self) -> None:
+        """Aggregate per-rank `TracesCollected` into a `TracesMerged` once all
+        ranks for a task have reported in."""
+        with self.transient_event_receiver as transients:
+            async for event in transients:
+                if isinstance(event, TracesCollected):
+                    await self._handle_traces_collected(event)
 
     # This function is re-entrant, take care!
     async def _send_event(self, event: IndexedEvent):
@@ -536,7 +640,7 @@ class Master:
         for trace_data in self._pending_traces[task_id].values():
             all_trace_data.extend(trace_data)
 
-        await self.event_sender.send(
+        await self.transient_event_sender.send(
             TracesMerged(task_id=task_id, traces=all_trace_data)
         )
 

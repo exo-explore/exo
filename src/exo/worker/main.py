@@ -8,32 +8,39 @@ from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
+from exo.routing.event_router import EventRouter
+from exo.routing.snapshot_receiver import SnapshotReceiver
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
-from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
+from exo.shared.models.model_cards import (
+    ModelCard,
+    ModelId,
+    add_to_card_cache,
+    delete_custom_card,
+)
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
+    RequestSnapshot,
     StartDownload,
 )
-from exo.shared.types.common import CommandId, NodeId, SystemId
+from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
-    CustomModelCardAdded,
-    CustomModelCardDeleted,
     Event,
     IndexedEvent,
     InputChunkReceived,
-    InstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
     TaskCreated,
     TaskStatusUpdated,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
+    TransientEvent,
 )
 from exo.shared.types.multiaddr import Multiaddr
+from exo.shared.types.snapshots import SnapshotChunk
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     CancelTask,
@@ -59,14 +66,21 @@ from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
 from exo.worker.runner.supervisor import RunnerSupervisor
 
+_SNAPSHOT_FETCH_TIMEOUT_SECONDS = 30
+
 
 class Worker:
     def __init__(
         self,
         node_id: NodeId,
+        session_id: SessionId,
         *,
+        event_router: EventRouter,
         event_receiver: Receiver[IndexedEvent],
         event_sender: Sender[Event],
+        transient_event_receiver: Receiver[TransientEvent],
+        transient_event_sender: Sender[TransientEvent],
+        snapshot_chunk_receiver: Receiver[SnapshotChunk],
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
@@ -74,8 +88,13 @@ class Worker:
         api_port: int,
     ):
         self.node_id: NodeId = node_id
+        self.session_id: SessionId = session_id
+        self.event_router = event_router
         self.event_receiver = event_receiver
         self.event_sender = event_sender
+        self.transient_event_receiver = transient_event_receiver
+        self.transient_event_sender = transient_event_sender
+        self.snapshot_chunk_receiver = snapshot_chunk_receiver
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.api_port = api_port
@@ -95,6 +114,9 @@ class Worker:
         self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
             base=0.5, cap=10.0
         )
+        # Tracks the on-disk copies of custom model cards we've written. The
+        # reconciliation loop diffs this against state.custom_model_cards.
+        self._synced_custom_cards: dict[ModelId, ModelCard] = {}
         self._stopped: anyio.Event = anyio.Event()
 
     async def run(self):
@@ -105,20 +127,70 @@ class Worker:
 
         try:
             async with self._tg as tg:
-                tg.start_soon(info_gatherer.run)
-                tg.start_soon(self._forward_info, info_recv)
-                tg.start_soon(self.plan_step)
-                tg.start_soon(self._event_applier)
-                tg.start_soon(self._poll_connection_updates)
+                # Snapshot fetch runs inside the task group so shutdown()
+                # during the fetch (e.g. a master re-election arriving early)
+                # cancels cleanly. Events are queued by the EventRouter
+                # while we wait; if the master has no snapshot we fall
+                # through to the NACK-based event-log replay.
+                tg.start_soon(self._bootstrap_then_run, info_gatherer, info_recv)
         finally:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")
             self.event_sender.close()
+            self.transient_event_sender.close()
+            self.snapshot_chunk_receiver.close()
             self.command_sender.close()
             self.download_command_sender.close()
             for runner in self.runners.values():
                 runner.shutdown()
             self._stopped.set()
+
+    async def _bootstrap_then_run(
+        self, info_gatherer: InfoGatherer, info_recv: Receiver[GatheredInfo]
+    ) -> None:
+        await self._fetch_snapshot()
+        self._tg.start_soon(info_gatherer.run)
+        self._tg.start_soon(self._forward_info, info_recv)
+        self._tg.start_soon(self.plan_step)
+        self._tg.start_soon(self._event_applier)
+        self._tg.start_soon(self._transient_event_handler)
+        self._tg.start_soon(self._reconcile_instance_backoff)
+        self._tg.start_soon(self._reconcile_custom_cards)
+        self._tg.start_soon(self._poll_connection_updates)
+
+    async def _fetch_snapshot(self) -> None:
+        """Request a snapshot from the master and apply it before draining events.
+
+        We expect this to take well under a second on a healthy cluster. If
+        nothing arrives within `_SNAPSHOT_FETCH_TIMEOUT_SECONDS`, we proceed
+        with an empty state — the existing NACK loop will replay the entire
+        event log, which is slow but always correct.
+        """
+        receiver = SnapshotReceiver(self.node_id, self.session_id)
+        await self.command_sender.send(
+            ForwarderCommand(
+                origin=self._system_id,
+                command=RequestSnapshot(requester_node_id=self.node_id),
+            )
+        )
+
+        with anyio.move_on_after(_SNAPSHOT_FETCH_TIMEOUT_SECONDS):
+            with self.snapshot_chunk_receiver as chunks:
+                async for chunk in chunks:
+                    received = receiver.ingest(chunk)
+                    if received is not None:
+                        self.state = received.state
+                        self.event_router.set_buffer_start(
+                            received.last_event_applied_idx + 1
+                        )
+                        logger.info(
+                            f"Worker bootstrapped from snapshot at idx "
+                            f"{received.last_event_applied_idx}"
+                        )
+                        return
+        logger.info(
+            "No snapshot received before timeout; falling back to full event-log replay"
+        )
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -134,50 +206,85 @@ class Worker:
     async def _event_applier(self):
         with self.event_receiver as events:
             async for event in events:
-                # 2. for each event, apply it to the state
+                # Events queued before our snapshot was applied are no-ops:
+                # the snapshot already folded them in.
+                if event.idx <= self.state.last_event_applied_idx:
+                    continue
                 self.state = apply(self.state, event=event)
-                event = event.event
 
-                if isinstance(event, InstanceDeleted):
-                    self._instance_backoff.reset(event.instance_id)
-
-                # Buffer input image chunks for image editing
+    async def _transient_event_handler(self):
+        with self.transient_event_receiver as events:
+            async for event in events:
                 if isinstance(event, InputChunkReceived):
-                    cmd_id = event.command_id
-                    if cmd_id not in self.input_chunk_buffer:
-                        self.input_chunk_buffer[cmd_id] = {}
-                        self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
+                    self._absorb_input_chunk(event)
 
-                    self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
-                        event.chunk
+    async def _reconcile_instance_backoff(self):
+        """Drop backoff entries for instances no longer in state.
+
+        Reconciling from state (rather than reacting to InstanceDeleted) keeps
+        worker behaviour correct after snapshot-based catch-up, which may not
+        replay the deletion event at all.
+        """
+        while True:
+            await anyio.sleep(1)
+            live_instances = set(self.state.instances.keys())
+            for iid in self._instance_backoff.tracked_keys():
+                if iid not in live_instances:
+                    self._instance_backoff.reset(iid)
+
+    async def _reconcile_custom_cards(self):
+        """Make the on-disk custom model cards match `state.custom_model_cards`.
+
+        Adds and removes are driven by state diffs rather than event reactions
+        so that joining via snapshot (which skips historical events) still
+        leaves disk in sync.
+        """
+        while True:
+            await anyio.sleep(1)
+            target = dict(self.state.custom_model_cards)
+            for model_id, card in target.items():
+                if self._synced_custom_cards.get(model_id) == card:
+                    continue
+                try:
+                    await card.save_to_custom_dir()
+                    add_to_card_cache(card)
+                    self._synced_custom_cards[model_id] = card
+                except OSError as e:
+                    logger.opt(exception=e).warning(
+                        f"Failed to write custom model card {model_id}; will retry"
+                    )
+            for model_id in list(self._synced_custom_cards):
+                if model_id in target:
+                    continue
+                try:
+                    await delete_custom_card(model_id)
+                    self._synced_custom_cards.pop(model_id, None)
+                except OSError as e:
+                    logger.opt(exception=e).warning(
+                        f"Failed to delete custom model card {model_id}; will retry"
                     )
 
-                    if (
-                        len(self.input_chunk_buffer[cmd_id])
-                        == self.input_chunk_counts[cmd_id]
-                    ):
-                        per_image: defaultdict[int, list[InputImageChunk]] = (
-                            defaultdict(list)
-                        )
-                        for chunk in self.input_chunk_buffer[cmd_id].values():
-                            per_image[chunk.image_index].append(chunk)
-                        for chunks_for_image in per_image.values():
-                            sorted_chunks = sorted(
-                                chunks_for_image, key=lambda c: c.chunk_index
-                            )
-                            img = Base64Image("".join(c.data for c in sorted_chunks))
-                            self.image_cache[
-                                Base64ImageHash(
-                                    hashlib.sha256(img.encode("ascii")).hexdigest()
-                                )
-                            ] = img
+    def _absorb_input_chunk(self, event: InputChunkReceived) -> None:
+        """Buffer an image-upload chunk; once all chunks for a command have
+        arrived, reassemble each image and cache it by hash."""
+        cmd_id = event.command_id
+        if cmd_id not in self.input_chunk_buffer:
+            self.input_chunk_buffer[cmd_id] = {}
+            self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
 
-                if isinstance(event, CustomModelCardAdded):
-                    await event.model_card.save_to_custom_dir()
-                    add_to_card_cache(event.model_card)
+        self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = event.chunk
 
-                if isinstance(event, CustomModelCardDeleted):
-                    await delete_custom_card(event.model_id)
+        if len(self.input_chunk_buffer[cmd_id]) != self.input_chunk_counts[cmd_id]:
+            return
+
+        per_image: defaultdict[int, list[InputImageChunk]] = defaultdict(list)
+        for chunk in self.input_chunk_buffer[cmd_id].values():
+            per_image[chunk.image_index].append(chunk)
+        for chunks_for_image in per_image.values():
+            sorted_chunks = sorted(chunks_for_image, key=lambda c: c.chunk_index)
+            img = Base64Image("".join(c.data for c in sorted_chunks))
+            digest = Base64ImageHash(hashlib.sha256(img.encode("ascii")).hexdigest())
+            self.image_cache[digest] = img
 
     async def plan_step(self):
         while True:
@@ -370,12 +477,18 @@ class Worker:
         runner = RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
+            transient_event_sender=self.transient_event_sender.clone(),
         )
         self.runners[task.bound_instance.bound_runner_id] = runner
         self._tg.start_soon(runner.run)
         return runner
 
     async def _poll_connection_updates(self):
+        # Poll cadence trades off cluster-view freshness against ping load.
+        # 2s makes topology edge changes feel snappy on the dashboard while
+        # still being well above the per-probe timeout (5s) so we don't
+        # stack overlapping probes when peers are slow.
+        poll_interval_seconds = 2.0
         while True:
             edges = set(
                 conn.edge for conn in self.state.topology.out_edges(self.node_id)
@@ -418,4 +531,4 @@ class Worker:
                     logger.debug(f"ping failed to discover {conn=}")
                     await self.event_sender.send(TopologyEdgeDeleted(conn=conn))
 
-            await anyio.sleep(10)
+            await anyio.sleep(poll_interval_seconds)

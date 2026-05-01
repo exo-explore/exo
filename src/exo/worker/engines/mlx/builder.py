@@ -7,7 +7,7 @@ import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.common import ModelId
-from exo.shared.types.events import Event
+from exo.shared.types.events import Event, TransientEvent
 from exo.shared.types.tasks import TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
@@ -32,7 +32,7 @@ from .vision import VisionProcessor
 @dataclass
 class MlxBuilder(Builder):
     model_id: ModelId
-    event_sender: MpSender[Event]
+    event_sender: MpSender[Event | TransientEvent]
     cancel_receiver: MpReceiver[TaskId]
     inference_model: Model | None = None
     tokenizer: TokenizerWrapper | None = None
