@@ -10,6 +10,8 @@ Run with:
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
 from .helpers import ClusterInfo, make_client, place_and_wait
@@ -40,7 +42,15 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def playwright_page(single_node_cluster: ClusterInfo):
-    """Create a Playwright browser page pointed at the cluster's dashboard."""
+    """Create a Playwright browser page pointed at the cluster's dashboard.
+
+    Marks onboarding as complete before loading so the wizard doesn't interfere.
+    """
+    # Mark onboarding complete on the server so the dashboard skips the wizard.
+    client = make_client(single_node_cluster)
+    with contextlib.suppress(Exception):
+        client.request_json("POST", "/onboarding")
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1280, "height": 800})
@@ -87,11 +97,25 @@ class TestDashboard:
         )
 
     def test_dashboard_chat_inference(self, single_node_cluster: ClusterInfo):
-        """Full flow: place model via API, then use dashboard to chat."""
+        """Full flow: place model via API, then use dashboard to chat with it.
+
+        Selects the running instance in the dashboard before chatting to prevent
+        the dashboard's auto-launch logic from creating a different (larger) model.
+        """
+        from .helpers import DEFAULT_MODEL
+
         client = make_client(single_node_cluster)
 
         # Place model via API first (more reliable than clicking through UI)
         place_and_wait(client)
+
+        # Mark onboarding as complete on the server so the dashboard skips the
+        # onboarding wizard (which can auto-launch a different model).
+        with contextlib.suppress(Exception):
+            client.request_json("POST", "/onboarding")
+
+        # The model name as it appears in the dashboard instance card
+        model_short_name = DEFAULT_MODEL.split("/")[-1]  # Llama-3.2-1B-Instruct-4bit
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -101,8 +125,15 @@ class TestDashboard:
 
             page.screenshot(path="/tmp/dashboard_before_chat.png")
 
-            # Try to find and interact with chat input
-            # Note: selectors may need adjustment based on actual dashboard DOM
+            # Click the running instance card to select it as the chat model.
+            # This prevents the chat auto-launch from picking a different model.
+            instance_card = page.locator(
+                f'[role="button"]:has-text("{model_short_name}")'
+            ).first
+            if instance_card.count() > 0 and instance_card.is_visible():
+                instance_card.click()
+                page.wait_for_timeout(1000)
+
             chat_input = page.locator("textarea").first
             if chat_input.is_visible():
                 chat_input.fill("Say hello")
