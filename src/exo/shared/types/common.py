@@ -1,10 +1,29 @@
-from typing import Any, Self
+from typing import Any, Literal, Self
 from uuid import uuid4
 
 from pydantic import GetCoreSchemaHandler, field_validator
 from pydantic_core import CoreSchema, core_schema
 
 from exo.utils.pydantic_ext import FrozenModel
+
+ModelSourceKind = Literal[
+    "exo",
+    "huggingface",
+    "lmstudio",
+    "ollama",
+    "llamacpp",
+]
+"""Identifier for where a locally-available model came from.
+
+- ``exo``: model lives in one of ``EXO_MODELS_DIRS`` and is managed by exo's own downloader.
+- ``huggingface``: standard HF cache (``~/.cache/huggingface/hub/``), shared with mlx-lm and modern llama.cpp ``-hf``.
+- ``lmstudio``: LM Studio's local library (``~/.lmstudio/models/{publisher}/{model}/``).
+- ``ollama``: Ollama's content-addressed store (``~/.ollama/models/manifests/`` + ``blobs/``).
+- ``llamacpp``: llama.cpp's standalone GGUF cache.
+"""
+
+ModelFileFormat = Literal["safetensors", "mlx", "gguf"]
+"""On-disk weight format for a discovered model."""
 
 
 class Id(str):

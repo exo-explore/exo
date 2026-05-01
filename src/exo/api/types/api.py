@@ -6,7 +6,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 from exo.shared.models.model_cards import ModelCard, ModelId
-from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.common import CommandId, ModelSourceKind, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.text_generation import ReasoningDialect, ReasoningEffort
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
@@ -449,6 +449,20 @@ class CancelDownloadParams(FrozenModel):
 
 class CancelDownloadResponse(FrozenModel):
     command_id: CommandId
+
+
+class SourceInfo(FrozenModel):
+    kind: ModelSourceKind
+    display_name: str
+    available: bool
+
+
+class SourcesResponse(FrozenModel):
+    sources: list[SourceInfo]
+
+
+class RescanSourcesResponse(FrozenModel):
+    triggered: bool
 
 
 class TraceEventResponse(FrozenModel):

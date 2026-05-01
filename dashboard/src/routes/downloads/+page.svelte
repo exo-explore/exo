@@ -5,12 +5,15 @@
   import {
     topologyData,
     downloads,
+    localModels,
     nodeDisk,
     refreshState,
     lastUpdate as lastUpdateStore,
     startDownload,
     cancelDownload,
     deleteDownload,
+    type ModelSourceKind,
+    type RawLocalModelEntry,
   } from "$lib/stores/app.svelte";
   import {
     getDownloadTag,
@@ -20,7 +23,12 @@
   import HeaderNav from "$lib/components/HeaderNav.svelte";
 
   type CellStatus =
-    | { kind: "completed"; totalBytes: number; modelDirectory?: string }
+    | {
+        kind: "completed";
+        totalBytes: number;
+        modelDirectory?: string;
+        sources: Set<ModelSourceKind>;
+      }
     | {
         kind: "downloading";
         percentage: number;
@@ -29,15 +37,43 @@
         speed: number;
         etaMs: number;
         modelDirectory?: string;
+        sources: Set<ModelSourceKind>;
       }
     | {
         kind: "pending";
         downloaded: number;
         total: number;
         modelDirectory?: string;
+        sources: Set<ModelSourceKind>;
       }
-    | { kind: "failed"; modelDirectory?: string }
-    | { kind: "not_present" };
+    | { kind: "failed"; modelDirectory?: string; sources: Set<ModelSourceKind> }
+    | {
+        // External: discovered by a non-exo source (LM Studio, Ollama, …) and not
+        // currently being managed by exo's downloader.
+        kind: "external";
+        totalBytes: number;
+        modelDirectory?: string;
+        sources: Set<ModelSourceKind>;
+        format: "safetensors" | "mlx" | "gguf";
+        loadable: boolean;
+      }
+    | { kind: "not_present"; sources: Set<ModelSourceKind> };
+
+  const SOURCE_LABELS: Record<ModelSourceKind, string> = {
+    exo: "exo",
+    huggingface: "HF",
+    lmstudio: "LM Studio",
+    ollama: "Ollama",
+    llamacpp: "llama.cpp",
+  };
+
+  const SOURCE_COLORS: Record<ModelSourceKind, string> = {
+    exo: "bg-exo-yellow/20 text-exo-yellow",
+    huggingface: "bg-orange-500/20 text-orange-300",
+    lmstudio: "bg-purple-500/20 text-purple-300",
+    ollama: "bg-blue-500/20 text-blue-300",
+    llamacpp: "bg-pink-500/20 text-pink-300",
+  };
 
   type ModelCardInfo = {
     family: string;
@@ -124,8 +160,9 @@
   }
 
   const CELL_PRIORITY: Record<CellStatus["kind"], number> = {
-    completed: 4,
-    downloading: 3,
+    completed: 5,
+    downloading: 4,
+    external: 3,
     pending: 2,
     failed: 1,
     not_present: 0,
@@ -175,19 +212,31 @@
     return { prettyName, card };
   }
 
+  const localModelsData = $derived(localModels());
+
   let modelRows = $state<ModelRow[]>([]);
   let nodeColumns = $state<NodeColumn[]>([]);
   let infoRow = $state<ModelRow | null>(null);
+  let sourceFilter = $state<ModelSourceKind | "all">("all");
 
   $effect(() => {
     try {
-      if (!downloadsData || Object.keys(downloadsData).length === 0) {
+      const downloadsEmpty =
+        !downloadsData || Object.keys(downloadsData).length === 0;
+      const localModelsEmpty =
+        !localModelsData || Object.keys(localModelsData).length === 0;
+      if (downloadsEmpty && localModelsEmpty) {
         modelRows = [];
         nodeColumns = [];
         return;
       }
 
-      const allNodeIds = Object.keys(downloadsData);
+      const allNodeIds = Array.from(
+        new Set([
+          ...Object.keys(downloadsData ?? {}),
+          ...Object.keys(localModelsData ?? {}),
+        ]),
+      );
       const columns: NodeColumn[] = allNodeIds.map((nodeId) => {
         const diskInfo = nodeDiskData?.[nodeId];
         return {
@@ -200,7 +249,9 @@
 
       const rowMap = new Map<string, ModelRow>();
 
-      for (const [nodeId, nodeDownloads] of Object.entries(downloadsData)) {
+      for (const [nodeId, nodeDownloads] of Object.entries(
+        downloadsData ?? {},
+      )) {
         const entries = Array.isArray(nodeDownloads)
           ? nodeDownloads
           : nodeDownloads && typeof nodeDownloads === "object"
@@ -234,10 +285,14 @@
           const modelDirectory =
             ((payload.model_directory ?? payload.modelDirectory) as string) ||
             undefined;
+          // Active exo-managed downloads are always source=exo; the local-model
+          // merge below extends `sources` with any other sources hosting the same
+          // model on this node.
+          const sources = new Set<ModelSourceKind>(["exo"]);
           let cell: CellStatus;
           if (tag === "DownloadCompleted") {
             const totalBytes = getBytes(payload.total);
-            cell = { kind: "completed", totalBytes, modelDirectory };
+            cell = { kind: "completed", totalBytes, modelDirectory, sources };
           } else if (tag === "DownloadOngoing") {
             const rawProgress =
               payload.download_progress ?? payload.downloadProgress ?? {};
@@ -257,9 +312,10 @@
               speed,
               etaMs,
               modelDirectory,
+              sources,
             };
           } else if (tag === "DownloadFailed") {
-            cell = { kind: "failed", modelDirectory };
+            cell = { kind: "failed", modelDirectory, sources };
           } else {
             const downloaded = getBytes(
               payload.downloaded ??
@@ -274,6 +330,7 @@
               downloaded,
               total,
               modelDirectory,
+              sources,
             };
           }
 
@@ -284,13 +341,49 @@
         }
       }
 
+      // Merge local_models. Each entry either augments an existing exo-managed
+      // cell (adding to `sources`) or creates an "external" cell when this is the
+      // only place the model lives on this node.
+      for (const [nodeId, entries] of Object.entries(localModelsData ?? {})) {
+        if (!Array.isArray(entries)) continue;
+        for (const entry of entries as RawLocalModelEntry[]) {
+          const modelId = entry.matchedModelId ?? entry.externalId;
+          let row = rowMap.get(modelId);
+          if (!row) {
+            row = {
+              modelId,
+              prettyName: null,
+              cells: {},
+              shardMetadata: null,
+              modelCard: null,
+            };
+            rowMap.set(modelId, row);
+          }
+          const existing = row.cells[nodeId];
+          const totalBytes = entry.sizeBytes?.inBytes ?? 0;
+          if (existing && existing.kind !== "not_present") {
+            existing.sources.add(entry.source);
+            continue;
+          }
+          row.cells[nodeId] = {
+            kind: "external",
+            totalBytes,
+            modelDirectory: entry.path,
+            sources: new Set<ModelSourceKind>([entry.source]),
+            format: entry.format,
+            loadable: entry.loadableWithMlx,
+          };
+        }
+      }
+
       function rowSortKey(row: ModelRow): number {
-        // in progress (4) -> completed (3) -> paused (2) -> not started (1) -> not present (0)
+        // downloading (5) -> completed (4) -> external (3) -> paused (2) -> not started (1) -> not present (0)
         let best = 0;
         for (const cell of Object.values(row.cells)) {
           let score = 0;
-          if (cell.kind === "downloading") score = 4;
-          else if (cell.kind === "completed") score = 3;
+          if (cell.kind === "downloading") score = 5;
+          else if (cell.kind === "completed") score = 4;
+          else if (cell.kind === "external") score = 3;
           else if (cell.kind === "pending" && cell.downloaded > 0)
             score = 2; // paused
           else if (cell.kind === "pending" || cell.kind === "failed") score = 1; // not started
@@ -302,35 +395,51 @@
       function totalCompletedBytes(row: ModelRow): number {
         let total = 0;
         for (const cell of Object.values(row.cells)) {
-          if (cell.kind === "completed") total += cell.totalBytes;
+          if (cell.kind === "completed" || cell.kind === "external")
+            total += cell.totalBytes;
         }
         return total;
       }
 
-      const rows = Array.from(rowMap.values()).sort((a, b) => {
-        const aPriority = rowSortKey(a);
-        const bPriority = rowSortKey(b);
-        if (aPriority !== bPriority) return bPriority - aPriority;
-        // Within completed or paused, sort by biggest size first
-        if (aPriority === 3 && bPriority === 3) {
-          const sizeDiff = totalCompletedBytes(b) - totalCompletedBytes(a);
-          if (sizeDiff !== 0) return sizeDiff;
+      function rowMatchesSourceFilter(row: ModelRow): boolean {
+        if (sourceFilter === "all") return true;
+        for (const cell of Object.values(row.cells)) {
+          if (
+            "sources" in cell &&
+            (cell.sources as Set<ModelSourceKind>).has(sourceFilter)
+          ) {
+            return true;
+          }
         }
-        if (aPriority === 2 && bPriority === 2) {
-          const aSize = Math.max(
-            ...Object.values(a.cells).map((c) =>
-              c.kind === "pending" ? c.total : 0,
-            ),
-          );
-          const bSize = Math.max(
-            ...Object.values(b.cells).map((c) =>
-              c.kind === "pending" ? c.total : 0,
-            ),
-          );
-          if (aSize !== bSize) return bSize - aSize;
-        }
-        return a.modelId.localeCompare(b.modelId);
-      });
+        return false;
+      }
+
+      const rows = Array.from(rowMap.values())
+        .filter(rowMatchesSourceFilter)
+        .sort((a, b) => {
+          const aPriority = rowSortKey(a);
+          const bPriority = rowSortKey(b);
+          if (aPriority !== bPriority) return bPriority - aPriority;
+          // Within completed or paused, sort by biggest size first
+          if (aPriority === 3 && bPriority === 3) {
+            const sizeDiff = totalCompletedBytes(b) - totalCompletedBytes(a);
+            if (sizeDiff !== 0) return sizeDiff;
+          }
+          if (aPriority === 2 && bPriority === 2) {
+            const aSize = Math.max(
+              ...Object.values(a.cells).map((c) =>
+                c.kind === "pending" ? c.total : 0,
+              ),
+            );
+            const bSize = Math.max(
+              ...Object.values(b.cells).map((c) =>
+                c.kind === "pending" ? c.total : 0,
+              ),
+            );
+            if (aSize !== bSize) return bSize - aSize;
+          }
+          return a.modelId.localeCompare(b.modelId);
+        });
 
       modelRows = rows;
       nodeColumns = columns;
@@ -403,6 +512,20 @@
   </button>
 {/snippet}
 
+{#snippet sourceBadges(sources: Set<ModelSourceKind>)}
+  <div class="flex flex-wrap gap-1 justify-center">
+    {#each Array.from(sources) as src}
+      <span
+        class="text-[9px] uppercase tracking-wider px-1.5 py-px rounded font-medium {SOURCE_COLORS[
+          src
+        ]}"
+      >
+        {SOURCE_LABELS[src]}
+      </span>
+    {/each}
+  </div>
+{/snippet}
+
 <div class="min-h-screen bg-exo-dark-gray text-white">
   <HeaderNav showHome={true} />
   <div class="max-w-7xl mx-auto px-4 lg:px-8 py-6 space-y-6">
@@ -411,10 +534,11 @@
         <h1
           class="text-2xl font-mono tracking-[0.2em] uppercase text-exo-yellow"
         >
-          Downloads
+          Models
         </h1>
         <p class="text-sm text-exo-light-gray">
-          Overview of models on each node
+          Models available on each node — including those installed via LM
+          Studio, Ollama, llama.cpp and HuggingFace.
         </p>
       </div>
       <div class="flex items-center gap-3">
@@ -432,6 +556,27 @@
             : "n/a"}
         </div>
       </div>
+    </div>
+
+    <!-- Source filter chips -->
+    <div class="flex items-center gap-2 flex-wrap text-xs font-mono">
+      <span class="text-exo-light-gray uppercase tracking-wider text-[10px]"
+        >Source:</span
+      >
+      {#each ["all", "exo", "huggingface", "lmstudio", "ollama", "llamacpp"] as filter}
+        {@const active = sourceFilter === filter}
+        <button
+          type="button"
+          class="px-2 py-1 rounded border transition-colors uppercase tracking-wider text-[10px] {active
+            ? 'border-exo-yellow text-exo-yellow bg-exo-yellow/10'
+            : 'border-exo-medium-gray/40 text-exo-light-gray hover:border-exo-yellow/50'}"
+          onclick={() =>
+            (sourceFilter =
+              filter === "all" ? "all" : (filter as ModelSourceKind))}
+        >
+          {filter === "all" ? "All" : SOURCE_LABELS[filter as ModelSourceKind]}
+        </button>
+      {/each}
     </div>
 
     {#if !hasDownloads}
@@ -519,7 +664,10 @@
                 {#each nodeColumns as col}
                   {@const cell = row.cells[col.nodeId] ?? {
                     kind: "not_present" as const,
+                    sources: new Set<ModelSourceKind>(),
                   }}
+                  {@const exoManaged =
+                    "sources" in cell && cell.sources.has("exo")}
                   <td class="px-4 py-3 text-center align-middle">
                     {#if cell.kind === "completed"}
                       <div
@@ -540,7 +688,39 @@
                         <span class="text-xs text-white/70"
                           >{formatBytes(cell.totalBytes)}</span
                         >
-                        {@render deleteButton(col.nodeId, row.modelId)}
+                        {@render sourceBadges(cell.sources)}
+                        {#if exoManaged}
+                          {@render deleteButton(col.nodeId, row.modelId)}
+                        {/if}
+                      </div>
+                    {:else if cell.kind === "external"}
+                      <div
+                        class="flex flex-col items-center gap-1"
+                        title={cell.loadable
+                          ? `Loadable in exo (${formatBytes(cell.totalBytes)})`
+                          : `${cell.format.toUpperCase()} — not yet loadable in exo (${formatBytes(cell.totalBytes)})`}
+                      >
+                        <svg
+                          class="w-7 h-7 {cell.loadable
+                            ? 'text-blue-300'
+                            : 'text-white/40'}"
+                          viewBox="0 0 20 20"
+                          fill="currentColor"
+                        >
+                          <path
+                            d="M3 5a2 2 0 012-2h3.5l1 1H15a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V5z"
+                          />
+                        </svg>
+                        <span class="text-[10px] text-white/70"
+                          >{formatBytes(cell.totalBytes)}</span
+                        >
+                        {@render sourceBadges(cell.sources)}
+                        {#if !cell.loadable}
+                          <span
+                            class="text-[9px] uppercase tracking-wider text-white/40"
+                            >{cell.format} · n/a</span
+                          >
+                        {/if}
                       </div>
                     {:else if cell.kind === "downloading"}
                       <div
@@ -579,6 +759,7 @@
                           </button>
                           {@render deleteButton(col.nodeId, row.modelId)}
                         </div>
+                        {@render sourceBadges(cell.sources)}
                       </div>
                     {:else if cell.kind === "pending"}
                       <div

@@ -21,6 +21,7 @@ from exo.shared.types.profiling import (
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
+from exo.shared.types.worker.local_models import LocalModelEntry
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.pydantic_ext import FrozenModel
 
@@ -44,6 +45,7 @@ class State(FrozenModel):
     instances: Mapping[InstanceId, Instance] = {}
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
+    local_models: Mapping[NodeId, Sequence[LocalModelEntry]] = {}
     tasks: Mapping[TaskId, Task] = {}
     last_seen: Mapping[NodeId, datetime] = {}
     topology: Topology = Field(default_factory=Topology)

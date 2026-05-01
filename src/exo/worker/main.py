@@ -58,6 +58,7 @@ from exo.utils.keyed_backoff import KeyedBackoff
 from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
 from exo.worker.runner.supervisor import RunnerSupervisor
+from exo.worker.source_scanner import SourceScanner
 
 
 class Worker:
@@ -103,6 +104,8 @@ class Worker:
         info_send, info_recv = channel[GatheredInfo]()
         info_gatherer: InfoGatherer = InfoGatherer(info_send)
 
+        source_scanner = SourceScanner(self.node_id, self.event_sender)
+
         try:
             async with self._tg as tg:
                 tg.start_soon(info_gatherer.run)
@@ -110,6 +113,7 @@ class Worker:
                 tg.start_soon(self.plan_step)
                 tg.start_soon(self._event_applier)
                 tg.start_soon(self._poll_connection_updates)
+                tg.start_soon(source_scanner.run)
         finally:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")

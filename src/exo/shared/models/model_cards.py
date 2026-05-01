@@ -349,7 +349,12 @@ async def fetch_config_data(model_id: ModelId) -> ConfigData:
 
 
 async def fetch_safetensors_size(model_id: ModelId) -> Memory:
-    """Gets model size from safetensors index or falls back to HF API."""
+    """Gets model size from the safetensors index or, for single-file models, the HF API.
+
+    Single-file safetensors models (e.g. ``Qwen/Qwen3-0.6B``) ship just ``model.safetensors``
+    with no sharding index. We treat the missing index as a signal to ask HF directly via
+    ``model_info().safetensors.total`` rather than as an error.
+    """
     from exo.download.download_utils import (
         download_file_with_retry,
         resolve_model_dir,
@@ -357,15 +362,23 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
     from exo.shared.types.worker.downloads import ModelSafetensorsIndex
 
     target_dir = await resolve_model_dir(model_id)
-    index_path = await download_file_with_retry(
-        model_id,
-        "main",
-        "model.safetensors.index.json",
-        target_dir,
-        lambda curr_bytes, total_bytes, is_renamed: logger.debug(
-            f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
-        ),
-    )
+    try:
+        index_path = await download_file_with_retry(
+            model_id,
+            "main",
+            "model.safetensors.index.json",
+            target_dir,
+            lambda curr_bytes, total_bytes, is_renamed: logger.debug(
+                f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
+            ),
+        )
+    except FileNotFoundError:
+        # Single-file model — no index on the remote.
+        info = model_info(model_id)
+        if info.safetensors is None:
+            raise ValueError(f"No safetensors info found for {model_id}") from None
+        return Memory.from_bytes(info.safetensors.total)
+
     async with aiofiles.open(index_path, "r") as f:
         index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
 
