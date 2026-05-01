@@ -212,6 +212,53 @@ class TestThinkingModelsFinishReason:
         ]
         assert len(last_gen) == 1
         assert last_gen[0].is_thinking is False
+        # Finish chunk rides the content channel so consumers reading only
+        # content and finish_reason still see the terminating delta, but its
+        # text must be empty so the last mid-thinking token does not leak.
+        assert last_gen[0].text == ""
+        gens = [r for r in results if isinstance(r, GenerationResponse)]
+        thinking_text = "".join(
+            r.text for r in gens if r.is_thinking and r.finish_reason is None
+        )
+        content_text = "".join(
+            r.text for r in gens if not r.is_thinking and r.finish_reason is None
+        )
+        assert "more reasoning" in thinking_text
+        assert content_text == ""
+
+    def test_finish_reason_during_thinking_no_content_leak(self):
+        """Generation ends inside <think>...</think> with no closing tag.
+
+        The token text must reach reasoning_content; the finish_reason rides
+        a separate empty-text chunk on the content channel.
+        """
+        tokens = [
+            _make_response("Let me", 0),
+            _make_response(" think", 1),
+            _make_response(" carefully", 2),
+            _make_response(" the", 3, finish_reason="length"),
+        ]
+        results = _step_until_finish(
+            parse_thinking_models(
+                _queue_source(tokens),
+                think_start="<think>",
+                think_end="</think>",
+                starts_in_thinking=True,
+            )
+        )
+        gens = [r for r in results if isinstance(r, GenerationResponse)]
+        thinking_text = "".join(
+            r.text for r in gens if r.is_thinking and r.finish_reason is None
+        )
+        content_text = "".join(r.text for r in gens if not r.is_thinking)
+        finish_chunks = [r for r in gens if r.finish_reason is not None]
+
+        assert thinking_text == "Let me think carefully the"
+        assert content_text == ""
+        assert len(finish_chunks) == 1
+        assert finish_chunks[0].is_thinking is False
+        assert finish_chunks[0].text == ""
+        assert finish_chunks[0].finish_reason == "length"
 
     def test_finish_reason_after_thinking(self):
         tokens = [
