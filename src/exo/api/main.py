@@ -964,7 +964,11 @@ class API:
             )
         return resolved_model
 
-    def stream_events(self) -> StreamingResponse:
+    def stream_events(
+        self,
+        since: int = Query(default=0, ge=0),
+        limit: int | None = Query(default=None, ge=0),
+    ) -> StreamingResponse:
         def _generate_json_array(events: Iterable[Event]) -> Iterable[str]:
             yield "["
             first = True
@@ -975,9 +979,23 @@ class API:
                 yield event.model_dump_json()
             yield "]"
 
+        log_count = len(self._event_log)
+        if since == 0 and limit is None:
+            # Backward-compatible path: full ledger dump (matches pre-cursor behavior).
+            return StreamingResponse(
+                _generate_json_array(self._event_log.read_all()),
+                media_type="application/json",
+                headers={"X-EXO-Last-Idx": str(log_count)},
+            )
+        end = log_count if limit is None else min(since + limit, log_count)
+        if since >= end:
+            events_iter: Iterable[Event] = iter(())
+        else:
+            events_iter = self._event_log.read_range(since, end)
         return StreamingResponse(
-            _generate_json_array(self._event_log.read_all()),
+            _generate_json_array(events_iter),
             media_type="application/json",
+            headers={"X-EXO-Last-Idx": str(end)},
         )
 
     async def get_image(self, image_id: str) -> FileResponse:
