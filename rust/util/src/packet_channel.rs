@@ -1,90 +1,178 @@
 use std::io::{self, ErrorKind, IoSlice, IoSliceMut};
 use std::mem::{MaybeUninit, size_of};
 
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 use rustix::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd as _, IntoRawFd as _, OwnedFd, RawFd};
 use rustix::io::{FdFlags, fcntl_getfd, fcntl_setfd, retry_on_intr};
 use rustix::net::{
     AddressFamily, RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags,
-    SendAncillaryBuffer, SendAncillaryMessage, SendFlags, SocketFlags, SocketType, recvmsg,
-    sendmsg, socketpair,
+    SendAncillaryBuffer, SendAncillaryMessage, SendFlags, SocketType, recvmsg, sendmsg, socketpair,
 };
-use zerocopy::byteorder::{NetworkEndian, U64};
+use zerocopy::byteorder::{NetworkEndian, U16, U64};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
-const CHANNELS_PER_FRAME: usize = 1;
-const FRAME_HEADER_LEN: usize = size_of::<FrameHeader>();
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+compile_error!("packet_channel currently supports only Linux and macOS");
 
-/// Default maximum byte-frame payload accepted by [`UnixPacketChannel::recv`].
+const FRAME_MARKER: u8 = b'P';
+const HEADER_MAGIC: [u8; 4] = *b"EXPC";
+const HEADER_VERSION: u8 = 1;
+const HEADER_LEN: usize = size_of::<FrameHeader>();
+const MAX_CHANNELS_PER_PACKET: usize = 16;
+
+/// Default maximum byte payload accepted by [`UnixPacketChannel::recv`].
 ///
 /// This is a protocol safety limit, not an expected message size. Increase it
 /// when the application legitimately needs to pass larger serialized objects.
 pub const DEFAULT_MAX_PAYLOAD_SIZE: usize = 64 * 1024 * 1024;
 
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, IntoPrimitive, TryFromPrimitive)]
-enum FrameKind {
-    Bytes = 0,
-    Channel = 1,
-}
-
 #[repr(C, packed)]
 #[derive(Clone, Copy, FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned)]
 struct FrameHeader {
-    raw_kind: u8,
+    magic: [u8; 4],
+    version: u8,
+    flags: u8,
+    channel_count: U16<NetworkEndian>,
     payload_len: U64<NetworkEndian>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DecodedFrameHeader {
+    payload_len: usize,
+    channel_count: usize,
+}
+
 impl FrameHeader {
-    fn new(kind: FrameKind, payload_len: usize) -> io::Result<Self> {
+    fn new(payload_len: usize, channel_count: usize) -> io::Result<Self> {
+        if channel_count > MAX_CHANNELS_PER_PACKET {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "packet carries too many channel descriptors",
+            ));
+        }
+
         let payload_len = u64::try_from(payload_len).map_err(|_| {
             io::Error::new(
                 ErrorKind::InvalidInput,
                 "payload length does not fit in the wire header",
             )
         })?;
+        let channel_count = u16::try_from(channel_count).map_err(|_| {
+            io::Error::new(
+                ErrorKind::InvalidInput,
+                "channel count does not fit in the wire header",
+            )
+        })?;
 
         Ok(Self {
-            raw_kind: kind.into(),
+            magic: HEADER_MAGIC,
+            version: HEADER_VERSION,
+            flags: 0,
+            channel_count: U16::new(channel_count),
             payload_len: U64::new(payload_len),
         })
     }
 
-    fn kind(self) -> io::Result<FrameKind> {
-        FrameKind::try_from(self.raw_kind)
-            .map_err(|_| io::Error::new(ErrorKind::InvalidData, "invalid frame kind"))
-    }
+    fn decode(bytes: &[u8; HEADER_LEN]) -> io::Result<DecodedFrameHeader> {
+        let header = Self::read_from_bytes(bytes)
+            .map_err(|_| io::Error::new(ErrorKind::InvalidData, "invalid packet header"))?;
+        if header.magic != HEADER_MAGIC {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "invalid packet header magic",
+            ));
+        }
+        if header.version != HEADER_VERSION {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "unsupported packet header version",
+            ));
+        }
+        if header.flags != 0 {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "packet header reserved flags are non-zero",
+            ));
+        }
 
-    fn payload_len(self) -> io::Result<usize> {
-        usize::try_from(self.payload_len.get()).map_err(|_| {
+        let channel_count = usize::from(header.channel_count.get());
+        let payload_len = usize::try_from(header.payload_len.get()).map_err(|_| {
             io::Error::new(
                 ErrorKind::InvalidData,
                 "payload length does not fit on this platform",
             )
+        })?;
+
+        if channel_count > MAX_CHANNELS_PER_PACKET {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "packet carries too many channel descriptors",
+            ));
+        }
+
+        Ok(DecodedFrameHeader {
+            payload_len,
+            channel_count,
         })
     }
 }
 
-/// One framed message received from a [`UnixPacketChannel`].
+/// One logical packet received from a [`UnixPacketChannel`].
+///
+/// The byte payload and the attached channel descriptors are delivered together.
+/// This mirrors Unix socket ancillary data: ordinary bytes are carried in the
+/// stream, while descriptors are attached to a specific byte in that stream.
 #[derive(Debug)]
-pub enum Packet {
-    Bytes(Vec<u8>),
-    Channel(UnixPacketChannel),
+pub struct Packet {
+    pub bytes: Vec<u8>,
+    pub channels: Vec<UnixPacketChannel>,
 }
 
-/// A connected Unix-domain, framed byte/channel transport.
+impl Packet {
+    #[must_use]
+    #[inline]
+    pub const fn new(bytes: Vec<u8>, channels: Vec<UnixPacketChannel>) -> Self {
+        Self { bytes, channels }
+    }
+
+    #[must_use]
+    #[inline]
+    pub const fn bytes(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            channels: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn channel(channel: UnixPacketChannel) -> Self {
+        Self {
+            bytes: Vec::new(),
+            channels: vec![channel],
+        }
+    }
+}
+
+/// A connected Unix-domain byte/channel transport.
 ///
-/// This is built on an unnamed `AF_UNIX`/`SOCK_STREAM` socket. The stream is
-/// framed with a small fixed zerocopy header, so byte payloads are not limited
-/// by kernel packet size. Channel endpoints are carried with Unix ancillary
-/// data on zero-length channel frames.
+/// This uses one unnamed `AF_UNIX`/`SOCK_STREAM` socket. Each logical packet is
+/// framed as:
+///
+/// 1. a one-byte marker carrying any `SCM_RIGHTS` ancillary descriptors,
+/// 2. a fixed-size header containing byte length and descriptor count,
+/// 3. the byte payload.
+///
+/// Keeping descriptor transfer on a single marker byte avoids retrying
+/// descriptor sends after a partial stream write, while `SOCK_STREAM` keeps
+/// payload size independent of kernel datagram limits and works on Linux and
+/// macOS.
 #[derive(Debug)]
 pub struct UnixPacketChannel {
     fd: OwnedFd,
 }
 
 impl UnixPacketChannel {
-    /// Create a connected pair of unnamed Unix framed channels.
+    /// Create a connected pair of unnamed Unix packet channels.
     ///
     /// # Errors
     ///
@@ -94,63 +182,47 @@ impl UnixPacketChannel {
         let (left, right) = socketpair(
             AddressFamily::UNIX,
             SocketType::STREAM,
-            SocketFlags::empty(),
+            socket_creation_flags(),
             None,
         )
-        .map_err(io::Error::from)?;
+        .map_err(io::Error::from)
+        .map_err(|err| annotate_io_error("socketpair(AF_UNIX, SOCK_STREAM)", &err))?;
 
-        // SAFETY: `socketpair` created both descriptors as connected
-        // `AF_UNIX`/`SOCK_STREAM` endpoints, and `OwnedFd` gives this code
-        // unique ownership of each descriptor.
-        let left = unsafe { Self::from_owned_fd(left)? };
-        // SAFETY: Same reasoning as above for the other end of the socketpair.
-        let right = unsafe { Self::from_owned_fd(right)? };
+        let left = Self::from_owned_fd(left)?;
+        let right = Self::from_owned_fd(right)?;
 
         Ok((left, right))
     }
 
-    /// Wrap an owned file descriptor as a Unix framed channel.
-    ///
-    /// This constructor trusts the caller that `fd` is an `AF_UNIX`/
-    /// `SOCK_STREAM` endpoint using this framing protocol. Use
-    /// [`Self::from_checked_owned_fd`] when the descriptor comes from an
-    /// untrusted source and the host permits socket option inspection.
+    /// Wrap an owned file descriptor after validating it as a connected
+    /// `AF_UNIX`/`SOCK_STREAM` socket endpoint.
     ///
     /// # Errors
     ///
-    /// Returns an error if the descriptor cannot be configured.
-    ///
-    /// # Safety
-    ///
-    /// `fd` must be an `AF_UNIX`/`SOCK_STREAM` endpoint intended to be used by
-    /// this protocol. Use [`Self::from_checked_owned_fd`] when that invariant
-    /// has not already been established.
+    /// Returns an error if the descriptor is not a connected Unix stream socket or cannot
+    /// be configured.
     #[inline]
-    pub unsafe fn from_owned_fd(fd: OwnedFd) -> io::Result<Self> {
-        configure_socket(&fd)?;
+    pub fn from_owned_fd(fd: OwnedFd) -> io::Result<Self> {
+        set_close_on_exec(&fd)?;
+        validate_channel_fd(&fd)?;
+        #[cfg(target_os = "macos")]
+        configure_validated_socket(&fd)?;
         Ok(Self { fd })
     }
 
-    /// Wrap an owned file descriptor after validating it as a stream socket.
-    ///
-    /// The descriptor is checked as a `SOCK_STREAM` socket before being
-    /// accepted. This intentionally does not validate `SO_DOMAIN`, because some
-    /// container/sandbox profiles reject that `getsockopt` even for valid
-    /// descriptors.
+    /// Compatibility alias for [`Self::from_owned_fd`].
     ///
     /// # Errors
     ///
-    /// Returns an error if the descriptor is not a stream socket or cannot be
-    /// configured.
+    /// Returns an error if the descriptor is not a connected Unix stream socket or cannot
+    /// be configured.
     #[inline]
     pub fn from_checked_owned_fd(fd: OwnedFd) -> io::Result<Self> {
-        validate_stream_socket(&fd)?;
-        // SAFETY: `validate_stream_socket` checked the descriptor type. The
-        // caller supplied `OwnedFd`, so Rust has unique ownership.
-        unsafe { Self::from_owned_fd(fd) }
+        Self::from_owned_fd(fd)
     }
 
-    /// Wrap an inherited raw file descriptor as a Unix framed channel.
+    /// Wrap an inherited raw file descriptor after validating it as a connected
+    /// `AF_UNIX`/`SOCK_STREAM` socket endpoint.
     ///
     /// # Safety
     ///
@@ -160,34 +232,29 @@ impl UnixPacketChannel {
     ///
     /// # Errors
     ///
-    /// Returns an error if the descriptor cannot be configured.
+    /// Returns an error if the descriptor is not a connected Unix stream socket or cannot
+    /// be configured.
     #[inline]
     pub unsafe fn from_raw_fd(raw_fd: RawFd) -> io::Result<Self> {
         // SAFETY: The caller guarantees that `raw_fd` is open and uniquely owned.
         let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
-        // SAFETY: The caller also guarantees this descriptor is the expected
-        // framed-channel endpoint.
-        unsafe { Self::from_owned_fd(fd) }
+        Self::from_owned_fd(fd)
     }
 
-    /// Wrap an inherited raw file descriptor after validating it as a stream
-    /// socket.
+    /// Compatibility alias for [`Self::from_raw_fd`].
     ///
     /// # Safety
     ///
-    /// `raw_fd` must be open and uniquely owned by this call path. After this
-    /// function succeeds or fails, the descriptor is owned by Rust and will be
-    /// closed on drop.
+    /// `raw_fd` must be open and uniquely owned by this call path.
     ///
     /// # Errors
     ///
-    /// Returns an error if the descriptor is not a stream socket or cannot be
-    /// configured.
+    /// Returns an error if the descriptor is not a connected Unix stream socket or cannot
+    /// be configured.
     #[inline]
     pub unsafe fn from_checked_raw_fd(raw_fd: RawFd) -> io::Result<Self> {
         // SAFETY: The caller guarantees that `raw_fd` is open and uniquely owned.
-        let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
-        Self::from_checked_owned_fd(fd)
+        unsafe { Self::from_raw_fd(raw_fd) }
     }
 
     /// Return the underlying raw file descriptor.
@@ -211,219 +278,239 @@ impl UnixPacketChannel {
         self.fd.into_raw_fd()
     }
 
-    /// Send an arbitrary-sized opaque byte message without attached channels.
-    ///
-    /// The bytes are length-prefixed and written across the stream as needed.
-    /// The receiver still enforces its own maximum accepted payload size.
+    /// Send an opaque byte message without attached channels.
     ///
     /// # Errors
     ///
-    /// Returns an error if the frame cannot be written.
+    /// Returns an error if the packet cannot be written.
     #[inline]
     pub fn send(&mut self, bytes: &[u8]) -> io::Result<()> {
-        let header = FrameHeader::new(FrameKind::Bytes, bytes.len())?;
+        self.send_packet(Packet::bytes(bytes.to_vec()))
+    }
 
+    /// Send a packet containing bytes and zero or more channel endpoints.
+    ///
+    /// This consumes any channels in `packet`. The kernel duplicates descriptors
+    /// into the receiving process; consuming local channel values gives this API
+    /// transfer-of-ownership semantics at the Rust boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the packet cannot be written. On error, channels in
+    /// `packet` have still been consumed and are dropped.
+    #[inline]
+    pub fn send_packet(&mut self, packet: Packet) -> io::Result<()> {
+        let Packet { bytes, channels } = packet;
+        let header = FrameHeader::new(bytes.len(), channels.len())?;
+
+        self.send_marker_with_channels(&channels)?;
         self.send_all(header.as_bytes())?;
-        self.send_all(bytes)
+        self.send_all(&bytes)
     }
 
     /// Send a framed-channel endpoint over this channel.
     ///
-    /// This consumes `channel`. The kernel duplicates the descriptor into the
-    /// receiver's process; consuming the local value gives this method
-    /// transfer-of-ownership semantics at the Rust API boundary.
-    ///
     /// # Errors
     ///
-    /// Returns an error if ancillary data cannot be prepared or the channel
-    /// frame cannot be sent. On error, `channel` is still dropped.
+    /// Returns an error if the packet cannot be written.
     #[inline]
     pub fn send_channel(&mut self, channel: Self) -> io::Result<()> {
-        let result = {
-            let header = FrameHeader::new(FrameKind::Channel, 0)?;
-            let channel_fds = [channel.as_fd()];
-            let mut ancillary_storage =
-                [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(CHANNELS_PER_FRAME))];
-            let mut ancillary = SendAncillaryBuffer::new(&mut ancillary_storage);
-
-            if ancillary.push(SendAncillaryMessage::ScmRights(&channel_fds)) {
-                self.send_channel_header(&header, &mut ancillary)
-            } else {
-                Err(io::Error::new(
-                    ErrorKind::InvalidInput,
-                    "ancillary buffer is too small for channel descriptors",
-                ))
-            }
-        };
-        drop(channel);
-        result
+        self.send_packet(Packet::channel(channel))
     }
 
-    /// Receive the next frame with [`DEFAULT_MAX_PAYLOAD_SIZE`].
+    /// Receive the next packet with [`DEFAULT_MAX_PAYLOAD_SIZE`].
     ///
     /// # Errors
     ///
-    /// Returns an error if receiving fails, the peer closes, or the next frame
+    /// Returns an error if receiving fails, the peer closes, or the next packet
     /// violates the protocol.
     #[inline]
     pub fn recv(&mut self) -> io::Result<Packet> {
         self.recv_with_max_payload_size(DEFAULT_MAX_PAYLOAD_SIZE)
     }
 
-    /// Receive the next frame, allowing at most `max_payload_size` bytes.
+    /// Receive the next packet, allowing at most `max_payload_size` bytes.
     ///
     /// Returns `UnexpectedEof` when the peer has closed the channel. Returns
     /// `InvalidData` if the frame is malformed or exceeds `max_payload_size`.
+    /// Protocol errors should be treated as fatal to this channel.
     ///
     /// # Errors
     ///
-    /// Returns an error if receiving fails, the peer closes, or the next frame
+    /// Returns an error if receiving fails, the peer closes, or the next packet
     /// violates the protocol.
     #[inline]
     pub fn recv_with_max_payload_size(&mut self, max_payload_size: usize) -> io::Result<Packet> {
-        let mut header_bytes = [0; FRAME_HEADER_LEN];
-        let mut channels = self.recv_exact_collecting_channels(&mut header_bytes)?;
-        let header = FrameHeader::read_from_bytes(&header_bytes)
-            .map_err(|_| io::Error::new(ErrorKind::InvalidData, "invalid frame header"))?;
-        let kind = header.kind()?;
-        let payload_len = header.payload_len()?;
+        let received_fds = self.recv_marker_with_channels()?;
 
-        if payload_len > max_payload_size {
+        let mut header_bytes = [0; HEADER_LEN];
+        self.recv_exact_without_channels(&mut header_bytes)?;
+        let header = FrameHeader::decode(&header_bytes)?;
+
+        if header.channel_count != received_fds.len() {
             return Err(io::Error::new(
                 ErrorKind::InvalidData,
-                "frame payload exceeds maximum size",
+                "packet header channel count does not match ancillary data",
+            ));
+        }
+        if header.payload_len > max_payload_size {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "packet payload exceeds maximum size",
             ));
         }
 
-        match kind {
-            FrameKind::Bytes => {
-                if !channels.is_empty() {
-                    return Err(io::Error::new(
-                        ErrorKind::InvalidData,
-                        "byte frame carried a channel descriptor",
-                    ));
-                }
+        let mut payload = vec![0; header.payload_len];
+        self.recv_exact_without_channels(&mut payload)?;
 
-                let mut payload = vec![0; payload_len];
-                let payload_channels = self.recv_exact_collecting_channels(&mut payload)?;
-                if !payload_channels.is_empty() {
-                    return Err(io::Error::new(
-                        ErrorKind::InvalidData,
-                        "byte frame payload carried a channel descriptor",
-                    ));
-                }
-
-                Ok(Packet::Bytes(payload))
-            }
-            FrameKind::Channel => {
-                if payload_len != 0 {
-                    return Err(io::Error::new(
-                        ErrorKind::InvalidData,
-                        "channel frame carried a byte payload",
-                    ));
-                }
-
-                match channels.pop() {
-                    Some(channel) if channels.is_empty() => Ok(Packet::Channel(channel)),
-                    _ => Err(io::Error::new(
-                        ErrorKind::InvalidData,
-                        "channel frame did not carry exactly one channel descriptor",
-                    )),
-                }
-            }
+        let mut channels = Vec::with_capacity(received_fds.len());
+        for fd in received_fds {
+            channels.push(Self::from_owned_fd(fd)?);
         }
+
+        Ok(Packet {
+            bytes: payload,
+            channels,
+        })
     }
 
-    /// Receive the next byte frame with [`DEFAULT_MAX_PAYLOAD_SIZE`].
+    /// Receive the next byte-only packet with [`DEFAULT_MAX_PAYLOAD_SIZE`].
     ///
     /// # Errors
     ///
-    /// Returns an error if receiving fails or the next frame is not a byte
-    /// frame.
+    /// Returns an error if receiving fails or the next packet carries channels.
     #[inline]
     pub fn recv_bytes(&mut self) -> io::Result<Vec<u8>> {
         self.recv_bytes_with_max_payload_size(DEFAULT_MAX_PAYLOAD_SIZE)
     }
 
-    /// Receive the next byte frame, allowing at most `max_payload_size` bytes.
+    /// Receive the next byte-only packet, allowing at most `max_payload_size`
+    /// bytes.
     ///
     /// # Errors
     ///
-    /// Returns an error if receiving fails or the next frame is not a byte
-    /// frame.
+    /// Returns an error if receiving fails or the next packet carries channels.
     #[inline]
     pub fn recv_bytes_with_max_payload_size(
         &mut self,
         max_payload_size: usize,
     ) -> io::Result<Vec<u8>> {
-        match self.recv_with_max_payload_size(max_payload_size)? {
-            Packet::Bytes(bytes) => Ok(bytes),
-            Packet::Channel(_) => Err(io::Error::new(
+        let packet = self.recv_with_max_payload_size(max_payload_size)?;
+        if !packet.channels.is_empty() {
+            return Err(io::Error::new(
                 ErrorKind::InvalidData,
-                "expected a byte frame, received a channel frame",
-            )),
+                "expected a byte-only packet, received channel descriptors",
+            ));
         }
+
+        Ok(packet.bytes)
     }
 
-    /// Receive the next channel frame.
+    /// Receive the next channel-only packet.
     ///
     /// # Errors
     ///
-    /// Returns an error if receiving fails or the next frame is not a channel
-    /// frame.
+    /// Returns an error if receiving fails or the next packet is not exactly one
+    /// channel with no byte payload.
     #[inline]
     pub fn recv_channel(&mut self) -> io::Result<Self> {
-        match self.recv_with_max_payload_size(0)? {
-            Packet::Channel(channel) => Ok(channel),
-            Packet::Bytes(_) => Err(io::Error::new(
+        let mut packet = self.recv_with_max_payload_size(0)?;
+        if !packet.bytes.is_empty() || packet.channels.len() != 1 {
+            return Err(io::Error::new(
                 ErrorKind::InvalidData,
-                "expected a channel frame, received a byte frame",
-            )),
+                "expected a channel-only packet",
+            ));
         }
+
+        Ok(packet.channels.remove(0))
     }
 
-    fn recv_exact_collecting_channels(&self, mut buffer: &mut [u8]) -> io::Result<Vec<Self>> {
-        let mut channels = Vec::new();
+    fn send_marker_with_channels(&self, channels: &[Self]) -> io::Result<()> {
+        let borrowed_fds = channels
+            .iter()
+            .map(AsFd::as_fd)
+            .collect::<Vec<BorrowedFd<'_>>>();
+        let mut ancillary_storage =
+            [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_CHANNELS_PER_PACKET))];
+        let mut ancillary = SendAncillaryBuffer::new(&mut ancillary_storage);
 
+        if !borrowed_fds.is_empty()
+            && !ancillary.push(SendAncillaryMessage::ScmRights(&borrowed_fds))
+        {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "ancillary buffer is too small for channel descriptors",
+            ));
+        }
+
+        let marker = [FRAME_MARKER];
+        let iov = [IoSlice::new(&marker)];
+        let sent = retry_on_intr(|| sendmsg(&self.fd, &iov, &mut ancillary, send_flags()))
+            .map_err(io::Error::from)?;
+
+        if sent != marker.len() {
+            return Err(io::Error::new(
+                ErrorKind::WriteZero,
+                "stream socket failed to write packet marker",
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn recv_marker_with_channels(&self) -> io::Result<Vec<OwnedFd>> {
+        let mut marker = [0];
+        let mut ancillary_storage =
+            [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_CHANNELS_PER_PACKET))];
+        let mut ancillary = RecvAncillaryBuffer::new(&mut ancillary_storage);
+
+        let received = {
+            let mut iov = [IoSliceMut::new(&mut marker)];
+            retry_on_intr(|| recvmsg(&self.fd, &mut iov, &mut ancillary, recv_flags()))
+                .map_err(io::Error::from)?
+        };
+
+        if received.bytes == 0 {
+            return Err(io::Error::new(ErrorKind::UnexpectedEof, "channel closed"));
+        }
+        if received.bytes != marker.len() {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "stream socket over-reported marker bytes",
+            ));
+        }
+        check_return_flags(received.flags)?;
+        if marker[0] != FRAME_MARKER {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "invalid packet marker",
+            ));
+        }
+
+        collect_received_fds(&mut ancillary)
+    }
+
+    fn recv_exact_without_channels(&self, mut buffer: &mut [u8]) -> io::Result<()> {
         while !buffer.is_empty() {
             let mut ancillary_storage =
-                [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(CHANNELS_PER_FRAME))];
+                [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_CHANNELS_PER_PACKET))];
             let mut ancillary = RecvAncillaryBuffer::new(&mut ancillary_storage);
 
             let received = {
                 let mut iov = [IoSliceMut::new(buffer)];
-                retry_on_intr(|| recvmsg(&self.fd, &mut iov, &mut ancillary, RecvFlags::empty()))
+                retry_on_intr(|| recvmsg(&self.fd, &mut iov, &mut ancillary, recv_flags()))
                     .map_err(io::Error::from)?
             };
 
             if received.bytes == 0 {
                 return Err(io::Error::new(ErrorKind::UnexpectedEof, "channel closed"));
             }
-
-            if received.flags.contains(ReturnFlags::TRUNC) {
+            check_return_flags(received.flags)?;
+            if !collect_received_fds(&mut ancillary)?.is_empty() {
                 return Err(io::Error::new(
                     ErrorKind::InvalidData,
-                    "stream frame payload truncated",
+                    "descriptor ancillary data appeared outside a packet marker",
                 ));
-            }
-
-            if received.flags.contains(ReturnFlags::CTRUNC) {
-                return Err(io::Error::new(
-                    ErrorKind::InvalidData,
-                    "stream frame channel descriptors truncated",
-                ));
-            }
-
-            for message in ancillary.drain() {
-                if let RecvAncillaryMessage::ScmRights(fds) = message {
-                    for fd in fds {
-                        // SAFETY: Attached descriptors are interpreted as
-                        // framed-channel endpoints by this protocol. Malicious
-                        // peers can still cause I/O errors, but not Rust memory
-                        // unsafety.
-                        channels.push(unsafe { Self::from_owned_fd(fd)? });
-                    }
-                }
             }
 
             buffer = buffer.get_mut(received.bytes..).ok_or_else(|| {
@@ -434,7 +521,7 @@ impl UnixPacketChannel {
             })?;
         }
 
-        Ok(channels)
+        Ok(())
     }
 
     fn send_all(&self, mut bytes: &[u8]) -> io::Result<()> {
@@ -443,6 +530,7 @@ impl UnixPacketChannel {
             let mut ancillary = SendAncillaryBuffer::default();
             let sent = retry_on_intr(|| sendmsg(&self.fd, &iov, &mut ancillary, send_flags()))
                 .map_err(io::Error::from)?;
+
             if sent == 0 {
                 return Err(io::Error::new(
                     ErrorKind::WriteZero,
@@ -456,25 +544,6 @@ impl UnixPacketChannel {
                     "stream socket over-reported sent bytes",
                 )
             })?;
-        }
-
-        Ok(())
-    }
-
-    fn send_channel_header(
-        &self,
-        header: &FrameHeader,
-        ancillary: &mut SendAncillaryBuffer<'_, '_, '_>,
-    ) -> io::Result<()> {
-        let iov = [IoSlice::new(header.as_bytes())];
-        let sent = retry_on_intr(|| sendmsg(&self.fd, &iov, ancillary, send_flags()))
-            .map_err(io::Error::from)?;
-
-        if sent != FRAME_HEADER_LEN {
-            return Err(io::Error::new(
-                ErrorKind::WriteZero,
-                "stream socket accepted a partial channel frame header",
-            ));
         }
 
         Ok(())
@@ -495,22 +564,64 @@ impl AsRawFd for UnixPacketChannel {
     }
 }
 
-fn configure_socket<Fd: AsFd>(fd: Fd) -> io::Result<()> {
-    set_close_on_exec(fd.as_fd())?;
+fn collect_received_fds(ancillary: &mut RecvAncillaryBuffer<'_>) -> io::Result<Vec<OwnedFd>> {
+    let mut fds = Vec::new();
+    for message in ancillary.drain() {
+        if let RecvAncillaryMessage::ScmRights(received_fds) = message {
+            for fd in received_fds {
+                if fds.len() == MAX_CHANNELS_PER_PACKET {
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidData,
+                        "packet carried too many channel descriptors",
+                    ));
+                }
+                fds.push(fd);
+            }
+        }
+    }
 
-    #[cfg(target_os = "macos")]
-    rustix::net::sockopt::set_socket_nosigpipe(fd.as_fd(), true).map_err(io::Error::from)?;
+    Ok(fds)
+}
+
+fn check_return_flags(flags: ReturnFlags) -> io::Result<()> {
+    if flags.contains(ReturnFlags::TRUNC) {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "stream data truncated",
+        ));
+    }
+    if flags.contains(ReturnFlags::CTRUNC) {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "descriptor ancillary data truncated",
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn configure_validated_socket<Fd: AsFd>(_fd: Fd) -> io::Result<()> {
+    rustix::net::sockopt::set_socket_nosigpipe(_fd.as_fd(), true)
+        .map_err(io::Error::from)
+        .map_err(|err| annotate_io_error("setsockopt(SO_NOSIGPIPE)", &err))?;
 
     Ok(())
 }
 
 fn set_close_on_exec<Fd: AsFd>(fd: Fd) -> io::Result<()> {
-    let flags = fcntl_getfd(fd.as_fd()).map_err(io::Error::from)?;
-    fcntl_setfd(fd.as_fd(), flags | FdFlags::CLOEXEC).map_err(io::Error::from)
+    let flags = fcntl_getfd(fd.as_fd())
+        .map_err(io::Error::from)
+        .map_err(|err| annotate_io_error("fcntl(F_GETFD)", &err))?;
+    fcntl_setfd(fd.as_fd(), flags | FdFlags::CLOEXEC)
+        .map_err(io::Error::from)
+        .map_err(|err| annotate_io_error("fcntl(F_SETFD, FD_CLOEXEC)", &err))
 }
 
-fn validate_stream_socket(fd: &OwnedFd) -> io::Result<()> {
-    let socket_type = rustix::net::sockopt::socket_type(fd).map_err(io::Error::from)?;
+fn validate_channel_fd(fd: &OwnedFd) -> io::Result<()> {
+    let socket_type = rustix::net::sockopt::socket_type(fd)
+        .map_err(io::Error::from)
+        .map_err(|err| annotate_io_error("getsockopt(SO_TYPE)", &err))?;
     if socket_type != SocketType::STREAM {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
@@ -518,7 +629,57 @@ fn validate_stream_socket(fd: &OwnedFd) -> io::Result<()> {
         ));
     }
 
+    let local_name = rustix::net::getsockname(fd)
+        .map_err(io::Error::from)
+        .map_err(|err| annotate_io_error("getsockname", &err))?;
+    if local_name.address_family() != AddressFamily::UNIX {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            "file descriptor is not an AF_UNIX socket",
+        ));
+    }
+
+    let peer_name = rustix::net::getpeername(fd)
+        .map_err(io::Error::from)
+        .map_err(|err| annotate_io_error("getpeername", &err))?
+        .ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::InvalidInput,
+                "file descriptor is not a connected socket",
+            )
+        })?;
+    if peer_name.address_family() != AddressFamily::UNIX {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            "file descriptor peer is not an AF_UNIX socket",
+        ));
+    }
+
     Ok(())
+}
+
+fn annotate_io_error(context: &'static str, err: &io::Error) -> io::Error {
+    io::Error::new(err.kind(), format!("{context}: {err}"))
+}
+
+#[cfg(target_os = "linux")]
+const fn socket_creation_flags() -> rustix::net::SocketFlags {
+    rustix::net::SocketFlags::CLOEXEC
+}
+
+#[cfg(target_os = "macos")]
+const fn socket_creation_flags() -> rustix::net::SocketFlags {
+    rustix::net::SocketFlags::empty()
+}
+
+#[cfg(target_os = "linux")]
+const fn recv_flags() -> RecvFlags {
+    RecvFlags::CMSG_CLOEXEC
+}
+
+#[cfg(target_os = "macos")]
+const fn recv_flags() -> RecvFlags {
+    RecvFlags::empty()
 }
 
 #[cfg(target_os = "linux")]
@@ -526,13 +687,14 @@ const fn send_flags() -> SendFlags {
     SendFlags::NOSIGNAL
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 const fn send_flags() -> SendFlags {
     SendFlags::empty()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
     use std::thread;
 
     use super::*;
@@ -607,6 +769,24 @@ mod tests {
     }
 
     #[test]
+    fn sends_bytes_and_channel_in_one_packet() -> io::Result<()> {
+        let (mut control_left, mut control_right) = UnixPacketChannel::pair()?;
+        let (mut nested_left, nested_right) = UnixPacketChannel::pair()?;
+
+        control_left.send_packet(Packet::new(b"metadata".to_vec(), vec![nested_right]))?;
+
+        let mut packet = control_right.recv()?;
+        assert_eq!(packet.bytes, b"metadata");
+        assert_eq!(packet.channels.len(), 1);
+
+        let mut received_nested = packet.channels.remove(0);
+        nested_left.send(b"nested payload")?;
+        assert_eq!(received_nested.recv_bytes()?, b"nested payload");
+
+        Ok(())
+    }
+
+    #[test]
     fn preserves_order_across_bytes_and_channels() -> io::Result<()> {
         let (mut control_left, mut control_right) = UnixPacketChannel::pair()?;
         let (mut nested_left, nested_right) = UnixPacketChannel::pair()?;
@@ -640,16 +820,43 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unexpected_frame_kind() -> io::Result<()> {
+    fn rejects_unexpected_packet_shape() -> io::Result<()> {
         let (mut control_left, mut control_right) = UnixPacketChannel::pair()?;
         let (_nested_left, nested_right) = UnixPacketChannel::pair()?;
 
         control_left.send_channel(nested_right)?;
 
         let Err(err) = control_right.recv_bytes() else {
-            return Err(io::Error::other("frame should be a channel"));
+            return Err(io::Error::other("packet should carry a channel"));
         };
         assert_eq!(err.kind(), ErrorKind::InvalidData);
+
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_non_channel_descriptors() -> io::Result<()> {
+        let (left, mut right) = UnixPacketChannel::pair()?;
+        let file = File::open("/dev/null")?;
+        let borrowed_fds = [file.as_fd()];
+
+        let mut ancillary_storage =
+            [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_CHANNELS_PER_PACKET))];
+        let mut ancillary = SendAncillaryBuffer::new(&mut ancillary_storage);
+        assert!(ancillary.push(SendAncillaryMessage::ScmRights(&borrowed_fds)));
+
+        let marker = [FRAME_MARKER];
+        let iov = [IoSlice::new(&marker)];
+        let sent = retry_on_intr(|| sendmsg(&left.fd, &iov, &mut ancillary, send_flags()))
+            .map_err(io::Error::from)?;
+        assert_eq!(sent, marker.len());
+
+        let header = FrameHeader::new(0, 1)?;
+        left.send_all(header.as_bytes())?;
+
+        let Err(_) = right.recv() else {
+            return Err(io::Error::other("plain file descriptor should be rejected"));
+        };
 
         Ok(())
     }
