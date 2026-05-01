@@ -13,9 +13,9 @@ from tinygrad import Device, Tensor, dtypes
 from tinygrad.device import Buffer
 
 try:
-  from mlx_tinygrad_interop.lease_pool import MlxToTinygradCopyLeasePools, MlxToTinygradLeasePools
+  from mlx_tinygrad_interop.lib.lease_pool import MlxToTinygradCopyLeasePools, MlxToTinygradLeasePools
 except ModuleNotFoundError:
-  from lease_pool import MlxToTinygradCopyLeasePools, MlxToTinygradLeasePools
+  from lib.lease_pool import MlxToTinygradCopyLeasePools, MlxToTinygradLeasePools
 
 DTYPES: dict[str, tuple[Any, Any, np.dtype[Any]]] = {
   "float16": (mx.float16, dtypes.float16, np.dtype(np.float16)),

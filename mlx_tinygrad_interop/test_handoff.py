@@ -4,7 +4,7 @@ import mlx.core as mx
 import numpy as np
 from tinygrad import Tensor, dtypes
 
-from mlx_tinygrad_interop.lease_pool import (
+from mlx_tinygrad_interop.lib.lease_pool import (
   MlxToTinygradCopyKey,
   MlxToTinygradCopyLeasePool,
   MlxToTinygradCopyLeasePools,

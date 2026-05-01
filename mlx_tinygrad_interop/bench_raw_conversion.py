@@ -12,14 +12,14 @@ from tinygrad import Device, Tensor, dtypes
 from tinygrad.device import Buffer
 
 try:
-  from mlx_tinygrad_interop.lease_pool import (
+  from mlx_tinygrad_interop.lib.lease_pool import (
     MlxToTinygradCopyLeasePool,
     MlxToTinygradCopyLeasePools,
     MlxToTinygradLeasePool,
     MlxToTinygradLeasePools,
   )
 except ModuleNotFoundError:
-  from lease_pool import MlxToTinygradCopyLeasePool, MlxToTinygradCopyLeasePools, MlxToTinygradLeasePool, MlxToTinygradLeasePools
+  from lib.lease_pool import MlxToTinygradCopyLeasePool, MlxToTinygradCopyLeasePools, MlxToTinygradLeasePool, MlxToTinygradLeasePools
 
 blackhole: Any = None
 

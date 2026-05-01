@@ -28,8 +28,10 @@ before the reporting format was changed.
   - `CONVERSION_BENCH_NOTES.md`
 - Interop code:
   - `mlx_tinygrad_interop/`
+- Reusable library code:
+  - `mlx_tinygrad_interop/lib/`
 - Baseline bridge module:
-  - `mlx_tinygrad_interop/tensor_bridge.py`
+  - `mlx_tinygrad_interop/lib/tensor_bridge.py`
 - Route benchmark using existing PyTorch interop:
   - `mlx_tinygrad_interop/bench_torch_route.py`
 - Historical benchmark kept as-is:
@@ -70,13 +72,13 @@ bidirectional latency, not symmetry for its own sake.
   - `Tensor._unsafe_from_metal_buffer_fast(mtl_buffer_ptr, shape, dtype=..., byte_offset=0, owner=None)`
   - `Tensor._unsafe_metal_borrower(mtl_buffer_ptr, shape, dtype=..., byte_offset=0, owner=None)`
 - exo handoff layer
-  - `mlx_tinygrad_interop.lease_pool.MlxToTinygradLeasePool`
-  - `mlx_tinygrad_interop.lease_pool.MlxToTinygradLeasePools`
-  - `mlx_tinygrad_interop.lease_pool.MlxToTinygradCopyLeasePool`
-  - `mlx_tinygrad_interop.lease_pool.MlxToTinygradCopyLeasePools`
+  - `mlx_tinygrad_interop.lib.lease_pool.MlxToTinygradLeasePool`
+  - `mlx_tinygrad_interop.lib.lease_pool.MlxToTinygradLeasePools`
+  - `mlx_tinygrad_interop.lib.lease_pool.MlxToTinygradCopyLeasePool`
+  - `mlx_tinygrad_interop.lib.lease_pool.MlxToTinygradCopyLeasePools`
   - `mlx_tinygrad_interop.stress_interop`
-  - `mlx_tinygrad_interop.tensor_bridge.tinygrad_to_mlx`
-  - `mlx_tinygrad_interop.tensor_bridge.mlx_to_tinygrad` (stubbed)
+  - `mlx_tinygrad_interop.lib.tensor_bridge.tinygrad_to_mlx`
+  - `mlx_tinygrad_interop.lib.tensor_bridge.mlx_to_tinygrad` (stubbed)
 
 These helpers are intentionally private and unsafe.
 

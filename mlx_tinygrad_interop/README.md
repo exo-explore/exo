@@ -3,7 +3,7 @@
 Private code for benchmarking MLX `<->` tinygrad tensor conversions.
 
 There is also now a lightweight baseline bridge module in
-`mlx_tinygrad_interop/tensor_bridge.py`, modelled after vLLM Metal's
+`mlx_tinygrad_interop/lib/tensor_bridge.py`, modelled after vLLM Metal's
 `tensor_bridge.py` shape:
 
 - `tinygrad_to_mlx(...)` is implemented
@@ -11,6 +11,10 @@ There is also now a lightweight baseline bridge module in
 
 That module is meant as a simple public-shaped bridge baseline, separate from
 the lower-level benchmark and lease-pool experiments.
+
+Reusable runtime code now lives under `mlx_tinygrad_interop/lib/`.
+Benchmarks, stress harnesses, and tests stay in the top-level
+`mlx_tinygrad_interop/` package.
 
 There is also a separate benchmark file for the route that relies on existing
 tinygrad <-> PyTorch and MLX <-> PyTorch interop instead of new framework
