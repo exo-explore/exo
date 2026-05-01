@@ -28,6 +28,7 @@ delegate = "0.13"
 
 # Utility dependencies
 keccak-const = "0.2"
+rustix = "1.1.2"
 
 # Async dependencies
 async-stream = "0.3"
