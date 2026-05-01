@@ -14,6 +14,7 @@
 
   let modelCapabilities = $state<Record<string, string[]>>({});
   let modelContextLengths = $state<Record<string, number>>({});
+  let downloadedModels = $state<string[]>([]);
   let modelReasoningDialects = $state<Record<string, string>>({});
 
   const runningModels = $derived.by(() => {
@@ -38,13 +39,20 @@
     return models;
   });
 
+  const selectableModels = $derived.by(() => {
+    const models = new Set<string>();
+    for (const model of runningModels) models.add(model);
+    for (const model of downloadedModels) models.add(model);
+    return [...models];
+  });
+
   function estimateParamSize(modelId: string): number {
     const match = modelId.match(/(\d+(?:\.\d+)?)[Bb]/);
     return match ? parseFloat(match[1]) : 0;
   }
 
   const modelsBySize = $derived(
-    [...runningModels].sort(
+    [...selectableModels].sort(
       (a, b) => estimateParamSize(b) - estimateParamSize(a),
     ),
   );
@@ -130,7 +138,7 @@
 
   const openCodeConfig = $derived.by(() => {
     const models: Record<string, Record<string, unknown>> = {};
-    for (const modelId of runningModels) {
+    for (const modelId of selectableModels) {
       const caps = modelCapabilities[modelId] || [];
       const ctxLen = modelContextLengths[modelId] || 0;
       const dialect = modelReasoningDialects[modelId];
@@ -168,7 +176,7 @@
       models["your-model-id"] = { name: "your-model-name" };
     }
     const firstModel =
-      runningModels.length > 0 ? runningModels[0] : "your-model-id";
+      selectableModels.length > 0 ? selectableModels[0] : "your-model-id";
     return JSON.stringify(
       {
         $schema: "https://opencode.ai/config.json",
@@ -245,7 +253,7 @@
 
   const piModelsJson = $derived.by(() => {
     const models: Record<string, unknown>[] = [];
-    for (const modelId of runningModels) {
+    for (const modelId of selectableModels) {
       const caps = modelCapabilities[modelId] || [];
       const ctxLen = modelContextLengths[modelId] || 0;
       const entry: Record<string, unknown> = { id: modelId };
@@ -371,8 +379,11 @@
   onMount(async () => {
     refreshState();
     try {
-      const resp = await fetch("/v1/models");
-      const data = (await resp.json()) as {
+      const [modelsResp, downloadedResp] = await Promise.all([
+        fetch("/v1/models"),
+        fetch("/models?status=downloaded"),
+      ]);
+      const data = (await modelsResp.json()) as {
         data: {
           id: string;
           capabilities: string[];
@@ -392,6 +403,12 @@
       modelCapabilities = caps;
       modelContextLengths = ctxs;
       modelReasoningDialects = dialects;
+      if (downloadedResp.ok) {
+        const downloadedData = (await downloadedResp.json()) as {
+          data: { id: string }[];
+        };
+        downloadedModels = (downloadedData.data || []).map((model) => model.id);
+      }
     } catch {
       /* ignore */
     }
@@ -490,7 +507,7 @@
     <!-- Tab Content -->
     <div class="space-y-4">
       {#if activeTab === "Claude Code"}
-        {#if runningModels.length > 1}
+        {#if selectableModels.length > 1}
           <div class="grid grid-cols-3 gap-3 text-xs">
             {#each [{ label: "Opus", bind: () => opusModel, set: (v: string) => (opusModel = v) }, { label: "Sonnet", bind: () => sonnetModel, set: (v: string) => (sonnetModel = v) }, { label: "Haiku", bind: () => haikuModel, set: (v: string) => (haikuModel = v) }] as tier}
               <div>
@@ -504,7 +521,7 @@
                     tier.set((e.target as HTMLSelectElement).value)}
                   class="w-full {selectClass}"
                 >
-                  {#each runningModels as model}
+                  {#each selectableModels as model}
                     <option value={model}>{model.split("/").pop()}</option>
                   {/each}
                 </select>
@@ -534,14 +551,14 @@
         />
       {:else if activeTab === "Codex"}
         <div class="flex gap-3 text-xs">
-          {#if runningModels.length > 1}
+          {#if selectableModels.length > 1}
             <div>
               <span
                 class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1"
                 >Model</span
               >
               <select bind:value={codexModel} class={selectClass}>
-                {#each runningModels as model}
+                {#each selectableModels as model}
                   <option value={model}>{model.split("/").pop()}</option>
                 {/each}
               </select>
@@ -573,14 +590,14 @@
           language="bash"
         />
       {:else if activeTab === "OpenClaw"}
-        {#if runningModels.length > 1}
+        {#if selectableModels.length > 1}
           <div class="text-xs">
             <span
               class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1"
               >Model</span
             >
             <select bind:value={openClawModel} class={selectClass}>
-              {#each runningModels as model}
+              {#each selectableModels as model}
                 <option value={model}>{model.split("/").pop()}</option>
               {/each}
             </select>
@@ -600,14 +617,14 @@
           language="bash"
         />
       {:else if activeTab === "Pi"}
-        {#if runningModels.length > 1}
+        {#if selectableModels.length > 1}
           <div class="text-xs">
             <span
               class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1"
               >Model</span
             >
             <select bind:value={piModel} class={selectClass}>
-              {#each runningModels as model}
+              {#each selectableModels as model}
                 <option value={model}>{model.split("/").pop()}</option>
               {/each}
             </select>
@@ -637,7 +654,7 @@
         <IntegrationCard
           title="2. Open & Select Model"
           subtitle="http://localhost:3000"
-          description={`Open http://localhost:3000 in your browser. Select the running model from the dropdown at the top: ${runningModels.length > 0 ? runningModels.join(", ") : "no models running"}`}
+          description={`Open http://localhost:3000 in your browser. Select an available model from the dropdown at the top: ${selectableModels.length > 0 ? selectableModels.join(", ") : "no local models detected"}`}
           config={"open http://localhost:3000"}
           language="bash"
         />

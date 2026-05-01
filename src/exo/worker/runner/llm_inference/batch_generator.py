@@ -396,16 +396,22 @@ class BatchGenerator(Engine):
         if not self._queue:
             self.agree_on_tasks()
 
+        output: list[
+            tuple[TaskId, GenerationChunk | CancelledResponse | FinishedResponse]
+        ] = []
+
         # Submit any queued tasks to the engine
         while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
             task = self._queue.popleft()
             try:
-                uid = self._start_task(task)
+                prompt = apply_chat_template(self.tokenizer, task.task_params)
+                uid = self._start_task(task, prompt)
             except PrefillCancelled:
                 continue
             except Exception as e:
                 self._send_error(task, e)
-                raise
+                output.append((task.task_id, FinishedResponse()))
+                continue
 
             queue = GeneratorQueue[GenerationResponse]()
             if task.task_params.bench:
@@ -415,7 +421,7 @@ class BatchGenerator(Engine):
             else:
                 output_generator = apply_all_parsers(
                     queue.gen(),
-                    apply_chat_template(self.tokenizer, task.task_params),
+                    prompt,
                     self.tool_parser,
                     self.tokenizer,
                     type(self.model),
@@ -425,13 +431,10 @@ class BatchGenerator(Engine):
             self._active_tasks[uid] = (task, queue, output_generator)
 
         if not self._gen.has_work:
-            return self._apply_cancellations()
+            return itertools.chain(output, self._apply_cancellations())
 
         results = self._gen.step()
 
-        output: list[
-            tuple[TaskId, GenerationChunk | CancelledResponse | FinishedResponse]
-        ] = []
         for uid, response in results:
             if uid not in self._active_tasks:
                 # should we error here?
@@ -492,9 +495,8 @@ class BatchGenerator(Engine):
                 )
             )
 
-    def _start_task(self, task: TextGeneration) -> int:
+    def _start_task(self, task: TextGeneration, prompt: str) -> int:
         _check_for_debug_prompts(task.task_params)
-        prompt = apply_chat_template(self.tokenizer, task.task_params)
 
         def on_prefill_progress(processed: int, total: int) -> None:
             if self.device_rank == 0:

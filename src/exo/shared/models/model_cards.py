@@ -66,7 +66,7 @@ async def _load_cards_from_dir(directory: Path, *, is_custom: bool) -> None:
             card = await ModelCard.load_from_path(toml_file)
             if is_custom:
                 card = card.model_copy(update={"is_custom": True})
-            if card.model_id not in _card_cache:
+            if is_custom or card.model_id not in _card_cache:
                 _card_cache[card.model_id] = card
         except (ValidationError, TOMLKitError):
             pass
@@ -75,6 +75,10 @@ async def _load_cards_from_dir(directory: Path, *, is_custom: bool) -> None:
 async def _refresh_card_cache() -> None:
     for path in _BUILTIN_CARD_DIRS:
         await _load_cards_from_dir(path, is_custom=False)
+    await _load_cards_from_dir(_custom_cards_dir, is_custom=True)
+
+
+async def _refresh_custom_card_cache() -> None:
     await _load_cards_from_dir(_custom_cards_dir, is_custom=True)
 
 
@@ -90,6 +94,8 @@ def get_card(model_id: ModelId) -> "ModelCard | None":
 async def get_model_cards() -> list["ModelCard"]:
     if len(_card_cache) == 0:
         await _refresh_card_cache()
+    else:
+        await _refresh_custom_card_cache()
     if EXO_ENABLE_IMAGE_MODELS:
         return list(_card_cache.values())
     return [c for c in _card_cache.values() if not _is_image_card(c)]

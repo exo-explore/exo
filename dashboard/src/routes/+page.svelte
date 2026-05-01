@@ -785,6 +785,7 @@
       capabilities?: string[];
     }>
   >([]);
+  let downloadedModelIds = $state<Set<string>>(new Set());
   type ModelMemoryFitStatus =
     | "fits_now"
     | "fits_cluster_capacity"
@@ -1358,7 +1359,10 @@
 
   async function fetchModels() {
     try {
-      const response = await fetch("/models");
+      const [response, downloadedResponse] = await Promise.all([
+        fetch("/models"),
+        fetch("/models?status=downloaded"),
+      ]);
       if (response.ok) {
         const data = await response.json();
         // API returns { data: [{ id, name }] } format
@@ -1368,6 +1372,12 @@
           ? Object.keys(topologyData()!.nodes).length
           : 1;
         applyLaunchDefaults(models, currentNodeCount);
+      }
+      if (downloadedResponse.ok) {
+        const downloadedData = await downloadedResponse.json();
+        downloadedModelIds = new Set(
+          (downloadedData.data || []).map((model: { id: string }) => model.id),
+        );
       }
     } catch (error) {
       console.error("Failed to fetch models:", error);
@@ -4683,6 +4693,7 @@
         totalMemoryGB={clusterMemory().total / (1024 * 1024 * 1024)}
         usedMemoryGB={clusterMemory().used / (1024 * 1024 * 1024)}
         {downloadsData}
+        {downloadedModelIds}
         topologyNodes={data?.nodes}
       />
     {/if}
@@ -6757,6 +6768,7 @@
     totalMemoryGB={clusterMemory().total / (1024 * 1024 * 1024)}
     usedMemoryGB={clusterMemory().used / (1024 * 1024 * 1024)}
     {downloadsData}
+    {downloadedModelIds}
     topologyNodes={data?.nodes}
     instanceStatuses={modelInstanceStatuses}
   />

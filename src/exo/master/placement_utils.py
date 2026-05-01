@@ -348,17 +348,20 @@ def find_ip_prioritised(
     Priority: ethernet > wifi > unknown > thunderbolt
     """
     ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
-    if not ips:
-        return None
     other_network = node_network.get(other_node_id, NodeNetworkInfo())
     ip_to_type = {
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
 
+    if not ips:
+        ips = _fallback_interface_ips(other_network)
+        if not ips:
+            return None
+
     # Ring should prioritise fastest connection. As a best-effort, we prioritise TB.
     # TODO: Profile and get actual connection speeds.
     if ring:
-        priority = {
+        type_priority = {
             "thunderbolt": 0,
             "maybe_ethernet": 1,
             "ethernet": 2,
@@ -368,14 +371,55 @@ def find_ip_prioritised(
 
     # RDMA prefers ethernet coordinator
     else:
-        priority = {
+        type_priority = {
             "ethernet": 0,
-            "wifi": 1,
-            "unknown": 2,
-            "maybe_ethernet": 3,
+            "maybe_ethernet": 1,
+            "wifi": 2,
+            "unknown": 3,
             "thunderbolt": 4,
         }
-    return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
+
+    return min(
+        ips,
+        key=lambda ip: (
+            _address_priority(ip),
+            type_priority.get(ip_to_type.get(ip, "unknown"), 5),
+        ),
+    )
+
+
+def _fallback_interface_ips(node_network: NodeNetworkInfo) -> list[str]:
+    """Return advertised node IPs when topology only has non-socket edges."""
+    return [
+        iface.ip_address
+        for iface in node_network.interfaces
+        if _is_candidate_host_ip(iface.ip_address)
+    ]
+
+
+def _is_candidate_host_ip(ip: str) -> bool:
+    if ":" in ip:
+        return False
+    if ip.startswith("127.") or ip == "0.0.0.0":
+        return False
+    return True
+
+
+def _address_priority(ip: str) -> int:
+    if ip.startswith("192.168.") or ip.startswith("10."):
+        return 0
+    if ip.startswith("172."):
+        try:
+            second_octet = int(ip.split(".")[1])
+        except (IndexError, ValueError):
+            return 3
+        if 16 <= second_octet <= 31:
+            return 0
+    if ip.startswith("100."):
+        return 2
+    if ip.startswith("169.254."):
+        return 3
+    return 1
 
 
 def get_mlx_ring_hosts_by_node(

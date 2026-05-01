@@ -29,7 +29,10 @@ from exo.worker.engines.mlx.utils_mlx import (
 )
 from exo.worker.engines.mlx.vendor.dsml_encoding import parse_dsml_output
 from exo.worker.runner.bootstrap import logger
-from exo.worker.runner.llm_inference.tool_parsers import ToolParser
+from exo.worker.runner.llm_inference.tool_parsers import (
+    ToolParser,
+    _coerce_tool_calls_to_schema,
+)
 
 
 @cache
@@ -77,7 +80,7 @@ def apply_all_parsers(
 
     normalized_id = model_id.normalize().lower()
     if issubclass(model_type, GptOssModel):
-        generator = parse_gpt_oss(generator)
+        generator = parse_gpt_oss(generator, tools)
     elif issubclass(model_type, DeepseekV32Model) and "deepseek" in normalized_id:
         if tokenizer.has_thinking:
             generator = parse_thinking_models(
@@ -154,6 +157,7 @@ def map_responses_to_chunks(
 
 def parse_gpt_oss(
     responses: Generator[GenerationResponse | None],
+    tools: list[dict[str, Any]] | None = None,
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     encoding = get_gpt_oss_encoding()
     stream = StreamableParser(encoding, role=Role.ASSISTANT)
@@ -189,13 +193,16 @@ def parse_gpt_oss(
                 logger.info(
                     f"parse_gpt_oss yielding tool call: name={current_tool_name!r}"
                 )
+                tool_calls = [
+                    ToolCallItem(
+                        name=current_tool_name,
+                        arguments="".join(tool_arg_parts).strip(),
+                    )
+                ]
+                if tools is not None:
+                    tool_calls = _coerce_tool_calls_to_schema(tool_calls, tools)
                 yield ToolCallResponse(
-                    tool_calls=[
-                        ToolCallItem(
-                            name=current_tool_name,
-                            arguments="".join(tool_arg_parts).strip(),
-                        )
-                    ],
+                    tool_calls=tool_calls,
                     usage=response.usage,
                 )
                 tool_arg_parts = []
@@ -210,7 +217,7 @@ def parse_gpt_oss(
                 tool_arg_parts = []
             continue
 
-        if delta:
+        if delta and ch != "commentary":
             yield response.model_copy(
                 update={"text": delta, "is_thinking": ch == "analysis"}
             )
