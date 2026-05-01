@@ -148,9 +148,7 @@ def main() -> int:
                 total_bits / upload_elapsed / 1e6 if upload_elapsed > 0 else 0.0
             )
             download_mbps = (
-                total_bits / download_elapsed / 1e6
-                if download_elapsed > 0
-                else 0.0
+                total_bits / download_elapsed / 1e6 if download_elapsed > 0 else 0.0
             )
 
             # ---- Latency: tiny-payload all_sum is a ping-pong on a 2-rank
@@ -167,9 +165,7 @@ def main() -> int:
                 t0 = time.perf_counter()
                 mx.eval(mx.distributed.all_sum(lat_tensor, group=group))
                 per_iter_ms.append((time.perf_counter() - t0) * 1000.0)
-            latency_ms = (
-                statistics.median(per_iter_ms) if per_iter_ms else None
-            )
+            latency_ms = statistics.median(per_iter_ms) if per_iter_ms else None
         except Exception as e:  # noqa: BLE001
             # Without this catch the rank-0 process can exit with returncode 0
             # (because the parent `try/finally` only protects file cleanup) but

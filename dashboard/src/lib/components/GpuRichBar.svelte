@@ -105,7 +105,13 @@
     <span class="rich-label">GPU rich</span>
   </div>
 
-  <div class="track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow={fillPercent.toFixed(0)}>
+  <div
+    class="track"
+    role="meter"
+    aria-valuemin="0"
+    aria-valuemax="100"
+    aria-valuenow={fillPercent.toFixed(0)}
+  >
     <div class="gradient"></div>
     {#if hasAnyProfile}
       <!-- Past the marker the gradient dims so the marker reads as the

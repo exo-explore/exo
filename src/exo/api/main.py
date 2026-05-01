@@ -2177,9 +2177,7 @@ class API:
         """
         max_bytes = 32 * 1024 * 1024
         if size <= 0:
-            raise HTTPException(
-                status_code=400, detail="bytes query param must be > 0"
-            )
+            raise HTTPException(status_code=400, detail="bytes query param must be > 0")
         if size > max_bytes:
             raise HTTPException(
                 status_code=413,

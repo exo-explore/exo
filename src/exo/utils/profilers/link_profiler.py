@@ -39,6 +39,7 @@ class _UploadResponse(BaseModel):
     bytes_received: int
     recv_duration_ms: float
 
+
 LATENCY_PAYLOAD_BYTES = 64
 LATENCY_SAMPLES = 5
 BANDWIDTH_PAYLOAD_BYTES = 8 * 1024 * 1024
@@ -244,10 +245,7 @@ async def _measure_upload_mbps(
         body = _UploadResponse.model_validate_json(response.content)
     except ValidationError:
         return None
-    if (
-        body.bytes_received != BANDWIDTH_PAYLOAD_BYTES
-        or body.recv_duration_ms <= 0
-    ):
+    if body.bytes_received != BANDWIDTH_PAYLOAD_BYTES or body.recv_duration_ms <= 0:
         return None
     return BANDWIDTH_PAYLOAD_BYTES * 8 / (body.recv_duration_ms / 1000.0) / 1e6
 

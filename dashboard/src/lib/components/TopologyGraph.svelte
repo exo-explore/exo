@@ -74,9 +74,9 @@
     fromId: string;
     toId: string;
     transport: "socket" | "rdma";
-    uploadMbps: number | null;   // fromId -> toId (this row's source uploads)
+    uploadMbps: number | null; // fromId -> toId (this row's source uploads)
     downloadMbps: number | null; // toId -> fromId (this row's source downloads)
-    latencyMs: number | null;    // round-trip; one-way ≈ RTT/2 (no clock sync)
+    latencyMs: number | null; // round-trip; one-way ≈ RTT/2 (no clock sync)
     type: ConnectionType;
     detail: string;
   }
@@ -591,7 +591,7 @@
           metricsLabel
             .append("tspan")
             .attr("fill", "rgba(74,222,128,0.95)")
-            .text(`${formatLatencyMs(minLat)} RTT`);
+            .text(formatLatencyMs(minLat));
         }
       }
 
@@ -617,7 +617,11 @@
         };
       });
       hitTarget.on("mouseleave", () => {
-        if (hoveredPair && hoveredPair.a === entry.a && hoveredPair.b === entry.b) {
+        if (
+          hoveredPair &&
+          hoveredPair.a === entry.a &&
+          hoveredPair.b === entry.b
+        ) {
           hoveredPair = null;
         }
       });
@@ -1520,8 +1524,12 @@
                 <span class="detail">{profile.detail}</span>
               </td>
               <td class="type">{profile.type.label}</td>
-              <td class="bandwidth">{formatBandwidthMbps(profile.uploadMbps)}</td>
-              <td class="bandwidth">{formatBandwidthMbps(profile.downloadMbps)}</td>
+              <td class="bandwidth"
+                >{formatBandwidthMbps(profile.uploadMbps)}</td
+              >
+              <td class="bandwidth"
+                >{formatBandwidthMbps(profile.downloadMbps)}</td
+              >
               <td class="latency">{formatLatencyMs(profile.latencyMs)}</td>
             </tr>
           {/each}
