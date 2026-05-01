@@ -23,6 +23,7 @@ from pydantic import (
     TypeAdapter,
 )
 
+from exo.download.fingerprint import fingerprint_directory
 from exo.download.huggingface_utils import (
     filter_repo_objects,
     get_allow_patterns,
@@ -121,17 +122,76 @@ class InsufficientDiskSpaceError(Exception):
 def resolve_existing_model(
     model_id: ModelId, card: ModelCard | None = None
 ) -> Path | None:
-    """Search all model directories for a complete, pre-existing model.
+    """Find a complete local copy of a model — by folder convention first, then by content.
 
-    Checks read-only directories first, then writable directories.
-    A candidate is only returned if ``is_model_directory_complete`` confirms
-    all weight files are present.
+    1. Convention pass: look for ``{search_dir}/{model_id.normalize()}``. Read-only dirs
+       take precedence over writable dirs (matches existing semantics).
+    2. Content pass: if the convention pass misses, hash the architecture-defining
+       fields of the canonical ``config.json`` and scan every other dir under
+       ``EXO_MODELS_*_DIRS`` for one with a matching fingerprint. Lets exo recognise
+       a model the user has on disk under a non-canonical folder name without forcing
+       a redundant re-download.
     """
     normalized = model_id.normalize()
     for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
         candidate = search_dir / normalized
         if candidate.is_dir() and is_model_directory_complete(candidate, card):
             return candidate
+
+    target_fp = _target_fingerprint(normalized)
+    if target_fp is None:
+        return None
+    return _find_by_content(target_fp, normalized, card)
+
+
+def _target_fingerprint(normalized_id: str) -> str | None:
+    """Fingerprint the canonical config.json for ``normalized_id`` if it exists.
+
+    ``ModelCard.fetch_from_hf`` writes ``config.json`` into the canonical dir during
+    ``/models/add``, so in normal flow this returns a real fingerprint. When the user
+    has never added the model card, returns ``None`` and the second pass is skipped.
+    """
+    for search_dir in (*EXO_MODELS_DIRS, *EXO_MODELS_READ_ONLY_DIRS):
+        fp = fingerprint_directory(search_dir / normalized_id)
+        if fp is not None:
+            return fp
+    return None
+
+
+# Process-wide dedup for the "resolved by content" log line. Without this, the same
+# (target_fp, found_path) gets logged at INFO every time the coordinator or worker
+# checks completeness for an active download — once per file event, ~10× per second.
+_logged_content_resolutions: set[tuple[str, str]] = set()
+
+
+def _find_by_content(
+    target_fp: str, skip_dir_name: str, card: ModelCard | None
+) -> Path | None:
+    """Walk ``EXO_MODELS_*_DIRS`` for a complete model dir whose fingerprint matches."""
+    for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
+        if not search_dir.exists():
+            continue
+        try:
+            children = list(search_dir.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir() or child.name == skip_dir_name:
+                continue
+            # Skip exo's own metadata cache.
+            if child.name == "caches":
+                continue
+            if fingerprint_directory(child) != target_fp:
+                continue
+            if is_model_directory_complete(child, card):
+                log_key = (target_fp, str(child))
+                if log_key not in _logged_content_resolutions:
+                    _logged_content_resolutions.add(log_key)
+                    logger.info(
+                        f"Resolved {target_fp[:12]}… to {child} via content fingerprint "
+                        f"(folder name '{child.name}' != convention '{skip_dir_name}')"
+                    )
+                return child
     return None
 
 
@@ -144,7 +204,40 @@ def build_model_path(model_id: ModelId) -> Path:
     found = resolve_existing_model(model_id)
     if found is not None:
         return found
+    external = _resolve_from_external_sources(str(model_id))
+    if external is not None:
+        return external
     return EXO_DEFAULT_MODELS_DIR / model_id.normalize()
+
+
+def _resolve_from_external_sources(external_id: str) -> Path | None:
+    """Ask non-exo sources whether they have a usable path for this model.
+
+    Used when exo's own cache doesn't have the model — lets MLX inference load
+    safetensors models that already live in the HF cache or LM Studio's library
+    without forcing a re-download. GGUF entries from Ollama/llama.cpp are skipped:
+    they exist in the catalog but no current exo engine can load them.
+    """
+    # Lazy import: ``exo.sources`` pulls in optional cache-walking modules; keeping
+    # this out of module load-time avoids paying that cost in unrelated code paths.
+    from exo.sources import default_sources
+
+    for source in default_sources():
+        if source.kind == "exo":
+            continue  # already covered by resolve_existing_model above
+        try:
+            if not source.is_available():
+                continue
+            resolved = source.resolve_path(external_id)
+        except Exception as exc:  # noqa: BLE001 — best-effort across third-party caches
+            logger.debug(f"source {source.kind} resolve_path raised: {exc!r}")
+            continue
+        if resolved is None:
+            continue
+        # Only return the path if the engine can actually load it.
+        if resolved.is_dir() and (resolved / "config.json").exists():
+            return resolved
+    return None
 
 
 def select_download_dir(required_bytes: int) -> Path:
@@ -191,12 +284,17 @@ async def select_download_dir_for_shard(
 
 
 async def resolve_model_dir(model_id: ModelId) -> Path:
-    """Return the directory for a model's files, creating it if needed.
+    """Return the directory exo should *write* a model's files into.
 
-    Checks all model directories for an existing complete model first,
-    then falls back to the default models directory.
+    Prefers an existing exo-managed copy (canonical or mispathed-but-content-matched)
+    so partial downloads resume in place; otherwise falls back to the canonical
+    ``EXO_DEFAULT_MODELS_DIR/{normalized_id}``. Deliberately does NOT consult external
+    sources (HF cache, LM Studio, …) — those are read-only as far as exo is concerned;
+    redirecting writes there would confuse the owning tool and would scatter exo's
+    metadata across third-party caches.
     """
-    target = await asyncio.to_thread(build_model_path, model_id)
+    found = await asyncio.to_thread(resolve_existing_model, model_id)
+    target = found if found is not None else EXO_DEFAULT_MODELS_DIR / model_id.normalize()
     await aios.makedirs(target, exist_ok=True)
     return target
 
@@ -249,11 +347,20 @@ def _scan_model_directory(
 ) -> list[FileListEntry] | None:
     """Scan a local model directory and build a file list.
 
-    Requires at least one ``*.safetensors.index.json``.  Every weight file
-    referenced by the index that is missing on disk gets ``size=None``.
+    Two layouts are recognised:
+
+    * **Sharded** — at least one ``*.safetensors.index.json`` exists. Every weight file
+      named in the index but missing on disk is added with ``size=None`` so completeness
+      checks can detect partial downloads.
+    * **Single-file** — no index, but a non-partial ``model.safetensors`` is on disk
+      (e.g. ``Qwen/Qwen3-0.6B``). We trust local files: a present, fully-downloaded
+      ``model.safetensors`` means the dir is complete.
+
+    Returns ``None`` only when neither layout is present (truly empty / not a model dir).
     """
     index_files = list(model_dir.glob("**/*.safetensors.index.json"))
-    if not index_files:
+    has_single_file_weights = (model_dir / "model.safetensors").is_file()
+    if not index_files and not has_single_file_weights:
         return None
 
     entries_by_path: dict[str, FileListEntry] = {}
@@ -278,6 +385,12 @@ def _scan_model_directory(
                     path=item.name,
                     size=item.stat().st_size,
                 )
+
+    # Single-file layout: nothing more to enumerate. The presence of a non-partial
+    # ``model.safetensors`` is the completeness signal — partial downloads live under
+    # ``model.safetensors.partial`` until the rename at end of download.
+    if not index_files:
+        return list(entries_by_path.values())
 
     # Add expected weight files from index that haven't been downloaded yet
     for index_file in index_files:

@@ -219,6 +219,29 @@ export interface TraceListResponse {
   traces: TraceListItem[];
 }
 
+export type ModelSourceKind =
+  | "exo"
+  | "huggingface"
+  | "lmstudio"
+  | "ollama"
+  | "llamacpp";
+
+export type ModelFileFormat = "safetensors" | "mlx" | "gguf";
+
+// Mirrors LocalModelEntry on the backend; kept loose-typed where the dashboard
+// just passes values through.
+export interface RawLocalModelEntry {
+  nodeId: string;
+  source: ModelSourceKind;
+  externalId: string;
+  displayName: string;
+  path: string;
+  format: ModelFileFormat;
+  sizeBytes: { inBytes: number };
+  loadableWithMlx: boolean;
+  matchedModelId?: string | null;
+}
+
 interface RawStateResponse {
   topology?: RawTopology;
   instances?: Record<
@@ -231,6 +254,7 @@ interface RawStateResponse {
   runners?: Record<string, unknown>;
   instanceLinks?: Record<string, RawInstanceLink>;
   downloads?: Record<string, unknown[]>;
+  localModels?: Record<string, RawLocalModelEntry[]>;
   // New granular node state fields
   nodeIdentities?: Record<string, RawNodeIdentity>;
   nodeMemory?: Record<string, RawMemoryUsage>;
@@ -551,6 +575,7 @@ class AppStore {
   instanceLinks = $state<Record<string, RawInstanceLink>>({});
   featureFlags = $state<Record<string, boolean>>({});
   downloads = $state<Record<string, unknown[]>>({});
+  localModels = $state<Record<string, RawLocalModelEntry[]>>({});
   nodeDisk = $state<
     Record<
       string,
@@ -1337,6 +1362,11 @@ class AppStore {
       }
       if (data.downloads) {
         this.downloads = data.downloads;
+      }
+      if (data.localModels) {
+        this.localModels = data.localModels;
+      } else {
+        this.localModels = {};
       }
       if (data.nodeDisk) {
         this.nodeDisk = data.nodeDisk;
@@ -3498,6 +3528,7 @@ export const updateInstanceLink = (
 export const deleteInstanceLink = (linkId: string) =>
   appStore.deleteInstanceLink(linkId);
 export const downloads = () => appStore.downloads;
+export const localModels = () => appStore.localModels;
 export const nodeDisk = () => appStore.nodeDisk;
 export const placementPreviews = () => appStore.placementPreviews;
 export const selectedPreviewModelId = () => appStore.selectedPreviewModelId;
