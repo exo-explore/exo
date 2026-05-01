@@ -130,9 +130,15 @@ def _measure_streaming_bandwidth_gbps() -> float:
     the chip's DRAM ceiling on Apple Silicon. Same eval-per-iteration
     discipline as the matmul: without it MLX fuses the loop into one
     reduction and we'd report a wildly optimistic number.
+
+    Uses `mx.zeros` rather than `mx.random.uniform` for the buffer because
+    DRAM bandwidth is independent of the values being streamed, and `uniform`
+    allocates an FP32 temporary which doubles the peak allocation — a 2 GiB
+    FP16 buffer would briefly need 4 GiB of Metal heap, exceeding the
+    `max_buffer_size` on smaller Apple devices (3.5 GiB on the CI runner).
     """
     n_elements = _BANDWIDTH_BYTES // _BYTES_PER_ELEMENT
-    buffer = mx.random.uniform(shape=(n_elements,), dtype=_DTYPE)
+    buffer = mx.zeros(shape=(n_elements,), dtype=_DTYPE)
     mx.eval(buffer)
 
     _warm_up_with(lambda: mx.sum(buffer), time.perf_counter() + _WARMUP_SECONDS)
