@@ -28,9 +28,6 @@ delegate = "0.13"
 
 # Utility dependencies
 keccak-const = "0.2"
-num_enum = "0.7"
-rustix = "1.1.2"
-zerocopy = { version = "0.8.31", features = ["derive"] }
 
 # Async dependencies
 async-stream = "0.3"
