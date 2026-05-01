@@ -40,6 +40,7 @@ exo = "exo.main:main"
 dev = [
   "basedpyright>=1.29.0",
   "pyinstaller>=6.17.0",
+  "playwright>=1.52.0",
   "pytest>=8.4.0",
   "pytest-asyncio>=1.0.0",
   "pytest-env",
@@ -75,7 +76,7 @@ cuda13 = [
 ###
 
 [tool.uv.workspace]
-members = ["rust/exo_pyo3_bindings", "bench"]
+members = ["rust/exo_pyo3_bindings", "bench", "tools"]
 
 [tool.uv.sources]
 exo-pyo3-bindings = { workspace = true }
@@ -112,7 +113,7 @@ build-backend = "uv_build"
 ###
 
 [tool.basedpyright]
-include = ["src", "bench"]
+include = ["src", "bench", "tools"]
 typeCheckingMode = "strict"
 failOnWarnings = true
 
@@ -145,6 +146,13 @@ reportMissingModuleSource = false
 
 [[tool.basedpyright.executionEnvironments]]
 root = "src"
+
+[[tool.basedpyright.executionEnvironments]]
+root = "bench"
+extraPaths = ["tools/src"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "tools/src"
 
 
 ###
@@ -220,5 +228,5 @@ pythonpath = "."
 asyncio_mode = "auto"
 markers = ["slow: marks tests as slow (deselected by default)"]
 env = ["EXO_TESTS=1"]
-addopts = "-m 'not slow' --ignore=tests/start_distributed_test.py"
+addopts = "-m 'not slow' --ignore=tests/start_distributed_test.py --ignore=tests/integration"
 filterwarnings = ["ignore:builtin type Swig:DeprecationWarning"]

@@ -15,9 +15,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from harness import (
-    ExoClient,
-    ExoHttpError,
+from exo_tools.client import ExoClient, ExoHttpError
+from exo_tools.harness import (
     add_common_instance_args,
     capture_cluster_snapshot,
     instance_id_from_instance,
