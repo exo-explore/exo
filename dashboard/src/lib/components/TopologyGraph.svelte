@@ -526,9 +526,9 @@
       }
 
       // Per-direction labels, each placed next to the arrow that represents
-      // that direction. The arrow already encodes "which way", so the label
-      // doesn't need ↑↓ glyphs. A profile from A's perspective contributes
-      // its uploadMbps to the A→B direction and its downloadMbps to the B→A
+      // that direction. The arrow encodes "which way", so the label doesn't
+      // need ↑↓ glyphs. A profile from A's perspective contributes its
+      // uploadMbps to the A→B direction and its downloadMbps to the B→A
       // direction; from B's perspective it's the other way around.
       const pairProfiles = collectPairProfiles(entry.a, entry.b);
       let maxAToB: number | null = null;
@@ -550,17 +550,27 @@
         }
       }
 
+      // All three labels for an edge sit on its OUTER side (away from the
+      // viewport centroid). Pushing toward the centroid would pile up
+      // every edge's labels on top of each other in the middle.
       const px = -uy;
       const py = ux;
-      const towardCenter =
-        (centerX - mx) * px + (centerY - my) * py >= 0 ? 1 : -1;
-      const perpOffset = 14;
+      const dotToCenter = (centerX - mx) * px + (centerY - my) * py;
+      // sign = away from center. For diagonals whose midpoint *is* the
+      // centroid (dot==0), pick a deterministic side based on the edge
+      // direction so the choice is stable across renders.
+      const awayFromCenter =
+        dotToCenter === 0 ? (ux + uy >= 0 ? 1 : -1) : dotToCenter < 0 ? 1 : -1;
+      const perpOffset = 13;
       const labelFontSize = isMinimized ? 9 : 11;
       const bwColor = "rgba(255,215,0,0.95)";
       const latColor = "rgba(74,222,128,0.95)";
-      // Each per-direction label sits beside its arrow head, displaced
-      // along the edge direction so it doesn't sit directly on the arrow.
-      const alongOffset = 38;
+
+      // Place labels along a strip parallel to the edge, on its outer side.
+      //   [A→B]   [latency]   [B→A]
+      // Distances are tuned so each bandwidth label sits next to its
+      // arrow head (arrows are at ±tipOffset=16 along the edge).
+      const bwAlong = 56;
 
       function placeLabel(
         x: number,
@@ -581,34 +591,32 @@
           .text(text);
       }
 
-      // A→B label (next to the A→B arrow tip, on the A-side of midpoint).
+      const perpX = px * perpOffset * awayFromCenter;
+      const perpY = py * perpOffset * awayFromCenter;
+
+      // A→B bandwidth: next to the A→B arrow head (on the A side).
       if (entry.aToB && maxAToB != null) {
-        const baseX = mx - ux * alongOffset;
-        const baseY = my - uy * alongOffset;
         placeLabel(
-          baseX + px * perpOffset * towardCenter,
-          baseY + py * perpOffset * towardCenter,
+          mx - ux * bwAlong + perpX,
+          my - uy * bwAlong + perpY,
           formatBandwidthMbps(maxAToB),
           bwColor,
         );
       }
-      // B→A label (next to the B→A arrow tip, on the B-side of midpoint).
+      // B→A bandwidth: next to the B→A arrow head (on the B side).
       if (entry.bToA && maxBToA != null) {
-        const baseX = mx + ux * alongOffset;
-        const baseY = my + uy * alongOffset;
         placeLabel(
-          baseX + px * perpOffset * towardCenter,
-          baseY + py * perpOffset * towardCenter,
+          mx + ux * bwAlong + perpX,
+          my + uy * bwAlong + perpY,
           formatBandwidthMbps(maxBToA),
           bwColor,
         );
       }
-      // Latency centered on the edge midpoint, on the *other* side of the
-      // edge from the bandwidth labels so the eye doesn't trip over them.
+      // Latency centered between the two bandwidth labels, same outer side.
       if (minLat != null) {
         placeLabel(
-          mx - px * perpOffset * towardCenter,
-          my - py * perpOffset * towardCenter,
+          mx + perpX,
+          my + perpY,
           formatLatencyMs(minLat / 2),
           latColor,
         );
@@ -1557,7 +1565,11 @@
                 )}</td
               >
               <td class="latency"
-                >{formatLatencyMs(profile.latencyJitterMs)}</td
+                >{formatLatencyMs(
+                  profile.latencyJitterMs != null
+                    ? profile.latencyJitterMs / 2
+                    : null,
+                )}</td
               >
             </tr>
           {/each}
