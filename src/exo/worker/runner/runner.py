@@ -16,6 +16,7 @@ from exo.shared.types.events import (
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
+    TransientEvent,
 )
 from exo.shared.types.tasks import (
     ConnectToGroup,
@@ -86,7 +87,7 @@ class Runner:
         self,
         bound_instance: BoundInstance,
         builder: Builder,
-        event_sender: MpSender[Event],
+        event_sender: MpSender[Event | TransientEvent],
         task_receiver: MpReceiver[Task],
     ):
         self.event_sender = event_sender

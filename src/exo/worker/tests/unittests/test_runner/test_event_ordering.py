@@ -15,6 +15,7 @@ from exo.shared.types.events import (
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
+    TransientEvent,
 )
 from exo.shared.types.tasks import (
     ConnectToGroup,
@@ -110,7 +111,10 @@ CHAT_TASK = TextGeneration(
 )
 
 
-def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Event]):
+def assert_events_equal(
+    test_events: Iterable[Event | TransientEvent],
+    true_events: Iterable[Event | TransientEvent],
+):
     for test_event, true_event in zip(test_events, true_events, strict=True):
         test_event = test_event.model_copy(update={"event_id": true_event.event_id})
         assert test_event == true_event, f"{test_event} != {true_event}"

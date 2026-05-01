@@ -6,8 +6,10 @@ from exo.shared.election import ElectionMessage
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.events import (
     GlobalForwarderEvent,
+    GlobalForwarderTransientEvent,
     LocalForwarderEvent,
 )
+from exo.shared.types.snapshots import SnapshotChunk
 from exo.utils.pydantic_ext import FrozenModel
 
 
@@ -39,6 +41,9 @@ class TypedTopic[T: FrozenModel]:
 
 GLOBAL_EVENTS = TypedTopic("global_events", PublishPolicy.Always, GlobalForwarderEvent)
 LOCAL_EVENTS = TypedTopic("local_events", PublishPolicy.Always, LocalForwarderEvent)
+TRANSIENT_EVENTS = TypedTopic(
+    "transient_events", PublishPolicy.Always, GlobalForwarderTransientEvent
+)
 COMMANDS = TypedTopic("commands", PublishPolicy.Always, ForwarderCommand)
 ELECTION_MESSAGES = TypedTopic(
     "election_messages", PublishPolicy.Always, ElectionMessage
@@ -48,4 +53,7 @@ CONNECTION_MESSAGES = TypedTopic(
 )
 DOWNLOAD_COMMANDS = TypedTopic(
     "download_commands", PublishPolicy.Always, ForwarderDownloadCommand
+)
+SNAPSHOT_RESPONSES = TypedTopic(
+    "snapshot_responses", PublishPolicy.Always, SnapshotChunk
 )

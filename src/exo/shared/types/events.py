@@ -146,29 +146,37 @@ class InstanceLinkDeleted(BaseEvent):
     link_id: InstanceLinkId
 
 
+# Durable events: reduced into State by `apply()`, persisted in the master's
+# event log, ordered by a global index, and replayable.
 Event = (
     TestEvent
     | TaskCreated
     | TaskStatusUpdated
     | TaskFailed
     | TaskDeleted
-    | TaskAcknowledged
     | InstanceCreated
     | InstanceDeleted
     | RunnerStatusUpdated
     | NodeTimedOut
     | NodeGatheredInfo
     | NodeDownloadProgress
-    | ChunkGenerated
-    | InputChunkReceived
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
-    | TracesCollected
-    | TracesMerged
     | CustomModelCardAdded
     | CustomModelCardDeleted
     | InstanceLinkCreated
     | InstanceLinkDeleted
+)
+
+# Transient events: per-request streaming/notification signals. Not persisted,
+# not ordered, not replayed. Routed over a separate pubsub channel so a node
+# joining via snapshot doesn't have to (incorrectly) replay them.
+TransientEvent = (
+    TaskAcknowledged
+    | ChunkGenerated
+    | InputChunkReceived
+    | TracesCollected
+    | TracesMerged
 )
 
 
@@ -195,3 +203,14 @@ class LocalForwarderEvent(FrozenModel):
     origin: SystemId
     session: SessionId
     event: Event
+
+
+class GlobalForwarderTransientEvent(FrozenModel):
+    """A transient event published to the cluster.
+
+    No `origin_idx`: transients are unordered and not persisted.
+    """
+
+    origin: NodeId
+    session: SessionId
+    event: TransientEvent

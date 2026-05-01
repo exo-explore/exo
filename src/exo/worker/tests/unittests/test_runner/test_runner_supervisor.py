@@ -7,7 +7,12 @@ import pytest
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
+from exo.shared.types.events import (
+    ChunkGenerated,
+    Event,
+    RunnerStatusUpdated,
+    TransientEvent,
+)
 from exo.shared.types.tasks import Task, TaskId, TextGeneration
 from exo.shared.types.text_generation import (
     InputMessage,
@@ -43,9 +48,10 @@ class _DeadProcess:
 @pytest.mark.asyncio
 async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> None:
     event_sender, event_receiver = channel[Event]()
+    transient_sender, transient_receiver = channel[TransientEvent]()
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
-    _, ev_recv = mp_channel[Event]()
+    _, ev_recv = mp_channel[Event | TransientEvent]()
 
     bound_instance: BoundInstance = get_bound_mlx_ring_instance(
         instance_id=InstanceId("instance-a"),
@@ -62,6 +68,7 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
         _ev_recv=ev_recv,
         _task_sender=task_sender,
         _event_sender=event_sender,
+        _transient_event_sender=transient_sender,
         _cancel_sender=cancel_sender,
     )
 
@@ -81,7 +88,9 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
 
     await supervisor._check_runner(RuntimeError("boom"))  # pyright: ignore[reportPrivateUsage]
 
-    got_chunk = await event_receiver.receive()
+    # The synthetic error chunk now flows over the transient channel; the
+    # runner-status event still flows over the durable channel.
+    got_chunk = await transient_receiver.receive()
     got_status = await event_receiver.receive()
 
     assert isinstance(got_chunk, ChunkGenerated)
@@ -93,5 +102,7 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     assert isinstance(got_status.runner_status, RunnerFailed)
 
     event_sender.close()
+    transient_sender.close()
     with anyio.move_on_after(0.1):
         await event_receiver.aclose()
+        await transient_receiver.aclose()

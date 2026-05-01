@@ -5,8 +5,9 @@ from typing import Any, cast
 from pydantic import ConfigDict, Field, field_serializer, field_validator
 from pydantic.alias_generators import to_camel
 
+from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology, TopologySnapshot
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
     DiskUsage,
@@ -41,6 +42,11 @@ class State(FrozenModel):
         strict=True,
         arbitrary_types_allowed=True,
     )
+    # Bumped when we introduce a State change that older snapshots can't be
+    # round-tripped through (renamed/removed fields, new required fields).
+    # Snapshots tagged with a different version are discarded on load.
+    schema_version: int = Field(default=1, ge=1)
+
     instances: Mapping[InstanceId, Instance] = {}
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
@@ -64,6 +70,10 @@ class State(FrozenModel):
 
     instance_links: Mapping[InstanceLinkId, InstanceLink] = {}
     prefill_server_ports: Mapping[RunnerId, int] = {}
+
+    # User-added model cards. The on-disk copies under EXO_CUSTOM_MODEL_CARDS_DIR
+    # are reconciled to match this map by the worker.
+    custom_model_cards: Mapping[ModelId, ModelCard] = {}
 
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:

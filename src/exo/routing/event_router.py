@@ -40,8 +40,11 @@ class EventRouter:
 
     _nack_cancel_scope: CancelScope | None = field(init=False, default=None)
     _nack_attempts: int = field(init=False, default=0)
-    _nack_base_seconds: float = field(init=False, default=0.5)
-    _nack_cap_seconds: float = field(init=False, default=10.0)
+    # Snapshots carry the bulk of catch-up; NACK only needs to fetch the
+    # short tail of events emitted after the snapshot, so we can be much
+    # more aggressive than the historical 0.5s..10s window.
+    _nack_base_seconds: float = field(init=False, default=0.05)
+    _nack_cap_seconds: float = field(init=False, default=1.0)
 
     async def run(self):
         try:
@@ -94,8 +97,15 @@ class EventRouter:
                 await self.external_outbound.send(f_ev)
                 self.out_for_delivery[event.event_id] = (anyio.current_time(), f_ev)
 
+    def set_buffer_start(self, idx: int) -> None:
+        """Skip events strictly before `idx` (e.g. after applying a snapshot).
+
+        Both pending out-of-order events in the buffer and any future events
+        below `idx` are discarded. Idempotent and only moves forward.
+        """
+        self.event_buffer.fast_forward_to(idx)
+
     async def _run_ext_in(self):
-        buf = OrderedBuffer[Event]()
         with self.external_inbound as events:
             async for event in events:
                 if event.session != self.session_id:
@@ -103,12 +113,12 @@ class EventRouter:
                 if event.origin != self.session_id.master_node_id:
                     continue
 
-                buf.ingest(event.origin_idx, event.event)
+                self.event_buffer.ingest(event.origin_idx, event.event)
                 event_id = event.event.event_id
                 if event_id in self.out_for_delivery:
                     self.out_for_delivery.pop(event_id)
 
-                drained = buf.drain_indexed()
+                drained = self.event_buffer.drain_indexed()
                 if drained:
                     self._nack_attempts = 0
                     if self._nack_cancel_scope:
@@ -119,7 +129,9 @@ class EventRouter:
                     or self._nack_cancel_scope.cancel_called
                 ):
                     # Request the next index.
-                    self._tg.start_soon(self._nack_request, buf.next_idx_to_release)
+                    self._tg.start_soon(
+                        self._nack_request, self.event_buffer.next_idx_to_release
+                    )
                     continue
 
                 for idx, event in drained:

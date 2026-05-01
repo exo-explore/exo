@@ -47,6 +47,20 @@ class OrderedBuffer[T]:
         logger.trace(f"Releasing event {ret}")
         return ret
 
+    def fast_forward_to(self, idx: int) -> None:
+        """Skip past every event with index less than `idx`.
+
+        Used after a snapshot apply: the snapshot already covers events up to
+        and including `idx - 1`, so any pending or future events below `idx`
+        are redundant and should be discarded. Only moves forward — calling
+        with a smaller idx is a no-op.
+        """
+        if idx <= self.next_idx_to_release:
+            return
+        self.next_idx_to_release = idx
+        for stale in [i for i in self.store if i < idx]:
+            del self.store[stale]
+
 
 class MultiSourceBuffer[SourceId, T]:
     """
