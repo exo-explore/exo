@@ -139,8 +139,37 @@ export function inferRdmaConnectionType(
   };
 }
 
+// Sticky-cache keyed by (sinkNodeId, sinkIp). The backend re-derives
+// nodeNetwork every 10 s from `networksetup`, and individual entries
+// occasionally flicker (the IP is missing for one tick, then back). That
+// would visibly bounce the label between "Ethernet" and "Unknown" between
+// re-renders. Once we've classified a peer's IP as something concrete, we
+// stick with that until we get a *different* concrete answer — transient
+// "Unknown" readings are ignored.
+const _socketTypeCache: Map<string, ConnectionType> = new Map();
+
 /** Connection type for a SocketConnection edge identified by sink IP. */
 export function inferSocketConnectionType(
+  sinkNodeId: string,
+  sinkIp: string,
+  context: ConnectionTypeContext,
+): ConnectionType {
+  const fresh = _inferSocketConnectionTypeFresh(sinkNodeId, sinkIp, context);
+  const cacheKey = `${sinkNodeId}|${sinkIp}`;
+  if (fresh.kind !== "unknown") {
+    _socketTypeCache.set(cacheKey, fresh);
+    return fresh;
+  }
+  // Fresh classification couldn't determine a kind. Prefer the last good
+  // answer over flickering to "Unknown".
+  const cached = _socketTypeCache.get(cacheKey);
+  if (cached && cached.kind !== "unknown") {
+    return cached;
+  }
+  return fresh;
+}
+
+function _inferSocketConnectionTypeFresh(
   sinkNodeId: string,
   sinkIp: string,
   context: ConnectionTypeContext,
