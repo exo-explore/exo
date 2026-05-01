@@ -1,11 +1,12 @@
 import asyncio
 import hashlib
 import os
+import random
 import shutil
 import ssl
 import time
 import traceback
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Mapping
 from datetime import timedelta
 from pathlib import Path
 from typing import Callable, Literal
@@ -54,6 +55,33 @@ class HuggingFaceAuthenticationError(Exception):
 
 class HuggingFaceRateLimitError(Exception):
     """429 Huggingface code"""
+
+    def __init__(self, msg: str, retry_after: float | None = None) -> None:
+        super().__init__(msg)
+        self.retry_after = retry_after
+
+
+def _parse_retry_after(headers: Mapping[str, str]) -> float | None:
+    """Parse seconds-to-reset from HF's RateLimit header.
+
+    HF sends e.g. ``ratelimit: "api";r=0;t=52`` on 429s; ``t`` is the wait.
+    Returns ``None`` if the header is missing or has no ``t`` field.
+    """
+    raw = headers.get("RateLimit") or headers.get("ratelimit")
+    if raw is None:
+        return None
+    for part in raw.split(";"):
+        key, _, val = part.strip().partition("=")
+        if key == "t":
+            try:
+                return float(val)
+            except ValueError:
+                return None
+    return None
+
+
+# reset window is 5 min
+_RATE_LIMIT_MAX_SLEEP_SECS = 300.0
 
 
 async def _build_auth_error_message(status_code: int, model_id: ModelId) -> str:
@@ -552,6 +580,11 @@ async def file_meta(
         if r.status in [401, 403]:
             msg = await _build_auth_error_message(r.status, model_id)
             raise HuggingFaceAuthenticationError(msg)
+        elif r.status == 429:
+            raise HuggingFaceRateLimitError(
+                f"HuggingFace rate limit hit getting metadata for {model_id} file {path}",
+                retry_after=_parse_retry_after(r.headers),
+            )
         content_length = int(
             r.headers.get("x-linked-size") or r.headers.get("content-length") or 0
         )
@@ -571,7 +604,7 @@ async def download_file_with_retry(
     on_connection_lost: Callable[[], None] = lambda: None,
     skip_internet: bool = False,
 ) -> Path:
-    n_attempts = 3
+    n_attempts = 5
     for attempt in range(n_attempts):
         try:
             return await _download_file(
@@ -584,11 +617,15 @@ async def download_file_with_retry(
         except HuggingFaceRateLimitError as e:
             if attempt == n_attempts - 1:
                 raise e
-            logger.error(
-                f"Download error on attempt {attempt}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
+            sleep_for = e.retry_after if e.retry_after is not None else 2.0**attempt
+            sleep_for = min(sleep_for, _RATE_LIMIT_MAX_SLEEP_SECS) + random.uniform(
+                0, 1
             )
-            logger.error(traceback.format_exc())
-            await asyncio.sleep(2.0**attempt)
+            logger.warning(
+                f"Rate limited by HuggingFace downloading {model_id} file {path}; "
+                f"sleeping {sleep_for:.1f}s before retry {attempt + 2}/{n_attempts}"
+            )
+            await asyncio.sleep(sleep_for)
         except Exception as e:
             if attempt == n_attempts - 1:
                 on_connection_lost()
@@ -597,7 +634,7 @@ async def download_file_with_retry(
                 f"Download error on attempt {attempt + 1}/{n_attempts} for {model_id=} {revision=} {path=} {target_dir=}"
             )
             logger.error(traceback.format_exc())
-            await asyncio.sleep(2.0**attempt)
+            await asyncio.sleep(2.0**attempt + random.uniform(0, 1))
     raise Exception(
         f"Failed to download file {model_id=} {revision=} {path=} {target_dir=}"
     )
@@ -665,6 +702,11 @@ async def _download_file(
             if r.status in [401, 403]:
                 msg = await _build_auth_error_message(r.status, model_id)
                 raise HuggingFaceAuthenticationError(msg)
+            if r.status == 429:
+                raise HuggingFaceRateLimitError(
+                    f"HuggingFace rate limit hit downloading {model_id} file {path}",
+                    retry_after=_parse_retry_after(r.headers),
+                )
             assert r.status in [200, 206], (
                 f"Failed to download {path} from {url}: {r.status}"
             )
