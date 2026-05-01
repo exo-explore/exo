@@ -87,6 +87,36 @@ def test_apply_replaces_socket_profile_for_same_transport():
     assert socket_profiles[0].download_mbps == 200.0
 
 
+def test_apply_keeps_separate_socket_profiles_per_ip():
+    """A node reachable on multiple IPs (LAN + Tailscale + link-local) gets one
+    row per IP — they are NOT deduped down to a single socket profile that
+    bounces between paths as the reconciler probes each IP in turn.
+    """
+    state = State()
+    lan = SocketLinkProfile(
+        sink_node_id=NODE_B,
+        sink_ip="10.0.0.5",
+        latency_ms=1.0,
+        upload_mbps=1000.0,
+        download_mbps=1000.0,
+    )
+    tailscale = SocketLinkProfile(
+        sink_node_id=NODE_B,
+        sink_ip="100.88.70.34",
+        latency_ms=5.0,
+        upload_mbps=400.0,
+        download_mbps=400.0,
+    )
+    state = apply(state, _wrap(0, lan))
+    state = apply(state, _wrap(1, tailscale))
+    profiles = state.node_link_profiles[NODE_A][NODE_B]
+    socket_profiles = [p for p in profiles if isinstance(p, NodeSocketLinkProfile)]
+    assert len(socket_profiles) == 2
+    by_ip = {p.sink_ip: p for p in socket_profiles}
+    assert by_ip["10.0.0.5"].upload_mbps == 1000.0
+    assert by_ip["100.88.70.34"].upload_mbps == 400.0
+
+
 def test_apply_keeps_socket_and_rdma_profiles_to_same_peer():
     """A node may have two transports to the same peer (Wi-Fi + Thunderbolt)."""
     state = State()

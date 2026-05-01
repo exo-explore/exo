@@ -497,23 +497,42 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
     return state.model_copy(update=update)
 
 
+def _link_profile_dedup_key(
+    profile: NodeLinkProfile,
+) -> tuple[str, ...]:
+    """Identity for in-place replacement.
+
+    Sockets are deduped on the *IP* (one entry per (transport, sink_ip)) — a
+    peer with both a LAN IP and a Tailscale IP gets two rows, not one that
+    bounces between them as the reconciler probes each IP in turn.
+
+    RDMA edges are deduped on the rdma interface pair, since a node can have
+    multiple Thunderbolt cables to the same peer.
+    """
+    if isinstance(profile, NodeSocketLinkProfile):
+        return ("socket", profile.sink_ip)
+    return ("rdma", profile.source_rdma_iface, profile.sink_rdma_iface)
+
+
 def _merge_link_profile(
     existing: Mapping[NodeId, Mapping[NodeId, Sequence[NodeLinkProfile]]],
     source_node_id: NodeId,
     sink_node_id: NodeId,
     new_entry: NodeLinkProfile,
 ) -> Mapping[NodeId, Mapping[NodeId, Sequence[NodeLinkProfile]]]:
-    """Insert/replace a per-edge link profile, keyed by (source, sink, transport).
+    """Insert/replace a per-edge link profile, keyed by transport+identity.
 
     A node may have both a socket profile and an RDMA profile to the same peer
-    (e.g. Wi-Fi + Thunderbolt). We replace any existing entry that shares the
-    same transport, and append otherwise.
+    (e.g. Wi-Fi + Thunderbolt), and may have multiple sockets (LAN IP +
+    Tailscale + link-local + ...). We replace any existing entry that shares the
+    same dedup key (see `_link_profile_dedup_key`), and append otherwise.
     """
     source_map = dict(existing.get(source_node_id, {}))
     current = list(source_map.get(sink_node_id, ()))
+    new_key = _link_profile_dedup_key(new_entry)
     replaced = False
     for i, profile in enumerate(current):
-        if profile.transport == new_entry.transport:
+        if _link_profile_dedup_key(profile) == new_key:
             current[i] = new_entry
             replaced = True
             break
