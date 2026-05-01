@@ -77,6 +77,7 @@
     uploadMbps: number | null; // fromId -> toId (this row's source uploads)
     downloadMbps: number | null; // toId -> fromId (this row's source downloads)
     latencyMs: number | null; // round-trip; one-way ≈ RTT/2 (no clock sync)
+    latencyJitterMs: number | null; // mean |Δ| between adjacent RTTs
     type: ConnectionType;
     detail: string;
   }
@@ -104,6 +105,7 @@
             uploadMbps: profile.uploadMbps,
             downloadMbps: profile.downloadMbps,
             latencyMs: profile.latencyMs,
+            latencyJitterMs: profile.latencyJitterMs ?? null,
             type,
             detail: profile.sinkIp,
           });
@@ -123,6 +125,7 @@
             uploadMbps: profile.uploadMbps,
             downloadMbps: profile.downloadMbps,
             latencyMs: profile.latencyMs,
+            latencyJitterMs: profile.latencyJitterMs ?? null,
             type,
             detail: `${profile.sourceRdmaIface} → ${profile.sinkRdmaIface}`,
           });
@@ -608,12 +611,13 @@
         .attr("pointer-events", "stroke")
         .style("cursor", "help");
       hitTarget.on("mousemove", (event: MouseEvent) => {
-        const rect = svgContainer!.getBoundingClientRect();
+        // Viewport coords — the tooltip is `position: fixed` so it can
+        // escape the topology container's overflow:hidden clipping.
         hoveredPair = {
           a: entry.a,
           b: entry.b,
-          x: event.clientX - rect.left,
-          y: event.clientY - rect.top,
+          x: event.clientX,
+          y: event.clientY,
         };
       });
       hitTarget.on("mouseleave", () => {
@@ -1514,6 +1518,7 @@
             <th>↑ Upload</th>
             <th>↓ Download</th>
             <th>RTT</th>
+            <th>Jitter</th>
           </tr>
         </thead>
         <tbody>
@@ -1531,6 +1536,9 @@
                 >{formatBandwidthMbps(profile.downloadMbps)}</td
               >
               <td class="latency">{formatLatencyMs(profile.latencyMs)}</td>
+              <td class="latency"
+                >{formatLatencyMs(profile.latencyJitterMs)}</td
+              >
             </tr>
           {/each}
         </tbody>
@@ -1577,19 +1585,21 @@
   }
 
   .link-tooltip {
-    position: absolute;
-    z-index: 30;
+    /* position: fixed so the tooltip can escape `overflow: hidden` on the
+       topology container — multi-row tooltips were being clipped. */
+    position: fixed;
+    z-index: 1000;
     pointer-events: none;
     background: rgba(15, 15, 15, 0.95);
     border: 1px solid rgba(255, 215, 0, 0.3);
     border-radius: 6px;
-    padding: 8px 10px;
+    padding: 10px 12px;
     font-family: "SF Mono", Monaco, monospace;
     font-size: 11px;
     color: rgba(230, 230, 230, 0.95);
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
     backdrop-filter: blur(6px);
-    max-width: 460px;
+    max-width: 720px;
   }
 
   .tooltip-header {
@@ -1607,8 +1617,13 @@
   .link-tooltip th,
   .link-tooltip td {
     text-align: left;
-    padding: 3px 8px 3px 0;
+    padding: 4px 14px 4px 0;
     vertical-align: top;
+    white-space: nowrap;
+  }
+  .link-tooltip th:last-child,
+  .link-tooltip td:last-child {
+    padding-right: 0;
   }
 
   .link-tooltip th {

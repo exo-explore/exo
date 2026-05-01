@@ -122,23 +122,24 @@ class NodeGpuProfile(FrozenModel):
 
 
 class NodeSocketLinkProfile(FrozenModel):
-    """Per-direction TCP/IP bandwidth + round-trip latency to a peer.
+    """Per-direction TCP/IP bandwidth + round-trip latency (with jitter).
 
     `upload_mbps` is source -> sink (this node sending), `download_mbps` is
-    sink -> source. Captures path / queue asymmetries that a single
-    round-trip number would average away.
+    sink -> source. `latency_jitter_ms` is the mean of |Δ| between
+    consecutive RTT samples (RFC 3550 / iperf3 jitter convention).
     """
 
     transport: Literal["socket"] = "socket"
     sink_ip: str
     latency_ms: float
+    latency_jitter_ms: float = 0.0
     upload_mbps: float
     download_mbps: float
     measured_at: datetime
 
 
 class NodeRdmaLinkProfile(FrozenModel):
-    """Per-direction RDMA bandwidth + round-trip latency over a TB edge.
+    """Per-direction RDMA bandwidth + round-trip latency (with jitter) over a TB edge.
 
     All numeric fields are None when the most recent probe was skipped (peer
     busy) or failed. We never substitute synthetic numbers.
@@ -151,6 +152,7 @@ class NodeRdmaLinkProfile(FrozenModel):
     download_mbps: float | None
     payload_bytes: int | None
     latency_ms: float | None = None
+    latency_jitter_ms: float | None = None
     measured_at: datetime
 
 

@@ -49,6 +49,7 @@ def test_apply_socket_link_profile_keys_by_source_and_sink():
         sink_node_id=NODE_B,
         sink_ip="10.0.0.5",
         latency_ms=1.2,
+        latency_jitter_ms=0.1,
         upload_mbps=420.0,
         download_mbps=900.0,
     )
@@ -68,6 +69,7 @@ def test_apply_replaces_socket_profile_for_same_transport():
         sink_node_id=NODE_B,
         sink_ip="10.0.0.5",
         latency_ms=1.0,
+        latency_jitter_ms=0.1,
         upload_mbps=50.0,
         download_mbps=100.0,
     )
@@ -75,6 +77,7 @@ def test_apply_replaces_socket_profile_for_same_transport():
         sink_node_id=NODE_B,
         sink_ip="10.0.0.5",
         latency_ms=2.0,
+        latency_jitter_ms=0.1,
         upload_mbps=120.0,
         download_mbps=200.0,
     )
@@ -97,6 +100,7 @@ def test_apply_keeps_separate_socket_profiles_per_ip():
         sink_node_id=NODE_B,
         sink_ip="10.0.0.5",
         latency_ms=1.0,
+        latency_jitter_ms=0.1,
         upload_mbps=1000.0,
         download_mbps=1000.0,
     )
@@ -104,6 +108,7 @@ def test_apply_keeps_separate_socket_profiles_per_ip():
         sink_node_id=NODE_B,
         sink_ip="100.88.70.34",
         latency_ms=5.0,
+        latency_jitter_ms=0.1,
         upload_mbps=400.0,
         download_mbps=400.0,
     )
@@ -124,6 +129,7 @@ def test_apply_keeps_socket_and_rdma_profiles_to_same_peer():
         sink_node_id=NODE_B,
         sink_ip="10.0.0.5",
         latency_ms=2.0,
+        latency_jitter_ms=0.1,
         upload_mbps=400.0,
         download_mbps=900.0,
     )
@@ -132,6 +138,7 @@ def test_apply_keeps_socket_and_rdma_profiles_to_same_peer():
         source_rdma_iface="rdma_en2",
         sink_rdma_iface="rdma_en3",
         latency_ms=0.05,
+        latency_jitter_ms=0.1,
         upload_mbps=20_000.0,
         download_mbps=18_000.0,
         payload_bytes=64 * 1024 * 1024,
@@ -157,6 +164,7 @@ def test_apply_node_timed_out_drops_profiles():
                 sink_node_id=NODE_B,
                 sink_ip="10.0.0.5",
                 latency_ms=1,
+        latency_jitter_ms=0.1,
                 upload_mbps=1,
                 download_mbps=1,
             ),
@@ -184,6 +192,7 @@ def test_apply_node_timed_out_drops_inverse_link_profiles():
                 sink_node_id=NODE_B,
                 sink_ip="10.0.0.5",
                 latency_ms=1,
+        latency_jitter_ms=0.1,
                 upload_mbps=1,
                 download_mbps=1,
             ),

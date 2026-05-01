@@ -165,7 +165,18 @@ def main() -> int:
                 t0 = time.perf_counter()
                 mx.eval(mx.distributed.all_sum(lat_tensor, group=group))
                 per_iter_ms.append((time.perf_counter() - t0) * 1000.0)
-            latency_ms = statistics.median(per_iter_ms) if per_iter_ms else None
+            if per_iter_ms:
+                latency_ms = statistics.median(per_iter_ms)
+                _deltas = [
+                    abs(per_iter_ms[i] - per_iter_ms[i - 1])
+                    for i in range(1, len(per_iter_ms))
+                ]
+                latency_jitter_ms = (
+                    statistics.fmean(_deltas) if _deltas else 0.0
+                )
+            else:
+                latency_ms = None
+                latency_jitter_ms = None
         except Exception as e:  # noqa: BLE001
             # Without this catch the rank-0 process can exit with returncode 0
             # (because the parent `try/finally` only protects file cleanup) but
@@ -190,6 +201,7 @@ def main() -> int:
                     "payload_bytes": payload_bytes,
                     "iterations": iterations,
                     "latency_ms": latency_ms,
+                    "latency_jitter_ms": latency_jitter_ms,
                 }
             ),
             flush=True,

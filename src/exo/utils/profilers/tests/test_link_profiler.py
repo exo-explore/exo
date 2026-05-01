@@ -69,6 +69,7 @@ async def test_socket_profile_returns_finite_measurements():
     assert profile.sink_node_id == EXPECTED_NODE_ID
     assert profile.sink_ip == SINK_IP
     assert profile.latency_ms > 0
+    assert profile.latency_jitter_ms >= 0
     assert profile.upload_mbps > 0
     assert profile.download_mbps > 0
 

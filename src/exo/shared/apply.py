@@ -472,6 +472,7 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             new_entry = NodeSocketLinkProfile(
                 sink_ip=info.sink_ip,
                 latency_ms=info.latency_ms,
+                latency_jitter_ms=info.latency_jitter_ms,
                 upload_mbps=info.upload_mbps,
                 download_mbps=info.download_mbps,
                 measured_at=measured_at,
@@ -488,6 +489,7 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 download_mbps=info.download_mbps,
                 payload_bytes=info.payload_bytes,
                 latency_ms=info.latency_ms,
+                latency_jitter_ms=info.latency_jitter_ms,
                 measured_at=measured_at,
             )
             update["node_link_profiles"] = _merge_link_profile(

@@ -41,18 +41,22 @@ class _UploadResponse(BaseModel):
 
 
 LATENCY_PAYLOAD_BYTES = 64
-LATENCY_SAMPLES = 5
+LATENCY_SAMPLES = 10
 BANDWIDTH_PAYLOAD_BYTES = 8 * 1024 * 1024
 PROBE_TIMEOUT_SECONDS = 30.0
 
 
 @final
 class SocketLinkProfile(TaggedModel):
-    """Measured TCP/IP RTT plus per-direction bandwidth to a peer's API port."""
+    """Measured TCP/IP RTT (median + jitter) and per-direction bandwidth."""
 
     sink_node_id: NodeId
     sink_ip: str
     latency_ms: float
+    # Mean of |Δ| between consecutive RTT samples (RFC 3550 / iperf3 jitter
+    # convention). 0 for a perfectly stable link, sub-ms on a quiet LAN,
+    # tens of ms over Wi-Fi or NAT-relayed paths.
+    latency_jitter_ms: float
     upload_mbps: float
     download_mbps: float
 
@@ -70,9 +74,10 @@ class SocketLinkProfile(TaggedModel):
         ):
             return None
 
-        latency_ms = await _measure_latency_ms(client, sink_ip, api_port)
-        if latency_ms is None:
+        latency = await _measure_latency_ms(client, sink_ip, api_port)
+        if latency is None:
             return None
+        latency_ms, latency_jitter_ms = latency
 
         upload_mbps = await _measure_upload_mbps(client, sink_ip, api_port)
         if upload_mbps is None:
@@ -86,6 +91,7 @@ class SocketLinkProfile(TaggedModel):
             sink_node_id=expected_sink_node_id,
             sink_ip=sink_ip,
             latency_ms=latency_ms,
+            latency_jitter_ms=latency_jitter_ms,
             upload_mbps=upload_mbps,
             download_mbps=download_mbps,
         )
@@ -93,9 +99,9 @@ class SocketLinkProfile(TaggedModel):
 
 @final
 class RDMALinkProfile(TaggedModel):
-    """Measured RDMA bandwidth (per direction) + RTT over a Thunderbolt edge.
+    """Measured RDMA bandwidth (per direction) + RTT (with jitter) over a TB edge.
 
-    All three numeric fields are None when the most recent probe was skipped
+    All numeric fields are None when the most recent probe was skipped
     (the local node, the peer, or both had active runners) or failed.
     """
 
@@ -106,6 +112,7 @@ class RDMALinkProfile(TaggedModel):
     download_mbps: float | None
     payload_bytes: int | None
     latency_ms: float | None
+    latency_jitter_ms: float | None
 
     @classmethod
     async def measure(
@@ -142,6 +149,7 @@ class RDMALinkProfile(TaggedModel):
                 download_mbps=None,
                 payload_bytes=None,
                 latency_ms=None,
+                latency_jitter_ms=None,
             )
         return cls(
             sink_node_id=sink_node_id,
@@ -151,6 +159,7 @@ class RDMALinkProfile(TaggedModel):
             download_mbps=result.download_mbps,
             payload_bytes=result.payload_bytes,
             latency_ms=result.latency_ms,
+            latency_jitter_ms=result.latency_jitter_ms,
         )
 
 
@@ -201,8 +210,10 @@ async def _peer_node_id_matches(
 
 async def _measure_latency_ms(
     client: httpx.AsyncClient, sink_ip: str, api_port: int
-) -> float | None:
-    """Round-trip latency, median over K small-payload echoes."""
+) -> tuple[float, float] | None:
+    """Round-trip latency (median ms) and jitter (mean |Δ| between adjacent
+    samples, ms — RFC 3550 / iperf3 convention) over K small-payload echoes.
+    """
     samples_ms: list[float] = []
     payload = b"\x00" * LATENCY_PAYLOAD_BYTES
     url = _echo_url(sink_ip, api_port)
@@ -221,7 +232,12 @@ async def _measure_latency_ms(
         ):
             return None
         samples_ms.append(elapsed_ms)
-    return statistics.median(samples_ms)
+    median = statistics.median(samples_ms)
+    deltas = [
+        abs(samples_ms[i] - samples_ms[i - 1]) for i in range(1, len(samples_ms))
+    ]
+    jitter = statistics.fmean(deltas) if deltas else 0.0
+    return (median, jitter)
 
 
 async def _measure_upload_mbps(

@@ -137,6 +137,7 @@ export interface RawNodeSocketLinkProfile {
   transport: "socket";
   sinkIp: string;
   latencyMs: number;
+  latencyJitterMs?: number;
   uploadMbps: number;
   downloadMbps: number;
   measuredAt: string;
@@ -150,6 +151,7 @@ export interface RawNodeRdmaLinkProfile {
   downloadMbps: number | null;
   payloadBytes: number | null;
   latencyMs: number | null;
+  latencyJitterMs?: number | null;
   measuredAt: string;
 }
 

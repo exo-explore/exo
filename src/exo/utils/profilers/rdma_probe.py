@@ -67,6 +67,8 @@ class RdmaProbeResult(FrozenModel):
     # Round-trip latency over the same edge, measured with a tiny-payload
     # all_sum ping-pong. None when the latency loop was skipped or failed.
     latency_ms: float | None = None
+    # Jitter = mean of |Δ| between consecutive RTT samples (RFC 3550).
+    latency_jitter_ms: float | None = None
 
 
 class RdmaProbeError(Exception):
