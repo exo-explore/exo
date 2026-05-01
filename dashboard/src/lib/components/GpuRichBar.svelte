@@ -25,61 +25,6 @@
       0,
     ),
   );
-  const hasAnyProfile = $derived(Object.keys(profiles).length > 0);
-
-  // ── GPU-rich/poor scoring ────────────────────────────────────────────────
-  //
-  // We score each cluster against a reference "rich" rig — 8× H100 — and
-  // blend the three normalized scores. TFLOPS dominate the blend, memory
-  // bandwidth contributes meaningfully, total memory matters least. To honor
-  // "if one is insanely high you're rich" we also take the per-dimension
-  // best after weight, so a cluster that's outrageous in any single axis
-  // still pulls the thumb noticeably right.
-  //
-  // Anchors:
-  //   TFLOPS:    2140  — 8× H100 sparse FP16 (matches HF reference)
-  //   Bandwidth: 26_800 GB/s — 8× HBM3 (~3.35 TB/s each)
-  //   Memory:    640 GB — 8× 80 GB
-  const TFLOPS_ANCHOR = 2140;
-  const BANDWIDTH_ANCHOR_GBPS = 26_800;
-  const MEMORY_ANCHOR_BYTES = 640 * 1024 * 1024 * 1024;
-
-  // Blend weights (sum to 1). TFLOPS most, memory least.
-  const W_TFLOPS = 0.6;
-  const W_BANDWIDTH = 0.3;
-  const W_MEMORY = 0.1;
-
-  // Per-dimension caps for the "any one insanely high → rich" leg. A
-  // dimension that's fully maxed contributes at most this much. We allow
-  // FLOPS alone to nearly fill the bar; bandwidth alone gets you to ~80%;
-  // memory alone caps at ~50% because lots of unused RAM doesn't make a
-  // cluster generally GPU-rich.
-  const SINGLE_DIM_CAP_TFLOPS = 0.95;
-  const SINGLE_DIM_CAP_BANDWIDTH = 0.8;
-  const SINGLE_DIM_CAP_MEMORY = 0.5;
-
-  const fillPercent = $derived.by(() => {
-    if (!hasAnyProfile && totalMemoryBytes <= 0) return 0;
-    const tflopsScore = Math.min(1, totalTflops / TFLOPS_ANCHOR);
-    const bandwidthScore = Math.min(
-      1,
-      totalBandwidthGbps / BANDWIDTH_ANCHOR_GBPS,
-    );
-    const memoryScore = Math.min(1, totalMemoryBytes / MEMORY_ANCHOR_BYTES);
-
-    const blend =
-      W_TFLOPS * tflopsScore +
-      W_BANDWIDTH * bandwidthScore +
-      W_MEMORY * memoryScore;
-
-    const singleDim = Math.max(
-      SINGLE_DIM_CAP_TFLOPS * tflopsScore,
-      SINGLE_DIM_CAP_BANDWIDTH * bandwidthScore,
-      SINGLE_DIM_CAP_MEMORY * memoryScore,
-    );
-
-    return Math.min(100, Math.max(0, Math.max(blend, singleDim) * 100));
-  });
 
   function formatTflops(value: number): string {
     if (value >= 1000) return `${(value / 1000).toFixed(2)} PFLOPS`;
@@ -99,127 +44,32 @@
   }
 </script>
 
-<div class={`gpu-rich-bar ${className}`}>
-  <div class="header">
-    <span class="poor-label">GPU poor</span>
-    <span class="rich-label">GPU rich</span>
+<div class={`cluster-stats ${className}`}>
+  <div class="stat-block">
+    <span class="stat-value">{formatTflops(totalTflops)}</span>
+    <span class="stat-label">FP16 compute</span>
   </div>
-
-  <div
-    class="track"
-    role="meter"
-    aria-valuemin="0"
-    aria-valuemax="100"
-    aria-valuenow={fillPercent.toFixed(0)}
-  >
-    <div class="gradient"></div>
-    {#if hasAnyProfile}
-      <!-- Past the marker the gradient dims so the marker reads as the
-           current value, not just a tick on a static spectrum. -->
-      <div class="dim-past" style="left: {fillPercent}%;"></div>
-      <div class="marker" style="left: {fillPercent}%;"></div>
-    {/if}
+  <div class="stat-block">
+    <span class="stat-value">{formatBandwidth(totalBandwidthGbps)}</span>
+    <span class="stat-label">Memory bandwidth</span>
   </div>
-
-  <div class="footer">
-    <div class="stat-block">
-      <span class="stat-value">{formatTflops(totalTflops)}</span>
-      <span class="stat-label">FP16 compute</span>
-    </div>
-    <div class="stat-block">
-      <span class="stat-value">{formatBandwidth(totalBandwidthGbps)}</span>
-      <span class="stat-label">Memory bandwidth</span>
-    </div>
-    <div class="stat-block">
-      <span class="stat-value">{formatMemory(totalMemoryBytes)}</span>
-      <span class="stat-label">Memory</span>
-    </div>
+  <div class="stat-block">
+    <span class="stat-value">{formatMemory(totalMemoryBytes)}</span>
+    <span class="stat-label">Memory</span>
   </div>
 </div>
 
 <style>
-  .gpu-rich-bar {
+  .cluster-stats {
     width: 100%;
     max-width: 560px;
     margin: 0 auto;
     padding: 4px 4px 2px;
     background: transparent;
     font-family: "SF Mono", Monaco, monospace;
-  }
-
-  .header {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 6px;
-    font-size: 11px;
-    color: rgba(255, 255, 255, 0.85);
-    letter-spacing: 0.06em;
-  }
-
-  .poor-label {
-    color: rgba(244, 67, 54, 0.9);
-  }
-  .rich-label {
-    color: rgba(74, 222, 128, 0.95);
-  }
-
-  .track {
-    position: relative;
-    height: 8px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.04);
-    overflow: visible;
-  }
-
-  .gradient {
-    position: absolute;
-    inset: 0;
-    border-radius: 999px;
-    background: linear-gradient(
-      to right,
-      #f44336 0%,
-      #ff9800 35%,
-      #ffd700 60%,
-      #4ade80 100%
-    );
-    opacity: 0.95;
-  }
-
-  /* Marker line — a passive "you are here" indicator, never a draggable
-     thumb. Two layered rules keep it visible against any portion of the
-     gradient: a hairline white core flanked by a dark halo for contrast on
-     yellow/green sections. Shows past the bar's top and bottom edges by a
-     few px so it reads as a tick mark, not a fill. */
-  .marker {
-    position: absolute;
-    top: -3px;
-    bottom: -3px;
-    width: 2px;
-    transform: translateX(-50%);
-    background: rgba(255, 255, 255, 0.95);
-    box-shadow:
-      0 0 0 1px rgba(0, 0, 0, 0.55),
-      0 0 4px rgba(0, 0, 0, 0.5);
-    border-radius: 1px;
-    pointer-events: none;
-  }
-
-  .dim-past {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    right: 0;
-    background: rgba(0, 0, 0, 0.35);
-    border-top-right-radius: 999px;
-    border-bottom-right-radius: 999px;
-    pointer-events: none;
-  }
-
-  .footer {
     display: flex;
     justify-content: center;
-    margin-top: 8px;
-    gap: 18px;
+    gap: 24px;
     flex-wrap: wrap;
   }
 

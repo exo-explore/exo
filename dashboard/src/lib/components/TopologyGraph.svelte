@@ -525,77 +525,93 @@
           .attr("marker-end", "url(#arrowhead)");
       }
 
-      // Aggregate link profiles for the edge label (best up/down, lowest RTT).
-      // Hover hit-target attached below for the tooltip breakdown.
+      // Per-direction labels, each placed next to the arrow that represents
+      // that direction. The arrow already encodes "which way", so the label
+      // doesn't need ↑↓ glyphs. A profile from A's perspective contributes
+      // its uploadMbps to the A→B direction and its downloadMbps to the B→A
+      // direction; from B's perspective it's the other way around.
       const pairProfiles = collectPairProfiles(entry.a, entry.b);
-      if (pairProfiles.length > 0) {
-        let maxUp: number | null = null;
-        let maxDown: number | null = null;
-        let minLat: number | null = null;
-        for (const p of pairProfiles) {
-          if (p.uploadMbps != null && (maxUp == null || p.uploadMbps > maxUp)) {
-            maxUp = p.uploadMbps;
-          }
-          if (
-            p.downloadMbps != null &&
-            (maxDown == null || p.downloadMbps > maxDown)
-          ) {
-            maxDown = p.downloadMbps;
-          }
-          if (p.latencyMs != null && (minLat == null || p.latencyMs < minLat)) {
-            minLat = p.latencyMs;
-          }
+      let maxAToB: number | null = null;
+      let maxBToA: number | null = null;
+      let minLat: number | null = null;
+      for (const p of pairProfiles) {
+        const aToBValue =
+          p.fromId === entry.a ? p.uploadMbps : p.downloadMbps;
+        const bToAValue =
+          p.fromId === entry.a ? p.downloadMbps : p.uploadMbps;
+        if (aToBValue != null && (maxAToB == null || aToBValue > maxAToB)) {
+          maxAToB = aToBValue;
         }
+        if (bToAValue != null && (maxBToA == null || bToAValue > maxBToA)) {
+          maxBToA = bToAValue;
+        }
+        if (p.latencyMs != null && (minLat == null || p.latencyMs < minLat)) {
+          minLat = p.latencyMs;
+        }
+      }
 
-        // Offset the metrics label perpendicular to the edge so arrows stay
-        // legible; pick whichever side puts the label closer to viewport center.
-        const px = -uy;
-        const py = ux;
-        const towardCenter =
-          (centerX - mx) * px + (centerY - my) * py >= 0 ? 1 : -1;
-        const offset = 14;
-        const labelX = mx + px * offset * towardCenter;
-        const labelY = my + py * offset * towardCenter;
-        const labelFontSize = isMinimized ? 9 : 11;
+      const px = -uy;
+      const py = ux;
+      const towardCenter =
+        (centerX - mx) * px + (centerY - my) * py >= 0 ? 1 : -1;
+      const perpOffset = 14;
+      const labelFontSize = isMinimized ? 9 : 11;
+      const bwColor = "rgba(255,215,0,0.95)";
+      const latColor = "rgba(74,222,128,0.95)";
+      // Each per-direction label sits beside its arrow head, displaced
+      // along the edge direction so it doesn't sit directly on the arrow.
+      const alongOffset = 38;
 
-        const metricsLabel = linksGroup
+      function placeLabel(
+        x: number,
+        y: number,
+        text: string,
+        fill: string,
+      ) {
+        linksGroup
           .append("text")
-          .attr("x", labelX)
-          .attr("y", labelY)
+          .attr("x", x)
+          .attr("y", y)
           .attr("text-anchor", "middle")
           .attr("dominant-baseline", "middle")
           .attr("font-size", labelFontSize)
           .attr("font-family", "SF Mono, Monaco, monospace")
-          .attr("pointer-events", "none");
+          .attr("pointer-events", "none")
+          .attr("fill", fill)
+          .text(text);
+      }
 
-        const dim = "rgba(179,179,179,0.55)";
-        let needsSep = false;
-        if (maxUp != null) {
-          metricsLabel
-            .append("tspan")
-            .attr("fill", "rgba(255,215,0,0.95)")
-            .text(`↑${formatBandwidthMbps(maxUp)}`);
-          needsSep = true;
-        }
-        if (maxDown != null) {
-          if (needsSep) {
-            metricsLabel.append("tspan").attr("fill", dim).text("  ");
-          }
-          metricsLabel
-            .append("tspan")
-            .attr("fill", "rgba(255,215,0,0.95)")
-            .text(`↓${formatBandwidthMbps(maxDown)}`);
-          needsSep = true;
-        }
-        if (minLat != null) {
-          if (needsSep) {
-            metricsLabel.append("tspan").attr("fill", dim).text("  ·  ");
-          }
-          metricsLabel
-            .append("tspan")
-            .attr("fill", "rgba(74,222,128,0.95)")
-            .text(formatLatencyMs(minLat));
-        }
+      // A→B label (next to the A→B arrow tip, on the A-side of midpoint).
+      if (entry.aToB && maxAToB != null) {
+        const baseX = mx - ux * alongOffset;
+        const baseY = my - uy * alongOffset;
+        placeLabel(
+          baseX + px * perpOffset * towardCenter,
+          baseY + py * perpOffset * towardCenter,
+          formatBandwidthMbps(maxAToB),
+          bwColor,
+        );
+      }
+      // B→A label (next to the B→A arrow tip, on the B-side of midpoint).
+      if (entry.bToA && maxBToA != null) {
+        const baseX = mx + ux * alongOffset;
+        const baseY = my + uy * alongOffset;
+        placeLabel(
+          baseX + px * perpOffset * towardCenter,
+          baseY + py * perpOffset * towardCenter,
+          formatBandwidthMbps(maxBToA),
+          bwColor,
+        );
+      }
+      // Latency centered on the edge midpoint, on the *other* side of the
+      // edge from the bandwidth labels so the eye doesn't trip over them.
+      if (minLat != null) {
+        placeLabel(
+          mx - px * perpOffset * towardCenter,
+          my - py * perpOffset * towardCenter,
+          formatLatencyMs(minLat / 2),
+          latColor,
+        );
       }
 
       // Wide invisible hit target for hover, even when no profiles exist —
@@ -1517,7 +1533,7 @@
             <th>Type</th>
             <th>↑ Upload</th>
             <th>↓ Download</th>
-            <th>RTT</th>
+            <th>RTT/2</th>
             <th>Jitter</th>
           </tr>
         </thead>
@@ -1535,7 +1551,11 @@
               <td class="bandwidth"
                 >{formatBandwidthMbps(profile.downloadMbps)}</td
               >
-              <td class="latency">{formatLatencyMs(profile.latencyMs)}</td>
+              <td class="latency"
+                >{formatLatencyMs(
+                  profile.latencyMs != null ? profile.latencyMs / 2 : null,
+                )}</td
+              >
               <td class="latency"
                 >{formatLatencyMs(profile.latencyJitterMs)}</td
               >
