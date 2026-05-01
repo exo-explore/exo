@@ -33,9 +33,13 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
+    NodeGpuProfile,
     NodeIdentity,
+    NodeLinkProfile,
     NodeNetworkInfo,
     NodeRdmaCtlStatus,
+    NodeRdmaLinkProfile,
+    NodeSocketLinkProfile,
     NodeThunderboltInfo,
     ThunderboltBridgeStatus,
 )
@@ -63,6 +67,8 @@ from exo.utils.info_gatherer.info_gatherer import (
     StaticNodeInformation,
     ThunderboltBridgeInfo,
 )
+from exo.utils.profilers.gpu_profiler import GpuProfile
+from exo.utils.profilers.link_profiler import RDMALinkProfile, SocketLinkProfile
 
 
 def event_apply(event: Event, state: State) -> State:
@@ -304,6 +310,22 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     node_rdma_ctl = {
         key: value for key, value in state.node_rdma_ctl.items() if key != event.node_id
     }
+    node_gpu_profile = {
+        key: value
+        for key, value in state.node_gpu_profile.items()
+        if key != event.node_id
+    }
+    # Drop the leaving node both as source (outer key) and as sink (inner key).
+    node_link_profiles: dict[NodeId, Mapping[NodeId, Sequence[NodeLinkProfile]]] = {}
+    for source_id, sinks in state.node_link_profiles.items():
+        if source_id == event.node_id:
+            continue
+        filtered = {
+            sink_id: profiles
+            for sink_id, profiles in sinks.items()
+            if sink_id != event.node_id
+        }
+        node_link_profiles[source_id] = filtered
     # Only recompute cycles if the leaving node had TB bridge enabled
     leaving_node_status = state.node_thunderbolt_bridge.get(event.node_id)
     leaving_node_had_tb_enabled = (
@@ -326,6 +348,8 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "node_thunderbolt": node_thunderbolt,
             "node_thunderbolt_bridge": node_thunderbolt_bridge,
             "node_rdma_ctl": node_rdma_ctl,
+            "node_gpu_profile": node_gpu_profile,
+            "node_link_profiles": node_link_profiles,
             "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
         }
     )
@@ -432,8 +456,92 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 **state.node_rdma_ctl,
                 event.node_id: NodeRdmaCtlStatus(enabled=info.enabled),
             }
+        case GpuProfile():
+            measured_at = datetime.fromisoformat(event.when)
+            update["node_gpu_profile"] = {
+                **state.node_gpu_profile,
+                event.node_id: NodeGpuProfile(
+                    engine=info.engine,
+                    tflops_fp16=info.tflops_fp16,
+                    memory_bandwidth_gbps=info.memory_bandwidth_gbps,
+                    measured_at=measured_at,
+                ),
+            }
+        case SocketLinkProfile():
+            measured_at = datetime.fromisoformat(event.when)
+            new_entry = NodeSocketLinkProfile(
+                sink_ip=info.sink_ip,
+                latency_ms=info.latency_ms,
+                latency_jitter_ms=info.latency_jitter_ms,
+                upload_mbps=info.upload_mbps,
+                download_mbps=info.download_mbps,
+                measured_at=measured_at,
+            )
+            update["node_link_profiles"] = _merge_link_profile(
+                state.node_link_profiles, event.node_id, info.sink_node_id, new_entry
+            )
+        case RDMALinkProfile():
+            measured_at = datetime.fromisoformat(event.when)
+            new_entry = NodeRdmaLinkProfile(
+                source_rdma_iface=info.source_rdma_iface,
+                sink_rdma_iface=info.sink_rdma_iface,
+                upload_mbps=info.upload_mbps,
+                download_mbps=info.download_mbps,
+                payload_bytes=info.payload_bytes,
+                latency_ms=info.latency_ms,
+                latency_jitter_ms=info.latency_jitter_ms,
+                measured_at=measured_at,
+            )
+            update["node_link_profiles"] = _merge_link_profile(
+                state.node_link_profiles, event.node_id, info.sink_node_id, new_entry
+            )
 
     return state.model_copy(update=update)
+
+
+def _link_profile_dedup_key(
+    profile: NodeLinkProfile,
+) -> tuple[str, ...]:
+    """Identity for in-place replacement.
+
+    Sockets are deduped on the *IP* (one entry per (transport, sink_ip)) — a
+    peer with both a LAN IP and a Tailscale IP gets two rows, not one that
+    bounces between them as the reconciler probes each IP in turn.
+
+    RDMA edges are deduped on the rdma interface pair, since a node can have
+    multiple Thunderbolt cables to the same peer.
+    """
+    if isinstance(profile, NodeSocketLinkProfile):
+        return ("socket", profile.sink_ip)
+    return ("rdma", profile.source_rdma_iface, profile.sink_rdma_iface)
+
+
+def _merge_link_profile(
+    existing: Mapping[NodeId, Mapping[NodeId, Sequence[NodeLinkProfile]]],
+    source_node_id: NodeId,
+    sink_node_id: NodeId,
+    new_entry: NodeLinkProfile,
+) -> Mapping[NodeId, Mapping[NodeId, Sequence[NodeLinkProfile]]]:
+    """Insert/replace a per-edge link profile, keyed by transport+identity.
+
+    A node may have both a socket profile and an RDMA profile to the same peer
+    (e.g. Wi-Fi + Thunderbolt), and may have multiple sockets (LAN IP +
+    Tailscale + link-local + ...). We replace any existing entry that shares the
+    same dedup key (see `_link_profile_dedup_key`), and append otherwise.
+    """
+    source_map = dict(existing.get(source_node_id, {}))
+    current = list(source_map.get(sink_node_id, ()))
+    new_key = _link_profile_dedup_key(new_entry)
+    replaced = False
+    for i, profile in enumerate(current):
+        if _link_profile_dedup_key(profile) == new_key:
+            current[i] = new_entry
+            replaced = True
+            break
+    if not replaced:
+        current.append(new_entry)
+    source_map[sink_node_id] = current
+    return {**existing, source_node_id: source_map}
 
 
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:
