@@ -776,10 +776,14 @@ class ShardedMoE(CustomMlxLayer):
         super().__init__(layer)
         self.sharding_group: mx.distributed.Group | None = None
 
-    def __call__(self, x: mx.array) -> mx.array:
+    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.sharding_group is not None:
             x = sum_gradients(self.sharding_group)(x)
-        y = self.original_layer.__call__(x)
+            # Expose group to the wrapped layer so MoE patches can scale
+            # replicated inputs (e.g. residual fused into a per-rank epilogue
+            # would otherwise be all_sum'd to N*h instead of h).
+            self.original_layer.sharding_group = self.sharding_group
+        y = self.original_layer.__call__(x, *args, **kwargs)
         if self.sharding_group is not None:
             y = mx.distributed.all_sum(y, group=self.sharding_group)
         return y

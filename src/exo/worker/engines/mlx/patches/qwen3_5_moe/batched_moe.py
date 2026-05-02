@@ -166,10 +166,23 @@ def _batched_swiglu_down_moe_call_with_epilogue(self, x, _residual=None):
 
         # Residual baked into the epilogue. _fused_decoder_call always passes one;
         # zeros guard handles the no-residual call shape (shouldn't happen here).
+        #
+        # Under TP, ShardedMoE wraps this call and does mx.distributed.all_sum
+        # on our return value. Each rank produces a partial down_proj output
+        # plus the SAME replicated residual h; without scaling, all_sum would
+        # produce full_routed + full_shared + N*h. Divide H by N so it sums
+        # back to exactly h. ShardedMoE stashes sharding_group on us before
+        # calling; defaults to N=1 (single-mini, no scaling) when unset.
+        N = 1
+        sg = getattr(self, "sharding_group", None)
+        if sg is not None:
+            N = sg.size()
         if _residual is None:
             H = mx.zeros((B_dim, K_OUT), dtype=x.dtype)
         else:
             H = _residual.reshape(B_dim, K_OUT)
+            if N > 1:
+                H = H / N
 
         # D5: fused epilogue (weighted sum + sigmoid(gate_raw)*shared + residual)
         Y = batched_moe_epilogue(

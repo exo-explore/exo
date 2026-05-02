@@ -88,13 +88,17 @@ def apply_qwen35_batched_fused_patches(model: nn.Module) -> None:
     from .batched_moe import _batched_swiglu_down_moe_call_with_epilogue
     from .decoder import _fused_decoder_call
 
-    # Class-level method replacement
+    # Class-level method replacement.
     GatedDeltaNet.__call__ = _fused_gdn_with_outproj_call
     Qwen3NextAttention.__call__ = _batched_fused_gqa_with_oproj_call
     Qwen3NextSparseMoeBlock.__call__ = _batched_swiglu_down_moe_call_with_epilogue
     # _fused_decoder_call: h = x + attn(norm(x));  out = mlp(norm(h), _residual=h)
     # Attention wrappers return post-out_proj. MoE returns full output with
     # residual baked in by batched_moe_epilogue. Decoder body has no extra add.
+    #
+    # Under TP, ShardedMoE forwards the _residual kwarg through to our MoE call
+    # (see auto_parallel.py:ShardedMoE.__call__) and stashes its sharding_group
+    # on the inner MoE so we can scale residual by 1/N pre-all_sum.
     DecoderLayer.__call__ = _fused_decoder_call
 
     t_patch = time.time() - t0
