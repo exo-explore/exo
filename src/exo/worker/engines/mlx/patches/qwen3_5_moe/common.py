@@ -33,9 +33,21 @@ def _patch_swiglu_weights(moe):
 
     Creates concatenated (E, 2*N_INTER, K/4) weight, (E, 2*N_INTER, K/gs) scales/biases
     from the separate gate_proj and up_proj QuantizedSwitchLinear layers.
+
+    IMPORTANT (TP correctness): we read N_INTER and K_HIDDEN from weight.shape,
+    NOT from gate_proj.output_dims / gate_proj.input_dims. Under TP, exo's
+    shard_inplace updates the parameter dict (weights/scales/biases) but does
+    NOT update those module-level dim attributes — so they hold stale full
+    dims. Reading from weight.shape gives the true per-rank values.
     """
     gate_proj = moe.switch_mlp.gate_proj
     up_proj = moe.switch_mlp.up_proj
+
+    # True per-rank dims read from the actual sharded weight tensor.
+    # 8-bit pack: weight.shape[-1] = K_HIDDEN / 4. Use bits to derive pack_factor.
+    pack_factor = 32 // gate_proj.bits
+    N_INTER = gate_proj.weight.shape[-2]
+    K_HIDDEN = gate_proj.weight.shape[-1] * pack_factor
 
     moe.switch_mlp._fused_w_gu = mx.concatenate(
         [gate_proj.weight, up_proj.weight], axis=1)
@@ -43,8 +55,8 @@ def _patch_swiglu_weights(moe):
         [gate_proj.scales, up_proj.scales], axis=1)
     moe.switch_mlp._fused_b_gu = mx.concatenate(
         [gate_proj.biases, up_proj.biases], axis=1)
-    moe.switch_mlp._fused_n_inter = gate_proj.output_dims
-    moe.switch_mlp._fused_k_hidden = gate_proj.input_dims
+    moe.switch_mlp._fused_n_inter = N_INTER
+    moe.switch_mlp._fused_k_hidden = K_HIDDEN
     moe.switch_mlp._fused_group_size = gate_proj.group_size
 
     mx.eval(moe.switch_mlp._fused_w_gu,
@@ -54,7 +66,6 @@ def _patch_swiglu_weights(moe):
     # Alias originals to slices of the stacked tensor so prefill (which still
     # calls switch_mlp.{gate,up}_proj) reads from the same memory. Lets the
     # original (E, N_INTER, K/4) tensors be GC-d, removing ~20 GB / 40 layers.
-    N_INTER = gate_proj.output_dims
     gate_proj.weight = moe.switch_mlp._fused_w_gu[:, :N_INTER, :]
     gate_proj.scales = moe.switch_mlp._fused_s_gu[:, :N_INTER, :]
     gate_proj.biases = moe.switch_mlp._fused_b_gu[:, :N_INTER, :]
@@ -121,14 +132,25 @@ def _patch_seg_weights(moe):
 
 
 def _patch_down_proj(moe):
-    """Extract down_proj weights for merged 8-bit kernel dispatch."""
+    """Extract down_proj weights for merged 8-bit kernel dispatch.
+
+    Read K_OUT and N_IN from weight.shape, NOT from dp.output_dims /
+    dp.input_dims, because exo's shard_inplace under TP only updates the
+    parameter dict — it does not update those module-level attributes, which
+    leaves them holding stale full dims. Under TP for routed down_proj
+    (sharded-to-all on the input dim), N_IN halves per rank while K_OUT
+    stays full. Misreading N_IN as the full value would cause the merged
+    down_proj kernel to address past the end of the sharded weight buffer
+    (silent wrong output, model produces gibberish).
+    """
     dp = moe.switch_mlp.down_proj
-    moe._down_w = dp.weight       # (E, K_OUT, N_IN/4) uint32
-    moe._down_s = dp.scales       # (E, K_OUT, N_IN/gs) bf16
-    moe._down_b = dp.biases       # (E, K_OUT, N_IN/gs) bf16
-    moe._down_K = dp.output_dims  # K = 4096
-    moe._down_N = dp.input_dims   # N = 1024
-    moe._down_gs = dp.group_size  # gs = 64
+    pack_factor = 32 // dp.bits
+    moe._down_w = dp.weight                           # (E, K_OUT, N_IN/4) uint32
+    moe._down_s = dp.scales                           # (E, K_OUT, N_IN/gs) bf16
+    moe._down_b = dp.biases                           # (E, K_OUT, N_IN/gs) bf16
+    moe._down_K = dp.weight.shape[-2]                 # output dim (full hidden)
+    moe._down_N = dp.weight.shape[-1] * pack_factor   # input dim (per-rank under TP)
+    moe._down_gs = dp.group_size
     mx.eval(moe._down_w, moe._down_s, moe._down_b)
 
 
