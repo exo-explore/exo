@@ -159,3 +159,22 @@ def _fused_gdn_call(
     result = fused_rms_norm_gated(out, z_silu, norm_weight, batch_size=B)
 
     return result  # [B, S, value_dim] — skip out_proj (handled by Dispatch 6)
+
+
+def _fused_gdn_with_outproj_call(self, inputs, mask=None, cache=None):
+    """Fused GDN attention path WITH out_proj kept inside attention.
+
+    Wraps _fused_gdn_call (which returns pre-out_proj on the fast path) and
+    applies self.out_proj. Used by the fused_attn_batched_moe mode where we
+    want fused attention but no oproj cross-boundary fusion — keeps the TP
+    all-reduce boundary at out_proj intact.
+
+    The vanilla fallback inside _fused_gdn_call already applies out_proj
+    (it serves the legacy batched_fused_oproj mode), so we only apply
+    out_proj here on the fast path (S=1, B<=8).
+    """
+    B, S, _ = inputs.shape
+    out = _fused_gdn_call(self, inputs, mask, cache)
+    if S > 1 or B > 8:
+        return out
+    return self.out_proj(out)

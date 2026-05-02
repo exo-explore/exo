@@ -104,6 +104,22 @@ def _patch_shared_expert(moe):
     up.biases = moe._shared_b_gu[SI:]
 
 
+def _patch_seg_weights(moe):
+    """Store references (no copies) to shared_expert_gate quantized weights.
+
+    Used by kernels that fuse the shared_expert_gate (1, K) GEMV into Phase 3
+    of the seg-aware batched_merged_swiglu kernels (the fused_attn_batched_moe
+    mode). NOT related to oproj M1/W_fused precompute — pure references, zero
+    memory overhead. _patch_oproj_gate_rms also assigns these as a side effect
+    for the legacy batched_fused_oproj mode; this helper is the standalone
+    version for modes that don't need M1/W_fused.
+    """
+    seg = moe.shared_expert_gate
+    moe._seg_w = seg.weight    # (1, K/4) uint32
+    moe._seg_s = seg.scales    # (1, K/gs) bf16
+    moe._seg_b = seg.biases    # (1, K/gs) bf16
+
+
 def _patch_down_proj(moe):
     """Extract down_proj weights for merged 8-bit kernel dispatch."""
     dp = moe.switch_mlp.down_proj

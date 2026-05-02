@@ -100,3 +100,22 @@ def _batched_fused_gqa_call(
 
     # ── Gate multiply ──
     return output * gate_sigmoid.astype(output.dtype)
+
+
+def _batched_fused_gqa_with_oproj_call(self, x, mask=None, cache=None):
+    """Batched fused GQA attention path WITH o_proj kept inside attention.
+
+    Wraps _batched_fused_gqa_call (which returns pre-o_proj on the fast path)
+    and applies self.o_proj. Used by the fused_attn_batched_moe mode where
+    we want fused attention but no oproj cross-boundary fusion — keeps the
+    TP all-reduce boundary at o_proj intact.
+
+    The vanilla fallback inside _batched_fused_gqa_call already applies
+    o_proj (it serves the legacy batched_fused_oproj mode), so we only apply
+    o_proj here on the fast path (S=1, B<=8).
+    """
+    B, S, _ = x.shape
+    out = _batched_fused_gqa_call(self, x, mask, cache)
+    if S > 1 or B > 8:
+        return out
+    return self.o_proj(out)
