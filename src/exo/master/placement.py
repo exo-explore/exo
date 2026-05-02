@@ -28,7 +28,7 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo, NodeRdmaCtlStatus
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -105,6 +105,7 @@ def place_instance(
     node_network: Mapping[NodeId, NodeNetworkInfo],
     required_nodes: set[NodeId] | None = None,
     download_status: Mapping[NodeId, Sequence[DownloadProgress]] | None = None,
+    node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
@@ -166,8 +167,18 @@ def place_instance(
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
 
+    rdma_ctl_status = node_rdma_ctl or {}
+
+    def _all_rdma_ctl_enabled(cycle: Cycle) -> bool:
+        return all(
+            ((status := rdma_ctl_status.get(node_id)) is not None and status.enabled)
+            for node_id in cycle
+        )
+
     smallest_rdma_cycles = [
-        cycle for cycle in smallest_cycles if topology.is_rdma_cycle(cycle)
+        cycle
+        for cycle in smallest_cycles
+        if topology.is_rdma_cycle(cycle) and _all_rdma_ctl_enabled(cycle)
     ]
 
     if command.instance_meta == InstanceMeta.MlxJaccl:
