@@ -132,7 +132,13 @@ def _fused_gdn_call(
         cache[0] = conv_state_out
 
     # ── Dispatch 3: fused Q/K L2-norm ──
-    qk_normed = fused_qk_rmsnorm(qkv_conv_silu, batch_size=B)
+    # Pass per-instance dims so the kernel works under TP (where key_dim,
+    # value_dim, num_k_heads are halved per rank by QwenShardingStrategy).
+    qk_normed = fused_qk_rmsnorm(
+        qkv_conv_silu, batch_size=B,
+        key_dim=self.key_dim, value_dim=self.value_dim,
+        num_k_heads=self.num_k_heads, head_k_dim=self.head_k_dim,
+    )
 
     # ── Split q, k from normed output; v from conv output ──
     q = qk_normed[:, :, :self.key_dim].reshape(B, S, self.num_k_heads, self.head_k_dim)
@@ -156,7 +162,10 @@ def _fused_gdn_call(
 
     # ── Dispatch 5: fused RMSNorm × z_silu ──
     norm_weight = self.norm.weight
-    result = fused_rms_norm_gated(out, z_silu, norm_weight, batch_size=B)
+    result = fused_rms_norm_gated(
+        out, z_silu, norm_weight, batch_size=B,
+        num_v_heads=self.num_v_heads, head_v_dim=self.head_v_dim,
+    )
 
     return result  # [B, S, value_dim] — skip out_proj (handled by Dispatch 6)
 
