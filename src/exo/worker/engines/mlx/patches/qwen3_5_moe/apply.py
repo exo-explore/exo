@@ -61,7 +61,12 @@ def apply_qwen35_batched_fused_patches(model: nn.Module) -> None:
     n_gdn = 0
     n_gqa = 0
     for li, layer in enumerate(layers):
-        moe = layer.mlp
+        # Under TP, auto_parallel has already wrapped layer.mlp with ShardedMoE,
+        # so the inner Qwen3NextSparseMoeBlock lives at layer.mlp.original_layer.
+        # Unwrap so the per-layer weight prep can find switch_mlp / shared_expert
+        # / shared_expert_gate. Class-level __call__ replacement still hits the
+        # inner block, since ShardedMoE.__call__ delegates to original_layer.
+        moe = getattr(layer.mlp, "original_layer", layer.mlp)
         if isinstance(moe, Qwen3NextSparseMoeBlock):
             # MoE weight prep
             _patch_swiglu_weights(moe)
