@@ -65,6 +65,18 @@ from exo.utils.info_gatherer.info_gatherer import (
 )
 
 
+def _is_rdma_ctl_enabled(
+    node_id: NodeId, node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus]
+) -> bool:
+    """A node is RDMA-capable only if rdma_ctl status has been observed as enabled.
+
+    Missing entries default to ``False`` — if we have not yet observed (or the node
+    cannot run) ``rdma_ctl``, it must not participate in an RDMA-backed instance.
+    """
+    status = node_rdma_ctl.get(node_id)
+    return status is not None and status.enabled
+
+
 def event_apply(event: Event, state: State) -> State:
     """Apply an event to state."""
     match event:
@@ -397,6 +409,9 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 for nid in state.node_thunderbolt
                 for tb_ident in state.node_thunderbolt[nid].interfaces
             }
+            source_is_rdma_enabled = _is_rdma_ctl_enabled(
+                event.node_id, state.node_rdma_ctl
+            )
             as_rdma_conns = [
                 Connection(
                     source=event.node_id,
@@ -409,6 +424,10 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 for tb_conn in info.conns
                 if tb_conn.source_uuid in conn_map
                 if tb_conn.sink_uuid in conn_map
+                if source_is_rdma_enabled
+                and _is_rdma_ctl_enabled(
+                    conn_map[tb_conn.sink_uuid][0], state.node_rdma_ctl
+                )
             ]
             topology.replace_all_out_rdma_connections(event.node_id, as_rdma_conns)
         case ThunderboltBridgeInfo():
@@ -432,6 +451,12 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 **state.node_rdma_ctl,
                 event.node_id: NodeRdmaCtlStatus(enabled=info.enabled),
             }
+            # If RDMA just got disabled on this node, drop any RDMA edges touching it
+            # so placement / topology consumers cannot pick a disabled node for an
+            # RDMA-backed instance. (Edges will repopulate on the next
+            # MacThunderboltConnections poll once both endpoints are enabled again.)
+            if not info.enabled:
+                topology.remove_all_rdma_connections_touching(event.node_id)
 
     return state.model_copy(update=update)
 

@@ -21,7 +21,11 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
-from exo.shared.types.profiling import NetworkInterfaceInfo, NodeNetworkInfo
+from exo.shared.types.profiling import (
+    NetworkInterfaceInfo,
+    NodeNetworkInfo,
+    NodeRdmaCtlStatus,
+)
 from exo.shared.types.tasks import TaskId, TaskStatus, TextGeneration
 from exo.shared.types.text_generation import (
     InputMessage,
@@ -439,8 +443,21 @@ def test_tensor_rdma_backend_connectivity_matrix(
         min_nodes=1,
     )
 
+    node_rdma_ctl = {
+        node_a: NodeRdmaCtlStatus(enabled=True),
+        node_b: NodeRdmaCtlStatus(enabled=True),
+        node_c: NodeRdmaCtlStatus(enabled=True),
+    }
+
     # act
-    placements = place_instance(cic, topology, {}, node_memory, node_network)
+    placements = place_instance(
+        cic,
+        topology,
+        {},
+        node_memory,
+        node_network,
+        node_rdma_ctl=node_rdma_ctl,
+    )
 
     # assert
     assert len(placements) == 1
@@ -480,6 +497,131 @@ def test_tensor_rdma_backend_connectivity_matrix(
         else:
             ip_part = coordinator.split(":")[0]
             assert len(ip_part.split(".")) == 4
+
+
+def _build_three_node_rdma_topology() -> tuple[
+    Topology, NodeId, NodeId, NodeId, dict[NodeId, NodeNetworkInfo]
+]:
+    topology = Topology()
+    node_a = NodeId()
+    node_b = NodeId()
+    node_c = NodeId()
+
+    ethernet_interface = NetworkInterfaceInfo(name="en0", ip_address="10.0.0.1")
+    ethernet_conn = SocketConnection(
+        sink_multiaddr=Multiaddr(address="/ip4/10.0.0.1/tcp/8000")
+    )
+    node_network = {
+        node_a: NodeNetworkInfo(interfaces=[ethernet_interface]),
+        node_b: NodeNetworkInfo(interfaces=[ethernet_interface]),
+        node_c: NodeNetworkInfo(interfaces=[ethernet_interface]),
+    }
+
+    for n in (node_a, node_b, node_c):
+        topology.add_node(n)
+
+    rdma_pairs = [
+        (node_a, node_b, 3),
+        (node_b, node_a, 3),
+        (node_b, node_c, 4),
+        (node_c, node_b, 4),
+        (node_a, node_c, 5),
+        (node_c, node_a, 5),
+    ]
+    for src, sink, iface in rdma_pairs:
+        topology.add_connection(
+            Connection(source=src, sink=sink, edge=create_rdma_connection(iface))
+        )
+
+    socket_pairs = [
+        (node_a, node_b),
+        (node_b, node_c),
+        (node_c, node_a),
+        (node_a, node_c),
+        (node_b, node_a),
+        (node_c, node_b),
+    ]
+    for src, sink in socket_pairs:
+        topology.add_connection(Connection(source=src, sink=sink, edge=ethernet_conn))
+
+    return topology, node_a, node_b, node_c, node_network
+
+
+def test_place_mlx_jaccl_rejects_when_a_node_has_rdma_ctl_disabled(
+    model_card: ModelCard,
+):
+    # arrange
+    model_card = model_card.model_copy(
+        update={"n_layers": 12, "storage_size": Memory.from_bytes(1500)}
+    )
+    topology, node_a, node_b, node_c, node_network = _build_three_node_rdma_topology()
+    node_memory = {
+        node_a: create_node_memory(500),
+        node_b: create_node_memory(500),
+        node_c: create_node_memory(500),
+    }
+    node_rdma_ctl = {
+        node_a: NodeRdmaCtlStatus(enabled=True),
+        node_b: NodeRdmaCtlStatus(enabled=True),
+        node_c: NodeRdmaCtlStatus(enabled=False),
+    }
+    cic = PlaceInstance(
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxJaccl,
+        command_id=CommandId(),
+        model_card=model_card,
+        min_nodes=3,
+    )
+
+    # act / assert
+    with pytest.raises(
+        ValueError, match="Requested RDMA \\(MlxJaccl\\) but no RDMA-connected cycles"
+    ):
+        place_instance(
+            cic,
+            topology,
+            {},
+            node_memory,
+            node_network,
+            node_rdma_ctl=node_rdma_ctl,
+        )
+
+
+def test_place_mlx_jaccl_rejects_when_node_rdma_ctl_missing(model_card: ModelCard):
+    """A node with no observed rdma_ctl status must not participate in RDMA placement."""
+    # arrange
+    model_card = model_card.model_copy(
+        update={"n_layers": 12, "storage_size": Memory.from_bytes(1500)}
+    )
+    topology, node_a, node_b, node_c, node_network = _build_three_node_rdma_topology()
+    node_memory = {
+        node_a: create_node_memory(500),
+        node_b: create_node_memory(500),
+        node_c: create_node_memory(500),
+    }
+    # node_c has no rdma_ctl entry at all
+    node_rdma_ctl = {
+        node_a: NodeRdmaCtlStatus(enabled=True),
+        node_b: NodeRdmaCtlStatus(enabled=True),
+    }
+    cic = PlaceInstance(
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxJaccl,
+        command_id=CommandId(),
+        model_card=model_card,
+        min_nodes=3,
+    )
+
+    # act / assert
+    with pytest.raises(ValueError):
+        place_instance(
+            cic,
+            topology,
+            {},
+            node_memory,
+            node_network,
+            node_rdma_ctl=node_rdma_ctl,
+        )
 
 
 def _make_task(
