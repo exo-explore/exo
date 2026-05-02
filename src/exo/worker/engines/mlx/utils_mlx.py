@@ -284,6 +284,13 @@ def shard_and_load(
     logger.debug("SHARDED")
     logger.debug(model)
 
+    # Apply kernel fusion patches on the post-TP model. QwenShardingStrategy
+    # already updated num_attention_heads / key_dim / value_dim / conv_dim to
+    # per-rank values, so the patches operate on the right sizes. Patches
+    # stack/alias weights in place and don't disturb the sharding boundaries.
+    from exo.worker.engines.mlx.patches import maybe_apply_patches
+    maybe_apply_patches(model, model_path)
+
     # Synchronize processes before generation to avoid timeout
     mx_barrier(group)
 
