@@ -563,8 +563,38 @@ def make_kv_cache(
     assert hasattr(model, "layers")
 
     if hasattr(model, "make_cache"):
-        logger.info("Using MLX LM's make cache")
-        return model.make_cache()  # type: ignore
+        caches: list[
+            KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList
+        ] = list(model.make_cache())  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+        if KV_CACHE_BITS is not None:
+            # Honor KV_CACHE_BITS even when the model provides its own
+            # make_cache(). Replace plain KVCache entries with
+            # QuantizedKVCache; leave ArraysCache (DeltaNet/SSM) and other
+            # cache types alone since they don't support quantization.
+            quantized = 0
+            for i, c in enumerate(caches):
+                if isinstance(c, KVCache):
+                    qc = QuantizedKVCache(
+                        group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS
+                    )
+                    qc.step = 16384
+                    caches[i] = qc
+                    quantized += 1
+            logger.info(
+                f"Using quantized KV cache "
+                f"(bits={KV_CACHE_BITS}, group_size={CACHE_GROUP_SIZE}) "
+                f"for {quantized}/{len(caches)} layers"
+            )
+        else:
+            logger.info("Using MLX LM's make cache")
+            # Increase KVCache step size to reduce Metal allocator
+            # fragmentation. Default step=256 causes a mx.concatenate
+            # expansion every prefill chunk; a larger step lets the cache
+            # pre-allocate and write in-place for most of the prefill.
+            for c in caches:
+                if isinstance(c, KVCache):
+                    c.step = 16384
+        return caches
 
     if max_kv_size is None:
         if KV_CACHE_BITS is None:
