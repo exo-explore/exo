@@ -147,6 +147,7 @@ class Worker:
         self._tg.start_soon(self._forward_info, info_recv)
         self._tg.start_soon(self.plan_step)
         self._tg.start_soon(self._event_applier)
+        self._tg.start_soon(self._transient_event_handler)
         self._tg.start_soon(self._reconcile_instance_backoff)
         self._tg.start_soon(self._reconcile_custom_cards)
         self._tg.start_soon(self._poll_connection_updates)
@@ -198,6 +199,11 @@ class Worker:
                 # 2. for each event, apply it to the state
                 self.state = apply(self.state, event=event)
                 self._sync_input_views_from_state()
+
+    async def _transient_event_handler(self) -> None:
+        with self.transient_event_receiver as events:
+            async for _event in events:
+                pass
 
     async def _reconcile_instance_backoff(self) -> None:
         while True:
