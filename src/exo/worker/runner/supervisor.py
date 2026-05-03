@@ -19,6 +19,8 @@ from exo.shared.types.events import (
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
+    TracesCollected,
+    TracesMerged,
     TransientEvent,
 )
 from exo.shared.types.tasks import (
@@ -241,7 +243,9 @@ class RunnerSupervisor:
                         )
                         self.in_progress.pop(event.task_id, None)
                         self.completed.add(event.task_id)
-                    if isinstance(event, ChunkGenerated):
+                    if isinstance(
+                        event, (ChunkGenerated, TracesCollected, TracesMerged)
+                    ):
                         await self._transient_event_sender.send(event)
                     else:
                         await self._event_sender.send(event)

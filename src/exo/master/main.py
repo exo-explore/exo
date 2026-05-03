@@ -169,6 +169,7 @@ class Master:
         try:
             async with self._tg as tg:
                 tg.start_soon(self._event_processor)
+                tg.start_soon(self._transient_event_processor)
                 tg.start_soon(self._command_processor)
                 tg.start_soon(self._plan)
         finally:
@@ -516,10 +517,6 @@ class Master:
                     local_event.origin,
                 )
                 for event in self._multi_buffer.drain():
-                    if isinstance(event, TracesCollected):
-                        await self._handle_traces_collected(event)
-                        continue
-
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
 
                     event = event.model_copy(
@@ -572,6 +569,12 @@ class Master:
                 )
             )
 
+    async def _transient_event_processor(self) -> None:
+        with self.transient_event_receiver as transients:
+            async for event in transients:
+                if isinstance(event, TracesCollected):
+                    await self._handle_traces_collected(event)
+
     # This function is re-entrant, take care!
     async def _send_event(self, event: IndexedEvent):
         # Convenience method since this line is ugly
@@ -602,7 +605,7 @@ class Master:
         for trace_data in self._pending_traces[task_id].values():
             all_trace_data.extend(trace_data)
 
-        await self.event_sender.send(
+        await self.transient_event_sender.send(
             TracesMerged(task_id=task_id, traces=all_trace_data)
         )
 

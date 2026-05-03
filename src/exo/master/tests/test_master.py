@@ -26,6 +26,9 @@ from exo.shared.types.events import (
     LocalForwarderEvent,
     NodeGatheredInfo,
     TaskCreated,
+    TraceEventData,
+    TracesCollected,
+    TracesMerged,
     TransientEvent,
 )
 from exo.shared.types.memory import Memory
@@ -33,7 +36,7 @@ from exo.shared.types.profiling import (
     MemoryUsage,
 )
 from exo.shared.types.snapshots import SnapshotChunk
-from exo.shared.types.tasks import TaskStatus
+from exo.shared.types.tasks import TaskId, TaskStatus
 from exo.shared.types.tasks import TextGeneration as TextGenerationTask
 from exo.shared.types.text_generation import (
     InputMessage,
@@ -289,4 +292,58 @@ async def test_master_serves_snapshot_for_current_state():
         assert received.state.last_event_applied_idx == 12
 
         await master.shutdown()
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_master_merges_traces_from_transient_events() -> None:
+    node_id = NodeId("master")
+    session_id = SessionId(master_node_id=node_id, election_clock=0)
+
+    ge_sender, _global_event_receiver = channel[GlobalForwarderEvent]()
+    _command_sender, command_receiver = channel[ForwarderCommand]()
+    _local_event_sender, local_event_receiver = channel[LocalForwarderEvent]()
+    download_command_sender, _download_command_receiver = channel[
+        ForwarderDownloadCommand
+    ]()
+    event_sender, _event_receiver = channel[Event]()
+    transient_input_sender, transient_input_receiver = channel[TransientEvent]()
+    transient_output_sender, transient_output_receiver = channel[TransientEvent]()
+    snapshot_chunk_sender, _snapshot_chunk_receiver = channel[SnapshotChunk]()
+
+    master = Master(
+        node_id,
+        session_id,
+        event_sender=event_sender,
+        transient_event_receiver=transient_input_receiver,
+        transient_event_sender=transient_output_sender,
+        global_event_sender=ge_sender,
+        local_event_receiver=local_event_receiver,
+        command_receiver=command_receiver,
+        snapshot_chunk_sender=snapshot_chunk_sender,
+        download_command_sender=download_command_sender,
+    )
+
+    task_id = TaskId("task-a")
+    master._expected_ranks[task_id] = {0, 1}  # pyright: ignore[reportPrivateUsage]
+    trace_a = TraceEventData(
+        name="rank-0", start_us=1, duration_us=2, rank=0, category="test"
+    )
+    trace_b = TraceEventData(
+        name="rank-1", start_us=3, duration_us=4, rank=1, category="test"
+    )
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(master.run)
+        await transient_input_sender.send(
+            TracesCollected(task_id=task_id, rank=0, traces=[trace_a])
+        )
+        await transient_input_sender.send(
+            TracesCollected(task_id=task_id, rank=1, traces=[trace_b])
+        )
+
+        merged = await transient_output_receiver.receive()
+        assert isinstance(merged, TracesMerged)
+        assert merged.task_id == task_id
+        assert merged.traces == [trace_a, trace_b]
         tg.cancel_scope.cancel()
