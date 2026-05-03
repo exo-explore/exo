@@ -8,6 +8,7 @@ from exo.shared.types.events import (
     GlobalForwarderEvent,
     LocalForwarderEvent,
 )
+from exo.shared.types.snapshots import SnapshotChunk
 from exo.utils.pydantic_ext import FrozenModel
 
 
@@ -48,4 +49,7 @@ CONNECTION_MESSAGES = TypedTopic(
 )
 DOWNLOAD_COMMANDS = TypedTopic(
     "download_commands", PublishPolicy.Always, ForwarderDownloadCommand
+)
+SNAPSHOT_RESPONSES = TypedTopic(
+    "snapshot_responses", PublishPolicy.Always, SnapshotChunk
 )

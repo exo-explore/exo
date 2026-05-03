@@ -67,6 +67,12 @@ class RequestEventLog(BaseCommand):
     since_idx: int
 
 
+class RequestSnapshot(BaseCommand):
+    """Ask the current master to send a State snapshot to this node."""
+
+    requester_node_id: NodeId
+
+
 class StartDownload(BaseCommand):
     target_node_id: NodeId
     shard_metadata: ShardMetadata
@@ -106,6 +112,7 @@ DownloadCommand = StartDownload | DeleteDownload | CancelDownload
 Command = (
     TestCommand
     | RequestEventLog
+    | RequestSnapshot
     | TextGeneration
     | ImageGeneration
     | ImageEdits
