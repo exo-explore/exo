@@ -179,7 +179,6 @@ from exo.shared.types.events import (
     ChunkGenerated,
     Event,
     IndexedEvent,
-    InstanceDeleted,
     TracesMerged,
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
@@ -300,6 +299,7 @@ class API:
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
         ] = {}
+        self._observed_generation_commands: set[CommandId] = set()
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
 
@@ -320,6 +320,7 @@ class API:
         self.event_router = event_router
         self._text_generation_queues = {}
         self._image_generation_queues = {}
+        self._observed_generation_commands = set()
         self.unpause(result_clock)
         self.event_receiver.close()
         self.event_receiver = event_receiver
@@ -1860,6 +1861,7 @@ class API:
             async with self._tg as tg:
                 logger.info("Starting API")
                 tg.start_soon(self._bootstrap_then_apply_state)
+                tg.start_soon(self._reconcile_streams)
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)
                 print_startup_banner(self.port)
@@ -1947,23 +1949,47 @@ class API:
                             await queue.send(event.chunk)
                         except (BrokenResourceError, ClosedResourceError):
                             self._text_generation_queues.pop(event.command_id, None)
-                if isinstance(event, InstanceDeleted):
-                    self._close_streams_for_instance(event.instance_id)
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
 
-    def _close_streams_for_instance(self, instance_id: InstanceId) -> None:
-        """Close any active generation streams for commands running on the given instance."""
-        for task in self.state.tasks.values():
-            if task.instance_id != instance_id:
-                continue
-            if not isinstance(
+    async def _reconcile_streams(self) -> None:
+        while True:
+            await anyio.sleep(1)
+            self._reconcile_streams_once()
+
+    def _reconcile_streams_once(self) -> None:
+        generation_tasks = [
+            task
+            for task in self.state.tasks.values()
+            if isinstance(
                 task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
-            ):
-                continue
-            if sender := self._text_generation_queues.pop(task.command_id, None):
+            )
+        ]
+        state_command_ids = {task.command_id for task in generation_tasks}
+        self._observed_generation_commands.update(state_command_ids)
+
+        live_command_ids = {
+            task.command_id
+            for task in generation_tasks
+            if task.instance_id in self.state.instances
+        }
+        queued_command_ids = set(self._text_generation_queues) | set(
+            self._image_generation_queues
+        )
+        stale_command_ids = (
+            self._observed_generation_commands - live_command_ids
+        ) & queued_command_ids
+        self._close_streams_for_commands(stale_command_ids)
+
+        self._observed_generation_commands = (
+            self._observed_generation_commands & queued_command_ids
+        ) | state_command_ids
+
+    def _close_streams_for_commands(self, command_ids: set[CommandId]) -> None:
+        for command_id in command_ids:
+            if sender := self._text_generation_queues.pop(command_id, None):
                 sender.close()
-            if sender := self._image_generation_queues.pop(task.command_id, None):
+            if sender := self._image_generation_queues.pop(command_id, None):
                 sender.close()
 
     def _save_merged_trace(self, event: TracesMerged) -> None:
