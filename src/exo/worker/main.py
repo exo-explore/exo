@@ -36,6 +36,7 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
+    TransientEvent,
 )
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.snapshots import SnapshotChunk
@@ -76,6 +77,8 @@ class Worker:
         event_router: EventRouter,
         event_receiver: Receiver[IndexedEvent],
         event_sender: Sender[Event],
+        transient_event_receiver: Receiver[TransientEvent],
+        transient_event_sender: Sender[TransientEvent],
         snapshot_chunk_receiver: Receiver[SnapshotChunk],
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands
@@ -88,6 +91,8 @@ class Worker:
         self.event_router = event_router
         self.event_receiver = event_receiver
         self.event_sender = event_sender
+        self.transient_event_receiver = transient_event_receiver
+        self.transient_event_sender = transient_event_sender
         self.snapshot_chunk_receiver = snapshot_chunk_receiver
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
@@ -124,6 +129,8 @@ class Worker:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")
             self.event_sender.close()
+            self.transient_event_receiver.close()
+            self.transient_event_sender.close()
             self.snapshot_chunk_receiver.close()
             self.command_sender.close()
             self.download_command_sender.close()

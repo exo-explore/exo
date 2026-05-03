@@ -55,6 +55,7 @@ from exo.shared.types.events import (
     TraceEventData,
     TracesCollected,
     TracesMerged,
+    TransientEvent,
 )
 from exo.shared.types.instance_link import InstanceLink
 from exo.shared.types.snapshots import SnapshotChunk, SnapshotTransferId
@@ -136,6 +137,8 @@ class Master:
         *,
         command_receiver: Receiver[ForwarderCommand],
         event_sender: Sender[Event],
+        transient_event_receiver: Receiver[TransientEvent],
+        transient_event_sender: Sender[TransientEvent],
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
         snapshot_chunk_sender: Sender[SnapshotChunk],
@@ -148,6 +151,8 @@ class Master:
         self.command_task_mapping: dict[CommandId, TaskId] = {}
         self.command_receiver = command_receiver
         self.local_event_receiver = local_event_receiver
+        self.transient_event_receiver = transient_event_receiver
+        self.transient_event_sender = transient_event_sender
         self.global_event_sender = global_event_sender
         self.snapshot_chunk_sender = snapshot_chunk_sender
         self.download_command_sender = download_command_sender
@@ -170,6 +175,8 @@ class Master:
             self._event_log.close()
             self.global_event_sender.close()
             self.local_event_receiver.close()
+            self.transient_event_receiver.close()
+            self.transient_event_sender.close()
             self.snapshot_chunk_sender.close()
             self.command_receiver.close()
 

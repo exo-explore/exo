@@ -17,6 +17,7 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_id_keypair
+from exo.routing.transient_router import TransientRouter
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
@@ -31,6 +32,7 @@ from exo.worker.main import Worker
 class Node:
     router: Router
     event_router: EventRouter
+    transient_router: TransientRouter
     download_coordinator: DownloadCoordinator | None
     worker: Worker | None
     election: Election  # Every node participates in election, as we do want a node to become master even if it isn't a master candidate if no master candidates are present.
@@ -55,6 +57,7 @@ class Node:
         )
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
+        await router.register_topic(topics.TRANSIENT_EVENTS)
         await router.register_topic(topics.COMMANDS)
         await router.register_topic(topics.ELECTION_MESSAGES)
         await router.register_topic(topics.CONNECTION_MESSAGES)
@@ -65,6 +68,12 @@ class Node:
             command_sender=router.sender(topics.COMMANDS),
             external_outbound=router.sender(topics.LOCAL_EVENTS),
             external_inbound=router.receiver(topics.GLOBAL_EVENTS),
+        )
+        transient_router = TransientRouter(
+            node_id=node_id,
+            session_id=session_id,
+            external_outbound=router.sender(topics.TRANSIENT_EVENTS),
+            external_inbound=router.receiver(topics.TRANSIENT_EVENTS),
         )
 
         logger.info(f"Starting node {node_id}")
@@ -88,6 +97,7 @@ class Node:
                 port=args.api_port,
                 event_router=event_router,
                 event_receiver=event_router.receiver(),
+                transient_event_receiver=transient_router.receiver(),
                 snapshot_chunk_receiver=router.receiver(topics.SNAPSHOT_RESPONSES),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
@@ -103,6 +113,8 @@ class Node:
                 event_router=event_router,
                 event_receiver=event_router.receiver(),
                 event_sender=event_router.sender(),
+                transient_event_receiver=transient_router.receiver(),
+                transient_event_sender=transient_router.sender(),
                 snapshot_chunk_receiver=router.receiver(topics.SNAPSHOT_RESPONSES),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
@@ -116,6 +128,8 @@ class Node:
             node_id,
             session_id,
             event_sender=event_router.sender(),
+            transient_event_receiver=transient_router.receiver(),
+            transient_event_sender=transient_router.sender(),
             global_event_sender=router.sender(topics.GLOBAL_EVENTS),
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
@@ -140,6 +154,7 @@ class Node:
         return cls(
             router,
             event_router,
+            transient_router,
             download_coordinator,
             worker,
             election,
@@ -157,6 +172,7 @@ class Node:
             signal.signal(signal.SIGTERM, lambda _, __: self.shutdown())
             tg.start_soon(self.router.run)
             tg.start_soon(self.event_router.run)
+            tg.start_soon(self.transient_router.run)
             tg.start_soon(self.election.run)
             if self.download_coordinator:
                 tg.start_soon(self.download_coordinator.run)
@@ -200,6 +216,13 @@ class Node:
                         self.router.receiver(topics.GLOBAL_EVENTS),
                         self.router.sender(topics.LOCAL_EVENTS),
                     )
+                    self.transient_router.shutdown()
+                    self.transient_router = TransientRouter(
+                        node_id=self.node_id,
+                        session_id=result.session_id,
+                        external_outbound=self.router.sender(topics.TRANSIENT_EVENTS),
+                        external_inbound=self.router.receiver(topics.TRANSIENT_EVENTS),
+                    )
 
                 if (
                     result.session_id.master_node_id == self.node_id
@@ -215,6 +238,8 @@ class Node:
                         self.node_id,
                         result.session_id,
                         event_sender=self.event_router.sender(),
+                        transient_event_receiver=self.transient_router.receiver(),
+                        transient_event_sender=self.transient_router.sender(),
                         global_event_sender=self.router.sender(topics.GLOBAL_EVENTS),
                         local_event_receiver=self.router.receiver(topics.LOCAL_EVENTS),
                         command_receiver=self.router.receiver(topics.COMMANDS),
@@ -261,6 +286,8 @@ class Node:
                             event_router=self.event_router,
                             event_receiver=self.event_router.receiver(),
                             event_sender=self.event_router.sender(),
+                            transient_event_receiver=self.transient_router.receiver(),
+                            transient_event_sender=self.transient_router.sender(),
                             snapshot_chunk_receiver=self.router.receiver(
                                 topics.SNAPSHOT_RESPONSES
                             ),
@@ -277,9 +304,11 @@ class Node:
                             result.session_id,
                             self.event_router,
                             self.event_router.receiver(),
+                            self.transient_router.receiver(),
                             self.router.receiver(topics.SNAPSHOT_RESPONSES),
                         )
                     self._tg.start_soon(self.event_router.run)
+                    self._tg.start_soon(self.transient_router.run)
                 else:
                     if self.api:
                         self.api.unpause(result.won_clock)
