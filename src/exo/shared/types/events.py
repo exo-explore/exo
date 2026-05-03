@@ -172,6 +172,9 @@ Event = (
 )
 
 
+TransientEvent = TaskAcknowledged | ChunkGenerated | TracesCollected | TracesMerged
+
+
 class IndexedEvent(FrozenModel):
     """An event indexed by the master, with a globally unique index"""
 
@@ -195,3 +198,11 @@ class LocalForwarderEvent(FrozenModel):
     origin: SystemId
     session: SessionId
     event: Event
+
+
+class GlobalForwarderTransientEvent(FrozenModel):
+    """An unordered, non-durable event published to the cluster."""
+
+    origin: NodeId
+    session: SessionId
+    event: TransientEvent
