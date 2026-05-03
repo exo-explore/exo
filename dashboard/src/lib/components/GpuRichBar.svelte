@@ -3,6 +3,7 @@
     nodeAneProfile,
     nodeGpuProfile,
     topologyData,
+    type RawNodeAneProfile,
   } from "$lib/stores/app.svelte";
 
   interface Props {
@@ -24,11 +25,8 @@
       0,
     ),
   );
-  const totalAneTflops = $derived(
-    Object.values(aneProfiles).reduce(
-      (sum, p) => sum + (p?.tflopsFp16 ?? 0),
-      0,
-    ),
+  const totalAneTops = $derived(
+    Object.values(aneProfiles).reduce((sum, p) => sum + getPeakAneTops(p), 0),
   );
   const totalMemoryBytes = $derived(
     Object.values(topology?.nodes ?? {}).reduce(
@@ -40,6 +38,19 @@
   function formatTflops(value: number): string {
     if (value >= 1000) return `${(value / 1000).toFixed(2)} PFLOPS`;
     return `${value.toFixed(1)} TFLOPS`;
+  }
+
+  function formatTops(value: number): string {
+    if (value >= 1000) return `${(value / 1000).toFixed(2)} POPS`;
+    return `${value.toFixed(1)} TOPS`;
+  }
+
+  function getPeakAneTops(profile: RawNodeAneProfile | undefined): number {
+    if (!profile) return 0;
+    return Math.max(
+      0,
+      ...profile.precisionProfiles.map((p) => p.computeTops ?? 0),
+    );
   }
 
   function formatBandwidth(value: number): string {
@@ -65,8 +76,8 @@
     <span class="stat-label">Memory bandwidth</span>
   </div>
   <div class="stat-block">
-    <span class="stat-value">{formatTflops(totalAneTflops)}</span>
-    <span class="stat-label">ANE compute</span>
+    <span class="stat-value">{formatTops(totalAneTops)}</span>
+    <span class="stat-label">ANE peak</span>
   </div>
   <div class="stat-block">
     <span class="stat-value">{formatMemory(totalMemoryBytes)}</span>

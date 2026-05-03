@@ -64,7 +64,7 @@ class State(FrozenModel):
 
     # Profiler results.
     # node_gpu_profile: per-node GPU TFLOPS / memory bandwidth measurement.
-    # node_ane_profile: per-node ANE TFLOPS / streaming bandwidth measurement.
+    # node_ane_profile: per-node ANE compute / streaming bandwidth by precision.
     # node_link_profiles: per-edge link probe; outer key = source node, inner
     # key = sink node. May contain both a socket and an RDMA profile to the
     # same peer, so the inner value is a sequence.

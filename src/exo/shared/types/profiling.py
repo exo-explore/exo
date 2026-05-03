@@ -122,12 +122,23 @@ class NodeGpuProfile(FrozenModel):
     measured_at: datetime
 
 
+class NodeAnePrecisionProfile(FrozenModel):
+    """Measured ANE profile for a single weight precision."""
+
+    precision_bits: Literal[32, 16, 8, 4]
+    weight_bits: Literal[32, 16, 8, 4]
+    activation_bits: Literal[32, 16, 8, 4]
+    supported: bool
+    compute_tops: float | None = None
+    memory_bandwidth_gbps: float | None = None
+    error: str | None = None
+
+
 class NodeAneProfile(FrozenModel):
     """Measured ANE compute throughput and streaming bandwidth for a node."""
 
     engine: Literal["ane"]
-    tflops_fp16: float
-    memory_bandwidth_gbps: float
+    precision_profiles: Sequence[NodeAnePrecisionProfile]
     measured_at: datetime
 
 

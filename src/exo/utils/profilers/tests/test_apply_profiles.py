@@ -12,7 +12,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.profiling import NodeSocketLinkProfile
 from exo.shared.types.state import State
-from exo.utils.profilers.ane_profiler import AneProfile
+from exo.utils.profilers.ane_profiler import AnePrecisionProfile, AneProfile
 from exo.utils.profilers.gpu_profiler import GpuProfile
 from exo.utils.profilers.link_profiler import RDMALinkProfile, SocketLinkProfile
 
@@ -33,6 +33,30 @@ def _wrap(idx: int, info: object, when: str = WHEN) -> IndexedEvent:
     )
 
 
+def _ane_profile() -> AneProfile:
+    return AneProfile(
+        engine="ane",
+        precision_profiles=(
+            AnePrecisionProfile(
+                precision_bits=16,
+                weight_bits=16,
+                activation_bits=16,
+                supported=True,
+                compute_tops=12.0,
+                memory_bandwidth_gbps=80.0,
+            ),
+            AnePrecisionProfile(
+                precision_bits=8,
+                weight_bits=8,
+                activation_bits=8,
+                supported=True,
+                compute_tops=28.0,
+                memory_bandwidth_gbps=72.0,
+            ),
+        ),
+    )
+
+
 def test_apply_gpu_profile_writes_node_gpu_profile():
     state = State()
     profile = GpuProfile(engine="mlx", tflops_fp16=42.0, memory_bandwidth_gbps=400.0)
@@ -45,12 +69,14 @@ def test_apply_gpu_profile_writes_node_gpu_profile():
 
 def test_apply_ane_profile_writes_node_ane_profile():
     state = State()
-    profile = AneProfile(engine="ane", tflops_fp16=12.0, memory_bandwidth_gbps=80.0)
+    profile = _ane_profile()
     new_state = apply(state, _wrap(0, profile))
     entry = new_state.node_ane_profile[NODE_A]
-    assert entry.tflops_fp16 == 12.0
-    assert entry.memory_bandwidth_gbps == 80.0
     assert entry.engine == "ane"
+    precision_by_bits = {p.precision_bits: p for p in entry.precision_profiles}
+    assert precision_by_bits[16].compute_tops == 12.0
+    assert precision_by_bits[16].memory_bandwidth_gbps == 80.0
+    assert precision_by_bits[8].compute_tops == 28.0
 
 
 def test_apply_socket_link_profile_keys_by_source_and_sink():
@@ -168,7 +194,7 @@ def test_apply_node_timed_out_drops_profiles():
     )
     state = apply(
         state,
-        _wrap(1, AneProfile(engine="ane", tflops_fp16=1, memory_bandwidth_gbps=1)),
+        _wrap(1, _ane_profile()),
     )
     state = apply(
         state,

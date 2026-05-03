@@ -33,6 +33,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
+    NodeAnePrecisionProfile,
     NodeAneProfile,
     NodeGpuProfile,
     NodeIdentity,
@@ -481,8 +482,18 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 **state.node_ane_profile,
                 event.node_id: NodeAneProfile(
                     engine=info.engine,
-                    tflops_fp16=info.tflops_fp16,
-                    memory_bandwidth_gbps=info.memory_bandwidth_gbps,
+                    precision_profiles=tuple(
+                        NodeAnePrecisionProfile(
+                            precision_bits=profile.precision_bits,
+                            weight_bits=profile.weight_bits,
+                            activation_bits=profile.activation_bits,
+                            supported=profile.supported,
+                            compute_tops=profile.compute_tops,
+                            memory_bandwidth_gbps=profile.memory_bandwidth_gbps,
+                            error=profile.error,
+                        )
+                        for profile in info.precision_profiles
+                    ),
                     measured_at=measured_at,
                 ),
             }

@@ -14,6 +14,8 @@
     nodeNetworkRaw,
     nodeThunderbolt,
     type NodeInfo,
+    type RawNodeAnePrecisionProfile,
+    type RawNodeAneProfile,
   } from "$lib/stores/app.svelte";
   import {
     inferRdmaConnectionType,
@@ -70,6 +72,26 @@
     if (value == null || !isFinite(value)) return "—";
     if (value < 1) return `${(value * 1000).toFixed(0)} µs`;
     return `${value.toFixed(2)} ms`;
+  }
+
+  function formatAneTops(value: number | null | undefined): string {
+    if (value == null || !isFinite(value)) return "—";
+    if (value >= 1000) return `${(value / 1000).toFixed(2)}P`;
+    return `${value.toFixed(value >= 10 ? 0 : 1)}T`;
+  }
+
+  function formatAneProfileLine(profile: RawNodeAneProfile): string {
+    const preferredOrder: RawNodeAnePrecisionProfile["precisionBits"][] = [
+      16, 8, 4, 32,
+    ];
+    const byBits = new Map(
+      profile.precisionProfiles.map((p) => [p.precisionBits, p]),
+    );
+    return preferredOrder
+      .map((bits) => byBits.get(bits))
+      .filter((p): p is RawNodeAnePrecisionProfile => Boolean(p?.supported))
+      .map((p) => `${p.precisionBits}b ${formatAneTops(p.computeTops)}`)
+      .join(" · ");
   }
 
   interface PairProfileEntry {
@@ -1321,26 +1343,19 @@
             .text(`${gpuProfile.memoryBandwidthGbps.toFixed(0)} GB/s`);
         }
         if (aneProfile) {
+          const aneProfileLine = formatAneProfileLine(aneProfile);
           const aneY = infoY + fontSize * (gpuProfile ? 1.95 : 1.05);
           const aneText = nodeG
             .append("text")
             .attr("x", nodeInfo.x)
             .attr("y", aneY)
             .attr("text-anchor", "middle")
-            .attr("font-size", fontSize * 0.8)
+            .attr("font-size", fontSize * 0.72)
             .attr("font-family", "SF Mono, Monaco, monospace");
           aneText
             .append("tspan")
             .attr("fill", "rgba(96,165,250,0.95)")
-            .text(`ANE ${aneProfile.tflopsFp16.toFixed(1)} TFLOPS`);
-          aneText
-            .append("tspan")
-            .attr("fill", "rgba(179,179,179,0.6)")
-            .text("  ·  ");
-          aneText
-            .append("tspan")
-            .attr("fill", "rgba(255,215,0,0.75)")
-            .text(`${aneProfile.memoryBandwidthGbps.toFixed(0)} GB/s`);
+            .text(aneProfileLine ? `ANE ${aneProfileLine}` : "ANE profiling");
         }
       } else if (showCompactLabels) {
         // COMPACT MODE: Just name and basic info (4+ nodes)

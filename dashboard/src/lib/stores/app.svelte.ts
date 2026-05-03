@@ -135,10 +135,19 @@ export interface RawNodeGpuProfile {
   measuredAt: string;
 }
 
+export interface RawNodeAnePrecisionProfile {
+  precisionBits: 32 | 16 | 8 | 4;
+  weightBits: 32 | 16 | 8 | 4;
+  activationBits: 32 | 16 | 8 | 4;
+  supported: boolean;
+  computeTops?: number | null;
+  memoryBandwidthGbps?: number | null;
+  error?: string | null;
+}
+
 export interface RawNodeAneProfile {
   engine: "ane";
-  tflopsFp16: number;
-  memoryBandwidthGbps: number;
+  precisionProfiles: RawNodeAnePrecisionProfile[];
   measuredAt: string;
 }
 

@@ -25,17 +25,23 @@ import numpy as np
 import numpy.typing as npt
 from anyio import to_thread
 
-from exo.utils.pydantic_ext import TaggedModel
+from exo.utils.pydantic_ext import FrozenModel, TaggedModel
 
 type Pointer = int
 type Float16Array = npt.NDArray[np.float16]
+type Float32Array = npt.NDArray[np.float32]
+type NumericArray = Float16Array | Float32Array
 type UInt8Array = npt.NDArray[np.uint8]
 
-_BYTES_PER_ELEMENT = 2
+_FP16_BYTES_PER_ELEMENT = 2
+_FP32_BYTES_PER_ELEMENT = 4
+
+type AnePrecisionBits = Literal[32, 16, 8, 4]
+_ANE_PRECISION_BITS: tuple[AnePrecisionBits, ...] = (32, 16, 8, 4)
 
 _COMPUTE_IN_DIM = 2048
 _COMPUTE_OUT_DIM = 2048
-_COMPUTE_SPATIAL = 128
+_COMPUTE_SPATIAL = 768
 _COMPUTE_ITERATIONS_PER_PASS = 12
 
 _STREAM_CHANNELS = 4096
@@ -65,12 +71,24 @@ _ane_io_surface_object_class: Pointer | None = None
 
 
 @final
+class AnePrecisionProfile(FrozenModel):
+    """Per-precision ANE compute and memory-bound probe result."""
+
+    precision_bits: AnePrecisionBits
+    weight_bits: AnePrecisionBits
+    activation_bits: AnePrecisionBits
+    supported: bool
+    compute_tops: float | None = None
+    memory_bandwidth_gbps: float | None = None
+    error: str | None = None
+
+
+@final
 class AneProfile(TaggedModel):
     """Wire format for a measured ANE profile, gathered locally on a node."""
 
     engine: Literal["ane"]
-    tflops_fp16: float
-    memory_bandwidth_gbps: float
+    precision_profiles: Sequence[AnePrecisionProfile]
 
     @classmethod
     async def measure(cls) -> Self | None:
@@ -81,7 +99,60 @@ class AneProfile(TaggedModel):
     @classmethod
     def _measure_blocking(cls) -> Self:
         rng = np.random.default_rng(0)
+        profiles = tuple(
+            _measure_precision_profile(bits, rng) for bits in _ANE_PRECISION_BITS
+        )
+        return cls(engine="ane", precision_profiles=profiles)
 
+
+def _measure_precision_profile(
+    precision_bits: AnePrecisionBits, rng: np.random.Generator
+) -> AnePrecisionProfile:
+    try:
+        return _measure_supported_precision_profile(precision_bits, rng)
+    except Exception as exc:
+        return AnePrecisionProfile(
+            precision_bits=precision_bits,
+            weight_bits=precision_bits,
+            activation_bits=8 if precision_bits in (8, 4) else precision_bits,
+            supported=False,
+            error=_short_error(exc),
+        )
+
+
+def _measure_supported_precision_profile(
+    precision_bits: AnePrecisionBits, rng: np.random.Generator
+) -> AnePrecisionProfile:
+    activation_bits: AnePrecisionBits = (
+        8 if precision_bits in (8, 4) else precision_bits
+    )
+
+    if precision_bits == 32:
+        compute_weights = rng.standard_normal(
+            (_COMPUTE_OUT_DIM, _COMPUTE_IN_DIM)
+        ).astype(np.float32)
+        compute_input = rng.standard_normal((_COMPUTE_IN_DIM, _COMPUTE_SPATIAL)).astype(
+            np.float32
+        )
+        compute_kernel = _compile_static_conv_kernel(
+            weights=compute_weights,
+            input_channels=_COMPUTE_IN_DIM,
+            output_channels=_COMPUTE_OUT_DIM,
+            spatial=_COMPUTE_SPATIAL,
+            precision_bits=precision_bits,
+        )
+        compute_kernel.write_input(0, compute_input)
+
+        stream_input = rng.standard_normal((_STREAM_CHANNELS, _STREAM_SPATIAL)).astype(
+            np.float32
+        )
+        stream_kernel = _compile_relu_stream_kernel(
+            channels=_STREAM_CHANNELS,
+            spatial=_STREAM_SPATIAL,
+            precision_bits=precision_bits,
+        )
+        stream_kernel.write_input(0, stream_input)
+    elif precision_bits == 16:
         compute_weights = rng.standard_normal(
             (_COMPUTE_OUT_DIM, _COMPUTE_IN_DIM)
         ).astype(np.float16)
@@ -98,20 +169,65 @@ class AneProfile(TaggedModel):
             input_channels=_COMPUTE_IN_DIM,
             output_channels=_COMPUTE_OUT_DIM,
             spatial=_COMPUTE_SPATIAL,
+            precision_bits=precision_bits,
         )
         compute_kernel.write_input(0, compute_input)
 
         stream_kernel = _compile_relu_stream_kernel(
             channels=_STREAM_CHANNELS,
             spatial=_STREAM_SPATIAL,
+            precision_bits=precision_bits,
+        )
+        stream_kernel.write_input(0, stream_input)
+    else:
+        compute_weights = rng.standard_normal(
+            (_COMPUTE_OUT_DIM, _COMPUTE_IN_DIM)
+        ).astype(np.float32)
+        compute_input = rng.standard_normal((_COMPUTE_IN_DIM, _COMPUTE_SPATIAL)).astype(
+            np.float16
+        )
+
+        stream_input = rng.standard_normal((_STREAM_CHANNELS, _STREAM_SPATIAL)).astype(
+            np.float16
+        )
+
+        compute_kernel = _compile_quantized_static_conv_kernel(
+            weights=compute_weights,
+            input_channels=_COMPUTE_IN_DIM,
+            output_channels=_COMPUTE_OUT_DIM,
+            spatial=_COMPUTE_SPATIAL,
+            precision_bits=precision_bits,
+        )
+        compute_kernel.write_input(0, compute_input)
+
+        stream_kernel = _compile_quantized_stream_kernel(
+            channels=_STREAM_CHANNELS,
+            spatial=_STREAM_SPATIAL,
         )
         stream_kernel.write_input(0, stream_input)
 
-        return cls(
-            engine="ane",
-            tflops_fp16=_measure_compute_tflops(compute_kernel),
-            memory_bandwidth_gbps=_measure_streaming_bandwidth_gbps(stream_kernel),
-        )
+    return AnePrecisionProfile(
+        precision_bits=precision_bits,
+        weight_bits=precision_bits,
+        activation_bits=activation_bits,
+        supported=True,
+        compute_tops=_measure_compute_tops(compute_kernel),
+        memory_bandwidth_gbps=_measure_streaming_bandwidth_gbps(
+            stream_kernel,
+            bytes_per_element=(
+                _FP32_BYTES_PER_ELEMENT
+                if activation_bits == 32
+                else _FP16_BYTES_PER_ELEMENT
+            ),
+        ),
+    )
+
+
+def _short_error(exc: Exception) -> str:
+    message = str(exc).replace("\n", " ")
+    if len(message) <= 220:
+        return message
+    return f"{message[:217]}..."
 
 
 @final
@@ -183,7 +299,7 @@ class _AneKernel:
             err_desc = _describe_error(err_ptr.value)
             raise RuntimeError(f"ANE eval failed: {err_desc}")
 
-    def write_input(self, index: int, values: Float16Array) -> None:
+    def write_input(self, index: int, values: NumericArray) -> None:
         _write_iosurface(self._input_surfaces[index], values)
 
 
@@ -195,11 +311,11 @@ def ane_available() -> bool:
         return False
 
 
-def _measure_compute_tflops(kernel: _AneKernel) -> float:
+def _measure_compute_tops(kernel: _AneKernel) -> float:
     _warm_up_with(kernel.eval, time.perf_counter() + _WARMUP_SECONDS)
 
-    flops_per_iteration = 2 * _COMPUTE_IN_DIM * _COMPUTE_OUT_DIM * _COMPUTE_SPATIAL
-    best_tflops = 0.0
+    operations_per_iteration = 2 * _COMPUTE_IN_DIM * _COMPUTE_OUT_DIM * _COMPUTE_SPATIAL
+    best_tops = 0.0
     for _ in range(_MEASUREMENT_PASSES):
         start = time.perf_counter()
         for _ in range(_COMPUTE_ITERATIONS_PER_PASS):
@@ -207,15 +323,17 @@ def _measure_compute_tflops(kernel: _AneKernel) -> float:
         elapsed = time.perf_counter() - start
         if elapsed <= 0:
             continue
-        tflops = flops_per_iteration * _COMPUTE_ITERATIONS_PER_PASS / elapsed / 1e12
-        best_tflops = max(best_tflops, tflops)
-    return best_tflops
+        tops = operations_per_iteration * _COMPUTE_ITERATIONS_PER_PASS / elapsed / 1e12
+        best_tops = max(best_tops, tops)
+    return best_tops
 
 
-def _measure_streaming_bandwidth_gbps(kernel: _AneKernel) -> float:
+def _measure_streaming_bandwidth_gbps(
+    kernel: _AneKernel, *, bytes_per_element: int
+) -> float:
     _warm_up_with(kernel.eval, time.perf_counter() + _WARMUP_SECONDS)
 
-    bytes_per_iteration = _STREAM_CHANNELS * _STREAM_SPATIAL * _BYTES_PER_ELEMENT * 2
+    bytes_per_iteration = _STREAM_CHANNELS * _STREAM_SPATIAL * bytes_per_element * 2
     best_gbps = 0.0
     for _ in range(_MEASUREMENT_PASSES):
         start = time.perf_counter()
@@ -236,19 +354,23 @@ def _warm_up_with(do_op: Callable[[], None], deadline: float) -> None:
 
 def _compile_static_conv_kernel(
     *,
-    weights: Float16Array,
+    weights: NumericArray,
     input_channels: int,
     output_channels: int,
     spatial: int,
+    precision_bits: Literal[32, 16],
 ) -> _AneKernel:
+    element_type = _floating_mil_type(precision_bits)
     mil = _mil_static_conv(
         input_channels=input_channels,
         output_channels=output_channels,
         spatial=spatial,
+        element_type=element_type,
     )
-    weight_blob = _build_weight_blob_bytes(weights)
-    input_bytes = input_channels * spatial * _BYTES_PER_ELEMENT
-    output_bytes = output_channels * spatial * _BYTES_PER_ELEMENT
+    weight_blob = _build_floating_weight_blob_bytes(weights, precision_bits)
+    bytes_per_element = _bytes_per_precision(precision_bits)
+    input_bytes = input_channels * spatial * bytes_per_element
+    output_bytes = output_channels * spatial * bytes_per_element
     return _compile_kernel(
         mil_text=mil,
         weight_files={"weight.bin": weight_blob},
@@ -257,15 +379,65 @@ def _compile_static_conv_kernel(
     )
 
 
-def _compile_relu_stream_kernel(*, channels: int, spatial: int) -> _AneKernel:
-    element_count = channels * spatial
-    data_bytes = element_count * _BYTES_PER_ELEMENT
+def _compile_quantized_static_conv_kernel(
+    *,
+    weights: Float32Array,
+    input_channels: int,
+    output_channels: int,
+    spatial: int,
+    precision_bits: Literal[8, 4],
+) -> _AneKernel:
+    weight_blob = _build_quantized_weight_blob_bytes(weights, precision_bits)
+    mil = _mil_quantized_static_conv(
+        input_channels=input_channels,
+        output_channels=output_channels,
+        spatial=spatial,
+        precision_bits=precision_bits,
+    )
+    input_bytes = input_channels * spatial * _FP16_BYTES_PER_ELEMENT
+    output_bytes = output_channels * spatial * _FP16_BYTES_PER_ELEMENT
     return _compile_kernel(
-        mil_text=_mil_relu_stream(channels=channels, spatial=spatial),
+        mil_text=mil,
+        weight_files={"weight.bin": weight_blob},
+        input_sizes=(input_bytes,),
+        output_sizes=(output_bytes,),
+    )
+
+
+def _compile_relu_stream_kernel(
+    *, channels: int, spatial: int, precision_bits: Literal[32, 16]
+) -> _AneKernel:
+    element_count = channels * spatial
+    data_bytes = element_count * _bytes_per_precision(precision_bits)
+    return _compile_kernel(
+        mil_text=_mil_relu_stream(
+            channels=channels,
+            spatial=spatial,
+            element_type=_floating_mil_type(precision_bits),
+        ),
         weight_files={},
         input_sizes=(data_bytes,),
         output_sizes=(data_bytes,),
     )
+
+
+def _compile_quantized_stream_kernel(*, channels: int, spatial: int) -> _AneKernel:
+    element_count = channels * spatial
+    data_bytes = element_count * _FP16_BYTES_PER_ELEMENT
+    return _compile_kernel(
+        mil_text=_mil_quantized_stream(channels=channels, spatial=spatial),
+        weight_files={},
+        input_sizes=(data_bytes,),
+        output_sizes=(data_bytes,),
+    )
+
+
+def _floating_mil_type(precision_bits: Literal[32, 16]) -> Literal["fp32", "fp16"]:
+    return "fp32" if precision_bits == 32 else "fp16"
+
+
+def _bytes_per_precision(precision_bits: Literal[32, 16]) -> int:
+    return _FP32_BYTES_PER_ELEMENT if precision_bits == 32 else _FP16_BYTES_PER_ELEMENT
 
 
 def _compile_kernel(
@@ -487,7 +659,7 @@ def _write_model_files(
     return tmp_dir
 
 
-def _write_iosurface(surface: Pointer, values: Float16Array) -> None:
+def _write_iosurface(surface: Pointer, values: NumericArray) -> None:
     raw = cast(UInt8Array, np.ascontiguousarray(values).view(np.uint8).reshape(-1))
     nbytes = int(raw.nbytes)
     if nbytes > _iosurface_alloc_size(surface):
@@ -584,18 +756,84 @@ def _iosurface_alloc_size(surface: Pointer) -> int:
     )
 
 
-def _build_weight_blob_bytes(values: Float16Array) -> bytes:
-    flat = np.ascontiguousarray(values.reshape(-1), dtype=np.float16)
+def _build_floating_weight_blob_bytes(
+    values: NumericArray, precision_bits: Literal[32, 16]
+) -> bytes:
+    dtype = np.float32 if precision_bits == 32 else np.float16
+    type_code = 0x02 if precision_bits == 32 else 0x01
+    flat = np.ascontiguousarray(values.reshape(-1), dtype=dtype)
     payload = flat.tobytes()
-    header_bytes = 128
-    buf = bytearray(header_bytes + len(payload))
-    buf[0] = 0x01
-    buf[4] = 0x02
-    _pack_uint32_le(buf, 64, 0xDEADBEEF)
-    buf[68] = 0x01
-    _pack_uint32_le(buf, 72, len(payload))
-    _pack_uint32_le(buf, 80, header_bytes)
-    buf[header_bytes:] = payload
+    buf = _build_multi_weight_blob_bytes([(type_code, payload)])
+    return bytes(buf)
+
+
+def _build_quantized_weight_blob_bytes(
+    values: Float32Array, precision_bits: Literal[8, 4]
+) -> bytes:
+    weights = np.ascontiguousarray(values, dtype=np.float32)
+    abs_weights = cast(Float32Array, np.abs(weights))
+    channel_max = cast(Float32Array, np.max(abs_weights, axis=1, keepdims=True))
+    max_abs = cast(Float32Array, np.maximum(channel_max, np.float32(1e-6)))
+    if precision_bits == 8:
+        scale = np.ascontiguousarray(
+            (max_abs / np.float32(127.0)).reshape(-1, 1, 1, 1),
+            dtype=np.float16,
+        )
+        quantized = np.clip(
+            np.round(weights / max_abs * np.float32(127.0)), -128, 127
+        ).astype(np.int8)
+        data_payload = np.ascontiguousarray(quantized).tobytes()
+        data_type_code = 0x04
+    else:
+        scale = np.ascontiguousarray(
+            (max_abs / np.float32(7.0)).reshape(-1, 1, 1, 1),
+            dtype=np.float16,
+        )
+        quantized = np.clip(
+            np.round(weights / max_abs * np.float32(7.0)), -8, 7
+        ).astype(np.int8)
+        data_payload = _pack_int4_payload(quantized)
+        data_type_code = 0x08
+
+    return _build_multi_weight_blob_bytes(
+        [
+            (data_type_code, data_payload),
+            (0x01, scale.tobytes()),
+        ]
+    )
+
+
+def _pack_int4_payload(values: npt.NDArray[np.int8]) -> bytes:
+    flat = np.ascontiguousarray(values.reshape(-1), dtype=np.int8)
+    if flat.size % 2 != 0:
+        flat = np.pad(flat, (0, 1)).astype(np.int8)
+    nibbles = (flat & 0x0F).astype(np.uint8)
+    packed = nibbles[0::2] | (nibbles[1::2] << 4)
+    return np.ascontiguousarray(packed, dtype=np.uint8).tobytes()
+
+
+def _build_multi_weight_blob_bytes(blobs: Sequence[tuple[int, bytes]]) -> bytes:
+    total_bytes = 64
+    descriptors_and_payloads: list[tuple[bytes, bytes]] = []
+    for type_code, payload in blobs:
+        descriptor = bytearray(64)
+        _pack_uint32_le(descriptor, 0, 0xDEADBEEF)
+        _pack_uint32_le(descriptor, 4, type_code)
+        _pack_uint32_le(descriptor, 8, len(payload))
+        _pack_uint32_le(descriptor, 16, total_bytes + 64)
+        descriptors_and_payloads.append((bytes(descriptor), payload))
+        total_bytes += 64 + len(payload)
+
+    buf = bytearray(total_bytes)
+    _pack_uint32_le(buf, 0, len(blobs))
+    _pack_uint32_le(buf, 4, 0x02)
+
+    offset = 64
+    for descriptor, payload in descriptors_and_payloads:
+        buf[offset : offset + 64] = descriptor
+        offset += 64
+        buf[offset : offset + len(payload)] = payload
+        offset += len(payload)
     return bytes(buf)
 
 
@@ -1030,28 +1268,104 @@ _CONV_PARAMS = (
 _CONV_ARGS = "dilations=dl, groups=gr, pad=pd, pad_type=pt, strides=st"
 
 
-def _mil_static_conv(*, input_channels: int, output_channels: int, spatial: int) -> str:
+def _mil_static_conv(
+    *,
+    input_channels: int,
+    output_channels: int,
+    spatial: int,
+    element_type: Literal["fp32", "fp16"],
+) -> str:
     return (
         f"{_MIL_HEADER}"
-        f"    func main<ios18>(tensor<fp16, [1, {input_channels}, 1, {spatial}]> x) {{\n"
-        f"        tensor<fp16, [{output_channels}, {input_channels}, 1, 1]> W = const()"
-        f'[name=string("W"), val=tensor<fp16, [{output_channels}, {input_channels}, 1, 1]>'
+        f"    func main<ios18>(tensor<{element_type}, [1, {input_channels}, 1, {spatial}]> x) {{\n"
+        f"        tensor<{element_type}, [{output_channels}, {input_channels}, 1, 1]> W = const()"
+        f'[name=string("W"), val=tensor<{element_type}, [{output_channels}, {input_channels}, 1, 1]>'
         '(BLOBFILE(path=string("@model_path/weights/weight.bin"), '
         "offset=uint64(64)))];\n"
         f"{_CONV_PARAMS}"
-        f"        tensor<fp16, [1, {output_channels}, 1, {spatial}]> y = conv("
+        f"        tensor<{element_type}, [1, {output_channels}, 1, {spatial}]> y = conv("
         f'{_CONV_ARGS}, weight=W, x=x)[name=string("cv")];\n'
         "    } -> (y);\n"
         "}\n"
     )
 
 
-def _mil_relu_stream(*, channels: int, spatial: int) -> str:
+def _mil_quantized_static_conv(
+    *,
+    input_channels: int,
+    output_channels: int,
+    spatial: int,
+    precision_bits: Literal[8, 4],
+) -> str:
+    data_type = "int8" if precision_bits == 8 else "int4"
+    scale_blob_offset = 128 + _quantized_data_payload_size(
+        input_channels=input_channels,
+        output_channels=output_channels,
+        precision_bits=precision_bits,
+    )
     return (
         f"{_MIL_HEADER}"
-        f"    func main<ios18>(tensor<fp16, [1, {channels}, 1, {spatial}]> x) {{\n"
-        f"        tensor<fp16, [1, {channels}, 1, {spatial}]> y = relu(x=x)"
+        f"    func main<ios18>(tensor<fp16, [1, {input_channels}, 1, {spatial}]> x) {{\n"
+        f"        tensor<fp16, [{output_channels}, {input_channels}, 1, 1]> W = "
+        f"constexpr_blockwise_shift_scale(data = tensor<{data_type}, "
+        f"[{output_channels}, {input_channels}, 1, 1]>(BLOBFILE(path = "
+        'string("@model_path/weights/weight.bin"), offset = uint64(64))), '
+        f"scale = tensor<fp16, [{output_channels}, 1, 1, 1]>(BLOBFILE(path = "
+        'string("@model_path/weights/weight.bin"), '
+        f'offset = uint64({scale_blob_offset}))))[name = string("Wq")];\n'
+        f"{_mil_quantize_dequantize(channels=input_channels, spatial=spatial)}"
+        f"{_CONV_PARAMS}"
+        f"        tensor<fp16, [1, {output_channels}, 1, {spatial}]> y = conv("
+        f'{_CONV_ARGS}, weight=W, x=dx)[name=string("cv")];\n'
+        "    } -> (y);\n"
+        "}\n"
+    )
+
+
+def _mil_relu_stream(
+    *, channels: int, spatial: int, element_type: Literal["fp32", "fp16"]
+) -> str:
+    return (
+        f"{_MIL_HEADER}"
+        f"    func main<ios18>(tensor<{element_type}, [1, {channels}, 1, {spatial}]> x) {{\n"
+        f"        tensor<{element_type}, [1, {channels}, 1, {spatial}]> y = relu(x=x)"
         '[name=string("relu")];\n'
         "    } -> (y);\n"
         "}\n"
+    )
+
+
+def _mil_quantized_stream(*, channels: int, spatial: int) -> str:
+    return (
+        f"{_MIL_HEADER}"
+        f"    func main<ios18>(tensor<fp16, [1, {channels}, 1, {spatial}]> x) {{\n"
+        f"{_mil_quantize_dequantize(channels=channels, spatial=spatial)}"
+        f"        tensor<fp16, [1, {channels}, 1, {spatial}]> y = relu(x=dx)"
+        '[name=string("relu")];\n'
+        "    } -> (y);\n"
+        "}\n"
+    )
+
+
+def _quantized_data_payload_size(
+    *, input_channels: int, output_channels: int, precision_bits: Literal[8, 4]
+) -> int:
+    element_count = input_channels * output_channels
+    if precision_bits == 8:
+        return element_count
+    return (element_count + 1) // 2
+
+
+def _mil_quantize_dequantize(*, channels: int, spatial: int) -> str:
+    return (
+        '        fp16 qs = const()[name = string("qs"), val = fp16(0x1p-7)];\n'
+        '        int8 qz = const()[name = string("qz"), val = int8(0)];\n'
+        '        string qdt = const()[name = string("qdt"), val = string("int8")];\n'
+        f"        tensor<int8, [1, {channels}, 1, {spatial}]> qx = quantize("
+        "input = x, output_dtype = qdt, scale = qs, zero_point = qz)"
+        '[name = string("qx")];\n'
+        '        fp16 dqs = const()[name = string("dqs"), val = fp16(0x1p-7)];\n'
+        '        int8 dqz = const()[name = string("dqz"), val = int8(0)];\n'
+        f"        tensor<fp16, [1, {channels}, 1, {spatial}]> dx = dequantize("
+        'input = qx, scale = dqs, zero_point = dqz)[name = string("dx")];\n'
     )
