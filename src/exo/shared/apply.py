@@ -40,7 +40,14 @@ from exo.shared.types.profiling import (
     ThunderboltBridgeStatus,
 )
 from exo.shared.types.state import State
-from exo.shared.types.tasks import Task, TaskId, TaskStatus
+from exo.shared.types.tasks import (
+    ImageEdits,
+    ImageGeneration,
+    Task,
+    TaskId,
+    TaskStatus,
+    TextGeneration,
+)
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -72,7 +79,6 @@ def event_apply(event: Event, state: State) -> State:
             TestEvent()
             | ChunkGenerated()
             | TaskAcknowledged()
-            | InputChunkReceived()
             | TracesCollected()
             | TracesMerged()
             | CustomModelCardAdded()
@@ -93,6 +99,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_runner_status_updated(event, state)
         case TaskCreated():
             return apply_task_created(event, state)
+        case InputChunkReceived():
+            return apply_input_chunk_received(event, state)
         case TaskDeleted():
             return apply_task_deleted(event, state)
         case TaskFailed():
@@ -157,10 +165,32 @@ def apply_task_created(event: TaskCreated, state: State) -> State:
     return state.model_copy(update={"tasks": new_tasks})
 
 
+def apply_input_chunk_received(event: InputChunkReceived, state: State) -> State:
+    command_chunks = {
+        **state.input_chunks.get(event.command_id, {}),
+        event.chunk.chunk_index: event.chunk,
+    }
+    return state.model_copy(
+        update={
+            "input_chunks": {**state.input_chunks, event.command_id: command_chunks}
+        }
+    )
+
+
 def apply_task_deleted(event: TaskDeleted, state: State) -> State:
+    task = state.tasks.get(event.task_id)
     new_tasks: Mapping[TaskId, Task] = {
         tid: task for tid, task in state.tasks.items() if tid != event.task_id
     }
+    if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
+        new_input_chunks = {
+            command_id: chunks
+            for command_id, chunks in state.input_chunks.items()
+            if command_id != task.command_id
+        }
+        return state.model_copy(
+            update={"tasks": new_tasks, "input_chunks": new_input_chunks}
+        )
     return state.model_copy(update={"tasks": new_tasks})
 
 
