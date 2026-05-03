@@ -489,7 +489,12 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                             activation_bits=profile.activation_bits,
                             supported=profile.supported,
                             compute_tops=profile.compute_tops,
+                            weight_only_compute_tops=profile.weight_only_compute_tops,
+                            single_instance_compute_tops=profile.single_instance_compute_tops,
+                            compute_instances=profile.compute_instances,
                             memory_bandwidth_gbps=profile.memory_bandwidth_gbps,
+                            activation_quantization_speedup=profile.activation_quantization_speedup,
+                            native_quantized_compute=profile.native_quantized_compute,
                             error=profile.error,
                         )
                         for profile in info.precision_profiles

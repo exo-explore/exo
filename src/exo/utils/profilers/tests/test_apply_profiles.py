@@ -43,6 +43,8 @@ def _ane_profile() -> AneProfile:
                 activation_bits=16,
                 supported=True,
                 compute_tops=12.0,
+                single_instance_compute_tops=6.0,
+                compute_instances=2,
                 memory_bandwidth_gbps=80.0,
             ),
             AnePrecisionProfile(
@@ -51,7 +53,12 @@ def _ane_profile() -> AneProfile:
                 activation_bits=8,
                 supported=True,
                 compute_tops=28.0,
+                weight_only_compute_tops=18.0,
+                single_instance_compute_tops=14.0,
+                compute_instances=2,
                 memory_bandwidth_gbps=72.0,
+                activation_quantization_speedup=1.5,
+                native_quantized_compute=True,
             ),
         ),
     )
@@ -75,8 +82,13 @@ def test_apply_ane_profile_writes_node_ane_profile():
     assert entry.engine == "ane"
     precision_by_bits = {p.precision_bits: p for p in entry.precision_profiles}
     assert precision_by_bits[16].compute_tops == 12.0
+    assert precision_by_bits[16].single_instance_compute_tops == 6.0
+    assert precision_by_bits[16].compute_instances == 2
     assert precision_by_bits[16].memory_bandwidth_gbps == 80.0
     assert precision_by_bits[8].compute_tops == 28.0
+    assert precision_by_bits[8].weight_only_compute_tops == 18.0
+    assert precision_by_bits[8].activation_quantization_speedup == 1.5
+    assert precision_by_bits[8].native_quantized_compute
 
 
 def test_apply_socket_link_profile_keys_by_source_and_sink():

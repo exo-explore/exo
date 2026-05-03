@@ -18,8 +18,9 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Literal, Self, cast, final
+from typing import Literal, NamedTuple, Self, cast, final
 
 import numpy as np
 import numpy.typing as npt
@@ -43,6 +44,8 @@ _COMPUTE_IN_DIM = 2048
 _COMPUTE_OUT_DIM = 2048
 _COMPUTE_SPATIAL = 768
 _COMPUTE_ITERATIONS_PER_PASS = 12
+_COMPUTE_PARALLEL_INSTANCES = 2
+_NATIVE_QUANTIZATION_SPEEDUP_THRESHOLD = 1.2
 
 _STREAM_CHANNELS = 4096
 _STREAM_SPATIAL = 2048
@@ -79,7 +82,12 @@ class AnePrecisionProfile(FrozenModel):
     activation_bits: AnePrecisionBits
     supported: bool
     compute_tops: float | None = None
+    weight_only_compute_tops: float | None = None
+    single_instance_compute_tops: float | None = None
+    compute_instances: int = 1
     memory_bandwidth_gbps: float | None = None
+    activation_quantization_speedup: float | None = None
+    native_quantized_compute: bool | None = None
     error: str | None = None
 
 
@@ -105,6 +113,12 @@ class AneProfile(TaggedModel):
         return cls(engine="ane", precision_profiles=profiles)
 
 
+class _ComputeMeasurement(NamedTuple):
+    tops: float
+    single_instance_tops: float
+    instances: int
+
+
 def _measure_precision_profile(
     precision_bits: AnePrecisionBits, rng: np.random.Generator
 ) -> AnePrecisionProfile:
@@ -123,9 +137,13 @@ def _measure_precision_profile(
 def _measure_supported_precision_profile(
     precision_bits: AnePrecisionBits, rng: np.random.Generator
 ) -> AnePrecisionProfile:
+    # Core ML accepts int4 weights here, but the ANE activation Q/DQ path that
+    # triggers native low-precision conv uses int8 activations. int4 activation
+    # Q/DQ does not compile through this MIL/private-ANE path, so 4-bit means W4A8.
     activation_bits: AnePrecisionBits = (
         8 if precision_bits in (8, 4) else precision_bits
     )
+    baseline_measurement: _ComputeMeasurement | None = None
 
     if precision_bits == 32:
         compute_weights = rng.standard_normal(
@@ -134,14 +152,18 @@ def _measure_supported_precision_profile(
         compute_input = rng.standard_normal((_COMPUTE_IN_DIM, _COMPUTE_SPATIAL)).astype(
             np.float32
         )
-        compute_kernel = _compile_static_conv_kernel(
-            weights=compute_weights,
-            input_channels=_COMPUTE_IN_DIM,
-            output_channels=_COMPUTE_OUT_DIM,
-            spatial=_COMPUTE_SPATIAL,
-            precision_bits=precision_bits,
+        compute_kernels = tuple(
+            _compile_static_conv_kernel(
+                weights=compute_weights,
+                input_channels=_COMPUTE_IN_DIM,
+                output_channels=_COMPUTE_OUT_DIM,
+                spatial=_COMPUTE_SPATIAL,
+                precision_bits=precision_bits,
+            )
+            for _ in range(_COMPUTE_PARALLEL_INSTANCES)
         )
-        compute_kernel.write_input(0, compute_input)
+        for kernel in compute_kernels:
+            kernel.write_input(0, compute_input)
 
         stream_input = rng.standard_normal((_STREAM_CHANNELS, _STREAM_SPATIAL)).astype(
             np.float32
@@ -164,14 +186,18 @@ def _measure_supported_precision_profile(
             np.float16
         )
 
-        compute_kernel = _compile_static_conv_kernel(
-            weights=compute_weights,
-            input_channels=_COMPUTE_IN_DIM,
-            output_channels=_COMPUTE_OUT_DIM,
-            spatial=_COMPUTE_SPATIAL,
-            precision_bits=precision_bits,
+        compute_kernels = tuple(
+            _compile_static_conv_kernel(
+                weights=compute_weights,
+                input_channels=_COMPUTE_IN_DIM,
+                output_channels=_COMPUTE_OUT_DIM,
+                spatial=_COMPUTE_SPATIAL,
+                precision_bits=precision_bits,
+            )
+            for _ in range(_COMPUTE_PARALLEL_INSTANCES)
         )
-        compute_kernel.write_input(0, compute_input)
+        for kernel in compute_kernels:
+            kernel.write_input(0, compute_input)
 
         stream_kernel = _compile_relu_stream_kernel(
             channels=_STREAM_CHANNELS,
@@ -191,27 +217,64 @@ def _measure_supported_precision_profile(
             np.float16
         )
 
-        compute_kernel = _compile_quantized_static_conv_kernel(
-            weights=compute_weights,
-            input_channels=_COMPUTE_IN_DIM,
-            output_channels=_COMPUTE_OUT_DIM,
-            spatial=_COMPUTE_SPATIAL,
-            precision_bits=precision_bits,
+        compute_kernels = tuple(
+            _compile_quantized_static_conv_kernel(
+                weights=compute_weights,
+                input_channels=_COMPUTE_IN_DIM,
+                output_channels=_COMPUTE_OUT_DIM,
+                spatial=_COMPUTE_SPATIAL,
+                precision_bits=precision_bits,
+                quantize_activations=True,
+            )
+            for _ in range(_COMPUTE_PARALLEL_INSTANCES)
         )
-        compute_kernel.write_input(0, compute_input)
+        for kernel in compute_kernels:
+            kernel.write_input(0, compute_input)
 
         stream_kernel = _compile_quantized_stream_kernel(
             channels=_STREAM_CHANNELS,
             spatial=_STREAM_SPATIAL,
         )
         stream_kernel.write_input(0, stream_input)
+        baseline_kernels = tuple(
+            _compile_quantized_static_conv_kernel(
+                weights=compute_weights,
+                input_channels=_COMPUTE_IN_DIM,
+                output_channels=_COMPUTE_OUT_DIM,
+                spatial=_COMPUTE_SPATIAL,
+                precision_bits=precision_bits,
+                quantize_activations=False,
+            )
+            for _ in range(_COMPUTE_PARALLEL_INSTANCES)
+        )
+        for kernel in baseline_kernels:
+            kernel.write_input(0, compute_input)
+        baseline_measurement = _measure_compute_tops(baseline_kernels)
+
+    measurement = _measure_compute_tops(compute_kernels)
+    activation_quantization_speedup = None
+    native_quantized_compute = None
+    if baseline_measurement is not None:
+        activation_quantization_speedup = (
+            measurement.tops / baseline_measurement.tops
+            if baseline_measurement.tops > 0
+            else 0.0
+        )
+        native_quantized_compute = (
+            activation_quantization_speedup >= _NATIVE_QUANTIZATION_SPEEDUP_THRESHOLD
+        )
 
     return AnePrecisionProfile(
         precision_bits=precision_bits,
         weight_bits=precision_bits,
         activation_bits=activation_bits,
         supported=True,
-        compute_tops=_measure_compute_tops(compute_kernel),
+        compute_tops=measurement.tops,
+        weight_only_compute_tops=(
+            baseline_measurement.tops if baseline_measurement is not None else None
+        ),
+        single_instance_compute_tops=measurement.single_instance_tops,
+        compute_instances=measurement.instances,
         memory_bandwidth_gbps=_measure_streaming_bandwidth_gbps(
             stream_kernel,
             bytes_per_element=(
@@ -220,6 +283,8 @@ def _measure_supported_precision_profile(
                 else _FP16_BYTES_PER_ELEMENT
             ),
         ),
+        activation_quantization_speedup=activation_quantization_speedup,
+        native_quantized_compute=native_quantized_compute,
     )
 
 
@@ -311,21 +376,81 @@ def ane_available() -> bool:
         return False
 
 
-def _measure_compute_tops(kernel: _AneKernel) -> float:
-    _warm_up_with(kernel.eval, time.perf_counter() + _WARMUP_SECONDS)
-
+def _measure_compute_tops(kernels: Sequence[_AneKernel]) -> _ComputeMeasurement:
     operations_per_iteration = 2 * _COMPUTE_IN_DIM * _COMPUTE_OUT_DIM * _COMPUTE_SPATIAL
+    single_instance_tops = _measure_parallel_compute_tops(
+        kernels[:1], operations_per_iteration=operations_per_iteration
+    )
+    best = _ComputeMeasurement(
+        tops=single_instance_tops,
+        single_instance_tops=single_instance_tops,
+        instances=1,
+    )
+    if len(kernels) >= 2:
+        parallel_tops = _measure_parallel_compute_tops(
+            kernels[:2], operations_per_iteration=operations_per_iteration
+        )
+        if parallel_tops > best.tops:
+            best = _ComputeMeasurement(
+                tops=parallel_tops,
+                single_instance_tops=single_instance_tops,
+                instances=2,
+            )
+    return best
+
+
+def _measure_parallel_compute_tops(
+    kernels: Sequence[_AneKernel], *, operations_per_iteration: int
+) -> float:
+    if not kernels:
+        return 0.0
+    _warm_up_kernels(kernels, time.perf_counter() + _WARMUP_SECONDS)
+
     best_tops = 0.0
-    for _ in range(_MEASUREMENT_PASSES):
-        start = time.perf_counter()
-        for _ in range(_COMPUTE_ITERATIONS_PER_PASS):
-            kernel.eval()
-        elapsed = time.perf_counter() - start
-        if elapsed <= 0:
-            continue
-        tops = operations_per_iteration * _COMPUTE_ITERATIONS_PER_PASS / elapsed / 1e12
-        best_tops = max(best_tops, tops)
+    with ThreadPoolExecutor(max_workers=len(kernels)) as executor:
+        for _ in range(_MEASUREMENT_PASSES):
+            start = time.perf_counter()
+            if len(kernels) == 1:
+                _eval_kernel_iterations(kernels[0], _COMPUTE_ITERATIONS_PER_PASS)
+            else:
+                futures = [
+                    executor.submit(
+                        _eval_kernel_iterations,
+                        kernel,
+                        _COMPUTE_ITERATIONS_PER_PASS,
+                    )
+                    for kernel in kernels
+                ]
+                for future in futures:
+                    future.result()
+            elapsed = time.perf_counter() - start
+            if elapsed <= 0:
+                continue
+            tops = (
+                operations_per_iteration
+                * _COMPUTE_ITERATIONS_PER_PASS
+                * len(kernels)
+                / elapsed
+                / 1e12
+            )
+            best_tops = max(best_tops, tops)
     return best_tops
+
+
+def _warm_up_kernels(kernels: Sequence[_AneKernel], deadline: float) -> None:
+    if len(kernels) == 1:
+        _warm_up_with(kernels[0].eval, deadline)
+        return
+    with ThreadPoolExecutor(max_workers=len(kernels)) as executor:
+        while time.perf_counter() < deadline:
+            futures = [executor.submit(kernel.eval) for kernel in kernels]
+            for future in futures:
+                future.result()
+
+
+def _eval_kernel_iterations(kernel: _AneKernel, iterations: int) -> None:
+    for _ in range(iterations):
+        kernel.eval()
 
 
 def _measure_streaming_bandwidth_gbps(
@@ -386,6 +511,7 @@ def _compile_quantized_static_conv_kernel(
     output_channels: int,
     spatial: int,
     precision_bits: Literal[8, 4],
+    quantize_activations: bool,
 ) -> _AneKernel:
     weight_blob = _build_quantized_weight_blob_bytes(weights, precision_bits)
     mil = _mil_quantized_static_conv(
@@ -393,6 +519,7 @@ def _compile_quantized_static_conv_kernel(
         output_channels=output_channels,
         spatial=spatial,
         precision_bits=precision_bits,
+        quantize_activations=quantize_activations,
     )
     input_bytes = input_channels * spatial * _FP16_BYTES_PER_ELEMENT
     output_bytes = output_channels * spatial * _FP16_BYTES_PER_ELEMENT
@@ -1296,6 +1423,7 @@ def _mil_quantized_static_conv(
     output_channels: int,
     spatial: int,
     precision_bits: Literal[8, 4],
+    quantize_activations: bool,
 ) -> str:
     data_type = "int8" if precision_bits == 8 else "int4"
     scale_blob_offset = 128 + _quantized_data_payload_size(
@@ -1303,6 +1431,12 @@ def _mil_quantized_static_conv(
         output_channels=output_channels,
         precision_bits=precision_bits,
     )
+    activation_preamble = (
+        _mil_quantize_dequantize(channels=input_channels, spatial=spatial)
+        if quantize_activations
+        else ""
+    )
+    conv_input = "dx" if quantize_activations else "x"
     return (
         f"{_MIL_HEADER}"
         f"    func main<ios18>(tensor<fp16, [1, {input_channels}, 1, {spatial}]> x) {{\n"
@@ -1313,10 +1447,10 @@ def _mil_quantized_static_conv(
         f"scale = tensor<fp16, [{output_channels}, 1, 1, 1]>(BLOBFILE(path = "
         'string("@model_path/weights/weight.bin"), '
         f'offset = uint64({scale_blob_offset}))))[name = string("Wq")];\n'
-        f"{_mil_quantize_dequantize(channels=input_channels, spatial=spatial)}"
+        f"{activation_preamble}"
         f"{_CONV_PARAMS}"
         f"        tensor<fp16, [1, {output_channels}, 1, {spatial}]> y = conv("
-        f'{_CONV_ARGS}, weight=W, x=dx)[name=string("cv")];\n'
+        f'{_CONV_ARGS}, weight=W, x={conv_input})[name=string("cv")];\n'
         "    } -> (y);\n"
         "}\n"
     )

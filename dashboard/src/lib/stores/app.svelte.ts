@@ -141,7 +141,12 @@ export interface RawNodeAnePrecisionProfile {
   activationBits: 32 | 16 | 8 | 4;
   supported: boolean;
   computeTops?: number | null;
+  weightOnlyComputeTops?: number | null;
+  singleInstanceComputeTops?: number | null;
+  computeInstances?: number;
   memoryBandwidthGbps?: number | null;
+  activationQuantizationSpeedup?: number | null;
+  nativeQuantizedCompute?: boolean | null;
   error?: string | null;
 }
 

@@ -130,7 +130,12 @@ class NodeAnePrecisionProfile(FrozenModel):
     activation_bits: Literal[32, 16, 8, 4]
     supported: bool
     compute_tops: float | None = None
+    weight_only_compute_tops: float | None = None
+    single_instance_compute_tops: float | None = None
+    compute_instances: int = 1
     memory_bandwidth_gbps: float | None = None
+    activation_quantization_speedup: float | None = None
+    native_quantized_compute: bool | None = None
     error: str | None = None
 
 

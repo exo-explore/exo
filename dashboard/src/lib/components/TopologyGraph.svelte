@@ -80,6 +80,12 @@
     return `${value.toFixed(value >= 10 ? 0 : 1)}T`;
   }
 
+  function formatAnePrecisionLabel(
+    profile: RawNodeAnePrecisionProfile,
+  ): string {
+    return `W${profile.weightBits}A${profile.activationBits} ${formatAneTops(profile.computeTops)}`;
+  }
+
   function formatAneProfileLine(profile: RawNodeAneProfile): string {
     const preferredOrder: RawNodeAnePrecisionProfile["precisionBits"][] = [
       16, 8, 4, 32,
@@ -90,7 +96,7 @@
     return preferredOrder
       .map((bits) => byBits.get(bits))
       .filter((p): p is RawNodeAnePrecisionProfile => Boolean(p?.supported))
-      .map((p) => `${p.precisionBits}b ${formatAneTops(p.computeTops)}`)
+      .map((p) => formatAnePrecisionLabel(p))
       .join(" · ");
   }
 
