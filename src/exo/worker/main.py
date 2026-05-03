@@ -3,7 +3,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 import anyio
-from anyio import fail_after, to_thread
+from anyio import fail_after, move_on_after, to_thread
 from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
@@ -364,8 +364,16 @@ class Worker:
                     await self._start_runner_task(task)
 
     async def shutdown(self):
+        self.event_sender.close()
+        self.command_sender.close()
+        self.download_command_sender.close()
+        for runner in self.runners.values():
+            runner.shutdown()
         self._tg.cancel_tasks()
-        await self._stopped.wait()
+        with move_on_after(5) as scope:
+            await self._stopped.wait()
+        if scope.cancel_called:
+            logger.warning("Timed out waiting for Worker shutdown")
 
     async def _start_runner_task(self, task: Task):
         if (instance := self.state.instances.get(task.instance_id)) is not None:
