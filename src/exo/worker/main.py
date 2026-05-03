@@ -30,7 +30,6 @@ from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     IndexedEvent,
-    InstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
     TaskCreated,
@@ -141,6 +140,7 @@ class Worker:
         self._tg.start_soon(self._forward_info, info_recv)
         self._tg.start_soon(self.plan_step)
         self._tg.start_soon(self._event_applier)
+        self._tg.start_soon(self._reconcile_instance_backoff)
         self._tg.start_soon(self._reconcile_custom_cards)
         self._tg.start_soon(self._poll_connection_updates)
 
@@ -190,12 +190,18 @@ class Worker:
                     continue
                 # 2. for each event, apply it to the state
                 self.state = apply(self.state, event=event)
-                event = event.event
-
-                if isinstance(event, InstanceDeleted):
-                    self._instance_backoff.reset(event.instance_id)
-
                 self._sync_input_views_from_state()
+
+    async def _reconcile_instance_backoff(self) -> None:
+        while True:
+            await anyio.sleep(1)
+            self._reconcile_instance_backoff_once()
+
+    def _reconcile_instance_backoff_once(self) -> None:
+        live_instances = set(self.state.instances)
+        for instance_id in self._instance_backoff.tracked_keys():
+            if instance_id not in live_instances:
+                self._instance_backoff.reset(instance_id)
 
     async def _reconcile_custom_cards(self) -> None:
         while True:
