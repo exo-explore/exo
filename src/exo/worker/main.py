@@ -8,6 +8,8 @@ from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
+from exo.routing.event_router import EventRouter
+from exo.routing.snapshot_receiver import SnapshotReceiver
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
@@ -16,9 +18,10 @@ from exo.shared.types.commands import (
     DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
+    RequestSnapshot,
     StartDownload,
 )
-from exo.shared.types.common import CommandId, NodeId, SystemId
+from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     CustomModelCardAdded,
     CustomModelCardDeleted,
@@ -33,6 +36,7 @@ from exo.shared.types.events import (
     TopologyEdgeDeleted,
 )
 from exo.shared.types.multiaddr import Multiaddr
+from exo.shared.types.snapshots import SnapshotChunk
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     CancelTask,
@@ -58,14 +62,19 @@ from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
 from exo.worker.runner.supervisor import RunnerSupervisor
 
+_SNAPSHOT_FETCH_TIMEOUT_SECONDS = 30
+
 
 class Worker:
     def __init__(
         self,
         node_id: NodeId,
+        session_id: SessionId,
         *,
+        event_router: EventRouter,
         event_receiver: Receiver[IndexedEvent],
         event_sender: Sender[Event],
+        snapshot_chunk_receiver: Receiver[SnapshotChunk],
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
@@ -73,8 +82,11 @@ class Worker:
         api_port: int,
     ):
         self.node_id: NodeId = node_id
+        self.session_id: SessionId = session_id
+        self.event_router = event_router
         self.event_receiver = event_receiver
         self.event_sender = event_sender
+        self.snapshot_chunk_receiver = snapshot_chunk_receiver
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.api_port = api_port
@@ -104,20 +116,56 @@ class Worker:
 
         try:
             async with self._tg as tg:
-                tg.start_soon(info_gatherer.run)
-                tg.start_soon(self._forward_info, info_recv)
-                tg.start_soon(self.plan_step)
-                tg.start_soon(self._event_applier)
-                tg.start_soon(self._poll_connection_updates)
+                tg.start_soon(self._bootstrap_then_run, info_gatherer, info_recv)
         finally:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")
             self.event_sender.close()
+            self.snapshot_chunk_receiver.close()
             self.command_sender.close()
             self.download_command_sender.close()
             for runner in self.runners.values():
                 runner.shutdown()
             self._stopped.set()
+
+    async def _bootstrap_then_run(
+        self, info_gatherer: InfoGatherer, info_recv: Receiver[GatheredInfo]
+    ) -> None:
+        await self._fetch_snapshot()
+        self._sync_input_views_from_state()
+        self._tg.start_soon(info_gatherer.run)
+        self._tg.start_soon(self._forward_info, info_recv)
+        self._tg.start_soon(self.plan_step)
+        self._tg.start_soon(self._event_applier)
+        self._tg.start_soon(self._poll_connection_updates)
+
+    async def _fetch_snapshot(self) -> None:
+        receiver = SnapshotReceiver(self.node_id, self.session_id)
+        await self.command_sender.send(
+            ForwarderCommand(
+                origin=self._system_id,
+                command=RequestSnapshot(requester_node_id=self.node_id),
+            )
+        )
+
+        with anyio.move_on_after(_SNAPSHOT_FETCH_TIMEOUT_SECONDS):
+            with self.snapshot_chunk_receiver as chunks:
+                async for chunk in chunks:
+                    received = receiver.ingest(chunk)
+                    if received is None:
+                        continue
+                    self.state = received.state
+                    self.event_router.set_buffer_start(
+                        received.last_event_applied_idx + 1
+                    )
+                    logger.info(
+                        f"Worker bootstrapped from snapshot at idx "
+                        f"{received.last_event_applied_idx}"
+                    )
+                    return
+        logger.info(
+            "No snapshot received before timeout; falling back to full event-log replay"
+        )
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -133,6 +181,8 @@ class Worker:
     async def _event_applier(self):
         with self.event_receiver as events:
             async for event in events:
+                if event.idx <= self.state.last_event_applied_idx:
+                    continue
                 # 2. for each event, apply it to the state
                 self.state = apply(self.state, event=event)
                 event = event.event
