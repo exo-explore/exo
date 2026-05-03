@@ -96,8 +96,11 @@ class Node:
         if not args.no_worker:
             worker = Worker(
                 node_id,
+                session_id,
+                event_router=event_router,
                 event_receiver=event_router.receiver(),
                 event_sender=event_router.sender(),
+                snapshot_chunk_receiver=router.receiver(topics.SNAPSHOT_RESPONSES),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 api_port=args.api_port,
@@ -251,8 +254,13 @@ class Node:
                         # TODO: add profiling etc to resource monitor
                         self.worker = Worker(
                             self.node_id,
+                            result.session_id,
+                            event_router=self.event_router,
                             event_receiver=self.event_router.receiver(),
                             event_sender=self.event_router.sender(),
+                            snapshot_chunk_receiver=self.router.receiver(
+                                topics.SNAPSHOT_RESPONSES
+                            ),
                             command_sender=self.router.sender(topics.COMMANDS),
                             download_command_sender=self.router.sender(
                                 topics.DOWNLOAD_COMMANDS
