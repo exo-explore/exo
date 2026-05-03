@@ -254,7 +254,6 @@ class API:
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
-        self._sent_image_hashes: set[str] = set()
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -304,7 +303,6 @@ class API:
         self.event_receiver.close()
         self.event_receiver = event_receiver
         self._tg.start_soon(self._apply_state)
-        self._sent_image_hashes = set()
 
     def unpause(self, result_clock: int):
         logger.info("Unpausing API")
@@ -826,18 +824,8 @@ class API:
         )
         command = TextGeneration(task_params=task_params)
 
-        new_images: list[tuple[int, str]] = []
-        for idx, (img, h) in enumerate(zip(images, hashes, strict=True)):
-            if h not in self._sent_image_hashes:
-                self._sent_image_hashes.add(h)
-                new_images.append((idx, img))
-
-        if not new_images:
-            await self._send(command)
-            return command
-
         all_chunks: list[tuple[int, str]] = []
-        for img_idx, img_data in new_images:
+        for img_idx, img_data in enumerate(images):
             for i in range(0, len(img_data), EXO_MAX_CHUNK_SIZE):
                 all_chunks.append((img_idx, img_data[i : i + EXO_MAX_CHUNK_SIZE]))
 

@@ -24,7 +24,6 @@ from exo.shared.types.events import (
     CustomModelCardDeleted,
     Event,
     IndexedEvent,
-    InputChunkReceived,
     InstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
@@ -141,43 +140,41 @@ class Worker:
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
 
-                # Buffer input image chunks for image editing
-                if isinstance(event, InputChunkReceived):
-                    cmd_id = event.command_id
-                    if cmd_id not in self.input_chunk_buffer:
-                        self.input_chunk_buffer[cmd_id] = {}
-                        self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
-
-                    self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
-                        event.chunk
-                    )
-
-                    if (
-                        len(self.input_chunk_buffer[cmd_id])
-                        == self.input_chunk_counts[cmd_id]
-                    ):
-                        per_image: defaultdict[int, list[InputImageChunk]] = (
-                            defaultdict(list)
-                        )
-                        for chunk in self.input_chunk_buffer[cmd_id].values():
-                            per_image[chunk.image_index].append(chunk)
-                        for chunks_for_image in per_image.values():
-                            sorted_chunks = sorted(
-                                chunks_for_image, key=lambda c: c.chunk_index
-                            )
-                            img = Base64Image("".join(c.data for c in sorted_chunks))
-                            self.image_cache[
-                                Base64ImageHash(
-                                    hashlib.sha256(img.encode("ascii")).hexdigest()
-                                )
-                            ] = img
-
                 if isinstance(event, CustomModelCardAdded):
                     await event.model_card.save_to_custom_dir()
                     add_to_card_cache(event.model_card)
 
                 if isinstance(event, CustomModelCardDeleted):
                     await delete_custom_card(event.model_id)
+
+                self._sync_input_views_from_state()
+
+    def _sync_input_views_from_state(self) -> None:
+        self.input_chunk_buffer = {
+            command_id: dict(chunks)
+            for command_id, chunks in self.state.input_chunks.items()
+        }
+        self.input_chunk_counts = {
+            command_id: next(iter(chunks.values())).total_chunks
+            for command_id, chunks in self.input_chunk_buffer.items()
+            if chunks
+        }
+
+        self.image_cache = {}
+        for command_id, chunks in self.input_chunk_buffer.items():
+            expected_chunks = self.input_chunk_counts.get(command_id)
+            if expected_chunks is None or len(chunks) != expected_chunks:
+                continue
+
+            per_image: defaultdict[int, list[InputImageChunk]] = defaultdict(list)
+            for chunk in chunks.values():
+                per_image[chunk.image_index].append(chunk)
+            for chunks_for_image in per_image.values():
+                sorted_chunks = sorted(chunks_for_image, key=lambda c: c.chunk_index)
+                image = Base64Image("".join(chunk.data for chunk in sorted_chunks))
+                self.image_cache[
+                    Base64ImageHash(hashlib.sha256(image.encode("ascii")).hexdigest())
+                ] = image
 
     async def plan_step(self):
         while True:
@@ -189,7 +186,7 @@ class Worker:
                 self.state.instances,
                 self.state.runners,
                 self.state.tasks,
-                self.input_chunk_buffer,
+                self.state.input_chunks,
                 self.image_cache,
                 self._instance_backoff,
                 self._download_backoff,
@@ -321,15 +318,9 @@ class Worker:
                             advanced_params=task.task_params.advanced_params,
                         ),
                     )
-                    # Cleanup buffers
-                    if cmd_id in self.input_chunk_buffer:
-                        del self.input_chunk_buffer[cmd_id]
-                    if cmd_id in self.input_chunk_counts:
-                        del self.input_chunk_counts[cmd_id]
                     await self._start_runner_task(modified_task)
 
                 case TextGeneration() if task.task_params.image_hashes:
-                    cmd_id = task.command_id
                     resolved_images = [
                         self.image_cache[h]
                         for _, h in sorted(task.task_params.image_hashes.items())
@@ -341,10 +332,6 @@ class Worker:
                             )
                         }
                     )
-                    if cmd_id in self.input_chunk_buffer:
-                        del self.input_chunk_buffer[cmd_id]
-                    if cmd_id in self.input_chunk_counts:
-                        del self.input_chunk_counts[cmd_id]
                     await self._start_runner_task(modified_task)
                 case LoadModel(instance_id=instance_id):
                     if (instance := self.state.instances.get(instance_id)) is not None:

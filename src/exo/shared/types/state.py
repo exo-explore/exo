@@ -6,7 +6,8 @@ from pydantic import ConfigDict, Field, field_serializer, field_validator
 from pydantic.alias_generators import to_camel
 
 from exo.shared.topology import Topology, TopologySnapshot
-from exo.shared.types.common import NodeId
+from exo.shared.types.chunks import InputImageChunk
+from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
     DiskUsage,
@@ -45,6 +46,9 @@ class State(FrozenModel):
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
     tasks: Mapping[TaskId, Task] = {}
+    # Durable request input chunks for active image requests. Workers rebuild
+    # local image caches from this state instead of reading events directly.
+    input_chunks: Mapping[CommandId, Mapping[int, InputImageChunk]] = {}
     last_seen: Mapping[NodeId, datetime] = {}
     topology: Topology = Field(default_factory=Topology)
     last_event_applied_idx: int = Field(default=-1, ge=-1)
