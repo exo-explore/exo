@@ -13,11 +13,8 @@ from anyio import (
     sleep_forever,
 )
 from exo_pyo3_bindings import (
-    AllQueuesFullError,
     Keypair,
-    MessageTooLargeError,
     NetworkingHandle,
-    NoPeersSubscribedToTopicError,
     PyFromSwarm,
 )
 from filelock import FileLock
@@ -191,9 +188,9 @@ class Router:
                 from_swarm = await self._net.recv()
                 logger.debug(from_swarm)
                 match from_swarm:
-                    case PyFromSwarm.Message(origin, topic, data):
+                    case PyFromSwarm.Message(topic, data):
                         logger.trace(
-                            f"Received message on {topic} from {origin} with payload {data}"
+                            f"Received message on {topic} with payload {data}"
                         )
                         if topic not in self.topic_routers:
                             logger.warning(
@@ -225,21 +222,12 @@ class Router:
     async def _networking_publish(self):
         with self.networking_receiver as networked_items:
             async for topic, data in networked_items:
-                try:
-                    logger.trace(f"Sending message on {topic} with payload {data}")
-                    if len(data) > 1024 * 1024:
-                        logger.warning(
-                            "Sending overlarge payload, network performance may be temporarily degraded"
-                        )
-                    await self._net.gossipsub_publish(topic, data)
-                except NoPeersSubscribedToTopicError:
-                    pass
-                except AllQueuesFullError:
-                    logger.warning(f"All peer queues full, dropping message on {topic}")
-                except MessageTooLargeError:
+                logger.trace(f"Sending message on {topic} with payload {data}")
+                if len(data) > 1024 * 1024:
                     logger.warning(
-                        f"Message too large for gossipsub on {topic} ({len(data)} bytes), dropping"
+                        "Sending overlarge payload, network performance may be temporarily degraded"
                     )
+                await self._net.gossipsub_publish(topic, data)
 
 
 def get_node_id_keypair(
