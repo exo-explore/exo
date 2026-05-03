@@ -152,19 +152,15 @@ Event = (
     | TaskStatusUpdated
     | TaskFailed
     | TaskDeleted
-    | TaskAcknowledged
     | InstanceCreated
     | InstanceDeleted
     | RunnerStatusUpdated
     | NodeTimedOut
     | NodeGatheredInfo
     | NodeDownloadProgress
-    | ChunkGenerated
     | InputChunkReceived
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
-    | TracesCollected
-    | TracesMerged
     | CustomModelCardAdded
     | CustomModelCardDeleted
     | InstanceLinkCreated
@@ -173,6 +169,7 @@ Event = (
 
 
 TransientEvent = TaskAcknowledged | ChunkGenerated | TracesCollected | TracesMerged
+RunnerEvent = Event | TransientEvent
 
 
 class IndexedEvent(FrozenModel):

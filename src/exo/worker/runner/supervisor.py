@@ -16,6 +16,7 @@ from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
+    RunnerEvent,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -58,7 +59,7 @@ class RunnerSupervisor:
     bound_instance: BoundInstance
     runner_process: mp.Process
     initialize_timeout: float
-    _ev_recv: MpReceiver[Event]
+    _ev_recv: MpReceiver[RunnerEvent]
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
     _transient_event_sender: Sender[TransientEvent]
@@ -82,7 +83,7 @@ class RunnerSupervisor:
         transient_event_sender: Sender[TransientEvent],
         initialize_timeout: float = 400,
     ) -> Self:
-        ev_send, ev_recv = mp_channel[Event]()
+        ev_send, ev_recv = mp_channel[RunnerEvent]()
         task_sender, task_recv = mp_channel[Task]()
         cancel_sender, cancel_recv = mp_channel[TaskId]()
 

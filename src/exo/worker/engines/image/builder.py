@@ -12,7 +12,7 @@ from exo.shared.constants import EXO_TRACING_ENABLED
 from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
 from exo.shared.types.chunks import Chunk, ErrorChunk
 from exo.shared.types.events import (
-    Event,
+    RunnerEvent,
     TraceEventData,
     TracesCollected,
 )
@@ -66,7 +66,7 @@ def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
 
 
 def _send_traces_if_enabled(
-    event_sender: MpSender[Event],
+    event_sender: MpSender[RunnerEvent],
     task_id: TaskId,
     rank: int,
 ) -> None:
@@ -97,7 +97,7 @@ def _send_traces_if_enabled(
 
 @dataclass
 class MfluxBuilder(Builder):
-    event_sender: MpSender[Event]
+    event_sender: MpSender[RunnerEvent]
     cancel_receiver: MpReceiver[TaskId]
     shard_metadata: ShardMetadata | None = None
     image_model: DistributedImageModel | None = None
@@ -137,7 +137,7 @@ class MfluxBuilder(Builder):
 class ImageEngine(Engine):
     image_model: DistributedImageModel
     shard_metadata: ShardMetadata
-    event_sender: MpSender[Event]
+    event_sender: MpSender[RunnerEvent]
     cancel_receiver: MpReceiver[TaskId]
     current_gen: (
         Generator[tuple[TaskId, Chunk | FinishedResponse | CancelledResponse]] | None

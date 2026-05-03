@@ -3,7 +3,7 @@ import resource
 
 import loguru
 
-from exo.shared.types.events import Event, RunnerStatusUpdated
+from exo.shared.types.events import RunnerEvent, RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import RunnerFailed
@@ -15,7 +15,7 @@ logger: "loguru.Logger" = loguru.logger
 
 def entrypoint(
     bound_instance: BoundInstance,
-    event_sender: MpSender[Event],
+    event_sender: MpSender[RunnerEvent],
     task_receiver: MpReceiver[Task],
     cancel_receiver: MpReceiver[TaskId],
     _logger: "loguru.Logger",
