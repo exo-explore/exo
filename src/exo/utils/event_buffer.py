@@ -47,6 +47,18 @@ class OrderedBuffer[T]:
         logger.trace(f"Releasing event {ret}")
         return ret
 
+    def fast_forward_to(self, idx: int) -> None:
+        """Skip every event before idx.
+
+        Snapshot restore uses this after applying state that already includes
+        events before idx. Any buffered or future event below idx is stale.
+        """
+        if idx <= self.next_idx_to_release:
+            return
+        self.next_idx_to_release = idx
+        for stale_idx in [i for i in self.store if i < idx]:
+            del self.store[stale_idx]
+
 
 class MultiSourceBuffer[SourceId, T]:
     """
