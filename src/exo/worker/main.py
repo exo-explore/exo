@@ -12,7 +12,12 @@ from exo.routing.event_router import EventRouter
 from exo.routing.snapshot_receiver import SnapshotReceiver
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
-from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
+from exo.shared.models.model_cards import (
+    ModelCard,
+    ModelId,
+    add_to_card_cache,
+    delete_custom_card,
+)
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     DeleteInstance,
@@ -23,8 +28,6 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
-    CustomModelCardAdded,
-    CustomModelCardDeleted,
     Event,
     IndexedEvent,
     InstanceDeleted,
@@ -106,6 +109,7 @@ class Worker:
         self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
             base=0.5, cap=10.0
         )
+        self._synced_custom_cards: dict[ModelId, ModelCard] = {}
         self._stopped: anyio.Event = anyio.Event()
 
     async def run(self):
@@ -137,6 +141,7 @@ class Worker:
         self._tg.start_soon(self._forward_info, info_recv)
         self._tg.start_soon(self.plan_step)
         self._tg.start_soon(self._event_applier)
+        self._tg.start_soon(self._reconcile_custom_cards)
         self._tg.start_soon(self._poll_connection_updates)
 
     async def _fetch_snapshot(self) -> None:
@@ -190,14 +195,27 @@ class Worker:
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
 
-                if isinstance(event, CustomModelCardAdded):
-                    await event.model_card.save_to_custom_dir()
-                    add_to_card_cache(event.model_card)
-
-                if isinstance(event, CustomModelCardDeleted):
-                    await delete_custom_card(event.model_id)
-
                 self._sync_input_views_from_state()
+
+    async def _reconcile_custom_cards(self) -> None:
+        while True:
+            await anyio.sleep(1)
+            await self._sync_custom_cards_from_state()
+
+    async def _sync_custom_cards_from_state(self) -> None:
+        target = dict(self.state.custom_model_cards)
+        for model_id, card in target.items():
+            if self._synced_custom_cards.get(model_id) == card:
+                continue
+            await card.save_to_custom_dir()
+            add_to_card_cache(card)
+            self._synced_custom_cards[model_id] = card
+
+        for model_id in list(self._synced_custom_cards):
+            if model_id in target:
+                continue
+            await delete_custom_card(model_id)
+            self._synced_custom_cards.pop(model_id, None)
 
     def _sync_input_views_from_state(self) -> None:
         self.input_chunk_buffer = {
