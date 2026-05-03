@@ -59,6 +59,7 @@ class Node:
         await router.register_topic(topics.ELECTION_MESSAGES)
         await router.register_topic(topics.CONNECTION_MESSAGES)
         await router.register_topic(topics.DOWNLOAD_COMMANDS)
+        await router.register_topic(topics.SNAPSHOT_RESPONSES)
         event_router = EventRouter(
             session_id,
             command_sender=router.sender(topics.COMMANDS),
@@ -112,6 +113,7 @@ class Node:
             global_event_sender=router.sender(topics.GLOBAL_EVENTS),
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
+            snapshot_chunk_sender=router.sender(topics.SNAPSHOT_RESPONSES),
             download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
         )
 
@@ -210,6 +212,9 @@ class Node:
                         global_event_sender=self.router.sender(topics.GLOBAL_EVENTS),
                         local_event_receiver=self.router.receiver(topics.LOCAL_EVENTS),
                         command_receiver=self.router.receiver(topics.COMMANDS),
+                        snapshot_chunk_sender=self.router.sender(
+                            topics.SNAPSHOT_RESPONSES
+                        ),
                         download_command_sender=self.router.sender(
                             topics.DOWNLOAD_COMMANDS
                         ),

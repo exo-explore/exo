@@ -1,6 +1,8 @@
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import anyio
+from anyio import to_thread
 from loguru import logger
 
 from exo.master.placement import (
@@ -55,6 +57,7 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.instance_link import InstanceLink
+from exo.shared.types.snapshots import SnapshotChunk, SnapshotTransferId
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -74,6 +77,15 @@ from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
+
+_SNAPSHOT_CHUNK_BYTES = 512 * 1024
+_MAX_EVENT_LOG_REPLAY_BATCH = 1000
+
+
+def _encode_state_for_transfer(state: State) -> bytes:
+    import zstandard
+
+    return zstandard.ZstdCompressor().compress(state.model_dump_json().encode("utf-8"))
 
 
 def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
@@ -126,6 +138,7 @@ class Master:
         event_sender: Sender[Event],
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
+        snapshot_chunk_sender: Sender[SnapshotChunk],
         download_command_sender: Sender[ForwarderDownloadCommand],
     ):
         self.node_id = node_id
@@ -136,6 +149,7 @@ class Master:
         self.command_receiver = command_receiver
         self.local_event_receiver = local_event_receiver
         self.global_event_sender = global_event_sender
+        self.snapshot_chunk_sender = snapshot_chunk_sender
         self.download_command_sender = download_command_sender
         self.event_sender = event_sender
         self._system_id = SystemId()
@@ -156,6 +170,7 @@ class Master:
             self._event_log.close()
             self.global_event_sender.close()
             self.local_event_receiver.close()
+            self.snapshot_chunk_sender.close()
             self.command_receiver.close()
 
     async def shutdown(self):
@@ -442,15 +457,18 @@ class Master:
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             # rate limit to 1000 at a time
-                            end = min(command.since_idx + 1000, len(self._event_log))
+                            end = min(
+                                command.since_idx + _MAX_EVENT_LOG_REPLAY_BATCH,
+                                len(self._event_log),
+                            )
                             for i, event in enumerate(
                                 self._event_log.read_range(command.since_idx, end),
                                 start=command.since_idx,
                             ):
                                 await self._send_event(IndexedEvent(idx=i, event=event))
                         case RequestSnapshot():
-                            logger.info(
-                                "Ignoring RequestSnapshot; snapshot serving is not wired yet"
+                            self._tg.start_soon(
+                                self._serve_snapshot, command.requester_node_id
                             )
                     for event in generated_events:
                         await self.event_sender.send(event)
@@ -510,6 +528,42 @@ class Master:
 
                     self._event_log.append(event)
                     await self._send_event(indexed)
+
+    async def _serve_snapshot(self, requester_node_id: NodeId) -> None:
+        state = self.state
+        if state.last_event_applied_idx < 0:
+            logger.info(
+                f"RequestSnapshot from {requester_node_id} but master has no events yet"
+            )
+            return
+
+        body = await to_thread.run_sync(_encode_state_for_transfer, state)
+        sha256 = hashlib.sha256(body).hexdigest()
+        chunks = [
+            body[i : i + _SNAPSHOT_CHUNK_BYTES]
+            for i in range(0, len(body), _SNAPSHOT_CHUNK_BYTES)
+        ] or [b""]
+        transfer_id = SnapshotTransferId()
+
+        logger.info(
+            f"Serving snapshot to {requester_node_id}: "
+            f"idx={state.last_event_applied_idx}, "
+            f"{len(chunks)} chunk(s), {len(body)} bytes total"
+        )
+        for index, chunk in enumerate(chunks):
+            await self.snapshot_chunk_sender.send(
+                SnapshotChunk.from_data(
+                    data=chunk,
+                    transfer_id=transfer_id,
+                    requester_node_id=requester_node_id,
+                    session_id=self.session_id,
+                    schema_version=state.schema_version,
+                    last_event_applied_idx=state.last_event_applied_idx,
+                    chunk_index=index,
+                    total_chunks=len(chunks),
+                    sha256_hex=sha256,
+                )
+            )
 
     # This function is re-entrant, take care!
     async def _send_event(self, event: IndexedEvent):
