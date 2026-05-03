@@ -42,6 +42,9 @@ class State(FrozenModel):
         strict=True,
         arbitrary_types_allowed=True,
     )
+    # Bump when a State change makes older snapshots unsafe to restore.
+    schema_version: int = Field(default=1, ge=1)
+
     instances: Mapping[InstanceId, Instance] = {}
     runners: Mapping[RunnerId, RunnerStatus] = {}
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
