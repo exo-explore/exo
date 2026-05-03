@@ -207,5 +207,14 @@ def _batched_swiglu_down_moe_call_with_epilogue(self, x, _residual=None):
     shared_y = mx.sigmoid(self.shared_expert_gate(x)) * shared_y
     out = y + shared_y
     if _residual is not None:
-        out = out + _residual
+        # Same N-scaling logic as the decode fast-path. Under TP, ShardedMoE
+        # all_sums our return value across N ranks. _residual is replicated,
+        # so without scaling the residual contribution becomes N*h instead
+        # of h. Divide by N here so post-all_sum we recover h exactly once.
+        # On single-mini, sharding_group is None → N=1 → no scaling.
+        N = 1
+        sg = getattr(self, "sharding_group", None)
+        if sg is not None:
+            N = sg.size()
+        out = out + (_residual / N if N > 1 else _residual)
     return out
