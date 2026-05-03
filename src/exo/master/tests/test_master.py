@@ -7,12 +7,14 @@ from loguru import logger
 
 from exo.master.main import Master
 from exo.routing.router import get_node_id_keypair
+from exo.routing.snapshot_receiver import SnapshotReceiver
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.commands import (
     CommandId,
     ForwarderCommand,
     ForwarderDownloadCommand,
     PlaceInstance,
+    RequestSnapshot,
     TextGeneration,
 )
 from exo.shared.types.common import ModelId, NodeId, SessionId, SystemId
@@ -29,6 +31,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     MemoryUsage,
 )
+from exo.shared.types.snapshots import SnapshotChunk
 from exo.shared.types.tasks import TaskStatus
 from exo.shared.types.tasks import TextGeneration as TextGenerationTask
 from exo.shared.types.text_generation import (
@@ -56,6 +59,7 @@ async def test_master():
     local_event_sender, le_receiver = channel[LocalForwarderEvent]()
     fcds, _fcdr = channel[ForwarderDownloadCommand]()
     ev_send, ev_recv = channel[Event]()
+    snapshot_chunk_send, _snapshot_chunk_recv = channel[SnapshotChunk]()
 
     async def mock_event_router():
         idx = 0
@@ -92,6 +96,7 @@ async def test_master():
         global_event_sender=ge_sender,
         local_event_receiver=le_receiver,
         command_receiver=co_receiver,
+        snapshot_chunk_sender=snapshot_chunk_send,
         download_command_sender=fcds,
     )
     logger.info("run the master")
@@ -229,3 +234,52 @@ async def test_master():
 
         ev_send.close()
         await master.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_master_serves_snapshot_for_current_state():
+    node_id = NodeId("master")
+    requester_node_id = NodeId("worker")
+    session_id = SessionId(master_node_id=node_id, election_clock=0)
+
+    ge_sender, _global_event_receiver = channel[GlobalForwarderEvent]()
+    command_sender, command_receiver = channel[ForwarderCommand]()
+    _local_event_sender, local_event_receiver = channel[LocalForwarderEvent]()
+    download_command_sender, _download_command_receiver = channel[
+        ForwarderDownloadCommand
+    ]()
+    event_sender, _event_receiver = channel[Event]()
+    snapshot_chunk_sender, snapshot_chunk_receiver = channel[SnapshotChunk]()
+
+    master = Master(
+        node_id,
+        session_id,
+        event_sender=event_sender,
+        global_event_sender=ge_sender,
+        local_event_receiver=local_event_receiver,
+        command_receiver=command_receiver,
+        snapshot_chunk_sender=snapshot_chunk_sender,
+        download_command_sender=download_command_sender,
+    )
+    master.state = master.state.model_copy(update={"last_event_applied_idx": 12})
+
+    receiver = SnapshotReceiver(requester_node_id, session_id)
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(master.run)
+        await command_sender.send(
+            ForwarderCommand(
+                origin=SystemId("api"),
+                command=RequestSnapshot(requester_node_id=requester_node_id),
+            )
+        )
+
+        received = None
+        while received is None:
+            chunk = await snapshot_chunk_receiver.receive()
+            received = receiver.ingest(chunk)
+
+        assert received.last_event_applied_idx == 12
+        assert received.state.last_event_applied_idx == 12
+
+        await master.shutdown()
+        tg.cancel_scope.cancel()
