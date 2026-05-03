@@ -121,6 +121,8 @@ from exo.api.types.openai_responses import (
 )
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
+from exo.routing.event_router import EventRouter
+from exo.routing.snapshot_receiver import SnapshotReceiver
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
@@ -164,6 +166,7 @@ from exo.shared.types.commands import (
     ImageEdits,
     ImageGeneration,
     PlaceInstance,
+    RequestSnapshot,
     SendInputChunk,
     SetInstanceLink,
     StartDownload,
@@ -171,7 +174,7 @@ from exo.shared.types.commands import (
     TaskFinished,
     TextGeneration,
 )
-from exo.shared.types.common import CommandId, Id, NodeId, SystemId
+from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -181,6 +184,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.memory import Memory
+from exo.shared.types.snapshots import SnapshotChunk
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -206,6 +210,8 @@ from exo.utils.task_group import TaskGroup
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
+
+_SNAPSHOT_FETCH_TIMEOUT_SECONDS = 30
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
@@ -236,9 +242,12 @@ class API:
     def __init__(
         self,
         node_id: NodeId,
+        session_id: SessionId,
         *,
         port: int,
+        event_router: EventRouter,
         event_receiver: Receiver[IndexedEvent],
+        snapshot_chunk_receiver: Receiver[SnapshotChunk],
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
@@ -247,9 +256,12 @@ class API:
         self.state = State()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self._system_id = SystemId()
+        self.session_id = session_id
+        self.event_router = event_router
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.event_receiver = event_receiver
+        self.snapshot_chunk_receiver = snapshot_chunk_receiver
         self.election_receiver = election_receiver
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
@@ -291,18 +303,29 @@ class API:
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
 
-    def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):
+    def reset(
+        self,
+        result_clock: int,
+        session_id: SessionId,
+        event_router: EventRouter,
+        event_receiver: Receiver[IndexedEvent],
+        snapshot_chunk_receiver: Receiver[SnapshotChunk],
+    ):
         logger.info("Resetting API State")
         self._event_log.close()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self.state = State()
         self._system_id = SystemId()
+        self.session_id = session_id
+        self.event_router = event_router
         self._text_generation_queues = {}
         self._image_generation_queues = {}
         self.unpause(result_clock)
         self.event_receiver.close()
         self.event_receiver = event_receiver
-        self._tg.start_soon(self._apply_state)
+        self.snapshot_chunk_receiver.close()
+        self.snapshot_chunk_receiver = snapshot_chunk_receiver
+        self._tg.start_soon(self._bootstrap_then_apply_state)
 
     def unpause(self, result_clock: int):
         logger.info("Unpausing API")
@@ -1836,7 +1859,7 @@ class API:
         try:
             async with self._tg as tg:
                 logger.info("Starting API")
-                tg.start_soon(self._apply_state)
+                tg.start_soon(self._bootstrap_then_apply_state)
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)
                 print_startup_banner(self.port)
@@ -1850,6 +1873,7 @@ class API:
             self._event_log.close()
             self.command_sender.close()
             self.event_receiver.close()
+            self.snapshot_chunk_receiver.close()
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
@@ -1865,9 +1889,43 @@ class API:
                 shutdown_trigger=ev.wait,
             )
 
+    async def _bootstrap_then_apply_state(self):
+        await self._fetch_snapshot()
+        await self._apply_state()
+
+    async def _fetch_snapshot(self) -> None:
+        receiver = SnapshotReceiver(self.node_id, self.session_id)
+        await self.command_sender.send(
+            ForwarderCommand(
+                origin=self._system_id,
+                command=RequestSnapshot(requester_node_id=self.node_id),
+            )
+        )
+
+        with anyio.move_on_after(_SNAPSHOT_FETCH_TIMEOUT_SECONDS):
+            with self.snapshot_chunk_receiver as chunks:
+                async for chunk in chunks:
+                    received = receiver.ingest(chunk)
+                    if received is None:
+                        continue
+                    self.state = received.state
+                    self.event_router.set_buffer_start(
+                        received.last_event_applied_idx + 1
+                    )
+                    logger.info(
+                        f"API bootstrapped from snapshot at idx "
+                        f"{received.last_event_applied_idx}"
+                    )
+                    return
+        logger.info(
+            "API: no snapshot received before timeout; falling back to full event-log replay"
+        )
+
     async def _apply_state(self):
         with self.event_receiver as events:
             async for i_event in events:
+                if i_event.idx <= self.state.last_event_applied_idx:
+                    continue
                 self._event_log.append(i_event.event)
                 self.state = apply(self.state, i_event)
                 event = i_event.event
