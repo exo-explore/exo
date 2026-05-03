@@ -7,7 +7,6 @@ from loguru import logger
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.events import (
-    ChunkGenerated,
     CustomModelCardAdded,
     CustomModelCardDeleted,
     Event,
@@ -21,7 +20,6 @@ from exo.shared.types.events import (
     NodeGatheredInfo,
     NodeTimedOut,
     RunnerStatusUpdated,
-    TaskAcknowledged,
     TaskCreated,
     TaskDeleted,
     TaskFailed,
@@ -29,8 +27,6 @@ from exo.shared.types.events import (
     TestEvent,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
-    TracesCollected,
-    TracesMerged,
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
@@ -76,13 +72,7 @@ from exo.utils.info_gatherer.info_gatherer import (
 def event_apply(event: Event, state: State) -> State:
     """Apply an event to state."""
     match event:
-        case (
-            TestEvent()
-            | ChunkGenerated()
-            | TaskAcknowledged()
-            | TracesCollected()
-            | TracesMerged()
-        ):  # Pass-through events that don't modify state
+        case TestEvent():
             return state
         case CustomModelCardAdded():
             return apply_custom_model_card_added(event, state)

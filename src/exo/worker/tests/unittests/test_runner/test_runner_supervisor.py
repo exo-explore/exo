@@ -10,6 +10,7 @@ from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
+    RunnerEvent,
     RunnerStatusUpdated,
     TransientEvent,
 )
@@ -51,7 +52,7 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     transient_sender, transient_receiver = channel[TransientEvent]()
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
-    _, ev_recv = mp_channel[Event]()
+    _, ev_recv = mp_channel[RunnerEvent]()
 
     bound_instance: BoundInstance = get_bound_mlx_ring_instance(
         instance_id=InstanceId("instance-a"),
@@ -113,7 +114,7 @@ async def test_forward_events_routes_generated_chunks_to_transient() -> None:
     transient_sender, transient_receiver = channel[TransientEvent]()
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
-    ev_send, ev_recv = mp_channel[Event]()
+    ev_send, ev_recv = mp_channel[RunnerEvent]()
 
     bound_instance: BoundInstance = get_bound_mlx_ring_instance(
         instance_id=InstanceId("instance-a"),
