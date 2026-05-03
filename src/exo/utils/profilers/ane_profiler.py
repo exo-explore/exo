@@ -44,7 +44,8 @@ _COMPUTE_IN_DIM = 2048
 _COMPUTE_OUT_DIM = 2048
 _COMPUTE_SPATIAL = 768
 _COMPUTE_ITERATIONS_PER_PASS = 12
-_COMPUTE_PARALLEL_INSTANCES = 2
+_COMPUTE_PARALLEL_INSTANCES = 4
+_COMPUTE_INSTANCE_COUNTS = (1, 2, 4)
 _NATIVE_QUANTIZATION_SPEEDUP_THRESHOLD = 1.2
 
 _STREAM_CHANNELS = 4096
@@ -378,23 +379,30 @@ def ane_available() -> bool:
 
 def _measure_compute_tops(kernels: Sequence[_AneKernel]) -> _ComputeMeasurement:
     operations_per_iteration = 2 * _COMPUTE_IN_DIM * _COMPUTE_OUT_DIM * _COMPUTE_SPATIAL
-    single_instance_tops = _measure_parallel_compute_tops(
-        kernels[:1], operations_per_iteration=operations_per_iteration
-    )
+    single_instance_tops = 0.0
     best = _ComputeMeasurement(
-        tops=single_instance_tops,
+        tops=0.0,
         single_instance_tops=single_instance_tops,
         instances=1,
     )
-    if len(kernels) >= 2:
-        parallel_tops = _measure_parallel_compute_tops(
-            kernels[:2], operations_per_iteration=operations_per_iteration
+    for instance_count in _COMPUTE_INSTANCE_COUNTS:
+        if len(kernels) < instance_count:
+            continue
+        tops = _measure_parallel_compute_tops(
+            kernels[:instance_count], operations_per_iteration=operations_per_iteration
         )
-        if parallel_tops > best.tops:
+        if instance_count == 1:
+            single_instance_tops = tops
             best = _ComputeMeasurement(
-                tops=parallel_tops,
+                tops=tops,
                 single_instance_tops=single_instance_tops,
-                instances=2,
+                instances=1,
+            )
+        elif tops > best.tops:
+            best = _ComputeMeasurement(
+                tops=tops,
+                single_instance_tops=single_instance_tops,
+                instances=instance_count,
             )
     return best
 
