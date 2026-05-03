@@ -187,6 +187,11 @@ def load_mlx_items(
         mx.eval(model)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
+
+        # Apply kernel fusion patches if available for this model type
+        from exo.worker.engines.mlx.patches import maybe_apply_patches
+        maybe_apply_patches(model, model_path)
+
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
 
     else:
@@ -278,6 +283,15 @@ def shard_and_load(
 
     logger.debug("SHARDED")
     logger.debug(model)
+
+    # Apply kernel fusion patches on the post-TP model. QwenShardingStrategy
+    # has already updated num_attention_heads / key_dim / value_dim / conv_dim
+    # to per-rank values, so the patches operate on correctly-sized sharded
+    # weights. Patches stack/alias weights in place and don't disturb the
+    # sharding boundaries (out_proj/o_proj remain nn.Linear, MoE __call__
+    # still returns (B,S,K) hidden state).
+    from exo.worker.engines.mlx.patches import maybe_apply_patches
+    maybe_apply_patches(model, model_path)
 
     # Synchronize processes before generation to avoid timeout
     mx_barrier(group)
