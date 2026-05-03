@@ -38,7 +38,7 @@ def print_startup_banner(port: int) -> None:
 
 ╔═══════════════════════════════════════════════════════════════════════╗
 ║                                                                       ║
-║  🌐 Dashboard & API Ready                                             ║
+║  Dashboard & API Ready                                                ║
 ║                                                                       ║
 ║  {dashboard_url}{" " * (69 - len(dashboard_url))}║
 ║                                                                       ║
