@@ -25,6 +25,7 @@ from exo.shared.types.commands import (
     ImageGeneration,
     PlaceInstance,
     RequestEventLog,
+    RequestSnapshot,
     SendInputChunk,
     SetInstanceLink,
     TaskCancelled,
@@ -447,6 +448,10 @@ class Master:
                                 start=command.since_idx,
                             ):
                                 await self._send_event(IndexedEvent(idx=i, event=event))
+                        case RequestSnapshot():
+                            logger.info(
+                                "Ignoring RequestSnapshot; snapshot serving is not wired yet"
+                            )
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except ValueError as e:
