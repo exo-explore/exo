@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { nodeGpuProfile, topologyData } from "$lib/stores/app.svelte";
+  import {
+    nodeAneProfile,
+    nodeGpuProfile,
+    topologyData,
+    type RawNodeAneProfile,
+  } from "$lib/stores/app.svelte";
 
   interface Props {
     class?: string;
@@ -8,6 +13,7 @@
   let { class: className = "" }: Props = $props();
 
   const profiles = $derived(nodeGpuProfile());
+  const aneProfiles = $derived(nodeAneProfile());
   const topology = $derived(topologyData());
 
   const totalTflops = $derived(
@@ -19,6 +25,9 @@
       0,
     ),
   );
+  const totalAneTops = $derived(
+    Object.values(aneProfiles).reduce((sum, p) => sum + getPeakAneTops(p), 0),
+  );
   const totalMemoryBytes = $derived(
     Object.values(topology?.nodes ?? {}).reduce(
       (sum, n) => sum + (n.system_info?.memory ?? 0),
@@ -29,6 +38,19 @@
   function formatTflops(value: number): string {
     if (value >= 1000) return `${(value / 1000).toFixed(2)} PFLOPS`;
     return `${value.toFixed(1)} TFLOPS`;
+  }
+
+  function formatTops(value: number): string {
+    if (value >= 1000) return `${(value / 1000).toFixed(2)} POPS`;
+    return `${value.toFixed(1)} TOPS`;
+  }
+
+  function getPeakAneTops(profile: RawNodeAneProfile | undefined): number {
+    if (!profile) return 0;
+    return Math.max(
+      0,
+      ...profile.precisionProfiles.map((p) => p.computeTops ?? 0),
+    );
   }
 
   function formatBandwidth(value: number): string {
@@ -52,6 +74,10 @@
   <div class="stat-block">
     <span class="stat-value">{formatBandwidth(totalBandwidthGbps)}</span>
     <span class="stat-label">Memory bandwidth</span>
+  </div>
+  <div class="stat-block">
+    <span class="stat-value">{formatTops(totalAneTops)}</span>
+    <span class="stat-label">ANE peak</span>
   </div>
   <div class="stat-block">
     <span class="stat-value">{formatMemory(totalMemoryBytes)}</span>

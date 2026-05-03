@@ -8,11 +8,14 @@
     nodeThunderboltBridge,
     nodeRdmaCtl,
     nodeIdentities,
+    nodeAneProfile,
     nodeGpuProfile,
     nodeLinkProfiles,
     nodeNetworkRaw,
     nodeThunderbolt,
     type NodeInfo,
+    type RawNodeAnePrecisionProfile,
+    type RawNodeAneProfile,
   } from "$lib/stores/app.svelte";
   import {
     inferRdmaConnectionType,
@@ -44,6 +47,7 @@
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const rdmaCtlData = $derived(nodeRdmaCtl());
   const identitiesData = $derived(nodeIdentities());
+  const aneProfileData = $derived(nodeAneProfile());
   const gpuProfileData = $derived(nodeGpuProfile());
   const linkProfilesData = $derived(nodeLinkProfiles());
   const nodeNetworkData = $derived(nodeNetworkRaw());
@@ -68,6 +72,32 @@
     if (value == null || !isFinite(value)) return "—";
     if (value < 1) return `${(value * 1000).toFixed(0)} µs`;
     return `${value.toFixed(2)} ms`;
+  }
+
+  function formatAneTops(value: number | null | undefined): string {
+    if (value == null || !isFinite(value)) return "—";
+    if (value >= 1000) return `${(value / 1000).toFixed(2)}P`;
+    return `${value.toFixed(value >= 10 ? 0 : 1)}T`;
+  }
+
+  function formatAnePrecisionLabel(
+    profile: RawNodeAnePrecisionProfile,
+  ): string {
+    return `W${profile.weightBits}A${profile.activationBits} ${formatAneTops(profile.computeTops)}`;
+  }
+
+  function formatAneProfileLine(profile: RawNodeAneProfile): string {
+    const preferredOrder: RawNodeAnePrecisionProfile["precisionBits"][] = [
+      16, 8, 4, 32,
+    ];
+    const byBits = new Map(
+      profile.precisionProfiles.map((p) => [p.precisionBits, p]),
+    );
+    return preferredOrder
+      .map((bits) => byBits.get(bits))
+      .filter((p): p is RawNodeAnePrecisionProfile => Boolean(p?.supported))
+      .map((p) => formatAnePrecisionLabel(p))
+      .join(" · ");
   }
 
   interface PairProfileEntry {
@@ -1242,8 +1272,9 @@
           .text(powerText);
       }
 
-      // GPU profile (TFLOPS + memory bandwidth) — only shown when we have a
-      // measurement; otherwise the slot collapses.
+      // Hardware profiles are only shown when we have measurements; otherwise
+      // their slots collapse.
+      const aneProfile = aneProfileData[nodeInfo.id];
       const gpuProfile = gpuProfileData[nodeInfo.id];
 
       // Labels - adapt based on mode
@@ -1316,6 +1347,21 @@
             .append("tspan")
             .attr("fill", "rgba(255,215,0,0.8)")
             .text(`${gpuProfile.memoryBandwidthGbps.toFixed(0)} GB/s`);
+        }
+        if (aneProfile) {
+          const aneProfileLine = formatAneProfileLine(aneProfile);
+          const aneY = infoY + fontSize * (gpuProfile ? 1.95 : 1.05);
+          const aneText = nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", aneY)
+            .attr("text-anchor", "middle")
+            .attr("font-size", fontSize * 0.72)
+            .attr("font-family", "SF Mono, Monaco, monospace");
+          aneText
+            .append("tspan")
+            .attr("fill", "rgba(96,165,250,0.95)")
+            .text(aneProfileLine ? `ANE ${aneProfileLine}` : "ANE profiling");
         }
       } else if (showCompactLabels) {
         // COMPACT MODE: Just name and basic info (4+ nodes)
@@ -1426,10 +1472,15 @@
 
       // Debug mode: Show TB bridge and RDMA status
       if (debugEnabled) {
+        const profileLineCount =
+          (gpuProfile ? 1 : 0) + (aneProfile && showFullLabels ? 1 : 0);
+        const profileDebugOffset =
+          showFullLabels && profileLineCount > 1 ? 12 : 0;
         let debugLabelY =
           nodeInfo.y +
           iconBaseHeight / 2 +
-          (showFullLabels ? 32 : showCompactLabels ? 26 : 22);
+          (showFullLabels ? 32 : showCompactLabels ? 26 : 22) +
+          profileDebugOffset;
         const debugFontSize = showFullLabels ? 9 : 7;
         const debugLineHeight = showFullLabels ? 11 : 9;
 
@@ -1493,6 +1544,7 @@
     const _hoveredNodeId = hoveredNodeId;
     const _filteredNodes = filteredNodes;
     const _highlightedNodes = highlightedNodes;
+    const _ane = aneProfileData;
     const _gpu = gpuProfileData;
     const _links = linkProfilesData;
     const _network = nodeNetworkData;

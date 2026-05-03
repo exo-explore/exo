@@ -63,6 +63,7 @@ class SystemPerformanceProfile(FrozenModel):
     gpu_usage: float = 0.0
     temp: float = 0.0
     sys_power: float = 0.0
+    ane_power: float = 0.0
     pcpu_usage: float = 0.0
     ecpu_usage: float = 0.0
 
@@ -118,6 +119,31 @@ class NodeGpuProfile(FrozenModel):
     engine: Literal["mlx"]
     tflops_fp16: float
     memory_bandwidth_gbps: float
+    measured_at: datetime
+
+
+class NodeAnePrecisionProfile(FrozenModel):
+    """Measured ANE profile for a single weight precision."""
+
+    precision_bits: Literal[32, 16, 8, 4]
+    weight_bits: Literal[32, 16, 8, 4]
+    activation_bits: Literal[32, 16, 8, 4]
+    supported: bool
+    compute_tops: float | None = None
+    weight_only_compute_tops: float | None = None
+    single_instance_compute_tops: float | None = None
+    compute_instances: int = 1
+    memory_bandwidth_gbps: float | None = None
+    activation_quantization_speedup: float | None = None
+    native_quantized_compute: bool | None = None
+    error: str | None = None
+
+
+class NodeAneProfile(FrozenModel):
+    """Measured ANE compute throughput and streaming bandwidth for a node."""
+
+    engine: Literal["ane"]
+    precision_profiles: Sequence[NodeAnePrecisionProfile]
     measured_at: datetime
 
 

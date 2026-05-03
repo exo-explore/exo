@@ -186,13 +186,16 @@ class NodePowerStats(BaseModel, frozen=True):
     node_id: NodeId
     samples: int
     avg_sys_power: float
+    avg_ane_power: float
 
 
 class PowerUsage(BaseModel, frozen=True):
     elapsed_seconds: float
     nodes: list[NodePowerStats]
     total_avg_sys_power_watts: float
+    total_avg_ane_power_watts: float
     total_energy_joules: float
+    total_ane_energy_joules: float
 
 
 class BenchChatCompletionResponse(ChatCompletionResponse):
