@@ -1,0 +1,21 @@
+port = 52415
+timeout = 72000.0
+settle_timeout = 60.0
+prefill_server_host = "169.254.100.1"
+prefill_server_wait_timeout = 60.0
+
+[prefill]
+model = "sakamakismile/Qwen3.6-27B-NVFP4"
+node = "gx10-de89"
+instance_meta = "vllm"
+sharding = "pipeline"
+min_nodes = 1
+max_nodes = 1
+
+[decode]
+model = "mlx-community/Qwen3.6-27B-4bit"
+node = "rambo"
+instance_meta = "ring"
+sharding = "pipeline"
+min_nodes = 1
+max_nodes = 1
