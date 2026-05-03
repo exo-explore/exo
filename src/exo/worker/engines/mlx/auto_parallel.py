@@ -761,10 +761,12 @@ class ShardedMoE(CustomMlxLayer):
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.sharding_group is not None:
             x = sum_gradients(self.sharding_group)(x)
-            # Expose group to the wrapped layer so MoE patches can scale
-            # replicated inputs (e.g. residual fused into a per-rank epilogue
-            # would otherwise be all_sum'd to N*h instead of h).
-            self.original_layer.sharding_group = self.sharding_group
+            # Only stash sharding_group on the wrapped layer if it is one of
+            # our patched MoE blocks (presence of _seg_w marks our patch).
+            # Avoids touching vanilla MoE module attribute set under TP, so
+            # the EXO_FUSED_KERNELS=0 path is bit-identical to upstream main.
+            if hasattr(self.original_layer, "_seg_w"):
+                self.original_layer.sharding_group = self.sharding_group
         y = self.original_layer.__call__(x, *args, **kwargs)
         if self.sharding_group is not None:
             y = mx.distributed.all_sum(y, group=self.sharding_group)
