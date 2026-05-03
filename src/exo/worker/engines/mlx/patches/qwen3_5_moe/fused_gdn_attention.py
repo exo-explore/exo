@@ -107,7 +107,15 @@ def _fused_gdn_call(
     if S > 1 or B > 8:
         return _vanilla_gdn_call(self, inputs, mask, cache)
 
-    from mlx_lm.models.gated_delta import gated_delta_kernel
+    # Use our OWN precomputed-g/beta kernel (kernels/gdn_step_precomputed.py).
+    # mlx-lm's gated_delta_kernel signature changed in 0.31.3 (the fork pinned
+    # by main): it now takes raw (a, b, A_log, dt_bias) and computes
+    # g = exp(-exp(A_log)*softplus(a+dt_bias)) and beta = sigmoid(b) inside the
+    # Metal kernel, instead of accepting pre-computed g/beta. Since our D2
+    # already pre-computes g/beta as part of the merged projections kernel,
+    # we use our own gated_delta_update_precomputed kernel which keeps the old
+    # interface. Lets the fused path be insulated from upstream API churn.
+    from .kernels.gdn_step_precomputed import gated_delta_update_precomputed as gated_delta_kernel
 
     # ── Cache: conv state ──
     if cache is not None and cache[0] is not None:
