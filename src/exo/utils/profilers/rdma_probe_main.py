@@ -33,6 +33,18 @@ LATENCY_PAYLOAD_BYTES = 64
 LATENCY_ITERATIONS = 50
 
 
+def build_two_rank_ibv_devs(
+    *, source_iface: str, sink_iface: str
+) -> list[list[str | None]]:
+    """Build the MLX_IBV_DEVICES matrix for a two-rank source/sink probe.
+
+    `ibv_devs[i][j]` is the RDMA interface on rank i used to reach rank j.
+    Rank 0 is the source and rank 1 is the sink, so row 0 must contain the
+    source's local interface and row 1 must contain the sink's local interface.
+    """
+    return [[None, source_iface], [sink_iface, None]]
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print(
@@ -60,10 +72,7 @@ def main() -> int:
     payload_bytes = params.payload_bytes
     iterations = params.iterations
 
-    # `ibv_devs[i][j]` is the RDMA interface on node i used to reach node j.
-    # Diagonals are None. The matrix is symmetric in shape but the interface
-    # names differ per node.
-    ibv_devs = [[None, sink_iface], [source_iface, None]]
+    ibv_devs = build_two_rank_ibv_devs(source_iface=source_iface, sink_iface=sink_iface)
 
     with tempfile.NamedTemporaryFile(
         prefix="exo_rdma_probe_ibv_devs_", suffix=".json", mode="w", delete=False
@@ -171,9 +180,7 @@ def main() -> int:
                     abs(per_iter_ms[i] - per_iter_ms[i - 1])
                     for i in range(1, len(per_iter_ms))
                 ]
-                latency_jitter_ms = (
-                    statistics.fmean(_deltas) if _deltas else 0.0
-                )
+                latency_jitter_ms = statistics.fmean(_deltas) if _deltas else 0.0
             else:
                 latency_ms = None
                 latency_jitter_ms = None

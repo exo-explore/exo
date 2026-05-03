@@ -535,10 +535,8 @@
       let maxBToA: number | null = null;
       let minLat: number | null = null;
       for (const p of pairProfiles) {
-        const aToBValue =
-          p.fromId === entry.a ? p.uploadMbps : p.downloadMbps;
-        const bToAValue =
-          p.fromId === entry.a ? p.downloadMbps : p.uploadMbps;
+        const aToBValue = p.fromId === entry.a ? p.uploadMbps : p.downloadMbps;
+        const bToAValue = p.fromId === entry.a ? p.downloadMbps : p.uploadMbps;
         if (aToBValue != null && (maxAToB == null || aToBValue > maxAToB)) {
           maxAToB = aToBValue;
         }
@@ -572,12 +570,7 @@
       // arrow head (arrows are at ±tipOffset=16 along the edge).
       const bwAlong = 56;
 
-      function placeLabel(
-        x: number,
-        y: number,
-        text: string,
-        fill: string,
-      ) {
+      function placeLabel(x: number, y: number, text: string, fill: string) {
         linksGroup
           .append("text")
           .attr("x", x)

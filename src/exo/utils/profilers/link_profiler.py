@@ -233,9 +233,7 @@ async def _measure_latency_ms(
             return None
         samples_ms.append(elapsed_ms)
     median = statistics.median(samples_ms)
-    deltas = [
-        abs(samples_ms[i] - samples_ms[i - 1]) for i in range(1, len(samples_ms))
-    ]
+    deltas = [abs(samples_ms[i] - samples_ms[i - 1]) for i in range(1, len(samples_ms))]
     jitter = statistics.fmean(deltas) if deltas else 0.0
     return (median, jitter)
 
