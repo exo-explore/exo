@@ -445,6 +445,8 @@ class Worker:
         return runner
 
     async def _poll_connection_updates(self):
+        poll_interval_seconds = 2.0
+
         while True:
             edges = set(
                 conn.edge for conn in self.state.topology.out_edges(self.node_id)
@@ -487,4 +489,4 @@ class Worker:
                     logger.debug(f"ping failed to discover {conn=}")
                     await self.event_sender.send(TopologyEdgeDeleted(conn=conn))
 
-            await anyio.sleep(10)
+            await anyio.sleep(poll_interval_seconds)
