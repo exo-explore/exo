@@ -4,7 +4,6 @@ import pytest
 from exo_pyo3_bindings import (
     Keypair,
     NetworkingHandle,
-    NoPeersSubscribedToTopicError,
     PyFromSwarm,
 )
 
@@ -13,17 +12,15 @@ from exo_pyo3_bindings import (
 async def test_sleep_on_multiple_items() -> None:
     print("PYTHON: starting handle")
     h = NetworkingHandle(Keypair.generate(), [], 0)
+    print("PYTHON: handle started")
 
     rt = asyncio.create_task(_await_recv(h))
 
     # sleep for 4 ticks
-    for i in range(4):
+    for i in range(10):
         await asyncio.sleep(1)
 
-        try:
-            await h.gossipsub_publish("topic", b"somehting or other")
-        except NoPeersSubscribedToTopicError as e:
-            print("caught it", e)
+        await h.gossipsub_publish("topic", b"somehting or other")
 
 
 async def _await_recv(h: NetworkingHandle):
@@ -34,3 +31,6 @@ async def _await_recv(h: NetworkingHandle):
                 print(f"PYTHON: connection update: {c}")
             case PyFromSwarm.Message() as m:
                 print(f"PYTHON: message: {m}")
+
+if __name__ == "__main__":
+    asyncio.run(test_sleep_on_multiple_items())
