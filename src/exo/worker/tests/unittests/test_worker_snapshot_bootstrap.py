@@ -7,13 +7,15 @@ import pytest
 import zstandard
 
 from exo.routing.event_router import EventRouter
+from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.commands import (
     ForwarderCommand,
     ForwarderDownloadCommand,
     RequestSnapshot,
 )
-from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.common import CommandId, ModelId, NodeId, SessionId
 from exo.shared.types.events import (
+    ChunkGenerated,
     Event,
     GlobalForwarderEvent,
     IndexedEvent,
@@ -51,6 +53,7 @@ def _worker(
     EventRouter,
     Receiver[ForwarderCommand],
     Sender[SnapshotChunk],
+    Sender[TransientEvent],
     Sender[IndexedEvent],
 ]:
     router_command_sender, _router_command_receiver = channel[ForwarderCommand]()
@@ -85,16 +88,28 @@ def _worker(
         download_command_sender=download_command_sender,
         api_port=52415,
     )
-    return worker, event_router, command_receiver, snapshot_sender, event_sender
+    return (
+        worker,
+        event_router,
+        command_receiver,
+        snapshot_sender,
+        transient_sender,
+        event_sender,
+    )
 
 
 @pytest.mark.asyncio
 async def test_worker_fetch_snapshot_applies_state_and_fast_forwards_router() -> None:
     node_id = NodeId("worker")
     session_id = SessionId(master_node_id=NodeId("master"), election_clock=1)
-    worker, event_router, command_receiver, snapshot_sender, _event_sender = _worker(
-        node_id, session_id
-    )
+    (
+        worker,
+        event_router,
+        command_receiver,
+        snapshot_sender,
+        _transient_sender,
+        _event_sender,
+    ) = _worker(node_id, session_id)
     state = State(last_event_applied_idx=7)
 
     async with anyio.create_task_group() as tg:
@@ -115,9 +130,14 @@ async def test_worker_fetch_snapshot_applies_state_and_fast_forwards_router() ->
 async def test_worker_event_applier_ignores_events_covered_by_snapshot() -> None:
     node_id = NodeId("worker")
     session_id = SessionId(master_node_id=NodeId("master"), election_clock=1)
-    worker, _event_router, _command_receiver, _snapshot_sender, event_sender = _worker(
-        node_id, session_id
-    )
+    (
+        worker,
+        _event_router,
+        _command_receiver,
+        _snapshot_sender,
+        _transient_sender,
+        event_sender,
+    ) = _worker(node_id, session_id)
     worker.state = State(last_event_applied_idx=7)
 
     async with anyio.create_task_group() as tg:
@@ -127,4 +147,40 @@ async def test_worker_event_applier_ignores_events_covered_by_snapshot() -> None
 
         while worker.state.last_event_applied_idx != 8:
             await anyio.sleep(0.001)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_worker_transient_handler_drains_ignored_events() -> None:
+    node_id = NodeId("worker")
+    session_id = SessionId(master_node_id=NodeId("master"), election_clock=1)
+    (
+        worker,
+        _event_router,
+        _command_receiver,
+        _snapshot_sender,
+        transient_sender,
+        _event_sender,
+    ) = _worker(node_id, session_id)
+    done = anyio.Event()
+
+    async def run_handler() -> None:
+        await worker._transient_event_handler()
+        done.set()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(run_handler)
+        await transient_sender.send(
+            ChunkGenerated(
+                command_id=CommandId("cmd-a"),
+                chunk=ErrorChunk(
+                    model=ModelId("test-model"),
+                    error_message="ignored transient",
+                ),
+            )
+        )
+        transient_sender.close()
+
+        with anyio.fail_after(1):
+            await done.wait()
         tg.cancel_scope.cancel()
