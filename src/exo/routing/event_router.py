@@ -40,8 +40,9 @@ class EventRouter:
 
     _nack_cancel_scope: CancelScope | None = field(init=False, default=None)
     _nack_attempts: int = field(init=False, default=0)
-    _nack_base_seconds: float = field(init=False, default=0.5)
-    _nack_cap_seconds: float = field(init=False, default=10.0)
+    # Snapshot bootstrap leaves only a short post-snapshot tail for NACK replay.
+    _nack_base_seconds: float = field(init=False, default=0.05)
+    _nack_cap_seconds: float = field(init=False, default=1.0)
 
     async def run(self):
         try:
