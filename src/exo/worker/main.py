@@ -438,6 +438,7 @@ class Worker:
         runner = RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
+            transient_event_sender=self.transient_event_sender.clone(),
         )
         self.runners[task.bound_instance.bound_runner_id] = runner
         self._tg.start_soon(runner.run)
