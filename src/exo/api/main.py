@@ -136,8 +136,7 @@ from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
-    add_to_card_cache,
-    get_card,
+    card_cache,
     get_model_cards,
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
@@ -1773,7 +1772,7 @@ class API:
 
         # Immediately update the local cache so the subsequent GET /models
         # returns the new model without waiting for the event round-trip.
-        add_to_card_cache(card)
+        card_cache[card.model_id] = card
 
         return ModelListModel(
             id=card.model_id,
@@ -1789,7 +1788,7 @@ class API:
 
     async def delete_custom_model(self, model_id: ModelId) -> JSONResponse:
         """Delete a user-added custom model card and sync deletion across the cluster."""
-        card = get_card(model_id)
+        card = card_cache.get(model_id)
         if card is None or not card.is_custom:
             raise HTTPException(status_code=404, detail="Custom model card not found")
 

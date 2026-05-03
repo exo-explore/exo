@@ -135,9 +135,9 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     prefill_endpoint: str | None = None
 
     def with_card_sampling_defaults(self) -> "TextGenerationTaskParams":
-        from exo.shared.models.model_cards import get_card
+        from exo.shared.models.model_cards import card_cache
 
-        card = get_card(self.model)
+        card = card_cache.get(self.model, None)
         if card is None:
             return self
 

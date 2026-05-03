@@ -39,7 +39,7 @@ _BUILTIN_CARD_DIRS = [
     Path(RESOURCES_DIR) / "image_model_cards",
 ]
 
-_card_cache: dict[ModelId, "ModelCard"] = {}
+card_cache: dict[ModelId, "ModelCard"] = {}
 
 
 def detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
@@ -66,8 +66,8 @@ async def _load_cards_from_dir(directory: Path, *, is_custom: bool) -> None:
             card = await ModelCard.load_from_path(toml_file)
             if is_custom:
                 card = card.model_copy(update={"is_custom": True})
-            if card.model_id not in _card_cache:
-                _card_cache[card.model_id] = card
+            if card.model_id not in card_cache:
+                card_cache[card.model_id] = card
         except (ValidationError, TOMLKitError):
             pass
 
@@ -82,17 +82,12 @@ def _is_image_card(card: "ModelCard") -> bool:
     return any(t in (ModelTask.TextToImage, ModelTask.ImageToImage) for t in card.tasks)
 
 
-def get_card(model_id: ModelId) -> "ModelCard | None":
-    """Look up a single model card from the cache by ID."""
-    return _card_cache.get(model_id)
-
-
 async def get_model_cards() -> list["ModelCard"]:
-    if len(_card_cache) == 0:
+    if len(card_cache) == 0:
         await _refresh_card_cache()
     if EXO_ENABLE_IMAGE_MODELS:
-        return list(_card_cache.values())
-    return [c for c in _card_cache.values() if not _is_image_card(c)]
+        return list(card_cache.values())
+    return [c for c in card_cache.values() if not _is_image_card(c)]
 
 
 class ModelTask(str, Enum):
@@ -196,14 +191,14 @@ class ModelCard(FrozenModel):
     # Is it okay that model card.load defaults to network access if the card doesn't exist? do we want to be more explicit here?
     @staticmethod
     async def load(model_id: ModelId) -> "ModelCard":
-        if model_id not in _card_cache:
+        if model_id not in card_cache:
             await _refresh_card_cache()
-        if (mc := _card_cache.get(model_id)) is not None:
+        if (mc := card_cache.get(model_id)) is not None:
             return mc
 
         mc = await ModelCard.fetch_from_hf(model_id)
         await mc.save_to_custom_dir()
-        _card_cache[model_id] = mc
+        card_cache[model_id] = mc
         return mc
 
     @staticmethod
@@ -232,18 +227,12 @@ class ModelCard(FrozenModel):
             vision=config_data.vision,
         )
 
-
-def add_to_card_cache(card: "ModelCard") -> None:
-    """Add or update a model card in the in-memory cache."""
-    _card_cache[card.model_id] = card
-
-
 async def delete_custom_card(model_id: ModelId) -> bool:
     """Delete a user-added custom model card. Returns True if deleted."""
     card_path = _custom_cards_dir / (ModelId(model_id).normalize() + ".toml")
     if await card_path.exists():
         await card_path.unlink()
-        _card_cache.pop(model_id, None)
+        card_cache.pop(model_id, None)
         return True
     return False
 
