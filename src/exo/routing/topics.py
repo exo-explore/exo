@@ -6,6 +6,7 @@ from exo.shared.election import ElectionMessage
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.events import (
     GlobalForwarderEvent,
+    GlobalForwarderTransientEvent,
     LocalForwarderEvent,
 )
 from exo.shared.types.snapshots import SnapshotChunk
@@ -40,6 +41,9 @@ class TypedTopic[T: FrozenModel]:
 
 GLOBAL_EVENTS = TypedTopic("global_events", PublishPolicy.Always, GlobalForwarderEvent)
 LOCAL_EVENTS = TypedTopic("local_events", PublishPolicy.Always, LocalForwarderEvent)
+TRANSIENT_EVENTS = TypedTopic(
+    "transient_events", PublishPolicy.Always, GlobalForwarderTransientEvent
+)
 COMMANDS = TypedTopic("commands", PublishPolicy.Always, ForwarderCommand)
 ELECTION_MESSAGES = TypedTopic(
     "election_messages", PublishPolicy.Always, ElectionMessage
