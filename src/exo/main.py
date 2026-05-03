@@ -84,8 +84,11 @@ class Node:
         if args.spawn_api:
             api = API(
                 node_id,
+                session_id,
                 port=args.api_port,
+                event_router=event_router,
                 event_receiver=event_router.receiver(),
+                snapshot_chunk_receiver=router.receiver(topics.SNAPSHOT_RESPONSES),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 election_receiver=router.receiver(topics.ELECTION_MESSAGES),
@@ -269,7 +272,13 @@ class Node:
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:
-                        self.api.reset(result.won_clock, self.event_router.receiver())
+                        self.api.reset(
+                            result.won_clock,
+                            result.session_id,
+                            self.event_router,
+                            self.event_router.receiver(),
+                            self.router.receiver(topics.SNAPSHOT_RESPONSES),
+                        )
                     self._tg.start_soon(self.event_router.run)
                 else:
                     if self.api:
