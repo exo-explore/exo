@@ -52,13 +52,17 @@ class PowerSampler:
                     node_id=node_id,
                     samples=n,
                     avg_sys_power=sum(p.sys_power for p in profiles) / n,
+                    avg_ane_power=sum(p.ane_power for p in profiles) / n,
                 )
             )
 
         total_avg_sys = sum(ns.avg_sys_power for ns in node_stats)
+        total_avg_ane = sum(ns.avg_ane_power for ns in node_stats)
         return PowerUsage(
             elapsed_seconds=elapsed,
             nodes=node_stats,
             total_avg_sys_power_watts=total_avg_sys,
+            total_avg_ane_power_watts=total_avg_ane,
             total_energy_joules=total_avg_sys * elapsed,
+            total_ane_energy_joules=total_avg_ane * elapsed,
         )

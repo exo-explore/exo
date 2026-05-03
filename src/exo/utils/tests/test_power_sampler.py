@@ -9,8 +9,8 @@ from exo.shared.types.profiling import SystemPerformanceProfile
 from exo.utils.power_sampler import PowerSampler
 
 
-def _make_profile(sys_power: float) -> SystemPerformanceProfile:
-    return SystemPerformanceProfile(sys_power=sys_power)
+def _make_profile(sys_power: float, ane_power: float = 0.0) -> SystemPerformanceProfile:
+    return SystemPerformanceProfile(sys_power=sys_power, ane_power=ane_power)
 
 
 NODE_A = NodeId("node-a")
@@ -20,7 +20,7 @@ NODE_B = NodeId("node-b")
 @pytest.fixture
 def single_node_sampler() -> PowerSampler:
     state: dict[NodeId, SystemPerformanceProfile] = {
-        NODE_A: _make_profile(10.0),
+        NODE_A: _make_profile(10.0, 2.0),
     }
     return PowerSampler(get_node_system=lambda: state)
 
@@ -28,8 +28,8 @@ def single_node_sampler() -> PowerSampler:
 @pytest.fixture
 def multi_node_state() -> dict[NodeId, SystemPerformanceProfile]:
     return {
-        NODE_A: _make_profile(10.0),
-        NODE_B: _make_profile(20.0),
+        NODE_A: _make_profile(10.0, 2.0),
+        NODE_B: _make_profile(20.0, 4.0),
     }
 
 
@@ -44,6 +44,7 @@ async def test_single_sample(single_node_sampler: PowerSampler) -> None:
     assert len(result.nodes) == 1
     assert result.nodes[0].node_id == NODE_A
     assert result.nodes[0].avg_sys_power == 10.0
+    assert result.nodes[0].avg_ane_power == 2.0
     assert result.nodes[0].samples >= 1
     assert result.elapsed_seconds > 0
 
@@ -61,6 +62,7 @@ async def test_multi_node_averaging(
     result = sampler.result()
     assert len(result.nodes) == 2
     assert result.total_avg_sys_power_watts == 30.0
+    assert result.total_avg_ane_power_watts == 6.0
 
 
 async def test_energy_calculation(single_node_sampler: PowerSampler) -> None:
@@ -72,27 +74,31 @@ async def test_energy_calculation(single_node_sampler: PowerSampler) -> None:
 
     result = single_node_sampler.result()
     expected_energy = result.total_avg_sys_power_watts * result.elapsed_seconds
+    expected_ane_energy = result.total_avg_ane_power_watts * result.elapsed_seconds
     assert result.total_energy_joules == expected_energy
+    assert result.total_ane_energy_joules == expected_ane_energy
 
 
 async def test_changing_power_is_averaged() -> None:
     """When power changes mid-sampling, the result should be the average."""
     state: dict[NodeId, SystemPerformanceProfile] = {
-        NODE_A: _make_profile(10.0),
+        NODE_A: _make_profile(10.0, 1.0),
     }
     sampler = PowerSampler(get_node_system=lambda: state, interval=0.05)
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(sampler.run)
         await anyio.sleep(0.15)
-        state[NODE_A] = _make_profile(20.0)
+        state[NODE_A] = _make_profile(20.0, 3.0)
         await anyio.sleep(0.15)
         tg.cancel_scope.cancel()
 
     result = sampler.result()
     avg = result.nodes[0].avg_sys_power
+    avg_ane = result.nodes[0].avg_ane_power
     # Should be between 10 and 20, not exactly either
     assert 10.0 < avg < 20.0
+    assert 1.0 < avg_ane < 3.0
 
 
 async def test_empty_state() -> None:
@@ -108,7 +114,9 @@ async def test_empty_state() -> None:
     result = sampler.result()
     assert len(result.nodes) == 0
     assert result.total_avg_sys_power_watts == 0.0
+    assert result.total_avg_ane_power_watts == 0.0
     assert result.total_energy_joules == 0.0
+    assert result.total_ane_energy_joules == 0.0
 
 
 async def test_result_stops_sampling() -> None:

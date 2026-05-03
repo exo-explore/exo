@@ -36,6 +36,7 @@ from exo.shared.types.topology import (
 )
 from exo.utils.channels import Sender
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo
+from exo.utils.profilers.ane_profiler import AneProfile
 from exo.utils.profilers.gpu_profiler import GpuProfile
 from exo.utils.profilers.link_profiler import (
     PROBE_TIMEOUT_SECONDS,
@@ -46,10 +47,12 @@ from exo.utils.profilers.rdma_probe import RdmaProbeBusyError
 from exo.utils.task_group import TaskGroup
 
 GPU_TTL = timedelta(hours=1)
+ANE_TTL = timedelta(hours=1)
 SOCKET_LINK_TTL = timedelta(minutes=5)
 RDMA_LINK_TTL = timedelta(hours=6)
 RECONCILE_TICK_SECONDS = 15.0
 GPU_PROBE_HARD_TIMEOUT_SECONDS = 60.0
+ANE_PROBE_HARD_TIMEOUT_SECONDS = 120.0
 SOCKET_PROBE_HARD_TIMEOUT_SECONDS = 30.0
 RDMA_PROBE_HARD_TIMEOUT_SECONDS = 90.0
 
@@ -69,11 +72,13 @@ class ProfilerManager:
     state_view: Callable[[], State]
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
     _gpu_in_flight: bool = field(init=False, default=False)
+    _ane_in_flight: bool = field(init=False, default=False)
     _link_in_flight: set[LinkKey] = field(init=False, default_factory=set)
 
     async def run(self) -> None:
         async with self._tg as tg:
             tg.start_soon(self._reconcile_gpu, RECONCILE_TICK_SECONDS)
+            tg.start_soon(self._reconcile_ane, RECONCILE_TICK_SECONDS)
             tg.start_soon(self._reconcile_links, RECONCILE_TICK_SECONDS)
 
     def shutdown(self) -> None:
@@ -111,6 +116,39 @@ class ProfilerManager:
             logger.opt(exception=e).warning("GPU probe failed")
         finally:
             self._gpu_in_flight = False
+
+    # ----- ANE --------------------------------------------------------------
+
+    async def _reconcile_ane(self, tick_seconds: float) -> None:
+        while True:
+            try:
+                self._maybe_start_ane_probe()
+            except Exception as e:
+                logger.opt(exception=e).warning("ANE reconcile error")
+            await anyio.sleep(tick_seconds)
+
+    def _maybe_start_ane_probe(self) -> None:
+        state = self.state_view()
+        if self._ane_in_flight:
+            return
+        if state.runners:
+            return
+        existing = state.node_ane_profile.get(self.node_id)
+        if existing is not None and not _is_stale(existing.measured_at, ANE_TTL):
+            return
+        self._ane_in_flight = True
+        self._tg.start_soon(self._do_ane_probe)
+
+    async def _do_ane_probe(self) -> None:
+        try:
+            with fail_after(ANE_PROBE_HARD_TIMEOUT_SECONDS):
+                profile = await AneProfile.measure()
+            if profile is not None:
+                await self.info_sender.send(profile)
+        except Exception as e:
+            logger.opt(exception=e).warning("ANE probe failed")
+        finally:
+            self._ane_in_flight = False
 
     # ----- Links ------------------------------------------------------------
 

@@ -8,6 +8,7 @@
     nodeThunderboltBridge,
     nodeRdmaCtl,
     nodeIdentities,
+    nodeAneProfile,
     nodeGpuProfile,
     nodeLinkProfiles,
     nodeNetworkRaw,
@@ -44,6 +45,7 @@
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const rdmaCtlData = $derived(nodeRdmaCtl());
   const identitiesData = $derived(nodeIdentities());
+  const aneProfileData = $derived(nodeAneProfile());
   const gpuProfileData = $derived(nodeGpuProfile());
   const linkProfilesData = $derived(nodeLinkProfiles());
   const nodeNetworkData = $derived(nodeNetworkRaw());
@@ -1242,8 +1244,9 @@
           .text(powerText);
       }
 
-      // GPU profile (TFLOPS + memory bandwidth) — only shown when we have a
-      // measurement; otherwise the slot collapses.
+      // Hardware profiles are only shown when we have measurements; otherwise
+      // their slots collapse.
+      const aneProfile = aneProfileData[nodeInfo.id];
       const gpuProfile = gpuProfileData[nodeInfo.id];
 
       // Labels - adapt based on mode
@@ -1316,6 +1319,28 @@
             .append("tspan")
             .attr("fill", "rgba(255,215,0,0.8)")
             .text(`${gpuProfile.memoryBandwidthGbps.toFixed(0)} GB/s`);
+        }
+        if (aneProfile) {
+          const aneY = infoY + fontSize * (gpuProfile ? 1.95 : 1.05);
+          const aneText = nodeG
+            .append("text")
+            .attr("x", nodeInfo.x)
+            .attr("y", aneY)
+            .attr("text-anchor", "middle")
+            .attr("font-size", fontSize * 0.8)
+            .attr("font-family", "SF Mono, Monaco, monospace");
+          aneText
+            .append("tspan")
+            .attr("fill", "rgba(96,165,250,0.95)")
+            .text(`ANE ${aneProfile.tflopsFp16.toFixed(1)} TFLOPS`);
+          aneText
+            .append("tspan")
+            .attr("fill", "rgba(179,179,179,0.6)")
+            .text("  ·  ");
+          aneText
+            .append("tspan")
+            .attr("fill", "rgba(255,215,0,0.75)")
+            .text(`${aneProfile.memoryBandwidthGbps.toFixed(0)} GB/s`);
         }
       } else if (showCompactLabels) {
         // COMPACT MODE: Just name and basic info (4+ nodes)
@@ -1426,10 +1451,15 @@
 
       // Debug mode: Show TB bridge and RDMA status
       if (debugEnabled) {
+        const profileLineCount =
+          (gpuProfile ? 1 : 0) + (aneProfile && showFullLabels ? 1 : 0);
+        const profileDebugOffset =
+          showFullLabels && profileLineCount > 1 ? 12 : 0;
         let debugLabelY =
           nodeInfo.y +
           iconBaseHeight / 2 +
-          (showFullLabels ? 32 : showCompactLabels ? 26 : 22);
+          (showFullLabels ? 32 : showCompactLabels ? 26 : 22) +
+          profileDebugOffset;
         const debugFontSize = showFullLabels ? 9 : 7;
         const debugLineHeight = showFullLabels ? 11 : 9;
 
@@ -1493,6 +1523,7 @@
     const _hoveredNodeId = hoveredNodeId;
     const _filteredNodes = filteredNodes;
     const _highlightedNodes = highlightedNodes;
+    const _ane = aneProfileData;
     const _gpu = gpuProfileData;
     const _links = linkProfilesData;
     const _network = nodeNetworkData;

@@ -63,6 +63,7 @@ class SystemPerformanceProfile(FrozenModel):
     gpu_usage: float = 0.0
     temp: float = 0.0
     sys_power: float = 0.0
+    ane_power: float = 0.0
     pcpu_usage: float = 0.0
     ecpu_usage: float = 0.0
 
@@ -116,6 +117,15 @@ class NodeGpuProfile(FrozenModel):
     """Measured GPU compute throughput and memory bandwidth for a node."""
 
     engine: Literal["mlx"]
+    tflops_fp16: float
+    memory_bandwidth_gbps: float
+    measured_at: datetime
+
+
+class NodeAneProfile(FrozenModel):
+    """Measured ANE compute throughput and streaming bandwidth for a node."""
+
+    engine: Literal["ane"]
     tflops_fp16: float
     memory_bandwidth_gbps: float
     measured_at: datetime

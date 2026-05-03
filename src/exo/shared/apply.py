@@ -33,6 +33,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
+    NodeAneProfile,
     NodeGpuProfile,
     NodeIdentity,
     NodeLinkProfile,
@@ -67,6 +68,7 @@ from exo.utils.info_gatherer.info_gatherer import (
     StaticNodeInformation,
     ThunderboltBridgeInfo,
 )
+from exo.utils.profilers.ane_profiler import AneProfile
 from exo.utils.profilers.gpu_profiler import GpuProfile
 from exo.utils.profilers.link_profiler import RDMALinkProfile, SocketLinkProfile
 
@@ -315,6 +317,11 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
         for key, value in state.node_gpu_profile.items()
         if key != event.node_id
     }
+    node_ane_profile = {
+        key: value
+        for key, value in state.node_ane_profile.items()
+        if key != event.node_id
+    }
     # Drop the leaving node both as source (outer key) and as sink (inner key).
     node_link_profiles: dict[NodeId, Mapping[NodeId, Sequence[NodeLinkProfile]]] = {}
     for source_id, sinks in state.node_link_profiles.items():
@@ -348,6 +355,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "node_thunderbolt": node_thunderbolt,
             "node_thunderbolt_bridge": node_thunderbolt_bridge,
             "node_rdma_ctl": node_rdma_ctl,
+            "node_ane_profile": node_ane_profile,
             "node_gpu_profile": node_gpu_profile,
             "node_link_profiles": node_link_profiles,
             "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
@@ -461,6 +469,17 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             update["node_gpu_profile"] = {
                 **state.node_gpu_profile,
                 event.node_id: NodeGpuProfile(
+                    engine=info.engine,
+                    tflops_fp16=info.tflops_fp16,
+                    memory_bandwidth_gbps=info.memory_bandwidth_gbps,
+                    measured_at=measured_at,
+                ),
+            }
+        case AneProfile():
+            measured_at = datetime.fromisoformat(event.when)
+            update["node_ane_profile"] = {
+                **state.node_ane_profile,
+                event.node_id: NodeAneProfile(
                     engine=info.engine,
                     tflops_fp16=info.tflops_fp16,
                     memory_bandwidth_gbps=info.memory_bandwidth_gbps,

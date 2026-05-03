@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { nodeGpuProfile, topologyData } from "$lib/stores/app.svelte";
+  import {
+    nodeAneProfile,
+    nodeGpuProfile,
+    topologyData,
+  } from "$lib/stores/app.svelte";
 
   interface Props {
     class?: string;
@@ -8,6 +12,7 @@
   let { class: className = "" }: Props = $props();
 
   const profiles = $derived(nodeGpuProfile());
+  const aneProfiles = $derived(nodeAneProfile());
   const topology = $derived(topologyData());
 
   const totalTflops = $derived(
@@ -16,6 +21,12 @@
   const totalBandwidthGbps = $derived(
     Object.values(profiles).reduce(
       (sum, p) => sum + (p?.memoryBandwidthGbps ?? 0),
+      0,
+    ),
+  );
+  const totalAneTflops = $derived(
+    Object.values(aneProfiles).reduce(
+      (sum, p) => sum + (p?.tflopsFp16 ?? 0),
       0,
     ),
   );
@@ -52,6 +63,10 @@
   <div class="stat-block">
     <span class="stat-value">{formatBandwidth(totalBandwidthGbps)}</span>
     <span class="stat-label">Memory bandwidth</span>
+  </div>
+  <div class="stat-block">
+    <span class="stat-value">{formatTflops(totalAneTflops)}</span>
+    <span class="stat-label">ANE compute</span>
   </div>
   <div class="stat-block">
     <span class="stat-value">{formatMemory(totalMemoryBytes)}</span>

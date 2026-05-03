@@ -27,6 +27,7 @@ from exo.shared.types.thunderbolt import (
     ThunderboltIdentifier,
 )
 from exo.utils.channels import Sender
+from exo.utils.profilers.ane_profiler import AneProfile
 from exo.utils.profilers.gpu_profiler import GpuProfile
 from exo.utils.profilers.link_profiler import RDMALinkProfile, SocketLinkProfile
 from exo.utils.pydantic_ext import TaggedModel
@@ -367,6 +368,7 @@ GatheredInfo = (
     | MiscData
     | StaticNodeInformation
     | NodeDiskUsage
+    | AneProfile
     | GpuProfile
     | SocketLinkProfile
     | RDMALinkProfile

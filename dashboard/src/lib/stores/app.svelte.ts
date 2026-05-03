@@ -46,6 +46,7 @@ export interface NodeInfo {
     };
     gpu_usage?: [number, number];
     sys_power?: number;
+    ane_power?: number;
   };
   last_macmon_update: number;
   friendly_name?: string;
@@ -100,6 +101,7 @@ interface RawSystemPerformanceProfile {
   gpuUsage?: number;
   temp?: number;
   sysPower?: number;
+  anePower?: number;
   pcpuUsage?: number;
   ecpuUsage?: number;
 }
@@ -128,6 +130,13 @@ interface RawNodeNetworkInfo {
 
 export interface RawNodeGpuProfile {
   engine: "mlx";
+  tflopsFp16: number;
+  memoryBandwidthGbps: number;
+  measuredAt: string;
+}
+
+export interface RawNodeAneProfile {
+  engine: "ane";
   tflopsFp16: number;
   memoryBandwidthGbps: number;
   measuredAt: string;
@@ -309,6 +318,8 @@ interface RawStateResponse {
   >;
   // Per-node GPU compute + memory bandwidth profile.
   nodeGpuProfile?: Record<string, RawNodeGpuProfile>;
+  // Per-node ANE compute + streaming bandwidth profile.
+  nodeAneProfile?: Record<string, RawNodeAneProfile>;
   // Per-edge link probe results, keyed source -> sink -> [profiles].
   nodeLinkProfiles?: RawNodeLinkProfiles;
 }
@@ -511,6 +522,7 @@ function transformTopology(
         gpu_usage:
           system?.gpuUsage !== undefined ? [0, system.gpuUsage] : undefined,
         sys_power: system?.sysPower,
+        ane_power: system?.anePower,
       },
       last_macmon_update: Date.now() / 1000,
       friendly_name: identity?.friendlyName,
@@ -634,6 +646,7 @@ class AppStore {
     >
   >({});
   nodeGpuProfile = $state<Record<string, RawNodeGpuProfile>>({});
+  nodeAneProfile = $state<Record<string, RawNodeAneProfile>>({});
   nodeLinkProfiles = $state<RawNodeLinkProfiles>({});
   nodeNetworkRaw = $state<Record<string, RawNodeNetworkInfo>>({});
 
@@ -1406,6 +1419,7 @@ class AppStore {
       this.nodeThunderboltBridge = data.nodeThunderboltBridge ?? {};
       // Profiler outputs
       this.nodeGpuProfile = data.nodeGpuProfile ?? {};
+      this.nodeAneProfile = data.nodeAneProfile ?? {};
       this.nodeLinkProfiles = data.nodeLinkProfiles ?? {};
       // Raw network info — kept so the connection-type inference can use
       // interfaceType, which the topology-shaped `NodeInfo.network_interfaces`
@@ -3671,6 +3685,7 @@ export const nodeThunderboltBridge = () => appStore.nodeThunderboltBridge;
 
 // Profiler outputs
 export const nodeGpuProfile = () => appStore.nodeGpuProfile;
+export const nodeAneProfile = () => appStore.nodeAneProfile;
 export const nodeLinkProfiles = () => appStore.nodeLinkProfiles;
 export const nodeNetworkRaw = () => appStore.nodeNetworkRaw;
 
