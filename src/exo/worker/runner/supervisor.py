@@ -19,6 +19,7 @@ from exo.shared.types.events import (
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
+    TransientEvent,
 )
 from exo.shared.types.tasks import (
     CANCEL_ALL_TASKS,
@@ -58,6 +59,7 @@ class RunnerSupervisor:
     _ev_recv: MpReceiver[Event]
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
+    _transient_event_sender: Sender[TransientEvent]
     _cancel_sender: MpSender[TaskId]
     _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
@@ -75,6 +77,7 @@ class RunnerSupervisor:
         *,
         bound_instance: BoundInstance,
         event_sender: Sender[Event],
+        transient_event_sender: Sender[TransientEvent],
         initialize_timeout: float = 400,
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event]()
@@ -104,6 +107,7 @@ class RunnerSupervisor:
             _task_sender=task_sender,
             _cancel_sender=cancel_sender,
             _event_sender=event_sender,
+            _transient_event_sender=transient_event_sender,
         )
 
         return self
@@ -124,6 +128,8 @@ class RunnerSupervisor:
                 self._task_sender.close()
             with contextlib.suppress(ClosedResourceError):
                 self._event_sender.close()
+            with contextlib.suppress(ClosedResourceError):
+                self._transient_event_sender.close()
             with contextlib.suppress(ClosedResourceError):
                 self._cancel_sender.send(CANCEL_ALL_TASKS)
             with contextlib.suppress(ClosedResourceError):
@@ -235,7 +241,10 @@ class RunnerSupervisor:
                         )
                         self.in_progress.pop(event.task_id, None)
                         self.completed.add(event.task_id)
-                    await self._event_sender.send(event)
+                    if isinstance(event, ChunkGenerated):
+                        await self._transient_event_sender.send(event)
+                    else:
+                        await self._event_sender.send(event)
         except (ClosedResourceError, BrokenResourceError) as e:
             await self._check_runner(e)
         finally:
@@ -275,7 +284,7 @@ class RunnerSupervisor:
         for task in self.in_progress.values():
             if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
                 with anyio.CancelScope(shield=True):
-                    await self._event_sender.send(
+                    await self._transient_event_sender.send(
                         ChunkGenerated(
                             command_id=task.command_id,
                             chunk=ErrorChunk(

@@ -333,6 +333,7 @@ class API:
         self.snapshot_chunk_receiver.close()
         self.snapshot_chunk_receiver = snapshot_chunk_receiver
         self._tg.start_soon(self._bootstrap_then_apply_state)
+        self._tg.start_soon(self._apply_transient)
 
     def unpause(self, result_clock: int):
         logger.info("Unpausing API")
@@ -1867,6 +1868,7 @@ class API:
             async with self._tg as tg:
                 logger.info("Starting API")
                 tg.start_soon(self._bootstrap_then_apply_state)
+                tg.start_soon(self._apply_transient)
                 tg.start_soon(self._reconcile_streams)
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)
@@ -1939,25 +1941,28 @@ class API:
                 self.state = apply(self.state, i_event)
                 event = i_event.event
 
-                if isinstance(event, ChunkGenerated):
-                    if queue := self._image_generation_queues.get(
-                        event.command_id, None
-                    ):
-                        assert isinstance(event.chunk, ImageChunk)
-                        try:
-                            await queue.send(event.chunk)
-                        except (BrokenResourceError, ClosedResourceError):
-                            self._image_generation_queues.pop(event.command_id, None)
-                    if queue := self._text_generation_queues.get(
-                        event.command_id, None
-                    ):
-                        assert not isinstance(event.chunk, ImageChunk)
-                        try:
-                            await queue.send(event.chunk)
-                        except (BrokenResourceError, ClosedResourceError):
-                            self._text_generation_queues.pop(event.command_id, None)
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
+
+    async def _apply_transient(self) -> None:
+        with self.transient_event_receiver as events:
+            async for event in events:
+                if isinstance(event, ChunkGenerated):
+                    await self._dispatch_chunk(event)
+
+    async def _dispatch_chunk(self, event: ChunkGenerated) -> None:
+        if queue := self._image_generation_queues.get(event.command_id, None):
+            assert isinstance(event.chunk, ImageChunk)
+            try:
+                await queue.send(event.chunk)
+            except (BrokenResourceError, ClosedResourceError):
+                self._image_generation_queues.pop(event.command_id, None)
+        if queue := self._text_generation_queues.get(event.command_id, None):
+            assert not isinstance(event.chunk, ImageChunk)
+            try:
+                await queue.send(event.chunk)
+            except (BrokenResourceError, ClosedResourceError):
+                self._text_generation_queues.pop(event.command_id, None)
 
     async def _reconcile_streams(self) -> None:
         while True:
