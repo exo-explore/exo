@@ -141,3 +141,28 @@ async def test_drain_and_ingest_with_new_sequence(buffer: OrderedBuffer[Event]):
     assert [e[0] for e in drained] == [2]
     assert buffer.next_idx_to_release == 3
     assert 4 in buffer.store
+
+
+@pytest.mark.asyncio
+async def test_fast_forward_discards_buffered_stale_events(
+    buffer: OrderedBuffer[Event],
+):
+    buffer.ingest(*make_indexed_event(0))
+    buffer.ingest(*make_indexed_event(2))
+    buffer.ingest(*make_indexed_event(4))
+
+    buffer.fast_forward_to(3)
+
+    assert buffer.next_idx_to_release == 3
+    assert set(buffer.store) == {4}
+
+
+@pytest.mark.asyncio
+async def test_fast_forward_only_moves_forward(buffer: OrderedBuffer[Event]):
+    buffer.ingest(*make_indexed_event(0))
+    buffer.ingest(*make_indexed_event(1))
+    buffer.drain()
+
+    buffer.fast_forward_to(1)
+
+    assert buffer.next_idx_to_release == 2

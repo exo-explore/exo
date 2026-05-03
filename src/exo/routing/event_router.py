@@ -80,6 +80,9 @@ class EventRouter:
     def shutdown(self) -> None:
         self._tg.cancel_tasks()
 
+    def set_buffer_start(self, idx: int) -> None:
+        self.event_buffer.fast_forward_to(idx)
+
     async def _ingest(self, system_id: SystemId, recv: Receiver[Event]):
         idx = 0
         with recv as events:
@@ -95,7 +98,6 @@ class EventRouter:
                 self.out_for_delivery[event.event_id] = (anyio.current_time(), f_ev)
 
     async def _run_ext_in(self):
-        buf = OrderedBuffer[Event]()
         with self.external_inbound as events:
             async for event in events:
                 if event.session != self.session_id:
@@ -103,12 +105,12 @@ class EventRouter:
                 if event.origin != self.session_id.master_node_id:
                     continue
 
-                buf.ingest(event.origin_idx, event.event)
+                self.event_buffer.ingest(event.origin_idx, event.event)
                 event_id = event.event.event_id
                 if event_id in self.out_for_delivery:
                     self.out_for_delivery.pop(event_id)
 
-                drained = buf.drain_indexed()
+                drained = self.event_buffer.drain_indexed()
                 if drained:
                     self._nack_attempts = 0
                     if self._nack_cancel_scope:
@@ -119,7 +121,9 @@ class EventRouter:
                     or self._nack_cancel_scope.cancel_called
                 ):
                     # Request the next index.
-                    self._tg.start_soon(self._nack_request, buf.next_idx_to_release)
+                    self._tg.start_soon(
+                        self._nack_request, self.event_buffer.next_idx_to_release
+                    )
                     continue
 
                 for idx, event in drained:
