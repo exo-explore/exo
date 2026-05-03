@@ -55,6 +55,7 @@ from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
+from exo.utils.profilers.profiler_manager import ProfilerManager
 from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
 from exo.worker.runner.supervisor import RunnerSupervisor
@@ -101,11 +102,18 @@ class Worker:
         logger.info("Starting Worker")
 
         info_send, info_recv = channel[GatheredInfo]()
-        info_gatherer: InfoGatherer = InfoGatherer(info_send)
+        info_gatherer: InfoGatherer = InfoGatherer(info_send.clone())
+        profiler_manager: ProfilerManager = ProfilerManager(
+            info_sender=info_send,
+            node_id=self.node_id,
+            api_port=self.api_port,
+            state_view=lambda: self.state,
+        )
 
         try:
             async with self._tg as tg:
                 tg.start_soon(info_gatherer.run)
+                tg.start_soon(profiler_manager.run)
                 tg.start_soon(self._forward_info, info_recv)
                 tg.start_soon(self.plan_step)
                 tg.start_soon(self._event_applier)

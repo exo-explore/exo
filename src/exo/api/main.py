@@ -15,7 +15,7 @@ import anyio
 from anyio import BrokenResourceError, ClosedResourceError
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
@@ -202,6 +202,12 @@ from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
+from exo.utils.profilers.rdma_probe import (
+    RdmaProbeBusyError,
+    RdmaProbeError,
+    RdmaProbeParams,
+    handle_rdma_probe_sink_request,
+)
 from exo.utils.task_group import TaskGroup
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
@@ -400,6 +406,10 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
+        self.app.post("/profile/echo")(self.profile_echo)
+        self.app.post("/profile/upload")(self.profile_upload)
+        self.app.get("/profile/download")(self.profile_download)
+        self.app.post("/profile/rdma_probe")(self.profile_rdma_probe)
 
     def get_state(self, path: str = ""):
         if path == "":
@@ -2116,3 +2126,80 @@ class API:
         ONBOARDING_COMPLETE_FILE.parent.mkdir(parents=True, exist_ok=True)
         ONBOARDING_COMPLETE_FILE.write_text("true")
         return JSONResponse({"completed": True})
+
+    async def profile_echo(self, request: Request) -> Response:
+        """Echo the request body back unchanged.
+
+        Used by the link profiler for ping probes (RTT). Capped to keep an
+        attacker (or buggy peer) from exhausting memory.
+        """
+        body = await request.body()
+        max_bytes = 32 * 1024 * 1024
+        if len(body) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"echo payload exceeds {max_bytes} byte cap",
+            )
+        return Response(content=body, media_type="application/octet-stream")
+
+    async def profile_upload(self, request: Request) -> JSONResponse:
+        """Discard the request body, time how long the receive took, and
+        return that duration. The response is intentionally tiny so that the
+        client's wall-clock measurement, after subtracting the round-trip,
+        cleanly maps to one-way upload bandwidth — but better still, we just
+        return our server-side duration so the client doesn't have to
+        subtract anything.
+        """
+        max_bytes = 32 * 1024 * 1024
+        start = time.perf_counter()
+        bytes_received = 0
+        async for chunk in request.stream():
+            bytes_received += len(chunk)
+            if bytes_received > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"upload payload exceeds {max_bytes} byte cap",
+                )
+        recv_duration_ms = (time.perf_counter() - start) * 1000.0
+        return JSONResponse(
+            {
+                "bytes_received": bytes_received,
+                "recv_duration_ms": recv_duration_ms,
+            }
+        )
+
+    async def profile_download(
+        self, size: int = Query(0, alias="bytes", ge=0)
+    ) -> Response:
+        """Return `size` zeroed bytes. The client times its receive to get
+        one-way download bandwidth (the request itself is negligibly small).
+        Query param is named `bytes` for HTTP convention.
+        """
+        max_bytes = 32 * 1024 * 1024
+        if size <= 0:
+            raise HTTPException(status_code=400, detail="bytes query param must be > 0")
+        if size > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"download size exceeds {max_bytes} byte cap",
+            )
+        return Response(
+            content=b"\x00" * size,
+            media_type="application/octet-stream",
+        )
+
+    async def profile_rdma_probe(self, params: RdmaProbeParams) -> Response:
+        """Run the sink side of an RDMA bandwidth probe in a child process.
+
+        Returns 200 on a clean probe run, 409 if the node is busy with active
+        runners or another probe, 500 on any unexpected subprocess failure.
+        """
+        try:
+            await handle_rdma_probe_sink_request(
+                params=params, runners=self.state.runners
+            )
+        except RdmaProbeBusyError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except RdmaProbeError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        return Response(status_code=200)

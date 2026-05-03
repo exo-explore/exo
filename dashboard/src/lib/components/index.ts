@@ -1,4 +1,5 @@
 export { default as TopologyGraph } from "./TopologyGraph.svelte";
+export { default as GpuRichBar } from "./GpuRichBar.svelte";
 export { default as ChatForm } from "./ChatForm.svelte";
 export { default as ChatMessages } from "./ChatMessages.svelte";
 export { default as ChatAttachments } from "./ChatAttachments.svelte";

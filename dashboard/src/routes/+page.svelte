@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     TopologyGraph,
+    GpuRichBar,
     ChatForm,
     ChatMessages,
     ChatSidebar,
@@ -4744,9 +4745,10 @@
     {#if topologyOnlyEnabled}
       <!-- TOPOLOGY ONLY MODE: Full-screen topology -->
       <div
-        class="flex-1 flex flex-col min-h-0 min-w-0 p-4"
+        class="flex-1 flex flex-col min-h-0 min-w-0 p-4 gap-3"
         in:fade={{ duration: 300 }}
       >
+        <GpuRichBar />
         <div
           class="flex-1 relative bg-exo-dark-gray/40 rounded-lg overflow-hidden"
         >
@@ -4870,7 +4872,10 @@
         out:fade={{ duration: 200 }}
       >
         <!-- Center: MAIN TOPOLOGY DISPLAY -->
-        <div class="flex-1 flex flex-col min-h-0 min-w-0 py-4">
+        <div class="flex-1 flex flex-col min-h-0 min-w-0 py-4 gap-3">
+          <div class="mx-4">
+            <GpuRichBar />
+          </div>
           <!-- Topology Container - Takes most of the space -->
           <div
             class="flex-1 relative bg-exo-dark-gray/40 mx-4 mb-4 rounded-lg overflow-hidden"
