@@ -226,15 +226,25 @@ class Worker:
         for model_id, card in target.items():
             if self._synced_custom_cards.get(model_id) == card:
                 continue
-            await card.save_to_custom_dir()
-            add_to_card_cache(card)
-            self._synced_custom_cards[model_id] = card
+            try:
+                await card.save_to_custom_dir()
+                add_to_card_cache(card)
+                self._synced_custom_cards[model_id] = card
+            except OSError as e:
+                logger.opt(exception=e).warning(
+                    f"Failed to write custom model card {model_id}; will retry"
+                )
 
         for model_id in list(self._synced_custom_cards):
             if model_id in target:
                 continue
-            await delete_custom_card(model_id)
-            self._synced_custom_cards.pop(model_id, None)
+            try:
+                await delete_custom_card(model_id)
+                self._synced_custom_cards.pop(model_id, None)
+            except OSError as e:
+                logger.opt(exception=e).warning(
+                    f"Failed to delete custom model card {model_id}; will retry"
+                )
 
     def _sync_input_views_from_state(self) -> None:
         self.input_chunk_buffer = {

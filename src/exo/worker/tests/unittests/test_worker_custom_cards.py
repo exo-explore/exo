@@ -76,3 +76,46 @@ async def test_worker_deletes_custom_cards_missing_from_state(
 
     assert deleted == [card.model_id]
     assert worker._synced_custom_cards == {}
+
+
+@pytest.mark.asyncio
+async def test_worker_retries_custom_card_save_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cached: list[ModelId] = []
+
+    async def save_to_custom_dir(_card: ModelCard) -> None:
+        raise OSError("disk unavailable")
+
+    def add_to_card_cache(card: ModelCard) -> None:
+        cached.append(card.model_id)
+
+    monkeypatch.setattr(ModelCard, "save_to_custom_dir", save_to_custom_dir)
+    monkeypatch.setattr(worker_main, "add_to_card_cache", add_to_card_cache)
+
+    card = _model_card(ModelId("custom/model"))
+    worker = _worker()
+    worker.state = State(custom_model_cards={card.model_id: card})
+
+    await worker._sync_custom_cards_from_state()
+
+    assert cached == []
+    assert worker._synced_custom_cards == {}
+
+
+@pytest.mark.asyncio
+async def test_worker_retries_custom_card_delete_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def delete_custom_card(_model_id: ModelId) -> bool:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(worker_main, "delete_custom_card", delete_custom_card)
+
+    card = _model_card(ModelId("custom/model"))
+    worker = _worker()
+    worker._synced_custom_cards = {card.model_id: card}
+
+    await worker._sync_custom_cards_from_state()
+
+    assert worker._synced_custom_cards == {card.model_id: card}
