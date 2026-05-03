@@ -1939,16 +1939,14 @@ class API:
                     continue
                 self._event_log.append(i_event.event)
                 self.state = apply(self.state, i_event)
-                event = i_event.event
-
-                if isinstance(event, TracesMerged):
-                    self._save_merged_trace(event)
 
     async def _apply_transient(self) -> None:
         with self.transient_event_receiver as events:
             async for event in events:
                 if isinstance(event, ChunkGenerated):
                     await self._dispatch_chunk(event)
+                elif isinstance(event, TracesMerged):
+                    self._save_merged_trace(event)
 
     async def _dispatch_chunk(self, event: ChunkGenerated) -> None:
         if queue := self._image_generation_queues.get(event.command_id, None):
