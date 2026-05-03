@@ -25,6 +25,7 @@ def test_state_serialization_roundtrip() -> None:
     json_repr = state.model_dump_json()
     restored_state = State.model_validate_json(json_repr)
 
+    assert restored_state.schema_version == state.schema_version
     assert (
         state.topology.to_snapshot().nodes
         == restored_state.topology.to_snapshot().nodes
