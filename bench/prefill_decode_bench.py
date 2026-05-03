@@ -22,6 +22,7 @@ import contextlib
 import copy
 import itertools
 import json
+import socket
 import sys
 import time
 import tomllib
@@ -54,8 +55,17 @@ from loguru import logger
 
 def _node_id_to_friendly(client: ExoClient) -> dict[str, str]:
     identities = client.get_node_identities() or {}
+    # Filter to currently-online nodes; identity map accumulates historical
+    # peer IDs across restarts and otherwise picks an offline one.
+    try:
+        topo = client.request_json("GET", "/state/topology") or {}
+        live = {str(n) for n in topo.get("nodes", []) if n is not None}
+    except Exception:
+        live = None
     out: dict[str, str] = {}
     for node_id, identity in identities.items():
+        if live is not None and str(node_id) not in live:
+            continue
         if isinstance(identity, dict):
             name = identity.get("friendlyName") or identity.get("friendly_name")
             if isinstance(name, str):
@@ -115,6 +125,8 @@ _TOP_LEVEL_TOML_KEYS = {
     "force_download",
     "danger_delete_downloads",
     "all_combinations",
+    "prefill_server_host",
+    "prefill_server_wait_timeout",
 }
 
 
@@ -236,6 +248,53 @@ def _delete_instance_link(client: ExoClient, link_id: str) -> None:
     client.request_json("DELETE", f"/v1/instance-links/{link_id}")
 
 
+def _first_runner_id_from_instance(instance: dict[str, Any]) -> str | None:
+    inner = unwrap_instance(instance)
+    node_to_runner = inner.get("shardAssignments", {}).get("nodeToRunner", {})
+    if not isinstance(node_to_runner, dict):
+        return None
+    return next(iter(node_to_runner.values()), None)
+
+
+def _wait_for_prefill_server(
+    client: ExoClient,
+    prefill_instance: dict[str, Any],
+    host: str | None,
+    timeout_seconds: float,
+) -> None:
+    if host is None:
+        time.sleep(2)
+        return
+
+    ports = client.request_json("GET", "/state/prefillServerPorts") or {}
+    runner_id = _first_runner_id_from_instance(prefill_instance)
+    port = ports.get(runner_id) if runner_id is not None else None
+    if port is None:
+        logger.warning(
+            "Prefill server port not found in state; falling back to fixed wait"
+        )
+        time.sleep(2)
+        return
+
+    logger.info(f"Polling prefill server at {host}:{port}...")
+    deadline = time.monotonic() + timeout_seconds
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            with socket.create_connection((host, int(port)), timeout=1.0):
+                logger.info(f"Prefill server reachable after {attempt} attempt(s)")
+                return
+        except OSError:
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    f"Prefill server still not reachable after "
+                    f"{timeout_seconds:.1f}s; benchmark will continue"
+                )
+                return
+            time.sleep(1)
+
+
 def run_one(
     client: ExoClient,
     model_id: str,
@@ -256,6 +315,7 @@ def run_one(
     elapsed = time.perf_counter() - t0
 
     stats = out.get("generation_stats")
+    power_usage = out.get("power_usage")
     choices = out.get("choices") or [{}]
     message = choices[0].get("message", {}) if choices else {}
     text = message.get("content") or ""
@@ -265,6 +325,7 @@ def run_one(
         "elapsed_s": elapsed,
         "output_text_preview": preview,
         "stats": stats,
+        "power_usage": power_usage,
     }, pp_tokens
 
 
@@ -456,9 +517,22 @@ def main() -> int:
         help="Also run each (pp,tg) pair without the prefill/decode link "
         "(decode instance does its own prefill) and report the diff.",
     )
+    ap.add_argument(
+        "--prefill-server-host",
+        default=None,
+        help="Optional host/IP to poll after linking before disaggregated runs.",
+    )
+    ap.add_argument(
+        "--prefill-server-wait-timeout",
+        type=float,
+        default=None,
+        help="Seconds to wait for --prefill-server-host. Defaults to 60.",
+    )
     args = ap.parse_args()
     cfg = _load_toml(args.config) if args.config else {}
     _merge_toml_into_args(args, cfg)
+    if args.prefill_server_wait_timeout is None:
+        args.prefill_server_wait_timeout = 60.0
     prefill_overrides = cfg.get("prefill", {}) if cfg else {}
     decode_overrides = cfg.get("decode", {}) if cfg else {}
     if args.prefill_model is None and "model" in prefill_overrides:
@@ -718,7 +792,12 @@ def main() -> int:
             return 1
         link_id = str(links[-1].get("linkId") or links[-1].get("link_id") or "")
         logger.info(f"Link created: {link_id}")
-        time.sleep(2)
+        _wait_for_prefill_server(
+            client,
+            prefill_instance,
+            args.prefill_server_host,
+            args.prefill_server_wait_timeout,
+        )
 
         disagg_rows = _run_phase(
             client=client,
