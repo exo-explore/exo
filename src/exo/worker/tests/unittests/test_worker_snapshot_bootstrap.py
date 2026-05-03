@@ -19,6 +19,7 @@ from exo.shared.types.events import (
     IndexedEvent,
     LocalForwarderEvent,
     TestEvent,
+    TransientEvent,
 )
 from exo.shared.types.snapshots import SnapshotChunk, SnapshotTransferId
 from exo.shared.types.state import State
@@ -64,6 +65,7 @@ def _worker(
 
     event_sender, event_receiver = channel[IndexedEvent]()
     local_event_output_sender, _local_event_output_receiver = channel[Event]()
+    transient_sender, transient_receiver = channel[TransientEvent]()
     command_sender, command_receiver = channel[ForwarderCommand]()
     download_command_sender, _download_command_receiver = channel[
         ForwarderDownloadCommand
@@ -76,6 +78,8 @@ def _worker(
         event_router=event_router,
         event_receiver=event_receiver,
         event_sender=local_event_output_sender,
+        transient_event_receiver=transient_receiver,
+        transient_event_sender=transient_sender,
         snapshot_chunk_receiver=snapshot_receiver,
         command_sender=command_sender,
         download_command_sender=download_command_sender,

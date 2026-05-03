@@ -180,6 +180,7 @@ from exo.shared.types.events import (
     Event,
     IndexedEvent,
     TracesMerged,
+    TransientEvent,
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.memory import Memory
@@ -246,6 +247,7 @@ class API:
         port: int,
         event_router: EventRouter,
         event_receiver: Receiver[IndexedEvent],
+        transient_event_receiver: Receiver[TransientEvent],
         snapshot_chunk_receiver: Receiver[SnapshotChunk],
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
@@ -260,6 +262,7 @@ class API:
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.event_receiver = event_receiver
+        self.transient_event_receiver = transient_event_receiver
         self.snapshot_chunk_receiver = snapshot_chunk_receiver
         self.election_receiver = election_receiver
         self.node_id: NodeId = node_id
@@ -309,6 +312,7 @@ class API:
         session_id: SessionId,
         event_router: EventRouter,
         event_receiver: Receiver[IndexedEvent],
+        transient_event_receiver: Receiver[TransientEvent],
         snapshot_chunk_receiver: Receiver[SnapshotChunk],
     ):
         logger.info("Resetting API State")
@@ -324,6 +328,8 @@ class API:
         self.unpause(result_clock)
         self.event_receiver.close()
         self.event_receiver = event_receiver
+        self.transient_event_receiver.close()
+        self.transient_event_receiver = transient_event_receiver
         self.snapshot_chunk_receiver.close()
         self.snapshot_chunk_receiver = snapshot_chunk_receiver
         self._tg.start_soon(self._bootstrap_then_apply_state)
@@ -1875,6 +1881,7 @@ class API:
             self._event_log.close()
             self.command_sender.close()
             self.event_receiver.close()
+            self.transient_event_receiver.close()
             self.snapshot_chunk_receiver.close()
 
     async def run_api(self, ev: anyio.Event):

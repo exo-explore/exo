@@ -26,6 +26,7 @@ from exo.shared.types.events import (
     LocalForwarderEvent,
     NodeGatheredInfo,
     TaskCreated,
+    TransientEvent,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
@@ -59,6 +60,7 @@ async def test_master():
     local_event_sender, le_receiver = channel[LocalForwarderEvent]()
     fcds, _fcdr = channel[ForwarderDownloadCommand]()
     ev_send, ev_recv = channel[Event]()
+    transient_send, transient_recv = channel[TransientEvent]()
     snapshot_chunk_send, _snapshot_chunk_recv = channel[SnapshotChunk]()
 
     async def mock_event_router():
@@ -93,6 +95,8 @@ async def test_master():
         node_id,
         session_id,
         event_sender=ev_send,
+        transient_event_receiver=transient_recv,
+        transient_event_sender=transient_send,
         global_event_sender=ge_sender,
         local_event_receiver=le_receiver,
         command_receiver=co_receiver,
@@ -249,12 +253,15 @@ async def test_master_serves_snapshot_for_current_state():
         ForwarderDownloadCommand
     ]()
     event_sender, _event_receiver = channel[Event]()
+    transient_event_sender, transient_event_receiver = channel[TransientEvent]()
     snapshot_chunk_sender, snapshot_chunk_receiver = channel[SnapshotChunk]()
 
     master = Master(
         node_id,
         session_id,
         event_sender=event_sender,
+        transient_event_receiver=transient_event_receiver,
+        transient_event_sender=transient_event_sender,
         global_event_sender=ge_sender,
         local_event_receiver=local_event_receiver,
         command_receiver=command_receiver,
