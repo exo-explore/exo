@@ -61,6 +61,7 @@ class Election:
         # If we aren't a candidate, simply don't increment seniority.
         # For reference: This node can be elected master if all nodes are not master candidates
         # Any master candidate will automatically win out over this node.
+        self.is_candidate = is_candidate
         self.seniority = seniority if is_candidate else -1
         self.clock = 0
         self.node_id = node_id
@@ -253,6 +254,16 @@ class Election:
 
     def _election_status(self, clock: int | None = None) -> ElectionMessage:
         c = self.clock if clock is None else clock
+        # Non-candidate nodes must never propose themselves as master.
+        # Re-propose the last known master instead. During a solo partition
+        # this prevents the node from winning by default.
+        if not self.is_candidate and self.current_session.master_node_id != self.node_id:
+            return ElectionMessage(
+                proposed_session=self.current_session,
+                clock=c,
+                seniority=self.seniority,
+                commands_seen=self.commands_seen,
+            )
         return ElectionMessage(
             proposed_session=(
                 self.current_session

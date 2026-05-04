@@ -46,6 +46,7 @@ class Node:
     node_id: NodeId
     offline: bool
     _api_port: int
+    _no_master: bool
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
@@ -112,22 +113,28 @@ class Node:
         else:
             worker = None
 
-        # We start every node with a master
-        master = Master(
-            node_id,
-            session_id,
-            event_sender=event_router.sender(),
-            global_event_sender=router.sender(topics.GLOBAL_EVENTS),
-            local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
-            command_receiver=router.receiver(topics.COMMANDS),
-            download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
-        )
+        # We start every node with a master, unless --no-master is set
+        if args.no_master:
+            master = None
+        else:
+            master = Master(
+                node_id,
+                session_id,
+                event_sender=event_router.sender(),
+                global_event_sender=router.sender(topics.GLOBAL_EVENTS),
+                local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
+                command_receiver=router.receiver(topics.COMMANDS),
+                download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
+            )
 
         er_send, er_recv = channel[ElectionResult]()
         election = Election(
             node_id,
             # If someone manages to assemble 1 MILLION devices into an exo cluster then. well done. good job champ.
             seniority=1_000_000 if args.force_master else 0,
+            # --no-api nodes (coordinators) must not self-elect as master; any API-bearing node beats them.
+            # --no-master explicitly prevents self-election even during solo partitions.
+            is_candidate=args.spawn_api and not args.no_master,
             # nb: this DOES feedback right now. i have thoughts on how to address this,
             # but ultimately it seems not worth the complexity
             election_message_sender=router.sender(topics.ELECTION_MESSAGES),
@@ -149,6 +156,7 @@ class Node:
             node_id,
             args.offline,
             args.api_port,
+            args.no_master,
         )
 
     async def run(self):
@@ -209,6 +217,12 @@ class Node:
                         "cannot be new master if we remain master"
                     )
                     logger.info("Node elected Master - maintaining self")
+                elif (
+                    result.session_id.master_node_id == self.node_id
+                    and self.master is None
+                    and self._no_master
+                ):
+                    logger.warning("Node won election but --no-master is set. Refusing promotion.")
                 elif (
                     result.session_id.master_node_id == self.node_id
                     and self.master is None
@@ -377,6 +391,7 @@ def main_inner(args: "Args"):
 class Args(FrozenModel):
     verbosity: int = 0
     force_master: bool = False
+    no_master: bool = False
     spawn_api: bool = False
     api_port: PositiveInt = 52415
     tb_only: bool = False
@@ -413,6 +428,12 @@ class Args(FrozenModel):
             "--force-master",
             action="store_true",
             dest="force_master",
+        )
+        parser.add_argument(
+            "--no-master",
+            action="store_true",
+            dest="no_master",
+            help="Prevent this node from ever becoming master (worker-only mode)",
         )
         parser.add_argument(
             "--no-api",
