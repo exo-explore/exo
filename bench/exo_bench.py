@@ -287,6 +287,10 @@ def run_one_completion(
         "max_tokens": tg,
         "logprobs": False,
         "use_prefix_cache": use_prefix_cache,
+        # Argmax sampling for deterministic, faster decode (matches
+        # mlx_lm.benchmark default). Avoids per-token softmax + categorical
+        # sample over the full vocab.
+        "temperature": 0.0,
     }
 
     if not stream:
@@ -747,6 +751,8 @@ def main() -> int:
                                 "max_tokens": tg,
                                 "logprobs": False,
                                 "use_prefix_cache": args.use_prefix_cache,
+                                # Argmax sampling — matches mlx_lm.benchmark default
+                                "temperature": 0.0,
                             }
                             barrier = threading.Barrier(concurrency)
                             batch_start = threading.Event()
