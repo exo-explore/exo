@@ -108,6 +108,15 @@ class ExoBatchGenerator:
             prefill_step_size=4096,
         )
         self._step_count = 0
+        # DECODE_TIMING accumulators — totals across all step() calls for the
+        # current generation. Reset when a request finishes (logged via
+        # logger.info) so each request gets its own breakdown.
+        self._dt_set_topk = 0.0
+        self._dt_mlx_next = 0.0
+        self._dt_topk_take = 0.0
+        self._dt_response_loop = 0.0
+        self._dt_total_step = 0.0
+        self._dt_step_count = 0
 
     @property
     def has_work(self) -> bool:
@@ -330,16 +339,23 @@ class ExoBatchGenerator:
         if not self.has_work:
             return []
 
+        # ─── DECODE_TIMING: top of step() ─────────────────────────────────
+        _dt_t0 = time.perf_counter()
+
         gb = self._mlx_gen._generation_batch
         set_needs_topk(
             gb,
             any(t.task_params.logprobs for t in self._active_tasks.values()),
         )
+        _dt_t1 = time.perf_counter()
+
         _step_tic = time.perf_counter()
         _, responses = self._mlx_gen.next()
         _next_elapsed = time.perf_counter() - _step_tic
+        _dt_t2 = time.perf_counter()
 
         topk = take_ready_topk(gb)
+        _dt_t3 = time.perf_counter()
 
         results: list[tuple[int, GenerationResponse]] = []
 
@@ -425,6 +441,30 @@ class ExoBatchGenerator:
                 else:
                     generation_tps = 0.0
 
+                # ─── DECODE_TIMING: log per-section breakdown for THIS request ─
+                _dt_n = max(self._dt_step_count, 1)
+                _dt_total = self._dt_total_step
+                logger.info(
+                    f"[DECODE_TIMING] uid={response.uid} "
+                    f"steps={self._dt_step_count} "
+                    f"completion_tokens={state.completion_tokens} "
+                    f"gen_tps={generation_tps:.2f} "
+                    f"total_step_ms={_dt_total * 1000:.1f} "
+                    f"avg_per_step_ms={(_dt_total / _dt_n) * 1000:.3f} "
+                    f"avg_set_topk_us={(self._dt_set_topk / _dt_n) * 1e6:.1f} "
+                    f"avg_mlx_next_ms={(self._dt_mlx_next / _dt_n) * 1000:.3f} "
+                    f"avg_topk_take_us={(self._dt_topk_take / _dt_n) * 1e6:.1f} "
+                    f"avg_response_loop_us={(self._dt_response_loop / _dt_n) * 1e6:.1f} "
+                    f"mlx_next_pct={(self._dt_mlx_next / max(_dt_total, 1e-9)) * 100:.1f}%"
+                )
+                # Reset accumulators so the next request gets a clean slate
+                self._dt_set_topk = 0.0
+                self._dt_mlx_next = 0.0
+                self._dt_topk_take = 0.0
+                self._dt_response_loop = 0.0
+                self._dt_total_step = 0.0
+                self._dt_step_count = 0
+
                 stats = GenerationStats(
                     prompt_tps=state.prefill_tps,
                     generation_tps=generation_tps,
@@ -478,6 +518,16 @@ class ExoBatchGenerator:
             logger.debug(
                 f"step overhead: {_overhead * 1000:.2f}ms (next={_next_elapsed * 1000:.2f}ms total={_step_elapsed * 1000:.2f}ms)"
             )
+
+        # ─── DECODE_TIMING: accumulate per-section times for this step() ──
+        _dt_t_end = time.perf_counter()
+        if responses:  # only count steps that produced tokens
+            self._dt_set_topk += _dt_t1 - _dt_t0
+            self._dt_mlx_next += _dt_t2 - _dt_t1
+            self._dt_topk_take += _dt_t3 - _dt_t2
+            self._dt_response_loop += _dt_t_end - _dt_t3
+            self._dt_total_step += _dt_t_end - _dt_t0
+            self._dt_step_count += 1
 
         return results
 
