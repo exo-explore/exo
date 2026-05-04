@@ -9,9 +9,10 @@ import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from multiprocessing import reduction
+from multiprocessing.process import BaseProcess
+from multiprocessing.resource_sharer import DupFd
 from types import TracebackType
-from typing import Literal, Protocol, Self, cast, final
+from typing import Literal, Self, TextIO, final
 
 from anyio import create_task_group, to_thread
 
@@ -22,35 +23,18 @@ _READ_CHUNK_SIZE = 64 * 1024
 MultiprocessingStartMethod = Literal["fork", "forkserver", "spawn"]
 
 
-class _DetachableFileDescriptor(Protocol):
-    def detach(self) -> int: ...
-
-
-class _ProcessContext(Protocol):
-    def Process(  # noqa: N802 - multiprocessing context API uses this name.
-        self,
-        group: None = None,
-        target: Callable[..., object] | None = None,
-        name: str | None = None,
-        args: tuple[object, ...] = (),
-        kwargs: object | None = None,
-        *,
-        daemon: bool | None = None,
-    ) -> mp.Process: ...
-
-
 @final
 @dataclass(frozen=True)
 class ChildFileDescriptor:
     """A parent fd wrapper that can be detached as a valid fd in a spawned child."""
 
-    _wrapped: _DetachableFileDescriptor
+    _wrapped: DupFd
 
     @classmethod
     def from_parent_fd(cls, fd: int) -> Self:
         if fd < 0:
             raise ValueError("file descriptor must be non-negative")
-        return cls(cast(_DetachableFileDescriptor, reduction.DupFd(fd)))
+        return cls(DupFd(fd))
 
     def detach(self) -> int:
         return self._wrapped.detach()
@@ -185,7 +169,7 @@ class PipeStdioCapture:
 @final
 @dataclass(eq=False)
 class CapturedMpProcess:
-    process: mp.Process
+    process: BaseProcess
     capture: PipeStdioCapture
     _stdout_write_fd: int
     _stderr_write_fd: int
@@ -270,15 +254,12 @@ def _create_captured_process[**P](
             stdout=ChildFileDescriptor.from_parent_fd(stdout_write_fd),
             stderr=ChildFileDescriptor.from_parent_fd(stderr_write_fd),
         )
-        process_context = cast(
-            _ProcessContext, cast(object, mp.get_context(options.start_method))
-        )
-        process = process_context.Process(
-            name=options.process_name,
-            target=_run_with_captured_stdio,
-            args=(child_stdio, target, *target_args),
-            kwargs=target_kwargs,
-            daemon=options.daemon,
+        process = _make_process(
+            options,
+            child_stdio,
+            target,
+            *target_args,
+            **target_kwargs,
         )
 
         return CapturedMpProcess(
@@ -296,6 +277,47 @@ def _create_captured_process[**P](
         for fd in (stdout_read_fd, stdout_write_fd, stderr_read_fd, stderr_write_fd):
             _close_fd(fd)
         raise
+
+
+def _make_process[**P](
+    options: CapturedProcessOptions,
+    child_stdio: ChildStdio,
+    target: Callable[P, object],
+    *target_args: P.args,
+    **target_kwargs: P.kwargs,
+) -> BaseProcess:
+    process_args = (child_stdio, target, *target_args)
+    if options.start_method is None:
+        return mp.Process(
+            name=options.process_name,
+            target=_run_with_captured_stdio,
+            args=process_args,
+            kwargs=target_kwargs,
+            daemon=options.daemon,
+        )
+    if options.start_method == "fork":
+        return mp.get_context("fork").Process(
+            name=options.process_name,
+            target=_run_with_captured_stdio,
+            args=process_args,
+            kwargs=target_kwargs,
+            daemon=options.daemon,
+        )
+    if options.start_method == "forkserver":
+        return mp.get_context("forkserver").Process(
+            name=options.process_name,
+            target=_run_with_captured_stdio,
+            args=process_args,
+            kwargs=target_kwargs,
+            daemon=options.daemon,
+        )
+    return mp.get_context("spawn").Process(
+        name=options.process_name,
+        target=_run_with_captured_stdio,
+        args=process_args,
+        kwargs=target_kwargs,
+        daemon=options.daemon,
+    )
 
 
 def _run_with_captured_stdio[**P](
@@ -335,12 +357,9 @@ def _replace_python_stdio() -> None:
     sys.__stderr__ = stderr
 
 
-def _open_text_stream_for_fd(fd: int, fallback: object) -> io.TextIOWrapper:
-    encoding = "utf-8"
-    errors = "replace"
-    if isinstance(fallback, io.TextIOBase):
-        encoding = fallback.encoding or encoding
-        errors = fallback.errors or errors
+def _open_text_stream_for_fd(fd: int, fallback: TextIO) -> io.TextIOWrapper:
+    encoding = fallback.encoding or "utf-8"
+    errors = fallback.errors or "replace"
     return os.fdopen(
         fd,
         mode="w",
