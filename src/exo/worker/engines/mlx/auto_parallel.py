@@ -599,7 +599,7 @@ def tensor_auto_parallel(
         raise ValueError(f"Unsupported model type: {type(model)}")
 
     model = yield from tensor_parallel_sharding_strategy.shard_model(model)
-    return patch_tensor_model(model)
+    return model  # PATCH-DISABLED for A/B test
 
 
 class TensorParallelShardingStrategy(ABC):
