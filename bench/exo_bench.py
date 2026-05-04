@@ -727,6 +727,15 @@ def main() -> int:
                             )
                             runs.append(row)
                             all_rows.append(row)
+                            # Per-repeat trial log so individual numbers are visible
+                            # alongside the final averaged summary. Useful for
+                            # spotting outliers and trial-to-trial variance.
+                            _s = row.get("stats") or {}
+                            logger.info(
+                                f"  repeat {r + 1}/{args.repeat}: "
+                                f"prompt_tps={_s.get('prompt_tps', 0):.2f} "
+                                f"gen_tps={_s.get('generation_tps', 0):.2f}"
+                            )
                         else:
                             # Concurrent: fire N requests in parallel
                             # Pre-build prompt once, barrier ensures simultaneous dispatch
