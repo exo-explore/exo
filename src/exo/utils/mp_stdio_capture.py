@@ -9,6 +9,12 @@ import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from multiprocessing.context import (
+    DefaultContext,
+    ForkContext,
+    ForkServerContext,
+    SpawnContext,
+)
 from multiprocessing.process import BaseProcess
 from multiprocessing.resource_sharer import DupFd
 from types import TracebackType
@@ -21,6 +27,7 @@ _STDERR_FD = 2
 _READ_CHUNK_SIZE = 64 * 1024
 
 MultiprocessingStartMethod = Literal["fork", "forkserver", "spawn"]
+ProcessContext = DefaultContext | ForkContext | ForkServerContext | SpawnContext
 
 
 @final
@@ -287,37 +294,28 @@ def _make_process[**P](
     **target_kwargs: P.kwargs,
 ) -> BaseProcess:
     process_args = (child_stdio, target, *target_args)
-    if options.start_method is None:
-        return mp.Process(
-            name=options.process_name,
-            target=_run_with_captured_stdio,
-            args=process_args,
-            kwargs=target_kwargs,
-            daemon=options.daemon,
-        )
-    if options.start_method == "fork":
-        return mp.get_context("fork").Process(
-            name=options.process_name,
-            target=_run_with_captured_stdio,
-            args=process_args,
-            kwargs=target_kwargs,
-            daemon=options.daemon,
-        )
-    if options.start_method == "forkserver":
-        return mp.get_context("forkserver").Process(
-            name=options.process_name,
-            target=_run_with_captured_stdio,
-            args=process_args,
-            kwargs=target_kwargs,
-            daemon=options.daemon,
-        )
-    return mp.get_context("spawn").Process(
+    process_context = _get_process_context(options.start_method)
+    return process_context.Process(
         name=options.process_name,
         target=_run_with_captured_stdio,
         args=process_args,
         kwargs=target_kwargs,
         daemon=options.daemon,
     )
+
+
+def _get_process_context(
+    start_method: MultiprocessingStartMethod | None,
+) -> ProcessContext:
+    # Keep the literal branches isolated here. Current multiprocessing stubs return
+    # BaseContext for union input, and BaseContext does not expose Process.
+    if start_method is None:
+        return mp.get_context()
+    if start_method == "fork":
+        return mp.get_context("fork")
+    if start_method == "forkserver":
+        return mp.get_context("forkserver")
+    return mp.get_context("spawn")
 
 
 def _run_with_captured_stdio[**P](
