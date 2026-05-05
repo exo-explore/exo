@@ -17,8 +17,7 @@ def apply_mlx_patches() -> None:
         return
     _applied = True
     patch_yarn_rope()
-    # apply_batch_gen_patch()  # PATCH-DISABLED for A/B: removes opt_batch_gen _patched_step
-    # Python wrapper. Top-K logprobs gated off in bench mode (logprobs=False) anyway.
+    apply_batch_gen_patch()
 
 
 def maybe_apply_patches(model: nn.Module, model_path: Path) -> None:
