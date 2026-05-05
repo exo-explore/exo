@@ -151,6 +151,7 @@ pub fn create_swarm(
     from_client: mpsc::Receiver<ToSwarm>,
     bootstrap_peers: Vec<String>,
     listen_port: u16,
+    trusted_peer_ids: Vec<PeerId>,
 ) -> alias::AnyResult<Swarm> {
     let parsed_bootstrap_peers: Vec<libp2p::Multiaddr> = bootstrap_peers
         .iter()
@@ -161,7 +162,7 @@ pub fn create_swarm(
     let mut swarm = SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_other_transport(tcp_transport)?
-        .with_behaviour(|keypair| Behaviour::new(keypair, parsed_bootstrap_peers))?
+        .with_behaviour(|keypair| Behaviour::new(keypair, parsed_bootstrap_peers, trusted_peer_ids))?
         .build();
 
     swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{listen_port}").parse()?)?;
@@ -259,9 +260,10 @@ mod behaviour {
         pub fn new(
             keypair: &identity::Keypair,
             bootstrap_peers: Vec<libp2p::Multiaddr>,
+            trusted_peer_ids: Vec<libp2p::PeerId>,
         ) -> alias::AnyResult<Self> {
             Ok(Self {
-                discovery: discovery::Behaviour::new(keypair, bootstrap_peers)?,
+                discovery: discovery::Behaviour::new(keypair, bootstrap_peers, trusted_peer_ids)?,
                 gossipsub: gossipsub_behaviour(keypair),
             })
         }

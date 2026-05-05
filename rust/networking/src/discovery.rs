@@ -105,6 +105,7 @@ pub struct Behaviour {
     managed: managed::Behaviour,
     mdns_discovered: HashMap<PeerId, BTreeSet<Multiaddr>>,
     bootstrap_peers: Vec<Multiaddr>,
+    trusted_peer_ids: Vec<PeerId>,
 
     retry_delay: Delay, // retry interval
 
@@ -113,11 +114,12 @@ pub struct Behaviour {
 }
 
 impl Behaviour {
-    pub fn new(keypair: &identity::Keypair, bootstrap_peers: Vec<Multiaddr>) -> io::Result<Self> {
+    pub fn new(keypair: &identity::Keypair, bootstrap_peers: Vec<Multiaddr>, trusted_peer_ids: Vec<PeerId>) -> io::Result<Self> {
         Ok(Self {
             managed: managed::Behaviour::new(keypair)?,
             mdns_discovered: HashMap::new(),
             bootstrap_peers,
+            trusted_peer_ids,
             retry_delay: Delay::new(RETRY_CONNECT_INTERVAL),
             pending_events: WakerDeque::new(),
         })
@@ -139,6 +141,10 @@ impl Behaviour {
 
     fn handle_mdns_discovered(&mut self, peers: Vec<(PeerId, Multiaddr)>) {
         for (p, ma) in peers {
+            // reject peers not in the trusted allowlist (when allowlist is non-empty)
+            if !self.trusted_peer_ids.is_empty() && !self.trusted_peer_ids.contains(&p) {
+                continue;
+            }
             self.dial(p, ma.clone()); // always connect
 
             // get peer's multi-addresses or insert if missing
