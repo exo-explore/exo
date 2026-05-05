@@ -29,6 +29,8 @@ def _mlx_force_oom(size: int = 200000) -> None:
     """
     Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
     """
+    print(f"CHILD: start")
+
     mx.set_default_device(mx.gpu)
     a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
     b = mx.random.uniform(shape=(size, size), dtype=mx.float32)
@@ -38,6 +40,8 @@ def _mlx_force_oom(size: int = 200000) -> None:
     e = mx.matmul(b, c)
     f = mx.sigmoid(d + e)
     mx.eval(f)
+
+    print(f"CHILD: end")
 
 
 @pytest.mark.asyncio
@@ -115,5 +119,5 @@ async def test_death(capsys: CaptureFixture[str]) -> None:
 
         print("PARENT: done")
 
-        # print(result.output.stdout_text())
-        # print(result.output.stderr_text())
+        print("CHILD out:", result.output.stdout_text())
+        print("CHILD err:", result.output.stderr_text())
