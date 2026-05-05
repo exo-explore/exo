@@ -1,10 +1,11 @@
 import os
 import sys
 
+import mlx.core as mx
 import pytest
 from _pytest.capture import CaptureFixture
 
-from exo.utils.mp_stdio_capture import CapturedProcessOptions, create_captured_process
+from exo.utils.mp_stdio_capture import CapturedProcessOptions
 
 
 def _write_to_stdio(prefix: str, *, stderr_suffix: str) -> None:
@@ -24,9 +25,24 @@ def _raise_after_stderr_write() -> None:
     raise RuntimeError("child boom")
 
 
+def _mlx_force_oom(size: int = 200000) -> None:
+    """
+    Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
+    """
+    mx.set_default_device(mx.gpu)
+    a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
+    b = mx.random.uniform(shape=(size, size), dtype=mx.float32)
+    mx.eval(a, b)
+    c = mx.matmul(a, b)
+    d = mx.matmul(a, c)
+    e = mx.matmul(b, c)
+    f = mx.sigmoid(d + e)
+    mx.eval(f)
+
+
 @pytest.mark.asyncio
 async def test_spawn_process_captures_stdout_and_stderr_separately(
-    capfd: CaptureFixture[str],
+        capfd: CaptureFixture[str],
 ) -> None:
     options = CapturedProcessOptions(start_method="spawn")
     captured = options.create_process(
@@ -54,12 +70,16 @@ async def test_spawn_process_captures_stdout_and_stderr_separately(
 @pytest.mark.filterwarnings(
     "ignore:This process .* is multi-threaded.*:DeprecationWarning"
 )
-async def test_default_helper_uses_current_multiprocessing_context() -> None:
-    result = await create_captured_process(
-        _write_to_stdio,
-        "default",
-        stderr_suffix="error",
-    ).run()
+async def test_default_options_use_current_multiprocessing_context() -> None:
+    result = (
+        await CapturedProcessOptions()
+        .create_process(
+            _write_to_stdio,
+            "default",
+            stderr_suffix="error",
+        )
+        .run()
+    )
 
     assert result.exitcode == 0
     assert "default: python stdout" in result.output.stdout_text()
@@ -85,3 +105,12 @@ async def test_child_exception_traceback_is_captured_from_stderr() -> None:
     stderr = result.output.stderr_text()
     assert "stderr before exception" in stderr
     assert "RuntimeError: child boom" in stderr
+
+
+@pytest.mark.asyncio
+async def test_death() -> None:
+    options = CapturedProcessOptions(start_method="spawn")
+    result = await options.create_process(_mlx_force_oom).run()
+
+    print(result.output.stdout_text())
+    print(result.output.stderr_text())

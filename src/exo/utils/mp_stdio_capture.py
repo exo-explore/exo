@@ -119,12 +119,55 @@ class CapturedProcessOptions:
         *target_args: P.args,
         **target_kwargs: P.kwargs,
     ) -> CapturedMpProcess:
-        return _create_captured_process(
-            self,
-            target,
-            *target_args,
-            **target_kwargs,
-        )
+        stdout_read_fd, stdout_write_fd = os.pipe()
+        stderr_read_fd, stderr_write_fd = os.pipe()
+
+        try:
+            child_stdio = ChildStdio(
+                stdout=ChildFileDescriptor.from_parent_fd(stdout_write_fd),
+                stderr=ChildFileDescriptor.from_parent_fd(stderr_write_fd),
+            )
+
+            process_context: ProcessContext
+            # Current multiprocessing stubs return BaseContext for union input, and
+            # BaseContext does not expose Process. Keep the literal narrowing here.
+            if self.start_method is None:
+                process_context = mp.get_context()
+            elif self.start_method == "fork":
+                process_context = mp.get_context("fork")
+            elif self.start_method == "forkserver":
+                process_context = mp.get_context("forkserver")
+            else:
+                process_context = mp.get_context("spawn")
+
+            process = process_context.Process(
+                name=self.process_name,
+                target=_run_with_captured_stdio,
+                args=(child_stdio, target, *target_args),
+                kwargs=target_kwargs,
+                daemon=self.daemon,
+            )
+
+            return CapturedMpProcess(
+                process=process,
+                capture=PipeStdioCapture(
+                    _stdout_read_fd=stdout_read_fd,
+                    _stderr_read_fd=stderr_read_fd,
+                    stdout=CaptureBuffer(max_bytes=self.max_capture_bytes),
+                    stderr=CaptureBuffer(max_bytes=self.max_capture_bytes),
+                ),
+                _stdout_write_fd=stdout_write_fd,
+                _stderr_write_fd=stderr_write_fd,
+            )
+        except BaseException:
+            for fd in (
+                stdout_read_fd,
+                stdout_write_fd,
+                stderr_read_fd,
+                stderr_write_fd,
+            ):
+                _close_fd(fd)
+            raise
 
 
 @final
@@ -243,71 +286,6 @@ class CapturedMpProcess:
         exc_tb: TracebackType | None,
     ) -> None:
         self.close_parent_fds()
-
-
-def create_captured_process[**P](
-    target: Callable[P, object],
-    *target_args: P.args,
-    **target_kwargs: P.kwargs,
-) -> CapturedMpProcess:
-    return _create_captured_process(
-        CapturedProcessOptions(),
-        target,
-        *target_args,
-        **target_kwargs,
-    )
-
-
-def _create_captured_process[**P](
-    options: CapturedProcessOptions,
-    target: Callable[P, object],
-    *target_args: P.args,
-    **target_kwargs: P.kwargs,
-) -> CapturedMpProcess:
-    stdout_read_fd, stdout_write_fd = os.pipe()
-    stderr_read_fd, stderr_write_fd = os.pipe()
-
-    try:
-        child_stdio = ChildStdio(
-            stdout=ChildFileDescriptor.from_parent_fd(stdout_write_fd),
-            stderr=ChildFileDescriptor.from_parent_fd(stderr_write_fd),
-        )
-
-        process_context: ProcessContext
-        # Current multiprocessing stubs return BaseContext for union input, and
-        # BaseContext does not expose Process. Keep the literal narrowing here.
-        if options.start_method is None:
-            process_context = mp.get_context()
-        elif options.start_method == "fork":
-            process_context = mp.get_context("fork")
-        elif options.start_method == "forkserver":
-            process_context = mp.get_context("forkserver")
-        else:
-            process_context = mp.get_context("spawn")
-
-        process = process_context.Process(
-            name=options.process_name,
-            target=_run_with_captured_stdio,
-            args=(child_stdio, target, *target_args),
-            kwargs=target_kwargs,
-            daemon=options.daemon,
-        )
-
-        return CapturedMpProcess(
-            process=process,
-            capture=PipeStdioCapture(
-                _stdout_read_fd=stdout_read_fd,
-                _stderr_read_fd=stderr_read_fd,
-                stdout=CaptureBuffer(max_bytes=options.max_capture_bytes),
-                stderr=CaptureBuffer(max_bytes=options.max_capture_bytes),
-            ),
-            _stdout_write_fd=stdout_write_fd,
-            _stderr_write_fd=stderr_write_fd,
-        )
-    except BaseException:
-        for fd in (stdout_read_fd, stdout_write_fd, stderr_read_fd, stderr_write_fd):
-            _close_fd(fd)
-        raise
 
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
