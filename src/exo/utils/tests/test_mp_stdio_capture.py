@@ -5,7 +5,6 @@ import mlx.core as mx
 import pytest
 from _pytest.capture import CaptureFixture
 
-from exo.utils.channels import Sender
 from exo.utils.mp_stdio_capture import CapturedProcessOptions
 
 
@@ -112,7 +111,6 @@ async def test_child_exception_traceback_is_captured_from_stderr() -> None:
 async def test_death() -> None:
     options = CapturedProcessOptions(start_method="spawn")
     result = await options.create_process(_mlx_force_oom).run()
-    Sender()
 
     print(result.output.stdout_text())
     print(result.output.stderr_text())
