@@ -796,6 +796,7 @@ dependencies = [
  "pyo3-log",
  "pyo3-stub-gen",
  "rand 0.10.1",
+ "serde_json",
  "tokio",
  "zenoh",
  "zerompk",

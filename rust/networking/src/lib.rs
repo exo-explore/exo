@@ -2,9 +2,11 @@ use std::{
     env,
     ops::{Deref, DerefMut},
     panic,
+    sync::Arc,
 };
 
 use netwatcher::WatchHandle;
+use parking_lot::Mutex;
 use tokio::{sync::mpsc, task::JoinHandle};
 use zenoh::{Result, Session as ZSession, config::WhatAmI, internal::runtime::Runtime};
 use zenoh_plugin_storage_manager::StoragesPlugin;
@@ -51,7 +53,7 @@ pub async fn open(cfg: zenoh::Config) -> Result<Session> {
         .await?;
     let session = zenoh::session::init(runtime.clone().into()).await?;
     runtime.start().await?;
-    let _watch_all_handle = watch_all(runtime).await?;
+    let _watch_all_handle = Arc::new(Mutex::new(watch_all(runtime).await?));
     Ok(Session {
         session,
         _watch_all_handle,
@@ -91,7 +93,7 @@ async fn watch_all(runtime: Runtime) -> Result<WatchAllHandle> {
 
 pub struct Session {
     pub session: ZSession,
-    _watch_all_handle: WatchAllHandle,
+    _watch_all_handle: Arc<Mutex<WatchAllHandle>>,
 }
 impl Deref for Session {
     type Target = ZSession;
