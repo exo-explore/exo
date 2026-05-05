@@ -143,6 +143,7 @@ class ImageEngine(Engine):
         Generator[tuple[TaskId, Chunk | FinishedResponse | CancelledResponse]] | None
     ) = field(init=False, default=None)
     queue: deque[ImageTask] = field(init=False, default_factory=deque)
+    _cancelled_tasks: set[TaskId] = field(init=False, default_factory=set)
 
     def warmup(self) -> None:
         image = warmup_image_generator(model=self.image_model)
