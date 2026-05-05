@@ -56,7 +56,10 @@ class ChildStdio:
     stderr: ChildFileDescriptor
 
     def install(self) -> None:
-        _flush_python_stdio()
+        for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
+            if stream is not None:
+                with contextlib.suppress(ValueError):
+                    stream.flush()
 
         stdout_fd = self.stdout.detach()
         stderr_fd = self.stderr.detach()
@@ -68,10 +71,18 @@ class ChildStdio:
             _close_unless_standard_fd(stdout_fd)
             _close_unless_standard_fd(stderr_fd)
 
-        _replace_python_stdio()
-        _line_buffer_python_stdio()
-        if sys.__stderr__ is not None:
-            faulthandler.enable(file=sys.__stderr__, all_threads=True)
+        stdout = _open_text_stream_for_fd(_STDOUT_FD, sys.stdout)
+        stderr = _open_text_stream_for_fd(_STDERR_FD, sys.stderr)
+        sys.stdout = stdout
+        sys.stderr = stderr
+        sys.__stdout__ = stdout
+        sys.__stderr__ = stderr
+
+        for stream in (stdout, stderr):
+            with contextlib.suppress(ValueError):
+                stream.reconfigure(line_buffering=True, write_through=True)
+
+        faulthandler.enable(file=stderr, all_threads=True)
 
 
 @final
@@ -261,12 +272,25 @@ def _create_captured_process[**P](
             stdout=ChildFileDescriptor.from_parent_fd(stdout_write_fd),
             stderr=ChildFileDescriptor.from_parent_fd(stderr_write_fd),
         )
-        process = _make_process(
-            options,
-            child_stdio,
-            target,
-            *target_args,
-            **target_kwargs,
+
+        process_context: ProcessContext
+        # Current multiprocessing stubs return BaseContext for union input, and
+        # BaseContext does not expose Process. Keep the literal narrowing here.
+        if options.start_method is None:
+            process_context = mp.get_context()
+        elif options.start_method == "fork":
+            process_context = mp.get_context("fork")
+        elif options.start_method == "forkserver":
+            process_context = mp.get_context("forkserver")
+        else:
+            process_context = mp.get_context("spawn")
+
+        process = process_context.Process(
+            name=options.process_name,
+            target=_run_with_captured_stdio,
+            args=(child_stdio, target, *target_args),
+            kwargs=target_kwargs,
+            daemon=options.daemon,
         )
 
         return CapturedMpProcess(
@@ -286,38 +310,7 @@ def _create_captured_process[**P](
         raise
 
 
-def _make_process[**P](
-    options: CapturedProcessOptions,
-    child_stdio: ChildStdio,
-    target: Callable[P, object],
-    *target_args: P.args,
-    **target_kwargs: P.kwargs,
-) -> BaseProcess:
-    process_args = (child_stdio, target, *target_args)
-    process_context = _get_process_context(options.start_method)
-    return process_context.Process(
-        name=options.process_name,
-        target=_run_with_captured_stdio,
-        args=process_args,
-        kwargs=target_kwargs,
-        daemon=options.daemon,
-    )
-
-
-def _get_process_context(
-    start_method: MultiprocessingStartMethod | None,
-) -> ProcessContext:
-    # Keep the literal branches isolated here. Current multiprocessing stubs return
-    # BaseContext for union input, and BaseContext does not expose Process.
-    if start_method is None:
-        return mp.get_context()
-    if start_method == "fork":
-        return mp.get_context("fork")
-    if start_method == "forkserver":
-        return mp.get_context("forkserver")
-    return mp.get_context("spawn")
-
-
+# Spawn-mode multiprocessing requires a module-level target that can be pickled.
 def _run_with_captured_stdio[**P](
     stdio: ChildStdio,
     target: Callable[P, object],
@@ -339,22 +332,6 @@ async def _drain_fd(fd: int, buffer: CaptureBuffer) -> None:
         _close_fd(fd)
 
 
-def _flush_python_stdio() -> None:
-    for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
-        if stream is not None:
-            with contextlib.suppress(ValueError):
-                stream.flush()
-
-
-def _replace_python_stdio() -> None:
-    stdout = _open_text_stream_for_fd(_STDOUT_FD, sys.stdout)
-    stderr = _open_text_stream_for_fd(_STDERR_FD, sys.stderr)
-    sys.stdout = stdout
-    sys.stderr = stderr
-    sys.__stdout__ = stdout
-    sys.__stderr__ = stderr
-
-
 def _open_text_stream_for_fd(fd: int, fallback: TextIO) -> io.TextIOWrapper:
     encoding = fallback.encoding or "utf-8"
     errors = fallback.errors or "replace"
@@ -366,13 +343,6 @@ def _open_text_stream_for_fd(fd: int, fallback: TextIO) -> io.TextIOWrapper:
         errors=errors,
         closefd=False,
     )
-
-
-def _line_buffer_python_stdio() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        if isinstance(stream, io.TextIOWrapper):
-            with contextlib.suppress(ValueError):
-                stream.reconfigure(line_buffering=True, write_through=True)
 
 
 def _close_unless_standard_fd(fd: int) -> None:
