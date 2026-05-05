@@ -8,9 +8,8 @@ from _pytest.capture import CaptureFixture
 from anyio import EndOfStream, create_task_group, fail_after
 from anyio.abc import ByteReceiveStream
 
-from exo.utils.mp_stdio_capture import (
-    CapturedMpProcess,
-    open_process,
+from exo.utils.async_process import (
+    AsyncSpawnProcess,
 )
 
 
@@ -66,7 +65,7 @@ async def _collect_stream(
 
 
 async def _collect_process_output(
-    process: CapturedMpProcess,
+    process: AsyncSpawnProcess,
 ) -> tuple[int, bytes, bytes]:
     stdout = bytearray()
     stderr = bytearray()
@@ -86,11 +85,12 @@ async def _collect_process_output(
 async def test_spawn_process_captures_stdout_and_stderr_separately(
     capfd: CaptureFixture[str],
 ) -> None:
-    process = await open_process(
+    process = AsyncSpawnProcess(
         _write_to_stdio,
         args=("child",),
         kwargs={"stderr_suffix": "error"},
     )
+    await process.start()
 
     async with process:
         exitcode, stdout_bytes, stderr_bytes = await _collect_process_output(process)
@@ -109,12 +109,13 @@ async def test_spawn_process_captures_stdout_and_stderr_separately(
 
 
 @pytest.mark.asyncio
-async def test_default_open_process_uses_spawn_backend() -> None:
-    process = await open_process(
+async def test_captured_process_uses_spawn_backend() -> None:
+    process = AsyncSpawnProcess(
         _write_to_stdio,
         args=("default",),
         kwargs={"stderr_suffix": "error"},
     )
+    await process.start()
     async with process:
         exitcode, stdout, stderr = await _collect_process_output(process)
 
@@ -125,7 +126,8 @@ async def test_default_open_process_uses_spawn_backend() -> None:
 
 @pytest.mark.asyncio
 async def test_stdout_stream_honors_receive_size() -> None:
-    process = await open_process(_write_large_output)
+    process = AsyncSpawnProcess(_write_large_output)
+    await process.start()
 
     async with process:
         first_stdout = await process.stdout.receive(6)
@@ -148,7 +150,8 @@ async def test_stdout_stream_honors_receive_size() -> None:
 
 @pytest.mark.asyncio
 async def test_child_exception_traceback_is_captured_from_stderr() -> None:
-    process = await open_process(_raise_after_stderr_write)
+    process = AsyncSpawnProcess(_raise_after_stderr_write)
+    await process.start()
 
     async with process:
         exitcode, _, stderr_bytes = await _collect_process_output(process)
@@ -161,7 +164,8 @@ async def test_child_exception_traceback_is_captured_from_stderr() -> None:
 
 @pytest.mark.asyncio
 async def test_aclose_can_cancel_idle_drainers_before_child_exits() -> None:
-    process = await open_process(_sleep_without_output)
+    process = AsyncSpawnProcess(_sleep_without_output)
+    await process.start()
 
     with fail_after(2):
         await process.aclose()
@@ -172,7 +176,8 @@ async def test_aclose_can_cancel_idle_drainers_before_child_exits() -> None:
 @pytest.mark.asyncio
 async def test_death(capsys: CaptureFixture[str]) -> None:
     with capsys.disabled():
-        process = await open_process(_mlx_force_oom)
+        process = AsyncSpawnProcess(_mlx_force_oom)
+        await process.start()
         async with process:
             _, stdout, stderr = await _collect_process_output(process)
 
