@@ -4,7 +4,7 @@
 Uses hosts s2, s4, s9, s10.
 
 Run with:
-    uv run pytest tests/integration/test_4node.py -v
+    uv run pytest tests/test_4node.py -v
 
 Note: tensor/jaccl is excluded because the current 4-node topology (star via s9)
 doesn't form a 4-node jaccl cycle with the default small model. Add it back

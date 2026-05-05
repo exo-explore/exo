@@ -5,11 +5,11 @@ These tests run against real hardware clusters managed by `eco`.
 They are excluded from the default `uv run pytest` run and must be
 invoked explicitly:
 
-    uv run pytest tests/integration/ -v
+    uv run pytest tests/ -v
 
 To override host selection (instead of constraint-based reservation):
 
-    uv run pytest tests/integration/ -v --hosts s2,s4,s9,s10
+    uv run pytest tests/ -v --hosts s2,s4,s9,s10
 """
 
 from __future__ import annotations

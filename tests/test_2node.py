@@ -4,7 +4,7 @@
 Hosts s9 and s10 must be Thunderbolt-connected for jaccl tests.
 
 Run with:
-    uv run pytest tests/integration/test_2node.py -v
+    uv run pytest tests/test_2node.py -v
 """
 
 from __future__ import annotations

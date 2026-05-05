@@ -2,7 +2,7 @@
 """Resilience tests: disconnect/reconnect nodes and verify cluster recovery.
 
 Run with:
-    uv run pytest tests/integration/test_resilience.py -v
+    uv run pytest tests/test_resilience.py -v
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from .helpers import (
 class TestResilience:
     """Tests for cluster resilience during node disconnects."""
 
-    def test_disconnect_reconnect(self, two_node_cluster: ClusterInfo):
+    def test_disconnect_reconnect(self, cluster: ClusterInfo):
         """Full disconnect/reconnect cycle:
 
         1. Place a 2-node instance, verify inference
@@ -37,7 +37,6 @@ class TestResilience:
         6. Clean up 1-node instance, place a 2-node instance again
         7. Verify inference works with both nodes
         """
-        cluster = two_node_cluster
         client = make_client(cluster)
 
         # --- Phase 1: 2-node inference ---

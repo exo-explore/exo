@@ -5,7 +5,7 @@ Prerequisites:
     uv run playwright install chromium
 
 Run with:
-    uv run pytest tests/integration/test_dashboard.py -v
+    uv run pytest tests/test_dashboard.py -v
 """
 
 from __future__ import annotations
