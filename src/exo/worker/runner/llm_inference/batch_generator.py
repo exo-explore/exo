@@ -118,6 +118,10 @@ class SequentialGenerator(Engine):
         | None
     ) = field(default=None, init=False)
 
+    @property
+    def emits_chunks(self) -> bool:
+        return self.device_rank == 0
+
     def warmup(self):
         self.check_for_cancel_every = warmup_inference(
             model=self.model,
@@ -347,6 +351,10 @@ class BatchGenerator(Engine):
             kv_prefix_cache=self.kv_prefix_cache,
             vision_processor=self.vision_processor,
         )
+
+    @property
+    def emits_chunks(self) -> bool:
+        return self.device_rank == 0
 
     def warmup(self):
         self.check_for_cancel_every = warmup_inference(

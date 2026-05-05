@@ -145,6 +145,10 @@ class ImageEngine(Engine):
     queue: deque[ImageTask] = field(init=False, default_factory=deque)
     _cancelled_tasks: set[TaskId] = field(init=False, default_factory=set)
 
+    @property
+    def emits_chunks(self) -> bool:
+        return _is_primary_output_node(self.shard_metadata)
+
     def warmup(self) -> None:
         image = warmup_image_generator(model=self.image_model)
         if image is not None:

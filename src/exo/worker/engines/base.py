@@ -22,6 +22,10 @@ class Engine(ABC):
             or CANCEL_ALL_TASKS in self._cancelled_tasks
         )
 
+    @property
+    @abstractmethod
+    def emits_chunks(self) -> bool: ...
+
     @abstractmethod
     def warmup(self) -> None: ...
 
