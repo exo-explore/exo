@@ -60,3 +60,4 @@ env_logger.workspace = true
 zenoh.workspace = true
 zerompk.workspace = true
 rand = "0.10.1"
+serde_json = "1.0.149"
