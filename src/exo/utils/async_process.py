@@ -6,11 +6,11 @@ import faulthandler
 import multiprocessing as mp
 import os
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from multiprocessing.process import BaseProcess
 from multiprocessing.resource_sharer import DupFd
 from signal import Signals
-from typing import Any, Iterable, final
+from typing import final
 
 from anyio import (
     BrokenResourceError,
@@ -65,14 +65,14 @@ class MemoryByteReceiveStream(ByteReceiveStream):
 @final
 class AsyncSpawnProcess(AnyioProcess):
     def __init__(
-            self,
-            target: Callable[..., object] | None = None,
-            name: str | None = None,
-            args: Iterable[Any] = (),
-            kwargs: Mapping[str, Any] = {},
-            *,
-            daemon: bool | None = None,
-            stream_buffer_size: int = 16,
+        self,
+        target: Callable[..., object] | None = None,
+        name: str | None = None,
+        args: Iterable[object] = (),
+        kwargs: Mapping[str, object] | None = None,
+        *,
+        daemon: bool | None = None,
+        stream_buffer_size: int = 16,
     ) -> None:
         if stream_buffer_size <= 0:
             raise ValueError("stream_buffer_size must be positive")
@@ -120,7 +120,7 @@ class AsyncSpawnProcess(AnyioProcess):
                     self._target,
                     *self._args,
                 ),
-                kwargs=self._kwargs,
+                kwargs={} if self._kwargs is None else self._kwargs,
                 daemon=self._daemon,
             )
             process.start()
@@ -149,10 +149,10 @@ class AsyncSpawnProcess(AnyioProcess):
                 with contextlib.suppress(Exception):
                     await stream.aclose()
             for fd in (
-                    stdout_read_fd,
-                    stdout_write_fd,
-                    stderr_read_fd,
-                    stderr_write_fd,
+                stdout_read_fd,
+                stdout_write_fd,
+                stderr_read_fd,
+                stderr_write_fd,
             ):
                 _close_fd(fd)
             raise
@@ -247,11 +247,11 @@ class AsyncSpawnProcess(AnyioProcess):
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
 def _run_with_captured_stdio(
-        stdout: DupFd,
-        stderr: DupFd,
-        target: Callable[..., object],
-        *target_args: object,
-        **target_kwargs: object,
+    stdout: DupFd,
+    stderr: DupFd,
+    target: Callable[..., object] | None,
+    *target_args: object,
+    **target_kwargs: object,
 ) -> None:
     stdout_fd = stdout.detach()
     stderr_fd = stderr.detach()
@@ -265,7 +265,8 @@ def _run_with_captured_stdio(
                 _close_fd(fd)
 
     faulthandler.enable(file=sys.stderr, all_threads=True)
-    target(*target_args, **target_kwargs)
+    if target is not None:
+        target(*target_args, **target_kwargs)
 
 
 async def _drain_fd(fd: int, send_stream: ObjectSendStream[bytes]) -> None:
