@@ -25,7 +25,7 @@ def _raise_after_stderr_write() -> None:
     raise RuntimeError("child boom")
 
 
-def _mlx_force_oom(size: int = 150_000) -> None:
+def _mlx_force_oom(size: int = 29_500) -> None:
     """
     Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
     """
