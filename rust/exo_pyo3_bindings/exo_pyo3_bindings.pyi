@@ -92,3 +92,59 @@ class PyFromSwarm:
     
     ...
 
+@typing.final
+class UnixBlobChannel:
+    @staticmethod
+    def pair() -> tuple[UnixBlobChannel, UnixBlobChannel]:
+        r"""
+        Create a connected pair of unnamed Unix blob channels.
+        """
+    @staticmethod
+    def from_raw_fd(fd: builtins.int) -> UnixBlobChannel:
+        r"""
+        Wrap an inherited raw file descriptor.
+        
+        The returned object owns `fd`; do not close or reuse that descriptor
+        elsewhere after calling this method.
+        """
+    def raw_fd(self) -> builtins.int:
+        r"""
+        Return the underlying file descriptor without transferring ownership.
+        """
+    def fileno(self) -> builtins.int:
+        r"""
+        Alias for [`raw_fd`], matching Python file-like objects.
+        """
+    def into_raw_fd(self) -> builtins.int:
+        r"""
+        Consume this channel and return its file descriptor.
+        
+        After this method succeeds, the Python object is closed and the caller
+        owns the returned descriptor.
+        """
+    def close(self) -> None:
+        r"""
+        Close this channel.
+        """
+    def closed(self) -> builtins.bool:
+        r"""
+        Return whether this channel has been closed or consumed.
+        """
+    def send(self, bytes: bytes) -> None:
+        r"""
+        Send one binary blob.
+        """
+    def recv(self) -> bytes:
+        r"""
+        Receive one binary blob using the default maximum blob size.
+        """
+    def recv_with_max_blob_size(self, max_blob_size: builtins.int) -> bytes:
+        r"""
+        Receive one binary blob, allowing at most `max_blob_size` bytes.
+        """
+    @staticmethod
+    def default_max_blob_size() -> builtins.int:
+        r"""
+        Default maximum blob size accepted by `recv`.
+        """
+

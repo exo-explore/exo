@@ -6,6 +6,7 @@ from exo_pyo3_bindings import (
     NetworkingHandle,
     NoPeersSubscribedToTopicError,
     PyFromSwarm,
+    UnixBlobChannel,
 )
 
 
@@ -34,3 +35,22 @@ async def _await_recv(h: NetworkingHandle):
                 print(f"PYTHON: connection update: {c}")
             case PyFromSwarm.Message() as m:
                 print(f"PYTHON: message: {m}")
+
+
+def test_unix_blob_channel_roundtrip() -> None:
+    left, right = UnixBlobChannel.pair()
+
+    left.send(b"hello")
+
+    assert right.recv() == b"hello"
+
+
+def test_unix_blob_channel_raw_fd_handoff() -> None:
+    left, right = UnixBlobChannel.pair()
+    raw_fd = right.into_raw_fd()
+    adopted = UnixBlobChannel.from_raw_fd(raw_fd)
+
+    left.send(b"from raw fd")
+
+    assert adopted.recv() == b"from raw fd"
+    assert right.closed()
