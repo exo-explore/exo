@@ -120,4 +120,4 @@ async def test_death(capsys: CaptureFixture[str]) -> None:
         print("PARENT: done")
 
         print("CHILD out:", result.output.stdout_text())
-        print("CHILD err:", result.output.stderr_text())
+        print("CHILD err:", result.output.stderr_text(), "hello :)")
