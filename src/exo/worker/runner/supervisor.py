@@ -71,11 +71,11 @@ class RunnerSupervisor:
 
     @classmethod
     def create(
-        cls,
-        *,
-        bound_instance: BoundInstance,
-        event_sender: Sender[Event],
-        initialize_timeout: float = 400,
+            cls,
+            *,
+            bound_instance: BoundInstance,
+            event_sender: Sender[Event],
+            initialize_timeout: float = 400,
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event]()
         task_sender, task_recv = mp_channel[Task]()
@@ -219,8 +219,8 @@ class RunnerSupervisor:
                         self.pending.pop(event.task_id).set()
                         continue
                     if (
-                        isinstance(event, TaskStatusUpdated)
-                        and event.task_status == TaskStatus.Complete
+                            isinstance(event, TaskStatusUpdated)
+                            and event.task_status == TaskStatus.Complete
                     ):
                         # If a task has just been completed, we should be working on it.
                         assert isinstance(

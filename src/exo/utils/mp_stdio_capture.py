@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import faulthandler
 import io
 import multiprocessing as mp
 import os
 import sys
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from multiprocessing.context import (
@@ -17,10 +17,26 @@ from multiprocessing.context import (
 )
 from multiprocessing.process import BaseProcess
 from multiprocessing.resource_sharer import DupFd
-from types import TracebackType
+from signal import Signals
 from typing import Literal, Self, TextIO, final
 
-from anyio import create_task_group, to_thread
+from anyio import (
+    BrokenResourceError,
+    CancelScope,
+    ClosedResourceError,
+    create_memory_object_stream,
+    to_thread,
+    wait_readable,
+)
+from anyio.abc import (
+    ByteReceiveStream,
+    ByteSendStream,
+    ObjectReceiveStream,
+    ObjectSendStream,
+)
+from anyio.abc import (
+    Process as AnyioProcess,
+)
 
 _STDOUT_FD = 1
 _STDERR_FD = 2
@@ -87,40 +103,30 @@ class ChildStdio:
 
 @final
 @dataclass(frozen=True)
-class CapturedOutput:
-    stdout: bytes
-    stderr: bytes
-
-    def stdout_text(self, encoding: str = "utf-8", errors: str = "replace") -> str:
-        return self.stdout.decode(encoding, errors=errors)
-
-    def stderr_text(self, encoding: str = "utf-8", errors: str = "replace") -> str:
-        return self.stderr.decode(encoding, errors=errors)
-
-
-@final
-@dataclass(frozen=True)
-class CapturedProcessResult:
-    exitcode: int | None
-    output: CapturedOutput
-
-
-@final
-@dataclass(frozen=True)
 class CapturedProcessOptions:
     process_name: str | None = None
     daemon: bool | None = None
     start_method: MultiprocessingStartMethod | None = None
-    max_capture_bytes: int | None = None
+    stream_buffer_size: int = 16
 
-    def create_process[**P](
+    async def open_process[**P](
         self,
         target: Callable[P, object],
         *target_args: P.args,
         **target_kwargs: P.kwargs,
     ) -> CapturedMpProcess:
+        if self.stream_buffer_size <= 0:
+            raise ValueError("stream_buffer_size must be positive")
+
         stdout_read_fd, stdout_write_fd = os.pipe()
         stderr_read_fd, stderr_write_fd = os.pipe()
+        stdout_send, stdout_receive = create_memory_object_stream[bytes](
+            self.stream_buffer_size
+        )
+        stderr_send, stderr_receive = create_memory_object_stream[bytes](
+            self.stream_buffer_size
+        )
+        drain_tasks: tuple[asyncio.Task[None], ...] = ()
 
         try:
             child_stdio = ChildStdio(
@@ -147,19 +153,35 @@ class CapturedProcessOptions:
                 kwargs=target_kwargs,
                 daemon=self.daemon,
             )
+            process.start()
+            pid = process.pid
+            if pid is None:
+                raise RuntimeError("started process has no pid")
 
+            _close_fd(stdout_write_fd)
+            _close_fd(stderr_write_fd)
+
+            drain_tasks = (
+                asyncio.create_task(_drain_fd(stdout_read_fd, stdout_send)),
+                asyncio.create_task(_drain_fd(stderr_read_fd, stderr_send)),
+            )
             return CapturedMpProcess(
                 process=process,
-                capture=PipeStdioCapture(
-                    _stdout_read_fd=stdout_read_fd,
-                    _stderr_read_fd=stderr_read_fd,
-                    stdout=CaptureBuffer(max_bytes=self.max_capture_bytes),
-                    stderr=CaptureBuffer(max_bytes=self.max_capture_bytes),
-                ),
-                _stdout_write_fd=stdout_write_fd,
-                _stderr_write_fd=stderr_write_fd,
+                _pid=pid,
+                _stdout=MemoryByteReceiveStream(stdout_receive),
+                _stderr=MemoryByteReceiveStream(stderr_receive),
+                _drain_tasks=drain_tasks,
             )
         except BaseException:
+            await _cancel_drain_tasks(drain_tasks)
+            with contextlib.suppress(Exception):
+                await stdout_send.aclose()
+            with contextlib.suppress(Exception):
+                await stderr_send.aclose()
+            with contextlib.suppress(Exception):
+                await stdout_receive.aclose()
+            with contextlib.suppress(Exception):
+                await stderr_receive.aclose()
             for fd in (
                 stdout_read_fd,
                 stdout_write_fd,
@@ -170,122 +192,118 @@ class CapturedProcessOptions:
             raise
 
 
+async def open_process[**P](
+    target: Callable[P, object],
+    *target_args: P.args,
+    **target_kwargs: P.kwargs,
+) -> CapturedMpProcess:
+    return await CapturedProcessOptions().open_process(
+        target,
+        *target_args,
+        **target_kwargs,
+    )
+
+
 @final
 @dataclass(eq=False)
-class CaptureBuffer:
-    max_bytes: int | None = None
+class MemoryByteReceiveStream(ByteReceiveStream):
+    _receive_stream: ObjectReceiveStream[bytes]
     _buffer: bytearray = field(default_factory=bytearray, init=False)
-    _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
 
-    def __post_init__(self) -> None:
-        if self.max_bytes is not None and self.max_bytes <= 0:
-            raise ValueError("max_bytes must be positive when provided")
+    async def receive(self, max_bytes: int = _READ_CHUNK_SIZE) -> bytes:
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
 
-    def append(self, chunk: bytes) -> None:
-        if not chunk:
-            return
+        if not self._buffer:
+            self._buffer.extend(await self._receive_stream.receive())
 
-        with self._lock:
-            self._buffer.extend(chunk)
-            if self.max_bytes is not None and len(self._buffer) > self.max_bytes:
-                del self._buffer[: len(self._buffer) - self.max_bytes]
+        chunk = bytes(self._buffer[:max_bytes])
+        del self._buffer[:max_bytes]
+        return chunk
 
-    def snapshot(self) -> bytes:
-        with self._lock:
-            return bytes(self._buffer)
-
-    def snapshot_text(self, encoding: str = "utf-8", errors: str = "replace") -> str:
-        return self.snapshot().decode(encoding, errors=errors)
+    async def aclose(self) -> None:
+        self._buffer.clear()
+        await self._receive_stream.aclose()
 
 
 @final
 @dataclass(eq=False)
-class PipeStdioCapture:
-    _stdout_read_fd: int
-    _stderr_read_fd: int
-    stdout: CaptureBuffer
-    stderr: CaptureBuffer
+class CapturedMpProcess(AnyioProcess):
+    process: BaseProcess
+    _pid: int
+    _stdout: MemoryByteReceiveStream
+    _stderr: MemoryByteReceiveStream
+    _drain_tasks: tuple[asyncio.Task[None], ...]
     _closed: bool = field(default=False, init=False)
+    _returncode: int | None = field(default=None, init=False)
 
-    async def drain(self) -> None:
-        async with create_task_group() as task_group:
-            task_group.start_soon(_drain_fd, self._stdout_read_fd, self.stdout)
-            task_group.start_soon(_drain_fd, self._stderr_read_fd, self.stderr)
-        self._closed = True
-
-    def snapshot(self) -> CapturedOutput:
-        return CapturedOutput(
-            stdout=self.stdout.snapshot(),
-            stderr=self.stderr.snapshot(),
-        )
-
-    def close(self) -> None:
+    async def aclose(self) -> None:
         if self._closed:
             return
+
         self._closed = True
-        _close_fd(self._stdout_read_fd)
-        _close_fd(self._stderr_read_fd)
+        with CancelScope(shield=True) as scope:
+            await self._stdout.aclose()
+            await self._stderr.aclose()
+            await _cancel_drain_tasks(self._drain_tasks)
 
+            scope.shield = False
+            try:
+                await self.wait()
+            except BaseException:
+                scope.shield = True
+                self.kill()
+                await self.wait()
+                raise
+            finally:
+                with contextlib.suppress(ValueError):
+                    self.process.close()
 
-@final
-@dataclass(eq=False)
-class CapturedMpProcess:
-    process: BaseProcess
-    capture: PipeStdioCapture
-    _stdout_write_fd: int
-    _stderr_write_fd: int
-    _started: bool = field(default=False, init=False)
-    _parent_write_fds_closed: bool = field(default=False, init=False)
+    async def wait(self) -> int:
+        if self._returncode is not None:
+            return self._returncode
 
-    def start(self) -> None:
-        if self._started:
-            raise RuntimeError("process has already been started")
+        await to_thread.run_sync(self.process.join)
+        exitcode = self.process.exitcode
+        if exitcode is None:
+            raise RuntimeError("process exited without an exit code")
 
-        try:
-            self.process.start()
-        except BaseException:
-            self.close_parent_fds()
-            raise
+        self._returncode = exitcode
+        return exitcode
 
-        self._started = True
-        self.close_parent_write_fds()
+    def terminate(self) -> None:
+        self.process.terminate()
 
-    async def wait(self, timeout: float | None = None) -> int | None:
-        await to_thread.run_sync(self.process.join, timeout)
-        return self.process.exitcode
+    def kill(self) -> None:
+        self.process.kill()
 
-    async def run(self) -> CapturedProcessResult:
-        self.start()
-        async with create_task_group() as task_group:
-            task_group.start_soon(self.capture.drain)
-            await self.wait()
+    def send_signal(self, signal: Signals) -> None:
+        os.kill(self.pid, signal)
 
-        return CapturedProcessResult(
-            exitcode=self.process.exitcode,
-            output=self.capture.snapshot(),
-        )
+    @property
+    def pid(self) -> int:
+        return self._pid
 
-    def close_parent_write_fds(self) -> None:
-        if self._parent_write_fds_closed:
-            return
-        self._parent_write_fds_closed = True
-        _close_fd(self._stdout_write_fd)
-        _close_fd(self._stderr_write_fd)
+    @property
+    def returncode(self) -> int | None:
+        if self._returncode is not None:
+            return self._returncode
 
-    def close_parent_fds(self) -> None:
-        self.close_parent_write_fds()
-        self.capture.close()
+        with contextlib.suppress(ValueError):
+            return self.process.exitcode
+        return None
 
-    def __enter__(self) -> Self:
-        return self
+    @property
+    def stdin(self) -> ByteSendStream | None:
+        return None
 
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
-        self.close_parent_fds()
+    @property
+    def stdout(self) -> ByteReceiveStream:
+        return self._stdout
+
+    @property
+    def stderr(self) -> ByteReceiveStream:
+        return self._stderr
 
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
@@ -299,15 +317,33 @@ def _run_with_captured_stdio[**P](
     target(*target_args, **target_kwargs)
 
 
-async def _drain_fd(fd: int, buffer: CaptureBuffer) -> None:
+async def _drain_fd(fd: int, send_stream: ObjectSendStream[bytes]) -> None:
     try:
         while True:
-            chunk = await to_thread.run_sync(os.read, fd, _READ_CHUNK_SIZE)
+            await wait_readable(fd)
+            chunk = os.read(fd, _READ_CHUNK_SIZE)
             if not chunk:
                 return
-            buffer.append(chunk)
+            await send_stream.send(chunk)
+    except (BrokenPipeError, BrokenResourceError, ClosedResourceError):
+        pass
     finally:
         _close_fd(fd)
+        await send_stream.aclose()
+
+
+async def _cancel_drain_tasks(tasks: tuple[asyncio.Task[None], ...]) -> None:
+    if not tasks:
+        return
+
+    for task in tasks:
+        task.cancel()
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for result in results:
+        if result is None or isinstance(result, asyncio.CancelledError):
+            continue
+        raise result
 
 
 def _open_text_stream_for_fd(fd: int, fallback: TextIO) -> io.TextIOWrapper:

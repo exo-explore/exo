@@ -1,11 +1,18 @@
 import os
 import sys
+import time
 
 import mlx.core as mx
 import pytest
 from _pytest.capture import CaptureFixture
+from anyio import EndOfStream, create_task_group, fail_after
+from anyio.abc import ByteReceiveStream
 
-from exo.utils.mp_stdio_capture import CapturedProcessOptions
+from exo.utils.mp_stdio_capture import (
+    CapturedMpProcess,
+    CapturedProcessOptions,
+    open_process,
+)
 
 
 def _write_to_stdio(prefix: str, *, stderr_suffix: str) -> None:
@@ -25,11 +32,15 @@ def _raise_after_stderr_write() -> None:
     raise RuntimeError("child boom")
 
 
+def _sleep_without_output() -> None:
+    time.sleep(0.1)
+
+
 def _mlx_force_oom(size: int = 40_000) -> None:
     """
     Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
     """
-    print(f"CHILD: start")
+    print("CHILD: start")
 
     mx.set_default_device(mx.gpu)
     a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
@@ -41,27 +52,56 @@ def _mlx_force_oom(size: int = 40_000) -> None:
     f = mx.sigmoid(d + e)
     mx.eval(f)
 
-    print(f"CHILD: end")
+    print("CHILD: end")
+
+
+async def _collect_stream(
+    stream: ByteReceiveStream,
+    output: bytearray,
+) -> None:
+    while True:
+        try:
+            output.extend(await stream.receive())
+        except EndOfStream:
+            return
+
+
+async def _collect_process_output(
+    process: CapturedMpProcess,
+) -> tuple[int, bytes, bytes]:
+    stdout = bytearray()
+    stderr = bytearray()
+
+    async with create_task_group() as task_group:
+        task_group.start_soon(_collect_stream, process.stdout, stdout)
+        task_group.start_soon(_collect_stream, process.stderr, stderr)
+        await process.wait()
+
+    if process.returncode is None:
+        raise RuntimeError("process exited without a return code")
+    exitcode = process.returncode
+    return exitcode, bytes(stdout), bytes(stderr)
 
 
 @pytest.mark.asyncio
 async def test_spawn_process_captures_stdout_and_stderr_separately(
-        capfd: CaptureFixture[str],
+    capfd: CaptureFixture[str],
 ) -> None:
     options = CapturedProcessOptions(start_method="spawn")
-    captured = options.create_process(
+    process = await options.open_process(
         _write_to_stdio,
         "child",
         stderr_suffix="error",
     )
 
-    result = await captured.run()
+    async with process:
+        exitcode, stdout_bytes, stderr_bytes = await _collect_process_output(process)
 
     parent_output = capfd.readouterr()
-    stdout = result.output.stdout_text()
-    stderr = result.output.stderr_text()
+    stdout = stdout_bytes.decode("utf-8", errors="replace")
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
 
-    assert result.exitcode == 0
+    assert exitcode == 0
     assert "child: python stdout" in stdout
     assert "child: fd stdout" in stdout
     assert "child: python stderr error" in stderr
@@ -75,49 +115,78 @@ async def test_spawn_process_captures_stdout_and_stderr_separately(
     "ignore:This process .* is multi-threaded.*:DeprecationWarning"
 )
 async def test_default_options_use_current_multiprocessing_context() -> None:
-    result = (
-        await CapturedProcessOptions()
-        .create_process(
-            _write_to_stdio,
-            "default",
-            stderr_suffix="error",
-        )
-        .run()
+    process = await open_process(
+        _write_to_stdio,
+        "default",
+        stderr_suffix="error",
     )
+    async with process:
+        exitcode, stdout, stderr = await _collect_process_output(process)
 
-    assert result.exitcode == 0
-    assert "default: python stdout" in result.output.stdout_text()
-    assert "default: python stderr error" in result.output.stderr_text()
+    assert exitcode == 0
+    assert b"default: python stdout" in stdout
+    assert b"default: python stderr error" in stderr
 
 
 @pytest.mark.asyncio
-async def test_capture_can_keep_bounded_tail() -> None:
-    options = CapturedProcessOptions(start_method="spawn", max_capture_bytes=8)
-    result = await options.create_process(_write_large_output).run()
+async def test_stdout_stream_honors_receive_size() -> None:
+    options = CapturedProcessOptions(start_method="spawn")
+    process = await options.open_process(_write_large_output)
 
-    assert result.exitcode == 0
-    assert result.output.stdout == b"23456789"
-    assert result.output.stderr == b"23456789"
+    async with process:
+        first_stdout = await process.stdout.receive(6)
+        remaining_stdout = bytearray()
+        stderr = bytearray()
+
+        async with create_task_group() as task_group:
+            task_group.start_soon(_collect_stream, process.stdout, remaining_stdout)
+            task_group.start_soon(_collect_stream, process.stderr, stderr)
+            await process.wait()
+
+    if process.returncode is None:
+        raise RuntimeError("process exited without a return code")
+    exitcode = process.returncode
+    assert exitcode == 0
+    assert first_stdout == b"stdout"
+    assert bytes(remaining_stdout) == b"-0123456789"
+    assert bytes(stderr) == b"stderr-0123456789"
 
 
 @pytest.mark.asyncio
 async def test_child_exception_traceback_is_captured_from_stderr() -> None:
     options = CapturedProcessOptions(start_method="spawn")
-    result = await options.create_process(_raise_after_stderr_write).run()
+    process = await options.open_process(_raise_after_stderr_write)
 
-    assert result.exitcode == 1
-    stderr = result.output.stderr_text()
+    async with process:
+        exitcode, _, stderr_bytes = await _collect_process_output(process)
+
+    assert exitcode == 1
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
     assert "stderr before exception" in stderr
     assert "RuntimeError: child boom" in stderr
+
+
+@pytest.mark.asyncio
+async def test_aclose_can_cancel_idle_drainers_before_child_exits() -> None:
+    process = await CapturedProcessOptions(start_method="spawn").open_process(
+        _sleep_without_output
+    )
+
+    with fail_after(2):
+        await process.aclose()
+
+    assert process.returncode == 0
 
 
 @pytest.mark.asyncio
 async def test_death(capsys: CaptureFixture[str]) -> None:
     with capsys.disabled():
         options = CapturedProcessOptions(start_method="spawn")
-        result = await options.create_process(_mlx_force_oom).run()
+        process = await options.open_process(_mlx_force_oom)
+        async with process:
+            _, stdout, stderr = await _collect_process_output(process)
 
         print("PARENT: done")
 
-        print("CHILD out:", result.output.stdout_text())
-        print("CHILD err:", result.output.stderr_text(), "hello :)")
+        print("CHILD out:", stdout.decode("utf-8", errors="replace"))
+        print("CHILD err:", stderr.decode("utf-8", errors="replace"), "hello :)")
