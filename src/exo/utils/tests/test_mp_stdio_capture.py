@@ -109,9 +109,11 @@ async def test_child_exception_traceback_is_captured_from_stderr() -> None:
 
 @pytest.mark.asyncio
 async def test_death(capsys: CaptureFixture[str]) -> None:
-    options = CapturedProcessOptions(start_method="spawn")
-    result = await options.create_process(_mlx_force_oom).run()
-
     with capsys.disabled():
-        print(result.output.stdout_text())
-        print(result.output.stderr_text())
+        options = CapturedProcessOptions(start_method="spawn")
+        result = await options.create_process(_mlx_force_oom).run()
+
+        print("PARENT: done")
+
+        # print(result.output.stdout_text())
+        # print(result.output.stderr_text())
