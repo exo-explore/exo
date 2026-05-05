@@ -197,9 +197,14 @@ class SequentialGenerator(Engine):
             self._active = None
             raise
 
-        return itertools.chain(
-            output,
-            map(lambda task: (task, CancelledResponse()), self._cancelled_tasks),
+        return filter(
+            lambda chunk: (
+                not isinstance(chunk[1], GenerationChunk) or self.device_rank == 0
+            ),
+            itertools.chain(
+                output,
+                map(lambda task: (task, CancelledResponse()), self._cancelled_tasks),
+            ),
         )
 
     def _start_next(self) -> None:
@@ -449,7 +454,12 @@ class BatchGenerator(Engine):
                 output.append((task.task_id, FinishedResponse()))
                 del self._active_tasks[uid]
 
-        return itertools.chain(output, self._apply_cancellations())
+        return filter(
+            lambda chunk: (
+                not isinstance(chunk[1], GenerationChunk) or self.device_rank == 0
+            ),
+            itertools.chain(output, self._apply_cancellations()),
+        )
 
     def _apply_cancellations(
         self,

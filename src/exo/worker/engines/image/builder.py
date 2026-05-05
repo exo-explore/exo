@@ -169,7 +169,11 @@ class ImageEngine(Engine):
             task = self.queue.popleft()
             self.current_gen = self._run_image_task(task.task_id, task.task_params)
             resp = next(self.current_gen, None)
-        return (resp,) if resp is not None else ()
+        return (
+            (resp,)
+            if resp is not None and _is_primary_output_node(self.shard_metadata)
+            else ()
+        )
 
     def close(self) -> None:
         with contextlib.suppress(NameError, AttributeError):
