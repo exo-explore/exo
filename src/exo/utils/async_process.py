@@ -7,11 +7,10 @@ import multiprocessing as mp
 import os
 import sys
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
 from multiprocessing.process import BaseProcess
 from multiprocessing.resource_sharer import DupFd
 from signal import Signals
-from typing import final
+from typing import Any, Iterable, final
 
 from anyio import (
     BrokenResourceError,
@@ -37,10 +36,10 @@ _READ_CHUNK_SIZE = 64 * 1024
 
 
 @final
-@dataclass(eq=False)
 class MemoryByteReceiveStream(ByteReceiveStream):
-    _receive_stream: ObjectReceiveStream[bytes]
-    _buffer: bytearray = field(default_factory=bytearray, init=False)
+    def __init__(self, receive_stream: ObjectReceiveStream[bytes]) -> None:
+        self._receive_stream = receive_stream
+        self._buffer = bytearray()
 
     async def receive(self, max_bytes: int = _READ_CHUNK_SIZE) -> bytes:
         if max_bytes <= 0:
@@ -64,25 +63,36 @@ class MemoryByteReceiveStream(ByteReceiveStream):
 
 
 @final
-@dataclass(eq=False)
 class AsyncSpawnProcess(AnyioProcess):
-    target: Callable[..., object]
-    args: tuple[object, ...] = ()
-    kwargs: Mapping[str, object] | None = None
-    name: str | None = None
-    daemon: bool | None = None
-    stream_buffer_size: int = 16
-    _process: BaseProcess | None = field(default=None, init=False)
-    _pid: int | None = field(default=None, init=False)
-    _stdout: MemoryByteReceiveStream | None = field(default=None, init=False)
-    _stderr: MemoryByteReceiveStream | None = field(default=None, init=False)
-    _drain_tasks: tuple[asyncio.Task[None], ...] = field(default=(), init=False)
-    _closed: bool = field(default=False, init=False)
-    _returncode: int | None = field(default=None, init=False)
-
-    def __post_init__(self) -> None:
-        if self.stream_buffer_size <= 0:
+    def __init__(
+            self,
+            target: Callable[..., object] | None = None,
+            name: str | None = None,
+            args: Iterable[Any] = (),
+            kwargs: Mapping[str, Any] = {},
+            *,
+            daemon: bool | None = None,
+            stream_buffer_size: int = 16,
+    ) -> None:
+        if stream_buffer_size <= 0:
             raise ValueError("stream_buffer_size must be positive")
+
+        # setup state
+        self._target = target
+        self._name = name
+        self._args = args
+        self._kwargs = kwargs
+        self._daemon = daemon
+        self._stream_buffer_size = stream_buffer_size
+
+        # lifecycle state
+        self._process: BaseProcess | None = None
+        self._pid: int | None = None
+        self._stdout: MemoryByteReceiveStream | None = None
+        self._stderr: MemoryByteReceiveStream | None = None
+        self._drain_tasks: tuple[asyncio.Task[None], ...] = ()
+        self._closed = False
+        self._returncode: int | None = None
 
     async def start(self) -> None:
         if self._closed:
@@ -93,38 +103,41 @@ class AsyncSpawnProcess(AnyioProcess):
         stdout_read_fd, stdout_write_fd = os.pipe()
         stderr_read_fd, stderr_write_fd = os.pipe()
         stdout_send, stdout_receive = create_memory_object_stream[bytes](
-            self.stream_buffer_size
+            self._stream_buffer_size
         )
         stderr_send, stderr_receive = create_memory_object_stream[bytes](
-            self.stream_buffer_size
+            self._stream_buffer_size
         )
         drain_tasks: tuple[asyncio.Task[None], ...] = ()
 
         try:
             process = mp.get_context("spawn").Process(
-                name=self.name,
                 target=_run_with_captured_stdio,
+                name=self._name,
                 args=(
                     DupFd(stdout_write_fd),
                     DupFd(stderr_write_fd),
-                    self.target,
-                    *self.args,
+                    self._target,
+                    *self._args,
                 ),
-                kwargs={} if self.kwargs is None else self.kwargs,
-                daemon=self.daemon,
+                kwargs=self._kwargs,
+                daemon=self._daemon,
             )
             process.start()
             pid = process.pid
             if pid is None:
                 raise RuntimeError("started process has no pid")
 
+            # important to close parent write-side FD to prevent hangs
             _close_fd(stdout_write_fd)
             _close_fd(stderr_write_fd)
 
+            # drain the read-end FD into async memory-buffer stream
             drain_tasks = (
                 asyncio.create_task(_drain_fd(stdout_read_fd, stdout_send)),
                 asyncio.create_task(_drain_fd(stderr_read_fd, stderr_send)),
             )
+
             self._process = process
             self._pid = pid
             self._stdout = MemoryByteReceiveStream(stdout_receive)
@@ -132,19 +145,14 @@ class AsyncSpawnProcess(AnyioProcess):
             self._drain_tasks = drain_tasks
         except BaseException:
             await _cancel_drain_tasks(drain_tasks)
-            with contextlib.suppress(Exception):
-                await stdout_send.aclose()
-            with contextlib.suppress(Exception):
-                await stderr_send.aclose()
-            with contextlib.suppress(Exception):
-                await stdout_receive.aclose()
-            with contextlib.suppress(Exception):
-                await stderr_receive.aclose()
+            for stream in (stdout_send, stderr_send, stdout_receive, stderr_receive):
+                with contextlib.suppress(Exception):
+                    await stream.aclose()
             for fd in (
-                stdout_read_fd,
-                stdout_write_fd,
-                stderr_read_fd,
-                stderr_write_fd,
+                    stdout_read_fd,
+                    stdout_write_fd,
+                    stderr_read_fd,
+                    stderr_write_fd,
             ):
                 _close_fd(fd)
             raise
@@ -214,8 +222,9 @@ class AsyncSpawnProcess(AnyioProcess):
         return None
 
     @property
-    def stdin(self) -> ByteSendStream | None:
-        return None
+    def stdin(self) -> ByteSendStream:
+        # todo: implement this if ever needed
+        raise NotImplementedError("custom stdin streams have not yet been implemented")
 
     @property
     def stdout(self) -> ByteReceiveStream:
@@ -238,11 +247,11 @@ class AsyncSpawnProcess(AnyioProcess):
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
 def _run_with_captured_stdio(
-    stdout: DupFd,
-    stderr: DupFd,
-    target: Callable[..., object],
-    *target_args: object,
-    **target_kwargs: object,
+        stdout: DupFd,
+        stderr: DupFd,
+        target: Callable[..., object],
+        *target_args: object,
+        **target_kwargs: object,
 ) -> None:
     stdout_fd = stdout.detach()
     stderr_fd = stderr.detach()
