@@ -6,7 +6,7 @@ import faulthandler
 import multiprocessing as mp
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from multiprocessing.process import BaseProcess
 from multiprocessing.resource_sharer import DupFd
@@ -36,94 +36,75 @@ _STDERR_FD = 2
 _READ_CHUNK_SIZE = 64 * 1024
 
 
-@final
-@dataclass(frozen=True)
-class CapturedProcessOptions:
-    process_name: str | None = None
-    daemon: bool | None = None
-    stream_buffer_size: int = 16
-
-    async def open_process[**P](
-            self,
-            target: Callable[P, object],
-            *target_args: P.args,
-            **target_kwargs: P.kwargs,
-    ) -> CapturedMpProcess:
-        if self.stream_buffer_size <= 0:
-            raise ValueError("stream_buffer_size must be positive")
-
-        stdout_read_fd, stdout_write_fd = os.pipe()
-        stderr_read_fd, stderr_write_fd = os.pipe()
-        stdout_send, stdout_receive = create_memory_object_stream[bytes](
-            self.stream_buffer_size
-        )
-        stderr_send, stderr_receive = create_memory_object_stream[bytes](
-            self.stream_buffer_size
-        )
-        drain_tasks: tuple[asyncio.Task[None], ...] = ()
-
-        try:
-            process = mp.get_context("spawn").Process(
-                name=self.process_name,
-                target=_run_with_captured_stdio,
-                args=(
-                    DupFd(stdout_write_fd),
-                    DupFd(stderr_write_fd),
-                    target,
-                    *target_args,
-                ),
-                kwargs=target_kwargs,
-                daemon=self.daemon,
-            )
-            process.start()
-            pid = process.pid
-            if pid is None:
-                raise RuntimeError("started process has no pid")
-
-            _close_fd(stdout_write_fd)
-            _close_fd(stderr_write_fd)
-
-            drain_tasks = (
-                asyncio.create_task(_drain_fd(stdout_read_fd, stdout_send)),
-                asyncio.create_task(_drain_fd(stderr_read_fd, stderr_send)),
-            )
-            return CapturedMpProcess(
-                process=process,
-                _pid=pid,
-                _stdout=MemoryByteReceiveStream(stdout_receive),
-                _stderr=MemoryByteReceiveStream(stderr_receive),
-                _drain_tasks=drain_tasks,
-            )
-        except BaseException:
-            await _cancel_drain_tasks(drain_tasks)
-            with contextlib.suppress(Exception):
-                await stdout_send.aclose()
-            with contextlib.suppress(Exception):
-                await stderr_send.aclose()
-            with contextlib.suppress(Exception):
-                await stdout_receive.aclose()
-            with contextlib.suppress(Exception):
-                await stderr_receive.aclose()
-            for fd in (
-                    stdout_read_fd,
-                    stdout_write_fd,
-                    stderr_read_fd,
-                    stderr_write_fd,
-            ):
-                _close_fd(fd)
-            raise
-
-
-async def open_process[**P](
-        target: Callable[P, object],
-        *target_args: P.args,
-        **target_kwargs: P.kwargs,
+async def open_process(
+        target: Callable[..., object],
+        *,
+        args: tuple[object, ...] = (),
+        kwargs: Mapping[str, object] | None = None,
+        name: str | None = None,
+        daemon: bool | None = None,
+        stream_buffer_size: int = 16,
 ) -> CapturedMpProcess:
-    return await CapturedProcessOptions().open_process(
-        target,
-        *target_args,
-        **target_kwargs,
-    )
+    if stream_buffer_size <= 0:
+        raise ValueError("stream_buffer_size must be positive")
+
+    target_kwargs: Mapping[str, object] = {} if kwargs is None else kwargs
+    stdout_read_fd, stdout_write_fd = os.pipe()
+    stderr_read_fd, stderr_write_fd = os.pipe()
+    stdout_send, stdout_receive = create_memory_object_stream[bytes](stream_buffer_size)
+    stderr_send, stderr_receive = create_memory_object_stream[bytes](stream_buffer_size)
+    drain_tasks: tuple[asyncio.Task[None], ...] = ()
+
+    try:
+        process = mp.get_context("spawn").Process(
+            name=name,
+            target=_run_with_captured_stdio,
+            args=(
+                DupFd(stdout_write_fd),
+                DupFd(stderr_write_fd),
+                target,
+                *args,
+            ),
+            kwargs=target_kwargs,
+            daemon=daemon,
+        )
+        process.start()
+        pid = process.pid
+        if pid is None:
+            raise RuntimeError("started process has no pid")
+
+        _close_fd(stdout_write_fd)
+        _close_fd(stderr_write_fd)
+
+        drain_tasks = (
+            asyncio.create_task(_drain_fd(stdout_read_fd, stdout_send)),
+            asyncio.create_task(_drain_fd(stderr_read_fd, stderr_send)),
+        )
+        return CapturedMpProcess(
+            process=process,
+            _pid=pid,
+            _stdout=MemoryByteReceiveStream(stdout_receive),
+            _stderr=MemoryByteReceiveStream(stderr_receive),
+            _drain_tasks=drain_tasks,
+        )
+    except BaseException:
+        await _cancel_drain_tasks(drain_tasks)
+        with contextlib.suppress(Exception):
+            await stdout_send.aclose()
+        with contextlib.suppress(Exception):
+            await stderr_send.aclose()
+        with contextlib.suppress(Exception):
+            await stdout_receive.aclose()
+        with contextlib.suppress(Exception):
+            await stderr_receive.aclose()
+        for fd in (
+                stdout_read_fd,
+                stdout_write_fd,
+                stderr_read_fd,
+                stderr_write_fd,
+        ):
+            _close_fd(fd)
+        raise
 
 
 @final
@@ -136,12 +117,20 @@ class MemoryByteReceiveStream(ByteReceiveStream):
         if max_bytes <= 0:
             raise ValueError("max_bytes must be positive")
 
-        if not self._buffer:
-            self._buffer.extend(await self._receive_stream.receive())
+        # return chunk in buffer upto max_bytes
+        if self._buffer:
+            chunk = bytes(self._buffer[:max_bytes])
+            del self._buffer[:max_bytes]
+            return chunk
 
-        chunk = bytes(self._buffer[:max_bytes])
-        del self._buffer[:max_bytes]
-        return chunk
+        # return fresh chunk upto max_bytes
+        chunk = await self._receive_stream.receive()
+        if len(chunk) <= max_bytes:
+            return chunk
+
+        # fresh chunk >max_bytes stored in buffer and <=max_bytes returned
+        self._buffer.extend(chunk[max_bytes:])
+        return chunk[:max_bytes]
 
     async def aclose(self) -> None:
         self._buffer.clear()
@@ -229,12 +218,12 @@ class CapturedMpProcess(AnyioProcess):
 
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
-def _run_with_captured_stdio[**P](
+def _run_with_captured_stdio(
         stdout: DupFd,
         stderr: DupFd,
-        target: Callable[P, object],
-        *target_args: P.args,
-        **target_kwargs: P.kwargs,
+        target: Callable[..., object],
+        *target_args: object,
+        **target_kwargs: object,
 ) -> None:
     stdout_fd = stdout.detach()
     stderr_fd = stderr.detach()
