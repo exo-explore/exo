@@ -40,6 +40,7 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
+from exo.utils import fmap
 from exo.utils.keyed_backoff import KeyedBackoff
 from exo.worker.runner.supervisor import RunnerSupervisor
 
@@ -88,8 +89,10 @@ def _kill_runner(
             )
 
         for (
-            global_runner_id
-        ) in runner.bound_instance.instance.shard_assignments.node_to_runner.values():
+            _,
+            global_runner_id,
+            _,
+        ) in runner.bound_instance.instance.shard_assignments.shards:
             if runner_id == global_runner_id:
                 continue
 
@@ -108,7 +111,13 @@ def _create_runner(
     instance_backoff: KeyedBackoff[InstanceId],
 ) -> CreateRunner | None:
     for instance in instances.values():
-        runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
+        runner_id = next(
+            fmap(
+                lambda it: it.runner_id if it.node_id == node_id else None,
+                instance.shard_assignments.shards,
+            ),
+            None,
+        )
         if runner_id is None:
             continue
 
@@ -118,7 +127,7 @@ def _create_runner(
         # don't create runners if any other nodes have runners that have failed - wait for them to fix themselves first.
         instance_has_failed_runner = any(
             isinstance(all_runners.get(remote_runner_id), RunnerFailed)
-            for remote_runner_id in instance.shard_assignments.node_to_runner.values()
+            for (_, remote_runner_id, _) in instance.shard_assignments.shards
             if remote_runner_id != runner_id
         )
         we_have_failed_before = isinstance(all_runners.get(runner_id), RunnerFailed)
@@ -175,7 +184,7 @@ def _init_distributed_backend(
         instance = runner.bound_instance.instance
         shard_assignments = instance.shard_assignments
 
-        is_single_node_instance = len(shard_assignments.runner_to_shard) == 1
+        is_single_node_instance = len(shard_assignments.shards) == 1
         if is_single_node_instance:
             continue
 
@@ -185,7 +194,7 @@ def _init_distributed_backend(
                 all_runners.get(global_runner_id),
                 (RunnerConnecting, RunnerIdle),
             )
-            for global_runner_id in shard_assignments.runner_to_shard
+            for (_, global_runner_id, _) in shard_assignments.shards
         )
 
         if not (runner_is_idle and all_runners_connecting):
@@ -205,7 +214,7 @@ def _init_distributed_backend(
         # Rank = n-1
         connecting_rank_ready = device_rank == world_size - 1 and all(
             isinstance(all_runners.get(global_runner_id, None), RunnerConnecting)
-            for global_runner_id in shard_assignments.runner_to_shard
+            for (_, global_runner_id, _) in shard_assignments.shards
             if global_runner_id != runner_id
         )
 
@@ -233,12 +242,12 @@ def _load_model(
                 and dp.shard_metadata.model_card.model_id == shard_assignments.model_id
                 for dp in global_download_status[nid]
             )
-            for nid in shard_assignments.node_to_runner
+            for (nid, _, _) in shard_assignments.shards
         )
         if not all_local_downloads_complete:
             continue
 
-        is_single_node_instance = len(instance.shard_assignments.runner_to_shard) == 1
+        is_single_node_instance = len(instance.shard_assignments.shards) == 1
         if is_single_node_instance and isinstance(runner.status, RunnerIdle):
             return LoadModel(instance_id=instance.instance_id)
 
@@ -249,7 +258,7 @@ def _load_model(
                 all_runners.get(global_runner_id, None),
                 (RunnerConnected, RunnerLoading, RunnerLoaded),
             )
-            for global_runner_id in shard_assignments.runner_to_shard
+            for (_, global_runner_id, _) in shard_assignments.shards
         )
 
         if is_runner_waiting and all_ready_for_model:
@@ -281,13 +290,13 @@ def _ready_to_warmup(
                 all_runners.get(global_runner_id, None),
                 (RunnerLoaded, RunnerWarmingUp),
             )
-            for global_runner_id in shard_assignments.runner_to_shard
+            for (_, global_runner_id, _) in shard_assignments.shards
         )
 
         # Rank = 0
         connecting_rank_ready = device_rank == 0 and all(
             isinstance(all_runners.get(global_runner_id, None), RunnerWarmingUp)
-            for global_runner_id in shard_assignments.runner_to_shard
+            for (_, global_runner_id, _) in shard_assignments.shards
             if global_runner_id != runner_id
         )
 
@@ -338,7 +347,11 @@ def _pending_tasks(
 
             if isinstance(runner.status, (RunnerReady, RunnerRunning)) and all(
                 isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))
-                for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
+                for (
+                    _,
+                    global_runner_id,
+                    _,
+                ) in runner.bound_instance.instance.shard_assignments.shards
             ):
                 return task
 

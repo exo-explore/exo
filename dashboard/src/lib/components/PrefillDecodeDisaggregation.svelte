@@ -9,6 +9,7 @@
     createInstanceLink,
     updateInstanceLink,
     deleteInstanceLink,
+    getInstanceNodeIds,
     type Instance,
   } from "$lib/stores/app.svelte";
   import { deriveBaseModel, deriveFamily } from "$lib/utils/model_family";
@@ -16,7 +17,6 @@
   type InstanceWrapper = {
     MlxRingInstance?: Instance;
     MlxJacclInstance?: Instance;
-    VllmInstance?: Instance;
   };
 
   let interval: ReturnType<typeof setInterval> | null = null;
@@ -43,13 +43,9 @@
     const ids = nodeIdentities();
     for (const [id, raw] of Object.entries(instances())) {
       const wrapper = raw as InstanceWrapper;
-      const inst =
-        wrapper.MlxRingInstance ??
-        wrapper.MlxJacclInstance ??
-        wrapper.VllmInstance;
+      const inst = wrapper.MlxRingInstance ?? wrapper.MlxJacclInstance;
       const modelId = inst?.shardAssignments?.modelId ?? "";
-      const nodeToRunner = inst?.shardAssignments?.nodeToRunner ?? {};
-      const nodeIds = Object.keys(nodeToRunner);
+      const nodeIds = getInstanceNodeIds(inst);
       const nodeNames = nodeIds
         .map((nodeId) => ids[nodeId]?.friendlyName ?? nodeId.slice(0, 6))
         .filter((name) => !!name);

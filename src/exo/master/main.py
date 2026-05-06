@@ -79,9 +79,9 @@ def _prefill_endpoint_for(
     decode = state.instances.get(decode_instance_id)
     if decode is None:
         return None
-    decode_node = next(iter(decode.shard_assignments.node_to_runner.keys()), None)
-    if decode_node is None:
-        return None
+    decode_node = decode.shard_assignments.shards[
+        decode.shard_assignments.primary_output_node
+    ].node_id
 
     sources: set[InstanceId] = set()
     for link in instance_links:
@@ -102,7 +102,7 @@ def _prefill_endpoint_for(
         instance = state.instances.get(src_id)
         if instance is None:
             continue
-        for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
+        for node_id, runner_id, _ in instance.shard_assignments.shards:
             port = state.prefill_server_ports.get(runner_id)
             if port is None:
                 continue
@@ -143,9 +143,7 @@ class Master:
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
-        self._expected_ranks: dict[TaskId, set[int]] = {}
-        self.aggregator: LVAggregator = aggregator
-        self.storage: Storage = storage
+        self._world_sizes: dict[TaskId, int] = {}
 
     async def run(self):
         logger.info("Starting Master")
@@ -306,11 +304,9 @@ class Master:
                                     selected_instance_id
                                 )
                                 if selected_instance:
-                                    ranks = set(
-                                        shard.device_rank
-                                        for shard in selected_instance.shard_assignments.runner_to_shard.values()
+                                    self._world_sizes[task_id] = len(
+                                        selected_instance.shard_assignments.shards
                                     )
-                                    self._expected_ranks[task_id] = ranks
                         case ImageEdits():
                             for instance in self.state.instances.values():
                                 if (
@@ -362,11 +358,9 @@ class Master:
                                     selected_instance_id
                                 )
                                 if selected_instance:
-                                    ranks = set(
-                                        shard.device_rank
-                                        for shard in selected_instance.shard_assignments.runner_to_shard.values()
+                                    self._world_sizes[task_id] = len(
+                                        selected_instance.shard_assignments.shards
                                     )
-                                    self._expected_ranks[task_id] = ranks
                         case DeleteInstance():
                             placement = delete_instance(command, self.state.instances)
                             transition_events = get_transition_events(
@@ -466,7 +460,7 @@ class Master:
                 self.state.with_aggregator(self.aggregator).topology.list_nodes()
             )
             for instance_id, instance in self.state.instances.items():
-                for node_id in instance.shard_assignments.node_to_runner:
+                for node_id, _, _ in instance.shard_assignments.shards:
                     if node_id not in connected_node_ids:
                         await self.event_sender.send(
                             InstanceDeleted(instance_id=instance_id)
@@ -535,9 +529,8 @@ class Master:
         self._pending_traces[task_id][event.rank] = event.traces
 
         if (
-            task_id in self._expected_ranks
-            and set(self._pending_traces[task_id].keys())
-            >= self._expected_ranks[task_id]
+            task_id in self._world_sizes
+            and len(self._pending_traces[task_id]) >= self._world_sizes[task_id]
         ):
             await self._merge_and_save_traces(task_id)
 
@@ -551,5 +544,5 @@ class Master:
         )
 
         del self._pending_traces[task_id]
-        if task_id in self._expected_ranks:
-            del self._expected_ranks[task_id]
+        if task_id in self._world_sizes:
+            del self._world_sizes[task_id]
