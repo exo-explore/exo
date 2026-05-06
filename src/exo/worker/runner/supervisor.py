@@ -73,11 +73,11 @@ class RunnerSupervisor:
 
     @classmethod
     def create(
-            cls,
-            *,
-            bound_instance: BoundInstance,
-            event_sender: Sender[Event],
-            initialize_timeout: float = 400,
+        cls,
+        *,
+        bound_instance: BoundInstance,
+        event_sender: Sender[Event],
+        initialize_timeout: float = 400,
     ) -> Self:
         mp_ctx = AsyncSpawnProcess.context()
         ev_send, ev_recv = mp_channel[Event](context=mp_ctx)
@@ -203,8 +203,8 @@ class RunnerSupervisor:
                         self.pending.pop(event.task_id).set()
                         continue
                     if (
-                            isinstance(event, TaskStatusUpdated)
-                            and event.task_status == TaskStatus.Complete
+                        isinstance(event, TaskStatusUpdated)
+                        and event.task_status == TaskStatus.Complete
                     ):
                         # If a task has just been completed, we should be working on it.
                         assert isinstance(
@@ -234,9 +234,9 @@ class RunnerSupervisor:
                     await self._check_runner(RuntimeError("Runner found to be dead"))
 
     async def _forward_runner_output(
-            self,
-            stream_name: str,
-            stream: ByteReceiveStream,
+        self,
+        stream_name: str,
+        stream: ByteReceiveStream,
     ) -> None:
         while True:
             try:
