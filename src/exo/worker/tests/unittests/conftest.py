@@ -11,7 +11,12 @@ from exo.shared.types.worker.instances import (
     InstanceId,
     MlxRingInstance,
 )
-from exo.shared.types.worker.runners import RunnerId, RunnerStatus, ShardAssignments
+from exo.shared.types.worker.runners import (
+    RunnerId,
+    RunnerStatus,
+    ShardAssignments,
+    ShardWithId,
+)
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 
 
@@ -52,16 +57,22 @@ def get_pipeline_shard_metadata(
     )
 
 
+# todo: clean up legacy formatted shards
 def get_shard_assignments(
     model_id: ModelId,
     node_to_runner: dict[NodeId, RunnerId],
     runner_to_shard: dict[RunnerId, ShardMetadata],
 ) -> ShardAssignments:
-    return ShardAssignments(
-        model_id=model_id,
-        node_to_runner=node_to_runner,
-        runner_to_shard=runner_to_shard,
-    )
+    pon = 0
+    shards = [
+        ShardWithId(nid, rid := node_to_runner[nid], runner_to_shard[rid])
+        for nid in node_to_runner
+    ]
+    for i, (_, _, shard) in enumerate(shards):
+        if shard.is_primary_output():
+            pon = i
+
+    return ShardAssignments(model_id=model_id, shards=shards, primary_output_node=pon)
 
 
 def get_mlx_ring_instance(

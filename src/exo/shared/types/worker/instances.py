@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from enum import Enum
 
 from pydantic import model_validator
@@ -22,7 +23,14 @@ class BaseInstance(TaggedModel):
     shard_assignments: ShardAssignments
 
     def shard(self, runner_id: RunnerId) -> ShardMetadata | None:
-        return self.shard_assignments.runner_to_shard.get(runner_id, None)
+        for _, rid, shard in self.shard_assignments.shards:
+            if rid == runner_id:
+                return shard
+
+    def runners_for(self, node_id: NodeId) -> Iterable[RunnerId]:
+        for nid, rid, _ in self.shard_assignments.shards:
+            if nid == node_id:
+                yield rid
 
 
 class MlxRingInstance(BaseInstance):
@@ -59,8 +67,9 @@ class BoundInstance(FrozenModel):
 
     @model_validator(mode="after")
     def validate_shard_exists(self) -> "BoundInstance":
-        assert (
-            self.bound_runner_id in self.instance.shard_assignments.runner_to_shard
+        assert any(
+            rid == self.bound_runner_id
+            for (_, rid, _) in self.instance.shard_assignments.shards
         ), (
             "Bound Instance must be constructed with a runner_id that is in the instances assigned shards"
         )

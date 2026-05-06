@@ -30,8 +30,6 @@ from exo.shared.types.worker.runner_response import (
     ModelLoadingResponse,
 )
 from exo.shared.types.worker.shards import (
-    CfgShardMetadata,
-    PipelineShardMetadata,
     ShardMetadata,
 )
 from exo.utils.channels import MpReceiver, MpSender
@@ -47,22 +45,6 @@ from exo.worker.engines.image.generate import (
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
 )
-
-
-def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
-    """Check if this node is the primary output node for image generation.
-
-    For CFG models: the last pipeline stage in CFG group 0 (positive prompt).
-    For non-CFG models: the last pipeline stage.
-    """
-    if isinstance(shard_metadata, CfgShardMetadata):
-        is_pipeline_last = (
-            shard_metadata.pipeline_rank == shard_metadata.pipeline_world_size - 1
-        )
-        return is_pipeline_last and shard_metadata.cfg_rank == 0
-    elif isinstance(shard_metadata, PipelineShardMetadata):
-        return shard_metadata.device_rank == shard_metadata.world_size - 1
-    return False
 
 
 def _send_traces_if_enabled(
@@ -171,7 +153,7 @@ class ImageEngine(Engine):
             resp = next(self.current_gen, None)
         return (
             (resp,)
-            if resp is not None and _is_primary_output_node(self.shard_metadata)
+            if resp is not None and self.shard_metadata.is_primary_output()
             else ()
         )
 
@@ -202,10 +184,10 @@ class ImageEngine(Engine):
                 task=task_params,
                 cancel_checker=cancel_checker,
             ):
-                if _is_primary_output_node(self.shard_metadata):
+                if self.shard_metadata.is_primary_output():
                     yield (task_id, response)
         except Exception as e:
-            if _is_primary_output_node(self.shard_metadata):
+            if self.shard_metadata.is_primary_output():
                 yield (
                     task_id,
                     ErrorChunk(

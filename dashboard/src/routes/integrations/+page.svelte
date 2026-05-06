@@ -3,7 +3,11 @@
   import { fade } from "svelte/transition";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
   import IntegrationCard from "$lib/components/IntegrationCard.svelte";
-  import { instances, refreshState } from "$lib/stores/app.svelte";
+  import {
+    instances,
+    refreshState,
+    type Instance,
+  } from "$lib/stores/app.svelte";
   import { onMount } from "svelte";
 
   const apiUrl = browser
@@ -24,9 +28,7 @@
         if (values.length > 0) {
           const instance = values[0];
           if (instance && typeof instance === "object") {
-            const inst = instance as {
-              shardAssignments?: { modelId?: string };
-            };
+            const inst = instance as Instance;
             const modelId = inst.shardAssignments?.modelId;
             if (modelId && !models.includes(modelId)) {
               models.push(modelId);
