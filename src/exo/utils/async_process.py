@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import faulthandler
 import multiprocessing as mp
@@ -11,13 +10,15 @@ from multiprocessing.context import SpawnContext
 from multiprocessing.process import BaseProcess
 from multiprocessing.resource_sharer import DupFd
 from signal import Signals
-from typing import final
+from types import TracebackType
+from typing import Self, final
 
 from anyio import (
     BrokenResourceError,
     CancelScope,
     ClosedResourceError,
     create_memory_object_stream,
+    create_task_group,
     to_thread,
     wait_readable,
 )
@@ -26,6 +27,7 @@ from anyio.abc import (
     ByteSendStream,
     ObjectReceiveStream,
     ObjectSendStream,
+    TaskGroup,
 )
 from anyio.abc import (
     Process as AnyioProcess,
@@ -70,14 +72,14 @@ class AsyncSpawnProcess(AnyioProcess):
         return mp.get_context("spawn")
 
     def __init__(
-            self,
-            target: Callable[..., object] | None = None,
-            name: str | None = None,
-            args: Iterable[object] = (),
-            kwargs: Mapping[str, object] | None = None,
-            *,
-            daemon: bool | None = None,
-            stream_buffer_size: int = 16,
+        self,
+        target: Callable[..., object] | None = None,
+        name: str | None = None,
+        args: Iterable[object] = (),
+        kwargs: Mapping[str, object] | None = None,
+        *,
+        daemon: bool | None = None,
+        stream_buffer_size: int = 16,
     ) -> None:
         if stream_buffer_size <= 0:
             raise ValueError("stream_buffer_size must be positive")
@@ -95,15 +97,45 @@ class AsyncSpawnProcess(AnyioProcess):
         self._pid: int | None = None
         self._stdout: MemoryByteReceiveStream | None = None
         self._stderr: MemoryByteReceiveStream | None = None
-        self._drain_tasks: tuple[asyncio.Task[None], ...] = ()
+        self._owned_task_group: TaskGroup | None = None
+        self._drain_cancel_scopes: tuple[CancelScope, ...] = ()
         self._closed = False
         self._returncode: int | None = None
 
-    async def start(self) -> None:
+    async def __aenter__(self) -> Self:
+        if self._owned_task_group is not None:
+            raise RuntimeError("process context has already been entered")
+
+        task_group = create_task_group()
+        await task_group.__aenter__()
+        self._owned_task_group = task_group
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        task_group = self._owned_task_group
+        try:
+            await self.aclose()
+        finally:
+            self._owned_task_group = None
+            if task_group is not None:
+                await task_group.__aexit__(exc_type, exc_val, exc_tb)
+
+    async def start(self, task_group: TaskGroup | None = None) -> None:
         if self._closed:
             raise RuntimeError("process has been closed")
         if self._process is not None:
             raise RuntimeError("process has already been started")
+        drain_task_group = self._owned_task_group if task_group is None else task_group
+        if drain_task_group is None:
+            raise RuntimeError(
+                "start() requires an AnyIO task group; pass task_group or use "
+                "AsyncSpawnProcess as an async context manager"
+            )
 
         stdout_read_fd, stdout_write_fd = os.pipe()
         stderr_read_fd, stderr_write_fd = os.pipe()
@@ -113,7 +145,7 @@ class AsyncSpawnProcess(AnyioProcess):
         stderr_send, stderr_receive = create_memory_object_stream[bytes](
             self._stream_buffer_size
         )
-        drain_tasks: tuple[asyncio.Task[None], ...] = ()
+        drain_cancel_scopes: tuple[CancelScope, ...] = ()
 
         try:
             process = mp.get_context("spawn").Process(
@@ -138,26 +170,36 @@ class AsyncSpawnProcess(AnyioProcess):
             _close_fd(stderr_write_fd)
 
             # drain the read-end FD into async memory-buffer stream
-            drain_tasks = (
-                asyncio.create_task(_drain_fd(stdout_read_fd, stdout_send)),
-                asyncio.create_task(_drain_fd(stderr_read_fd, stderr_send)),
+            drain_cancel_scopes = (CancelScope(), CancelScope())
+            drain_task_group.start_soon(
+                _drain_fd_in_scope,
+                stdout_read_fd,
+                stdout_send,
+                drain_cancel_scopes[0],
+            )
+            drain_task_group.start_soon(
+                _drain_fd_in_scope,
+                stderr_read_fd,
+                stderr_send,
+                drain_cancel_scopes[1],
             )
 
             self._process = process
             self._pid = pid
             self._stdout = MemoryByteReceiveStream(stdout_receive)
             self._stderr = MemoryByteReceiveStream(stderr_receive)
-            self._drain_tasks = drain_tasks
+            self._drain_cancel_scopes = drain_cancel_scopes
         except BaseException:
-            await _cancel_drain_tasks(drain_tasks)
+            for cancel_scope in drain_cancel_scopes:
+                cancel_scope.cancel()
             for stream in (stdout_send, stderr_send, stdout_receive, stderr_receive):
                 with contextlib.suppress(Exception):
                     await stream.aclose()
             for fd in (
-                    stdout_read_fd,
-                    stdout_write_fd,
-                    stderr_read_fd,
-                    stderr_write_fd,
+                stdout_read_fd,
+                stdout_write_fd,
+                stderr_read_fd,
+                stderr_write_fd,
             ):
                 _close_fd(fd)
             raise
@@ -173,7 +215,9 @@ class AsyncSpawnProcess(AnyioProcess):
         with CancelScope(shield=True) as scope:
             await self.stdout.aclose()
             await self.stderr.aclose()
-            await _cancel_drain_tasks(self._drain_tasks)
+            for cancel_scope in self._drain_cancel_scopes:
+                cancel_scope.cancel()
+            self._drain_cancel_scopes = ()
 
             scope.shield = False
             try:
@@ -210,6 +254,9 @@ class AsyncSpawnProcess(AnyioProcess):
         self.process.join(timeout)
 
     def close(self) -> None:
+        for cancel_scope in self._drain_cancel_scopes:
+            cancel_scope.cancel()
+        self._drain_cancel_scopes = ()
         self.process.close()
 
     def kill(self) -> None:
@@ -261,11 +308,11 @@ class AsyncSpawnProcess(AnyioProcess):
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
 def _run_with_captured_stdio(
-        stdout: DupFd,
-        stderr: DupFd,
-        target: Callable[..., object] | None,
-        *target_args: object,
-        **target_kwargs: object,
+    stdout: DupFd,
+    stderr: DupFd,
+    target: Callable[..., object] | None,
+    *target_args: object,
+    **target_kwargs: object,
 ) -> None:
     stdout_fd = stdout.detach()
     stderr_fd = stderr.detach()
@@ -298,18 +345,13 @@ async def _drain_fd(fd: int, send_stream: ObjectSendStream[bytes]) -> None:
         await send_stream.aclose()
 
 
-async def _cancel_drain_tasks(tasks: tuple[asyncio.Task[None], ...]) -> None:
-    if not tasks:
-        return
-
-    for task in tasks:
-        task.cancel()
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for result in results:
-        if result is None or isinstance(result, asyncio.CancelledError):
-            continue
-        raise result
+async def _drain_fd_in_scope(
+    fd: int,
+    send_stream: ObjectSendStream[bytes],
+    cancel_scope: CancelScope,
+) -> None:
+    with cancel_scope:
+        await _drain_fd(fd, send_stream)
 
 
 def _close_fd(fd: int) -> None:

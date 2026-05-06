@@ -93,8 +93,8 @@ def _mlx_force_oom(size: int = 40_000) -> None:
 
 
 async def _collect_stream(
-        stream: ByteReceiveStream,
-        output: bytearray,
+    stream: ByteReceiveStream,
+    output: bytearray,
 ) -> None:
     while True:
         try:
@@ -104,7 +104,7 @@ async def _collect_stream(
 
 
 async def _collect_process_output(
-        process: AsyncSpawnProcess,
+    process: AsyncSpawnProcess,
 ) -> tuple[int, bytes, bytes]:
     stdout = bytearray()
     stderr = bytearray()
@@ -133,11 +133,11 @@ def _fd_count() -> int | None:
 
 
 async def _run_and_collect(
-        target: Callable[..., object] | None,
-        *,
-        args: tuple[object, ...] = (),
-        kwargs: dict[str, object] | None = None,
-        stream_buffer_size: int = 16,
+    target: Callable[..., object] | None,
+    *,
+    args: tuple[object, ...] = (),
+    kwargs: dict[str, object] | None = None,
+    stream_buffer_size: int = 16,
 ) -> tuple[int, bytes, bytes]:
     process = AsyncSpawnProcess(
         target,
@@ -145,23 +145,22 @@ async def _run_and_collect(
         kwargs=kwargs,
         stream_buffer_size=stream_buffer_size,
     )
-    await process.start()
     async with process:
+        await process.start()
         return await _collect_process_output(process)
 
 
 @pytest.mark.asyncio
 async def test_spawn_process_captures_stdout_and_stderr_separately(
-        capfd: CaptureFixture[str],
+    capfd: CaptureFixture[str],
 ) -> None:
     process = AsyncSpawnProcess(
         _write_to_stdio,
         args=("child",),
         kwargs={"stderr_suffix": "error"},
     )
-    await process.start()
-
     async with process:
+        await process.start()
         exitcode, stdout_bytes, stderr_bytes = await _collect_process_output(process)
 
     parent_output = capfd.readouterr()
@@ -189,9 +188,9 @@ async def test_process_with_no_target_exits_successfully() -> None:
 @pytest.mark.asyncio
 async def test_stdout_stream_honors_receive_size() -> None:
     process = AsyncSpawnProcess(_write_large_output)
-    await process.start()
 
     async with process:
+        await process.start()
         first_stdout = await process.stdout.receive(6)
         remaining_stdout = bytearray()
         stderr = bytearray()
@@ -227,9 +226,9 @@ async def test_large_stdout_and_stderr_are_not_lost_with_bounded_buffers() -> No
 @pytest.mark.asyncio
 async def test_child_exception_traceback_is_captured_from_stderr() -> None:
     process = AsyncSpawnProcess(_raise_after_stderr_write)
-    await process.start()
 
     async with process:
+        await process.start()
         exitcode, _, stderr_bytes = await _collect_process_output(process)
 
     assert exitcode == 1
@@ -240,7 +239,7 @@ async def test_child_exception_traceback_is_captured_from_stderr() -> None:
 
 @pytest.mark.asyncio
 async def test_repeated_bad_children_do_not_pollute_or_replace_parent_stdio(
-        capfd: CaptureFixture[str],
+    capfd: CaptureFixture[str],
 ) -> None:
     stdout_object = sys.stdout
     stderr_object = sys.stderr
@@ -296,7 +295,7 @@ async def test_repeated_bad_children_do_not_pollute_or_replace_parent_stdio(
 
 @pytest.mark.asyncio
 async def test_child_can_close_stdio_without_corrupting_parent_stdio(
-        capfd: CaptureFixture[str],
+    capfd: CaptureFixture[str],
 ) -> None:
     stdout_identity = _fd_identity(1)
     stderr_identity = _fd_identity(2)
@@ -341,10 +340,11 @@ async def test_repeated_crashing_children_do_not_grow_parent_fd_table() -> None:
 @pytest.mark.asyncio
 async def test_aclose_can_cancel_idle_drainers_before_child_exits() -> None:
     process = AsyncSpawnProcess(_sleep_without_output)
-    await process.start()
+    async with process:
+        await process.start()
 
-    with fail_after(2):
-        await process.aclose()
+        with fail_after(2):
+            await process.aclose()
 
     assert process.returncode == 0
 
@@ -353,9 +353,9 @@ async def test_aclose_can_cancel_idle_drainers_before_child_exits() -> None:
 async def test_spawn_process_can_use_spawn_context_mp_channel() -> None:
     send, recv = mp_channel[str](context=AsyncSpawnProcess.context())
     process = AsyncSpawnProcess(_send_over_mp_channel, args=(send,))
-    await process.start()
 
     async with process:
+        await process.start()
         with fail_after(2):
             assert await recv.receive_async() == "hello from child"
             assert await process.wait() == 0
@@ -369,8 +369,8 @@ async def test_spawn_process_can_use_spawn_context_mp_channel() -> None:
 async def test_death(capsys: CaptureFixture[str]) -> None:
     with capsys.disabled():
         process = AsyncSpawnProcess(_mlx_force_oom)
-        await process.start()
         async with process:
+            await process.start()
             _, stdout, stderr = await _collect_process_output(process)
 
         print("PARENT: done")
