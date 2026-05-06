@@ -1,4 +1,4 @@
-from typing import Any, Type
+from typing import Any, Callable, Iterable, Iterator, Type, TypeGuard
 
 from .phantom import PhantomData
 
@@ -14,3 +14,11 @@ def todo[T](
     _phantom: PhantomData[T] = None,
 ) -> T:
     raise NotImplementedError(msg)
+
+
+def not_none[T](t: T | None) -> TypeGuard[T]:
+    return t is not None
+
+
+def fmap[T, U](f: Callable[[T], U | None], s: Iterable[T]) -> Iterator[U]:
+    return filter(not_none, map(f, s))

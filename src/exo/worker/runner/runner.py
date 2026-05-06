@@ -102,10 +102,6 @@ class Runner:
         self.device_rank = self.shard_metadata.device_rank
 
         logger.info("hello from the runner")
-        if getattr(self.shard_metadata, "immediate_exception", False):
-            raise Exception("Fake exception - runner failed to spin up.")
-        if timeout := getattr(self.shard_metadata, "should_timeout", 0):
-            time.sleep(timeout)
 
         self.setup_start_time = time.time()
 

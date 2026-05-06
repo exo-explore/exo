@@ -232,20 +232,7 @@ def place_instance(
 
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
-            # TODO(evan): shard assignments should contain information about ranks, this is ugly
-            def get_device_rank(node_id: NodeId) -> int:
-                runner_id = shard_assignments.node_to_runner[node_id]
-                shard_metadata = shard_assignments.runner_to_shard.get(runner_id)
-                assert shard_metadata is not None
-                return shard_metadata.device_rank
-
-            zero_node_ids = [
-                node_id
-                for node_id in selected_cycle.node_ids
-                if get_device_rank(node_id) == 0
-            ]
-            assert len(zero_node_ids) == 1
-            coordinator_node_id = zero_node_ids[0]
+            coordinator_node_id = shard_assignments.shards[0][0]
 
             mlx_jaccl_devices = get_mlx_jaccl_devices_matrix(
                 [node_id for node_id in selected_cycle],
@@ -346,10 +333,10 @@ def cancel_unnecessary_downloads(
     active_models = set(
         (
             node_id,
-            instance.shard_assignments.runner_to_shard[runner_id].model_card.model_id,
+            instance.shard_assignments.model_id,
         )
         for instance in instances.values()
-        for node_id, runner_id in instance.shard_assignments.node_to_runner.items()
+        for node_id, _, _ in instance.shard_assignments.shards
     )
     for pair in currently_downloading:
         if pair not in active_models:

@@ -142,18 +142,17 @@ def instance_id_from_instance(instance: dict[str, Any]) -> str:
 
 def nodes_used_in_instance(instance: dict[str, Any]) -> int:
     inner = unwrap_instance(instance)
-    return len(inner["shardAssignments"]["nodeToRunner"])
+    return len(inner["shardAssignments"]["shards"])
 
 
 def runner_ids_from_instance(instance: dict[str, Any]) -> list[str]:
     inner = unwrap_instance(instance)
-    runner_to_shard = inner["shardAssignments"]["runnerToShard"]
-    return list(runner_to_shard.keys())
+    return [r for (_, r, _) in inner["shardAssignments"]["shards"]]
 
 
 def node_ids_from_instance(instance: dict[str, Any]) -> list[str]:
     inner = unwrap_instance(instance)
-    return list(inner["shardAssignments"]["nodeToRunner"].keys())
+    return [n for (n, _, _) in inner["shardAssignments"]["shards"]]
 
 
 def runner_ready(runner: dict[str, Any]) -> bool:
@@ -412,8 +411,8 @@ def run_planning_phase(
 
     # Get nodes from preview
     inner = unwrap_instance(preview["instance"])
-    node_ids = list(inner["shardAssignments"]["nodeToRunner"].keys())
-    runner_to_shard = inner["shardAssignments"]["runnerToShard"]
+    node_ids = [n for (n, _, _) in inner["shardAssignments"]["shards"]]
+    shards = inner["shardAssignments"]["shards"]
 
     needs_download = False
 
@@ -481,9 +480,7 @@ def run_planning_phase(
 
     # Start downloads (idempotent)
     download_t0 = time.perf_counter() if needs_download else None
-    for node_id in node_ids:
-        runner_id = inner["shardAssignments"]["nodeToRunner"][node_id]
-        shard = runner_to_shard[runner_id]
+    for node_id, _, shard in shards:
         client.request_json(
             "POST",
             "/download/start",
