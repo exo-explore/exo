@@ -66,12 +66,40 @@ export interface TopologyData {
   edges: TopologyEdge[];
 }
 
+export type InstanceShard = [nodeId: string, runnerId: string, shard: unknown];
+
+export interface ShardAssignments {
+  modelId: string;
+  shards: InstanceShard[];
+  primaryOutputNode: number;
+}
+
 export interface Instance {
-  shardAssignments?: {
-    modelId?: string;
-    runnerToShard?: Record<string, unknown>;
-    nodeToRunner?: Record<string, string>;
-  };
+  shardAssignments: ShardAssignments;
+}
+
+export function getInstanceShards(
+  instance: Instance | null | undefined,
+): InstanceShard[] {
+  return instance?.shardAssignments.shards ?? [];
+}
+
+export function getInstanceRunnerIds(
+  instance: Instance | null | undefined,
+): string[] {
+  return getInstanceShards(instance).map(([, runnerId]) => runnerId);
+}
+
+export function getInstanceNodeIds(
+  instance: Instance | null | undefined,
+): string[] {
+  return [...new Set(getInstanceShards(instance).map(([nodeId]) => nodeId))];
+}
+
+export function getInstanceFirstShard(
+  instance: Instance | null | undefined,
+): unknown {
+  return getInstanceShards(instance)[0]?.[2];
 }
 
 export interface RawInstanceLink {
@@ -918,7 +946,7 @@ class AppStore {
   private extractInstanceModelId(instanceWrapped: unknown): string | null {
     const [, instance] = this.getTaggedValue(instanceWrapped);
     if (!instance || typeof instance !== "object") return null;
-    const inst = instance as { shardAssignments?: { modelId?: string } };
+    const inst = instance as Instance;
     return inst.shardAssignments?.modelId ?? null;
   }
 
@@ -936,11 +964,8 @@ class AppStore {
     else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
 
     let sharding: string | null = null;
-    const inst = instance as {
-      shardAssignments?: { runnerToShard?: Record<string, unknown> };
-    };
-    const runnerToShard = inst.shardAssignments?.runnerToShard || {};
-    const firstShardWrapped = Object.values(runnerToShard)[0];
+    const inst = instance as Instance;
+    const firstShardWrapped = getInstanceFirstShard(inst);
     if (firstShardWrapped) {
       const [shardTag] = this.getTaggedValue(firstShardWrapped);
       if (shardTag === "PipelineShardMetadata") sharding = "Pipeline";
@@ -2262,7 +2287,7 @@ class AppStore {
         if (keys.length === 1) {
           const instance = (instanceWrapper as Record<string, unknown>)[
             keys[0]
-          ] as { shardAssignments?: { modelId?: string } };
+          ] as Instance;
           const instanceModelId = instance?.shardAssignments?.modelId;
 
           // ensure to only return requestedModelId that matches an instance

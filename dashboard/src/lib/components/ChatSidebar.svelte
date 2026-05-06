@@ -12,6 +12,8 @@
     toggleDebugMode,
     topologyOnlyMode,
     toggleTopologyOnlyMode,
+    getInstanceFirstShard,
+    type Instance,
   } from "$lib/stores/app.svelte";
 
   interface Props {
@@ -186,7 +188,7 @@
   function extractInstanceModelId(instanceWrapped: unknown): string | null {
     const [, instance] = getTaggedValue(instanceWrapped);
     if (!instance || typeof instance !== "object") return null;
-    const inst = instance as { shardAssignments?: { modelId?: string } };
+    const inst = instance as Instance;
     return inst.shardAssignments?.modelId ?? null;
   }
 
@@ -204,11 +206,7 @@
     else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
 
     let sharding: string | null = null;
-    const inst = instance as {
-      shardAssignments?: { runnerToShard?: Record<string, unknown> };
-    };
-    const runnerToShard = inst.shardAssignments?.runnerToShard || {};
-    const firstShardWrapped = Object.values(runnerToShard)[0];
+    const firstShardWrapped = getInstanceFirstShard(instance as Instance);
     if (firstShardWrapped) {
       const [shardTag] = getTaggedValue(firstShardWrapped);
       if (shardTag === "PipelineShardMetadata") sharding = "Pipeline";

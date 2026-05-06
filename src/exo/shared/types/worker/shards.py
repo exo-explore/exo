@@ -15,17 +15,13 @@ class Sharding(str, Enum):
 class BaseShardMetadata(TaggedModel):
     """
     Defines a specific shard of the model that is ready to be run on a device.
-    Replaces previous `Shard` object.
+    Layers are represented as a half-open interval [start_layer, end_layer),
+    where start_layer is inclusive and end_layer is exclusive.
     """
 
     model_card: ModelCard
     device_rank: int
     world_size: int
-
-    # Error handling; equivalent to monkey-patch, but we can't monkey-patch runner.py
-    # This is kinda annoying because it allocates memory in the ShardMetadata object. Can be rethought after Shanghai.
-    immediate_exception: bool = False
-    should_timeout: float | None = None
 
     start_layer: int = Field(ge=0)
     end_layer: int = Field(ge=0)
@@ -51,27 +47,56 @@ class BaseShardMetadata(TaggedModel):
             )
         )
 
+    def is_primary_output(self) -> bool:
+        return self.device_rank == self.world_size - 1
+
 
 @final
 class PipelineShardMetadata(BaseShardMetadata):
-    """
-    Pipeline parallelism shard meta.
-
-    Layers are represented as a half-open interval [start_layer, end_layer),
-    where start_layer is inclusive and end_layer is exclusive.
-    """
+    pass
 
 
 @final
 class CfgShardMetadata(BaseShardMetadata):
-    """Shard metadata for CFG-parallel image generation models."""
+    # example
+    # world_size 6
+    # rank prank crank
+    #  0     0     0
+    #  1     1     0
+    #  2     2     0
+    #  3     2     1
+    #  4     1     1
+    #  5     0     1
 
-    cfg_rank: int  # 0 = positive branch, 1 = negative branch
-    cfg_world_size: int = 2
+    @property
+    def cfg_rank(self) -> int:
+        # 0 = positive branch, 1 = negative branch
+        return 0 if self.device_rank < self.world_size // 2 else 1
 
-    # Pipeline-relative coordinates (computed at placement time)
-    pipeline_rank: int  # rank within the pipeline group (0, 1, 2, ...)
-    pipeline_world_size: int  # number of nodes per pipeline group
+    @property
+    def cfg_world_size(self) -> int:
+        return 2
+
+    @property
+    def pipeline_rank(self) -> int:
+        return (
+            self.device_rank
+            if self.cfg_rank == 0
+            else (self.world_size - self.device_rank - 1)
+        )
+
+    @property
+    def pipeline_world_size(self) -> int:
+        return self.world_size // 2
+
+    def is_primary_output(self) -> bool:
+        """
+        For CFG models: the last pipeline stage in CFG group 0 (positive prompt).
+        For non-CFG models: the last pipeline stage.
+        """
+        assert self.pipeline_world_size == self.world_size // 2
+        assert self.world_size % 2 == 0
+        return self.device_rank == (self.world_size // 2) - 1
 
 
 @final

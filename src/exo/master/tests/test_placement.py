@@ -49,16 +49,36 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
-from exo.shared.types.worker.runners import ShardAssignments
+from exo.shared.types.worker.runners import RunnerId, ShardAssignments, ShardWithId
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 
 
+class MockShard:
+    def is_primary_output(self) -> bool:
+        return True
+
+
 @pytest.fixture
-def instance() -> Instance:
+def instance(model_card: ModelCard) -> Instance:
     return MlxRingInstance(
         instance_id=InstanceId(),
         shard_assignments=ShardAssignments(
-            model_id=ModelId("test-model"), runner_to_shard={}, node_to_runner={}
+            model_id=ModelId("test-model"),
+            shards=[
+                ShardWithId(
+                    NodeId(),
+                    RunnerId(),
+                    PipelineShardMetadata(
+                        model_card=model_card,
+                        device_rank=0,
+                        world_size=1,
+                        start_layer=0,
+                        end_layer=model_card.n_layers,
+                        n_layers=model_card.n_layers,
+                    ),
+                )
+            ],
+            primary_output_node=0,
         ),
         hosts_by_node={},
         ephemeral_port=50000,
@@ -123,6 +143,11 @@ def test_get_instance_placements_create_instance(
     node_id_a = NodeId()
     node_id_b = NodeId()
     node_id_c = NodeId()
+    node_to_layers = {
+        node_id_a: expected_layers[0],
+        node_id_b: expected_layers[1],
+        node_id_c: expected_layers[2],
+    }
 
     # fully connected (directed) between the 3 nodes
     conn_a_b = Connection(
@@ -175,22 +200,11 @@ def test_get_instance_placements_create_instance(
     instance = placements[instance_id]
     assert instance.shard_assignments.model_id == model_card.model_id
 
-    runner_id_a = instance.shard_assignments.node_to_runner[node_id_a]
-    runner_id_b = instance.shard_assignments.node_to_runner[node_id_b]
-    runner_id_c = instance.shard_assignments.node_to_runner[node_id_c]
+    for nid, _, shard in (shards := instance.shard_assignments.shards):
+        assert shard.end_layer - shard.start_layer == node_to_layers[nid]
 
-    shard_a = instance.shard_assignments.runner_to_shard[runner_id_a]
-    shard_b = instance.shard_assignments.runner_to_shard[runner_id_b]
-    shard_c = instance.shard_assignments.runner_to_shard[runner_id_c]
-
-    assert shard_a.end_layer - shard_a.start_layer == expected_layers[0]
-    assert shard_b.end_layer - shard_b.start_layer == expected_layers[1]
-    assert shard_c.end_layer - shard_c.start_layer == expected_layers[2]
-
-    shards = [shard_a, shard_b, shard_c]
-    shards_sorted = sorted(shards, key=lambda s: s.start_layer)
-    assert shards_sorted[0].start_layer == 0
-    assert shards_sorted[-1].end_layer == total_layers
+    assert shards[0].shard.start_layer == 0
+    assert shards[-1].shard.end_layer == total_layers
 
 
 def test_get_instance_placements_one_node_exact_fit() -> None:
@@ -218,9 +232,7 @@ def test_get_instance_placements_one_node_exact_fit() -> None:
     instance_id = list(placements.keys())[0]
     instance = placements[instance_id]
     assert instance.shard_assignments.model_id == "test-model"
-    assert len(instance.shard_assignments.node_to_runner) == 1
-    assert len(instance.shard_assignments.runner_to_shard) == 1
-    assert len(instance.shard_assignments.runner_to_shard) == 1
+    assert len(instance.shard_assignments.shards) == 1
 
 
 def test_get_instance_placements_one_node_fits_with_extra_memory() -> None:
@@ -248,9 +260,7 @@ def test_get_instance_placements_one_node_fits_with_extra_memory() -> None:
     instance_id = list(placements.keys())[0]
     instance = placements[instance_id]
     assert instance.shard_assignments.model_id == "test-model"
-    assert len(instance.shard_assignments.node_to_runner) == 1
-    assert len(instance.shard_assignments.runner_to_shard) == 1
-    assert len(instance.shard_assignments.runner_to_shard) == 1
+    assert len(instance.shard_assignments.shards) == 1
 
 
 def test_get_instance_placements_one_node_not_fit() -> None:
@@ -381,7 +391,7 @@ def test_placement_selects_leaf_nodes(
     assert len(placements) == 1
     instance = list(placements.values())[0]
 
-    assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
+    assigned_nodes = set(map(lambda it: it.node_id, instance.shard_assignments.shards))
     assert assigned_nodes == set((node_id_a, node_id_b)) or assigned_nodes == set(
         (
             node_id_c,
@@ -498,8 +508,8 @@ def test_tensor_rdma_backend_connectivity_matrix(
     for i in range(3):
         assert matrix[i][i] is None
 
-    assigned_nodes = list(instance.shard_assignments.node_to_runner.keys())
-    node_to_idx = {node_id: idx for idx, node_id in enumerate(assigned_nodes)}
+    assigned_nodes = list(instance.shard_assignments.shards)
+    node_to_idx = {node_id: idx for idx, (node_id, _, _) in enumerate(assigned_nodes)}
 
     idx_a = node_to_idx[node_a]
     idx_b = node_to_idx[node_b]
@@ -511,7 +521,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
 
     # Verify coordinators are set for all nodes
     assert len(instance.jaccl_coordinators) == 3
-    for node_id in assigned_nodes:
+    for node_id, _, _ in assigned_nodes:
         assert node_id in instance.jaccl_coordinators
         coordinator = instance.jaccl_coordinators[node_id]
         assert ":" in coordinator
@@ -825,7 +835,7 @@ def test_placement_prefers_cycle_with_downloaded_model(
 
     assert len(placements) == 1
     instance = list(placements.values())[0]
-    assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
+    assigned_nodes = set(map(lambda it: it.node_id, instance.shard_assignments.shards))
     assert assigned_nodes == {node_b}
 
 
@@ -903,7 +913,7 @@ def test_placement_prefers_cycle_with_higher_download_progress(
 
     assert len(placements) == 1
     instance = list(placements.values())[0]
-    assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
+    assigned_nodes = set(map(lambda it: it.node_id, instance.shard_assignments.shards))
     assert assigned_nodes == {node_b}
 
 
@@ -957,7 +967,7 @@ def test_placement_does_not_prefer_cycle_with_failed_download(
 
     assert len(placements) == 1
     instance = list(placements.values())[0]
-    assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
+    assigned_nodes = set(map(lambda it: it.node_id, instance.shard_assignments.shards))
     # node_a should win on RAM tiebreaker since failed download scores 0.0
     assert assigned_nodes == {node_a}
 

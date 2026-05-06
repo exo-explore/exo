@@ -1,4 +1,5 @@
-from collections.abc import Mapping
+from collections.abc import Sequence
+from typing import NamedTuple
 
 from pydantic import model_validator
 
@@ -83,16 +84,26 @@ RunnerStatus = (
 )
 
 
+class ShardWithId(NamedTuple):
+    node_id: NodeId
+    runner_id: RunnerId
+    shard: ShardMetadata
+
+
 class ShardAssignments(FrozenModel):
     model_id: ModelId
-    runner_to_shard: Mapping[RunnerId, ShardMetadata]
-    node_to_runner: Mapping[NodeId, RunnerId]
+    shards: Sequence[ShardWithId]
+    # this node needs to be connected to the API node for the stream to be considered ready
+    # (this is a device rank)
+    primary_output_node: int
 
     @model_validator(mode="after")
     def validate_runners_exist(self) -> "ShardAssignments":
-        for runner_id in self.node_to_runner.values():
-            if runner_id not in self.runner_to_shard:
-                raise ValueError(
-                    f"Runner {runner_id} in node_to_runner does not exist in runner_to_shard"
-                )
+        for position, shard in enumerate(self.shards):
+            if shard.shard.device_rank != position:
+                raise ValueError("shard position does not correspond to device rank")
+
+        if not self.shards[self.primary_output_node].shard.is_primary_output():
+            raise ValueError("primary output node does not correspond to primary shard")
+
         return self
