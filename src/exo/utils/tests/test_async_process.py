@@ -14,6 +14,7 @@ from anyio.abc import ByteReceiveStream
 from exo.utils.async_process import (
     AsyncSpawnProcess,
 )
+from exo.utils.channels import MpSender, mp_channel
 
 
 def _write_to_stdio(prefix: str, *, stderr_suffix: str) -> None:
@@ -65,6 +66,11 @@ def _close_stdio_and_exit() -> None:
 
 def _sleep_without_output() -> None:
     time.sleep(0.1)
+
+
+def _send_over_mp_channel(send: MpSender[str]) -> None:
+    send.send("hello from child")
+    send.close()
 
 
 def _mlx_force_oom(size: int = 40_000) -> None:
@@ -341,6 +347,21 @@ async def test_aclose_can_cancel_idle_drainers_before_child_exits() -> None:
         await process.aclose()
 
     assert process.returncode == 0
+
+
+@pytest.mark.asyncio
+async def test_spawn_process_can_use_spawn_context_mp_channel() -> None:
+    send, recv = mp_channel[str](context=AsyncSpawnProcess.context())
+    process = AsyncSpawnProcess(_send_over_mp_channel, args=(send,))
+    await process.start()
+
+    async with process:
+        with fail_after(2):
+            assert await recv.receive_async() == "hello from child"
+            assert await process.wait() == 0
+
+    with contextlib.suppress(Exception):
+        recv.close()
 
 
 @pytest.mark.asyncio

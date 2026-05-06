@@ -7,6 +7,7 @@ import multiprocessing as mp
 import os
 import sys
 from collections.abc import Callable, Iterable, Mapping
+from multiprocessing.context import SpawnContext
 from multiprocessing.process import BaseProcess
 from multiprocessing.resource_sharer import DupFd
 from signal import Signals
@@ -64,15 +65,19 @@ class MemoryByteReceiveStream(ByteReceiveStream):
 
 @final
 class AsyncSpawnProcess(AnyioProcess):
+    @staticmethod
+    def context() -> SpawnContext:
+        return mp.get_context("spawn")
+
     def __init__(
-        self,
-        target: Callable[..., object] | None = None,
-        name: str | None = None,
-        args: Iterable[object] = (),
-        kwargs: Mapping[str, object] | None = None,
-        *,
-        daemon: bool | None = None,
-        stream_buffer_size: int = 16,
+            self,
+            target: Callable[..., object] | None = None,
+            name: str | None = None,
+            args: Iterable[object] = (),
+            kwargs: Mapping[str, object] | None = None,
+            *,
+            daemon: bool | None = None,
+            stream_buffer_size: int = 16,
     ) -> None:
         if stream_buffer_size <= 0:
             raise ValueError("stream_buffer_size must be positive")
@@ -149,10 +154,10 @@ class AsyncSpawnProcess(AnyioProcess):
                 with contextlib.suppress(Exception):
                     await stream.aclose()
             for fd in (
-                stdout_read_fd,
-                stdout_write_fd,
-                stderr_read_fd,
-                stderr_write_fd,
+                    stdout_read_fd,
+                    stdout_write_fd,
+                    stderr_read_fd,
+                    stderr_write_fd,
             ):
                 _close_fd(fd)
             raise
@@ -197,6 +202,15 @@ class AsyncSpawnProcess(AnyioProcess):
 
     def terminate(self) -> None:
         self.process.terminate()
+
+    def is_alive(self) -> bool:
+        return self._process is not None and self._process.is_alive()
+
+    def join(self, timeout: float | None = None) -> None:
+        self.process.join(timeout)
+
+    def close(self) -> None:
+        self.process.close()
 
     def kill(self) -> None:
         self.process.kill()
@@ -247,11 +261,11 @@ class AsyncSpawnProcess(AnyioProcess):
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
 def _run_with_captured_stdio(
-    stdout: DupFd,
-    stderr: DupFd,
-    target: Callable[..., object] | None,
-    *target_args: object,
-    **target_kwargs: object,
+        stdout: DupFd,
+        stderr: DupFd,
+        target: Callable[..., object] | None,
+        *target_args: object,
+        **target_kwargs: object,
 ) -> None:
     stdout_fd = stdout.detach()
     stderr_fd = stderr.detach()
