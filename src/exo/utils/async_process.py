@@ -34,6 +34,8 @@ from exo.utils.task_group import TaskGroup
 _STDOUT_FD = 1
 _STDERR_FD = 2
 _READ_CHUNK_SIZE = 64 * 1024
+_TERMINATE_GRACE_SECONDS = 5.0
+_KILL_GRACE_SECONDS = 5.0
 
 
 @final
@@ -169,10 +171,12 @@ class AsyncSpawnProcess:
                 tg.start_soon(_drain_fd, stderr_read_fd, stderr_send)
                 await self.wait()
         finally:
-            with CancelScope(shield=True):
-                await self._terminate_if_still_alive()
-            self._has_stopped = True
-            self._stopped.set()
+            try:
+                with CancelScope(shield=True):
+                    await self._terminate_if_still_alive()
+            finally:
+                self._has_stopped = True
+                self._stopped.set()
 
     async def wait_started(self) -> None:
         await self._started.wait()
@@ -288,15 +292,20 @@ class AsyncSpawnProcess:
         with contextlib.suppress(ValueError):
             if process.is_alive():
                 process.terminate()
-                with move_on_after(5):
+                with move_on_after(_TERMINATE_GRACE_SECONDS):
                     await self.wait()
 
             if self.exitcode is not None or not process.is_alive():
                 return
 
             process.kill()
-            with move_on_after(5):
+            with move_on_after(_KILL_GRACE_SECONDS):
                 await self.wait()
+
+            if self.exitcode is not None or not process.is_alive():
+                return
+
+            raise RuntimeError(f"process {self.pid} is still alive after SIGKILL")
 
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.

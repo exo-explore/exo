@@ -4,13 +4,16 @@ import signal
 import sys
 import time
 from collections.abc import Callable
+from types import FrameType
 
 import mlx.core as mx
 import pytest
 from _pytest.capture import CaptureFixture
 from anyio import EndOfStream, create_task_group, fail_after
 from anyio.abc import ByteReceiveStream
+from pytest import MonkeyPatch
 
+import exo.utils.async_process as async_process
 from exo.utils.async_process import (
     AsyncSpawnProcess,
 )
@@ -66,6 +69,23 @@ def _close_stdio_and_exit() -> None:
 
 def _sleep_without_output() -> None:
     time.sleep(0.1)
+
+
+def _exit_on_sigterm(exitcode: int) -> None:
+    def handle_sigterm(_signum: int, _frame: FrameType | None) -> None:
+        os._exit(exitcode)
+
+    signal.signal(signal.SIGTERM, handle_sigterm)
+    os.write(1, b"sigterm-ready\n")
+    while True:
+        time.sleep(0.1)
+
+
+def _ignore_sigterm_forever() -> None:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    os.write(1, b"sigterm-ready\n")
+    while True:
+        time.sleep(0.1)
 
 
 def _send_over_mp_channel(send: MpSender[str]) -> None:
@@ -368,6 +388,41 @@ async def test_shutdown_can_cancel_idle_drainers_before_child_exits() -> None:
             await process.wait_stopped()
 
     assert process.exitcode is not None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_allows_child_to_exit_after_sigterm() -> None:
+    process = AsyncSpawnProcess(_exit_on_sigterm, args=(43,))
+
+    async with create_task_group() as task_group:
+        task_group.start_soon(process.run)
+        await process.wait_started()
+        assert await process.stdout.receive() == b"sigterm-ready\n"
+
+        with fail_after(2):
+            process.shutdown()
+            await process.wait_stopped()
+
+    assert process.exitcode == 43
+
+
+@pytest.mark.asyncio
+async def test_shutdown_escalates_to_sigkill_when_child_ignores_sigterm(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(async_process, "_TERMINATE_GRACE_SECONDS", 0.1)
+    process = AsyncSpawnProcess(_ignore_sigterm_forever)
+
+    async with create_task_group() as task_group:
+        task_group.start_soon(process.run)
+        await process.wait_started()
+        assert await process.stdout.receive() == b"sigterm-ready\n"
+
+        with fail_after(3):
+            process.shutdown()
+            await process.wait_stopped()
+
+    assert process.exitcode == -signal.SIGKILL
 
 
 @pytest.mark.asyncio
