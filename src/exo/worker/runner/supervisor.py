@@ -1,5 +1,4 @@
 import contextlib
-import multiprocessing as mp
 import signal
 from dataclasses import dataclass, field
 from typing import Self
@@ -8,8 +7,10 @@ import anyio
 from anyio import (
     BrokenResourceError,
     ClosedResourceError,
+    EndOfStream,
     to_thread,
 )
+from anyio.abc import ByteReceiveStream
 from loguru import logger
 
 from exo.shared.types.chunks import ErrorChunk
@@ -41,6 +42,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.shared.types.worker.shards import ShardMetadata
+from exo.utils.async_process import AsyncSpawnProcess
 from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
 from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint
@@ -53,7 +55,7 @@ DECODE_TIMEOUT_SECONDS = 5
 class RunnerSupervisor:
     shard_metadata: ShardMetadata
     bound_instance: BoundInstance
-    runner_process: mp.Process
+    runner_process: AsyncSpawnProcess
     initialize_timeout: float
     _ev_recv: MpReceiver[Event]
     _task_sender: MpSender[Task]
@@ -77,11 +79,12 @@ class RunnerSupervisor:
         event_sender: Sender[Event],
         initialize_timeout: float = 400,
     ) -> Self:
-        ev_send, ev_recv = mp_channel[Event]()
-        task_sender, task_recv = mp_channel[Task]()
-        cancel_sender, cancel_recv = mp_channel[TaskId]()
+        mp_ctx = AsyncSpawnProcess.context()
+        ev_send, ev_recv = mp_channel[Event](context=mp_ctx)
+        task_sender, task_recv = mp_channel[Task](context=mp_ctx)
+        cancel_sender, cancel_recv = mp_channel[TaskId](context=mp_ctx)
 
-        runner_process = mp.Process(
+        runner_process = AsyncSpawnProcess(
             target=entrypoint,
             args=(
                 bound_instance,
@@ -109,9 +112,18 @@ class RunnerSupervisor:
         return self
 
     async def run(self):
-        self.runner_process.start()
+        runner_started = False
         try:
             async with self._tg as tg:
+                tg.start_soon(self.runner_process.run)
+                await self.runner_process.wait_started()
+                runner_started = True
+                tg.start_soon(
+                    self._forward_runner_output, "stdout", self.runner_process.stdout
+                )
+                tg.start_soon(
+                    self._forward_runner_output, "stderr", self.runner_process.stderr
+                )
                 tg.start_soon(self._watch_runner)
                 tg.start_soon(self._forward_events)
         finally:
@@ -129,41 +141,13 @@ class RunnerSupervisor:
             with contextlib.suppress(ClosedResourceError):
                 self._cancel_sender.close()
 
-            await to_thread.run_sync(self.runner_process.join, 5)
-
-            if self.runner_process.is_alive():
-                logger.warning(
-                    "Runner process didn't shutdown succesfully, terminating"
-                )
-                self.runner_process.terminate()
-                self.runner_process.join(timeout=10)
-
-                if not self.runner_process.is_alive():
-                    logger.warning("Terminated nicely in the first attempt!")
-
-                else:
-                    # Try really hard to terminate
-                    for i in range(2, 11):
-                        self.runner_process.terminate()
-                        self.runner_process.join(timeout=2)
-                        if not self.runner_process.is_alive():
-                            logger.warning(f"That took {i} attempts :)")
-                            break
-                    # Try even harder to kill
-                    else:
-                        logger.critical(
-                            "Runner process didn't respond to SIGTERM, killing"
-                        )
-                        j = 0
-                        while self.runner_process.is_alive():
-                            j += 1
-                            self.runner_process.kill()
-                            self.runner_process.join(timeout=5)
-                            logger.warning(f"That took {j} attempts :(")
-            else:
-                logger.info("Runner process succesfully terminated")
-
-            self.runner_process.close()
+            if runner_started:
+                with anyio.CancelScope(shield=True):
+                    self.runner_process.shutdown()
+                    await self.runner_process.wait_stopped()
+                    if not self.runner_process.is_alive():
+                        logger.info("Runner process succesfully terminated")
+                    self.runner_process.close()
 
     def shutdown(self):
         self._tg.cancel_tasks()
@@ -248,6 +232,25 @@ class RunnerSupervisor:
                 await anyio.sleep(5)
                 if not self.runner_process.is_alive():
                     await self._check_runner(RuntimeError("Runner found to be dead"))
+
+    async def _forward_runner_output(
+        self,
+        stream_name: str,
+        stream: ByteReceiveStream,
+    ) -> None:
+        while True:
+            try:
+                chunk = await stream.receive()
+            except (EndOfStream, ClosedResourceError, BrokenResourceError):
+                return
+
+            message = chunk.decode("utf-8", errors="replace").rstrip()
+            if not message:
+                continue
+            if stream_name == "stderr":
+                logger.warning(f"Runner stderr: {message}")
+            else:
+                logger.debug(f"Runner stdout: {message}")
 
     async def _check_runner(self, e: Exception) -> None:
         if not self._cancel_watch_runner.cancel_called:
