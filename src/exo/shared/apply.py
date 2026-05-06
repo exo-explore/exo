@@ -16,6 +16,7 @@ from exo.shared.types.events import (
     InstanceDeleted,
     InstanceLinkCreated,
     InstanceLinkDeleted,
+    LocalModelsScanned,
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -44,6 +45,7 @@ from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
+from exo.shared.types.worker.local_models import LocalModelEntry
 from exo.shared.types.worker.runners import (
     RunnerId,
     RunnerReady,
@@ -87,6 +89,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_node_timed_out(event, state)
         case NodeDownloadProgress():
             return apply_node_download_progress(event, state)
+        case LocalModelsScanned():
+            return apply_local_models_scanned(event, state)
         case NodeGatheredInfo():
             return apply_node_gathered_info(event, state)
         case RunnerStatusUpdated():
@@ -150,6 +154,21 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
         node_id: current,
     }
     return state.model_copy(update={"downloads": new_downloads})
+
+
+def apply_local_models_scanned(event: LocalModelsScanned, state: State) -> State:
+    """Replace all entries for a single (node, source) pair with the freshly-scanned list."""
+    others: list[LocalModelEntry] = [
+        entry
+        for entry in state.local_models.get(event.node_id, ())
+        if entry.source != event.source
+    ]
+    next_for_node: list[LocalModelEntry] = others + list(event.entries)
+    new_local: Mapping[NodeId, Sequence[LocalModelEntry]] = {
+        **state.local_models,
+        event.node_id: next_for_node,
+    }
+    return state.model_copy(update={"local_models": new_local})
 
 
 def apply_task_created(event: TaskCreated, state: State) -> State:
@@ -278,6 +297,9 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     downloads = {
         key: value for key, value in state.downloads.items() if key != event.node_id
     }
+    local_models = {
+        key: value for key, value in state.local_models.items() if key != event.node_id
+    }
     # Clean up all granular node mappings
     node_memory = {
         key: value for key, value in state.node_memory.items() if key != event.node_id
@@ -317,6 +339,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     return state.model_copy(
         update={
             "downloads": downloads,
+            "local_models": local_models,
             "topology": topology,
             "last_seen": last_seen,
             "node_memory": node_memory,

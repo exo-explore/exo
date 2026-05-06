@@ -86,6 +86,9 @@ from exo.api.types import (
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
+    RescanSourcesResponse,
+    SourceInfo,
+    SourcesResponse,
     StartDownloadParams,
     StartDownloadResponse,
     ToolCall,
@@ -393,6 +396,8 @@ class API:
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.post("/download/cancel")(self.cancel_download)
+        self.app.get("/sources")(self.list_sources)
+        self.app.post("/sources/rescan")(self.rescan_sources)
         self.app.get("/v1/traces")(self.list_traces)
         self.app.post("/v1/traces/delete")(self.delete_traces)
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
@@ -1975,12 +1980,67 @@ class API:
     async def delete_download(
         self, node_id: NodeId, model_id: ModelId
     ) -> DeleteDownloadResponse:
+        # Guard: only allow deletion of models that exo's own downloader manages.
+        # Models surfaced from external sources (LM Studio, Ollama, …) live outside
+        # exo's writable cache and shouldn't be touched here — direct the user at the
+        # owning tool instead.
+        node_downloads = self.state.downloads.get(node_id, ())
+        is_exo_managed = any(
+            isinstance(dl, DownloadCompleted)
+            and dl.shard_metadata.model_card.model_id == model_id
+            for dl in node_downloads
+        )
+        if not is_exo_managed:
+            external_sources: set[str] = {
+                entry.source
+                for entry in self.state.local_models.get(node_id, ())
+                if entry.external_id == str(model_id) and entry.source != "exo"
+            }
+            if external_sources:
+                tools = ", ".join(sorted(external_sources))
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"'{model_id}' is managed by {tools}. "
+                        "Remove it from the owning tool to free disk space."
+                    ),
+                )
         command = DeleteDownload(
             target_node_id=node_id,
             model_id=ModelId(model_id),
         )
         await self._send_download(command)
         return DeleteDownloadResponse(command_id=command.command_id)
+
+    async def list_sources(self) -> SourcesResponse:
+        """Enumerate all model sources known to this node and whether each is configured.
+
+        Reads :func:`exo.sources.default_sources` on the API process. Availability is a
+        cheap directory existence check; entries themselves are surfaced via ``/state``
+        under ``local_models``.
+        """
+        from exo.sources import default_sources
+
+        infos: list[SourceInfo] = []
+        for source in default_sources():
+            try:
+                available = source.is_available()
+            except Exception:  # noqa: BLE001
+                available = False
+            infos.append(
+                SourceInfo(
+                    kind=source.kind,
+                    display_name=source.display_name,
+                    available=available,
+                )
+            )
+        return SourcesResponse(sources=infos)
+
+    async def rescan_sources(self) -> RescanSourcesResponse:
+        """Best-effort: returns immediately. Workers rescan on a 60s timer; this is a
+        documentation hook for a future broadcast-rescan command. Today it always
+        returns ``triggered=false`` so callers don't depend on a no-op."""
+        return RescanSourcesResponse(triggered=False)
 
     async def cancel_download(
         self,

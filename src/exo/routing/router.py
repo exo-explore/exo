@@ -22,6 +22,7 @@ from exo_pyo3_bindings import (
 )
 from filelock import FileLock
 from loguru import logger
+from pydantic import ValidationError
 
 from exo.shared.constants import EXO_NODE_ID_KEYPAIR
 from exo.utils.channels import Receiver, Sender, channel
@@ -201,7 +202,18 @@ class Router:
                             )
                             continue
                         router = self.topic_routers[topic]
-                        await router.publish_bytes(data)
+                        try:
+                            await router.publish_bytes(data)
+                        except ValidationError as exc:
+                            # A peer running an incompatible schema (newer or older) sent a
+                            # message we can't parse. Drop it and keep the loop alive — one
+                            # bad sender must not take the node offline.
+                            logger.warning(
+                                f"Dropping malformed message on {topic} from {origin}: "
+                                f"{exc.error_count()} validation errors. "
+                                f"(Run with -v for the full payload.)"
+                            )
+                            logger.debug(f"Malformed payload: {data!r}; errors: {exc}")
                     case PyFromSwarm.Connection():
                         message = ConnectionMessage.from_update(from_swarm)
                         logger.trace(

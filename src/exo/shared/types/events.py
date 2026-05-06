@@ -6,11 +6,20 @@ from pydantic import Field
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Connection
 from exo.shared.types.chunks import Chunk, InputImageChunk
-from exo.shared.types.common import CommandId, Id, ModelId, NodeId, SessionId, SystemId
+from exo.shared.types.common import (
+    CommandId,
+    Id,
+    ModelId,
+    ModelSourceKind,
+    NodeId,
+    SessionId,
+    SystemId,
+)
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
+from exo.shared.types.worker.local_models import LocalModelEntry
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo
 from exo.utils.pydantic_ext import FrozenModel, TaggedModel
@@ -90,6 +99,19 @@ class NodeDownloadProgress(BaseEvent):
     download_progress: DownloadProgress
 
 
+class LocalModelsScanned(BaseEvent):
+    """Replaces the catalog of locally-discovered models for a single (node, source) pair.
+
+    The scanner emits one of these per source on every scan; the apply handler atomically
+    swaps the existing entries for that (node, source). Sources that fail to scan emit
+    nothing (last-known-good catalog wins) — see ``source_scanner.py``.
+    """
+
+    node_id: NodeId
+    source: ModelSourceKind
+    entries: list[LocalModelEntry]
+
+
 class ChunkGenerated(BaseEvent):
     command_id: CommandId
     chunk: Chunk
@@ -159,6 +181,7 @@ Event = (
     | NodeTimedOut
     | NodeGatheredInfo
     | NodeDownloadProgress
+    | LocalModelsScanned
     | ChunkGenerated
     | InputChunkReceived
     | TopologyEdgeCreated
