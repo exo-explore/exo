@@ -3,7 +3,7 @@ import os
 import signal
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from types import FrameType
 
 import mlx.core as mx
@@ -128,16 +128,16 @@ async def _collect_process_output(
 ) -> tuple[int, bytes, bytes]:
     stdout = bytearray()
     stderr = bytearray()
+    exitcodes: list[int] = []
 
     async with create_task_group() as task_group:
         task_group.start_soon(_collect_stream, process.stdout, stdout)
         task_group.start_soon(_collect_stream, process.stderr, stderr)
-        await process.wait()
+        exitcodes.append(await process.wait())
 
-    if process.exitcode is None:
+    if not exitcodes:
         raise RuntimeError("process exited without a return code")
-    exitcode = process.exitcode
-    return exitcode, bytes(stdout), bytes(stderr)
+    return exitcodes[0], bytes(stdout), bytes(stderr)
 
 
 def _fd_identity(fd: int) -> tuple[int, int]:
@@ -150,6 +150,17 @@ def _fd_count() -> int | None:
         with contextlib.suppress(OSError):
             return len(os.listdir(fd_dir))
     return None
+
+
+@contextlib.asynccontextmanager
+async def _started_process(process: AsyncSpawnProcess) -> AsyncIterator[None]:
+    async with create_task_group() as task_group:
+        task_group.start_soon(process.run)
+        await process.wait_started()
+        try:
+            yield
+        finally:
+            process.shutdown()
 
 
 async def _run_and_collect(
@@ -165,17 +176,11 @@ async def _run_and_collect(
         kwargs=kwargs,
         stream_buffer_size=stream_buffer_size,
     )
-    result: tuple[int, bytes, bytes] | None = None
-    async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
-        await process.wait_started()
-        result = await _collect_process_output(process)
-    if result is None:
-        raise RuntimeError("process collection did not run")
-    return result
+    async with _started_process(process):
+        return await _collect_process_output(process)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_spawn_process_captures_stdout_and_stderr_separately(
     capfd: CaptureFixture[str],
 ) -> None:
@@ -184,14 +189,8 @@ async def test_spawn_process_captures_stdout_and_stderr_separately(
         args=("child",),
         kwargs={"stderr_suffix": "error"},
     )
-    result: tuple[int, bytes, bytes] | None = None
-    async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
-        await process.wait_started()
-        result = await _collect_process_output(process)
-    if result is None:
-        raise RuntimeError("process collection did not run")
-    exitcode, stdout_bytes, stderr_bytes = result
+    async with _started_process(process):
+        exitcode, stdout_bytes, stderr_bytes = await _collect_process_output(process)
 
     parent_output = capfd.readouterr()
     stdout = stdout_bytes.decode("utf-8", errors="replace")
@@ -206,7 +205,7 @@ async def test_spawn_process_captures_stdout_and_stderr_separately(
     assert "child:" not in parent_output.err
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_process_with_no_target_exits_successfully() -> None:
     exitcode, stdout, stderr = await _run_and_collect(None)
 
@@ -215,35 +214,21 @@ async def test_process_with_no_target_exits_successfully() -> None:
     assert stderr == b""
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stdout_stream_honors_receive_size() -> None:
     process = AsyncSpawnProcess(_write_large_output)
-    first_stdout: bytes | None = None
-    remaining_stdout = bytearray()
-    stderr = bytearray()
 
-    async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
-        await process.wait_started()
+    async with _started_process(process):
         first_stdout = await process.stdout.receive(6)
+        exitcode, remaining_stdout, stderr = await _collect_process_output(process)
 
-        async with create_task_group() as collect_group:
-            collect_group.start_soon(_collect_stream, process.stdout, remaining_stdout)
-            collect_group.start_soon(_collect_stream, process.stderr, stderr)
-            await process.wait()
-
-    if first_stdout is None:
-        raise RuntimeError("process stdout was not read")
-    if process.exitcode is None:
-        raise RuntimeError("process exited without a return code")
-    exitcode = process.exitcode
     assert exitcode == 0
     assert first_stdout == b"stdout"
-    assert bytes(remaining_stdout) == b"-0123456789"
-    assert bytes(stderr) == b"stderr-0123456789"
+    assert remaining_stdout == b"-0123456789"
+    assert stderr == b"stderr-0123456789"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_large_stdout_and_stderr_are_not_lost_with_bounded_buffers() -> None:
     size = 1024 * 1024
     exitcode, stdout, stderr = await _run_and_collect(
@@ -257,18 +242,12 @@ async def test_large_stdout_and_stderr_are_not_lost_with_bounded_buffers() -> No
     assert stderr == b"stderr:" + (b"y" * size)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_child_exception_traceback_is_captured_from_stderr() -> None:
     process = AsyncSpawnProcess(_raise_after_stderr_write)
-    result: tuple[int, bytes, bytes] | None = None
 
-    async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
-        await process.wait_started()
-        result = await _collect_process_output(process)
-    if result is None:
-        raise RuntimeError("process collection did not run")
-    exitcode, _, stderr_bytes = result
+    async with _started_process(process):
+        exitcode, _, stderr_bytes = await _collect_process_output(process)
 
     assert exitcode == 1
     stderr = stderr_bytes.decode("utf-8", errors="replace")
@@ -276,7 +255,7 @@ async def test_child_exception_traceback_is_captured_from_stderr() -> None:
     assert "RuntimeError: child boom" in stderr
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_repeated_bad_children_do_not_pollute_or_replace_parent_stdio(
     capfd: CaptureFixture[str],
 ) -> None:
@@ -332,7 +311,7 @@ async def test_repeated_bad_children_do_not_pollute_or_replace_parent_stdio(
     assert "child boom" not in parent_output.err
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_child_can_close_stdio_without_corrupting_parent_stdio(
     capfd: CaptureFixture[str],
 ) -> None:
@@ -353,7 +332,7 @@ async def test_child_can_close_stdio_without_corrupting_parent_stdio(
     assert "parent stderr after child closed stdio" in parent_output.err
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_repeated_crashing_children_do_not_grow_parent_fd_table() -> None:
     await _run_and_collect(_exit_after_stdio_write, args=("warmup", 23))
     before = _fd_count()
@@ -376,13 +355,10 @@ async def test_repeated_crashing_children_do_not_grow_parent_fd_table() -> None:
     assert after <= before + 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_shutdown_can_cancel_idle_drainers_before_child_exits() -> None:
     process = AsyncSpawnProcess(_sleep_without_output)
-    async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
-        await process.wait_started()
-
+    async with _started_process(process):
         with fail_after(2):
             process.shutdown()
             await process.wait_stopped()
@@ -390,13 +366,11 @@ async def test_shutdown_can_cancel_idle_drainers_before_child_exits() -> None:
     assert process.exitcode is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_shutdown_allows_child_to_exit_after_sigterm() -> None:
     process = AsyncSpawnProcess(_exit_on_sigterm, args=(43,))
 
-    async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
-        await process.wait_started()
+    async with _started_process(process):
         assert await process.stdout.receive() == b"sigterm-ready\n"
 
         with fail_after(2):
@@ -406,16 +380,14 @@ async def test_shutdown_allows_child_to_exit_after_sigterm() -> None:
     assert process.exitcode == 43
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_shutdown_escalates_to_sigkill_when_child_ignores_sigterm(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(async_process, "_TERMINATE_GRACE_SECONDS", 0.1)
     process = AsyncSpawnProcess(_ignore_sigterm_forever)
 
-    async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
-        await process.wait_started()
+    async with _started_process(process):
         assert await process.stdout.receive() == b"sigterm-ready\n"
 
         with fail_after(3):
@@ -425,14 +397,12 @@ async def test_shutdown_escalates_to_sigkill_when_child_ignores_sigterm(
     assert process.exitcode == -signal.SIGKILL
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_spawn_process_can_use_spawn_context_mp_channel() -> None:
     send, recv = mp_channel[str](context=AsyncSpawnProcess.context())
     process = AsyncSpawnProcess(_send_over_mp_channel, args=(send,))
 
-    async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
-        await process.wait_started()
+    async with _started_process(process):
         with fail_after(2):
             assert await recv.receive_async() == "hello from child"
             assert await process.wait() == 0
@@ -441,16 +411,14 @@ async def test_spawn_process_can_use_spawn_context_mp_channel() -> None:
         recv.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.skip(reason="manual MLX OOM isolation check")
 async def test_death(capsys: CaptureFixture[str]) -> None:
     with capsys.disabled():
         process = AsyncSpawnProcess(_mlx_force_oom)
         stdout = b""
         stderr = b""
-        async with create_task_group() as task_group:
-            task_group.start_soon(process.run)
-            await process.wait_started()
+        async with _started_process(process):
             _, stdout, stderr = await _collect_process_output(process)
 
         print("PARENT: done")

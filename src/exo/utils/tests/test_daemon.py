@@ -1,4 +1,6 @@
+import contextlib
 import os
+from collections.abc import AsyncIterator
 
 import anyio
 import pytest
@@ -6,7 +8,7 @@ from anyio import EndOfStream, create_task_group, fail_after
 from anyio.abc import ByteReceiveStream
 
 from exo.utils.async_process import AsyncSpawnProcess
-from exo.utils.channels import MpSender, mp_channel
+from exo.utils.channels import MpReceiver, MpSender, mp_channel
 from exo.utils.daemon import detach_stdio_to_devnull
 
 
@@ -27,42 +29,14 @@ async def _spawn_grandchild_and_report(
     result_sender: MpSender[tuple[int, bytes, bytes]],
     label: str,
 ) -> None:
-    process = AsyncSpawnProcess(_write_grandchild_stdio, args=(label,))
-    exitcode: int | None = None
-    stdout = bytearray()
-    stderr = bytearray()
-
-    async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
-        await process.wait_started()
-        async with create_task_group() as collect_group:
-            collect_group.start_soon(_collect_stream, process.stdout, stdout)
-            collect_group.start_soon(_collect_stream, process.stderr, stderr)
-            exitcode = await process.wait()
-
-    if exitcode is None:
-        raise RuntimeError("grandchild process was not collected")
-    result_sender.send((exitcode, bytes(stdout), bytes(stderr)))
+    result_sender.send(await _collect_spawned_child(label))
     result_sender.close()
 
 
 async def _collect_spawned_child(label: str) -> tuple[int, bytes, bytes]:
     process = AsyncSpawnProcess(_write_grandchild_stdio, args=(label,))
-    exitcode: int | None = None
-    stdout = bytearray()
-    stderr = bytearray()
-
-    async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
-        await process.wait_started()
-        async with create_task_group() as collect_group:
-            collect_group.start_soon(_collect_stream, process.stdout, stdout)
-            collect_group.start_soon(_collect_stream, process.stderr, stderr)
-            exitcode = await process.wait()
-
-    if exitcode is None:
-        raise RuntimeError("child process was not collected")
-    return exitcode, bytes(stdout), bytes(stderr)
+    async with _started_process(process):
+        return await _collect_process_output(process)
 
 
 def _detach_stdio_then_spawn_captured_child(
@@ -94,45 +68,74 @@ async def _collect_stream(stream: ByteReceiveStream, output: bytearray) -> None:
             return
 
 
-@pytest.mark.asyncio
-async def test_detach_stdio_to_devnull_redirects_stdio_away_from_capture() -> None:
-    process = AsyncSpawnProcess(_write_before_and_after_detach)
+async def _collect_process_output(
+    process: AsyncSpawnProcess,
+) -> tuple[int, bytes, bytes]:
     stdout = bytearray()
     stderr = bytearray()
+    exitcodes: list[int] = []
 
+    async with create_task_group() as collect_group:
+        collect_group.start_soon(_collect_stream, process.stdout, stdout)
+        collect_group.start_soon(_collect_stream, process.stderr, stderr)
+        exitcodes.append(await process.wait())
+
+    if not exitcodes:
+        raise RuntimeError("process exited without a return code")
+    return exitcodes[0], bytes(stdout), bytes(stderr)
+
+
+@contextlib.asynccontextmanager
+async def _started_process(process: AsyncSpawnProcess) -> AsyncIterator[None]:
     async with create_task_group() as task_group:
         task_group.start_soon(process.run)
         await process.wait_started()
-        async with create_task_group() as collect_group:
-            collect_group.start_soon(_collect_stream, process.stdout, stdout)
-            collect_group.start_soon(_collect_stream, process.stderr, stderr)
-            assert await process.wait() == 0
+        try:
+            yield
+        finally:
+            process.shutdown()
 
+
+async def _run_process_and_receive[T](
+    process: AsyncSpawnProcess,
+    recv: MpReceiver[T],
+    *,
+    timeout: float,
+) -> tuple[int, T]:
+    async with _started_process(process):
+        with fail_after(timeout):
+            result = await recv.receive_async()
+            exitcode = await process.wait()
+
+    return exitcode, result
+
+
+@pytest.mark.anyio
+async def test_detach_stdio_to_devnull_redirects_stdio_away_from_capture() -> None:
+    process = AsyncSpawnProcess(_write_before_and_after_detach)
+
+    async with _started_process(process):
+        exitcode, stdout, stderr = await _collect_process_output(process)
+
+    assert exitcode == 0
     assert stdout == b"before stdout\n"
     assert stderr == b"before stderr\n"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_detached_stdio_process_can_spawn_and_capture_child_stdio() -> None:
     send, recv = mp_channel[tuple[int, bytes, bytes]](
         context=AsyncSpawnProcess.context()
     )
     process = AsyncSpawnProcess(_detach_stdio_then_spawn_captured_child, args=(send,))
-    result: tuple[int, bytes, bytes] | None = None
-    daemonized_parent_exitcode: int | None = None
 
     try:
-        async with create_task_group() as task_group:
-            task_group.start_soon(process.run)
-            await process.wait_started()
-            with fail_after(5):
-                result = await recv.receive_async()
-                daemonized_parent_exitcode = await process.wait()
+        daemonized_parent_exitcode, result = await _run_process_and_receive(
+            process, recv, timeout=5
+        )
     finally:
         recv.close()
 
-    if result is None:
-        raise RuntimeError("daemonized parent did not report grandchild result")
     child_exitcode, child_stdout, child_stderr = result
 
     assert daemonized_parent_exitcode == 0
@@ -141,7 +144,7 @@ async def test_detached_stdio_process_can_spawn_and_capture_child_stdio() -> Non
     assert child_stderr == b"grandchild stderr\n"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_detached_stdio_process_can_spawn_captured_children_sequentially() -> (
     None
 ):
@@ -152,21 +155,13 @@ async def test_detached_stdio_process_can_spawn_captured_children_sequentially()
         _detach_stdio_then_spawn_captured_children_sequentially,
         args=(send,),
     )
-    results: list[tuple[int, bytes, bytes]] | None = None
-    daemonized_parent_exitcode: int | None = None
 
     try:
-        async with create_task_group() as task_group:
-            task_group.start_soon(process.run)
-            await process.wait_started()
-            with fail_after(10):
-                results = await recv.receive_async()
-                daemonized_parent_exitcode = await process.wait()
+        daemonized_parent_exitcode, results = await _run_process_and_receive(
+            process, recv, timeout=10
+        )
     finally:
         recv.close()
-
-    if results is None:
-        raise RuntimeError("daemonized parent did not report child results")
 
     assert daemonized_parent_exitcode == 0
     assert results == [

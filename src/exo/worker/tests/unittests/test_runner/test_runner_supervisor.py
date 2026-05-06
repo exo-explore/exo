@@ -32,7 +32,7 @@ class _DeadProcess:
         return None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> None:
     event_sender, event_receiver = channel[Event]()
     task_sender, _ = mp_channel[Task]()
