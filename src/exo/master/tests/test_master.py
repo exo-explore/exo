@@ -6,7 +6,10 @@ import anyio
 import pytest
 from loguru import logger
 
-from exo.master.main import _MAX_MASTER_SESSION_LOG_DIRS, Master
+from exo.master.main import (
+    _MAX_MASTER_SESSION_LOG_DIRS,  # pyright: ignore[reportPrivateUsage]
+    Master,
+)
 from exo.routing.router import get_node_id_keypair
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.commands import (
@@ -316,4 +319,4 @@ def test_master_prunes_old_session_log_directories(tmp_path: Path):
     assert len(session_dirs) == _MAX_MASTER_SESSION_LOG_DIRS
     assert (master_log_root / f"{node_id}-99").exists()
 
-    master._event_log.close()
+    master._event_log.close()  # pyright: ignore[reportPrivateUsage]
