@@ -116,6 +116,7 @@ def mlx_distributed_init(
                 os.environ["MLX_HOSTFILE"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
                 # os.environ["MLX_RING_VERBOSE"] = "1" # NOTE: we don't use it enough to care (turn on again if need to)
+                
                 group = mx.distributed.init(backend="ring", strict=True)
 
             case MlxJacclInstance(
