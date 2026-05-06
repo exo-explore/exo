@@ -65,6 +65,11 @@
     nodeThunderboltBridge,
     nodeIdentities,
     isConnected,
+    getInstanceFirstShard,
+    getInstanceNodeIds,
+    getInstanceRunnerIds,
+    getInstanceShards,
+    type Instance,
     type DownloadProgress,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
@@ -998,11 +1003,7 @@
     if (keys.length !== 1) return new Set();
     const instance = (instanceWrapped as Record<string, unknown>)[keys[0]];
     if (!instance || typeof instance !== "object") return new Set();
-    const inst = instance as {
-      shardAssignments?: { nodeToRunner?: Record<string, string> };
-    };
-    if (!inst.shardAssignments?.nodeToRunner) return new Set();
-    return new Set(Object.keys(inst.shardAssignments.nodeToRunner));
+    return new Set(getInstanceNodeIds(instance as Instance));
   }
 
   function toggleInstanceDownloadDetails(nodeId: string): void {
@@ -1784,13 +1785,7 @@
       };
     }
 
-    const inst = instance as {
-      shardAssignments?: {
-        nodeToRunner?: Record<string, string>;
-        runnerToShard?: Record<string, unknown>;
-        modelId?: string;
-      };
-    };
+    const inst = instance as Instance;
     const instanceModelId = inst.shardAssignments?.modelId;
 
     if (!instanceModelId) {
@@ -1805,16 +1800,7 @@
       };
     }
 
-    // Get node IDs assigned to this instance
-    const nodeToRunner = inst.shardAssignments?.nodeToRunner || {};
-    const runnerToShard = inst.shardAssignments?.runnerToShard || {};
-    const runnerToNode: Record<string, string> = {};
-    for (const [nodeId, runnerId] of Object.entries(nodeToRunner)) {
-      runnerToNode[runnerId] = nodeId;
-    }
-    const instanceNodeIds = Object.keys(runnerToShard)
-      .map((runnerId) => runnerToNode[runnerId])
-      .filter(Boolean);
+    const instanceNodeIds = getInstanceNodeIds(inst);
 
     const result = collectDownloadStatus(instanceModelId, instanceNodeIds);
 
@@ -1858,6 +1844,7 @@
       case "FAILED":
         return "text-red-400";
       case "SHUTDOWN":
+      case "SHUTTING DOWN":
         return "text-gray-400";
       case "DOWNLOADING":
         return "text-blue-400";
@@ -1865,6 +1852,7 @@
       case "WARMING UP":
       case "WAITING":
       case "INITIALIZING":
+      case "CONNECTING":
         return "text-yellow-400";
       case "RUNNING":
         return "text-teal-400";
@@ -1887,10 +1875,7 @@
       return { statusText: "PREPARING", statusClass: "inactive" };
     }
 
-    const inst = instance as {
-      shardAssignments?: { runnerToShard?: Record<string, unknown> };
-    };
-    const runnerIds = Object.keys(inst.shardAssignments?.runnerToShard || {});
+    const runnerIds = getInstanceRunnerIds(instance as Instance);
 
     const statuses = runnerIds
       .map((rid) => {
@@ -1898,14 +1883,15 @@
         if (!r) return null;
         const [kind] = getTagged(r);
         const statusMap: Record<string, string> = {
-          RunnerWaitingForInitialization: "WaitingForInitialization",
-          RunnerInitializingBackend: "InitializingBackend",
-          RunnerWaitingForModel: "WaitingForModel",
+          RunnerIdle: "Idle",
+          RunnerConnecting: "Connecting",
+          RunnerConnected: "Connected",
           RunnerLoading: "Loading",
           RunnerLoaded: "Loaded",
           RunnerWarmingUp: "WarmingUp",
           RunnerReady: "Ready",
           RunnerRunning: "Running",
+          RunnerShuttingDown: "ShuttingDown",
           RunnerShutdown: "Shutdown",
           RunnerFailed: "Failed",
         };
@@ -1959,14 +1945,15 @@
       return { statusText: "RUNNING", statusClass: "running" };
     if (has("Ready")) return { statusText: "READY", statusClass: "loaded" };
     if (has("Loaded")) return { statusText: "LOADED", statusClass: "loaded" };
-    if (has("WaitingForModel"))
-      return { statusText: "WAITING", statusClass: "starting" };
-    if (has("InitializingBackend"))
+    if (has("Connected"))
       return { statusText: "INITIALIZING", statusClass: "starting" };
-    if (has("WaitingForInitialization"))
-      return { statusText: "INITIALIZING", statusClass: "starting" };
+    if (has("Connecting"))
+      return { statusText: "CONNECTING", statusClass: "starting" };
+    if (has("Idle")) return { statusText: "WAITING", statusClass: "starting" };
+    if (has("ShuttingDown"))
+      return { statusText: "SHUTTING DOWN", statusClass: "inactive" };
 
-    return { statusText: "RUNNING", statusClass: "active" };
+    return { statusText: "PREPARING", statusClass: "inactive" };
   }
 
   function getBytes(value: unknown): number {
@@ -2039,7 +2026,7 @@
   function getInstanceModelId(instanceWrapped: unknown): string {
     const [, instance] = getTagged(instanceWrapped);
     if (!instance || typeof instance !== "object") return "Unknown";
-    const inst = instance as { shardAssignments?: { modelId?: string } };
+    const inst = instance as Instance;
     return inst.shardAssignments?.modelId || "Unknown Model";
   }
 
@@ -2067,17 +2054,11 @@
     if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
     else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
 
-    const inst = instance as {
-      shardAssignments?: {
-        nodeToRunner?: Record<string, string>;
-        runnerToShard?: Record<string, unknown>;
-      };
-    };
+    const inst = instance as Instance;
 
     // Sharding strategy from first shard
     let sharding = "Unknown";
-    const runnerToShard = inst.shardAssignments?.runnerToShard || {};
-    const firstShardWrapped = Object.values(runnerToShard)[0];
+    const firstShardWrapped = getInstanceFirstShard(inst);
     if (firstShardWrapped) {
       const [shardTag] = getTagged(firstShardWrapped);
       if (shardTag === "PipelineShardMetadata") sharding = "Pipeline";
@@ -2087,8 +2068,7 @@
     }
 
     // Node names from topology
-    const nodeToRunner = inst.shardAssignments?.nodeToRunner || {};
-    const nodeIds = Object.keys(nodeToRunner);
+    const nodeIds = getInstanceNodeIds(inst);
     const nodeNames = nodeIds.map((nodeId) => {
       const node = data?.nodes?.[nodeId];
       return node?.friendly_name || nodeId.slice(0, 8);
@@ -2192,35 +2172,19 @@
   }
 
   function getOrderedRunnerNodes(
-    instance: Record<string, unknown>,
+    instance: Instance,
     shardType: "Pipeline" | "Tensor",
   ) {
-    const runnerToShard =
-      (
-        instance.shardAssignments as
-          | { runnerToShard?: Record<string, unknown> }
-          | undefined
-      )?.runnerToShard || {};
-    const nodeToRunner =
-      (
-        instance.shardAssignments as
-          | { nodeToRunner?: Record<string, string> }
-          | undefined
-      )?.nodeToRunner || {};
-    const runnerEntries = Object.entries(runnerToShard).map(
-      ([runnerId, shardWrapped]) => {
+    const runnerEntries = getInstanceShards(instance).map(
+      ([nodeId, runnerId, shardWrapped]) => {
         const [tag, shard] = getTagged(shardWrapped);
         const meta = shard as
           | {
-              modelMeta?: {
-                worldSize?: number;
-                nLayers?: number;
-                deviceRank?: number;
-              };
+              deviceRank?: number;
             }
           | undefined;
-        const deviceRank = meta?.modelMeta?.deviceRank ?? 0;
-        return { runnerId, tag, deviceRank };
+        const deviceRank = meta?.deviceRank ?? 0;
+        return { nodeId, runnerId, tag, deviceRank };
       },
     );
 
@@ -2231,13 +2195,11 @@
           : r.tag === "TensorShardMetadata",
       )
       .sort((a, b) => a.deviceRank - b.deviceRank)
-      .map((r, idx) => {
-        const nodeId = Object.entries(nodeToRunner).find(
-          ([, rid]) => rid === r.runnerId,
-        )?.[0];
-        return { nodeId, runnerId: r.runnerId, order: idx };
-      })
-      .filter((item) => item.nodeId);
+      .map((r, idx) => ({
+        nodeId: r.nodeId,
+        runnerId: r.runnerId,
+        order: idx,
+      }));
 
     return ordered as Array<{
       nodeId: string;
@@ -2281,10 +2243,7 @@
 
     // Jaccl (RDMA) – show RDMA interfaces from ibvDevices
     if (instanceTag === "MlxJacclInstance") {
-      const ordered = getOrderedRunnerNodes(
-        instance as Record<string, unknown>,
-        "Tensor",
-      );
+      const ordered = getOrderedRunnerNodes(instance as Instance, "Tensor");
       const ibvDevices =
         (instance as { ibvDevices?: Array<Array<string | null>> }).ibvDevices ||
         [];
@@ -2316,10 +2275,7 @@
 
     // Ring – derive ring order from pipeline shard ranks and pick host IPs from hostsByNode
     if (instanceTag === "MlxRingInstance") {
-      const ordered = getOrderedRunnerNodes(
-        instance as Record<string, unknown>,
-        "Pipeline",
-      );
+      const ordered = getOrderedRunnerNodes(instance as Instance, "Pipeline");
       const hostsByNode =
         (
           instance as {
@@ -2606,6 +2562,7 @@
         status.statusText === "WARMING UP" ||
         status.statusText === "WAITING" ||
         status.statusText === "INITIALIZING" ||
+        status.statusText === "CONNECTING" ||
         status.statusText === "PREPARING"
       ) {
         chatLaunchState = "launching";
@@ -5108,7 +5065,10 @@
                   {@const isFailed = statusText === "FAILED"}
                   {@const isLoading = statusText === "LOADING"}
                   {@const isWarmingUp =
-                    statusText === "WARMING UP" || statusText === "WAITING"}
+                    statusText === "WARMING UP" ||
+                    statusText === "WAITING" ||
+                    statusText === "INITIALIZING" ||
+                    statusText === "CONNECTING"}
                   {@const isReady =
                     statusText === "READY" || statusText === "LOADED"}
                   {@const isRunning = statusText === "RUNNING"}
@@ -6244,7 +6204,10 @@
                     {@const isFailed = statusText === "FAILED"}
                     {@const isLoading = statusText === "LOADING"}
                     {@const isWarmingUp =
-                      statusText === "WARMING UP" || statusText === "WAITING"}
+                      statusText === "WARMING UP" ||
+                      statusText === "WAITING" ||
+                      statusText === "INITIALIZING" ||
+                      statusText === "CONNECTING"}
                     {@const isReady =
                       statusText === "READY" || statusText === "LOADED"}
                     {@const isRunning = statusText === "RUNNING"}

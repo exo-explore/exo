@@ -204,6 +204,11 @@ def test_get_shard_assignments(
     node_a_id = NodeId()
     node_b_id = NodeId()
     node_c_id = NodeId()
+    layers_by_node = {
+        node_a_id: expected_layers[0],
+        node_b_id: expected_layers[1],
+        node_c_id: expected_layers[2],
+    }
 
     # create connections (A -> B -> C -> A forms a 3-cycle, plus B -> A also exists)
     connection1 = Connection(
@@ -258,25 +263,8 @@ def test_get_shard_assignments(
     )
 
     # assert
-    runner_id_a = shard_assignments.node_to_runner[node_a_id]
-    runner_id_b = shard_assignments.node_to_runner[node_b_id]
-    runner_id_c = shard_assignments.node_to_runner[node_c_id]
-
-    assert (
-        shard_assignments.runner_to_shard[runner_id_a].end_layer
-        - shard_assignments.runner_to_shard[runner_id_a].start_layer
-        == expected_layers[0]
-    )
-    assert (
-        shard_assignments.runner_to_shard[runner_id_b].end_layer
-        - shard_assignments.runner_to_shard[runner_id_b].start_layer
-        == expected_layers[1]
-    )
-    assert (
-        shard_assignments.runner_to_shard[runner_id_c].end_layer
-        - shard_assignments.runner_to_shard[runner_id_c].start_layer
-        == expected_layers[2]
-    )
+    for nid, _, shard in shard_assignments.shards:
+        assert shard.end_layer - shard.start_layer == layers_by_node[nid]
 
 
 def test_get_mlx_jaccl_coordinators():
@@ -543,11 +531,11 @@ class TestCfgParallelPlacement:
             model_card, cycle, node_memory
         )
 
-        shards = list(assignments.runner_to_shard.values())
+        shards = list(assignments.shards)
         assert len(shards) == 2
 
         # CFG models should get CfgShardMetadata
-        for shard in shards:
+        for _, _, shard in shards:
             assert isinstance(shard, CfgShardMetadata)
             # Both nodes should have all layers (no pipeline split)
             assert shard.start_layer == 0
@@ -558,7 +546,7 @@ class TestCfgParallelPlacement:
             assert shard.pipeline_rank == 0
 
         cfg_ranks = sorted(
-            s.cfg_rank for s in shards if isinstance(s, CfgShardMetadata)
+            s.shard.cfg_rank for s in shards if isinstance(s.shard, CfgShardMetadata)
         )
         assert cfg_ranks == [0, 1]
 
@@ -587,11 +575,11 @@ class TestCfgParallelPlacement:
             model_card, cycle, node_memory
         )
 
-        shards = list(assignments.runner_to_shard.values())
+        shards = assignments.shards
         assert len(shards) == 4
 
         # CFG models should get CfgShardMetadata
-        for shard in shards:
+        for _, _, shard in shards:
             assert isinstance(shard, CfgShardMetadata)
             assert shard.cfg_world_size == 2
             assert shard.pipeline_world_size == 2
@@ -599,10 +587,14 @@ class TestCfgParallelPlacement:
 
         # Check we have 2 nodes in each CFG group
         cfg_0_shards = [
-            s for s in shards if isinstance(s, CfgShardMetadata) and s.cfg_rank == 0
+            s.shard
+            for s in shards
+            if isinstance(s.shard, CfgShardMetadata) and s.shard.cfg_rank == 0
         ]
         cfg_1_shards = [
-            s for s in shards if isinstance(s, CfgShardMetadata) and s.cfg_rank == 1
+            s.shard
+            for s in shards
+            if isinstance(s.shard, CfgShardMetadata) and s.shard.cfg_rank == 1
         ]
         assert len(cfg_0_shards) == 2
         assert len(cfg_1_shards) == 2
@@ -637,11 +629,11 @@ class TestCfgParallelPlacement:
             model_card, cycle, node_memory
         )
 
-        shards = list(assignments.runner_to_shard.values())
+        shards = list(assignments.shards)
         assert len(shards) == 3
 
         # Odd node count with CFG model falls back to PipelineShardMetadata (sequential CFG)
-        for shard in shards:
+        for _, _, shard in shards:
             assert isinstance(shard, PipelineShardMetadata)
 
     def test_two_nodes_non_cfg_model_uses_pipeline(self):
@@ -673,18 +665,18 @@ class TestCfgParallelPlacement:
             model_card, cycle, node_memory
         )
 
-        shards = list(assignments.runner_to_shard.values())
+        shards = list(assignments.shards)
         assert len(shards) == 2
 
         # Non-CFG models should get PipelineShardMetadata
-        for shard in shards:
+        for _, _, shard in shards:
             assert isinstance(shard, PipelineShardMetadata)
 
         # Should have actual layer sharding (pipeline)
         layer_ranges = sorted(
-            (s.start_layer, s.end_layer)
+            (s.shard.start_layer, s.shard.end_layer)
             for s in shards
-            if isinstance(s, PipelineShardMetadata)
+            if isinstance(s.shard, PipelineShardMetadata)
         )
         # First shard starts at 0, last shard ends at 57
         assert layer_ranges[0][0] == 0
