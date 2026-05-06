@@ -114,9 +114,9 @@ async def _collect_process_output(
         task_group.start_soon(_collect_stream, process.stderr, stderr)
         await process.wait()
 
-    if process.returncode is None:
+    if process.exitcode is None:
         raise RuntimeError("process exited without a return code")
-    exitcode = process.returncode
+    exitcode = process.exitcode
     return exitcode, bytes(stdout), bytes(stderr)
 
 
@@ -145,9 +145,14 @@ async def _run_and_collect(
         kwargs=kwargs,
         stream_buffer_size=stream_buffer_size,
     )
-    async with process:
-        await process.start()
-        return await _collect_process_output(process)
+    result: tuple[int, bytes, bytes] | None = None
+    async with create_task_group() as task_group:
+        task_group.start_soon(process.run)
+        await process.wait_started()
+        result = await _collect_process_output(process)
+    if result is None:
+        raise RuntimeError("process collection did not run")
+    return result
 
 
 @pytest.mark.asyncio
@@ -159,9 +164,14 @@ async def test_spawn_process_captures_stdout_and_stderr_separately(
         args=("child",),
         kwargs={"stderr_suffix": "error"},
     )
-    async with process:
-        await process.start()
-        exitcode, stdout_bytes, stderr_bytes = await _collect_process_output(process)
+    result: tuple[int, bytes, bytes] | None = None
+    async with create_task_group() as task_group:
+        task_group.start_soon(process.run)
+        await process.wait_started()
+        result = await _collect_process_output(process)
+    if result is None:
+        raise RuntimeError("process collection did not run")
+    exitcode, stdout_bytes, stderr_bytes = result
 
     parent_output = capfd.readouterr()
     stdout = stdout_bytes.decode("utf-8", errors="replace")
@@ -188,21 +198,25 @@ async def test_process_with_no_target_exits_successfully() -> None:
 @pytest.mark.asyncio
 async def test_stdout_stream_honors_receive_size() -> None:
     process = AsyncSpawnProcess(_write_large_output)
+    first_stdout: bytes | None = None
+    remaining_stdout = bytearray()
+    stderr = bytearray()
 
-    async with process:
-        await process.start()
+    async with create_task_group() as task_group:
+        task_group.start_soon(process.run)
+        await process.wait_started()
         first_stdout = await process.stdout.receive(6)
-        remaining_stdout = bytearray()
-        stderr = bytearray()
 
-        async with create_task_group() as task_group:
-            task_group.start_soon(_collect_stream, process.stdout, remaining_stdout)
-            task_group.start_soon(_collect_stream, process.stderr, stderr)
+        async with create_task_group() as collect_group:
+            collect_group.start_soon(_collect_stream, process.stdout, remaining_stdout)
+            collect_group.start_soon(_collect_stream, process.stderr, stderr)
             await process.wait()
 
-    if process.returncode is None:
+    if first_stdout is None:
+        raise RuntimeError("process stdout was not read")
+    if process.exitcode is None:
         raise RuntimeError("process exited without a return code")
-    exitcode = process.returncode
+    exitcode = process.exitcode
     assert exitcode == 0
     assert first_stdout == b"stdout"
     assert bytes(remaining_stdout) == b"-0123456789"
@@ -226,10 +240,15 @@ async def test_large_stdout_and_stderr_are_not_lost_with_bounded_buffers() -> No
 @pytest.mark.asyncio
 async def test_child_exception_traceback_is_captured_from_stderr() -> None:
     process = AsyncSpawnProcess(_raise_after_stderr_write)
+    result: tuple[int, bytes, bytes] | None = None
 
-    async with process:
-        await process.start()
-        exitcode, _, stderr_bytes = await _collect_process_output(process)
+    async with create_task_group() as task_group:
+        task_group.start_soon(process.run)
+        await process.wait_started()
+        result = await _collect_process_output(process)
+    if result is None:
+        raise RuntimeError("process collection did not run")
+    exitcode, _, stderr_bytes = result
 
     assert exitcode == 1
     stderr = stderr_bytes.decode("utf-8", errors="replace")
@@ -338,15 +357,17 @@ async def test_repeated_crashing_children_do_not_grow_parent_fd_table() -> None:
 
 
 @pytest.mark.asyncio
-async def test_aclose_can_cancel_idle_drainers_before_child_exits() -> None:
+async def test_shutdown_can_cancel_idle_drainers_before_child_exits() -> None:
     process = AsyncSpawnProcess(_sleep_without_output)
-    async with process:
-        await process.start()
+    async with create_task_group() as task_group:
+        task_group.start_soon(process.run)
+        await process.wait_started()
 
         with fail_after(2):
-            await process.aclose()
+            process.shutdown()
+            await process.wait_stopped()
 
-    assert process.returncode == 0
+    assert process.exitcode is not None
 
 
 @pytest.mark.asyncio
@@ -354,8 +375,9 @@ async def test_spawn_process_can_use_spawn_context_mp_channel() -> None:
     send, recv = mp_channel[str](context=AsyncSpawnProcess.context())
     process = AsyncSpawnProcess(_send_over_mp_channel, args=(send,))
 
-    async with process:
-        await process.start()
+    async with create_task_group() as task_group:
+        task_group.start_soon(process.run)
+        await process.wait_started()
         with fail_after(2):
             assert await recv.receive_async() == "hello from child"
             assert await process.wait() == 0
@@ -369,8 +391,11 @@ async def test_spawn_process_can_use_spawn_context_mp_channel() -> None:
 async def test_death(capsys: CaptureFixture[str]) -> None:
     with capsys.disabled():
         process = AsyncSpawnProcess(_mlx_force_oom)
-        async with process:
-            await process.start()
+        stdout = b""
+        stderr = b""
+        async with create_task_group() as task_group:
+            task_group.start_soon(process.run)
+            await process.wait_started()
             _, stdout, stderr = await _collect_process_output(process)
 
         print("PARENT: done")

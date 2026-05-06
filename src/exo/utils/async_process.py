@@ -10,28 +10,26 @@ from multiprocessing.context import SpawnContext
 from multiprocessing.process import BaseProcess
 from multiprocessing.resource_sharer import DupFd
 from signal import Signals
-from types import TracebackType
-from typing import Self, final
+from typing import final
 
 from anyio import (
     BrokenResourceError,
     CancelScope,
     ClosedResourceError,
+    Event,
+    Lock,
     create_memory_object_stream,
-    create_task_group,
-    to_thread,
+    move_on_after,
+    sleep,
     wait_readable,
 )
 from anyio.abc import (
     ByteReceiveStream,
-    ByteSendStream,
     ObjectReceiveStream,
     ObjectSendStream,
-    TaskGroup,
 )
-from anyio.abc import (
-    Process as AnyioProcess,
-)
+
+from exo.utils.task_group import TaskGroup
 
 _STDOUT_FD = 1
 _STDERR_FD = 2
@@ -66,7 +64,7 @@ class MemoryByteReceiveStream(ByteReceiveStream):
 
 
 @final
-class AsyncSpawnProcess(AnyioProcess):
+class AsyncSpawnProcess:
     @staticmethod
     def context() -> SpawnContext:
         return mp.get_context("spawn")
@@ -97,45 +95,20 @@ class AsyncSpawnProcess(AnyioProcess):
         self._pid: int | None = None
         self._stdout: MemoryByteReceiveStream | None = None
         self._stderr: MemoryByteReceiveStream | None = None
-        self._owned_task_group: TaskGroup | None = None
-        self._drain_cancel_scopes: tuple[CancelScope, ...] = ()
+        self._tg = TaskGroup()
+        self._started = Event()
+        self._stopped = Event()
+        self._wait_lock = Lock()
+        self._start_error: BaseException | None = None
+        self._has_stopped = False
         self._closed = False
-        self._returncode: int | None = None
+        self._exitcode: int | None = None
 
-    async def __aenter__(self) -> Self:
-        if self._owned_task_group is not None:
-            raise RuntimeError("process context has already been entered")
-
-        task_group = create_task_group()
-        await task_group.__aenter__()
-        self._owned_task_group = task_group
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
-        task_group = self._owned_task_group
-        try:
-            await self.aclose()
-        finally:
-            self._owned_task_group = None
-            if task_group is not None:
-                await task_group.__aexit__(exc_type, exc_val, exc_tb)
-
-    async def start(self, task_group: TaskGroup | None = None) -> None:
+    async def run(self) -> None:
         if self._closed:
             raise RuntimeError("process has been closed")
         if self._process is not None:
             raise RuntimeError("process has already been started")
-        drain_task_group = self._owned_task_group if task_group is None else task_group
-        if drain_task_group is None:
-            raise RuntimeError(
-                "start() requires an AnyIO task group; pass task_group or use "
-                "AsyncSpawnProcess as an async context manager"
-            )
 
         stdout_read_fd, stdout_write_fd = os.pipe()
         stderr_read_fd, stderr_write_fd = os.pipe()
@@ -145,10 +118,9 @@ class AsyncSpawnProcess(AnyioProcess):
         stderr_send, stderr_receive = create_memory_object_stream[bytes](
             self._stream_buffer_size
         )
-        drain_cancel_scopes: tuple[CancelScope, ...] = ()
 
         try:
-            process = mp.get_context("spawn").Process(
+            process = self.context().Process(
                 target=_run_with_captured_stdio,
                 name=self._name,
                 args=(
@@ -169,29 +141,16 @@ class AsyncSpawnProcess(AnyioProcess):
             _close_fd(stdout_write_fd)
             _close_fd(stderr_write_fd)
 
-            # drain the read-end FD into async memory-buffer stream
-            drain_cancel_scopes = (CancelScope(), CancelScope())
-            drain_task_group.start_soon(
-                _drain_fd_in_scope,
-                stdout_read_fd,
-                stdout_send,
-                drain_cancel_scopes[0],
-            )
-            drain_task_group.start_soon(
-                _drain_fd_in_scope,
-                stderr_read_fd,
-                stderr_send,
-                drain_cancel_scopes[1],
-            )
-
             self._process = process
             self._pid = pid
             self._stdout = MemoryByteReceiveStream(stdout_receive)
             self._stderr = MemoryByteReceiveStream(stderr_receive)
-            self._drain_cancel_scopes = drain_cancel_scopes
-        except BaseException:
-            for cancel_scope in drain_cancel_scopes:
-                cancel_scope.cancel()
+            self._started.set()
+        except BaseException as exc:
+            self._start_error = exc
+            self._started.set()
+            self._has_stopped = True
+            self._stopped.set()
             for stream in (stdout_send, stderr_send, stdout_receive, stderr_receive):
                 with contextlib.suppress(Exception):
                     await stream.aclose()
@@ -204,60 +163,75 @@ class AsyncSpawnProcess(AnyioProcess):
                 _close_fd(fd)
             raise
 
+        try:
+            async with self._tg as tg:
+                tg.start_soon(_drain_fd, stdout_read_fd, stdout_send)
+                tg.start_soon(_drain_fd, stderr_read_fd, stderr_send)
+                await self.wait()
+        finally:
+            with CancelScope(shield=True):
+                await self._terminate_if_still_alive()
+            self._has_stopped = True
+            self._stopped.set()
+
+    async def wait_started(self) -> None:
+        await self._started.wait()
+        if self._start_error is not None:
+            raise self._start_error
+
+    async def wait_stopped(self) -> None:
+        await self._stopped.wait()
+
+    def shutdown(self) -> None:
+        if not self._has_stopped and self._tg.is_running():
+            self._tg.cancel_tasks()
+
     async def aclose(self) -> None:
         if self._closed:
             return
 
-        self._closed = True
-        if self._process is None:
-            return
-
-        with CancelScope(shield=True) as scope:
-            await self.stdout.aclose()
-            await self.stderr.aclose()
-            for cancel_scope in self._drain_cancel_scopes:
-                cancel_scope.cancel()
-            self._drain_cancel_scopes = ()
-
-            scope.shield = False
-            try:
-                await self.wait()
-            except BaseException:
-                scope.shield = True
-                self.kill()
-                await self.wait()
-                raise
-            finally:
-                with contextlib.suppress(ValueError):
-                    self._process.close()
+        self.shutdown()
+        if self._process is not None and not self._has_stopped:
+            await self.wait_stopped()
+        self.close()
 
     async def wait(self) -> int:
-        if self._returncode is not None:
-            return self._returncode
+        if self._exitcode is not None:
+            return self._exitcode
 
-        process = self.process
-        await to_thread.run_sync(process.join)
-        exitcode = process.exitcode
-        if exitcode is None:
-            raise RuntimeError("process exited without an exit code")
+        async with self._wait_lock:
+            if self._exitcode is not None:
+                return self._exitcode
 
-        self._returncode = exitcode
-        return exitcode
+            process = self.process
+            while True:
+                exitcode = process.exitcode
+                if exitcode is not None:
+                    process.join(0)
+                    self._exitcode = exitcode
+                    return exitcode
+
+                await sleep(0.01)
 
     def terminate(self) -> None:
         self.process.terminate()
 
     def is_alive(self) -> bool:
-        return self._process is not None and self._process.is_alive()
+        if self._process is None:
+            return False
+        with contextlib.suppress(ValueError):
+            return self._process.is_alive()
+        return False
 
     def join(self, timeout: float | None = None) -> None:
         self.process.join(timeout)
 
     def close(self) -> None:
-        for cancel_scope in self._drain_cancel_scopes:
-            cancel_scope.cancel()
-        self._drain_cancel_scopes = ()
-        self.process.close()
+        self._closed = True
+        if self._process is None:
+            return
+        with contextlib.suppress(ValueError):
+            self._process.close()
 
     def kill(self) -> None:
         self.process.kill()
@@ -272,20 +246,18 @@ class AsyncSpawnProcess(AnyioProcess):
         return self._pid
 
     @property
-    def returncode(self) -> int | None:
-        if self._returncode is not None:
-            return self._returncode
+    def exitcode(self) -> int | None:
+        if self._exitcode is not None:
+            return self._exitcode
         if self._process is None:
             return None
 
         with contextlib.suppress(ValueError):
-            return self._process.exitcode
+            exitcode = self._process.exitcode
+            if exitcode is not None:
+                self._exitcode = exitcode
+            return exitcode
         return None
-
-    @property
-    def stdin(self) -> ByteSendStream:
-        # todo: implement this if ever needed
-        raise NotImplementedError("custom stdin streams have not yet been implemented")
 
     @property
     def stdout(self) -> ByteReceiveStream:
@@ -304,6 +276,27 @@ class AsyncSpawnProcess(AnyioProcess):
         if self._process is None:
             raise RuntimeError("process has not been started")
         return self._process
+
+    async def _terminate_if_still_alive(self) -> None:
+        process = self._process
+        if process is None:
+            return
+
+        if self.exitcode is not None:
+            return
+
+        with contextlib.suppress(ValueError):
+            if process.is_alive():
+                process.terminate()
+                with move_on_after(5):
+                    await self.wait()
+
+            if self.exitcode is not None or not process.is_alive():
+                return
+
+            process.kill()
+            with move_on_after(5):
+                await self.wait()
 
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
@@ -343,15 +336,6 @@ async def _drain_fd(fd: int, send_stream: ObjectSendStream[bytes]) -> None:
     finally:
         _close_fd(fd)
         await send_stream.aclose()
-
-
-async def _drain_fd_in_scope(
-    fd: int,
-    send_stream: ObjectSendStream[bytes],
-    cancel_scope: CancelScope,
-) -> None:
-    with cancel_scope:
-        await _drain_fd(fd, send_stream)
 
 
 def _close_fd(fd: int) -> None:
