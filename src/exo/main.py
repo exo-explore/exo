@@ -273,7 +273,7 @@ def main():
     mp.set_start_method("spawn", force=True)
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
-    if args.daemonise:
+    if args.no_stdio:
         detach_stdio_to_devnull()
         logger.info("Detached stdio to /dev/null")
 
@@ -324,7 +324,7 @@ class Args(FrozenModel):
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
-    daemonise: bool = False
+    no_stdio: bool = False
     bootstrap_peers: list[str] = []
     libp2p_port: int
 
@@ -385,10 +385,8 @@ class Args(FrozenModel):
             help="Disable continuous batching, use sequential generation",
         )
         parser.add_argument(
-            "--daemonise",
-            "--daemonize",
+            "--no-stdio",
             action="store_true",
-            dest="daemonise",
             help="Detach stdin/stdout/stderr to /dev/null after logging is configured",
         )
         parser.add_argument(
