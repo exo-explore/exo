@@ -115,15 +115,25 @@ class RunnerSupervisor:
         runner_started = False
         try:
             async with self._tg as tg:
+                # start the process itself
                 tg.start_soon(self.runner_process.run)
                 await self.runner_process.wait_started()
                 runner_started = True
+
+                # start tasks to drain/collect stdout/stderr into usable errors
+                #
+                # TODO: right now it logs them as warnings, but in the future they should be split
+                #       into being logged AND a seperate task which tries to best-effort figure out cause
+                #       of error and package into error enum, which then is used by rest of app to act on it;
+                #       inferring what the error is would be done by pattern-matching in the text for things
+                #       e.g. certain VLLM error codes and so on
                 tg.start_soon(
                     self._forward_runner_output, "stdout", self.runner_process.stdout
                 )
                 tg.start_soon(
                     self._forward_runner_output, "stderr", self.runner_process.stderr
                 )
+
                 tg.start_soon(self._watch_runner)
                 tg.start_soon(self._forward_events)
         finally:

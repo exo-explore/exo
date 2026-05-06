@@ -263,6 +263,9 @@ class AsyncSpawnProcess:
             return exitcode
         return None
 
+    # TODO: maybe in the future if needed, create stdin that is also installed,
+    #       and a ByteSendStream handle is provided for it :)
+
     @property
     def stdout(self) -> ByteReceiveStream:
         if self._stdout is None:
