@@ -10,7 +10,6 @@ from anyio import (
     EndOfStream,
     to_thread,
 )
-from anyio.abc import ByteReceiveStream
 from loguru import logger
 
 from exo.shared.types.chunks import ErrorChunk
@@ -43,7 +42,7 @@ from exo.shared.types.worker.runners import (
 )
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.async_process import AsyncSpawnProcess
-from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
+from exo.utils.channels import MpReceiver, MpSender, Receiver, Sender, mp_channel
 from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint
 
@@ -246,7 +245,7 @@ class RunnerSupervisor:
     async def _forward_runner_output(
         self,
         stream_name: str,
-        stream: ByteReceiveStream,
+        stream: Receiver[bytes],
     ) -> None:
         while True:
             try:

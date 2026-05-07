@@ -23,7 +23,7 @@ from anyio import (
     wait_readable,
 )
 
-from exo.utils.channels import Sender, channel, Receiver
+from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.task_group import TaskGroup
 
 _STDOUT_FD = 1
@@ -47,18 +47,13 @@ class AsyncSpawnProcess:
             kwargs: Mapping[str, object] | None = None,
             *,
             daemon: bool | None = None,
-            stream_buffer_size: int = 16,
     ) -> None:
-        if stream_buffer_size <= 0:
-            raise ValueError("stream_buffer_size must be positive")
-
         # setup state
         self._target = target
         self._name = name
         self._args = args
         self._kwargs = kwargs
         self._daemon = daemon
-        self._stream_buffer_size = stream_buffer_size
 
         # lifecycle state
         self._process: BaseProcess | None = None

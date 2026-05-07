@@ -5,10 +5,9 @@ from collections.abc import AsyncIterator
 import anyio
 import pytest
 from anyio import EndOfStream, create_task_group, fail_after
-from anyio.abc import ByteReceiveStream
 
 from exo.utils.async_process import AsyncSpawnProcess
-from exo.utils.channels import MpReceiver, MpSender, mp_channel
+from exo.utils.channels import MpReceiver, MpSender, Receiver, mp_channel
 from exo.utils.daemon import detach_stdio_to_devnull
 
 
@@ -60,7 +59,7 @@ def _detach_stdio_then_spawn_captured_children_sequentially(
     result_sender.close()
 
 
-async def _collect_stream(stream: ByteReceiveStream, output: bytearray) -> None:
+async def _collect_stream(stream: Receiver[bytes], output: bytearray) -> None:
     while True:
         try:
             output.extend(await stream.receive())

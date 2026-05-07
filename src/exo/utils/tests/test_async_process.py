@@ -10,14 +10,13 @@ import mlx.core as mx
 import pytest
 from _pytest.capture import CaptureFixture
 from anyio import EndOfStream, create_task_group, fail_after
-from anyio.abc import ByteReceiveStream
 from pytest import MonkeyPatch
 
 import exo.utils.async_process as async_process
 from exo.utils.async_process import (
     AsyncSpawnProcess,
 )
-from exo.utils.channels import MpSender, mp_channel
+from exo.utils.channels import MpSender, Receiver, mp_channel
 
 
 def _write_to_stdio(prefix: str, *, stderr_suffix: str) -> None:
@@ -113,7 +112,7 @@ def _mlx_force_oom(size: int = 40_000) -> None:
 
 
 async def _collect_stream(
-    stream: ByteReceiveStream,
+    stream: Receiver[bytes],
     output: bytearray,
 ) -> None:
     while True:
@@ -215,16 +214,15 @@ async def test_process_with_no_target_exits_successfully() -> None:
 
 
 @pytest.mark.anyio
-async def test_stdout_stream_honors_receive_size() -> None:
+async def test_stdout_receiver_yields_bytes_chunks() -> None:
     process = AsyncSpawnProcess(_write_large_output)
 
     async with _started_process(process):
-        first_stdout = await process.stdout.receive(6)
+        first_stdout = await process.stdout.receive()
         exitcode, remaining_stdout, stderr = await _collect_process_output(process)
 
     assert exitcode == 0
-    assert first_stdout == b"stdout"
-    assert remaining_stdout == b"-0123456789"
+    assert first_stdout + remaining_stdout == b"stdout-0123456789"
     assert stderr == b"stderr-0123456789"
 
 
