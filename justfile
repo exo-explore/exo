@@ -22,8 +22,8 @@ sync-clean:
     uv sync --all-packages --force-reinstall --no-cache
 
 rust-rebuild:
-    PYO3_PYTHON="$(uv run python -c 'import sys; print(sys.executable)')" cargo run --bin stub_gen
-    uv sync --reinstall-package exo_pyo3_bindings
+    cargo run --bin stub_gen
+    uv sync --reinstall-package exo_net
 
 build-dashboard:
     #!/usr/bin/env bash

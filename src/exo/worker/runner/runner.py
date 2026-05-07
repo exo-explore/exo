@@ -86,7 +86,7 @@ class Runner:
         self,
         bound_instance: BoundInstance,
         builder: Builder,
-        event_sender: MpSender[Event],
+        event_sender: MpSender[Event | ChunkGenerated],
         task_receiver: MpReceiver[Task],
     ):
         self.event_sender = event_sender

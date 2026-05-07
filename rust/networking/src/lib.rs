@@ -1,9 +1,4 @@
-use std::{
-    env,
-    ops::{Deref, DerefMut},
-    panic,
-    sync::Arc,
-};
+use std::{env, panic, sync::Arc};
 
 use netwatcher::WatchHandle;
 use parking_lot::Mutex;
@@ -51,11 +46,11 @@ pub async fn open(cfg: zenoh::Config) -> Result<Session> {
         .plugins_manager(plugins)
         .build()
         .await?;
-    let session = zenoh::session::init(runtime.clone().into()).await?;
+    let z = zenoh::session::init(runtime.clone().into()).await?;
     runtime.start().await?;
-    let _watch_all_handle = Arc::new(Mutex::new(watch_all(runtime).await?));
+    let _watch_all_handle = watch_all(runtime).await?;
     Ok(Session {
-        session,
+        z,
         _watch_all_handle,
     })
 }
@@ -66,7 +61,9 @@ async fn watch_all(runtime: Runtime) -> Result<WatchAllHandle> {
     cfg.insert_json5("scouting/multicast/interface", "\"auto\"")?;
     let mut scout = zenoh::scout(WhatAmI::Peer, cfg.clone()).await?;
     let (send, mut recv) = mpsc::unbounded_channel();
-    let _sync = netwatcher::watch_interfaces_with_callback(move |u| _ = send.send(u))?;
+    let _sync = Arc::new(Mutex::new(netwatcher::watch_interfaces_with_callback(
+        move |u| _ = send.send(u),
+    )?));
     let _async = tokio::task::spawn(async move {
         loop {
             tokio::select! {
@@ -92,19 +89,8 @@ async fn watch_all(runtime: Runtime) -> Result<WatchAllHandle> {
 }
 
 pub struct Session {
-    pub session: ZSession,
-    _watch_all_handle: Arc<Mutex<WatchAllHandle>>,
-}
-impl Deref for Session {
-    type Target = ZSession;
-    fn deref(&self) -> &Self::Target {
-        &self.session
-    }
-}
-impl DerefMut for Session {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.session
-    }
+    pub z: ZSession,
+    _watch_all_handle: WatchAllHandle,
 }
 impl Drop for WatchAllHandle {
     fn drop(&mut self) {
@@ -113,6 +99,6 @@ impl Drop for WatchAllHandle {
 }
 
 pub struct WatchAllHandle {
-    _sync: WatchHandle,
+    _sync: Arc<Mutex<WatchHandle>>,
     _async: JoinHandle<Result<()>>,
 }

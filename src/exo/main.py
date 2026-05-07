@@ -5,8 +5,10 @@ import resource
 import signal
 from dataclasses import dataclass, field
 from typing import Self
+from uuid import uuid4
 
 import anyio
+from exo_net import PySession
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -16,7 +18,7 @@ from exo.download.coordinator import DownloadCoordinator
 from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
-from exo.routing.router import Router, get_node_id_keypair
+from exo.routing.router import Router
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
@@ -39,31 +41,31 @@ class Node:
     api: API | None
 
     node_id: NodeId
+    session: PySession
     offline: bool
     _api_port: int
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
     async def create(cls, args: "Args") -> Self:
-        keypair = get_node_id_keypair()
-        node_id = NodeId(keypair.to_node_id())
+        node_id_bytes = uuid4()
+        node_id = NodeId(str(node_id_bytes))
         session_id = SessionId(master_node_id=node_id, election_clock=0)
-        router = Router.create(
-            keypair,
+        router, session = Router.create(
+            node_id_bytes.bytes,
             bootstrap_peers=args.bootstrap_peers,
             listen_port=args.libp2p_port,
         )
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
-        await router.register_topic(topics.COMMANDS)
         await router.register_topic(topics.ELECTION_MESSAGES)
         await router.register_topic(topics.CONNECTION_MESSAGES)
         await router.register_topic(topics.DOWNLOAD_COMMANDS)
         event_router = EventRouter(
             session_id,
-            command_sender=router.sender(topics.COMMANDS),
             external_outbound=router.sender(topics.LOCAL_EVENTS),
             external_inbound=router.receiver(topics.GLOBAL_EVENTS),
+            command_sender=session.net_sender("orchestrator"),
         )
 
         logger.info(f"Starting node {node_id}")
@@ -85,9 +87,9 @@ class Node:
                 node_id,
                 port=args.api_port,
                 event_receiver=event_router.receiver(),
-                command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 election_receiver=router.receiver(topics.ELECTION_MESSAGES),
+                session=session,
             )
         else:
             api = None
@@ -97,9 +99,9 @@ class Node:
                 node_id,
                 event_receiver=event_router.receiver(),
                 event_sender=event_router.sender(),
-                command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 api_port=args.api_port,
+                session=session,
             )
         else:
             worker = None
@@ -111,8 +113,8 @@ class Node:
             event_sender=event_router.sender(),
             global_event_sender=router.sender(topics.GLOBAL_EVENTS),
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
-            command_receiver=router.receiver(topics.COMMANDS),
             download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
+            command_receiver=session.net_receiver("orchestrator")
         )
 
         er_send, er_recv = channel[ElectionResult]()
@@ -125,7 +127,6 @@ class Node:
             election_message_sender=router.sender(topics.ELECTION_MESSAGES),
             election_message_receiver=router.receiver(topics.ELECTION_MESSAGES),
             connection_message_receiver=router.receiver(topics.CONNECTION_MESSAGES),
-            command_receiver=router.receiver(topics.COMMANDS),
             election_result_sender=er_send,
         )
 
@@ -139,6 +140,7 @@ class Node:
             master,
             api,
             node_id,
+            session,
             args.offline,
             args.api_port,
         )
@@ -188,7 +190,7 @@ class Node:
                     self.event_router.shutdown()
                     self.event_router = EventRouter(
                         result.session_id,
-                        self.router.sender(topics.COMMANDS),
+                        self.session.net_sender("orchestrator"),
                         self.router.receiver(topics.GLOBAL_EVENTS),
                         self.router.sender(topics.LOCAL_EVENTS),
                     )
@@ -209,10 +211,10 @@ class Node:
                         event_sender=self.event_router.sender(),
                         global_event_sender=self.router.sender(topics.GLOBAL_EVENTS),
                         local_event_receiver=self.router.receiver(topics.LOCAL_EVENTS),
-                        command_receiver=self.router.receiver(topics.COMMANDS),
                         download_command_sender=self.router.sender(
                             topics.DOWNLOAD_COMMANDS
                         ),
+                        command_receiver=self.session.net_receiver("orchestrator"),
                     )
                     self._tg.start_soon(self.master.run)
                 elif (
@@ -248,11 +250,11 @@ class Node:
                             self.node_id,
                             event_receiver=self.event_router.receiver(),
                             event_sender=self.event_router.sender(),
-                            command_sender=self.router.sender(topics.COMMANDS),
                             download_command_sender=self.router.sender(
                                 topics.DOWNLOAD_COMMANDS
                             ),
                             api_port=self._api_port,
+                            session=self.session,
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:

@@ -159,10 +159,10 @@ Event = (
     | NodeTimedOut
     | NodeGatheredInfo
     | NodeDownloadProgress
-    | ChunkGenerated
-    | InputChunkReceived
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
+    | ChunkGenerated
+    | InputChunkReceived
     | TracesCollected
     | TracesMerged
     | CustomModelCardAdded

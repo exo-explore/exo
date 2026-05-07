@@ -3,24 +3,22 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "exo_pyo3_bindings"
-version = "0.2.1"
+name = "exo_net"
+version = "0.3.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
-  { name = "Andrei Cravtov", email = "the.andrei.cravtov@gmail.com" },
   { name = "Evan Quiney", email = "evanev7@gmail.com" },
+  { name = "Andrei Cravtov", email = "the.andrei.cravtov@gmail.com" },
 ]
 requires-python = ">=3.13"
 dependencies = []
 
 [dependency-groups]
-dev = ["exo_pyo3_bindings", "pytest>=8.4.0", "pytest-asyncio>=1.0.0"]
+dev = ["exo-net", "pytest>=8.4.0", "pytest-asyncio>=1.0.0"]
 
 [tool.maturin]
-#purelib = true
-#python-source = "python"
-module-name = "exo_pyo3_bindings"
+module-name = "exo_net"
 features = ["pyo3/extension-module", "pyo3/experimental-async"]
 
 [tool.pytest.ini_options]

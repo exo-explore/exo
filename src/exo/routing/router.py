@@ -2,8 +2,6 @@ from collections.abc import Sequence
 from copy import copy
 from itertools import count
 from math import inf
-from os import PathLike
-from pathlib import Path
 from typing import cast
 
 from anyio import (
@@ -12,15 +10,9 @@ from anyio import (
     move_on_after,
     sleep_forever,
 )
-from exo_pyo3_bindings import (
-    Keypair,
-    NetworkingHandle,
-    PyFromSwarm,
-)
-from filelock import FileLock
+from exo_net import NetworkingHandle, PyFromSwarm, PySession
 from loguru import logger
 
-from exo.shared.constants import EXO_NODE_ID_KEYPAIR
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
@@ -102,13 +94,14 @@ class Router:
     @classmethod
     def create(
         cls,
-        identity: Keypair,
+        identity: bytes,
         bootstrap_peers: Sequence[str] = (),
         listen_port: int = 0,
-    ) -> "Router":
-        return cls(
-            handle=NetworkingHandle(identity, list(bootstrap_peers), listen_port)
+    ) -> "tuple[Router, PySession]":
+        handle, session = NetworkingHandle.new(
+            identity, list(bootstrap_peers), listen_port
         )
+        return cls(handle=handle), session
 
     def __init__(self, handle: NetworkingHandle):
         self.topic_routers: dict[str, TopicRouter[FrozenModel]] = {}
@@ -189,9 +182,7 @@ class Router:
                 logger.debug(from_swarm)
                 match from_swarm:
                     case PyFromSwarm.Message(topic, data):
-                        logger.trace(
-                            f"Received message on {topic} with payload {data}"
-                        )
+                        logger.trace(f"Received message on {topic} with payload {data}")
                         if topic not in self.topic_routers:
                             logger.warning(
                                 f"Received message on unknown or inactive topic {topic}"
@@ -228,36 +219,3 @@ class Router:
                         "Sending overlarge payload, network performance may be temporarily degraded"
                     )
                 await self._net.gossipsub_publish(topic, data)
-
-
-def get_node_id_keypair(
-    path: str | bytes | PathLike[str] | PathLike[bytes] = EXO_NODE_ID_KEYPAIR,
-) -> Keypair:
-    """
-    Obtains the :class:`Keypair` associated with this node-ID.
-    Obtain the :class:`PeerId` by from it.
-    """
-    # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
-    return Keypair.generate()
-
-    def lock_path(path: str | bytes | PathLike[str] | PathLike[bytes]) -> Path:
-        return Path(str(path) + ".lock")
-
-    # operate with cross-process lock to avoid race conditions
-    with FileLock(lock_path(path)):
-        with open(path, "a+b") as f:  # opens in append-mode => starts at EOF
-            # if non-zero EOF, then file exists => use to get node-ID
-            if f.tell() != 0:
-                f.seek(0)  # go to start & read protobuf-encoded bytes
-                protobuf_encoded = f.read()
-
-                try:  # if decoded successfully, save & return
-                    return Keypair.from_bytes(protobuf_encoded)
-                except ValueError as e:  # on runtime error, assume corrupt file
-                    logger.warning(f"Encountered error when trying to get keypair: {e}")
-
-        # if no valid credentials, create new ones and persist
-        with open(path, "w+b") as f:
-            keypair = Keypair.generate()
-            f.write(keypair.to_bytes())
-            return keypair
