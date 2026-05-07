@@ -35,17 +35,18 @@ let
         # Replace workspace exo_pyo3_bindings with Nix-built wheel.
         # Preserve passthru so mkVirtualEnv can resolve dependency groups.
         # Copy .pyi stub + py.typed marker so basedpyright can find the types.
-        exo-pyo3-bindings = pkgs.stdenv.mkDerivation {
-          pname = "exo-pyo3-bindings";
+        exo-net = pkgs.stdenv.mkDerivation {
+          pname = "exo-net";
           version = "0.1.0";
-          src = self'.packages.exo_pyo3_bindings;
+          src = self'.packages.exo-net;
           # Install from pre-built wheel
           nativeBuildInputs = [ final.pyprojectWheelHook ];
           dontStrip = true;
           passthru = prev.exo-pyo3-bindings.passthru or { };
+
           postInstall = ''
-            local siteDir=$out/${final.python.sitePackages}/exo_pyo3_bindings
-            cp ${inputs.self}/rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi $siteDir/
+            local siteDir=$out/${final.python.sitePackages}/exo_net
+            cp ${inputs.self}/rust/exo_net/exo_net.pyi $siteDir/
             touch $siteDir/py.typed
           '';
         };

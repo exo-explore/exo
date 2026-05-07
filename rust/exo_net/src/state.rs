@@ -1,52 +1,20 @@
-use networking::Session;
-use pyo3::{
-    exceptions::{PyRuntimeError, PyValueError},
-    prelude::*,
-};
-use pyo3_stub_gen::derive::{gen_methods_from_python, gen_stub_pyclass, gen_stub_pymethods};
+use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde_json::{Map, Value};
-use zenoh::{Result, Session as ZSession, query::QueryTarget, sample::SampleFields};
-
-pyo3_stub_gen::inventory::submit! {
-    gen_methods_from_python! {
-        r#"
-            class StateProxy:
-                @staticmethod
-                async def init() -> StateProxy: ...
-                async def snapshot(self) -> str: ...
-        "#
-    }
-}
-
-pub fn snapshot_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<StateProxy>()?;
-
-    Ok(())
-}
+use zenoh::{Result, Session, sample::SampleFields};
 
 #[gen_stub_pyclass]
 #[pyclass]
 pub struct StateProxy {
-    session: Session,
+    pub session: Session,
 }
 #[gen_stub_pymethods]
 #[pymethods]
 impl StateProxy {
-    #[staticmethod]
-    #[gen_stub(skip)]
-    pub fn init<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(Self {
-                session: networking::open(
-                    networking::cfg(rand::random(), 0).expect("default cfg is valid"),
-                )
-                .await
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
-            })
-        })
-    }
-
-    #[gen_stub(skip)]
+    #[gen_stub(override_return_type(
+        type_repr="collections.abc.Awaitable[str]",
+        imports=("collections.abc")
+    ))]
     pub fn snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         pyo3_async_runtimes::tokio::future_into_py(py, {
             let session = self.session.clone();
@@ -61,7 +29,7 @@ impl StateProxy {
 }
 
 impl StateProxy {
-    async fn _snapshot(session: ZSession) -> Result<Value> {
+    async fn _snapshot(session: Session) -> Result<Value> {
         let q = session.get("storage/mem1/**").await?;
 
         let mut v = Value::Object(Map::default());

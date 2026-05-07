@@ -20,7 +20,6 @@ from exo.shared.types.chunks import (
     TokenChunk,
     ToolCallChunk,
 )
-from exo.shared.types.common import CommandId
 from exo.shared.types.text_generation import (
     Base64Image,
     InputMessage,
@@ -181,7 +180,6 @@ def ollama_request_to_text_generation(
 
 
 async def generate_ollama_chat_stream(
-    _command_id: CommandId,
     chunk_stream: AsyncGenerator[
         ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
     ],
@@ -264,7 +262,6 @@ async def generate_ollama_chat_stream(
 
 
 async def collect_ollama_chat_response(
-    _command_id: CommandId,
     chunk_stream: AsyncGenerator[
         ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
     ],
@@ -369,7 +366,6 @@ def ollama_generate_request_to_text_generation(
 
 
 async def generate_ollama_generate_stream(
-    _command_id: CommandId,
     chunk_stream: AsyncGenerator[
         ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
     ],
@@ -442,7 +438,6 @@ async def generate_ollama_generate_stream(
 
 
 async def collect_ollama_generate_response(
-    _command_id: CommandId,
     chunk_stream: AsyncGenerator[
         ErrorChunk | ToolCallChunk | TokenChunk | PrefillProgressChunk, None
     ],

@@ -32,14 +32,20 @@ class TokenChunk(BaseChunk):
 
 class ErrorChunk(BaseChunk):
     error_message: str
-    finish_reason: Literal["error"] = "error"
+
+    @property
+    def finish_reason(self) -> Literal["error"]:
+        return "error"
 
 
 class ToolCallChunk(BaseChunk):
     tool_calls: list[ToolCallItem]
     usage: Usage | None
-    finish_reason: Literal["tool_calls"] = "tool_calls"
     stats: GenerationStats | None = None
+
+    @property
+    def finish_reason(self) -> Literal["tool_calls"]:
+        return "tool_calls"
 
 
 class ImageChunk(BaseChunk):
@@ -84,7 +90,13 @@ class PrefillProgressChunk(BaseChunk):
     processed_tokens: int
     total_tokens: int
 
+    @property
+    def finish_reason(self) -> FinishReason | None:
+        return None
+
 
 StatusChunk = PrefillProgressChunk
 GenerationChunk = TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk
+TextGenerationChunk = TokenChunk | ToolCallChunk | ErrorChunk
+ImageGenerationChunk = ImageChunk | ErrorChunk
 Chunk = StatusChunk | GenerationChunk

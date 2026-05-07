@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["rust/exo_pyo3_bindings", "rust/networking"]
+members = ["rust/exo_net", "rust/networking"]
 
 [workspace.package]
 version = "0.0.1"
@@ -32,7 +32,19 @@ env_logger = "0.11.10"
 
 # networking
 zenoh = "=1.9.0"
-zerompk = "0.4.2"
+async-stream = "0.3.6"
+netwatcher = "0.6.0"
+parking_lot = "0.12.5"
+pin-project = "1.1.10"
+pyo3 = "0.27.2"
+pyo3-async-runtimes = "0.27.0"
+pyo3-log = "0.13.2"
+pyo3-stub-gen = "0.22.2"
+rand = "0.10.1"
+serde_json = "1.0.149"
+tracing = "0.1.44"
+zenoh-plugin-storage-manager = { version = "=1.9.0", default-features = false }
+zenoh-plugin-trait = "=1.9.0"
 
 [workspace.lints.rust]
 static_mut_refs = "warn"      # Or use "warn" instead of deny

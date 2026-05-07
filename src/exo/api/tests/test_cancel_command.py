@@ -1,11 +1,11 @@
 # pyright: reportUnusedFunction=false, reportAny=false
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from exo.api.main import API
+from exo.api.main import API, Transport
 from exo.shared.types.common import CommandId
 
 
@@ -15,9 +15,9 @@ def _make_api() -> Any:
     app = FastAPI()
     api = object.__new__(API)
     api.app = app
-    api._text_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
-    api._image_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
-    api._send = AsyncMock()  # pyright: ignore[reportPrivateUsage]
+    api.transport = object.__new__(Transport)
+    api.transport.cancel = AsyncMock()
+    api.transport.send_command = AsyncMock()
     api._setup_exception_handlers()  # pyright: ignore[reportPrivateUsage]
     app.post("/v1/cancel/{command_id}")(api.cancel_command)
     return api
@@ -43,16 +43,14 @@ def test_cancel_active_text_generation() -> None:
     client = TestClient(api.app)
 
     cid = CommandId("text-cmd-123")
-    sender = MagicMock()
-    api._text_generation_queues[cid] = sender
 
     response = client.post(f"/v1/cancel/{cid}")
     assert response.status_code == 200
     data: dict[str, Any] = response.json()
     assert data["message"] == "Command cancelled."
     assert data["command_id"] == str(cid)
-    sender.close.assert_called_once()
-    api._send.assert_called_once()
+    api.transport.cancel.assert_called_once()
+    api.transport.send_command.assert_called_once()
     task_cancelled = api._send.call_args[0][0]
     assert task_cancelled.cancelled_command_id == cid
 
@@ -63,15 +61,13 @@ def test_cancel_active_image_generation() -> None:
     client = TestClient(api.app)
 
     cid = CommandId("img-cmd-456")
-    sender = MagicMock()
-    api._image_generation_queues[cid] = sender
 
     response = client.post(f"/v1/cancel/{cid}")
     assert response.status_code == 200
     data: dict[str, Any] = response.json()
     assert data["message"] == "Command cancelled."
     assert data["command_id"] == str(cid)
-    sender.close.assert_called_once()
-    api._send.assert_called_once()
-    task_cancelled = api._send.call_args[0][0]
+    api.transport.cancel.assert_called_once()
+    api.transport.send_command.assert_called_once()
+    task_cancelled = api.transport.send_command.call_args[0][0]
     assert task_cancelled.cancelled_command_id == cid

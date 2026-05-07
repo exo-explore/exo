@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import anyio
 from anyio import fail_after, to_thread
+from exo_net import PySession
 from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
@@ -14,7 +15,6 @@ from exo.shared.models.model_cards import ModelId, card_cache
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     DeleteInstance,
-    ForwarderCommand,
     ForwarderDownloadCommand,
     StartDownload,
 )
@@ -65,16 +65,17 @@ class Worker:
         *,
         event_receiver: Receiver[IndexedEvent],
         event_sender: Sender[Event],
+        session: PySession,
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands
-        command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         api_port: int,
     ):
         self.node_id: NodeId = node_id
         self.event_receiver = event_receiver
         self.event_sender = event_sender
-        self.command_sender = command_sender
+        self.session = session
+        self.command_sender = session.net_sender("orchestrator")
         self.download_command_sender = download_command_sender
         self.api_port = api_port
 
@@ -114,7 +115,6 @@ class Worker:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")
             self.event_sender.close()
-            self.command_sender.close()
             self.download_command_sender.close()
             for runner in self.runners.values():
                 runner.shutdown()
@@ -209,10 +209,9 @@ class Worker:
                         f"Instance {iid} exceeded {EXO_MAX_INSTANCE_RETRIES} retries, requesting deletion"
                     )
                     await self.command_sender.send(
-                        ForwarderCommand(
-                            origin=self._system_id,
-                            command=DeleteInstance(instance_id=iid),
-                        )
+                        DeleteInstance(instance_id=iid)
+                        .model_dump_json()
+                        .encode("utf-8")
                     )
                     continue
 
@@ -375,6 +374,7 @@ class Worker:
         runner = RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
+            session=self.session,
         )
         self.runners[task.bound_instance.bound_runner_id] = runner
         self._tg.start_soon(runner.run)
