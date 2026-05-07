@@ -540,6 +540,7 @@ def mlx_generate(
     distributed_prompt_progress_callback: Callable[[], None] | None = None,
     on_generation_token: Callable[[], None] | None = None,
     vision_processor: VisionProcessor | None = None,
+    draft_model: Model | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -717,6 +718,12 @@ def mlx_generate(
     logger.info("Starting decode")
     mx_barrier(group)
 
+    # Speculative decoding via mlx_lm: only enabled in the single-device path
+    # (group is None). Distributed speculative is not yet plumbed; passing a
+    # draft_model alongside a non-trivial group would be a no-op, so we drop
+    # it explicitly to make the caller contract clear.
+    effective_draft_model = draft_model if group is None else None
+
     for completion_tokens, out in enumerate(
         stream_generate(
             model=model,
@@ -729,6 +736,7 @@ def mlx_generate(
             prefill_step_size=1,
             kv_group_size=KV_GROUP_SIZE,
             kv_bits=KV_BITS,
+            draft_model=effective_draft_model,
         ),
         start=1,
     ):

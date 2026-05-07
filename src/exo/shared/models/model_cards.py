@@ -171,6 +171,11 @@ class ModelCard(FrozenModel):
     is_custom: bool = False
     vision: VisionCardConfig | None = None
     sampling_defaults: SamplingDefaults = Field(default_factory=SamplingDefaults)
+    # Optional speculative-decoding draft model. When set, runners will load the
+    # named model alongside the target and pass it as `draft_model` to mlx_lm's
+    # `stream_generate`, enabling MLX-side speculative decoding. The drafter MUST
+    # share a tokenizer with the target.
+    drafter_model_id: ModelId | None = None
 
     @model_validator(mode="after")
     def _autodetect_vision(self) -> "ModelCard":

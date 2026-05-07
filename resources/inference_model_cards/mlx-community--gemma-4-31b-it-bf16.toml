@@ -8,6 +8,7 @@ family = "gemma"
 quantization = "bf16"
 base_model = "Gemma 4 31B"
 capabilities = ["text", "vision"]
+drafter_model_id = "mlx-community/gemma-4-e2b-it-bf16"
 
 context_length = 262144
 
