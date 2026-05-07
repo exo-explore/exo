@@ -150,7 +150,7 @@ class RunnerSupervisor:
                 if self.runner_process.exitcode is not None:
                     logger.info(f"Runner process successfully terminated: {self.runner_process.exitcode}")
                 else:
-                    raise
+                    logger.critical("Runner exit code unexpectedly not avaliable")
 
     def shutdown(self):
         self._tg.cancel_tasks()

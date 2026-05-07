@@ -264,6 +264,16 @@ async def test_stop_before_run_raises() -> None:
 
 
 @pytest.mark.anyio
+async def test_process_run_is_one_shot() -> None:
+    process = AsyncProcess(None)
+
+    await process.run()
+
+    with pytest.raises(RuntimeError, match="process has already been started"):
+        await process.run()
+
+
+@pytest.mark.anyio
 async def test_process_started_with_task_group_start_can_stop_immediately() -> None:
     process = AsyncProcess(_sleep_forever)
 
