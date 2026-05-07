@@ -157,7 +157,7 @@ def mlx_distributed_init(
 
         logger.info(f"Rank {rank} mlx distributed initialization complete")
 
-        return group
+        return group  # pyright: ignore[reportPossiblyUnboundVariable]
 
 
 def initialize_mlx(

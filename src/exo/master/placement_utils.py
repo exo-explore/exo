@@ -400,13 +400,11 @@ def _fallback_interface_ips(node_network: NodeNetworkInfo) -> list[str]:
 def _is_candidate_host_ip(ip: str) -> bool:
     if ":" in ip:
         return False
-    if ip.startswith("127.") or ip == "0.0.0.0":
-        return False
-    return True
+    return not (ip.startswith("127.") or ip == "0.0.0.0")
 
 
 def _address_priority(ip: str) -> int:
-    if ip.startswith("192.168.") or ip.startswith("10."):
+    if ip.startswith(("192.168.", "10.")):
         return 0
     if ip.startswith("172."):
         try:
