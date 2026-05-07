@@ -312,15 +312,10 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     if "kimi-k2" in model_id_lower:
         return [163586]
     elif "glm-5" in model_id_lower:
-        # For GLM-5
         # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
         return [154820, 154827, 154829]
-    elif "glm-4.7" in model_id_lower:
-        # For GLM-4.7
-        # 151336: <|user|>, 151329: <|endoftext|>, 151338: <|observation|>
-        return [151336, 151329, 151338]
     elif "glm" in model_id_lower:
-        # For GLM-4.5 and older
+        # For GLM-4.7 and older
         return [151336, 151329, 151338]
     elif "gpt-oss" in model_id_lower:
         return [200002, 200012]
