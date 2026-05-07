@@ -8,13 +8,16 @@ Run with:
 from __future__ import annotations
 
 import pytest
-from exo_tools.harness import cleanup_all_instances, place_instance
+from exo_tools.cluster import Thunderbolt
+from exo_tools.harness import Comm, Sharding, cleanup_all_instances, place_instance
 
 from .framework import DEFAULT_MODEL, InstanceSpec
 
 
-@pytest.mark.cluster(count=2, thunderbolt="a2a")
-@pytest.mark.instance(DEFAULT_MODEL, sharding="pipeline", comm="ring", min_nodes=2)
+@pytest.mark.cluster(count=2, thunderbolt=Thunderbolt.A2A)
+@pytest.mark.instance(
+    DEFAULT_MODEL, sharding=Sharding.PIPELINE, comm=Comm.RING, min_nodes=2
+)
 def test_node_recovery(session):
     """Full disconnect/reconnect cycle.
 

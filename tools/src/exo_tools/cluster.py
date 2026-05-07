@@ -17,8 +17,15 @@ import signal
 import subprocess
 import uuid
 from dataclasses import dataclass, field
+from enum import Enum
 
 from .client import ExoClient
+
+
+class Thunderbolt(str, Enum):
+    A2A = "a2a"  # all-to-all (eco --tb-a2a)
+    RING = "ring"  # ring topology (eco --tb-ring)
+
 
 logger = logging.getLogger("exo_tools.cluster")
 
@@ -114,17 +121,12 @@ class EcoSession:
         hosts: list[str] | None = None,
         *,
         count: int | None = None,
-        thunderbolt: bool | str | None = False,
+        thunderbolt: Thunderbolt | None = None,
         wait: bool = True,
         ref: str | None = _EXO_REF,
         timeout: int = 600,
     ) -> ClusterInfo:
         """Start and deploy exo on a set of hosts via eco.
-
-        thunderbolt:
-          - True or 'a2a' → --tb-a2a (all-to-all Thunderbolt)
-          - 'ring' → --tb-ring (ring Thunderbolt topology)
-          - False/None → no Thunderbolt constraint
 
         By default, deploys from local source via rsync. Set EXO_REF
         or pass ref= to deploy from a GitHub branch/tag instead (for CI).
@@ -134,10 +136,8 @@ class EcoSession:
             cmd.extend(hosts)
         if count is not None:
             cmd.extend(["--count", str(count)])
-        if thunderbolt is True or thunderbolt == "a2a":
-            cmd.append("--tb-a2a")
-        elif thunderbolt == "ring":
-            cmd.append("--tb-ring")
+        if thunderbolt is not None:
+            cmd.append(f"--tb-{thunderbolt.value}")
         if wait:
             cmd.append("--wait")
         if ref:

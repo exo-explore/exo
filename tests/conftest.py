@@ -56,12 +56,12 @@ def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line(
         "markers",
-        "cluster(count=N, thunderbolt='a2a'|'ring'|None, min_memory=GB, chip=PATTERN): "
+        "cluster(count=N, thunderbolt=Thunderbolt|None, min_memory=GB, chip=PATTERN): "
         "declare cluster requirements for a test",
     )
     config.addinivalue_line(
         "markers",
-        "instance(model_id, sharding='pipeline'|'tensor', comm='ring'|'jaccl', min_nodes=N): "
+        "instance(model_id, sharding=Sharding, comm=Comm, min_nodes=N): "
         "declare instance placement for a test",
     )
 
@@ -122,7 +122,7 @@ def session(request, _host_pool) -> Session:
             client,
             instance_spec.model_id,
             sharding=instance_spec.sharding,
-            instance_meta=instance_spec.instance_meta,
+            comm=instance_spec.comm,
             min_nodes=instance_spec.min_nodes,
         )
 

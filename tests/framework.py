@@ -22,25 +22,21 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from exo_tools.client import ExoClient
-from exo_tools.cluster import ClusterInfo, EcoSession, make_client_from_url
+from exo_tools.cluster import (
+    ClusterInfo,
+    EcoSession,
+    Thunderbolt,
+    make_client_from_url,
+)
+from exo_tools.harness import Comm, Sharding
 
 DEFAULT_MODEL = "mlx-community/Llama-3.2-1B-Instruct-4bit"
-
-
-_SHARDING_MAP = {
-    "pipeline": "Pipeline",
-    "tensor": "Tensor",
-}
-_COMM_MAP = {
-    "ring": "MlxRing",
-    "jaccl": "MlxJaccl",
-}
 
 
 @dataclass(frozen=True)
 class ClusterSpec:
     count: int = 1
-    thunderbolt: str | None = None  # 'a2a' | 'ring' | None
+    thunderbolt: Thunderbolt | None = None
     min_memory_gb: float | None = None
     chip: str | None = None
 
@@ -48,8 +44,8 @@ class ClusterSpec:
 @dataclass(frozen=True)
 class InstanceSpec:
     model_id: str
-    sharding: str = "Pipeline"  # 'Pipeline' | 'Tensor'
-    instance_meta: str = "MlxRing"  # 'MlxRing' | 'MlxJaccl'
+    sharding: Sharding = Sharding.PIPELINE
+    comm: Comm = Comm.RING
     min_nodes: int = 1
 
 
@@ -67,26 +63,15 @@ def parse_cluster_marker(marker) -> ClusterSpec:
 def parse_instance_marker(marker) -> InstanceSpec | None:
     if marker is None:
         return None
-    args = marker.args
-    kwargs = marker.kwargs
-    if not args:
+    if not marker.args:
         raise ValueError(
             "@pytest.mark.instance requires a positional model_id argument"
         )
-    model_id = args[0]
-    sharding_key = kwargs.get("sharding", "pipeline").lower()
-    comm_key = kwargs.get("comm", "ring").lower()
-    if sharding_key not in _SHARDING_MAP:
-        raise ValueError(
-            f"sharding must be one of {list(_SHARDING_MAP)}, got {sharding_key!r}"
-        )
-    if comm_key not in _COMM_MAP:
-        raise ValueError(f"comm must be one of {list(_COMM_MAP)}, got {comm_key!r}")
     return InstanceSpec(
-        model_id=model_id,
-        sharding=_SHARDING_MAP[sharding_key],
-        instance_meta=_COMM_MAP[comm_key],
-        min_nodes=kwargs.get("min_nodes", 1),
+        model_id=marker.args[0],
+        sharding=marker.kwargs.get("sharding", Sharding.PIPELINE),
+        comm=marker.kwargs.get("comm", Comm.RING),
+        min_nodes=marker.kwargs.get("min_nodes", 1),
     )
 
 

@@ -11,11 +11,23 @@ import argparse
 import contextlib
 import os
 import time
+from enum import Enum
 from typing import Any
 
 from loguru import logger
 
 from .client import ExoClient, ExoHttpError
+
+
+class Sharding(str, Enum):
+    PIPELINE = "Pipeline"  # layers split across nodes
+    TENSOR = "Tensor"  # layers split within (across nodes)
+
+
+class Comm(str, Enum):
+    RING = "MlxRing"  # ring all-reduce over network
+    JACCL = "MlxJaccl"  # RDMA over Thunderbolt
+
 
 _SETTLE_INITIAL_BACKOFF_S = 1.0
 _SETTLE_MAX_BACKOFF_S = 60.0
@@ -564,8 +576,8 @@ def place_instance(
     client: ExoClient,
     model_id: str,
     *,
-    sharding: str = "Pipeline",
-    instance_meta: str = "MlxRing",
+    sharding: Sharding = Sharding.PIPELINE,
+    comm: Comm = Comm.RING,
     min_nodes: int = 1,
     timeout: float = 600.0,
     placement_retries: int = 10,
@@ -581,8 +593,8 @@ def place_instance(
 
     body = {
         "model_id": model_id,
-        "sharding": sharding,
-        "instance_meta": instance_meta,
+        "sharding": sharding.value,
+        "instance_meta": comm.value,
         "min_nodes": min_nodes,
     }
 
@@ -608,7 +620,7 @@ def place_instance(
     if instance_id is None:
         raise TimeoutError(
             f"Placement failed after {placement_retries} attempts "
-            f"({sharding}/{instance_meta} for {model_id})"
+            f"({sharding.value}/{comm.value} for {model_id})"
         )
 
     wait_for_instance_ready(client, instance_id, timeout=timeout)
