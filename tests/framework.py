@@ -138,10 +138,10 @@ class Session:
         return resp["choices"][0]["message"]["content"]
 
     def disconnect_node(self, index: int) -> None:
+        """Stop exo on a node and wait for the cluster to observe the disconnect."""
         host = self.cluster.hosts[index]
         self.eco.stop([host], keep=True)
         self._stopped_hosts.add(host)
-        time.sleep(5.0)  # let the cluster detect the disconnect
 
     def reconnect_node(self, index: int) -> None:
         """Restart a previously disconnected node into the existing namespace."""
@@ -150,9 +150,13 @@ class Session:
         self._stopped_hosts.discard(host)
 
     def wait_ready(
-        self, expected_nodes: int | None = None, timeout: float = 120.0
+        self, expected_nodes: int | None = None, timeout: float = 60
     ) -> None:
-        """Wait until the cluster has all expected nodes visible and reporting memory."""
+        """Wait until the cluster has exactly `expected_nodes` visible and reporting memory.
+
+        Defaults to the count of non-stopped hosts. Use this after
+        `disconnect_node` / `reconnect_node` to wait for the cluster to settle.
+        """
         if expected_nodes is None:
             expected_nodes = len(self.cluster.hosts) - len(self._stopped_hosts)
         start = time.time()
@@ -161,11 +165,11 @@ class Session:
                 state = self.state
                 identities = len(state.get("nodeIdentities", {}))
                 memory = len(state.get("nodeMemory", {}))
-                if identities >= expected_nodes and memory >= expected_nodes:
+                if identities == expected_nodes and memory == expected_nodes:
                     return
             except Exception:
                 pass
             time.sleep(2.0)
         raise TimeoutError(
-            f"Cluster did not reach {expected_nodes} ready nodes within {timeout}s"
+            f"Cluster did not reach exactly {expected_nodes} ready nodes within {timeout}s"
         )

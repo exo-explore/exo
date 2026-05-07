@@ -33,6 +33,7 @@ def test_node_recovery(session):
 
     # --- Phase 2: disconnect one node ---
     session.disconnect_node(1)
+    session.wait_ready(60)
 
     # Clean up the now-broken 2-node instance
     cleanup_all_instances(session.client)
@@ -46,7 +47,7 @@ def test_node_recovery(session):
     # --- Phase 4: reconnect and restore 2-node cluster ---
     cleanup_all_instances(session.client)
     session.reconnect_node(1)
-    session.wait_ready(expected_nodes=2)
+    session.wait_ready(60)
 
     # --- Phase 5: 2-node inference again ---
     place_instance(session.client, DEFAULT_MODEL, min_nodes=2)
