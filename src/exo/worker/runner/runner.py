@@ -219,7 +219,6 @@ class Runner:
                     continue
                 self.seen.add(item.task_id)
                 self.handle_first_task(item)
-                logger.warning("exited :) check if it gets past this shutdown")
                 if isinstance(self.current_status, RunnerShutdown):
                     break
         finally:
