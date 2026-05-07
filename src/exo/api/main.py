@@ -205,17 +205,17 @@ from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 
 
-class SetStorageConfigRequest(CamelCaseModel):
+class SetStorageConfigRequest(FrozenModel):
     node_ids: list[NodeId] | None = None
     max_storage_gb: Annotated[float, Field(ge=0)] | None = None
     storage_policy: StoragePolicy = "manual"
 
 
-class NodeStorageInfo(CamelCaseModel):
+class NodeStorageInfo(FrozenModel):
     config: StorageConfig
     used: Memory
 

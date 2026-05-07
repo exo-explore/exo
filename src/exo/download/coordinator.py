@@ -489,9 +489,7 @@ class DownloadCoordinator:
                     elif progress.status in ["in_progress", "not_started"]:
                         # TODO(ciaran): temporary solution
                         # Don't downgrade a model that is already confirmed complete.
-                        if isinstance(
-                            self.download_status.get(model_id), ModelReady
-                        ):
+                        if isinstance(self.download_status.get(model_id), ModelReady):
                             continue
                         # The per-file size check compares local files against
                         # the latest HF "main" revision, which is a moving
