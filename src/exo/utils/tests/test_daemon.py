@@ -6,7 +6,7 @@ import anyio
 import pytest
 from anyio import EndOfStream, create_task_group, fail_after
 
-from exo.utils.async_process import AsyncSpawnProcess
+from exo.utils.async_process import AsyncProcess
 from exo.utils.channels import MpReceiver, MpSender, Receiver, mp_channel
 from exo.utils.daemon import detach_stdio_to_devnull
 
@@ -25,28 +25,28 @@ def _write_grandchild_stdio(label: str) -> None:
 
 
 async def _spawn_grandchild_and_report(
-    result_sender: MpSender[tuple[int, bytes, bytes]],
-    label: str,
+        result_sender: MpSender[tuple[int, bytes, bytes]],
+        label: str,
 ) -> None:
     result_sender.send(await _collect_spawned_child(label))
     result_sender.close()
 
 
 async def _collect_spawned_child(label: str) -> tuple[int, bytes, bytes]:
-    process = AsyncSpawnProcess(_write_grandchild_stdio, args=(label,))
+    process = AsyncProcess(_write_grandchild_stdio, args=(label,))
     async with _started_process(process):
         return await _collect_process_output(process)
 
 
 def _detach_stdio_then_spawn_captured_child(
-    result_sender: MpSender[tuple[int, bytes, bytes]],
+        result_sender: MpSender[tuple[int, bytes, bytes]],
 ) -> None:
     detach_stdio_to_devnull()
     anyio.run(_spawn_grandchild_and_report, result_sender, "grandchild")
 
 
 def _detach_stdio_then_spawn_captured_children_sequentially(
-    result_sender: MpSender[list[tuple[int, bytes, bytes]]],
+        result_sender: MpSender[list[tuple[int, bytes, bytes]]],
 ) -> None:
     async def run_children() -> list[tuple[int, bytes, bytes]]:
         results: list[tuple[int, bytes, bytes]] = []
@@ -68,7 +68,7 @@ async def _collect_stream(stream: Receiver[bytes], output: bytearray) -> None:
 
 
 async def _collect_process_output(
-    process: AsyncSpawnProcess,
+        process: AsyncProcess,
 ) -> tuple[int, bytes, bytes]:
     stdout = bytearray()
     stderr = bytearray()
@@ -85,7 +85,7 @@ async def _collect_process_output(
 
 
 @contextlib.asynccontextmanager
-async def _started_process(process: AsyncSpawnProcess) -> AsyncIterator[None]:
+async def _started_process(process: AsyncProcess) -> AsyncIterator[None]:
     async with create_task_group() as task_group:
         task_group.start_soon(process.run)
         await process.wait_started()
@@ -96,10 +96,10 @@ async def _started_process(process: AsyncSpawnProcess) -> AsyncIterator[None]:
 
 
 async def _run_process_and_receive[T](
-    process: AsyncSpawnProcess,
-    recv: MpReceiver[T],
-    *,
-    timeout: float,
+        process: AsyncProcess,
+        recv: MpReceiver[T],
+        *,
+        timeout: float,
 ) -> tuple[int, T]:
     async with _started_process(process):
         with fail_after(timeout):
@@ -111,7 +111,7 @@ async def _run_process_and_receive[T](
 
 @pytest.mark.anyio
 async def test_detach_stdio_to_devnull_redirects_stdio_away_from_capture() -> None:
-    process = AsyncSpawnProcess(_write_before_and_after_detach)
+    process = AsyncProcess(_write_before_and_after_detach)
 
     async with _started_process(process):
         exitcode, stdout, stderr = await _collect_process_output(process)
@@ -123,10 +123,8 @@ async def test_detach_stdio_to_devnull_redirects_stdio_away_from_capture() -> No
 
 @pytest.mark.anyio
 async def test_detached_stdio_process_can_spawn_and_capture_child_stdio() -> None:
-    send, recv = mp_channel[tuple[int, bytes, bytes]](
-        context=AsyncSpawnProcess.context()
-    )
-    process = AsyncSpawnProcess(_detach_stdio_then_spawn_captured_child, args=(send,))
+    send, recv = mp_channel[tuple[int, bytes, bytes]]()
+    process = AsyncProcess(_detach_stdio_then_spawn_captured_child, args=(send,))
 
     try:
         daemonized_parent_exitcode, result = await _run_process_and_receive(
@@ -145,12 +143,10 @@ async def test_detached_stdio_process_can_spawn_and_capture_child_stdio() -> Non
 
 @pytest.mark.anyio
 async def test_detached_stdio_process_can_spawn_captured_children_sequentially() -> (
-    None
+        None
 ):
-    send, recv = mp_channel[list[tuple[int, bytes, bytes]]](
-        context=AsyncSpawnProcess.context()
-    )
-    process = AsyncSpawnProcess(
+    send, recv = mp_channel[list[tuple[int, bytes, bytes]]]()
+    process = AsyncProcess(
         _detach_stdio_then_spawn_captured_children_sequentially,
         args=(send,),
     )

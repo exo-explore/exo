@@ -14,7 +14,7 @@ from pytest import MonkeyPatch
 
 import exo.utils.async_process as async_process
 from exo.utils.async_process import (
-    AsyncSpawnProcess,
+    AsyncProcess,
 )
 from exo.utils.channels import MpSender, Receiver, mp_channel
 
@@ -112,8 +112,8 @@ def _mlx_force_oom(size: int = 40_000) -> None:
 
 
 async def _collect_stream(
-    stream: Receiver[bytes],
-    output: bytearray,
+        stream: Receiver[bytes],
+        output: bytearray,
 ) -> None:
     while True:
         try:
@@ -123,7 +123,7 @@ async def _collect_stream(
 
 
 async def _collect_process_output(
-    process: AsyncSpawnProcess,
+        process: AsyncProcess,
 ) -> tuple[int, bytes, bytes]:
     stdout = bytearray()
     stderr = bytearray()
@@ -152,7 +152,7 @@ def _fd_count() -> int | None:
 
 
 @contextlib.asynccontextmanager
-async def _started_process(process: AsyncSpawnProcess) -> AsyncIterator[None]:
+async def _started_process(process: AsyncProcess) -> AsyncIterator[None]:
     async with create_task_group() as task_group:
         task_group.start_soon(process.run)
         await process.wait_started()
@@ -163,17 +163,15 @@ async def _started_process(process: AsyncSpawnProcess) -> AsyncIterator[None]:
 
 
 async def _run_and_collect(
-    target: Callable[..., object] | None,
-    *,
-    args: tuple[object, ...] = (),
-    kwargs: dict[str, object] | None = None,
-    stream_buffer_size: int = 16,
+        target: Callable[..., object] | None,
+        *,
+        args: tuple[object, ...] = (),
+        kwargs: dict[str, object] | None = None,
 ) -> tuple[int, bytes, bytes]:
-    process = AsyncSpawnProcess(
+    process = AsyncProcess(
         target,
         args=args,
         kwargs=kwargs,
-        stream_buffer_size=stream_buffer_size,
     )
     async with _started_process(process):
         return await _collect_process_output(process)
@@ -181,9 +179,9 @@ async def _run_and_collect(
 
 @pytest.mark.anyio
 async def test_spawn_process_captures_stdout_and_stderr_separately(
-    capfd: CaptureFixture[str],
+        capfd: CaptureFixture[str],
 ) -> None:
-    process = AsyncSpawnProcess(
+    process = AsyncProcess(
         _write_to_stdio,
         args=("child",),
         kwargs={"stderr_suffix": "error"},
@@ -215,7 +213,7 @@ async def test_process_with_no_target_exits_successfully() -> None:
 
 @pytest.mark.anyio
 async def test_stdout_receiver_yields_bytes_chunks() -> None:
-    process = AsyncSpawnProcess(_write_large_output)
+    process = AsyncProcess(_write_large_output)
 
     async with _started_process(process):
         first_stdout = await process.stdout.receive()
@@ -232,7 +230,6 @@ async def test_large_stdout_and_stderr_are_not_lost_with_bounded_buffers() -> No
     exitcode, stdout, stderr = await _run_and_collect(
         _write_large_exact_output,
         args=(size,),
-        stream_buffer_size=1,
     )
 
     assert exitcode == 0
@@ -242,7 +239,7 @@ async def test_large_stdout_and_stderr_are_not_lost_with_bounded_buffers() -> No
 
 @pytest.mark.anyio
 async def test_child_exception_traceback_is_captured_from_stderr() -> None:
-    process = AsyncSpawnProcess(_raise_after_stderr_write)
+    process = AsyncProcess(_raise_after_stderr_write)
 
     async with _started_process(process):
         exitcode, _, stderr_bytes = await _collect_process_output(process)
@@ -255,7 +252,7 @@ async def test_child_exception_traceback_is_captured_from_stderr() -> None:
 
 @pytest.mark.anyio
 async def test_repeated_bad_children_do_not_pollute_or_replace_parent_stdio(
-    capfd: CaptureFixture[str],
+        capfd: CaptureFixture[str],
 ) -> None:
     stdout_object = sys.stdout
     stderr_object = sys.stderr
@@ -273,7 +270,6 @@ async def test_repeated_bad_children_do_not_pollute_or_replace_parent_stdio(
             exitcode, stdout, stderr = await _run_and_collect(
                 target,
                 args=args,
-                stream_buffer_size=1,
             )
 
             assert exitcode != 0
@@ -311,7 +307,7 @@ async def test_repeated_bad_children_do_not_pollute_or_replace_parent_stdio(
 
 @pytest.mark.anyio
 async def test_child_can_close_stdio_without_corrupting_parent_stdio(
-    capfd: CaptureFixture[str],
+        capfd: CaptureFixture[str],
 ) -> None:
     stdout_identity = _fd_identity(1)
     stderr_identity = _fd_identity(2)
@@ -341,7 +337,6 @@ async def test_repeated_crashing_children_do_not_grow_parent_fd_table() -> None:
         exitcode, stdout, stderr = await _run_and_collect(
             _exit_after_stdio_write,
             args=(f"fd-child-{iteration}", 31),
-            stream_buffer_size=1,
         )
 
         assert exitcode == 31
@@ -355,7 +350,7 @@ async def test_repeated_crashing_children_do_not_grow_parent_fd_table() -> None:
 
 @pytest.mark.anyio
 async def test_shutdown_can_cancel_idle_drainers_before_child_exits() -> None:
-    process = AsyncSpawnProcess(_sleep_without_output)
+    process = AsyncProcess(_sleep_without_output)
     async with _started_process(process):
         with fail_after(2):
             process.shutdown()
@@ -366,7 +361,7 @@ async def test_shutdown_can_cancel_idle_drainers_before_child_exits() -> None:
 
 @pytest.mark.anyio
 async def test_shutdown_allows_child_to_exit_after_sigterm() -> None:
-    process = AsyncSpawnProcess(_exit_on_sigterm, args=(43,))
+    process = AsyncProcess(_exit_on_sigterm, args=(43,))
 
     async with _started_process(process):
         assert await process.stdout.receive() == b"sigterm-ready\n"
@@ -380,10 +375,10 @@ async def test_shutdown_allows_child_to_exit_after_sigterm() -> None:
 
 @pytest.mark.anyio
 async def test_shutdown_escalates_to_sigkill_when_child_ignores_sigterm(
-    monkeypatch: MonkeyPatch,
+        monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(async_process, "_TERMINATE_GRACE_SECONDS", 0.1)
-    process = AsyncSpawnProcess(_ignore_sigterm_forever)
+    process = AsyncProcess(_ignore_sigterm_forever)
 
     async with _started_process(process):
         assert await process.stdout.receive() == b"sigterm-ready\n"
@@ -397,8 +392,8 @@ async def test_shutdown_escalates_to_sigkill_when_child_ignores_sigterm(
 
 @pytest.mark.anyio
 async def test_spawn_process_can_use_spawn_context_mp_channel() -> None:
-    send, recv = mp_channel[str](context=AsyncSpawnProcess.context())
-    process = AsyncSpawnProcess(_send_over_mp_channel, args=(send,))
+    send, recv = mp_channel[str]()
+    process = AsyncProcess(_send_over_mp_channel, args=(send,))
 
     async with _started_process(process):
         with fail_after(2):
@@ -413,7 +408,7 @@ async def test_spawn_process_can_use_spawn_context_mp_channel() -> None:
 @pytest.mark.skip(reason="manual MLX OOM isolation check")
 async def test_death(capsys: CaptureFixture[str]) -> None:
     with capsys.disabled():
-        process = AsyncSpawnProcess(_mlx_force_oom)
+        process = AsyncProcess(_mlx_force_oom)
         stdout = b""
         stderr = b""
         async with _started_process(process):

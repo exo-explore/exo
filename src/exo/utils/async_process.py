@@ -6,7 +6,6 @@ import multiprocessing as mp
 import os
 import sys
 from collections.abc import Callable, Iterable, Mapping
-from multiprocessing.context import SpawnContext
 from multiprocessing.process import BaseProcess
 from multiprocessing.resource_sharer import DupFd
 from signal import Signals
@@ -34,11 +33,7 @@ _KILL_GRACE_SECONDS = 5.0
 
 
 @final
-class AsyncSpawnProcess:
-    @staticmethod
-    def context() -> SpawnContext:
-        return mp.get_context("spawn")
-
+class AsyncProcess:
     def __init__(
             self,
             target: Callable[..., object] | None = None,
@@ -81,7 +76,7 @@ class AsyncSpawnProcess:
         stderr_tx, stderr_rx = channel[bytes]()
 
         try:
-            process = self.context().Process(
+            process = mp.Process(
                 target=_run_with_captured_stdio,
                 name=self._name,
                 args=(

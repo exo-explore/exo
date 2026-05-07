@@ -41,7 +41,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.shared.types.worker.shards import ShardMetadata
-from exo.utils.async_process import AsyncSpawnProcess
+from exo.utils.async_process import AsyncProcess
 from exo.utils.channels import MpReceiver, MpSender, Receiver, Sender, mp_channel
 from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint
@@ -54,7 +54,7 @@ DECODE_TIMEOUT_SECONDS = 5
 class RunnerSupervisor:
     shard_metadata: ShardMetadata
     bound_instance: BoundInstance
-    runner_process: AsyncSpawnProcess
+    runner_process: AsyncProcess
     initialize_timeout: float
     _ev_recv: MpReceiver[Event]
     _task_sender: MpSender[Task]
@@ -72,18 +72,17 @@ class RunnerSupervisor:
 
     @classmethod
     def create(
-        cls,
-        *,
-        bound_instance: BoundInstance,
-        event_sender: Sender[Event],
-        initialize_timeout: float = 400,
+            cls,
+            *,
+            bound_instance: BoundInstance,
+            event_sender: Sender[Event],
+            initialize_timeout: float = 400,
     ) -> Self:
-        mp_ctx = AsyncSpawnProcess.context()
-        ev_send, ev_recv = mp_channel[Event](context=mp_ctx)
-        task_sender, task_recv = mp_channel[Task](context=mp_ctx)
-        cancel_sender, cancel_recv = mp_channel[TaskId](context=mp_ctx)
+        ev_send, ev_recv = mp_channel[Event]()
+        task_sender, task_recv = mp_channel[Task]()
+        cancel_sender, cancel_recv = mp_channel[TaskId]()
 
-        runner_process = AsyncSpawnProcess(
+        runner_process = AsyncProcess(
             target=entrypoint,
             args=(
                 bound_instance,
@@ -212,8 +211,8 @@ class RunnerSupervisor:
                         self.pending.pop(event.task_id).set()
                         continue
                     if (
-                        isinstance(event, TaskStatusUpdated)
-                        and event.task_status == TaskStatus.Complete
+                            isinstance(event, TaskStatusUpdated)
+                            and event.task_status == TaskStatus.Complete
                     ):
                         # If a task has just been completed, we should be working on it.
                         assert isinstance(
@@ -243,9 +242,9 @@ class RunnerSupervisor:
                     await self._check_runner(RuntimeError("Runner found to be dead"))
 
     async def _forward_runner_output(
-        self,
-        stream_name: str,
-        stream: Receiver[bytes],
+            self,
+            stream_name: str,
+            stream: Receiver[bytes],
     ) -> None:
         while True:
             try:

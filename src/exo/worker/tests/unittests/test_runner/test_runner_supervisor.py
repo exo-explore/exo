@@ -15,7 +15,7 @@ from exo.shared.types.text_generation import (
 )
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerFailed, RunnerId
-from exo.utils.async_process import AsyncSpawnProcess
+from exo.utils.async_process import AsyncProcess
 from exo.utils.channels import channel, mp_channel
 from exo.worker.runner.supervisor import RunnerSupervisor
 from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance
@@ -49,7 +49,7 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     supervisor = RunnerSupervisor(
         shard_metadata=bound_instance.bound_shard,
         bound_instance=bound_instance,
-        runner_process=cast(AsyncSpawnProcess, cast(object, _DeadProcess())),
+        runner_process=cast(AsyncProcess, cast(object, _DeadProcess())),
         initialize_timeout=400,
         _ev_recv=ev_recv,
         _task_sender=task_sender,
