@@ -185,6 +185,14 @@ class AsyncProcess:
             return exitcode
         return None
 
+    def is_alive(self) -> bool:
+        if self._process is None:
+            return False
+
+        with contextlib.suppress(ValueError):
+            return self._process.is_alive()
+        return False
+
     # TODO: maybe in the future if needed, create stdin that is also installed,
     #       and a ByteSendStream handle is provided for it :)
 

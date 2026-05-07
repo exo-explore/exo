@@ -232,7 +232,7 @@ class RunnerSupervisor:
         with self._cancel_watch_runner:
             while True:
                 await anyio.sleep(5)
-                if self.runner_process.exitcode is not None:
+                if not self.runner_process.is_alive():
                     await self._check_runner(RuntimeError("Runner found to be dead"))
 
     async def _forward_runner_output(
@@ -258,7 +258,7 @@ class RunnerSupervisor:
         if not self._cancel_watch_runner.cancel_called:
             self._cancel_watch_runner.cancel()
         logger.info("Checking runner's status")
-        if self.runner_process.exitcode is None:
+        if self.runner_process.is_alive():
             logger.info("Runner was found to be alive, stopping process")
             with anyio.CancelScope(shield=True):
                 await self.runner_process.stop()

@@ -259,6 +259,7 @@ async def test_stop_before_run_raises() -> None:
         kwargs={"stderr_suffix": "run"},
     )
 
+    assert not process.is_alive()
     with pytest.raises(RuntimeError, match="process has not been started"):
         await process.stop()
 
@@ -279,10 +280,11 @@ async def test_process_started_with_task_group_start_can_stop_immediately() -> N
 
     async with create_task_group() as task_group:
         await task_group.start(process.run)
+        assert process.is_alive()
         with fail_after(2):
             await process.stop()
 
-    assert process.exitcode is not None
+    assert not process.is_alive()
 
 
 @pytest.mark.anyio
