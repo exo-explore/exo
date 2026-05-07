@@ -71,11 +71,11 @@ class RunnerSupervisor:
 
     @classmethod
     def create(
-            cls,
-            *,
-            bound_instance: BoundInstance,
-            event_sender: Sender[Event],
-            initialize_timeout: float = 400,
+        cls,
+        *,
+        bound_instance: BoundInstance,
+        event_sender: Sender[Event],
+        initialize_timeout: float = 400,
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event]()
         task_sender, task_recv = mp_channel[Task]()
@@ -147,10 +147,9 @@ class RunnerSupervisor:
 
             with anyio.CancelScope(shield=True):
                 await self.runner_process.stop()
-                if self.runner_process.exitcode is not None:
-                    logger.info(f"Runner process successfully terminated: {self.runner_process.exitcode}")
-                else:
-                    logger.critical("Runner exit code unexpectedly not avaliable")
+                logger.info(
+                    f"Runner process successfully terminated: {self.runner_process.exitcode}"
+                )
 
     def shutdown(self):
         self._tg.cancel_tasks()
@@ -206,8 +205,8 @@ class RunnerSupervisor:
                         self.pending.pop(event.task_id).set()
                         continue
                     if (
-                            isinstance(event, TaskStatusUpdated)
-                            and event.task_status == TaskStatus.Complete
+                        isinstance(event, TaskStatusUpdated)
+                        and event.task_status == TaskStatus.Complete
                     ):
                         # If a task has just been completed, we should be working on it.
                         assert isinstance(
@@ -237,9 +236,9 @@ class RunnerSupervisor:
                     await self._check_runner(RuntimeError("Runner found to be dead"))
 
     async def _forward_runner_output(
-            self,
-            stream_name: str,
-            stream: Receiver[bytes],
+        self,
+        stream_name: str,
+        stream: Receiver[bytes],
     ) -> None:
         while True:
             try:
@@ -261,7 +260,8 @@ class RunnerSupervisor:
         logger.info("Checking runner's status")
         if self.runner_process.exitcode is None:
             logger.info("Runner was found to be alive, stopping process")
-            await self.runner_process.stop()
+            with anyio.CancelScope(shield=True):
+                await self.runner_process.stop()
         rc = self.runner_process.exitcode
         logger.info(f"Runner exited with exit code {rc}")
         if rc == 0:

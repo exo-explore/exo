@@ -128,8 +128,8 @@ def _mlx_force_oom(size: int = 40_000) -> None:
 
 
 async def _collect_stream(
-        stream: Receiver[bytes],
-        output: bytearray,
+    stream: Receiver[bytes],
+    output: bytearray,
 ) -> None:
     while True:
         try:
@@ -139,7 +139,7 @@ async def _collect_stream(
 
 
 async def _collect_process_output(
-        process: AsyncProcess,
+    process: AsyncProcess,
 ) -> tuple[int, bytes, bytes]:
     stdout = bytearray()
     stderr = bytearray()
@@ -178,10 +178,10 @@ async def _started_process(process: AsyncProcess) -> AsyncIterator[None]:
 
 
 async def _run_and_collect(
-        target: Callable[..., object] | None,
-        *,
-        args: tuple[object, ...] = (),
-        kwargs: dict[str, object] | None = None,
+    target: Callable[..., object] | None,
+    *,
+    args: tuple[object, ...] = (),
+    kwargs: dict[str, object] | None = None,
 ) -> tuple[int, bytes, bytes]:
     process = AsyncProcess(
         target,
@@ -194,7 +194,7 @@ async def _run_and_collect(
 
 @pytest.mark.anyio
 async def test_spawn_process_captures_stdout_and_stderr_separately(
-        capfd: CaptureFixture[str],
+    capfd: CaptureFixture[str],
 ) -> None:
     process = AsyncProcess(
         _write_to_stdio,
@@ -228,7 +228,7 @@ async def test_process_with_no_target_exits_successfully() -> None:
 
 @pytest.mark.anyio
 async def test_output_receivers_and_wait_are_safe_immediately_after_run_starts() -> (
-        None
+    None
 ):
     process = AsyncProcess(
         _write_to_stdio,
@@ -342,7 +342,7 @@ async def test_child_exception_traceback_is_captured_from_stderr() -> None:
 
 @pytest.mark.anyio
 async def test_repeated_bad_children_do_not_pollute_or_replace_parent_stdio(
-        capfd: CaptureFixture[str],
+    capfd: CaptureFixture[str],
 ) -> None:
     stdout_object = sys.stdout
     stderr_object = sys.stderr
@@ -397,7 +397,7 @@ async def test_repeated_bad_children_do_not_pollute_or_replace_parent_stdio(
 
 @pytest.mark.anyio
 async def test_child_can_close_stdio_without_corrupting_parent_stdio(
-        capfd: CaptureFixture[str],
+    capfd: CaptureFixture[str],
 ) -> None:
     stdout_identity = _fd_identity(1)
     stderr_identity = _fd_identity(2)
@@ -468,7 +468,7 @@ async def test_stop_retries_sigterm_before_sigkill(monkeypatch: MonkeyPatch) -> 
 
 @pytest.mark.anyio
 async def test_stop_escalates_to_sigkill_when_child_ignores_sigterm(
-        monkeypatch: MonkeyPatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(async_process, "_TERMINATE_GRACE_SECONDS", 0.1)
     monkeypatch.setattr(async_process, "_TERMINATE_RETRY_GRACE_SECONDS", 0.01)

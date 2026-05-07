@@ -25,8 +25,8 @@ def _write_grandchild_stdio(label: str) -> None:
 
 
 async def _spawn_grandchild_and_report(
-        result_sender: MpSender[tuple[int, bytes, bytes]],
-        label: str,
+    result_sender: MpSender[tuple[int, bytes, bytes]],
+    label: str,
 ) -> None:
     result_sender.send(await _collect_spawned_child(label))
     result_sender.close()
@@ -39,14 +39,14 @@ async def _collect_spawned_child(label: str) -> tuple[int, bytes, bytes]:
 
 
 def _detach_stdio_then_spawn_captured_child(
-        result_sender: MpSender[tuple[int, bytes, bytes]],
+    result_sender: MpSender[tuple[int, bytes, bytes]],
 ) -> None:
     detach_stdio_to_devnull()
     anyio.run(_spawn_grandchild_and_report, result_sender, "grandchild")
 
 
 def _detach_stdio_then_spawn_captured_children_sequentially(
-        result_sender: MpSender[list[tuple[int, bytes, bytes]]],
+    result_sender: MpSender[list[tuple[int, bytes, bytes]]],
 ) -> None:
     async def run_children() -> list[tuple[int, bytes, bytes]]:
         results: list[tuple[int, bytes, bytes]] = []
@@ -68,7 +68,7 @@ async def _collect_stream(stream: Receiver[bytes], output: bytearray) -> None:
 
 
 async def _collect_process_output(
-        process: AsyncProcess,
+    process: AsyncProcess,
 ) -> tuple[int, bytes, bytes]:
     stdout = bytearray()
     stderr = bytearray()
@@ -95,10 +95,10 @@ async def _started_process(process: AsyncProcess) -> AsyncIterator[None]:
 
 
 async def _run_process_and_receive[T](
-        process: AsyncProcess,
-        recv: MpReceiver[T],
-        *,
-        timeout: float,
+    process: AsyncProcess,
+    recv: MpReceiver[T],
+    *,
+    timeout: float,
 ) -> tuple[int, T]:
     async with _started_process(process):
         with fail_after(timeout):
@@ -142,7 +142,7 @@ async def test_detached_stdio_process_can_spawn_and_capture_child_stdio() -> Non
 
 @pytest.mark.anyio
 async def test_detached_stdio_process_can_spawn_captured_children_sequentially() -> (
-        None
+    None
 ):
     send, recv = mp_channel[list[tuple[int, bytes, bytes]]]()
     process = AsyncProcess(

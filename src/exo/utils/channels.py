@@ -150,10 +150,10 @@ class MpSender[T]:
         return self
 
     def __exit__(
-            self,
-            exc_type: type[BaseException] | None,
-            exc_val: BaseException | None,
-            exc_tb: TracebackType | None,
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         self.close()
 
@@ -249,10 +249,10 @@ class MpReceiver[T]:
         return self
 
     def __exit__(
-            self,
-            exc_type: type[BaseException] | None,
-            exc_val: BaseException | None,
-            exc_tb: TracebackType | None,
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         self.close()
 
@@ -296,12 +296,11 @@ class mp_channel[T]:  # noqa: N801
     """Create a pair of synchronous channels for interprocess communication"""
 
     # max buffer size uses math.inf to represent an unbounded queue, and 0 to represent a yet unimplemented "unbuffered" queue.
-    def __new__(
-            cls, max_buffer_size: float = inf) -> tuple[MpSender[T], MpReceiver[T]]:
+    def __new__(cls, max_buffer_size: float = inf) -> tuple[MpSender[T], MpReceiver[T]]:
         if (
-                max_buffer_size == 0
-                or max_buffer_size != inf
-                and not isinstance(max_buffer_size, int)
+            max_buffer_size == 0
+            or max_buffer_size != inf
+            and not isinstance(max_buffer_size, int)
         ):
             raise ValueError(
                 "max_buffer_size must be either an integer or math.inf. 0-sized buffers are not supported by multiprocessing"
