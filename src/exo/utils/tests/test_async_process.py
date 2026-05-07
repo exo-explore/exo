@@ -225,7 +225,7 @@ async def test_stdout_receiver_yields_bytes_chunks() -> None:
 
 
 @pytest.mark.anyio
-async def test_large_stdout_and_stderr_are_not_lost_with_bounded_buffers() -> None:
+async def test_large_stdout_and_stderr_are_not_lost() -> None:
     size = 1024 * 1024
     exitcode, stdout, stderr = await _run_and_collect(
         _write_large_exact_output,
@@ -391,7 +391,7 @@ async def test_shutdown_escalates_to_sigkill_when_child_ignores_sigterm(
 
 
 @pytest.mark.anyio
-async def test_spawn_process_can_use_spawn_context_mp_channel() -> None:
+async def test_process_can_use_mp_channel_with_global_spawn_context() -> None:
     send, recv = mp_channel[str]()
     process = AsyncProcess(_send_over_mp_channel, args=(send,))
 
