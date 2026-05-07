@@ -107,7 +107,6 @@ class AsyncProcess:
                 self._pid = pid
                 self._started.set()
 
-                assert stdout_read_fd is not None and stderr_read_fd is not None
                 async with create_task_group() as tg:
                     tg.start_soon(_drain_fd, stdout_read_fd, self._stdout_tx)
                     tg.start_soon(_drain_fd, stderr_read_fd, self._stderr_tx)
