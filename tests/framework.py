@@ -1,4 +1,3 @@
-# type: ignore
 """Marker-driven test framework for exo integration tests.
 
 Test authors declare requirements via markers:
@@ -23,6 +22,7 @@ from typing import Any
 
 from exo_tools.client import ExoClient
 from exo_tools.cluster import (
+    Chip,
     ClusterInfo,
     EcoSession,
     Thunderbolt,
@@ -30,7 +30,26 @@ from exo_tools.cluster import (
 )
 from exo_tools.harness import Comm, Sharding
 
+from exo.api.types.api import (
+    ChatCompletionChoice,
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+)
+
 DEFAULT_MODEL = "mlx-community/Llama-3.2-1B-Instruct-4bit"
+
+
+def _extract_content(resp: ChatCompletionResponse) -> str:
+    """Extract plain-text content from a non-streaming chat completion."""
+    choice = resp.choices[0]
+    if not isinstance(choice, ChatCompletionChoice):
+        raise RuntimeError(
+            f"Expected non-streaming choice, got {type(choice).__name__}"
+        )
+    content = choice.message.content
+    if not isinstance(content, str):
+        raise RuntimeError(f"Expected string content, got {type(content).__name__}")
+    return content
 
 
 @dataclass(frozen=True)
@@ -38,7 +57,7 @@ class ClusterSpec:
     count: int = 1
     thunderbolt: Thunderbolt | None = None
     min_memory_gb: float | None = None
-    chip: str | None = None
+    chip: Chip | None = None
 
 
 @dataclass(frozen=True)
@@ -102,40 +121,45 @@ class Session:
 
     def chat(self, prompt: str, max_tokens: int = 100) -> str:
         resp = self.chat_raw(prompt, max_tokens=max_tokens)
-        return resp["choices"][0]["message"]["content"]
+        return _extract_content(resp)
 
-    def chat_raw(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
+    def chat_raw(self, prompt: str, **kwargs: Any) -> ChatCompletionResponse:
         if not self.instance_spec:
             raise RuntimeError(
                 "No instance placed; add @pytest.mark.instance to the test"
             )
         max_tokens = kwargs.pop("max_tokens", 100)
-        return self.client.request_json(
-            "POST",
-            "/v1/chat/completions",
-            body={
+        request = ChatCompletionRequest.model_validate(
+            {
                 "model": self.instance_spec.model_id,
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": max_tokens,
                 **kwargs,
-            },
+            }
         )
+        return self._post_chat(request)
 
     def multi_turn(self, messages: list[dict[str, str]], max_tokens: int = 100) -> str:
         if not self.instance_spec:
             raise RuntimeError(
                 "No instance placed; add @pytest.mark.instance to the test"
             )
-        resp = self.client.request_json(
-            "POST",
-            "/v1/chat/completions",
-            body={
+        request = ChatCompletionRequest.model_validate(
+            {
                 "model": self.instance_spec.model_id,
                 "messages": messages,
                 "max_tokens": max_tokens,
-            },
+            }
         )
-        return resp["choices"][0]["message"]["content"]
+        return _extract_content(self._post_chat(request))
+
+    def _post_chat(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+        raw = self.client.request_json(
+            "POST",
+            "/v1/chat/completions",
+            body=request.model_dump(exclude_none=True),
+        )
+        return ChatCompletionResponse.model_validate(raw)
 
     def disconnect_node(self, index: int) -> None:
         """Stop exo on a node and wait for the cluster to observe the disconnect."""

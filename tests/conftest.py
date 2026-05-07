@@ -110,6 +110,8 @@ def session(request, _host_pool) -> Session:
             cluster = eco.start_deploy(
                 count=cluster_spec.count,
                 thunderbolt=cluster_spec.thunderbolt,
+                chip=cluster_spec.chip,
+                min_memory_gb=cluster_spec.min_memory_gb,
                 wait=True,
             )
         _cluster_cache[cluster_spec] = cluster

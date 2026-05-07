@@ -27,6 +27,25 @@ class Thunderbolt(str, Enum):
     RING = "ring"  # ring topology (eco --tb-ring)
 
 
+class Chip(str, Enum):
+    M1 = "M1"
+    M1_PRO = "M1 Pro"
+    M1_MAX = "M1 Max"
+    M1_ULTRA = "M1 Ultra"
+    M2 = "M2"
+    M2_PRO = "M2 Pro"
+    M2_MAX = "M2 Max"
+    M2_ULTRA = "M2 Ultra"
+    M3 = "M3"
+    M3_PRO = "M3 Pro"
+    M3_MAX = "M3 Max"
+    M3_ULTRA = "M3 Ultra"
+    M4 = "M4"
+    M4_PRO = "M4 Pro"
+    M4_MAX = "M4 Max"
+    M4_ULTRA = "M4 Ultra"
+
+
 logger = logging.getLogger("exo_tools.cluster")
 
 # When set, deploy from a GitHub branch/tag instead of local source (rsync).
@@ -122,6 +141,8 @@ class EcoSession:
         *,
         count: int | None = None,
         thunderbolt: Thunderbolt | None = None,
+        chip: Chip | None = None,
+        min_memory_gb: float | None = None,
         wait: bool = True,
         ref: str | None = _EXO_REF,
         timeout: int = 600,
@@ -138,6 +159,10 @@ class EcoSession:
             cmd.extend(["--count", str(count)])
         if thunderbolt is not None:
             cmd.append(f"--tb-{thunderbolt.value}")
+        if chip is not None:
+            cmd.extend(["--chip", chip.value])
+        if min_memory_gb is not None:
+            cmd.extend(["--min-memory", str(min_memory_gb)])
         if wait:
             cmd.append("--wait")
         if ref:
