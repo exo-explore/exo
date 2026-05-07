@@ -440,9 +440,7 @@ class Master:
                                 InstanceLinkDeleted(link_id=command.link_id)
                             )
                         case RequestEventLog():
-                            # We should just be able to send everything, since other buffers will ignore old messages
-                            # rate limit to 1000 at a time
-                            end = min(command.since_idx + 1000, len(self._event_log))
+                            end = len(self._event_log)
                             for i, event in enumerate(
                                 self._event_log.read_range(command.since_idx, end),
                                 start=command.since_idx,

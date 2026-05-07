@@ -1814,6 +1814,7 @@ version = "0.0.1"
 dependencies = [
  "async-stream",
  "futures-lite",
+ "log",
  "netwatcher",
  "parking_lot",
  "rand 0.10.1",
