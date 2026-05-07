@@ -18,17 +18,12 @@ from anyio import (
     ClosedResourceError,
     Event,
     Lock,
-    create_memory_object_stream,
     move_on_after,
     sleep,
     wait_readable,
 )
-from anyio.abc import (
-    ByteReceiveStream,
-    ObjectReceiveStream,
-    ObjectSendStream,
-)
 
+from exo.utils.channels import Sender, channel, Receiver
 from exo.utils.task_group import TaskGroup
 
 _STDOUT_FD = 1
@@ -39,47 +34,20 @@ _KILL_GRACE_SECONDS = 5.0
 
 
 @final
-class MemoryByteReceiveStream(ByteReceiveStream):
-    def __init__(self, receive_stream: ObjectReceiveStream[bytes]) -> None:
-        self._receive_stream = receive_stream
-        self._buffer = bytearray()
-
-    async def receive(self, max_bytes: int = _READ_CHUNK_SIZE) -> bytes:
-        if max_bytes <= 0:
-            raise ValueError("max_bytes must be positive")
-
-        if self._buffer:
-            chunk = bytes(self._buffer[:max_bytes])
-            del self._buffer[:max_bytes]
-            return chunk
-
-        chunk = await self._receive_stream.receive()
-        if len(chunk) <= max_bytes:
-            return chunk
-
-        self._buffer.extend(chunk[max_bytes:])
-        return chunk[:max_bytes]
-
-    async def aclose(self) -> None:
-        self._buffer.clear()
-        await self._receive_stream.aclose()
-
-
-@final
 class AsyncSpawnProcess:
     @staticmethod
     def context() -> SpawnContext:
         return mp.get_context("spawn")
 
     def __init__(
-        self,
-        target: Callable[..., object] | None = None,
-        name: str | None = None,
-        args: Iterable[object] = (),
-        kwargs: Mapping[str, object] | None = None,
-        *,
-        daemon: bool | None = None,
-        stream_buffer_size: int = 16,
+            self,
+            target: Callable[..., object] | None = None,
+            name: str | None = None,
+            args: Iterable[object] = (),
+            kwargs: Mapping[str, object] | None = None,
+            *,
+            daemon: bool | None = None,
+            stream_buffer_size: int = 16,
     ) -> None:
         if stream_buffer_size <= 0:
             raise ValueError("stream_buffer_size must be positive")
@@ -95,8 +63,8 @@ class AsyncSpawnProcess:
         # lifecycle state
         self._process: BaseProcess | None = None
         self._pid: int | None = None
-        self._stdout: MemoryByteReceiveStream | None = None
-        self._stderr: MemoryByteReceiveStream | None = None
+        self._stdout: Receiver[bytes] | None = None
+        self._stderr: Receiver[bytes] | None = None
         self._tg = TaskGroup()
         self._started = Event()
         self._stopped = Event()
@@ -114,12 +82,8 @@ class AsyncSpawnProcess:
 
         stdout_read_fd, stdout_write_fd = os.pipe()
         stderr_read_fd, stderr_write_fd = os.pipe()
-        stdout_send, stdout_receive = create_memory_object_stream[bytes](
-            self._stream_buffer_size
-        )
-        stderr_send, stderr_receive = create_memory_object_stream[bytes](
-            self._stream_buffer_size
-        )
+        stdout_tx, stdout_rx = channel[bytes]()
+        stderr_tx, stderr_rx = channel[bytes]()
 
         try:
             process = self.context().Process(
@@ -145,30 +109,30 @@ class AsyncSpawnProcess:
 
             self._process = process
             self._pid = pid
-            self._stdout = MemoryByteReceiveStream(stdout_receive)
-            self._stderr = MemoryByteReceiveStream(stderr_receive)
+            self._stdout = stdout_rx
+            self._stderr = stderr_rx
             self._started.set()
         except BaseException as exc:
             self._start_error = exc
             self._started.set()
             self._has_stopped = True
             self._stopped.set()
-            for stream in (stdout_send, stderr_send, stdout_receive, stderr_receive):
+            for ch in (stdout_tx, stdout_rx, stderr_tx, stderr_rx):
                 with contextlib.suppress(Exception):
-                    await stream.aclose()
+                    await ch.aclose()
             for fd in (
-                stdout_read_fd,
-                stdout_write_fd,
-                stderr_read_fd,
-                stderr_write_fd,
+                    stdout_read_fd,
+                    stdout_write_fd,
+                    stderr_read_fd,
+                    stderr_write_fd,
             ):
                 _close_fd(fd)
             raise
 
         try:
             async with self._tg as tg:
-                tg.start_soon(_drain_fd, stdout_read_fd, stdout_send)
-                tg.start_soon(_drain_fd, stderr_read_fd, stderr_send)
+                tg.start_soon(_drain_fd, stdout_read_fd, stdout_tx)
+                tg.start_soon(_drain_fd, stderr_read_fd, stderr_tx)
                 await self.wait()
         finally:
             try:
@@ -267,13 +231,13 @@ class AsyncSpawnProcess:
     #       and a ByteSendStream handle is provided for it :)
 
     @property
-    def stdout(self) -> ByteReceiveStream:
+    def stdout(self) -> Receiver[bytes]:
         if self._stdout is None:
             raise RuntimeError("process has not been started")
         return self._stdout
 
     @property
-    def stderr(self) -> ByteReceiveStream:
+    def stderr(self) -> Receiver[bytes]:
         if self._stderr is None:
             raise RuntimeError("process has not been started")
         return self._stderr
@@ -313,11 +277,11 @@ class AsyncSpawnProcess:
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
 def _run_with_captured_stdio(
-    stdout: DupFd,
-    stderr: DupFd,
-    target: Callable[..., object] | None,
-    *target_args: object,
-    **target_kwargs: object,
+        stdout: DupFd,
+        stderr: DupFd,
+        target: Callable[..., object] | None,
+        *target_args: object,
+        **target_kwargs: object,
 ) -> None:
     stdout_fd = stdout.detach()
     stderr_fd = stderr.detach()
@@ -335,7 +299,7 @@ def _run_with_captured_stdio(
         target(*target_args, **target_kwargs)
 
 
-async def _drain_fd(fd: int, send_stream: ObjectSendStream[bytes]) -> None:
+async def _drain_fd(fd: int, send_stream: Sender[bytes]) -> None:
     try:
         while True:
             await wait_readable(fd)
