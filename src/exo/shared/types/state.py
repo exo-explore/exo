@@ -5,8 +5,9 @@ from typing import Any, cast
 from pydantic import ConfigDict, Field, field_serializer, field_validator
 from pydantic.alias_generators import to_camel
 
+from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology, TopologySnapshot
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
     DiskUsage,
@@ -64,6 +65,9 @@ class State(FrozenModel):
 
     instance_links: Mapping[InstanceLinkId, InstanceLink] = {}
     prefill_server_ports: Mapping[RunnerId, int] = {}
+
+    # User-added model cards. Workers can reconcile their on-disk custom card cache
+    custom_model_cards: Mapping[ModelId, ModelCard] = {}
 
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:

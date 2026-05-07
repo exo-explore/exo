@@ -111,6 +111,36 @@ async def test_empty_state() -> None:
     assert result.total_energy_joules == 0.0
 
 
+def test_trapezoidal_unit_dt_weighting() -> None:
+    """Pure unit test on the integration helper. Crafted samples where the
+    arithmetic mean is wildly wrong vs the time-weighted result."""
+    from exo.utils.power_sampler import trapezoidal_energy
+
+    # 5 s window. Power = 10 W for the first 4.9 s, then 100 W for the last 0.1 s.
+    # Three samples: t=0 W=10, t=4.9 W=10, t=5.0 W=100.
+    samples = [
+        (0.0, _make_profile(10.0)),
+        (4.9, _make_profile(10.0)),
+        (5.0, _make_profile(100.0)),
+    ]
+    energy = trapezoidal_energy(samples, elapsed=5.0)
+    # (10+10)/2 * 4.9 + (10+100)/2 * 0.1 = 49 + 5.5 = 54.5 J
+    assert abs(energy - 54.5) < 1e-9
+    avg = energy / 5.0  # 10.9 W
+    # Arithmetic mean of the three samples would be (10+10+100)/3 ≈ 40 W.
+    # Trapezoidal correctly weights each segment by its dt.
+    assert abs(avg - 10.9) < 1e-9
+
+
+def test_trapezoidal_unit_single_sample() -> None:
+    """One sample: no window to integrate over, so fall back to constant power
+    over the elapsed duration."""
+    from exo.utils.power_sampler import trapezoidal_energy
+
+    samples = [(0.0, _make_profile(42.0))]
+    assert trapezoidal_energy(samples, elapsed=3.0) == 42.0 * 3.0
+
+
 async def test_result_stops_sampling() -> None:
     """Calling result() should stop the sampler's run loop."""
     state: dict[NodeId, SystemPerformanceProfile] = {
