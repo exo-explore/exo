@@ -6,6 +6,7 @@ import multiprocessing as mp
 import os
 import sys
 from collections.abc import Callable, Iterable, Mapping
+from itertools import count
 from multiprocessing.process import BaseProcess
 from multiprocessing.resource_sharer import DupFd
 from typing import final
@@ -22,13 +23,16 @@ from anyio import (
     wait_readable,
 )
 from anyio.abc import TaskStatus
+from loguru import logger
 
 from exo.utils.channels import Receiver, Sender, channel
 
 _STDOUT_FD = 1
 _STDERR_FD = 2
 _READ_CHUNK_SIZE = 64 * 1024
-_TERMINATE_GRACE_SECONDS = 5.0
+_TERMINATE_GRACE_SECONDS = 10.0
+_TERMINATE_RETRY_GRACE_SECONDS = 2.0
+_TERMINATE_ATTEMPTS = 10
 _KILL_GRACE_SECONDS = 5.0
 
 
@@ -201,22 +205,35 @@ class AsyncProcess:
             return
 
         with contextlib.suppress(ValueError):
-            if process.is_alive():
-                process.terminate()
-                with move_on_after(_TERMINATE_GRACE_SECONDS):
-                    await self.wait()
-
-            if self.exitcode is not None or not process.is_alive():
+            if not process.is_alive():
                 return
 
-            process.kill()
-            with move_on_after(_KILL_GRACE_SECONDS):
+            logger.warning("Child process didn't shut down successfully, terminating")
+            process.terminate()
+            with move_on_after(_TERMINATE_GRACE_SECONDS):
                 await self.wait()
 
             if self.exitcode is not None or not process.is_alive():
+                logger.warning("Terminated nicely in the first attempt!")
                 return
 
-            raise RuntimeError(f"process {self.pid} is still alive after SIGKILL")
+            for attempt in range(2, _TERMINATE_ATTEMPTS + 1):
+                process.terminate()
+                with move_on_after(_TERMINATE_RETRY_GRACE_SECONDS):
+                    await self.wait()
+
+                if self.exitcode is not None or not process.is_alive():
+                    logger.warning(f"That took {attempt} attempts :)")
+                    return
+
+            logger.critical("Child process didn't respond to SIGTERM, killing")
+            for attempt in count(1):
+                if self.exitcode is not None or not process.is_alive():
+                    break
+                process.kill()
+                with move_on_after(_KILL_GRACE_SECONDS):
+                    await self.wait()
+                logger.warning(f"That took {attempt} attempts :(")
 
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.

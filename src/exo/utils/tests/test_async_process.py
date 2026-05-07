@@ -76,6 +76,21 @@ def _exit_on_sigterm(exitcode: int) -> None:
         time.sleep(0.1)
 
 
+def _exit_after_repeated_sigterm(required_count: int, exitcode: int) -> None:
+    sigterm_count = 0
+
+    def handle_sigterm(_signum: int, _frame: FrameType | None) -> None:
+        nonlocal sigterm_count
+        sigterm_count += 1
+        if sigterm_count >= required_count:
+            os._exit(exitcode)
+
+    signal.signal(signal.SIGTERM, handle_sigterm)
+    os.write(1, b"sigterm-ready\n")
+    while True:
+        time.sleep(0.1)
+
+
 def _ignore_sigterm_forever() -> None:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     os.write(1, b"sigterm-ready\n")
@@ -427,10 +442,26 @@ async def test_stop_allows_child_to_exit_after_sigterm() -> None:
 
 
 @pytest.mark.anyio
+async def test_stop_retries_sigterm_before_sigkill(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(async_process, "_TERMINATE_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(async_process, "_TERMINATE_RETRY_GRACE_SECONDS", 0.01)
+    process = AsyncProcess(_exit_after_repeated_sigterm, args=(3, 44))
+
+    async with _started_process(process):
+        assert await process.stdout.receive() == b"sigterm-ready\n"
+
+        with fail_after(2):
+            await process.stop()
+
+    assert process.exitcode == 44
+
+
+@pytest.mark.anyio
 async def test_stop_escalates_to_sigkill_when_child_ignores_sigterm(
         monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(async_process, "_TERMINATE_GRACE_SECONDS", 0.1)
+    monkeypatch.setattr(async_process, "_TERMINATE_RETRY_GRACE_SECONDS", 0.01)
     process = AsyncProcess(_ignore_sigterm_forever)
 
     async with _started_process(process):
