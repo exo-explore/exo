@@ -274,6 +274,22 @@ async def test_stdout_receiver_yields_bytes_chunks() -> None:
 
 
 @pytest.mark.anyio
+async def test_output_can_be_read_after_process_exits() -> None:
+    process = AsyncProcess(_write_large_output)
+
+    async with create_task_group() as task_group:
+        await task_group.start(process.run)
+        assert await process.wait() == 0
+
+    assert await process.stdout.receive() == b"stdout-0123456789"
+    assert await process.stderr.receive() == b"stderr-0123456789"
+    with pytest.raises(EndOfStream):
+        await process.stdout.receive()
+    with pytest.raises(EndOfStream):
+        await process.stderr.receive()
+
+
+@pytest.mark.anyio
 async def test_large_stdout_and_stderr_are_not_lost() -> None:
     size = 1024 * 1024
     exitcode, stdout, stderr = await _run_and_collect(

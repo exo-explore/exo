@@ -127,7 +127,7 @@ class AsyncProcess:
                     await self._terminate_if_still_alive()
             finally:
                 cleanup_stdio_fd()
-                for tx in (self._stdout_tx, self._stdout_rx, self._stderr_tx, self._stderr_rx):
+                for tx in (self._stdout_tx, self._stderr_tx):
                     with contextlib.suppress(Exception):
                         await tx.aclose()
                 if self._process is not None:
