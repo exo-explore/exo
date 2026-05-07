@@ -130,6 +130,9 @@ class AsyncProcess:
                 for tx in (self._stdout_tx, self._stdout_rx, self._stderr_tx, self._stderr_rx):
                     with contextlib.suppress(Exception):
                         await tx.aclose()
+                if self._process is not None:
+                    with contextlib.suppress(ValueError):
+                        self._process.close()
                 self._run_cancel_scope = None
                 self._done.set()
 
@@ -139,11 +142,6 @@ class AsyncProcess:
         if self._run_cancel_scope is not None:
             self._run_cancel_scope.cancel()
         await self._done.wait()
-
-        if self._process is None:
-            return
-        with contextlib.suppress(ValueError):
-            self._process.close()
 
     async def aclose(self) -> None:
         await self.stop()
@@ -261,6 +259,7 @@ async def _drain_fd(fd: int, tx: Sender[bytes]) -> None:
 
 
 def _close_fd(fd: int | None) -> None:
-    if fd is None: return
+    if fd is None:
+        return
     with contextlib.suppress(OSError):
         os.close(fd)
