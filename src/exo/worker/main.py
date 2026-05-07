@@ -8,8 +8,9 @@ from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
+from exo.download.peer_state import discover_peers_for_model
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
+from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES, EXO_PEER_DOWNLOAD_PORT
 from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
@@ -252,12 +253,20 @@ class Worker:
                             )
                         )
                     else:
+                        # Discover peers that already have this model
+                        peers = discover_peers_for_model(
+                            self.node_id,
+                            self.state,
+                            shard.model_card.model_id.normalize(),
+                            EXO_PEER_DOWNLOAD_PORT,
+                        )
                         await self.download_command_sender.send(
                             ForwarderDownloadCommand(
                                 origin=self._system_id,
                                 command=StartDownload(
                                     target_node_id=self.node_id,
                                     shard_metadata=shard,
+                                    available_peers=peers,
                                 ),
                             )
                         )
