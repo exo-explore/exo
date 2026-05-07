@@ -8,7 +8,6 @@ import sys
 from collections.abc import Callable, Iterable, Mapping
 from multiprocessing.process import BaseProcess
 from multiprocessing.resource_sharer import DupFd
-from signal import Signals
 from typing import final
 
 from anyio import (
@@ -17,13 +16,13 @@ from anyio import (
     ClosedResourceError,
     Event,
     Lock,
+    create_task_group,
     move_on_after,
     sleep,
     wait_readable,
 )
 
 from exo.utils.channels import Receiver, Sender, channel
-from exo.utils.task_group import TaskGroup
 
 _STDOUT_FD = 1
 _STDERR_FD = 2
@@ -53,105 +52,104 @@ class AsyncProcess:
         # lifecycle state
         self._process: BaseProcess | None = None
         self._pid: int | None = None
-        self._stdout: Receiver[bytes] | None = None
-        self._stderr: Receiver[bytes] | None = None
-        self._tg = TaskGroup()
+        self._stdout_tx, self._stdout_rx = channel[bytes]()
+        self._stderr_tx, self._stderr_rx = channel[bytes]()
         self._started = Event()
         self._stopped = Event()
+        self._run_cancel_scope: CancelScope | None = None
+        self._run_called = False
         self._wait_lock = Lock()
         self._start_error: BaseException | None = None
-        self._has_stopped = False
         self._closed = False
         self._exitcode: int | None = None
 
     async def run(self) -> None:
-        if self._closed:
-            raise RuntimeError("process has been closed")
-        if self._process is not None:
+        if self._run_called:
             raise RuntimeError("process has already been started")
+        self._run_called = True
 
-        stdout_read_fd, stdout_write_fd = os.pipe()
-        stderr_read_fd, stderr_write_fd = os.pipe()
-        stdout_tx, stdout_rx = channel[bytes]()
-        stderr_tx, stderr_rx = channel[bytes]()
+        stdout_read_fd: int | None = None
+        stdout_write_fd: int | None = None
+        stderr_read_fd: int | None = None
+        stderr_write_fd: int | None = None
 
         try:
-            process = mp.Process(
-                target=_run_with_captured_stdio,
-                name=self._name,
-                args=(
-                    DupFd(stdout_write_fd),
-                    DupFd(stderr_write_fd),
-                    self._target,
-                    *self._args,
-                ),
-                kwargs={} if self._kwargs is None else self._kwargs,
-                daemon=self._daemon,
-            )
-            process.start()
-            pid = process.pid
-            if pid is None:
-                raise RuntimeError("started process has no pid")
+            if self._closed:
+                raise RuntimeError("process has been closed")
 
-            # important to close parent write-side FD to prevent hangs
-            _close_fd(stdout_write_fd)
-            _close_fd(stderr_write_fd)
+            with CancelScope() as run_cancel_scope:
+                self._run_cancel_scope = run_cancel_scope
+                stdout_read_fd, stdout_write_fd = os.pipe()
+                stderr_read_fd, stderr_write_fd = os.pipe()
 
-            self._process = process
-            self._pid = pid
-            self._stdout = stdout_rx
-            self._stderr = stderr_rx
-            self._started.set()
+                process = mp.Process(
+                    target=_run_with_captured_stdio,
+                    name=self._name,
+                    args=(
+                        DupFd(stdout_write_fd),
+                        DupFd(stderr_write_fd),
+                        self._target,
+                        *self._args,
+                    ),
+                    kwargs={} if self._kwargs is None else self._kwargs,
+                    daemon=self._daemon,
+                )
+                process.start()
+                pid = process.pid
+                if pid is None:
+                    raise RuntimeError("started process has no pid")
+
+                # important to close parent write-side FD to prevent hangs
+                _close_fd(stdout_write_fd)
+                _close_fd(stderr_write_fd)
+
+                self._process = process
+                self._pid = pid
+                self._started.set()
+
+                assert stdout_read_fd is not None and stderr_read_fd is not None
+                async with create_task_group() as tg:
+                    tg.start_soon(_drain_fd, stdout_read_fd, self._stdout_tx)
+                    tg.start_soon(_drain_fd, stderr_read_fd, self._stderr_tx)
+                    await self.wait()
         except BaseException as exc:
             self._start_error = exc
             self._started.set()
-            self._has_stopped = True
             self._stopped.set()
-            for ch in (stdout_tx, stdout_rx, stderr_tx, stderr_rx):
+            for ch in (self._stdout_tx, self._stdout_rx, self._stderr_tx, self._stderr_rx):
                 with contextlib.suppress(Exception):
                     await ch.aclose()
-            for fd in (
-                    stdout_read_fd,
-                    stdout_write_fd,
-                    stderr_read_fd,
-                    stderr_write_fd,
-            ):
-                _close_fd(fd)
+            for fd in (stdout_read_fd, stdout_write_fd, stderr_read_fd, stderr_write_fd):
+                if fd is not None:
+                    _close_fd(fd)
             raise
-
-        try:
-            async with self._tg as tg:
-                tg.start_soon(_drain_fd, stdout_read_fd, stdout_tx)
-                tg.start_soon(_drain_fd, stderr_read_fd, stderr_tx)
-                await self.wait()
         finally:
             try:
                 with CancelScope(shield=True):
                     await self._terminate_if_still_alive()
             finally:
-                self._has_stopped = True
+                for fd in (stdout_read_fd, stderr_read_fd):
+                    if fd is not None:
+                        _close_fd(fd)
+                for tx in (self._stdout_tx, self._stderr_tx):
+                    with contextlib.suppress(Exception):
+                        await tx.aclose()
+                self._run_cancel_scope = None
                 self._stopped.set()
 
-    async def wait_started(self) -> None:
-        await self._started.wait()
-        if self._start_error is not None:
-            raise self._start_error
-
-    async def wait_stopped(self) -> None:
-        await self._stopped.wait()
-
-    def shutdown(self) -> None:
-        if not self._has_stopped and self._tg.is_running():
-            self._tg.cancel_tasks()
-
-    async def aclose(self) -> None:
+    async def stop(self) -> None:
         if self._closed:
             return
 
-        self.shutdown()
-        if self._process is not None and not self._has_stopped:
-            await self.wait_stopped()
-        self.close()
+        if not self._run_called:
+            raise RuntimeError("process has not been started")
+        if self._run_cancel_scope is not None:
+            self._run_cancel_scope.cancel()
+        await self._stopped.wait()
+        self._close()
+
+    async def aclose(self) -> None:
+        await self.stop()
 
     async def wait(self) -> int:
         if self._exitcode is not None:
@@ -161,7 +159,12 @@ class AsyncProcess:
             if self._exitcode is not None:
                 return self._exitcode
 
-            process = self.process
+            await self._started.wait()
+            if self._start_error is not None:
+                raise self._start_error
+            if self._process is None:
+                raise RuntimeError("process has not been started")
+            process = self._process
             while True:
                 exitcode = process.exitcode
                 if exitcode is not None:
@@ -171,31 +174,15 @@ class AsyncProcess:
 
                 await sleep(0.01)
 
-    def terminate(self) -> None:
-        self.process.terminate()
-
-    def is_alive(self) -> bool:
-        if self._process is None:
-            return False
-        with contextlib.suppress(ValueError):
-            return self._process.is_alive()
-        return False
-
-    def join(self, timeout: float | None = None) -> None:
-        self.process.join(timeout)
-
-    def close(self) -> None:
+    def _close(self) -> None:
         self._closed = True
+        for ch in (self._stdout_tx, self._stdout_rx, self._stderr_tx, self._stderr_rx):
+            with contextlib.suppress(Exception):
+                ch.close()
         if self._process is None:
             return
         with contextlib.suppress(ValueError):
             self._process.close()
-
-    def kill(self) -> None:
-        self.process.kill()
-
-    def send_signal(self, signal: Signals) -> None:
-        os.kill(self.pid, signal)
 
     @property
     def pid(self) -> int:
@@ -222,21 +209,11 @@ class AsyncProcess:
 
     @property
     def stdout(self) -> Receiver[bytes]:
-        if self._stdout is None:
-            raise RuntimeError("process has not been started")
-        return self._stdout
+        return self._stdout_rx
 
     @property
     def stderr(self) -> Receiver[bytes]:
-        if self._stderr is None:
-            raise RuntimeError("process has not been started")
-        return self._stderr
-
-    @property
-    def process(self) -> BaseProcess:
-        if self._process is None:
-            raise RuntimeError("process has not been started")
-        return self._process
+        return self._stderr_rx
 
     async def _terminate_if_still_alive(self) -> None:
         process = self._process
@@ -289,19 +266,19 @@ def _run_with_captured_stdio(
         target(*target_args, **target_kwargs)
 
 
-async def _drain_fd(fd: int, send_stream: Sender[bytes]) -> None:
+async def _drain_fd(fd: int, tx: Sender[bytes]) -> None:
     try:
         while True:
             await wait_readable(fd)
             chunk = os.read(fd, _READ_CHUNK_SIZE)
             if not chunk:
                 return
-            await send_stream.send(chunk)
+            await tx.send(chunk)
     except (BrokenPipeError, BrokenResourceError, ClosedResourceError):
         pass
     finally:
         _close_fd(fd)
-        await send_stream.aclose()
+        await tx.aclose()
 
 
 def _close_fd(fd: int) -> None:

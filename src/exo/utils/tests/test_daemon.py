@@ -88,11 +88,10 @@ async def _collect_process_output(
 async def _started_process(process: AsyncProcess) -> AsyncIterator[None]:
     async with create_task_group() as task_group:
         task_group.start_soon(process.run)
-        await process.wait_started()
         try:
             yield
         finally:
-            process.shutdown()
+            await process.stop()
 
 
 async def _run_process_and_receive[T](

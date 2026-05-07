@@ -24,13 +24,6 @@ from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance
 class _DeadProcess:
     exitcode = -6
 
-    def is_alive(self) -> bool:
-        return False
-
-    def join(self, timeout: float | None = None) -> None:
-        _ = timeout
-        return None
-
 
 @pytest.mark.anyio
 async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> None:

@@ -66,10 +66,6 @@ def _close_stdio_and_exit() -> None:
     os._exit(0)
 
 
-def _sleep_without_output() -> None:
-    time.sleep(0.1)
-
-
 def _exit_on_sigterm(exitcode: int) -> None:
     def handle_sigterm(_signum: int, _frame: FrameType | None) -> None:
         os._exit(exitcode)
@@ -155,11 +151,10 @@ def _fd_count() -> int | None:
 async def _started_process(process: AsyncProcess) -> AsyncIterator[None]:
     async with create_task_group() as task_group:
         task_group.start_soon(process.run)
-        await process.wait_started()
         try:
             yield
         finally:
-            process.shutdown()
+            await process.stop()
 
 
 async def _run_and_collect(
@@ -209,6 +204,43 @@ async def test_process_with_no_target_exits_successfully() -> None:
     assert exitcode == 0
     assert stdout == b""
     assert stderr == b""
+
+
+@pytest.mark.anyio
+async def test_output_receivers_and_wait_are_safe_immediately_after_run_starts() -> (
+        None
+):
+    process = AsyncProcess(
+        _write_to_stdio,
+        args=("immediate",),
+        kwargs={"stderr_suffix": "error"},
+    )
+    result: tuple[int, bytes, bytes] | None = None
+
+    async with create_task_group() as task_group:
+        task_group.start_soon(process.run)
+        try:
+            result = await _collect_process_output(process)
+        finally:
+            await process.stop()
+
+    assert result is not None
+    exitcode, stdout, stderr = result
+    assert exitcode == 0
+    assert b"immediate: fd stdout\n" in stdout
+    assert b"immediate: fd stderr error\n" in stderr
+
+
+@pytest.mark.anyio
+async def test_stop_before_run_raises() -> None:
+    process = AsyncProcess(
+        _write_to_stdio,
+        args=("never",),
+        kwargs={"stderr_suffix": "run"},
+    )
+
+    with pytest.raises(RuntimeError, match="process has not been started"):
+        await process.stop()
 
 
 @pytest.mark.anyio
@@ -349,32 +381,20 @@ async def test_repeated_crashing_children_do_not_grow_parent_fd_table() -> None:
 
 
 @pytest.mark.anyio
-async def test_shutdown_can_cancel_idle_drainers_before_child_exits() -> None:
-    process = AsyncProcess(_sleep_without_output)
-    async with _started_process(process):
-        with fail_after(2):
-            process.shutdown()
-            await process.wait_stopped()
-
-    assert process.exitcode is not None
-
-
-@pytest.mark.anyio
-async def test_shutdown_allows_child_to_exit_after_sigterm() -> None:
+async def test_stop_allows_child_to_exit_after_sigterm() -> None:
     process = AsyncProcess(_exit_on_sigterm, args=(43,))
 
     async with _started_process(process):
         assert await process.stdout.receive() == b"sigterm-ready\n"
 
         with fail_after(2):
-            process.shutdown()
-            await process.wait_stopped()
+            await process.stop()
 
     assert process.exitcode == 43
 
 
 @pytest.mark.anyio
-async def test_shutdown_escalates_to_sigkill_when_child_ignores_sigterm(
+async def test_stop_escalates_to_sigkill_when_child_ignores_sigterm(
         monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(async_process, "_TERMINATE_GRACE_SECONDS", 0.1)
@@ -384,8 +404,7 @@ async def test_shutdown_escalates_to_sigkill_when_child_ignores_sigterm(
         assert await process.stdout.receive() == b"sigterm-ready\n"
 
         with fail_after(3):
-            process.shutdown()
-            await process.wait_stopped()
+            await process.stop()
 
     assert process.exitcode == -signal.SIGKILL
 

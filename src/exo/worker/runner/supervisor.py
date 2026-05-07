@@ -8,7 +8,6 @@ from anyio import (
     BrokenResourceError,
     ClosedResourceError,
     EndOfStream,
-    to_thread,
 )
 from loguru import logger
 
@@ -110,13 +109,10 @@ class RunnerSupervisor:
         return self
 
     async def run(self):
-        runner_started = False
         try:
             async with self._tg as tg:
                 # start the process itself
                 tg.start_soon(self.runner_process.run)
-                await self.runner_process.wait_started()
-                runner_started = True
 
                 # start tasks to drain/collect stdout/stderr into usable errors
                 #
@@ -149,13 +145,12 @@ class RunnerSupervisor:
             with contextlib.suppress(ClosedResourceError):
                 self._cancel_sender.close()
 
-            if runner_started:
-                with anyio.CancelScope(shield=True):
-                    self.runner_process.shutdown()
-                    await self.runner_process.wait_stopped()
-                    if not self.runner_process.is_alive():
-                        logger.info("Runner process succesfully terminated")
-                    self.runner_process.close()
+            with anyio.CancelScope(shield=True):
+                await self.runner_process.stop()
+                if self.runner_process.exitcode is not None:
+                    logger.info(f"Runner process successfully terminated: {self.runner_process.exitcode}")
+                else:
+                    raise
 
     def shutdown(self):
         self._tg.cancel_tasks()
@@ -238,7 +233,7 @@ class RunnerSupervisor:
         with self._cancel_watch_runner:
             while True:
                 await anyio.sleep(5)
-                if not self.runner_process.is_alive():
+                if self.runner_process.exitcode is not None:
                     await self._check_runner(RuntimeError("Runner found to be dead"))
 
     async def _forward_runner_output(
@@ -264,9 +259,9 @@ class RunnerSupervisor:
         if not self._cancel_watch_runner.cancel_called:
             self._cancel_watch_runner.cancel()
         logger.info("Checking runner's status")
-        if self.runner_process.is_alive():
-            logger.info("Runner was found to be alive, attempting to join process")
-            await to_thread.run_sync(self.runner_process.join, 5)
+        if self.runner_process.exitcode is None:
+            logger.info("Runner was found to be alive, stopping process")
+            await self.runner_process.stop()
         rc = self.runner_process.exitcode
         logger.info(f"Runner exited with exit code {rc}")
         if rc == 0:
