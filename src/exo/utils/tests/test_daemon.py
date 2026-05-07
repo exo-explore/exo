@@ -87,7 +87,7 @@ async def _collect_process_output(
 @contextlib.asynccontextmanager
 async def _started_process(process: AsyncProcess) -> AsyncIterator[None]:
     async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
+        await task_group.start(process.run)
         try:
             yield
         finally:

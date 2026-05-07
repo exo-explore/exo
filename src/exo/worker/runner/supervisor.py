@@ -112,7 +112,7 @@ class RunnerSupervisor:
         try:
             async with self._tg as tg:
                 # start the process itself
-                tg.start_soon(self.runner_process.run)
+                await tg.start(self.runner_process.run)
 
                 # start tasks to drain/collect stdout/stderr into usable errors
                 #

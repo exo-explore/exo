@@ -11,6 +11,7 @@ from multiprocessing.resource_sharer import DupFd
 from typing import final
 
 from anyio import (
+    TASK_STATUS_IGNORED,
     BrokenResourceError,
     CancelScope,
     ClosedResourceError,
@@ -20,6 +21,7 @@ from anyio import (
     sleep,
     wait_readable,
 )
+from anyio.abc import TaskStatus
 
 from exo.utils.channels import Receiver, Sender, channel
 
@@ -59,7 +61,7 @@ class AsyncProcess:
         self._start_error: BaseException | None = None
         self._exitcode: int | None = None
 
-    async def run(self) -> None:
+    async def run(self, *, task_status: TaskStatus[None] = TASK_STATUS_IGNORED) -> None:
         if self._run_cancel_scope is not None or self._done.is_set():
             raise RuntimeError("process has already been started")
 
@@ -67,6 +69,13 @@ class AsyncProcess:
         stdout_write_fd: int | None = None
         stderr_read_fd: int | None = None
         stderr_write_fd: int | None = None
+
+        def cleanup_stdio_fd() -> None:
+            nonlocal stdout_read_fd, stdout_write_fd, stderr_read_fd, stderr_write_fd
+            stdout_read_fd = _close_fd(stdout_read_fd)
+            stdout_write_fd = _close_fd(stdout_write_fd)
+            stderr_read_fd = _close_fd(stderr_read_fd)
+            stderr_write_fd = _close_fd(stderr_write_fd)
 
         try:
             with CancelScope() as run_cancel_scope:
@@ -92,10 +101,8 @@ class AsyncProcess:
                     raise RuntimeError("started process has no pid")
 
                 # important to close parent write-side FD to prevent hangs
-                _close_fd(stdout_write_fd)
-                stdout_write_fd = None
-                _close_fd(stderr_write_fd)
-                stderr_write_fd = None
+                stdout_write_fd = _close_fd(stdout_write_fd)
+                stderr_write_fd = _close_fd(stderr_write_fd)
 
                 self._process = process
                 self._pid = pid
@@ -106,26 +113,21 @@ class AsyncProcess:
                     stdout_read_fd = None
                     tg.start_soon(_drain_fd, stderr_read_fd, self._stderr_tx)
                     stderr_read_fd = None
+                    task_status.started()
                     await self.wait()
         except BaseException as exc:
             if not self._started.is_set():
                 self._start_error = exc
                 self._started.set()
-            for fd in (stdout_read_fd, stdout_write_fd, stderr_read_fd, stderr_write_fd):
-                if fd is not None:
-                    _close_fd(fd)
-            stdout_read_fd = None
-            stderr_read_fd = None
+            cleanup_stdio_fd()
             raise
         finally:
             try:
                 with CancelScope(shield=True):
                     await self._terminate_if_still_alive()
             finally:
-                for fd in (stdout_read_fd, stderr_read_fd):
-                    if fd is not None:
-                        _close_fd(fd)
-                for tx in (self._stdout_tx, self._stderr_tx):
+                cleanup_stdio_fd()
+                for tx in (self._stdout_tx, self._stdout_rx, self._stderr_tx, self._stderr_rx):
                     with contextlib.suppress(Exception):
                         await tx.aclose()
                 self._run_cancel_scope = None
@@ -138,10 +140,6 @@ class AsyncProcess:
             self._run_cancel_scope.cancel()
         await self._done.wait()
 
-        # close process resources
-        for ch in (self._stdout_tx, self._stdout_rx, self._stderr_tx, self._stderr_rx):
-            with contextlib.suppress(Exception):
-                await ch.aclose()
         if self._process is None:
             return
         with contextlib.suppress(ValueError):
@@ -262,6 +260,7 @@ async def _drain_fd(fd: int, tx: Sender[bytes]) -> None:
         await tx.aclose()
 
 
-def _close_fd(fd: int) -> None:
+def _close_fd(fd: int | None) -> None:
+    if fd is None: return
     with contextlib.suppress(OSError):
         os.close(fd)

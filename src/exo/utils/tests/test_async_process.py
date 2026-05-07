@@ -83,6 +83,11 @@ def _ignore_sigterm_forever() -> None:
         time.sleep(0.1)
 
 
+def _sleep_forever() -> None:
+    while True:
+        time.sleep(0.1)
+
+
 def _send_over_mp_channel(send: MpSender[str]) -> None:
     send.send("hello from child")
     send.close()
@@ -150,7 +155,7 @@ def _fd_count() -> int | None:
 @contextlib.asynccontextmanager
 async def _started_process(process: AsyncProcess) -> AsyncIterator[None]:
     async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
+        await task_group.start(process.run)
         try:
             yield
         finally:
@@ -218,7 +223,7 @@ async def test_output_receivers_and_wait_are_safe_immediately_after_run_starts()
     result: tuple[int, bytes, bytes] | None = None
 
     async with create_task_group() as task_group:
-        task_group.start_soon(process.run)
+        await task_group.start(process.run)
         try:
             result = await _collect_process_output(process)
         finally:
@@ -241,6 +246,18 @@ async def test_stop_before_run_raises() -> None:
 
     with pytest.raises(RuntimeError, match="process has not been started"):
         await process.stop()
+
+
+@pytest.mark.anyio
+async def test_process_started_with_task_group_start_can_stop_immediately() -> None:
+    process = AsyncProcess(_sleep_forever)
+
+    async with create_task_group() as task_group:
+        await task_group.start(process.run)
+        with fail_after(2):
+            await process.stop()
+
+    assert process.exitcode is not None
 
 
 @pytest.mark.anyio
