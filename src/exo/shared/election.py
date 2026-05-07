@@ -9,7 +9,6 @@ from anyio import (
 from loguru import logger
 
 from exo.routing.connection_message import ConnectionMessage
-from exo.shared.types.commands import ForwarderCommand
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.pydantic_ext import FrozenModel
@@ -22,7 +21,6 @@ class ElectionMessage(FrozenModel):
     clock: int
     seniority: int
     proposed_session: SessionId
-    commands_seen: int
 
     # Could eventually include a list of neighbour nodes for centrality
     def __lt__(self, other: Self) -> bool:
@@ -30,8 +28,6 @@ class ElectionMessage(FrozenModel):
             return self.clock < other.clock
         if self.seniority != other.seniority:
             return self.seniority < other.seniority
-        elif self.commands_seen != other.commands_seen:
-            return self.commands_seen < other.commands_seen
         else:
             return (
                 self.proposed_session.master_node_id
@@ -54,7 +50,6 @@ class Election:
         election_message_sender: Sender[ElectionMessage],
         election_result_sender: Sender[ElectionResult],
         connection_message_receiver: Receiver[ConnectionMessage],
-        command_receiver: Receiver[ForwarderCommand],
         is_candidate: bool = True,
         seniority: int = 0,
     ):
@@ -64,7 +59,6 @@ class Election:
         self.seniority = seniority if is_candidate else -1
         self.clock = 0
         self.node_id = node_id
-        self.commands_seen = 0
         # Every node spawns as master
         self.current_session: SessionId = SessionId(
             master_node_id=node_id, election_clock=0
@@ -75,7 +69,6 @@ class Election:
         self._em_receiver = election_message_receiver
         self._er_sender = election_result_sender
         self._cm_receiver = connection_message_receiver
-        self._co_receiver = command_receiver
 
         # Campaign state
         self._candidates: list[ElectionMessage] = []
@@ -89,7 +82,6 @@ class Election:
             async with self._tg as tg:
                 tg.start_soon(self._election_receiver)
                 tg.start_soon(self._connection_receiver)
-                tg.start_soon(self._command_counter)
 
                 # And start an election immediately, that instantly resolves
                 candidates: list[ElectionMessage] = []
@@ -179,11 +171,6 @@ class Election:
                 logger.debug("Campaign started")
                 logger.debug("Connection message added")
 
-    async def _command_counter(self) -> None:
-        with self._co_receiver as commands:
-            async for _command in commands:
-                self.commands_seen += 1
-
     async def _campaign(
         self, candidates: list[ElectionMessage], campaign_timeout: float
     ) -> None:
@@ -261,5 +248,4 @@ class Election:
             ),
             clock=c,
             seniority=self.seniority,
-            commands_seen=self.commands_seen,
         )

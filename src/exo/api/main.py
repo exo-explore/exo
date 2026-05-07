@@ -5,6 +5,7 @@ import json
 import random
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import anyio
-from anyio import BrokenResourceError, ClosedResourceError
+from exo_net import NetSender, PySession
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -21,6 +22,7 @@ from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType
 from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
+from pydantic import TypeAdapter
 
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
@@ -140,10 +142,12 @@ from exo.shared.models.model_cards import (
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
-    ErrorChunk,
-    ImageChunk,
+    Chunk,
+    ImageGenerationChunk,
     InputImageChunk,
     PrefillProgressChunk,
+    StatusChunk,
+    TextGenerationChunk,
     TokenChunk,
     ToolCallChunk,
 )
@@ -157,7 +161,6 @@ from exo.shared.types.commands import (
     DeleteInstance,
     DeleteInstanceLink,
     DownloadCommand,
-    ForwarderCommand,
     ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
@@ -171,7 +174,6 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SystemId
 from exo.shared.types.events import (
-    ChunkGenerated,
     Event,
     IndexedEvent,
     InstanceDeleted,
@@ -197,7 +199,7 @@ from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
-from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
@@ -230,6 +232,90 @@ def _require_disaggregation_enabled() -> None:
         )
 
 
+@dataclass
+class Transport:
+    z: PySession
+    cancel_scopes: dict[CommandId, anyio.CancelScope] = field(
+        init=False, default_factory=dict
+    )
+    command_sender: NetSender = field(init=False)
+    paused: bool = field(init=False, default=False)
+    paused_ev: anyio.Event = field(init=False, default_factory=anyio.Event)
+
+    def __post_init__(self):
+        # TODO: retire root keyspace
+        self.command_sender = self.z.net_sender("orchestrator")
+
+    async def send_command(self, command: Command) -> bool:
+        while self.paused:
+            await self.paused_ev.wait()
+        return await self.command_sender.send(command.model_dump_json().encode("utf-8"))
+
+    async def stream_text(
+        self,
+        command_id: CommandId,
+    ) -> AsyncGenerator[TextGenerationChunk | StatusChunk]:
+        async for chunk in self.stream(command_id):
+            if isinstance(chunk, (TextGenerationChunk | StatusChunk)):
+                yield chunk
+
+    async def stream_images(
+        self,
+        command_id: CommandId,
+    ) -> AsyncGenerator[ImageGenerationChunk]:
+        async for chunk in self.stream(command_id):
+            if isinstance(chunk, (ImageGenerationChunk)):
+                yield chunk
+
+    async def stream(
+        self,
+        command_id: CommandId,
+    ) -> AsyncGenerator[Chunk,]:
+        try:
+            with anyio.CancelScope() as cs:
+                self.cancel_scopes[command_id] = cs
+                # recv from any node
+                receiver = self.z.net_receiver(
+                    f"runners/*/active_tasks/{command_id}/chunks"
+                )
+                while True:
+                    data = await receiver.recv()
+                    yield (
+                        chunk := cast(
+                            Chunk,
+                            TypeAdapter(Chunk).validate_json(
+                                data, strict=True, extra="forbid"
+                            ),
+                        )
+                    )
+                    if (
+                        not isinstance(chunk, StatusChunk)
+                        and chunk.finish_reason is not None
+                    ):
+                        break
+        except anyio.get_cancelled_exc_class():
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    TaskCancelled(cancelled_command_id=command_id)
+                    .model_dump_json()
+                    .encode("utf-8")
+                )
+        finally:
+            self.cancel_scopes.pop(command_id, None)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    TaskFinished(finished_command_id=command_id)
+                    .model_dump_json()
+                    .encode("utf-8")
+                )
+
+    def cancel(self, command_id: CommandId) -> bool:
+        if (cs := self.cancel_scopes.get(command_id, None)) is not None:
+            cs.cancel()
+            return True
+        return False
+
+
 class API:
     def __init__(
         self,
@@ -237,15 +323,14 @@ class API:
         *,
         port: int,
         event_receiver: Receiver[IndexedEvent],
-        command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
+        session: PySession,
     ) -> None:
         self.state = State()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self._system_id = SystemId()
-        self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.event_receiver = event_receiver
         self.election_receiver = election_receiver
@@ -253,9 +338,6 @@ class API:
         self.last_completed_election: int = 0
         self.port = port
         self._sent_image_hashes: set[str] = set()
-
-        self.paused: bool = False
-        self.paused_ev: anyio.Event = anyio.Event()
 
         self.app = FastAPI()
 
@@ -280,13 +362,7 @@ class API:
             name="dashboard",
         )
 
-        self._text_generation_queues: dict[
-            CommandId,
-            Sender[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk],
-        ] = {}
-        self._image_generation_queues: dict[
-            CommandId, Sender[ImageChunk | ErrorChunk]
-        ] = {}
+        self.transport = Transport(session)
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
 
@@ -307,9 +383,9 @@ class API:
     def unpause(self, result_clock: int):
         logger.info("Unpausing API")
         self.last_completed_election = result_clock
-        self.paused = False
-        self.paused_ev.set()
-        self.paused_ev = anyio.Event()
+        self.transport.paused = False
+        self.transport.paused_ev.set()
+        self.transport.paused_ev = anyio.Event()
 
     def _setup_exception_handlers(self) -> None:
         self.app.exception_handler(HTTPException)(self.http_exception_handler)
@@ -424,7 +500,7 @@ class API:
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
         )
-        await self._send(command)
+        await self.transport.send_command(command)
 
         return CreateInstanceResponse(
             message="Command received.",
@@ -449,7 +525,7 @@ class API:
         command = CreateInstance(
             instance=instance,
         )
-        await self._send(command)
+        await self.transport.send_command(command)
 
         return CreateInstanceResponse(
             message="Command received.",
@@ -632,7 +708,7 @@ class API:
         command = DeleteInstance(
             instance_id=instance_id,
         )
-        await self._send(command)
+        await self.transport.send_command(command)
         return DeleteInstanceResponse(
             message="Command received.",
             command_id=command.command_id,
@@ -667,7 +743,7 @@ class API:
             prefill_instances=list(body.prefill_instances),
             decode_instances=list(body.decode_instances),
         )
-        await self._send(command)
+        await self.transport.send_command(command)
         return InstanceLinkResponse(
             message="Command received.", command_id=command.command_id
         )
@@ -677,63 +753,23 @@ class API:
     ) -> InstanceLinkResponse:
         _require_disaggregation_enabled()
         command = DeleteInstanceLink(link_id=link_id)
-        await self._send(command)
+        await self.transport.send_command(command)
         return InstanceLinkResponse(
             message="Command received.", command_id=command.command_id
         )
 
     async def cancel_command(self, command_id: CommandId) -> CancelCommandResponse:
         """Cancel an active command by closing its stream and notifying workers."""
-        sender = self._text_generation_queues.get(
-            command_id
-        ) or self._image_generation_queues.get(command_id)
-        if sender is None:
+        if self.transport.cancel(command_id):
+            return CancelCommandResponse(
+                message="Command cancelled.",
+                command_id=command_id,
+            )
+        else:
             raise HTTPException(
                 status_code=404,
                 detail="Command not found or already completed",
             )
-
-        await self._send(TaskCancelled(cancelled_command_id=command_id))
-        sender.close()
-
-        return CancelCommandResponse(
-            message="Command cancelled.",
-            command_id=command_id,
-        )
-
-    async def _token_chunk_stream(
-        self, command_id: CommandId
-    ) -> AsyncGenerator[
-        TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk, None
-    ]:
-        """Yield chunks for a given command until completion.
-
-        This is the internal low-level stream used by all API adapters.
-        """
-        try:
-            self._text_generation_queues[command_id], recv = channel[
-                TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk
-            ]()
-
-            with recv as token_chunks:
-                async for chunk in token_chunks:
-                    yield chunk
-                    if isinstance(chunk, PrefillProgressChunk):
-                        continue
-                    if chunk.finish_reason is not None:
-                        break
-
-        except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
-                )
-            raise
-        finally:
-            await self._send(TaskFinished(finished_command_id=command_id))
-            if command_id in self._text_generation_queues:
-                del self._text_generation_queues[command_id]
 
     async def _collect_text_generation_with_stats(
         self, command_id: CommandId
@@ -749,7 +785,7 @@ class API:
         async with anyio.create_task_group() as tg:
             tg.start_soon(sampler.run)
 
-            async for chunk in self._token_chunk_stream(command_id):
+            async for chunk in self.transport.stream_text(command_id):
                 if isinstance(chunk, PrefillProgressChunk):
                     continue
 
@@ -816,7 +852,7 @@ class API:
         images = task_params.images
         if not images:
             command = TextGeneration(task_params=task_params)
-            await self._send(command)
+            await self.transport.send_command(command)
             return command
 
         hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
@@ -833,7 +869,7 @@ class API:
                 new_images.append((idx, img))
 
         if not new_images:
-            await self._send(command)
+            await self.transport.send_command(command)
             return command
 
         all_chunks: list[tuple[int, str]] = []
@@ -842,7 +878,7 @@ class API:
                 all_chunks.append((img_idx, img_data[i : i + EXO_MAX_CHUNK_SIZE]))
 
         for global_idx, (img_idx, chunk_data) in enumerate(all_chunks):
-            await self._send(
+            await self.transport.send_command(
                 SendInputChunk(
                     chunk=InputImageChunk(
                         model=task_params.model,
@@ -855,7 +891,7 @@ class API:
                 )
             )
 
-        await self._send(command)
+        await self.transport.send_command(command)
         return command
 
     async def chat_completions(
@@ -875,7 +911,7 @@ class API:
                 with_sse_keepalive(
                     generate_chat_stream(
                         command.command_id,
-                        self._token_chunk_stream(command.command_id),
+                        self.transport.stream_text(command.command_id),
                     ),
                 ),
                 media_type="text/event-stream",
@@ -889,7 +925,7 @@ class API:
             return StreamingResponse(
                 collect_chat_response(
                     command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    self.transport.stream_text(command.command_id),
                 ),
                 media_type="application/json",
             )
@@ -918,7 +954,7 @@ class API:
                 with_sse_keepalive(
                     generate_chat_stream(
                         command.command_id,
-                        self._token_chunk_stream(command.command_id),
+                        self.transport.stream_text(command.command_id),
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1024,7 +1060,7 @@ class API:
         command = ImageGeneration(
             task_params=payload,
         )
-        await self._send(command)
+        await self.transport.send_command(command)
 
         # Check if streaming is requested
         if payload.stream and payload.partial_images and payload.partial_images > 0:
@@ -1060,105 +1096,85 @@ class API:
         image_metadata: dict[tuple[int, bool], tuple[int | None, int | None]] = {}
         images_complete = 0
 
-        try:
-            self._image_generation_queues[command_id], recv = channel[
-                ImageChunk | ErrorChunk
-            ]()
-
-            with recv as chunks:
-                async for chunk in chunks:
-                    if chunk.finish_reason == "error":
-                        error_response = ErrorResponse(
-                            error=ErrorInfo(
-                                message=chunk.error_message or "Internal server error",
-                                type="InternalServerError",
-                                code=500,
-                            )
-                        )
-                        yield f"data: {error_response.model_dump_json()}\n\n"
-                        yield "data: [DONE]\n\n"
-                        return
-
-                    key = (chunk.image_index, chunk.is_partial)
-
-                    if key not in image_chunks:
-                        image_chunks[key] = {}
-                        image_total_chunks[key] = chunk.total_chunks
-                        image_metadata[key] = (
-                            chunk.partial_index,
-                            chunk.total_partials,
-                        )
-
-                    image_chunks[key][chunk.chunk_index] = chunk.data
-
-                    # Check if this image is complete
-                    if len(image_chunks[key]) == image_total_chunks[key]:
-                        full_data = "".join(
-                            image_chunks[key][i] for i in range(len(image_chunks[key]))
-                        )
-
-                        partial_idx, total_partials = image_metadata[key]
-
-                        if chunk.is_partial:
-                            # Yield partial image event (always use b64_json for partials)
-                            event_data = {
-                                "type": "partial",
-                                "image_index": chunk.image_index,
-                                "partial_index": partial_idx,
-                                "total_partials": total_partials,
-                                "format": str(chunk.format),
-                                "data": {
-                                    "b64_json": full_data
-                                    if response_format == "b64_json"
-                                    else None,
-                                },
-                            }
-                            yield f"data: {json.dumps(event_data)}\n\n"
-                        else:
-                            # Final image
-                            if response_format == "url":
-                                image_bytes = base64.b64decode(full_data)
-                                content_type = _format_to_content_type(chunk.format)
-                                stored = self._image_store.store(
-                                    image_bytes, content_type
-                                )
-                                url = self._build_image_url(request, stored.image_id)
-                                event_data = {
-                                    "type": "final",
-                                    "image_index": chunk.image_index,
-                                    "format": str(chunk.format),
-                                    "data": {"url": url},
-                                }
-                            else:
-                                event_data = {
-                                    "type": "final",
-                                    "image_index": chunk.image_index,
-                                    "format": str(chunk.format),
-                                    "data": {"b64_json": full_data},
-                                }
-                            yield f"data: {json.dumps(event_data)}\n\n"
-                            images_complete += 1
-
-                            if images_complete >= num_images:
-                                yield "data: [DONE]\n\n"
-                                break
-
-                        # Clean up completed image chunks
-                        del image_chunks[key]
-                        del image_total_chunks[key]
-                        del image_metadata[key]
-
-        except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
+        async for chunk in self.transport.stream_images(command_id):
+            if chunk.finish_reason == "error":
+                error_response = ErrorResponse(
+                    error=ErrorInfo(
+                        message=chunk.error_message or "Internal server error",
+                        type="InternalServerError",
+                        code=500,
+                    )
                 )
-            raise
-        finally:
-            await self._send(TaskFinished(finished_command_id=command_id))
-            if command_id in self._image_generation_queues:
-                del self._image_generation_queues[command_id]
+                yield f"data: {error_response.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            key = (chunk.image_index, chunk.is_partial)
+
+            if key not in image_chunks:
+                image_chunks[key] = {}
+                image_total_chunks[key] = chunk.total_chunks
+                image_metadata[key] = (
+                    chunk.partial_index,
+                    chunk.total_partials,
+                )
+
+            image_chunks[key][chunk.chunk_index] = chunk.data
+
+            # Check if this image is complete
+            if len(image_chunks[key]) == image_total_chunks[key]:
+                full_data = "".join(
+                    image_chunks[key][i] for i in range(len(image_chunks[key]))
+                )
+
+                partial_idx, total_partials = image_metadata[key]
+
+                if chunk.is_partial:
+                    # Yield partial image event (always use b64_json for partials)
+                    event_data = {
+                        "type": "partial",
+                        "image_index": chunk.image_index,
+                        "partial_index": partial_idx,
+                        "total_partials": total_partials,
+                        "format": str(chunk.format),
+                        "data": {
+                            "b64_json": full_data
+                            if response_format == "b64_json"
+                            else None,
+                        },
+                    }
+                    yield f"data: {json.dumps(event_data)}\n\n"
+                else:
+                    # Final image
+                    if response_format == "url":
+                        image_bytes = base64.b64decode(full_data)
+                        content_type = _format_to_content_type(chunk.format)
+                        stored = self._image_store.store(image_bytes, content_type)
+                        url = self._build_image_url(request, stored.image_id)
+                        event_data = {
+                            "type": "final",
+                            "image_index": chunk.image_index,
+                            "format": str(chunk.format),
+                            "data": {"url": url},
+                        }
+                    else:
+                        event_data = {
+                            "type": "final",
+                            "image_index": chunk.image_index,
+                            "format": str(chunk.format),
+                            "data": {"b64_json": full_data},
+                        }
+                    yield f"data: {json.dumps(event_data)}\n\n"
+                    images_complete += 1
+
+                    if images_complete >= num_images:
+                        yield "data: [DONE]\n\n"
+                        break
+
+                # Clean up completed image chunks
+                del image_chunks[key]
+                del image_total_chunks[key]
+                del image_metadata[key]
 
     async def _collect_image_chunks(
         self,
@@ -1177,74 +1193,55 @@ class API:
         images_complete = 0
         stats: ImageGenerationStats | None = None
 
-        try:
-            self._image_generation_queues[command_id], recv = channel[
-                ImageChunk | ErrorChunk
-            ]()
-
-            while images_complete < num_images:
-                with recv as chunks:
-                    async for chunk in chunks:
-                        if chunk.finish_reason == "error":
-                            raise HTTPException(
-                                status_code=500,
-                                detail=chunk.error_message or "Internal server error",
-                            )
-
-                        if chunk.is_partial:
-                            continue
-
-                        if chunk.image_index not in image_chunks:
-                            image_chunks[chunk.image_index] = {}
-                            image_total_chunks[chunk.image_index] = chunk.total_chunks
-                            image_formats[chunk.image_index] = chunk.format
-
-                        image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
-
-                        if capture_stats and chunk.stats is not None:
-                            stats = chunk.stats
-
-                        if (
-                            len(image_chunks[chunk.image_index])
-                            == image_total_chunks[chunk.image_index]
-                        ):
-                            images_complete += 1
-
-                        if images_complete >= num_images:
-                            break
-
-            images: list[ImageData] = []
-            for image_idx in range(num_images):
-                chunks_dict = image_chunks[image_idx]
-                full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
-                if response_format == "url" and request is not None:
-                    image_bytes = base64.b64decode(full_data)
-                    content_type = _format_to_content_type(image_formats.get(image_idx))
-                    stored = self._image_store.store(image_bytes, content_type)
-                    url = self._build_image_url(request, stored.image_id)
-                    images.append(ImageData(b64_json=None, url=url))
-                else:
-                    images.append(
-                        ImageData(
-                            b64_json=full_data
-                            if response_format == "b64_json"
-                            else None,
-                            url=None,
-                        )
+        while images_complete < num_images:
+            async for chunk in self.transport.stream_images(command_id):
+                if chunk.finish_reason == "error":
+                    raise HTTPException(
+                        status_code=500,
+                        detail=chunk.error_message or "Internal server error",
                     )
 
-            return (images, stats if capture_stats else None)
-        except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
+                if chunk.is_partial:
+                    continue
+
+                if chunk.image_index not in image_chunks:
+                    image_chunks[chunk.image_index] = {}
+                    image_total_chunks[chunk.image_index] = chunk.total_chunks
+                    image_formats[chunk.image_index] = chunk.format
+
+                image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
+
+                if capture_stats and chunk.stats is not None:
+                    stats = chunk.stats
+
+                if (
+                    len(image_chunks[chunk.image_index])
+                    == image_total_chunks[chunk.image_index]
+                ):
+                    images_complete += 1
+
+                if images_complete >= num_images:
+                    break
+
+        images: list[ImageData] = []
+        for image_idx in range(num_images):
+            chunks_dict = image_chunks[image_idx]
+            full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
+            if response_format == "url" and request is not None:
+                image_bytes = base64.b64decode(full_data)
+                content_type = _format_to_content_type(image_formats.get(image_idx))
+                stored = self._image_store.store(image_bytes, content_type)
+                url = self._build_image_url(request, stored.image_id)
+                images.append(ImageData(b64_json=None, url=url))
+            else:
+                images.append(
+                    ImageData(
+                        b64_json=full_data if response_format == "b64_json" else None,
+                        url=None,
+                    )
                 )
-            raise
-        finally:
-            await self._send(TaskFinished(finished_command_id=command_id))
-            if command_id in self._image_generation_queues:
-                del self._image_generation_queues[command_id]
+
+        return (images, stats if capture_stats else None)
 
     async def _collect_image_generation(
         self,
@@ -1294,7 +1291,7 @@ class API:
         command = ImageGeneration(
             task_params=payload,
         )
-        await self._send(command)
+        await self.transport.send_command(command)
 
         return await self._collect_image_generation_with_stats(
             request=request,
@@ -1357,7 +1354,7 @@ class API:
             f"Sending input image: {len(image_data)} bytes in {total_chunks} chunks"
         )
         for chunk_index, chunk_data in enumerate(data_chunks):
-            await self._send(
+            await self.transport.send_command(
                 SendInputChunk(
                     chunk=InputImageChunk(
                         model=resolved_model,
@@ -1369,7 +1366,7 @@ class API:
                 )
             )
 
-        await self._send(command)
+        await self.transport.send_command(command)
         return command
 
     async def image_edits(
@@ -1497,7 +1494,7 @@ class API:
                     generate_claude_stream(
                         command.command_id,
                         payload.model,
-                        self._token_chunk_stream(command.command_id),
+                        self.transport.stream_text(command.command_id),
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1512,7 +1509,7 @@ class API:
                 collect_claude_response(
                     command.command_id,
                     payload.model,
-                    self._token_chunk_stream(command.command_id),
+                    self.transport.stream_text(command.command_id),
                 ),
                 media_type="application/json",
             )
@@ -1533,7 +1530,7 @@ class API:
                     generate_responses_stream(
                         command.command_id,
                         payload.model,
-                        self._token_chunk_stream(command.command_id),
+                        self.transport.stream_text(command.command_id),
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1549,7 +1546,7 @@ class API:
                 collect_responses_response(
                     command.command_id,
                     payload.model,
-                    self._token_chunk_stream(command.command_id),
+                    self.transport.stream_text(command.command_id),
                 ),
                 media_type="application/json",
             )
@@ -1575,8 +1572,7 @@ class API:
         if payload.stream:
             return StreamingResponse(
                 generate_ollama_chat_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    self.transport.stream_text(command.command_id),
                 ),
                 media_type="application/x-ndjson",
                 headers={
@@ -1588,8 +1584,7 @@ class API:
         else:
             return StreamingResponse(
                 collect_ollama_chat_response(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    self.transport.stream_text(command.command_id),
                 ),
                 media_type="application/json",
             )
@@ -1611,8 +1606,7 @@ class API:
         if payload.stream:
             return StreamingResponse(
                 generate_ollama_generate_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    self.transport.stream_text(command.command_id),
                 ),
                 media_type="application/x-ndjson",
                 headers={
@@ -1624,8 +1618,7 @@ class API:
         else:
             return StreamingResponse(
                 collect_ollama_generate_response(
-                    command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    self.transport.stream_text(command.command_id),
                 ),
                 media_type="application/json",
             )
@@ -1761,11 +1754,8 @@ class API:
                 status_code=400, detail=f"Failed to fetch model: {exc}"
             ) from exc
 
-        await self.command_sender.send(
-            ForwarderCommand(
-                origin=self._system_id,
-                command=AddCustomModelCard(model_card=card),
-            )
+        await self.transport.command_sender.send(
+            AddCustomModelCard(model_card=card).model_dump_json().encode("utf-8")
         )
 
         # Immediately update the local cache so the subsequent GET /models
@@ -1790,11 +1780,8 @@ class API:
         if card is None or not card.is_custom:
             raise HTTPException(status_code=404, detail="Custom model card not found")
 
-        await self.command_sender.send(
-            ForwarderCommand(
-                origin=self._system_id,
-                command=DeleteCustomModelCard(model_id=model_id),
-            )
+        await self.transport.command_sender.send(
+            DeleteCustomModelCard(model_id=model_id).model_dump_json().encode("utf-8")
         )
 
         return JSONResponse(
@@ -1859,7 +1846,6 @@ class API:
                         shutdown_ev.set()
         finally:
             self._event_log.close()
-            self.command_sender.close()
             self.event_receiver.close()
 
     async def run_api(self, ev: anyio.Event):
@@ -1883,23 +1869,6 @@ class API:
                 self.state = apply(self.state, i_event)
                 event = i_event.event
 
-                if isinstance(event, ChunkGenerated):
-                    if queue := self._image_generation_queues.get(
-                        event.command_id, None
-                    ):
-                        assert isinstance(event.chunk, ImageChunk)
-                        try:
-                            await queue.send(event.chunk)
-                        except (BrokenResourceError, ClosedResourceError):
-                            self._image_generation_queues.pop(event.command_id, None)
-                    if queue := self._text_generation_queues.get(
-                        event.command_id, None
-                    ):
-                        assert not isinstance(event.chunk, ImageChunk)
-                        try:
-                            await queue.send(event.chunk)
-                        except (BrokenResourceError, ClosedResourceError):
-                            self._text_generation_queues.pop(event.command_id, None)
                 if isinstance(event, InstanceDeleted):
                     self._close_streams_for_instance(event.instance_id)
                 if isinstance(event, TracesMerged):
@@ -1914,10 +1883,7 @@ class API:
                 task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
             ):
                 continue
-            if sender := self._text_generation_queues.pop(task.command_id, None):
-                sender.close()
-            if sender := self._image_generation_queues.pop(task.command_id, None):
-                sender.close()
+            self.transport.cancel(task.command_id)
 
     def _save_merged_trace(self, event: TracesMerged) -> None:
         traces = [
@@ -1938,7 +1904,7 @@ class API:
         with self.election_receiver as ems:
             async for message in ems:
                 if message.clock > self.last_completed_election:
-                    self.paused = True
+                    self.transport.paused = True
 
     async def _cleanup_expired_images(self):
         """Periodically clean up expired images from the store."""
@@ -1948,13 +1914,6 @@ class API:
             removed = self._image_store.cleanup_expired()
             if removed > 0:
                 logger.debug(f"Cleaned up {removed} expired images")
-
-    async def _send(self, command: Command):
-        while self.paused:
-            await self.paused_ev.wait()
-        await self.command_sender.send(
-            ForwarderCommand(origin=self._system_id, command=command)
-        )
 
     async def _send_download(self, command: DownloadCommand):
         await self.download_command_sender.send(

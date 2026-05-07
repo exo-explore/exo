@@ -15,7 +15,7 @@ dependencies = [
   "huggingface-hub>=1.8.0",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
-  "exo-pyo3-bindings",                         # rust bindings
+  "exo-net",                                   # rust bindings
   "anyio==4.11.0",
   "mlx==0.31.2; sys_platform == 'darwin'",
   "mlx-lm; sys_platform=='darwin'",
@@ -75,10 +75,10 @@ cuda13 = [
 ###
 
 [tool.uv.workspace]
-members = ["rust/exo_pyo3_bindings", "bench"]
+members = ["rust/exo_net", "bench"]
 
 [tool.uv.sources]
-exo-pyo3-bindings = { workspace = true }
+exo-net = { workspace = true }
 mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
 torch = [

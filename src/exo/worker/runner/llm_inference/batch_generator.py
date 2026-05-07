@@ -96,7 +96,7 @@ class SequentialGenerator(Engine):
     model_id: ModelId
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
-    event_sender: MpSender[Event]
+    event_sender: MpSender[Event | ChunkGenerated]
     vision_processor: VisionProcessor | None = None
     check_for_cancel_every: int = 50
 
@@ -327,7 +327,7 @@ class BatchGenerator(Engine):
     model_id: ModelId
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
-    event_sender: MpSender[Event]
+    event_sender: MpSender[Event | ChunkGenerated]
     check_for_cancel_every: int = 50
     vision_processor: VisionProcessor | None = None
 

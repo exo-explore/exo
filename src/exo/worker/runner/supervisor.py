@@ -10,9 +10,11 @@ from anyio import (
     ClosedResourceError,
     to_thread,
 )
+from exo_net import NetSender, PySession
 from loguru import logger
 
 from exo.shared.types.chunks import ErrorChunk
+from exo.shared.types.commands import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -45,20 +47,18 @@ from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
 from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint
 
-PREFILL_TIMEOUT_SECONDS = 60
-DECODE_TIMEOUT_SECONDS = 5
-
 
 @dataclass(eq=False)
 class RunnerSupervisor:
     shard_metadata: ShardMetadata
     bound_instance: BoundInstance
     runner_process: mp.Process
-    initialize_timeout: float
-    _ev_recv: MpReceiver[Event]
+    _ev_recv: MpReceiver[Event | ChunkGenerated]
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
     _cancel_sender: MpSender[TaskId]
+    session: PySession
+
     _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
@@ -75,9 +75,9 @@ class RunnerSupervisor:
         *,
         bound_instance: BoundInstance,
         event_sender: Sender[Event],
-        initialize_timeout: float = 400,
+        session: PySession,
     ) -> Self:
-        ev_send, ev_recv = mp_channel[Event]()
+        ev_send, ev_recv = mp_channel[Event | ChunkGenerated]()
         task_sender, task_recv = mp_channel[Task]()
         cancel_sender, cancel_recv = mp_channel[TaskId]()
 
@@ -99,11 +99,11 @@ class RunnerSupervisor:
             bound_instance=bound_instance,
             shard_metadata=shard_metadata,
             runner_process=runner_process,
-            initialize_timeout=initialize_timeout,
             _ev_recv=ev_recv,
             _task_sender=task_sender,
             _cancel_sender=cancel_sender,
             _event_sender=event_sender,
+            session=session,
         )
 
         return self
@@ -210,9 +210,19 @@ class RunnerSupervisor:
             await self._check_runner(TimeoutError("cancel pipe blocked"))
 
     async def _forward_events(self):
+        pubs: dict[CommandId, NetSender] = {}
         try:
             with self._ev_recv as events:
                 async for event in events:
+                    if isinstance(event, ChunkGenerated):
+                        if event.command_id not in pubs:
+                            pubs[event.command_id] = self.session.net_sender(
+                                f"runners/{self.bound_instance.bound_runner_id}/active_tasks/{event.command_id}/chunks"
+                            )
+                        pub = pubs[event.command_id]
+                        await pub.send(event.chunk.model_dump_json().encode("utf-8"))
+                        continue
+
                     if isinstance(event, RunnerStatusUpdated):
                         self.status = event.runner_status
                     if isinstance(event, TaskAcknowledged):
@@ -275,17 +285,18 @@ class RunnerSupervisor:
         for task in self.in_progress.values():
             if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
                 with anyio.CancelScope(shield=True):
-                    await self._event_sender.send(
-                        ChunkGenerated(
-                            command_id=task.command_id,
-                            chunk=ErrorChunk(
-                                model=self.shard_metadata.model_card.model_id,
-                                error_message=(
-                                    "Runner shutdown before completing command "
-                                    f"({cause})"
-                                ),
+                    send = self.session.net_sender(
+                        f"runners/{self.bound_instance.bound_runner_id}/active_tasks/{task.command_id}/chunks"
+                    )
+                    await send.send(
+                        ErrorChunk(
+                            model=self.shard_metadata.model_card.model_id,
+                            error_message=(
+                                f"Runner shutdown before completing command ({cause})"
                             ),
                         )
+                        .model_dump_json()
+                        .encode("utf-8")
                     )
 
         try:

@@ -87,4 +87,6 @@ class PrefillProgressChunk(BaseChunk):
 
 StatusChunk = PrefillProgressChunk
 GenerationChunk = TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk
+TextGenerationChunk = TokenChunk | ToolCallChunk | ErrorChunk
+ImageGenerationChunk = ImageChunk | ErrorChunk
 Chunk = StatusChunk | GenerationChunk

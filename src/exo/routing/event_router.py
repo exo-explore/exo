@@ -6,7 +6,7 @@ from anyio import BrokenResourceError, ClosedResourceError
 from anyio.abc import CancelScope
 from loguru import logger
 
-from exo.shared.types.commands import ForwarderCommand, RequestEventLog
+from exo.shared.types.commands import RequestEventLog
 from exo.shared.types.common import SessionId, SystemId
 from exo.shared.types.events import (
     Event,
@@ -19,11 +19,13 @@ from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
 from exo.utils.task_group import TaskGroup
 
+from exo_net import NetSender
+
 
 @dataclass
 class EventRouter:
     session_id: SessionId
-    command_sender: Sender[ForwarderCommand]
+    command_sender: NetSender
     external_inbound: Receiver[GlobalForwarderEvent]
     external_outbound: Sender[LocalForwarderEvent]
     _system_id: SystemId = field(init=False, default_factory=SystemId)
@@ -152,10 +154,9 @@ class EventRouter:
                     f"Nack attempt {self._nack_attempts}: Requesting Event Log from {since_idx}"
                 )
                 await self.command_sender.send(
-                    ForwarderCommand(
-                        origin=self._system_id,
-                        command=RequestEventLog(since_idx=since_idx),
-                    )
+                    RequestEventLog(since_idx=since_idx)
+                    .model_dump_json()
+                    .encode("utf-8")
                 )
             finally:
                 if self._nack_cancel_scope is scope:

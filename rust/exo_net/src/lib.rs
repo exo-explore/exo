@@ -5,20 +5,20 @@
 //!
 
 mod allow_threading;
-mod ident;
+// mod ident;
 mod networking;
+mod point_to_point;
+mod session;
+// mod state;
 
-use crate::ident::PyKeypair;
 use crate::networking::networking_submodule;
+use crate::point_to_point::{NetReceiver, NetSender};
+use crate::session::PySession;
+//use crate::state::StateProxy;
 use pyo3::prelude::PyModule;
 use pyo3::types::PyModuleMethods;
-use pyo3::{Bound, PyResult, pyclass, pymodule};
+use pyo3::{Bound, PyResult, pymodule};
 use pyo3_stub_gen::define_stub_info_gatherer;
-
-/// Namespace for all the constants used by this crate.
-pub(crate) mod r#const {
-    pub const MPSC_CHANNEL_SIZE: usize = 1024;
-}
 
 /// Namespace for crate-wide extension traits/methods
 pub(crate) mod ext {
@@ -151,7 +151,7 @@ pub(crate) mod ext {
 /// A Python module implemented in Rust. The name of this function must match
 /// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
 /// import the module.
-#[pymodule(name = "exo_pyo3_bindings")]
+#[pymodule(name = "exo_net")]
 fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // install logger
     pyo3_log::init();
@@ -162,7 +162,12 @@ fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // TODO: for now this is all NOT a submodule, but figure out how to make the submodule system
     //       work with maturin, where the types generate correctly, in the right folder, without
     //       too many importing issues...
-    m.add_class::<PyKeypair>()?;
+    // m.add_class::<PyKeypair>()?;
+    // networking_submodule(m)?;
+    // m.add_class::<StateProxy>()?;
+    m.add_class::<PySession>()?;
+    m.add_class::<NetReceiver>()?;
+    m.add_class::<NetSender>()?;
     networking_submodule(m)?;
 
     // top-level constructs
