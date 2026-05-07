@@ -11,11 +11,11 @@ from exo.download.download_utils import (
     download_shard,
 )
 from exo.download.shard_downloader import ShardDownloader
+from exo.shared.models import model_cards
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
     ModelTask,
-    get_model_cards,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.shards import (
@@ -258,7 +258,7 @@ class ResumableShardDownloader(ShardDownloader):
 
         tasks = [
             create_task(download_with_semaphore(model_card))
-            for model_card in await get_model_cards()
+            for model_card in await model_cards.card_cache.list_all()
         ]
 
         for task in asyncio.as_completed(tasks):

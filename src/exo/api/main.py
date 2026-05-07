@@ -133,12 +133,10 @@ from exo.shared.constants import (
 )
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
+from exo.shared.models import model_cards
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
-    add_to_card_cache,
-    get_card,
-    get_model_cards,
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
@@ -1635,17 +1633,16 @@ class API:
     async def ollama_tags(self) -> OllamaTagsResponse:
         """Returns list of models in Ollama tags format. We return the downloaded ones only."""
 
-        def none_if_empty(value: str) -> str | None:
-            return value or None
-
-        downloaded_model_ids: set[str] = set()
+        downloaded_model_ids: set[ModelId] = set()
         for node_downloads in self.state.downloads.values():
             for dl in node_downloads:
                 if isinstance(dl, DownloadCompleted):
                     downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
 
         cards = [
-            c for c in await get_model_cards() if c.model_id in downloaded_model_ids
+            c
+            for c in await model_cards.card_cache.list_all()
+            if c.model_id in downloaded_model_ids
         ]
 
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1658,8 +1655,8 @@ class API:
                     size=card.storage_size.in_bytes,
                     digest="sha256:000000000000",
                     details=OllamaModelDetails(
-                        family=none_if_empty(card.family),
-                        quantization_level=none_if_empty(card.quantization),
+                        family=card.family or None,
+                        quantization_level=card.quantization or None,
                     ),
                 )
                 for card in cards
@@ -1722,7 +1719,7 @@ class API:
 
     async def get_models(self, status: str | None = Query(default=None)) -> ModelList:
         """Returns list of available models, optionally filtered by being downloaded."""
-        cards = await get_model_cards()
+        cards = await model_cards.card_cache.list_all()
 
         if status == "downloaded":
             downloaded_model_ids: set[str] = set()
@@ -1773,7 +1770,7 @@ class API:
 
         # Immediately update the local cache so the subsequent GET /models
         # returns the new model without waiting for the event round-trip.
-        add_to_card_cache(card)
+        model_cards.card_cache.cc[card.model_id] = card
 
         return ModelListModel(
             id=card.model_id,
@@ -1789,7 +1786,7 @@ class API:
 
     async def delete_custom_model(self, model_id: ModelId) -> JSONResponse:
         """Delete a user-added custom model card and sync deletion across the cluster."""
-        card = get_card(model_id)
+        card = model_cards.card_cache.get(model_id)
         if card is None or not card.is_custom:
             raise HTTPException(status_code=404, detail="Custom model card not found")
 
