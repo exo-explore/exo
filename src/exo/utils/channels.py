@@ -2,7 +2,6 @@ import contextlib
 import multiprocessing as mp
 from dataclasses import dataclass, field
 from math import inf
-from multiprocessing.context import BaseContext
 from multiprocessing.synchronize import Event
 from queue import Empty, Full
 from types import TracebackType
@@ -80,7 +79,7 @@ class _MpEndOfStream:
 
 
 class MpState[T]:
-    def __init__(self, max_buffer_size: float, mp_ctx: BaseContext):
+    def __init__(self, max_buffer_size: float):
         if max_buffer_size == inf:
             max_buffer_size = 0
         assert isinstance(max_buffer_size, int), (
@@ -88,8 +87,8 @@ class MpState[T]:
         )
 
         self.max_buffer_size: float = max_buffer_size
-        self.buffer: mp.Queue[T | _MpEndOfStream] = mp_ctx.Queue(max_buffer_size)
-        self.closed: Event = mp_ctx.Event()
+        self.buffer: mp.Queue[T | _MpEndOfStream] = mp.Queue(max_buffer_size)
+        self.closed: Event = mp.Event()
 
     def __getstate__(self):
         d = self.__dict__.copy()
@@ -151,10 +150,10 @@ class MpSender[T]:
         return self
 
     def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
+            self,
+            exc_type: type[BaseException] | None,
+            exc_val: BaseException | None,
+            exc_tb: TracebackType | None,
     ) -> None:
         self.close()
 
@@ -250,10 +249,10 @@ class MpReceiver[T]:
         return self
 
     def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
+            self,
+            exc_type: type[BaseException] | None,
+            exc_val: BaseException | None,
+            exc_tb: TracebackType | None,
     ) -> None:
         self.close()
 
@@ -298,17 +297,14 @@ class mp_channel[T]:  # noqa: N801
 
     # max buffer size uses math.inf to represent an unbounded queue, and 0 to represent a yet unimplemented "unbuffered" queue.
     def __new__(
-        cls, max_buffer_size: float = inf, *, context: BaseContext | None = None
-    ) -> tuple[MpSender[T], MpReceiver[T]]:
+            cls, max_buffer_size: float = inf) -> tuple[MpSender[T], MpReceiver[T]]:
         if (
-            max_buffer_size == 0
-            or max_buffer_size != inf
-            and not isinstance(max_buffer_size, int)
+                max_buffer_size == 0
+                or max_buffer_size != inf
+                and not isinstance(max_buffer_size, int)
         ):
             raise ValueError(
                 "max_buffer_size must be either an integer or math.inf. 0-sized buffers are not supported by multiprocessing"
             )
-        state = MpState[T](
-            max_buffer_size, mp.get_context() if context is None else context
-        )
+        state = MpState[T](max_buffer_size)
         return MpSender(_state=state), MpReceiver(_state=state)
