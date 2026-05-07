@@ -60,16 +60,16 @@ from exo.worker.runner.supervisor import RunnerSupervisor
 
 class Worker:
     def __init__(
-            self,
-            node_id: NodeId,
-            *,
-            event_receiver: Receiver[IndexedEvent],
-            event_sender: Sender[Event],
-            # This is for requesting updates. It doesn't need to be a general command sender right now,
-            # but I think it's the correct way to be thinking about commands
-            command_sender: Sender[ForwarderCommand],
-            download_command_sender: Sender[ForwarderDownloadCommand],
-            api_port: int,
+        self,
+        node_id: NodeId,
+        *,
+        event_receiver: Receiver[IndexedEvent],
+        event_sender: Sender[Event],
+        # This is for requesting updates. It doesn't need to be a general command sender right now,
+        # but I think it's the correct way to be thinking about commands
+        command_sender: Sender[ForwarderCommand],
+        download_command_sender: Sender[ForwarderDownloadCommand],
+        api_port: int,
     ):
         self.node_id: NodeId = node_id
         self.event_receiver = event_receiver
@@ -154,8 +154,8 @@ class Worker:
                         event.chunk
                     )
                     if (
-                            len(self.input_chunk_buffer[cmd_id])
-                            == self.input_chunk_counts[cmd_id]
+                        len(self.input_chunk_buffer[cmd_id])
+                        == self.input_chunk_counts[cmd_id]
                     ):
                         per_image: defaultdict[int, list[InputImageChunk]] = (
                             defaultdict(list)
@@ -389,10 +389,10 @@ class Worker:
             )
             conns: defaultdict[NodeId, set[str]] = defaultdict(set)
             async for ip, nid in check_reachable(
-                    self.state.topology,
-                    self.node_id,
-                    self.state.node_network,
-                    api_port=self.api_port,
+                self.state.topology,
+                self.node_id,
+                self.state.node_network,
+                api_port=self.api_port,
             ):
                 if ip in conns[nid]:
                     continue
@@ -419,8 +419,8 @@ class Worker:
                 if conn.edge.sink_multiaddr.port != self.api_port:
                     continue
                 if (
-                        conn.sink not in conns
-                        or conn.edge.sink_multiaddr.ip_address not in conns[conn.sink]
+                    conn.sink not in conns
+                    or conn.edge.sink_multiaddr.ip_address not in conns[conn.sink]
                 ):
                     logger.debug(f"ping failed to discover {conn=}")
                     await self.event_sender.send(TopologyEdgeDeleted(conn=conn))

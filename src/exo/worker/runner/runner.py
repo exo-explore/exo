@@ -83,11 +83,11 @@ class ExitCode(str, Enum):
 
 class Runner:
     def __init__(
-            self,
-            bound_instance: BoundInstance,
-            builder: Builder,
-            event_sender: MpSender[Event],
-            task_receiver: MpReceiver[Task],
+        self,
+        bound_instance: BoundInstance,
+        builder: Builder,
+        event_sender: MpSender[Event],
+        task_receiver: MpReceiver[Task],
     ):
         self.event_sender = event_sender
         self.task_receiver = task_receiver
@@ -251,7 +251,7 @@ class Runner:
                 isinstance(self.current_status, (RunnerConnected, RunnerIdle))
             ):
                 total_layers = (
-                        self.shard_metadata.end_layer - self.shard_metadata.start_layer
+                    self.shard_metadata.end_layer - self.shard_metadata.start_layer
                 )
                 logger.info("runner loading")
 
@@ -295,7 +295,7 @@ class Runner:
                 logger.info("runner ready")
 
             case TextGeneration() | ImageEdits() | ImageGeneration() if isinstance(
-                    self.current_status, RunnerReady
+                self.current_status, RunnerReady
             ):
                 return_code = self.handle_generation_tasks(starting_task=task)
                 if return_code == ExitCode.Shutdown:
@@ -386,9 +386,9 @@ class Runner:
         return ExitCode.AllTasksComplete
 
     def send_chunk(
-            self,
-            chunk: Chunk,
-            command_id: CommandId,
+        self,
+        chunk: Chunk,
+        command_id: CommandId,
     ):
         assert isinstance(self.generator, Engine)
         self.event_sender.send(ChunkGenerated(command_id=command_id, chunk=chunk))

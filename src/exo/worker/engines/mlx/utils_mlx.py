@@ -88,7 +88,7 @@ class HostList(RootModel[list[str]]):
 
 
 def mlx_distributed_init(
-        bound_instance: BoundInstance,
+    bound_instance: BoundInstance,
 ) -> mx.distributed.Group:
     """
     Initialize MLX distributed.
@@ -115,7 +115,9 @@ def mlx_distributed_init(
 
                 os.environ["MLX_HOSTFILE"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
-                os.environ["MLX_RING_VERBOSE"] = "1"  # NOTE: we don't use it enough to care (turn on again if need to)
+                os.environ["MLX_RING_VERBOSE"] = (
+                    "1"  # NOTE: we don't use it enough to care (turn on again if need to)
+                )
 
                 group = mx.distributed.init(backend="ring", strict=True)
 
@@ -148,7 +150,7 @@ def mlx_distributed_init(
 
 
 def initialize_mlx(
-        bound_instance: BoundInstance,
+    bound_instance: BoundInstance,
 ) -> mx.distributed.Group:
     # should we unseed it?
     # TODO: pass in seed from params
@@ -161,8 +163,8 @@ def initialize_mlx(
 
 
 def load_mlx_items(
-        bound_instance: BoundInstance,
-        group: mx.distributed.Group | None,
+    bound_instance: BoundInstance,
+    group: mx.distributed.Group | None,
 ) -> Generator[
     ModelLoadingResponse, None, tuple[Model, TokenizerWrapper, "VisionProcessor | None"]
 ]:
@@ -230,8 +232,8 @@ def load_mlx_items(
 
 
 def shard_and_load(
-        shard_metadata: ShardMetadata,
-        group: mx.distributed.Group,
+    shard_metadata: ShardMetadata,
+    group: mx.distributed.Group,
 ) -> Generator[ModelLoadingResponse, None, tuple[nn.Module, TokenizerWrapper]]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
@@ -321,10 +323,10 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     elif "gpt-oss" in model_id_lower:
         return [200002, 200012]
     elif (
-            "qwen3.5" in model_id_lower
-            or "qwen-3.5" in model_id_lower
-            or "qwen3.6" in model_id_lower
-            or "qwen-3.6" in model_id_lower
+        "qwen3.5" in model_id_lower
+        or "qwen-3.5" in model_id_lower
+        or "qwen3.6" in model_id_lower
+        or "qwen-3.6" in model_id_lower
     ):
         # For Qwen3.5 / Qwen3.6: 248046 (<|im_end|>), 248044 (<|endoftext|>)
         return [248046, 248044]
@@ -334,7 +336,7 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
 
 
 def load_tokenizer_for_model_id(
-        model_id: ModelId, model_path: Path, *, trust_remote_code: bool = TRUST_REMOTE_CODE
+    model_id: ModelId, model_path: Path, *, trust_remote_code: bool = TRUST_REMOTE_CODE
 ) -> TokenizerWrapper:
     """
     Load tokenizer for a model given its ID and local path.
@@ -384,15 +386,13 @@ def load_tokenizer_for_model_id(
         else:
             from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
 
-        hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(
-            model_path)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(model_path)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
         # Patch encode to use internal tiktoken model directly
         # transformers 5.x has a bug in the encode->pad path for slow tokenizers
         def _patched_encode(text: str, **_kwargs: object) -> list[int]:
             # Pass allowed_special="all" to handle special tokens like <|im_user|>
-            return list(hf_tokenizer.model.encode(text,
-                                                  allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+            return list(hf_tokenizer.model.encode(text, allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
         hf_tokenizer.encode = _patched_encode
         return TokenizerWrapper(
@@ -516,7 +516,7 @@ def _strip_v4_thinking_markers(content: str) -> str:
 
 
 def consolidate_system_messages(
-        messages: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """
     System messages almost exclusively must go at the start of a message
@@ -542,9 +542,9 @@ def consolidate_system_messages(
 
 
 def render_chat_template(
-        tokenizer: TokenizerWrapper,
-        messages: list[dict[str, Any]],
-        task_params: TextGenerationTaskParams,
+    tokenizer: TokenizerWrapper,
+    messages: list[dict[str, Any]],
+    task_params: TextGenerationTaskParams,
 ) -> str:
     """
     Convert TextGenerationTaskParams to a chat template prompt.
@@ -659,8 +659,8 @@ def render_chat_template(
 
 
 def apply_chat_template(
-        tokenizer: TokenizerWrapper,
-        task_params: TextGenerationTaskParams,
+    tokenizer: TokenizerWrapper,
+    task_params: TextGenerationTaskParams,
 ) -> str:
     messages: list[dict[str, ChatTemplateValue]] = []
     if task_params.chat_template_messages is not None:
@@ -685,8 +685,8 @@ def apply_chat_template(
 
 
 def system_prompt_token_count(
-        task_params: TextGenerationTaskParams,
-        tokenizer: TokenizerWrapper,
+    task_params: TextGenerationTaskParams,
+    tokenizer: TokenizerWrapper,
 ) -> int:
     """Approximate token count of the system prompt portion of the input."""
     parts: list[str] = []
@@ -718,7 +718,7 @@ def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> b
 
 
 def fix_unmatched_think_end_tokens(
-        tokens: mx.array, tokenizer: TokenizerWrapper
+    tokens: mx.array, tokenizer: TokenizerWrapper
 ) -> mx.array:
     if not tokenizer.has_thinking:
         return tokens
@@ -822,9 +822,9 @@ def set_wired_limit_for_model(model_size: Memory):
 
 
 def mlx_cleanup(
-        model: Model | None,
-        tokenizer: TokenizerWrapper | None,
-        group: mx.distributed.Group | None,
+    model: Model | None,
+    tokenizer: TokenizerWrapper | None,
+    group: mx.distributed.Group | None,
 ) -> None:
     del model, tokenizer, group
     mx.clear_cache()
@@ -889,13 +889,13 @@ def _parse_kimi_tool_calls(text: str):
 
 
 def mx_all_gather_tasks(
-        tasks: list[TextGeneration],
-        group: mx.distributed.Group | None,
+    tasks: list[TextGeneration],
+    group: mx.distributed.Group | None,
 ) -> tuple[list[TextGeneration], list[TextGeneration]]:
     def encode_task_id(task_id: TaskId) -> list[int]:
         utf8_task_id = task_id.encode()
         return [
-            int.from_bytes(utf8_task_id[i: i + 1]) for i in range(len(utf8_task_id))
+            int.from_bytes(utf8_task_id[i : i + 1]) for i in range(len(utf8_task_id))
         ]
 
     def decode_task_id(encoded_task_id: list[int]) -> TaskId:
