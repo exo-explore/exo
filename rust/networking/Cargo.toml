@@ -15,6 +15,7 @@ zenoh-plugin-trait = "=1.9.0"
 zerompk = { version = "0.4.2", features = ["derive"] }
 rand = "0.10.1"
 tracing = "0.1.44"
+log.workspace = true
 
 [lints]
 workspace = true

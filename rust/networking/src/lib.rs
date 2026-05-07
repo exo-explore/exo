@@ -58,7 +58,7 @@ pub async fn open(cfg: zenoh::Config) -> Result<Session> {
     })
 }
 async fn watch_all(runtime: Runtime) -> Result<WatchAllHandle> {
-    tracing::info!("spawning if watcher");
+    log::info!("spawning scout");
     let mut cfg = Config::default();
     cfg.insert_json5("scouting/multicast/ttl", "3")?;
     cfg.insert_json5("scouting/multicast/interface", "\"auto\"")?;
@@ -72,7 +72,7 @@ async fn watch_all(runtime: Runtime) -> Result<WatchAllHandle> {
                     if u.is_none() {
                         return Ok(());
                     }
-                    tracing::info!("reloading scout");
+                    log::info!("reloading scout");
                     scout = zenoh::scout(WhatAmI::Peer, cfg.clone()).await?;
                 }
                 hello = scout.recv_async() => {
