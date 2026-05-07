@@ -116,10 +116,8 @@ class Worker:
             self.event_sender.close()
             self.command_sender.close()
             self.download_command_sender.close()
-            logger.warning("closed shit")
             for runner in self.runners.values():
                 runner.shutdown()
-            logger.warning("closed even more shit")
             self._stopped.set()
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
