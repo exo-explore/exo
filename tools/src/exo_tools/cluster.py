@@ -114,12 +114,17 @@ class EcoSession:
         hosts: list[str] | None = None,
         *,
         count: int | None = None,
-        thunderbolt: bool = False,
+        thunderbolt: bool | str | None = False,
         wait: bool = True,
         ref: str | None = _EXO_REF,
         timeout: int = 600,
     ) -> ClusterInfo:
         """Start and deploy exo on a set of hosts via eco.
+
+        thunderbolt:
+          - True or 'a2a' → --tb-a2a (all-to-all Thunderbolt)
+          - 'ring' → --tb-ring (ring Thunderbolt topology)
+          - False/None → no Thunderbolt constraint
 
         By default, deploys from local source via rsync. Set EXO_REF
         or pass ref= to deploy from a GitHub branch/tag instead (for CI).
@@ -129,8 +134,10 @@ class EcoSession:
             cmd.extend(hosts)
         if count is not None:
             cmd.extend(["--count", str(count)])
-        if thunderbolt:
+        if thunderbolt is True or thunderbolt == "a2a":
             cmd.append("--tb-a2a")
+        elif thunderbolt == "ring":
+            cmd.append("--tb-ring")
         if wait:
             cmd.append("--wait")
         if ref:

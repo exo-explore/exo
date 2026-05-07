@@ -8,6 +8,7 @@ managing downloads, filtering placements, and common CLI arguments.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import time
 from typing import Any
@@ -518,4 +519,121 @@ def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
         "--reuse-instance",
         action="store_true",
         help="Reuse an existing running instance for this model instead of creating a new one.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cluster/instance orchestration helpers (used by tests, bench, eval)
+# ---------------------------------------------------------------------------
+
+
+def get_instance_ids(client: ExoClient) -> set[str]:
+    """Return the set of current instance IDs from cluster state."""
+    state = client.request_json("GET", "/state") or {}
+    result: set[str] = set()
+    for instance in state.get("instances", {}).values():
+        with contextlib.suppress(Exception):
+            result.add(instance_id_from_instance(instance))
+    return result
+
+
+def wait_for_cluster_ready(
+    client: ExoClient, expected_nodes: int = 1, timeout: float = 120.0
+) -> None:
+    """Wait until the cluster has all expected nodes visible and reporting memory.
+
+    Placement requires nodeMemory for all nodes in a cycle. This polls until
+    both nodeIdentities and nodeMemory have at least `expected_nodes` entries.
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            state = client.request_json("GET", "/state") or {}
+            if (
+                len(state.get("nodeIdentities", {})) >= expected_nodes
+                and len(state.get("nodeMemory", {})) >= expected_nodes
+            ):
+                return
+        except Exception:
+            pass
+        time.sleep(1.0)
+    raise TimeoutError(f"Cluster not ready: expected {expected_nodes} nodes")
+
+
+def place_instance(
+    client: ExoClient,
+    model_id: str,
+    *,
+    sharding: str = "Pipeline",
+    instance_meta: str = "MlxRing",
+    min_nodes: int = 1,
+    timeout: float = 600.0,
+    placement_retries: int = 10,
+    placement_retry_delay: float = 10.0,
+) -> str:
+    """Place an instance and wait for it to be ready. Returns the instance_id.
+
+    The /place_instance API returns a command_id, but instances are stored
+    under a separately-generated instance_id. This polls cluster state for the
+    new instance, retrying placement if the cluster is still settling.
+    """
+    wait_for_cluster_ready(client, expected_nodes=min_nodes)
+
+    body = {
+        "model_id": model_id,
+        "sharding": sharding,
+        "instance_meta": instance_meta,
+        "min_nodes": min_nodes,
+    }
+
+    instance_id: str | None = None
+    for attempt in range(placement_retries):
+        before_ids = get_instance_ids(client)
+        client.request_json("POST", "/place_instance", body=body)
+
+        poll_deadline = time.time() + 30.0
+        while time.time() < poll_deadline:
+            new_ids = get_instance_ids(client) - before_ids
+            if new_ids:
+                instance_id = next(iter(new_ids))
+                break
+            time.sleep(1.0)
+
+        if instance_id is not None:
+            break
+
+        if attempt < placement_retries - 1:
+            time.sleep(placement_retry_delay)
+
+    if instance_id is None:
+        raise TimeoutError(
+            f"Placement failed after {placement_retries} attempts "
+            f"({sharding}/{instance_meta} for {model_id})"
+        )
+
+    wait_for_instance_ready(client, instance_id, timeout=timeout)
+    return instance_id
+
+
+def cleanup_all_instances(client: ExoClient) -> None:
+    """Remove all running instances from the cluster."""
+    state = client.request_json("GET", "/state") or {}
+    for instance in state.get("instances", {}).values():
+        with contextlib.suppress(Exception):
+            iid = instance_id_from_instance(instance)
+            client.request_json("DELETE", f"/instance/{iid}")
+            wait_for_instance_gone(client, iid, timeout=30.0)
+
+
+def is_model_downloaded(client: ExoClient, node_id: str, model_id: str) -> bool:
+    """Return True if `model_id` has a completed download on `node_id`."""
+    state = client.request_json("GET", "/state") or {}
+    entries = state.get("downloads", {}).get(node_id) or []
+    return any(
+        "DownloadCompleted" in entry
+        and unwrap_instance(entry["DownloadCompleted"]["shardMetadata"])["modelCard"][
+            "modelId"
+        ]
+        == model_id
+        for entry in entries
     )

@@ -14,8 +14,6 @@ import contextlib
 
 import pytest
 
-from .helpers import ClusterInfo, make_client, place_and_wait
-
 try:
     from playwright.sync_api import sync_playwright
 
@@ -40,115 +38,65 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
-def playwright_page(single_node_cluster: ClusterInfo):
-    """Create a Playwright browser page pointed at the cluster's dashboard.
-
-    Marks onboarding as complete before loading so the wizard doesn't interfere.
-    """
-    # Mark onboarding complete on the server so the dashboard skips the wizard.
-    client = make_client(single_node_cluster)
+def _mark_onboarding_complete(session) -> None:
+    """Mark onboarding complete on the server so the wizard doesn't auto-launch a model."""
     with contextlib.suppress(Exception):
-        client.request_json("POST", "/onboarding")
+        session.client.request_json("POST", "/onboarding")
+
+
+@pytest.mark.cluster(count=1)
+def test_dashboard_chat_inference(session):
+    """Full UI flow: open dashboard, pick a model, send a chat, verify response.
+
+    The instance is created via the dashboard UI (model picker → chat send
+    triggers the dashboard's auto-launch flow), not via @pytest.mark.instance.
+    """
+    _mark_onboarding_complete(session)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1280, "height": 800})
-        page.goto(single_node_cluster.api_url, wait_until="networkidle")
+        page.goto(session.cluster.api_url, wait_until="networkidle")
         page.wait_for_timeout(3000)
-        yield page
-        browser.close()
+        page.screenshot(path="/tmp/dashboard_initial.png")
 
+        # Open the model picker by clicking the "SELECT MODEL" button
+        page.get_by_text("SELECT MODEL", exact=False).first.click()
+        page.wait_for_timeout(1000)
+        page.screenshot(path="/tmp/dashboard_picker_open.png")
 
-class TestDashboard:
-    """End-to-end dashboard tests."""
+        # Search for the model — uses the model id substring; the picker
+        # matches against name/id so "Llama-3.2-1B" filters to the small Llama.
+        search_input = page.locator('input[placeholder*="Search models"]').first
+        search_input.fill("Llama-3.2-1B")
+        page.wait_for_timeout(1500)
+        page.screenshot(path="/tmp/dashboard_picker_search.png")
 
-    def test_dashboard_loads(self, playwright_page):
-        """Verify the dashboard page loads without errors."""
-        page = playwright_page
-        body_text = page.text_content("body")
-        assert body_text is not None
+        # Click the only matching result. The picker shows the model's
+        # display name (e.g. "Llama 3.2 1B") which differs from the model_id.
+        # We click the first visible button-like row in the result list.
+        page.get_by_text("Llama 3.2 1B", exact=False).first.click()
+        page.wait_for_timeout(1500)
+        page.screenshot(path="/tmp/dashboard_model_selected.png")
+
+        # Type a chat message — sending triggers the dashboard's auto-launch
+        # flow: it picks an optimal placement for the selected model and POSTs
+        # to /instance, then sends the chat once the runner is ready.
+        chat_input = page.locator("textarea").first
+        chat_input.fill("Say hello")
+        chat_input.press("Enter")
+        page.screenshot(path="/tmp/dashboard_chat_sent.png")
+
+        # Wait for the instance to launch and respond. Generous timeout
+        # because this includes model placement + load + generation.
+        page.wait_for_timeout(60000)
+        page.screenshot(path="/tmp/dashboard_after_chat.png")
+
+        # Verify an instance was created and the chat got a response
+        instances = session.client.request_json("GET", "/state").get("instances", {})
+        assert len(instances) > 0, "Expected the dashboard to have created an instance"
+
+        body_text = page.text_content("body") or ""
         assert len(body_text) > 0
 
-    def test_dashboard_shows_node_info(
-        self, playwright_page, single_node_cluster: ClusterInfo
-    ):
-        """Verify the dashboard displays node/cluster information."""
-        page = playwright_page
-        page.screenshot(path="/tmp/dashboard_cluster_info.png")
-
-        body_text = (page.text_content("body") or "").lower()
-
-        has_cluster_content = any(
-            indicator in body_text
-            for indicator in [
-                "gb",
-                "memory",
-                "node",
-                "model",
-                "connected",
-                "online",
-                "select",
-            ]
-        )
-        assert has_cluster_content, (
-            f"Dashboard doesn't appear to show cluster info. "
-            f"Body preview: {body_text[:500]}"
-        )
-
-    def test_dashboard_chat_inference(self, single_node_cluster: ClusterInfo):
-        """Full flow: place model via API, then use dashboard to chat with it.
-
-        Selects the running instance in the dashboard before chatting to prevent
-        the dashboard's auto-launch logic from creating a different (larger) model.
-        """
-        from .helpers import DEFAULT_MODEL
-
-        client = make_client(single_node_cluster)
-
-        # Place model via API first (more reliable than clicking through UI)
-        place_and_wait(client)
-
-        # Mark onboarding as complete on the server so the dashboard skips the
-        # onboarding wizard (which can auto-launch a different model).
-        with contextlib.suppress(Exception):
-            client.request_json("POST", "/onboarding")
-
-        # The model name as it appears in the dashboard instance card
-        model_short_name = DEFAULT_MODEL.split("/")[-1]  # Llama-3.2-1B-Instruct-4bit
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page(viewport={"width": 1280, "height": 800})
-            page.goto(single_node_cluster.api_url, wait_until="networkidle")
-            page.wait_for_timeout(3000)
-
-            page.screenshot(path="/tmp/dashboard_before_chat.png")
-
-            # Click the running instance card to select it as the chat model.
-            # This prevents the chat auto-launch from picking a different model.
-            instance_card = page.locator(
-                f'[role="button"]:has-text("{model_short_name}")'
-            ).first
-            if instance_card.count() > 0 and instance_card.is_visible():
-                instance_card.click()
-                page.wait_for_timeout(1000)
-
-            chat_input = page.locator("textarea").first
-            if chat_input.is_visible():
-                chat_input.fill("Say hello")
-                chat_input.press("Enter")
-
-                # Wait for a response (generous timeout for inference)
-                page.wait_for_timeout(30000)
-                page.screenshot(path="/tmp/dashboard_after_chat.png")
-
-                body_text = page.text_content("body") or ""
-                assert len(body_text) > 0
-            else:
-                page.screenshot(path="/tmp/dashboard_no_textarea.png")
-                pytest.skip(
-                    "Could not find chat textarea — dashboard UI may have changed"
-                )
-
-            browser.close()
+        browser.close()

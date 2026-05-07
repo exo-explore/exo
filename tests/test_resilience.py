@@ -7,79 +7,46 @@ Run with:
 
 from __future__ import annotations
 
-import time
+import pytest
+from exo_tools.harness import cleanup_all_instances, place_instance
 
-from .helpers import (
-    ClusterInfo,
-    chat_and_assert,
-    cleanup_all_instances,
-    eco,
-    make_client,
-    make_client_from_url,
-    place_and_wait,
-    verify_node_count,
-    wait_for_cluster_nodes,
-    wait_for_valid_placement,
-)
+from .framework import DEFAULT_MODEL, InstanceSpec
 
 
-class TestResilience:
-    """Tests for cluster resilience during node disconnects."""
+@pytest.mark.cluster(count=2, thunderbolt="a2a")
+@pytest.mark.instance(DEFAULT_MODEL, sharding="pipeline", comm="ring", min_nodes=2)
+def test_node_recovery(session):
+    """Full disconnect/reconnect cycle.
 
-    def test_disconnect_reconnect(self, cluster: ClusterInfo):
-        """Full disconnect/reconnect cycle:
+    1. Place a 2-node instance, verify inference
+    2. Disconnect one node
+    3. Place a 1-node instance on remaining node, verify inference
+    4. Reconnect the stopped node, wait for the cluster to reform
+    5. Place a 2-node instance again, verify inference
+    """
+    # --- Phase 1: 2-node inference ---
+    resp = session.chat("Hello")
+    assert len(resp) > 0
 
-        1. Place a 2-node instance, verify inference
-        2. Stop one node, wait for instance to error out
-        3. Clean up failed instance, place a 1-node instance on remaining node
-        4. Verify inference works with 1 node
-        5. Restart stopped node, wait for it to rejoin
-        6. Clean up 1-node instance, place a 2-node instance again
-        7. Verify inference works with both nodes
-        """
-        client = make_client(cluster)
+    # --- Phase 2: disconnect one node ---
+    session.disconnect_node(1)
 
-        # --- Phase 1: 2-node inference ---
-        place_and_wait(
-            client, sharding="Pipeline", instance_meta="MlxRing", min_nodes=2
-        )
-        verify_node_count(client, expected=2)
-        chat_and_assert(client)
+    # Clean up the now-broken 2-node instance
+    cleanup_all_instances(session.client)
 
-        # --- Phase 2: disconnect one node ---
-        disconnected_host = cluster.hosts[1]
-        eco.stop([disconnected_host], keep=True)
-        time.sleep(10.0)
+    # --- Phase 3: 1-node inference on the remaining node ---
+    place_instance(session.client, DEFAULT_MODEL, min_nodes=1)
+    session.instance_spec = InstanceSpec(model_id=DEFAULT_MODEL, min_nodes=1)
+    resp = session.chat("Hello")
+    assert len(resp) > 0
 
-        # Switch to the remaining node's API endpoint
-        remaining_host = cluster.hosts[0]
-        remaining_url = cluster.api_endpoints[remaining_host]
-        remaining_client = make_client_from_url(remaining_url)
+    # --- Phase 4: reconnect and restore 2-node cluster ---
+    cleanup_all_instances(session.client)
+    session.reconnect_node(1)
+    session.wait_ready(expected_nodes=2)
 
-        # Clean up the (now broken) 2-node instance
-        cleanup_all_instances(remaining_client)
-
-        # --- Phase 3: 1-node inference on remaining node ---
-        place_and_wait(remaining_client, min_nodes=1)
-        chat_and_assert(remaining_client)
-
-        # --- Phase 4: reconnect and restore 2-node cluster ---
-        cleanup_all_instances(remaining_client)
-        eco.start_hosts([disconnected_host], namespace=cluster.namespace)
-        wait_for_cluster_nodes(remaining_client, expected_count=2, timeout=120.0)
-
-        # --- Phase 5: 2-node inference again ---
-        wait_for_valid_placement(
-            remaining_client,
-            sharding="Pipeline",
-            instance_meta="MlxRing",
-            min_nodes=2,
-        )
-        place_and_wait(
-            remaining_client,
-            sharding="Pipeline",
-            instance_meta="MlxRing",
-            min_nodes=2,
-        )
-        verify_node_count(remaining_client, expected=2)
-        chat_and_assert(remaining_client)
+    # --- Phase 5: 2-node inference again ---
+    place_instance(session.client, DEFAULT_MODEL, min_nodes=2)
+    session.instance_spec = InstanceSpec(model_id=DEFAULT_MODEL, min_nodes=2)
+    resp = session.chat("Hello again")
+    assert len(resp) > 0
