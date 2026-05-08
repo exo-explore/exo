@@ -122,7 +122,6 @@ class AsyncProcess:
             if not self._started.is_set():
                 self._start_error = exc
                 self._started.set()
-            cleanup_stdio_fd()
             raise
         finally:
             try:
