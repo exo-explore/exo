@@ -6,79 +6,16 @@ import os
 import pathlib
 import typing
 __all__ = [
-    "AllQueuesFullError",
-    "FromSwarm",
-    "Keypair",
-    "MessageTooLargeError",
     "NetworkingHandle",
-    "NoPeersSubscribedToTopicError",
     "Pidfile",
     "PidfileError",
+    "PyFromSwarm",
 ]
 
 @typing.final
-class AllQueuesFullError(builtins.Exception):
-    def __new__(cls, *args: typing.Any) -> AllQueuesFullError: ...
-    def __repr__(self) -> builtins.str: ...
-    def __str__(self) -> builtins.str: ...
-
-class FromSwarm:
-    @typing.final
-    class Connection(FromSwarm):
-        __match_args__ = ("peer_id", "connected",)
-        @property
-        def peer_id(self) -> builtins.str: ...
-        @property
-        def connected(self) -> builtins.bool: ...
-        def __new__(cls, peer_id: builtins.str, connected: builtins.bool) -> FromSwarm.Connection: ...
-    
-    @typing.final
-    class Message(FromSwarm):
-        __match_args__ = ("origin", "topic", "data",)
-        @property
-        def origin(self) -> builtins.str: ...
-        @property
-        def topic(self) -> builtins.str: ...
-        @property
-        def data(self) -> bytes: ...
-        def __new__(cls, origin: builtins.str, topic: builtins.str, data: bytes) -> FromSwarm.Message: ...
-    
-    ...
-
-@typing.final
-class Keypair:
-    r"""
-    Identity keypair of a node.
-    """
-    @staticmethod
-    def generate() -> Keypair:
-        r"""
-        Generate a new Ed25519 keypair.
-        """
-    @staticmethod
-    def from_bytes(bytes: bytes) -> Keypair:
-        r"""
-        Construct an Ed25519 keypair from secret key bytes
-        """
-    def to_bytes(self) -> bytes:
-        r"""
-        Get the secret key bytes underlying the keypair
-        """
-    def to_node_id(self) -> builtins.str:
-        r"""
-        Convert the `Keypair` into the corresponding `PeerId` string, which we use as our `NodeId`.
-        """
-
-@typing.final
-class MessageTooLargeError(builtins.Exception):
-    def __new__(cls, *args: typing.Any) -> MessageTooLargeError: ...
-    def __repr__(self) -> builtins.str: ...
-    def __str__(self) -> builtins.str: ...
-
-@typing.final
 class NetworkingHandle:
-    def __new__(cls, identity: Keypair, bootstrap_peers: typing.Sequence[builtins.str], listen_port: builtins.int) -> NetworkingHandle: ...
-    def recv(self) -> typing.Awaitable[FromSwarm]: ...
+    @staticmethod
+    def new(identity: builtins.str, listen_port: builtins.int, discovery_service_port: builtins.int) -> NetworkingHandle: ...
     async def gossipsub_subscribe(self, topic: builtins.str) -> builtins.bool:
         r"""
         Subscribe to a `GossipSub` topic.
@@ -97,12 +34,7 @@ class NetworkingHandle:
         
         If no peers are found that subscribe to this topic, throws `NoPeersSubscribedToTopicError` exception.
         """
-
-@typing.final
-class NoPeersSubscribedToTopicError(builtins.Exception):
-    def __new__(cls, *args: typing.Any) -> NoPeersSubscribedToTopicError: ...
-    def __repr__(self) -> builtins.str: ...
-    def __str__(self) -> builtins.str: ...
+    async def recv(self) -> PyFromSwarm: ...
 
 @typing.final
 class Pidfile:
@@ -129,6 +61,7 @@ class Pidfile:
     def __new__(cls, path: builtins.str | os.PathLike | pathlib.Path, mode: builtins.int) -> Pidfile:
         r"""
         Creates a new PID file and locks it.
+        Writes the current process ID to the PID file.
         
         If the PID file cannot be locked, returns `PidfileError::AlreadyRunning` with
         a PID of the already running process, or `None` if no PID has been written to
@@ -159,4 +92,23 @@ class Pidfile:
 class PidfileError(builtins.Exception):
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
+
+class PyFromSwarm:
+    @typing.final
+    class Connection(PyFromSwarm):
+        __match_args__ = ("connected",)
+        @property
+        def connected(self) -> builtins.bool: ...
+        def __new__(cls, connected: builtins.bool) -> PyFromSwarm.Connection: ...
+    
+    @typing.final
+    class Message(PyFromSwarm):
+        __match_args__ = ("topic", "data",)
+        @property
+        def topic(self) -> builtins.str: ...
+        @property
+        def data(self) -> bytes: ...
+        def __new__(cls, topic: builtins.str, data: bytes) -> PyFromSwarm.Message: ...
+    
+    ...
 

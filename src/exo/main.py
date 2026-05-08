@@ -20,7 +20,7 @@ from exo.download.coordinator import DownloadCoordinator
 from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
-from exo.routing.router import Router, get_node_id_keypair
+from exo.routing.router import Router
 from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG, EXO_PID_FILE
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
@@ -50,13 +50,11 @@ class Node:
 
     @classmethod
     async def create(cls, args: "Args") -> Self:
-        keypair = get_node_id_keypair()
-        node_id = NodeId(keypair.to_node_id())
+        identity = os.urandom(16).hex().lstrip("0")
+        node_id = NodeId(identity)
         session_id = SessionId(master_node_id=node_id, election_clock=0)
         router = Router.create(
-            keypair,
-            bootstrap_peers=args.bootstrap_peers,
-            listen_port=args.libp2p_port,
+            identity, listen_port=args.zenoh_port, discovery_service_port=52413
         )
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
@@ -338,16 +336,18 @@ def main_inner(args: "Args"):
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
 
-    logger.info(f"{'=' * 40}")
-    logger.info(f"Starting EXO | pid={os.getpid()}")
-    logger.info(f"{'=' * 40}")
-    logger.info(f"EXO_LIBP2P_NAMESPACE: {os.getenv('EXO_LIBP2P_NAMESPACE')}")
+    logger.info(f"pid = {os.getpid()}")
+    if os.getenv("EXO_LIBP2P_NAMESPACE"):
+        raise ValueError(
+            "EXO_LIBP2P_NAMESPACE has been removed - use EXO_ZENOH_NAMESPACE instead"
+        )
+    logger.info(f"EXO_ZENOH_NAMESPACE: {os.getenv('EXO_ZENOH_NAMESPACE')}")
 
     if args.offline:
         logger.info("Running in OFFLINE mode — no internet checks, local models only")
 
     if args.bootstrap_peers:
-        logger.info(f"Bootstrap peers: {args.bootstrap_peers}")
+        raise ValueError("Bootstrap peers has been temporarily removed")
 
     if args.no_batch:
         os.environ["EXO_NO_BATCH"] = "1"
@@ -387,7 +387,7 @@ class Args(FrozenModel):
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
     legacy_daemon: bool = False
     bootstrap_peers: list[str] = []
-    libp2p_port: int
+    zenoh_port: int
 
     @classmethod
     def parse(cls) -> Self:
@@ -460,11 +460,11 @@ class Args(FrozenModel):
             help="Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)",
         )
         parser.add_argument(
-            "--libp2p-port",
+            "--zenoh-port",
             type=int,
-            default=0,
-            dest="libp2p_port",
-            help="Fixed TCP port for libp2p to listen on (0 = OS-assigned).",
+            default=52414,
+            dest="zenoh_port",
+            help="Fixed TCP port for zenoh to listen.",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
         fast_synch_group.add_argument(
