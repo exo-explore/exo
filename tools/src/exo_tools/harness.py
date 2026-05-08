@@ -1,127 +1,37 @@
 # type: ignore
+"""Instance lifecycle helpers for exo clusters.
+
+Provides utilities for placing instances, waiting for readiness,
+managing downloads, filtering placements, and common CLI arguments.
+"""
+
 from __future__ import annotations
 
 import argparse
-import http.client
-import json
+import contextlib
 import os
 import time
-from collections.abc import Iterator
+from enum import Enum
 from typing import Any
-from urllib.parse import urlencode
 
 from loguru import logger
+
+from .client import ExoClient, ExoHttpError
+
+
+class Sharding(str, Enum):
+    PIPELINE = "Pipeline"  # layers split across nodes
+    TENSOR = "Tensor"  # layers split within (across nodes)
+
+
+class Comm(str, Enum):
+    RING = "MlxRing"  # ring all-reduce over network
+    JACCL = "MlxJaccl"  # RDMA over Thunderbolt
+
 
 _SETTLE_INITIAL_BACKOFF_S = 1.0
 _SETTLE_MAX_BACKOFF_S = 60.0
 _SETTLE_BACKOFF_MULTIPLIER = 2.0
-
-
-class ExoHttpError(RuntimeError):
-    def __init__(self, status: int, reason: str, body_preview: str):
-        super().__init__(f"HTTP {status} {reason}: {body_preview}")
-        self.status = status
-
-
-class ExoClient:
-    def __init__(self, host: str, port: int, timeout_s: float = 7200.0):
-        self.host = host
-        self.port = port
-        self.timeout_s = timeout_s
-
-    def request_json(
-        self,
-        method: str,
-        path: str,
-        params: dict[str, Any] | None = None,
-        body: dict[str, Any] | None = None,
-        headers: dict[str, str] | None = None,
-    ) -> Any:
-        if not path.startswith("/"):
-            path = "/" + path
-        if params:
-            path = path + "?" + urlencode(params)
-
-        conn = http.client.HTTPConnection(self.host, self.port, timeout=self.timeout_s)
-        try:
-            payload: bytes | None = None
-            hdrs: dict[str, str] = {"Accept": "application/json"}
-
-            if body is not None:
-                payload = json.dumps(body).encode("utf-8")
-                hdrs["Content-Type"] = "application/json"
-            if headers:
-                hdrs.update(headers)
-
-            conn.request(method.upper(), path, body=payload, headers=hdrs)
-            resp = conn.getresponse()
-            raw = resp.read()
-            text = raw.decode("utf-8", errors="replace") if raw else ""
-
-            if resp.status >= 400:
-                raise ExoHttpError(resp.status, resp.reason, text[:300])
-
-            if not text:
-                return None
-            return json.loads(text)
-        finally:
-            conn.close()
-
-    def post_bench_chat_completions(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self.request_json("POST", "/bench/chat/completions", body=payload)
-
-    def stream_bench_chat_completions(self, payload: dict[str, Any]) -> Iterator[str]:
-        """POST /bench/chat/completions with stream=True, yielding raw SSE lines."""
-        payload = {**payload, "stream": True}
-        data = json.dumps(payload).encode("utf-8")
-        conn = http.client.HTTPConnection(self.host, self.port, timeout=self.timeout_s)
-        try:
-            conn.request(
-                "POST",
-                "/bench/chat/completions",
-                body=data,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream",
-                },
-            )
-            resp = conn.getresponse()
-            if resp.status >= 400:
-                raw = resp.read().decode("utf-8", errors="replace")
-                raise ExoHttpError(resp.status, resp.reason, raw[:300])
-            for line in resp:
-                yield line.decode("utf-8", errors="replace")
-        finally:
-            conn.close()
-
-    def get_state_path(self, path: str) -> Any:
-        try:
-            return self.request_json("GET", f"/state/{path}")
-        except ExoHttpError as e:
-            if e.status == 404:
-                return None
-            raise
-
-    def get_instance(self, instance_id: str) -> dict[str, Any] | None:
-        return self.get_state_path(f"instances/{instance_id}")
-
-    def get_runner(self, runner_id: str) -> dict[str, Any] | None:
-        return self.get_state_path(f"runners/{runner_id}")
-
-    def get_node_downloads(self, node_id: str) -> list[dict[str, Any]] | None:
-        return self.get_state_path(f"downloads/{node_id}")
-
-    def get_node_disk(self, node_id: str) -> dict[str, Any] | None:
-        return self.get_state_path(f"nodeDisk/{node_id}")
-
-    def get_node_system(self, node_id: str) -> dict[str, Any] | None:
-        return self.get_state_path(f"nodeSystem/{node_id}")
-
-    def get_node_identities(self) -> dict[str, Any] | None:
-        return self.get_state_path("nodeIdentities")
-
-    def get_topology(self) -> dict[str, Any] | None:
-        return self.get_state_path("topology")
 
 
 def unwrap_instance(instance: dict[str, Any]) -> dict[str, Any]:
@@ -555,7 +465,6 @@ def find_existing_instance(client: ExoClient, model_id: str) -> str | None:
     except Exception:
         return None
     for inst_id, inst in state.get("instances", {}).items():
-        # Instance structure is nested: {"MlxJacclInstance": {"shardAssignments": {"modelId": ...}}}
         for _inst_type, inner in inst.items():
             if not isinstance(inner, dict):
                 continue
@@ -623,3 +532,112 @@ def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Reuse an existing running instance for this model instead of creating a new one.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Cluster/instance orchestration helpers (used by tests, bench, eval)
+# ---------------------------------------------------------------------------
+
+
+def get_instance_ids(client: ExoClient) -> set[str]:
+    """Return the set of current instance IDs from cluster state."""
+    state = client.request_json("GET", "/state") or {}
+    result: set[str] = set()
+    for instance in state.get("instances", {}).values():
+        with contextlib.suppress(Exception):
+            result.add(instance_id_from_instance(instance))
+    return result
+
+
+def wait_for_cluster_ready(
+    client: ExoClient, expected_nodes: int = 1, timeout: float = 120.0
+) -> None:
+    """Wait until the cluster has all expected nodes visible and reporting memory.
+
+    Placement requires nodeMemory for all nodes in a cycle. This polls until
+    both nodeIdentities and nodeMemory have at least `expected_nodes` entries.
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            state = client.request_json("GET", "/state") or {}
+            if (
+                len(state.get("nodeIdentities", {})) >= expected_nodes
+                and len(state.get("nodeMemory", {})) >= expected_nodes
+            ):
+                return
+        except Exception:
+            pass
+        time.sleep(1.0)
+    raise TimeoutError(f"Cluster not ready: expected {expected_nodes} nodes")
+
+
+def place_instance(
+    client: ExoClient,
+    model_id: str,
+    *,
+    sharding: Sharding = Sharding.PIPELINE,
+    comm: Comm = Comm.RING,
+    min_nodes: int = 1,
+    timeout: float = 600.0,
+    placement_retries: int = 10,
+    placement_retry_delay: float = 10.0,
+) -> str:
+    """Place an instance and wait for it to be ready. Returns the instance_id.
+
+    The /place_instance API returns a command_id, but instances are stored
+    under a separately-generated instance_id. This polls cluster state for the
+    new instance, retrying placement if the cluster is still settling.
+    """
+    wait_for_cluster_ready(client, expected_nodes=min_nodes)
+
+    body = {
+        "model_id": model_id,
+        "sharding": sharding.value,
+        "instance_meta": comm.value,
+        "min_nodes": min_nodes,
+    }
+
+    instance_id: str | None = None
+    for attempt in range(placement_retries):
+        before_ids = get_instance_ids(client)
+        client.request_json("POST", "/place_instance", body=body)
+
+        poll_deadline = time.time() + 30.0
+        while time.time() < poll_deadline:
+            new_ids = get_instance_ids(client) - before_ids
+            if new_ids:
+                instance_id = next(iter(new_ids))
+                break
+            time.sleep(1.0)
+
+        if instance_id is not None:
+            break
+
+        if attempt < placement_retries - 1:
+            time.sleep(placement_retry_delay)
+
+    if instance_id is None:
+        raise TimeoutError(
+            f"Placement failed after {placement_retries} attempts "
+            f"({sharding.value}/{comm.value} for {model_id})"
+        )
+
+    wait_for_instance_ready(client, instance_id, timeout=timeout)
+    return instance_id
+
+
+def cleanup_all_instances(client: ExoClient) -> None:
+    """Remove all running instances from the cluster."""
+    state = client.request_json("GET", "/state") or {}
+    for instance in state.get("instances", {}).values():
+        with contextlib.suppress(Exception):
+            iid = instance_id_from_instance(instance)
+            client.request_json("DELETE", f"/instance/{iid}")
+            wait_for_instance_gone(client, iid, timeout=30.0)
+
+
+def is_model_downloaded(client: ExoClient, model_id: str) -> bool:
+    response = client.request_json("GET", "/models", params={"status": "downloaded"})
+    data = (response or {}).get("data", [])
+    return all(model.get("id") == model_id for model in data)
