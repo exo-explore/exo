@@ -12,6 +12,7 @@ from exo.download.download_utils import RepoDownloadProgress
 from exo.download.impl_shard_downloader import SingletonShardDownloader
 from exo.download.shard_downloader import ShardDownloader
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
+from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
     CancelDownload,
     ForwarderDownloadCommand,
@@ -37,6 +38,7 @@ def _make_shard(model_id: ModelId = MODEL_ID) -> ShardMetadata:
             hidden_size=1024,
             supports_tensor=False,
             tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
         ),
         device_rank=0,
         world_size=1,

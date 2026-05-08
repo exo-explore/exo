@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 import pytest
 
 from exo.master.placement import (
@@ -12,6 +14,7 @@ from exo.master.tests.conftest import (
 )
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
+from exo.shared.types.backends import Backend
 from exo.shared.types.commands import PlaceInstance
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
@@ -71,7 +74,14 @@ def model_card() -> ModelCard:
         hidden_size=30,
         supports_tensor=True,
         tasks=[ModelTask.TextGeneration],
+        backends=[Backend.MlxMetal],
     )
+
+
+def _metal_only(
+    node_memory: Mapping[NodeId, object],
+) -> dict[NodeId, list[Backend]]:
+    return {node_id: [Backend.MlxMetal] for node_id in node_memory}
 
 
 def place_instance_command(model_card: ModelCard) -> PlaceInstance:
@@ -155,7 +165,9 @@ def test_get_instance_placements_create_instance(
     topology.add_connection(conn_b_a)
 
     # act
-    placements = place_instance(cic, topology, {}, node_memory, node_network)
+    placements = place_instance(
+        cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
+    )
 
     # assert
     assert len(placements) == 1
@@ -195,9 +207,12 @@ def test_get_instance_placements_one_node_exact_fit() -> None:
             hidden_size=1000,
             supports_tensor=True,
             tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
         ),
     )
-    placements = place_instance(cic, topology, {}, node_memory, node_network)
+    placements = place_instance(
+        cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
+    )
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -222,9 +237,12 @@ def test_get_instance_placements_one_node_fits_with_extra_memory() -> None:
             hidden_size=1000,
             supports_tensor=True,
             tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
         ),
     )
-    placements = place_instance(cic, topology, {}, node_memory, node_network)
+    placements = place_instance(
+        cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
+    )
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -249,11 +267,14 @@ def test_get_instance_placements_one_node_not_fit() -> None:
             hidden_size=1000,
             supports_tensor=True,
             tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
         ),
     )
 
     with pytest.raises(ValueError, match="No cycles found with sufficient memory"):
-        place_instance(cic, topology, {}, node_memory, node_network)
+        place_instance(
+            cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
+        )
 
 
 def test_get_transition_events_no_change(instance: Instance):
@@ -352,7 +373,9 @@ def test_placement_selects_leaf_nodes(
     cic = place_instance_command(model_card=model_card)
 
     # act
-    placements = place_instance(cic, topology, {}, node_memory, node_network)
+    placements = place_instance(
+        cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
+    )
 
     # assert
     assert len(placements) == 1
@@ -456,6 +479,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
         {},
         node_memory,
         node_network,
+        _metal_only(node_memory),
         node_rdma_ctl=node_rdma_ctl,
     )
 
@@ -583,6 +607,7 @@ def test_place_mlx_jaccl_rejects_when_a_node_has_rdma_ctl_disabled(
             {},
             node_memory,
             node_network,
+            _metal_only(node_memory),
             node_rdma_ctl=node_rdma_ctl,
         )
 
@@ -620,6 +645,7 @@ def test_place_mlx_jaccl_rejects_when_node_rdma_ctl_missing(model_card: ModelCar
             {},
             node_memory,
             node_network,
+            _metal_only(node_memory),
             node_rdma_ctl=node_rdma_ctl,
         )
 
@@ -788,7 +814,13 @@ def test_placement_prefers_cycle_with_downloaded_model(
 
     cic = place_instance_command(model_card)
     placements = place_instance(
-        cic, topology, {}, node_memory, node_network, download_status=download_status
+        cic,
+        topology,
+        {},
+        node_memory,
+        node_network,
+        _metal_only(node_memory),
+        download_status=download_status,
     )
 
     assert len(placements) == 1
@@ -860,7 +892,13 @@ def test_placement_prefers_cycle_with_higher_download_progress(
 
     cic = place_instance_command(model_card)
     placements = place_instance(
-        cic, topology, {}, node_memory, node_network, download_status=download_status
+        cic,
+        topology,
+        {},
+        node_memory,
+        node_network,
+        _metal_only(node_memory),
+        download_status=download_status,
     )
 
     assert len(placements) == 1
@@ -908,7 +946,13 @@ def test_placement_does_not_prefer_cycle_with_failed_download(
 
     cic = place_instance_command(model_card)
     placements = place_instance(
-        cic, topology, {}, node_memory, node_network, download_status=download_status
+        cic,
+        topology,
+        {},
+        node_memory,
+        node_network,
+        _metal_only(node_memory),
+        download_status=download_status,
     )
 
     assert len(placements) == 1
@@ -916,3 +960,99 @@ def test_placement_does_not_prefer_cycle_with_failed_download(
     assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
     # node_a should win on RAM tiebreaker since failed download scores 0.0
     assert assigned_nodes == {node_a}
+
+
+def test_placement_rejects_when_model_backends_disjoint_from_engine(
+    model_card: ModelCard,
+):
+    topology = Topology()
+    node_id = NodeId()
+    topology.add_node(node_id)
+    node_memory = {node_id: create_node_memory(1000 * 1024)}
+    node_network = {node_id: create_node_network()}
+
+    cic = place_instance_command(
+        model_card.model_copy(update={"backends": [Backend.Vllm]})
+    )
+
+    with pytest.raises(ValueError, match="cannot satisfy engine MlxRing"):
+        place_instance(
+            cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
+        )
+
+
+def test_placement_rejects_when_only_some_nodes_support_backend(
+    model_card: ModelCard,
+):
+    topology = Topology()
+    node_a = NodeId()
+    node_b = NodeId()
+    node_c = NodeId()
+    for n in (node_a, node_b, node_c):
+        topology.add_node(n)
+
+    eth = create_socket_connection(1)
+    for src, dst in [
+        (node_a, node_b),
+        (node_b, node_c),
+        (node_c, node_a),
+        (node_a, node_c),
+        (node_c, node_b),
+        (node_b, node_a),
+    ]:
+        topology.add_connection(Connection(source=src, sink=dst, edge=eth))
+
+    node_memory = {n: create_node_memory(500 * 1024) for n in (node_a, node_b, node_c)}
+    node_network = {n: create_node_network() for n in (node_a, node_b, node_c)}
+    node_backends = {
+        node_a: [Backend.MlxMetal],
+        node_b: [Backend.MlxMetal],
+        node_c: [Backend.MlxCuda],  # the lone CUDA-only node breaks the cycle
+    }
+
+    cic = place_instance_command(
+        model_card.model_copy(
+            update={
+                "backends": [Backend.MlxMetal],
+                "n_layers": 12,
+                "storage_size": Memory.from_kb(1500),
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="No cycle where every node supports"):
+        place_instance(cic, topology, {}, node_memory, node_network, node_backends)
+
+
+def test_mlx_jaccl_rejects_cuda_only_cycle(model_card: ModelCard):
+    topology, node_a, node_b, node_c, node_network = _build_three_node_rdma_topology()
+    node_memory = {n: create_node_memory(500) for n in (node_a, node_b, node_c)}
+    node_rdma_ctl = {
+        n: NodeRdmaCtlStatus(enabled=True) for n in (node_a, node_b, node_c)
+    }
+    node_backends = {n: [Backend.MlxCuda] for n in (node_a, node_b, node_c)}
+
+    cic = PlaceInstance(
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxJaccl,
+        command_id=CommandId(),
+        model_card=model_card.model_copy(
+            update={
+                "backends": [Backend.MlxMetal, Backend.MlxCuda],
+                "n_layers": 12,
+                "storage_size": Memory.from_bytes(1500),
+            }
+        ),
+        min_nodes=3,
+    )
+
+    with pytest.raises(ValueError, match="No cycle where every node supports"):
+        place_instance(
+            cic,
+            topology,
+            {},
+            node_memory,
+            node_network,
+            node_backends,
+            node_rdma_ctl=node_rdma_ctl,
+        )

@@ -26,6 +26,7 @@ from exo.shared.constants import (
     EXO_MODELS_DIRS,
     RESOURCES_DIR,
 )
+from exo.shared.types.backends import Backend
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.text_generation import ReasoningDialect
@@ -164,6 +165,7 @@ class ModelCard(FrozenModel):
     quantization: str = ""
     base_model: str = ""
     capabilities: list[str] = []
+    backends: list[Backend]
     reasoning_dialect: ReasoningDialect = "none"
     context_length: int = 0
     uses_cfg: bool = False
@@ -247,6 +249,9 @@ class ModelCard(FrozenModel):
             trust_remote_code=False,
             is_custom=True,
             vision=config_data.vision,
+            backends=list(
+                Backend
+            ),  # all backends — we don't know what an arbitrary HF model supports; let placement gate decide
         )
 
 

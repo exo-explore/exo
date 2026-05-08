@@ -57,6 +57,7 @@ from exo.utils.info_gatherer.info_gatherer import (
     MacThunderboltIdentifiers,
     MemoryUsage,
     MiscData,
+    NodeBackends,
     NodeConfig,
     NodeDiskUsage,
     NodeNetworkInterfaces,
@@ -460,6 +461,11 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             # MacThunderboltConnections poll once both endpoints are enabled again.)
             if not info.enabled:
                 topology.remove_all_rdma_connections_touching(event.node_id)
+        case NodeBackends():
+            update["node_backends"] = {
+                **state.node_backends,
+                event.node_id: info.backends,
+            }
 
     return state.model_copy(update=update)
 
