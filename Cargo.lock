@@ -810,6 +810,7 @@ dependencies = [
  "log",
  "networking",
  "parking_lot",
+ "pidfile-rs",
  "pin-project",
  "pyo3",
  "pyo3-async-runtimes",
@@ -881,6 +882,16 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+]
+
+[[package]]
+name = "flopen"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbfb8b5fbd1f27929f216650081a07b6ceb0741f0542c8c43ff7ef8e93a35a5d"
+dependencies = [
+ "libc",
+ "nix 0.31.2",
 ]
 
 [[package]]
@@ -2290,6 +2301,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e57fef6bc5981e38c2ce2d63bfa546861309f875b8a75f092d1d54ae2d64f266"
 dependencies = [
  "siphasher",
+]
+
+[[package]]
+name = "pidfile-rs"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1a8aa9a30b1b65ef48b333931b80f2324a14e00208eb2b8f5788f1180791bcc"
+dependencies = [
+ "flopen",
+ "libc",
+ "log",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

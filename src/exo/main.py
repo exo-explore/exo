@@ -9,7 +9,7 @@ from typing import Self
 from uuid import uuid4
 
 import anyio
-from exo_net import PySession
+from exo_net import Pidfile, PidfileError, PySession
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -20,12 +20,11 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router
-from exo.shared.constants import EXO_LOG
+from exo.shared.constants import EXO_LOG, EXO_PID_FILE
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
-from exo.utils.pidfile import PidfileLockError, acquire_exo_pidfile
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
@@ -270,8 +269,9 @@ class Node:
 def main():
     # Exit early if no PID file (not compatible with double-for daemonization yet)
     try:
-        pidfile = acquire_exo_pidfile()
-    except PidfileLockError as exception:
+        pidfile = Pidfile(EXO_PID_FILE, 0o0600)
+        pidfile.write()
+    except (PidfileError, OSError) as exception:
         print(exception, file=sys.stderr)
         raise SystemExit(1) from exception
 

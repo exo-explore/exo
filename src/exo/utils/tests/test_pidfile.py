@@ -8,9 +8,8 @@ import textwrap
 from pathlib import Path
 from typing import Final
 
-import pytest
-
 import exo.utils.pidfile as pidfile
+import pytest
 from exo.utils.pidfile import acquire_exo_pidfile
 
 _CHILD_ACQUIRE_PIDFILE_SCRIPT: Final = textwrap.dedent(

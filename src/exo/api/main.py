@@ -309,7 +309,11 @@ class Transport:
                         and chunk.finish_reason is not None
                     ):
                         break
-        except (anyio.get_cancelled_exc_class(), anyio.BrokenResourceError, anyio.ClosedResourceError):
+        except (
+            anyio.get_cancelled_exc_class(),
+            anyio.BrokenResourceError,
+            anyio.ClosedResourceError,
+        ):
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
                     TaskCancelled(cancelled_command_id=command_id)

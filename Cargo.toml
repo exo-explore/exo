@@ -36,6 +36,7 @@ pin-project = "1.1.10"
 serde_json = "1.0.149"
 rand = "0.10.1"
 parking_lot = "0.12.5"
+pidfile-rs = "0.3.1"
 
 # Tracing/logging
 log = "0.4"

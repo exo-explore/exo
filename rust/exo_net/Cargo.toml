@@ -49,3 +49,4 @@ zenoh.workspace = true
 rand.workspace = true
 serde_json.workspace = true
 parking_lot.workspace = true
+pidfile-rs.workspace = true

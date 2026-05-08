@@ -12,8 +12,8 @@ mod point_to_point;
 mod session;
 mod state;
 
-use crate::pidfile::pidfile_submodule;
 use crate::networking::networking_submodule;
+use crate::pidfile::pidfile_submodule;
 use crate::point_to_point::{NetReceiver, NetSender};
 use crate::session::PySession;
 use crate::state::StateProxy;
