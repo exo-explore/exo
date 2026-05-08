@@ -2,6 +2,8 @@
 # ruff: noqa: E501, F401
 
 import builtins
+import os
+import pathlib
 import typing
 
 @typing.final
@@ -66,6 +68,48 @@ class NetworkingHandle:
 @typing.final
 class NoPeersSubscribedToTopicError(builtins.Exception):
     def __new__(cls, *args: typing.Any) -> NoPeersSubscribedToTopicError: ...
+    def __repr__(self) -> builtins.str: ...
+    def __str__(self) -> builtins.str: ...
+
+@typing.final
+class Pidfile:
+    r"""
+    A PID file protected with a lock.
+    
+    An instance of `Pidfile` can be used to manage a PID file: create it,
+    lock it, detect already running daemons. It is backed by [`pidfile`][]
+    functions of `libbsd`/`libutil` which use `flopen` to lock the PID
+    file.
+    
+    When a PID file is created, the process ID of the current process is
+    *not* written there, making it possible to lock the PID file before
+    forking and only write the ID of the forked process when it is ready.
+    
+    The PID file is deleted automatically when the `Pidfile` comes out of
+    the scope. To close the PID file without deleting it, for example, in
+    the parent process of a forked daemon, call `close()`.
+    
+    [`exit`]: https://doc.rust-lang.org/std/process/fn.exit.html
+    [`pidfile`]: https://linux.die.net/man/3/pidfile
+    [`daemon`(3)]: https://linux.die.net/man/3/daemon
+    """
+    def __new__(cls, path: builtins.str | os.PathLike | pathlib.Path, mode: builtins.int) -> Pidfile:
+        r"""
+        Creates a new PID file and locks it.
+        
+        If the PID file cannot be locked, returns `PidfileError::AlreadyRunning` with
+        a PID of the already running process, or `None` if no PID has been written to
+        the PID file yet.
+        """
+    def write(self) -> None:
+        r"""
+        Writes the current process ID to the PID file.
+        
+        The file is truncated before writing.
+        """
+
+@typing.final
+class PidfileError(builtins.Exception):
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
 

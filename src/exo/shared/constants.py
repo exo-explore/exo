@@ -69,6 +69,7 @@ DASHBOARD_DIR = (
 EXO_LOG_DIR = EXO_CACHE_HOME / "exo_log"
 EXO_LOG = EXO_LOG_DIR / "exo.log"
 EXO_TEST_LOG = EXO_CACHE_HOME / "exo_test.log"
+EXO_PID_FILE = EXO_CACHE_HOME / "exo.pid"
 
 # Identity (config)
 EXO_NODE_ID_KEYPAIR = EXO_CONFIG_HOME / "node_id.keypair"

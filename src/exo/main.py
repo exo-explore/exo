@@ -264,12 +264,20 @@ class Node:
 
 
 def main():
+    # Exit early if no PID file (not compatible with double-for daemonization yet)
+    try:
+        pidfile = acquire_exo_pidfile()
+    except PidfileLockError as exception:
+        print(exception, file=sys.stderr)
+        raise SystemExit(1) from exception
+
     args = Args.parse()
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
     mp.set_start_method("spawn", force=True)
+
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
     logger.info(f"{'=' * 40}")
@@ -306,6 +314,7 @@ def main():
     finally:
         logger.info("EXO Shutdown complete")
         logger_cleanup()
+        del pidfile
 
 
 class Args(FrozenModel):
