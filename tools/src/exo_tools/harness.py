@@ -637,15 +637,7 @@ def cleanup_all_instances(client: ExoClient) -> None:
             wait_for_instance_gone(client, iid, timeout=30.0)
 
 
-def is_model_downloaded(client: ExoClient, node_id: str, model_id: str) -> bool:
-    """Return True if `model_id` has a completed download on `node_id`."""
-    state = client.request_json("GET", "/state") or {}
-    entries = state.get("downloads", {}).get(node_id) or []
-    return any(
-        "DownloadCompleted" in entry
-        and unwrap_instance(entry["DownloadCompleted"]["shardMetadata"])["modelCard"][
-            "modelId"
-        ]
-        == model_id
-        for entry in entries
-    )
+def is_model_downloaded(client: ExoClient, model_id: str) -> bool:
+    response = client.request_json("GET", "/models", params={"status": "downloaded"})
+    data = (response or {}).get("data", [])
+    return all(model.get("id") == model_id for model in data)

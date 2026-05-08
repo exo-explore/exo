@@ -63,11 +63,11 @@ def test_download_from_scratch(session):
     # Poll until the model is gone (it may already be gone)
     deadline = time.time() + 60.0
     while time.time() < deadline:
-        if not is_model_downloaded(session.client, node_id, DEFAULT_MODEL):
+        if not is_model_downloaded(session.client, DEFAULT_MODEL):
             break
         time.sleep(2.0)
     else:
-        raise AssertionError(f"Expected {DEFAULT_MODEL} to be deleted from {node_id}")
+        raise AssertionError(f"Expected {DEFAULT_MODEL} to be deleted from cluster")
 
     place_instance(session.client, DEFAULT_MODEL, timeout=900.0)
     session.instance_spec = InstanceSpec(model_id=DEFAULT_MODEL)
