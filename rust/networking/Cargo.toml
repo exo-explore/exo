@@ -16,6 +16,7 @@ zerompk = { version = "0.4.2", features = ["derive"] }
 rand = "0.10.1"
 tracing = "0.1.44"
 log.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
 
 [lints]
 workspace = true
