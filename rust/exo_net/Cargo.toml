@@ -36,7 +36,7 @@ pyo3-async-runtimes = { workspace = true, features = [
 pyo3-log.workspace = true
 
 # async runtime
-tokio = { workspace = true, features = ["full", "tracing"] }
+tokio = { workspace = true, features = ["full"] }
 futures-lite.workspace = true
 pin-project.workspace = true
 
@@ -49,4 +49,3 @@ zenoh.workspace = true
 rand.workspace = true
 serde_json.workspace = true
 parking_lot.workspace = true
-tracing.workspace = true

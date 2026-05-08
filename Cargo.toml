@@ -21,10 +21,21 @@ opt-level = 3
 ## Crate members as common dependencies
 networking = { path = "rust/networking" }
 
-# Macro dependecies
+# pyo3
+pyo3 = "0.27.2"
+pyo3-async-runtimes = "0.27.0"
+pyo3-log = "0.13.2"
+pyo3-stub-gen = "0.22.2"
+
+# util
 extend = "1.2"
 tokio = "1.46"
 futures-lite = "2.6.1"
+async-stream = "0.3.6"
+pin-project = "1.1.10"
+serde_json = "1.0.149"
+rand = "0.10.1"
+parking_lot = "0.12.5"
 
 # Tracing/logging
 log = "0.4"
@@ -32,19 +43,10 @@ env_logger = "0.11.10"
 
 # networking
 zenoh = "=1.9.0"
-async-stream = "0.3.6"
-netwatcher = "0.6.0"
-parking_lot = "0.12.5"
-pin-project = "1.1.10"
-pyo3 = "0.27.2"
-pyo3-async-runtimes = "0.27.0"
-pyo3-log = "0.13.2"
-pyo3-stub-gen = "0.22.2"
-rand = "0.10.1"
-serde_json = "1.0.149"
-tracing = "0.1.44"
 zenoh-plugin-storage-manager = { version = "=1.9.0", default-features = false }
 zenoh-plugin-trait = "=1.9.0"
+netwatcher = "0.6.0"
+bytemuck = "1.25.0"
 
 [workspace.lints.rust]
 static_mut_refs = "warn"      # Or use "warn" instead of deny
