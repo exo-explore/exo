@@ -3,6 +3,7 @@ import multiprocessing as mp
 import os
 import resource
 import signal
+import sys
 from dataclasses import dataclass, field
 from typing import Self
 
@@ -22,6 +23,7 @@ from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
+from exo.utils.pidfile import PidfileLockError, acquire_exo_pidfile
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
