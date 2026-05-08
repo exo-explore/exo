@@ -39,13 +39,13 @@ _KILL_GRACE_SECONDS = 5.0
 @final
 class AsyncProcess:
     def __init__(
-        self,
-        target: Callable[..., object] | None = None,
-        name: str | None = None,
-        args: Iterable[object] = (),
-        kwargs: Mapping[str, object] | None = None,
-        *,
-        daemon: bool | None = None,
+            self,
+            target: Callable[..., object] | None = None,
+            name: str | None = None,
+            args: Iterable[object] = (),
+            kwargs: Mapping[str, object] | None = None,
+            *,
+            daemon: bool | None = None,
     ) -> None:
         # setup state
         self._target = target
@@ -241,16 +241,16 @@ class AsyncProcess:
                 process.kill()
                 with move_on_after(_KILL_GRACE_SECONDS):
                     await self.wait()
-                logger.warning(f"That took {attempt} attempts :(")
+            logger.warning(f"That took {attempt} attempts :(")
 
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
 def _run_with_captured_stdio(
-    stdout: DupFd,
-    stderr: DupFd,
-    target: Callable[..., object] | None,
-    *target_args: object,
-    **target_kwargs: object,
+        stdout: DupFd,
+        stderr: DupFd,
+        target: Callable[..., object] | None,
+        *target_args: object,
+        **target_kwargs: object,
 ) -> None:
     stdout_fd = stdout.detach()
     stderr_fd = stderr.detach()
