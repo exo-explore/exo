@@ -6,7 +6,6 @@ import multiprocessing as mp
 import os
 import sys
 from collections.abc import Callable, Iterable, Mapping
-from itertools import count
 from multiprocessing.process import BaseProcess
 from multiprocessing.resource_sharer import DupFd
 from typing import final
@@ -235,12 +234,14 @@ class AsyncProcess:
                     return
 
             logger.critical("Child process didn't respond to SIGTERM, killing")
-            for attempt in count(1):
-                if self.exitcode is not None or not process.is_alive():
-                    break
+            j = 0
+            while True:
                 process.kill()
                 with move_on_after(_KILL_GRACE_SECONDS):
                     await self.wait()
+                j += 1
+                if self.exitcode is not None or not process.is_alive():
+                    break
             logger.warning(f"That took {attempt} attempts :(")
 
 
