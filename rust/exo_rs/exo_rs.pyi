@@ -6,78 +6,35 @@ import os
 import pathlib
 import typing
 __all__ = [
-    "AllQueuesFullError",
     "FromSwarm",
-    "Keypair",
-    "MessageTooLargeError",
     "NetworkingHandle",
-    "NoPeersSubscribedToTopicError",
     "Pidfile",
     "PidfileError",
 ]
 
-@typing.final
-class AllQueuesFullError(builtins.Exception):
-    def __new__(cls, *args: typing.Any) -> AllQueuesFullError: ...
-    def __repr__(self) -> builtins.str: ...
-    def __str__(self) -> builtins.str: ...
-
 class FromSwarm:
     @typing.final
     class Connection(FromSwarm):
-        __match_args__ = ("peer_id", "connected",)
-        @property
-        def peer_id(self) -> builtins.str: ...
+        __match_args__ = ("connected",)
         @property
         def connected(self) -> builtins.bool: ...
-        def __new__(cls, peer_id: builtins.str, connected: builtins.bool) -> FromSwarm.Connection: ...
+        def __new__(cls, connected: builtins.bool) -> FromSwarm.Connection: ...
     
     @typing.final
     class Message(FromSwarm):
-        __match_args__ = ("origin", "topic", "data",)
-        @property
-        def origin(self) -> builtins.str: ...
+        __match_args__ = ("topic", "data",)
         @property
         def topic(self) -> builtins.str: ...
         @property
         def data(self) -> bytes: ...
-        def __new__(cls, origin: builtins.str, topic: builtins.str, data: bytes) -> FromSwarm.Message: ...
+        def __new__(cls, topic: builtins.str, data: bytes) -> FromSwarm.Message: ...
     
     ...
 
 @typing.final
-class Keypair:
-    r"""
-    Identity keypair of a node.
-    """
-    @staticmethod
-    def generate() -> Keypair:
-        r"""
-        Generate a new Ed25519 keypair.
-        """
-    @staticmethod
-    def from_bytes(bytes: bytes) -> Keypair:
-        r"""
-        Construct an Ed25519 keypair from secret key bytes
-        """
-    def to_bytes(self) -> bytes:
-        r"""
-        Get the secret key bytes underlying the keypair
-        """
-    def to_node_id(self) -> builtins.str:
-        r"""
-        Convert the `Keypair` into the corresponding `PeerId` string, which we use as our `NodeId`.
-        """
-
-@typing.final
-class MessageTooLargeError(builtins.Exception):
-    def __new__(cls, *args: typing.Any) -> MessageTooLargeError: ...
-    def __repr__(self) -> builtins.str: ...
-    def __str__(self) -> builtins.str: ...
-
-@typing.final
 class NetworkingHandle:
-    def __new__(cls, identity: Keypair, bootstrap_peers: typing.Sequence[builtins.str], listen_port: builtins.int) -> NetworkingHandle: ...
+    @staticmethod
+    def new(identity: builtins.str, namespace: builtins.str, listen_port: builtins.int, discovery_service_port: builtins.int) -> NetworkingHandle: ...
     def recv(self) -> typing.Awaitable[FromSwarm]: ...
     async def gossipsub_subscribe(self, topic: builtins.str) -> builtins.bool:
         r"""
@@ -97,12 +54,6 @@ class NetworkingHandle:
         
         If no peers are found that subscribe to this topic, throws `NoPeersSubscribedToTopicError` exception.
         """
-
-@typing.final
-class NoPeersSubscribedToTopicError(builtins.Exception):
-    def __new__(cls, *args: typing.Any) -> NoPeersSubscribedToTopicError: ...
-    def __repr__(self) -> builtins.str: ...
-    def __str__(self) -> builtins.str: ...
 
 @typing.final
 class Pidfile:
