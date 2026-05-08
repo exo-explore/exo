@@ -7,6 +7,7 @@ family = "flux"
 quantization = "4bit"
 base_model = "FLUX.1 Schnell"
 capabilities = ["image_gen"]
+backends = ["MlxMetal"]
 
 [storage_size]
 in_bytes = 15470210592
