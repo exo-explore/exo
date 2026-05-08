@@ -110,7 +110,7 @@
               nixpkgs-fmt.enable = true;
               ruff-format = {
                 enable = true;
-                excludes = [ "rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi" ];
+                excludes = [ "rust/exo_net/exo_net.pyi" ];
               };
               rustfmt = {
                 enable = true;

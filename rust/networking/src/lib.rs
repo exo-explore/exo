@@ -49,7 +49,7 @@ pub async fn open(cfg: zenoh::Config, listen_port: u16) -> Result<Session> {
         .plugins_manager(plugins)
         .build()
         .await?;
-    let session = zenoh::session::init(runtime.clone().into()).await?;
+    let z = zenoh::session::init(runtime.clone().into()).await?;
     runtime.start().await?;
     let mut discovery = Discovery::new(z.zid(), listen_port).await?;
     let _jh = tokio::task::spawn(async move {
@@ -82,7 +82,7 @@ pub async fn open(cfg: zenoh::Config, listen_port: u16) -> Result<Session> {
 }
 
 pub struct Session {
-    pub session: ZSession,
+    pub z: ZSession,
     _jh: JoinHandle<()>,
 }
 impl Drop for Session {
@@ -90,4 +90,3 @@ impl Drop for Session {
         self._jh.abort();
     }
 }
-

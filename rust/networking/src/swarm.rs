@@ -6,7 +6,6 @@ use std::pin::Pin;
 use futures_lite::Stream;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use tracing::info;
 use zenoh::Result;
 use zenoh::Session;
 use zenoh::handlers::FifoChannelHandler;
@@ -14,7 +13,6 @@ use zenoh::liveliness::LivelinessToken;
 use zenoh::pubsub::Subscriber;
 use zenoh::sample::Sample;
 use zenoh::sample::SampleKind;
-use zerompk::{FromMessagePack, ToMessagePack};
 
 #[derive(Debug)]
 pub enum ToSwarm {
@@ -32,7 +30,7 @@ pub enum ToSwarm {
         result_sender: oneshot::Sender<Result<()>>,
     },
 }
-#[derive(Debug, ToMessagePack, FromMessagePack)]
+#[derive(Debug)]
 pub enum FromSwarm {
     Message { topic: String, data: Vec<u8> },
     Discovered {},
@@ -41,26 +39,26 @@ pub enum FromSwarm {
 
 pub type Topics = HashMap<String, Subscriber<()>>;
 pub struct Swarm {
-    cfg: zenoh::Config,
+    pub session: crate::Session,
     from_client: mpsc::Receiver<ToSwarm>,
 }
 
 impl Swarm {
     pub fn into_stream(self) -> Pin<Box<dyn Stream<Item = FromSwarm> + Send>> {
         let Swarm {
-            cfg,
+            session,
             mut from_client,
         } = self;
         let stream = async_stream::stream! {
+            let mut session = session;
             let (mut to_topics, mut from_topics) = mpsc::channel(1024);
             let mut topics = Topics::new();
-            let Ok(mut session) = crate::open(cfg).await else { return; };
-            let Ok((_token, discovery)) = register_liveness(&mut session).await else { return; };
+            let Ok((_token, discovery)) = register_liveness(&mut session.z).await else { return; };
             loop {
                 tokio::select! {
                     msg = from_client.recv() => {
                         let Some(msg) = msg else { break };
-                        on_message(&mut session, &mut topics, &mut to_topics, msg).await;
+                        on_message(&mut session.z, &mut topics, &mut to_topics, msg).await;
                     }
                     event = from_topics.recv() => {
                         if let Some(event) = event {
@@ -73,11 +71,11 @@ impl Swarm {
                             let nid = key_expr.strip_prefix("nodes/").and_then(|s| s.strip_suffix("/live"));
                             yield match token.kind() {
                                 SampleKind::Put => {
-                                    info!("discovered: {nid:?}");
+                                    log::info!("discovered: {nid:?}");
                                     FromSwarm::Discovered {}
                                 }
                                 SampleKind::Delete => {
-                                    info!("expired: {nid:?}");
+                                    log::info!("expired: {nid:?}");
                                     FromSwarm::Expired {}
                                 }
                             }
@@ -171,7 +169,7 @@ async fn on_message(
     }
 }
 
-pub fn create_swarm(
+pub async fn create_swarm(
     identity: u128,
     from_client: mpsc::Receiver<ToSwarm>,
     bootstrap_peers: Vec<String>,

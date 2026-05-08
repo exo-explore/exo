@@ -45,5 +45,6 @@ async def _await_recv(h: NetworkingHandle):
 def scoped_lock_file():
     a = Pidfile("/tmp/lock.pid", 0o0600)
 
+
 if __name__ == "__main__":
     asyncio.run(test_sleep_on_multiple_items())

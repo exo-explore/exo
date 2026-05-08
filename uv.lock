@@ -24,7 +24,7 @@ prerelease-mode = "allow"
 members = [
     "exo",
     "exo-bench",
-    "exo-pyo3-bindings",
+    "exo-net",
     "exo-tools",
 ]
 overrides = [{ name = "opencv-python", marker = "python_full_version < '0'" }]
@@ -622,9 +622,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "exo-pyo3-bindings"
-version = "0.2.10"
-source = { editable = "rust/exo_pyo3_bindings" }
+name = "exo-net"
+version = "0.3.0"
+source = { editable = "rust/exo_net" }
 
 [package.dev-dependencies]
 dev = [
@@ -637,7 +637,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "exo-pyo3-bindings", editable = "rust/exo_pyo3_bindings" },
+    { name = "exo-net", editable = "rust/exo_net" },
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]

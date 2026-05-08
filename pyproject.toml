@@ -15,7 +15,7 @@ dependencies = [
   "huggingface-hub>=1.8.0",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
-  "exo-pyo3-bindings",               # rust bindings
+  "exo-net",                                   # rust bindings
   "anyio==4.11.0",
   "tiktoken>=0.12.0",                # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
@@ -76,10 +76,10 @@ mlx-cuda13 = [
 ###
 
 [tool.uv.workspace]
-members = ["rust/exo_pyo3_bindings", "bench", "tools"]
+members = ["rust/exo_net", "bench", "tools"]
 
 [tool.uv.sources]
-exo-pyo3-bindings = { workspace = true }
+exo-net = { workspace = true }
 mlx = [
   { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" },
   { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
@@ -241,7 +241,7 @@ torchaudio = ["torch"]
 ###
 
 [tool.ruff]
-extend-exclude = [".typings/**", "rust/exo_pyo3_bindings/**", "bench/vendor/**"]
+extend-exclude = [".typings/**", "rust/exo_net/**", "bench/vendor/**"]
 
 [tool.ruff.lint]
 extend-select = ["I", "N", "B", "A", "PIE", "SIM"]

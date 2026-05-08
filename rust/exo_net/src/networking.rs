@@ -1,15 +1,12 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::r#const::MPSC_CHANNEL_SIZE;
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
 use crate::ext::{ResultExt as _, TokioMpscSenderExt as _};
-use crate::ident::PyKeypair;
-use crate::pyclass;
 use futures_lite::{Stream, StreamExt as _};
 use networking::swarm::{FromSwarm, ToSwarm, create_swarm};
-use pyo3::exceptions::PyRuntimeError;
-use pyo3::prelude::{PyModule, PyModuleMethods as _};
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::{Bound, Py, PyAny, PyErr, PyResult, Python, pymethods};
 use pyo3_stub_gen::derive::{
@@ -53,27 +50,35 @@ impl PyNetworkingHandle {
 
     // ---- Lifecycle management methods ----
 
-    #[new]
-    #[pyo3(signature = (identity, bootstrap_peers, listen_port))]
-    fn py_new(
-        identity: Bound<'_, PyKeypair>,
+    #[staticmethod]
+    fn new<'py>(
+        identity: Bound<'py, PyBytes>,
         bootstrap_peers: Vec<String>,
         listen_port: u16,
-    ) -> PyResult<Self> {
+    ) -> PyResult<PyNetworkingHandle> {
         // create communication channels
-        let (to_swarm, from_client) = mpsc::channel(MPSC_CHANNEL_SIZE);
+        let (to_swarm, from_client) = mpsc::channel(1024);
 
         // get identity
-        let identity = identity.borrow().0.clone();
+        let identity = u128::from_le_bytes(
+            identity
+                .extract::<'_, Vec<u8>>()?
+                .try_into()
+                .map_err(|_| PyValueError::new_err("invalid identity bytes"))?,
+        );
 
         // create networking swarm (within tokio context!! or it crashes)
-        let _guard = pyo3_async_runtimes::tokio::get_runtime().enter();
-        let swarm = create_swarm(identity, from_client, bootstrap_peers, listen_port)
-            .map(|it| it.into_stream())
+        let swarm = pyo3_async_runtimes::tokio::get_runtime()
+            .block_on(create_swarm(
+                identity,
+                from_client,
+                bootstrap_peers,
+                listen_port,
+            ))
             .pyerr()?;
 
-        Ok(Self {
-            swarm: Arc::new(Mutex::new(swarm)),
+        Ok(PyNetworkingHandle {
+            swarm: Arc::new(Mutex::new(swarm.into_stream())),
             to_swarm,
         })
     }

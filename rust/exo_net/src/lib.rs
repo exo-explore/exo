@@ -7,11 +7,10 @@
 mod allow_threading;
 mod pidfile;
 // mod ident;
-// mod networking;
-mod state;
+mod networking;
 
+use crate::networking::networking_submodule;
 use crate::pidfile::pidfile_submodule;
-use crate::state::snapshot_module;
 use pyo3::prelude::PyModule;
 use pyo3::{Bound, PyResult, pymodule};
 use pyo3_stub_gen::define_stub_info_gatherer;
@@ -147,7 +146,7 @@ pub(crate) mod ext {
 /// A Python module implemented in Rust. The name of this function must match
 /// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
 /// import the module.
-#[pymodule(name = "exo_pyo3_bindings")]
+#[pymodule(name = "exo_net")]
 fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // install logger
     pyo3_log::init();
@@ -161,7 +160,7 @@ fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pidfile_submodule(m)?;
     // m.add_class::<PyKeypair>()?;
     // networking_submodule(m)?;
-    snapshot_module(m)?;
+    networking_submodule(m)?;
 
     // top-level constructs
     // TODO: ...

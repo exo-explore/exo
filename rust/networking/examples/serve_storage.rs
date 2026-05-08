@@ -1,5 +1,5 @@
+use log::info;
 use networking;
-use tracing::info;
 use zenoh::Result;
 
 #[tokio::main]
@@ -9,10 +9,12 @@ async fn main() -> Result<()> {
     let cfg = networking::cfg(rand::random(), 52414)?;
     let session = networking::open(cfg, 52414).await?;
     let _tok = session
+        .z
         .liveliness()
-        .declare_token(format!("nodes/{}/live", session.zid()))
+        .declare_token(format!("nodes/{}/live", session.z.zid()))
         .await?;
     let _sub = session
+        .z
         .liveliness()
         .declare_subscriber("nodes/*/live")
         .history(true)

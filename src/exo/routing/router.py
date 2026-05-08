@@ -2,8 +2,6 @@ from collections.abc import Sequence
 from copy import copy
 from itertools import count
 from math import inf
-from os import PathLike
-from pathlib import Path
 from typing import cast
 
 from anyio import (
@@ -12,15 +10,12 @@ from anyio import (
     move_on_after,
     sleep_forever,
 )
-from exo_pyo3_bindings import (
-    Keypair,
+from exo_net import (
     NetworkingHandle,
     PyFromSwarm,
 )
-from filelock import FileLock
 from loguru import logger
 
-from exo.shared.constants import EXO_NODE_ID_KEYPAIR
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
@@ -102,12 +97,12 @@ class Router:
     @classmethod
     def create(
         cls,
-        identity: Keypair,
+        identity: bytes,
         bootstrap_peers: Sequence[str] = (),
         listen_port: int = 0,
     ) -> "Router":
         return cls(
-            handle=NetworkingHandle(identity, list(bootstrap_peers), listen_port)
+            handle=NetworkingHandle.new(identity, list(bootstrap_peers), listen_port)
         )
 
     def __init__(self, handle: NetworkingHandle):
@@ -189,9 +184,7 @@ class Router:
                 logger.debug(from_swarm)
                 match from_swarm:
                     case PyFromSwarm.Message(topic, data):
-                        logger.trace(
-                            f"Received message on {topic} with payload {data}"
-                        )
+                        logger.trace(f"Received message on {topic} with payload {data}")
                         if topic not in self.topic_routers:
                             logger.warning(
                                 f"Received message on unknown or inactive topic {topic}"

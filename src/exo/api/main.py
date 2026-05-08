@@ -1913,7 +1913,6 @@ class API:
         try:
             async with self._tg as tg:
                 logger.info("Starting API")
-                tg.start_soon(self.transport.run)
                 tg.start_soon(self._apply_state)
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)

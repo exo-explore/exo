@@ -4,20 +4,17 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-async-stream = "0.3.6"
+async-stream.workspace = true
 futures-lite.workspace = true
-netwatcher = { version = "0.6.0", features = ["tokio"] }
-parking_lot = "0.12.5"
+netwatcher = { workspace = true, features = ["tokio"] }
+parking_lot.workspace = true
 tokio = { workspace = true, features = ["full"] }
-zenoh = { version = "=1.9.0", features = ["internal", "plugins", "unstable"] }
-zenoh-plugin-storage-manager = { version = "=1.9.0", default-features = false }
-zenoh-plugin-trait = "=1.9.0"
-zerompk = { version = "0.4.2", features = ["derive"] }
-rand = "0.10.1"
-tracing = "0.1.44"
+zenoh = { workspace = true, features = ["internal", "plugins", "unstable"] }
+zenoh-plugin-storage-manager.workspace = true
+zenoh-plugin-trait.workspace = true
+rand.workspace = true
 log.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 
 [lints]
 workspace = true
-
