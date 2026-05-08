@@ -133,9 +133,7 @@ class PipelineFirstLayer(CustomMlxLayer):
         if self.r != 0:
             # We want to avoid GPU timeout errors by evalling the distributed operation
             # so that it stays on CPU, which does not have a timeout.
-            mx.eval(x)
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
-            mx.eval(x)
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -162,10 +160,6 @@ class PipelineLastLayer(CustomMlxLayer):
 
         output: mx.array = self.original_layer(x, *args, **kwargs)
 
-        # Eval layer output to materialize it before send — this splits the graph
-        # so the send is isolated and the receiving rank's recv can complete.
-        mx.eval(output)
-
         if self.r != self.s - 1:
             if self.queue_sends:
                 _pending_prefill_sends.append(
@@ -181,7 +175,6 @@ class PipelineLastLayer(CustomMlxLayer):
                 _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
                 if hasattr(_cache, "keys"):  # pyright: ignore[reportAny]
                     _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
-            mx.eval(output)
             if cache is not None and hasattr(_cache, "keys"):  # type: ignore
                 mx.eval(_cache.keys)  # type: ignore
 
@@ -189,7 +182,6 @@ class PipelineLastLayer(CustomMlxLayer):
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
-            mx.eval(output)
 
         return output
 
