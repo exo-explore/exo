@@ -199,7 +199,7 @@ from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
-from exo.utils.channels import Receiver, Sender
+from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
@@ -241,10 +241,15 @@ class Transport:
     command_sender: NetSender = field(init=False)
     paused: bool = field(init=False, default=False)
     paused_ev: anyio.Event = field(init=False, default_factory=anyio.Event)
+    tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     def __post_init__(self):
         # TODO: retire root keyspace
         self.command_sender = self.session.net_sender("orchestrator")
+
+    async def run(self):
+        async with self.tg:
+            await anyio.sleep_forever()
 
     async def send_command(self, command: Command) -> bool:
         while self.paused:
@@ -270,7 +275,14 @@ class Transport:
     async def stream(
         self,
         command_id: CommandId,
-    ) -> AsyncGenerator[Chunk,]:
+    ) -> AsyncGenerator[Chunk]:
+        send, recv = channel[Chunk]()
+        self.tg.start_soon(self._run_stream, command_id, send)
+        async with recv:
+            async for item in recv:
+                yield item
+
+    async def _run_stream(self, command_id: CommandId, send: Sender[Chunk]):
         try:
             with anyio.CancelScope() as cs:
                 self.cancel_scopes[command_id] = cs
@@ -285,12 +297,11 @@ class Transport:
                             "stream terminated early without finish reason EOF"
                         )
                         break
-                    yield (
-                        chunk := cast(
-                            Chunk,
-                            TypeAdapter(Chunk).validate_json(
+                    await send.send(
+                        chunk := (
+                            TypeAdapter[Chunk](Chunk).validate_json(
                                 data, strict=True, extra="forbid"
-                            ),
+                            )
                         )
                     )
                     if (
@@ -298,7 +309,7 @@ class Transport:
                         and chunk.finish_reason is not None
                     ):
                         break
-        except anyio.get_cancelled_exc_class():
+        except (anyio.get_cancelled_exc_class(), anyio.BrokenResourceError, anyio.ClosedResourceError):
             with anyio.CancelScope(shield=True):
                 await self.command_sender.send(
                     TaskCancelled(cancelled_command_id=command_id)
@@ -315,7 +326,7 @@ class Transport:
                 )
 
     def cancel(self, command_id: CommandId) -> bool:
-        if (cs := self.cancel_scopes.get(command_id, None)) is not None:
+        if (cs := self.cancel_scopes.pop(command_id, None)) is not None:
             cs.cancel()
             return True
         return False
@@ -1839,6 +1850,7 @@ class API:
         try:
             async with self._tg as tg:
                 logger.info("Starting API")
+                tg.start_soon(self.transport.run)
                 tg.start_soon(self._apply_state)
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)

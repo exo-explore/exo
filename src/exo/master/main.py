@@ -123,7 +123,7 @@ class Master:
         node_id: NodeId,
         session_id: SessionId,
         *,
-        command_receiver: NetReceiver, # todo: not this type
+        command_receiver: NetReceiver,  # todo: not this type
         event_sender: Sender[Event],
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
@@ -196,9 +196,7 @@ class Master:
                                     if task.instance_id == instance.instance_id
                                     and task.task_status in in_flight
                                 )
-                                instance_task_counts[instance.instance_id] = (
-                                    task_count
-                                )
+                                instance_task_counts[instance.instance_id] = task_count
 
                         if not instance_task_counts:
                             raise ValueError(
@@ -207,9 +205,7 @@ class Master:
 
                         available_instance_ids = sorted(
                             instance_task_counts.keys(),
-                            key=lambda instance_id: instance_task_counts[
-                                instance_id
-                            ],
+                            key=lambda instance_id: instance_task_counts[instance_id],
                         )
 
                         decode_instance_id = available_instance_ids[0]
@@ -247,9 +243,7 @@ class Master:
                                     if task.instance_id == instance.instance_id
                                     and task.task_status in in_flight
                                 )
-                                instance_task_counts[instance.instance_id] = (
-                                    task_count
-                                )
+                                instance_task_counts[instance.instance_id] = task_count
 
                         if not instance_task_counts:
                             raise ValueError(
@@ -258,9 +252,7 @@ class Master:
 
                         available_instance_ids = sorted(
                             instance_task_counts.keys(),
-                            key=lambda instance_id: instance_task_counts[
-                                instance_id
-                            ],
+                            key=lambda instance_id: instance_task_counts[instance_id],
                         )
 
                         task_id = TaskId()
@@ -303,9 +295,7 @@ class Master:
                                     if task.instance_id == instance.instance_id
                                     and task.task_status in in_flight
                                 )
-                                instance_task_counts[instance.instance_id] = (
-                                    task_count
-                                )
+                                instance_task_counts[instance.instance_id] = task_count
 
                         if not instance_task_counts:
                             raise ValueError(
@@ -314,9 +304,7 @@ class Master:
 
                         available_instance_ids = sorted(
                             instance_task_counts.keys(),
-                            key=lambda instance_id: instance_task_counts[
-                                instance_id
-                            ],
+                            key=lambda instance_id: instance_task_counts[instance_id],
                         )
 
                         task_id = TaskId()

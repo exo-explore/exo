@@ -14,6 +14,7 @@ zenoh-plugin-storage-manager.workspace = true
 zenoh-plugin-trait.workspace = true
 rand.workspace = true
 log.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
 
 [lints]
 workspace = true

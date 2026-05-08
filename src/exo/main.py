@@ -114,7 +114,7 @@ class Node:
             global_event_sender=router.sender(topics.GLOBAL_EVENTS),
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
-            command_receiver=session.net_receiver("orchestrator")
+            command_receiver=session.net_receiver("orchestrator"),
         )
 
         er_send, er_recv = channel[ElectionResult]()

@@ -179,8 +179,8 @@ pub async fn create_swarm(
     if !bootstrap_peers.is_empty() || listen_port != 0 {
         todo!();
     }
-    let cfg = crate::cfg(identity, listen_port)?;
-    let session = crate::open(cfg).await?;
+    let cfg = crate::cfg(identity, 52414)?;
+    let session = crate::open(cfg, 52414).await?;
     Ok(Swarm {
         session,
         from_client,
