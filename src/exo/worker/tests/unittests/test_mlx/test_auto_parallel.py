@@ -12,7 +12,6 @@ from exo.worker.engines.mlx.auto_parallel import (
     CustomMlxLayer,
     PipelineFirstLayer,
     PipelineLastLayer,
-    patch_pipeline_model,
 )
 from exo.worker.tests.unittests.test_mlx.conftest import MockLayer
 
@@ -55,7 +54,7 @@ def run_pipeline_device(
 
         # Wrap in a mock model, then wrap in PipelineParallelModel for all_gather
         inner_model = MockModel([composed])
-        model = patch_pipeline_model(inner_model, group)
+        model = inner_model
 
         x = mx.ones((1, 4))
         result = model(x)

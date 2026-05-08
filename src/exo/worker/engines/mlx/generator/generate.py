@@ -35,6 +35,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     PipelineFirstLayer,
     PipelineLastLayer,
     clear_prefill_sends,
+    dist_chain_head,
     flush_prefill_sends,
     set_pipeline_prefill,
     set_pipeline_queue_sends,
@@ -249,6 +250,7 @@ def pipeline_parallel_prefill(
                     distributed_prompt_progress_callback()
 
                 flush_prefill_sends()
+                mx.eval([c.state for c in _prompt_cache])  # type: ignore
 
                 prompt_progress_callback(processed, total)
 
@@ -268,7 +270,7 @@ def pipeline_parallel_prefill(
 
     assert _prompt_cache is not None
     with mx.stream(generation_stream):
-        mx.eval([c.state for c in _prompt_cache])  # type: ignore
+        mx.eval([c.state for c in _prompt_cache], dist_chain_head())  # type: ignore
 
     # Final callback matching generate_step
     prompt_progress_callback(total, total)

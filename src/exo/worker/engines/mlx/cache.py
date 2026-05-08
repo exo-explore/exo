@@ -1,5 +1,6 @@
 import gc
 import os
+import time
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
@@ -456,6 +457,7 @@ class KVPrefixCache:
             mx.clear_cache()
 
     def get_memory_used_percentage(self) -> float:
+        t0 = time.perf_counter()
         local_pressure: float = get_memory_used_percentage()
 
         if self._group is None:
@@ -464,9 +466,14 @@ class KVPrefixCache:
         all_pressure = mx.distributed.all_gather(
             mx.array([local_pressure], dtype=mx.float32),
             group=self._group,
+            stream=mx.Device(mx.cpu),
         )
         # .item() evals.
         max_pressure = float(mx.max(all_pressure).item())
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info(
+            f"get_memory_used_percentage took {elapsed_ms:.2f}ms (group size {self._group.size()})"
+        )
         return max_pressure
 
 

@@ -71,12 +71,42 @@ if TYPE_CHECKING:
 
 _pending_prefill_sends: list[tuple[mx.array, int, mx.distributed.Group]] = []
 
+_last_dist_op: mx.array | None = None
+
+
+def _link(out: mx.array) -> mx.array:
+    global _last_dist_op
+    marker = out if _last_dist_op is None else mx.depends(out, _last_dist_op)
+    mx.async_eval(out)
+    _last_dist_op = marker
+    return out
+
+
+def send(x: mx.array, dst: int, group: mx.distributed.Group) -> mx.array:
+    return _link(mx.distributed.send(x, dst, group=group, stream=mx.Device(mx.cpu)))
+
+
+def recv_like(x: mx.array, src: int, group: mx.distributed.Group) -> mx.array:
+    received = _link(
+        mx.distributed.recv_like(x, src, group=group, stream=mx.Device(mx.cpu))
+    )
+    mx.eval(received)
+    return received
+
+
+def all_gather(x: mx.array, group: mx.distributed.Group) -> mx.array:
+    return _link(mx.distributed.all_gather(x, group=group, stream=mx.Device(mx.cpu)))
+
 
 def flush_prefill_sends() -> None:
     for output, dst, group in _pending_prefill_sends:
-        sent = mx.distributed.send(output, dst, group=group)
-        mx.async_eval(sent)
+        send(output, dst, group)
     _pending_prefill_sends.clear()
+
+
+def dist_chain_head() -> mx.array:
+    assert _last_dist_op is not None
+    return _last_dist_op
 
 
 def clear_prefill_sends() -> None:
@@ -131,11 +161,7 @@ class PipelineFirstLayer(CustomMlxLayer):
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
-            # We want to avoid GPU timeout errors by evalling the distributed operation
-            # so that it stays on CPU, which does not have a timeout.
-            mx.eval(x)
-            x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
-            mx.eval(x)
+            x = recv_like(x, (self.r - 1), group=self.group)
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -162,36 +188,31 @@ class PipelineLastLayer(CustomMlxLayer):
 
         output: mx.array = self.original_layer(x, *args, **kwargs)
 
-        # Eval layer output to materialize it before send — this splits the graph
-        # so the send is isolated and the receiving rank's recv can complete.
-        mx.eval(output)
-
         if self.r != self.s - 1:
             if self.queue_sends:
                 _pending_prefill_sends.append(
                     (output, (self.r + 1) % self.s, self.group)
                 )
+                sent_output = output
             else:
-                output = mx.distributed.send(
-                    output, (self.r + 1) % self.s, group=self.group
-                )
+                sent_output = send(output, (self.r + 1) % self.s, self.group)
             if cache is not None:
                 # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
                 # doesn't have .keys directly; access via first sub-cache.
                 _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
                 if hasattr(_cache, "keys"):  # pyright: ignore[reportAny]
-                    _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
-            mx.eval(output)
-            if cache is not None and hasattr(_cache, "keys"):  # type: ignore
-                mx.eval(_cache.keys)  # type: ignore
+                    _cache.keys = mx.depends(_cache.keys, sent_output)  # type: ignore
+        else:
+            sent_output = output
 
         if not self.is_prefill:
-            output = mx.distributed.all_gather(output, group=self.group)[
+            all_gathered_output = all_gather(sent_output, group=self.group)[
                 -output.shape[0] :
             ]
-            mx.eval(output)
+        else:
+            all_gathered_output = sent_output
 
-        return output
+        return all_gathered_output
 
 
 def set_pipeline_prefill(model: nn.Module, is_prefill: bool) -> None:
@@ -392,64 +413,6 @@ def pipeline_auto_parallel(
         "Expected a list of layers after auto-parallel initialisation"
     )
 
-    return patch_pipeline_model(model, group)
-
-
-def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
-    # Patch __call__ on the model's class
-    cls = model.__class__
-    original_call = cls.__call__  # type :ignore
-    call_signature = signature(original_call)  # type :ignore
-
-    def patched_call(
-        self: T,
-        *args: object,
-        **kwargs: object,
-    ) -> mx.array:
-        logits: mx.array = original_call(self, *args, **kwargs)  # type: ignore
-        cache = call_signature.bind_partial(self, *args, **kwargs).arguments.get(
-            "cache", None
-        )
-
-        # Add dependency to last cache entry to ensure distributed ops are evaluated
-        if cache is not None and len(cache) > 0:  # type: ignore
-            last = cache[-1]  # type: ignore
-            dep_cache = last[0] if hasattr(last, "caches") else last  # type: ignore
-            if hasattr(dep_cache, "keys") and dep_cache.keys is not None:  # type: ignore
-                dep_cache.keys = mx.depends(dep_cache.keys, logits)  # type: ignore
-
-        return logits
-
-    cls.__call__ = patched_call
-    return model
-
-
-def patch_tensor_model[T](model: T) -> T:
-    """Patch model's __call__ to ensure distributed ops sync during inference."""
-    cls = model.__class__
-    original_call = cls.__call__
-    call_signature = signature(original_call)
-
-    def patched_call(
-        self: T,
-        *args: object,
-        **kwargs: object,
-    ) -> mx.array:
-        logits: mx.array = original_call(self, *args, **kwargs)  # pyright: ignore[reportAny]
-        cache = call_signature.bind_partial(self, *args, **kwargs).arguments.get(
-            "cache", None
-        )
-
-        # Add dependency to last cache entry to ensure distributed ops are evaluated
-        if cache is not None and len(cache) > 0:  # pyright: ignore[reportAny]
-            last = cache[-1]  # pyright: ignore[reportAny]
-            dep_cache = last[0] if hasattr(last, "caches") else last  # pyright: ignore[reportAny]
-            if hasattr(dep_cache, "keys"):  # type: ignore
-                dep_cache.keys = mx.depends(dep_cache.keys, logits)  # pyright: ignore[reportAny]
-
-        return logits
-
-    cls.__call__ = patched_call
     return model
 
 
@@ -599,7 +562,7 @@ def tensor_auto_parallel(
         raise ValueError(f"Unsupported model type: {type(model)}")
 
     model = yield from tensor_parallel_sharding_strategy.shard_model(model)
-    return patch_tensor_model(model)
+    return model
 
 
 class TensorParallelShardingStrategy(ABC):
@@ -763,8 +726,10 @@ class ShardedMoE(CustomMlxLayer):
             x = sum_gradients(self.sharding_group)(x)
         y = self.original_layer.__call__(x)
         if self.sharding_group is not None:
-            y = mx.distributed.all_sum(y, group=self.sharding_group)
-        return y
+            z = mx.distributed.all_sum(y, group=self.sharding_group)
+        else:
+            z = y
+        return z
 
 
 class ShardedMoEV4(CustomMlxLayer):
@@ -780,8 +745,10 @@ class ShardedMoEV4(CustomMlxLayer):
             x = sum_gradients(self.sharding_group)(x)
         y = self._v4_inner(x, input_ids)
         if self.sharding_group is not None:
-            y = mx.distributed.all_sum(y, group=self.sharding_group)
-        return y
+            z = mx.distributed.all_sum(y, group=self.sharding_group)
+        else:
+            z = y
+        return z
 
 
 def _shard_quantized_rows(
