@@ -80,7 +80,7 @@ members = ["rust/exo_pyo3_bindings", "bench", "tools"]
 
 [tool.uv.sources]
 exo-pyo3-bindings = { workspace = true }
-mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
+mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "leo/order-distributed-ops", marker = "sys_platform == 'darwin'" }
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
 torch = [
   { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'cuda13' and extra != 'cpu' and extra != 'cuda12'" },
