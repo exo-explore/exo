@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Final
-
 import os
+from typing import Final
 
 from exo_pyo3_bindings import Pidfile, PidfileError
 
