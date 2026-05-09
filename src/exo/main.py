@@ -3,6 +3,7 @@ import multiprocessing as mp
 import os
 import resource
 import signal
+import sys
 from dataclasses import dataclass, field
 from typing import Self
 
@@ -22,6 +23,7 @@ from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
+from exo.utils.pidfile import PidfileLockError, acquire_exo_pidfile
 from exo.utils.daemon import detach_stdio_to_devnull
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
@@ -265,12 +267,20 @@ class Node:
 
 
 def main():
+    # Exit early if no PID file (not compatible with double-for daemonization yet)
+    try:
+        pidfile = acquire_exo_pidfile()
+    except PidfileLockError as exception:
+        print(exception, file=sys.stderr)
+        raise SystemExit(1) from exception
+
     args = Args.parse()
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
     mp.set_start_method("spawn", force=True)
+
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
     if args.no_stdio:
@@ -311,6 +321,7 @@ def main():
     finally:
         logger.info("EXO Shutdown complete")
         logger_cleanup()
+        del pidfile
 
 
 class Args(FrozenModel):

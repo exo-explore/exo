@@ -1,10 +1,12 @@
 import asyncio
 
 import pytest
+from _pytest.capture import CaptureFixture
 from exo_pyo3_bindings import (
     Keypair,
     NetworkingHandle,
     NoPeersSubscribedToTopicError,
+    Pidfile,
     PyFromSwarm,
 )
 
@@ -26,6 +28,13 @@ async def test_sleep_on_multiple_items() -> None:
             print("caught it", e)
 
 
+def test_pidfile(capsys: CaptureFixture[str]):
+    with capsys.disabled():
+        print("\nbefore python")
+        scoped_lock_file()
+        print("after python")
+
+
 async def _await_recv(h: NetworkingHandle):
     while True:
         event = await h.recv()
@@ -34,3 +43,7 @@ async def _await_recv(h: NetworkingHandle):
                 print(f"PYTHON: connection update: {c}")
             case PyFromSwarm.Message() as m:
                 print(f"PYTHON: message: {m}")
+
+
+def scoped_lock_file():
+    a = Pidfile("/tmp/lock.pid", 0o0600)
