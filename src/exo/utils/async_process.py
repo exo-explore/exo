@@ -241,7 +241,7 @@ class AsyncProcess:
                 j += 1
                 if self.exitcode is not None or not process.is_alive():
                     break
-            logger.warning(f"That took {attempt} attempts :(")
+            logger.warning(f"That took {j} attempts :(")
 
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
