@@ -1,0 +1,41 @@
+model_id = "mlx-community/Qwen3.5-4B-MLX-8bit"
+n_layers = 32
+hidden_size = 2560
+num_key_value_heads = 4
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "8bit"
+base_model = "Qwen3.5 4B"
+capabilities = ["text", "thinking", "thinking_toggle", "vision"]
+# Hybrid Qwen 3.5 (linear gated-delta + full-attention layers,
+# full_attention_interval=4) — paired with z-lab's DFlash drafter
+# (block-diffusion, block_size=16, target_layer_ids=[1,8,15,22,29]).
+# The runner auto-detects kind="dflash" via mlx-vlm's load_drafter
+# and routes through Qwen3_5DFlashTargetAdapter.
+coupled_drafter = "z-lab/Qwen3.5-4B-DFlash"
+reasoning_dialect = "post_last_user"
+context_length = 262144
+
+[storage_size]
+in_bytes = 4823654400
+
+# Source: https://huggingface.co/Qwen/Qwen3.5-9B#best-practices
+# Source: https://unsloth.ai/docs/models/qwen3.5
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0
+presence_penalty = 1.5
+
+# Source: https://huggingface.co/Qwen/Qwen3.5-9B#best-practices
+# Source: https://unsloth.ai/docs/models/qwen3.5
+[sampling_defaults.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0
+presence_penalty = 1.5

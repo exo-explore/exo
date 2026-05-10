@@ -1,17 +1,21 @@
 import contextlib
+import multiprocessing as mp
 import signal
 from dataclasses import dataclass, field
 from typing import Self
 
 import anyio
+import psutil
 from anyio import (
     BrokenResourceError,
     ClosedResourceError,
-    EndOfStream,
+    current_time,
+    to_thread,
 )
 from loguru import logger
 
 from exo.shared.types.chunks import ErrorChunk
+from exo.shared.types.common import ModelId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -34,14 +38,14 @@ from exo.shared.types.worker.runners import (
     RunnerFailed,
     RunnerIdle,
     RunnerLoading,
+    RunnerReady,
     RunnerRunning,
     RunnerShuttingDown,
     RunnerStatus,
     RunnerWarmingUp,
 )
 from exo.shared.types.worker.shards import ShardMetadata
-from exo.utils.async_process import AsyncProcess
-from exo.utils.channels import MpReceiver, MpSender, Receiver, Sender, mp_channel
+from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
 from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint
 
@@ -51,9 +55,14 @@ DECODE_TIMEOUT_SECONDS = 5
 
 @dataclass(eq=False)
 class RunnerSupervisor:
-    shard_metadata: ShardMetadata
+    # ``None`` when ``bound_instance.is_drafter_rank`` is true: the drafter
+    # rank has no shard (it serves the full drafter model, not a slice of
+    # the target). Use the ``model_id`` property instead of reaching
+    # through ``shard_metadata.model_card`` so the same access pattern
+    # works for target and drafter runners.
+    shard_metadata: ShardMetadata | None
     bound_instance: BoundInstance
-    runner_process: AsyncProcess
+    runner_process: mp.Process
     initialize_timeout: float
     _ev_recv: MpReceiver[Event]
     _task_sender: MpSender[Task]
@@ -65,6 +74,7 @@ class RunnerSupervisor:
     in_progress: dict[TaskId, Task] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
     cancelled: set[TaskId] = field(default_factory=set, init=False)
+    _started_at: float | None = field(default=None, init=False)
     _cancel_watch_runner: anyio.CancelScope = field(
         default_factory=anyio.CancelScope, init=False
     )
@@ -81,7 +91,7 @@ class RunnerSupervisor:
         task_sender, task_recv = mp_channel[Task]()
         cancel_sender, cancel_recv = mp_channel[TaskId]()
 
-        runner_process = AsyncProcess(
+        runner_process = mp.Process(
             target=entrypoint,
             args=(
                 bound_instance,
@@ -93,7 +103,12 @@ class RunnerSupervisor:
             daemon=True,
         )
 
-        shard_metadata = bound_instance.bound_shard
+        # Drafter ranks have no shard (they own the full drafter model);
+        # only target ranks slice the model into shards. Use ``model_id``
+        # for logging so both code paths share the same surface.
+        shard_metadata = (
+            None if bound_instance.is_drafter_rank else bound_instance.bound_shard
+        )
 
         self = cls(
             bound_instance=bound_instance,
@@ -105,33 +120,51 @@ class RunnerSupervisor:
             _cancel_sender=cancel_sender,
             _event_sender=event_sender,
         )
+        logger.info(
+            f"Created runner supervisor {self._runner_context()} "
+            f"model_id={self.model_id}"
+        )
 
         return self
 
+    @property
+    def model_id(self) -> ModelId:
+        """Model loaded by the supervised runner.
+
+        For target ranks this is the sharded model ID from
+        ``shard_metadata``; for drafter ranks it is the drafter model
+        ID from ``DrafterPlacement``. The two callers that previously
+        reached through ``shard_metadata.model_card.model_id`` only
+        needed the model id for logging / error chunks, both of which
+        also make sense for the drafter rank.
+        """
+        if self.shard_metadata is not None:
+            return self.shard_metadata.model_card.model_id
+        placement = self.bound_instance.instance.drafter_placement
+        assert placement is not None, (
+            "supervisor with no shard_metadata must be on a drafter rank "
+            "but its instance has no DrafterPlacement; this should have "
+            "been validated by BoundInstance"
+        )
+        return placement.drafter_model_id
+
     async def run(self):
+        self.runner_process.start()
+        self._started_at = current_time()
+        logger.info(
+            f"Runner process started {self._runner_context()} "
+            f"pid={self.runner_process.pid} model_id={self.model_id}"
+        )
         try:
             async with self._tg as tg:
-                # start the process itself
-                await tg.start(self.runner_process.run)
-
-                # start tasks to drain/collect stdout/stderr into usable errors
-                #
-                # TODO: right now it logs them as warnings, but in the future they should be split
-                #       into being logged AND a seperate task which tries to best-effort figure out cause
-                #       of error and package into error enum, which then is used by rest of app to act on it;
-                #       inferring what the error is would be done by pattern-matching in the text for things
-                #       e.g. certain VLLM error codes and so on
-                tg.start_soon(
-                    self._forward_runner_output, "stdout", self.runner_process.stdout
-                )
-                tg.start_soon(
-                    self._forward_runner_output, "stderr", self.runner_process.stderr
-                )
-
                 tg.start_soon(self._watch_runner)
                 tg.start_soon(self._forward_events)
         finally:
-            logger.info("Runner supervisor shutting down")
+            logger.info(
+                f"Runner supervisor shutting down {self._runner_context()} "
+                f"model_id={self.model_id} pid={self.runner_process.pid} "
+                f"rss_mb={self._runner_rss_mb()}"
+            )
             if not self._cancel_watch_runner.cancel_called:
                 self._cancel_watch_runner.cancel()
             with contextlib.suppress(ClosedResourceError):
@@ -145,11 +178,60 @@ class RunnerSupervisor:
             with contextlib.suppress(ClosedResourceError):
                 self._cancel_sender.close()
 
-            with anyio.CancelScope(shield=True):
-                await self.runner_process.stop()
-                logger.info(
-                    f"Runner process successfully terminated: {self.runner_process.exitcode}"
+            await to_thread.run_sync(self.runner_process.join, 5)
+
+            if self.runner_process.is_alive():
+                logger.warning(
+                    "Runner process did not shutdown successfully, terminating "
+                    f"{self._runner_context()} pid={self.runner_process.pid} "
+                    f"rss_mb={self._runner_rss_mb()}"
                 )
+                self.runner_process.terminate()
+                self.runner_process.join(timeout=10)
+
+                if not self.runner_process.is_alive():
+                    logger.warning(
+                        "Runner terminated after first SIGTERM "
+                        f"{self._runner_context()} pid={self.runner_process.pid}"
+                    )
+
+                else:
+                    # Try really hard to terminate
+                    for i in range(2, 11):
+                        self.runner_process.terminate()
+                        self.runner_process.join(timeout=2)
+                        if not self.runner_process.is_alive():
+                            logger.warning(
+                                "Runner terminated after repeated SIGTERM "
+                                f"{self._runner_context()} attempts={i} "
+                                f"pid={self.runner_process.pid}"
+                            )
+                            break
+                    # Try even harder to kill
+                    else:
+                        logger.critical(
+                            "Runner process did not respond to SIGTERM, killing "
+                            f"{self._runner_context()} pid={self.runner_process.pid} "
+                            f"rss_mb={self._runner_rss_mb()}"
+                        )
+                        j = 0
+                        while self.runner_process.is_alive():
+                            j += 1
+                            self.runner_process.kill()
+                            self.runner_process.join(timeout=5)
+                            logger.warning(
+                                "Runner kill attempt completed "
+                                f"{self._runner_context()} attempts={j} "
+                                f"pid={self.runner_process.pid}"
+                            )
+            else:
+                logger.info(
+                    "Runner process successfully terminated "
+                    f"{self._runner_context()} exitcode={self.runner_process.exitcode} "
+                    f"runtime_seconds={self._runtime_seconds()}"
+                )
+
+            self.runner_process.close()
 
     def shutdown(self):
         self._tg.cancel_tasks()
@@ -165,7 +247,11 @@ class RunnerSupervisor:
                 f"Skipping invalid task {task} as it has already been completed"
             )
             return
-        logger.info(f"Starting task {task}")
+        logger.info(
+            "Starting runner task "
+            f"{self._runner_context()} task_id={task.task_id} "
+            f"task_type={type(task).__name__} status={type(self.status).__name__}"
+        )
         event = anyio.Event()
         self.pending[task.task_id] = event
         self.in_progress[task.task_id] = task
@@ -175,7 +261,41 @@ class RunnerSupervisor:
             self.in_progress.pop(task.task_id, None)
             logger.warning(f"Task {task} dropped, runner closed communication.")
             return
+        # Generation tasks (Text/Image/Edits) on a warmed-up runner do not need
+        # the per-task ack-wait gate: the runner state machine accepts them
+        # in any order while ``RunnerReady``/``RunnerRunning``, and waiting
+        # for ack here serialises worker->runner dispatch one task at a time.
+        # This caps batched-prefill (in ``SequentialGenerator``) at B=2 even
+        # when the bench fires conc=4: slot #3 only ships after the runner
+        # acks slot #2, which only happens after batched_prefill completes.
+        # Lifecycle tasks (LoadModel, StartWarmup, ConnectToGroup, Shutdown,
+        # CancelTask) keep the gate so state transitions stay ordered.
+        is_generation_task = isinstance(
+            task, (TextGeneration, ImageGeneration, ImageEdits)
+        )
+        runner_is_warm = isinstance(self.status, (RunnerReady, RunnerRunning))
+        if is_generation_task and runner_is_warm:
+            return
         await event.wait()
+
+    def mark_task_dropped_locally(self, task_id: TaskId) -> None:
+        """Record that ``task_id`` was handled locally without dispatch.
+
+        Used by the worker when a task reaches this node but the
+        runner cannot accept it (currently: a generation task arriving
+        at a drafter rank, which only services lifecycle tasks). The
+        planner uses ``completed | in_progress`` to decide whether to
+        re-select a task on the next 100ms tick (see ``plan.py``); if
+        we just return without recording anything, the same task gets
+        re-selected on every tick until the target finishes,
+        re-emitting ``TaskCreated`` events and re-running this drop
+        path. Adding the id to ``completed`` short-circuits future
+        re-selection without falsely advertising completion to the
+        master -- the global completion still flows from the target
+        runner's ``TaskStatusUpdated`` event.
+        """
+        self.in_progress.pop(task_id, None)
+        self.completed.add(task_id)
 
     async def cancel_task(self, task_id: TaskId):
         if task_id in self.completed:
@@ -200,6 +320,13 @@ class RunnerSupervisor:
             with self._ev_recv as events:
                 async for event in events:
                     if isinstance(event, RunnerStatusUpdated):
+                        logger.info(
+                            "Runner status update "
+                            f"{self._runner_context()} "
+                            f"old_status={type(self.status).__name__} "
+                            f"new_status={type(event.runner_status).__name__} "
+                            f"pid={self.runner_process.pid} rss_mb={self._runner_rss_mb()}"
+                        )
                         self.status = event.runner_status
                     if isinstance(event, TaskAcknowledged):
                         self.pending.pop(event.task_id).set()
@@ -235,35 +362,26 @@ class RunnerSupervisor:
                 if not self.runner_process.is_alive():
                     await self._check_runner(RuntimeError("Runner found to be dead"))
 
-    async def _forward_runner_output(
-        self,
-        stream_name: str,
-        stream: Receiver[bytes],
-    ) -> None:
-        while True:
-            try:
-                chunk = await stream.receive()
-            except (EndOfStream, ClosedResourceError, BrokenResourceError):
-                return
-
-            message = chunk.decode("utf-8", errors="replace").rstrip()
-            if not message:
-                continue
-            if stream_name == "stderr":
-                logger.warning(f"Runner stderr: {message}")
-            else:
-                logger.debug(f"Runner stdout: {message}")
-
     async def _check_runner(self, e: Exception) -> None:
         if not self._cancel_watch_runner.cancel_called:
             self._cancel_watch_runner.cancel()
-        logger.info("Checking runner's status")
+        logger.info(
+            "Checking runner status "
+            f"{self._runner_context()} pid={self.runner_process.pid} "
+            f"rss_mb={self._runner_rss_mb()}"
+        )
         if self.runner_process.is_alive():
-            logger.info("Runner was found to be alive, stopping process")
-            with anyio.CancelScope(shield=True):
-                await self.runner_process.stop()
+            logger.info(
+                "Runner was found alive, attempting to join process "
+                f"{self._runner_context()} pid={self.runner_process.pid}"
+            )
+            await to_thread.run_sync(self.runner_process.join, 5)
         rc = self.runner_process.exitcode
-        logger.info(f"Runner exited with exit code {rc}")
+        logger.info(
+            "Runner exited "
+            f"{self._runner_context()} exitcode={rc} "
+            f"runtime_seconds={self._runtime_seconds()}"
+        )
         if rc == 0:
             return
 
@@ -276,7 +394,9 @@ class RunnerSupervisor:
         else:
             cause = f"exitcode={rc}"
 
-        logger.opt(exception=e).error(f"Runner terminated with {cause}")
+        logger.opt(exception=e).error(
+            f"Runner terminated with {cause} {self._runner_context()}"
+        )
 
         for task in self.in_progress.values():
             if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
@@ -285,7 +405,7 @@ class RunnerSupervisor:
                         ChunkGenerated(
                             command_id=task.command_id,
                             chunk=ErrorChunk(
-                                model=self.shard_metadata.model_card.model_id,
+                                model=self.model_id,
                                 error_message=(
                                     "Runner shutdown before completing command "
                                     f"({cause})"
@@ -308,3 +428,24 @@ class RunnerSupervisor:
                 "Event sender already closed, unable to report runner failure"
             )
         self.shutdown()
+
+    def _runner_context(self) -> str:
+        return (
+            f"instance_id={self.bound_instance.instance.instance_id} "
+            f"runner_id={self.bound_instance.bound_runner_id} "
+            f"node_id={self.bound_instance.bound_node_id}"
+        )
+
+    def _runner_rss_mb(self) -> float | None:
+        pid = self.runner_process.pid
+        if pid is None:
+            return None
+        try:
+            return round(psutil.Process(pid).memory_info().rss / (1024 * 1024), 3)
+        except psutil.Error:
+            return None
+
+    def _runtime_seconds(self) -> float | None:
+        if self._started_at is None:
+            return None
+        return round(current_time() - self._started_at, 3)

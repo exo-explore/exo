@@ -104,7 +104,9 @@ class MfluxBuilder(Builder):
     group: mx.distributed.Group | None = None
 
     def connect(self, bound_instance: BoundInstance) -> None:
-        self.group = initialize_mlx(bound_instance)
+        # Image generation models never declare a drafter, so target
+        # subgroup == parent group; the symmetric case of MlxGroupSplit.
+        self.group = initialize_mlx(bound_instance).target_subgroup
 
     def load(self, bound_instance: BoundInstance) -> Generator[ModelLoadingResponse]:
         self.shard_metadata = bound_instance.bound_shard

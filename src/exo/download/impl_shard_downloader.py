@@ -10,12 +10,13 @@ from exo.download.download_utils import (
     RepoDownloadProgress,
     download_shard,
 )
+from exo.download.peer_shard_downloader import PeerAwareShardDownloader
 from exo.download.shard_downloader import ShardDownloader
-from exo.shared.models import model_cards
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
     ModelTask,
+    get_model_cards,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.shards import (
@@ -25,11 +26,16 @@ from exo.shared.types.worker.shards import (
 
 
 def exo_shard_downloader(
-    max_parallel_downloads: int = 8, offline: bool = False
+    max_parallel_downloads: int = 8,
+    offline: bool = False,
+    peer_download_enabled: bool = False,
 ) -> ShardDownloader:
-    return SingletonShardDownloader(
-        ResumableShardDownloader(max_parallel_downloads, offline=offline)
+    inner: ShardDownloader = ResumableShardDownloader(
+        max_parallel_downloads, offline=offline
     )
+    if peer_download_enabled:
+        inner = PeerAwareShardDownloader(inner, offline=offline)
+    return SingletonShardDownloader(inner)
 
 
 async def build_base_shard(model_id: ModelId) -> ShardMetadata:
@@ -258,7 +264,7 @@ class ResumableShardDownloader(ShardDownloader):
 
         tasks = [
             create_task(download_with_semaphore(model_card))
-            for model_card in await model_cards.card_cache.list_all()
+            for model_card in await get_model_cards()
         ]
 
         for task in asyncio.as_completed(tasks):

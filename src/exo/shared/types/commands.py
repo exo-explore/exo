@@ -24,6 +24,7 @@ class TestCommand(BaseCommand):
 
 class TextGeneration(BaseCommand):
     task_params: TextGenerationTaskParams
+    target_instance_id: InstanceId | None = None
 
 
 class ImageGeneration(BaseCommand):
@@ -67,9 +68,20 @@ class RequestEventLog(BaseCommand):
     since_idx: int
 
 
+class PeerEndpoint(FrozenModel):
+    """A peer node that has (or is downloading) a model, with its network address."""
+
+    node_id: NodeId
+    ip: str
+    port: int
+    status: str = "complete"  # "complete" or "ongoing"
+    connection_type: str = "socket"  # "rdma" or "socket"
+
+
 class StartDownload(BaseCommand):
     target_node_id: NodeId
     shard_metadata: ShardMetadata
+    available_peers: list[PeerEndpoint] = Field(default_factory=list)
 
 
 class DeleteDownload(BaseCommand):

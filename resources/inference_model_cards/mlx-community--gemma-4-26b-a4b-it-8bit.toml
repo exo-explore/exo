@@ -8,7 +8,8 @@ family = "gemma"
 quantization = "8bit"
 base_model = "Gemma 4 26B A4B"
 capabilities = ["text", "vision"]
-drafter_model_id = "mlx-community/gemma-4-e2b-it-8bit"
+drafter_model_ids = ["mlx-community/gemma-4-e2b-it-8bit", "mlx-community/gemma-4-e4b-it-8bit"]
+coupled_drafter = "mlx-community/gemma-4-26B-A4B-it-assistant-bf16"
 
 context_length = 262144
 

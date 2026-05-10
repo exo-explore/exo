@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import os
 import random
 import shutil
@@ -239,20 +240,60 @@ async def ensure_cache_dir(model_id: ModelId) -> Path:
     return target
 
 
+def _looks_like_model_dir(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    model_markers = (
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors.index.json",
+        "pytorch_model.bin.index.json",
+    )
+    if any((path / marker).exists() for marker in model_markers):
+        return True
+    return any(path.glob("*.safetensors")) or any(path.glob("*.gguf"))
+
+
+def _delete_model_path(path: Path, *, delete_symlink_target: bool) -> bool:
+    if path.is_symlink():
+        target = path.resolve(strict=False)
+        path.unlink()
+        if delete_symlink_target and target.exists():
+            if not _looks_like_model_dir(target):
+                raise OSError(
+                    f"Refusing to delete symlink target that does not look like a model directory: {target}"
+                )
+            shutil.rmtree(target, ignore_errors=False)
+        return True
+
+    if path.exists():
+        shutil.rmtree(path, ignore_errors=False)
+        return True
+
+    return False
+
+
 async def delete_model(model_id: ModelId) -> bool:
-    """Delete a model from writable directories. Skips read-only dirs."""
+    """Delete a model from writable directories. Skips read-only dirs.
+
+    Writable model entries may be symlinks into another local model store. In
+    that case, deleting the model should delete the linked model directory too,
+    not only remove the exo-facing symlink.
+    """
     normalized = model_id.normalize()
     deleted = False
     for models_dir in EXO_MODELS_DIRS:
         model_dir = models_dir / normalized
-        if await aios.path.exists(model_dir):
-            await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
-            deleted = True
+        deleted = (
+            await asyncio.to_thread(
+                _delete_model_path, model_dir, delete_symlink_target=True
+            )
+            or deleted
+        )
 
     # Clear cache from default dir
     cache_dir = EXO_DEFAULT_MODELS_DIR / "caches" / normalized
-    if await aios.path.exists(cache_dir):
-        await asyncio.to_thread(shutil.rmtree, cache_dir, ignore_errors=False)
+    await asyncio.to_thread(_delete_model_path, cache_dir, delete_symlink_target=False)
 
     return deleted
 
@@ -280,12 +321,28 @@ def _scan_model_directory(
 ) -> list[FileListEntry] | None:
     """Scan a local model directory and build a file list.
 
-    Requires at least one ``*.safetensors.index.json``.  Every weight file
-    referenced by the index that is missing on disk gets ``size=None``.
+    Two recognized layouts:
+
+    1. Sharded weights: at least one ``*.safetensors.index.json`` is present
+       and enumerates every weight file. Files referenced by the index that
+       are missing on disk surface as ``FileListEntry(size=None)``.
+    2. Single-file: no ``*.safetensors.index.json`` exists, but the directory
+       holds exactly one ``*.safetensors`` weight alongside a ``config.json``.
+       This is the layout HuggingFace publishes for many small / quantized
+       single-file checkpoints (e.g. ``mlx-community/gemma-4-e2b-it-4bit``,
+       coupled MTP drafters), and treating those as un-scannable would force
+       a manual ``safetensors.index.json`` bootstrap to make the directory
+       look "complete" to :func:`is_model_directory_complete`. Returning a
+       file list directly off ``iterdir`` lets the existing scan-then-mark-
+       complete flow accept the layout natively without writing anything to
+       disk -- callers that re-parse the index downstream still find one
+       present in the sharded case and degrade to direct safetensors
+       loading in the single-file case (``mlx-lm`` / ``mlx-vlm``'s
+       ``load_drafter`` already handles both).
     """
     index_files = list(model_dir.glob("**/*.safetensors.index.json"))
     if not index_files:
-        return None
+        return _scan_single_file_safetensors_directory(model_dir, recursive)
 
     entries_by_path: dict[str, FileListEntry] = {}
 
@@ -335,6 +392,57 @@ def _scan_model_directory(
     return list(entries_by_path.values())
 
 
+def _scan_single_file_safetensors_directory(
+    model_dir: Path, recursive: bool
+) -> list[FileListEntry] | None:
+    """Build a file list for a directory that ships a single ``*.safetensors``.
+
+    Returns ``None`` (matching the original ``_scan_model_directory`` "no
+    index, can't help" semantics) when:
+
+    - the directory contains zero or multiple ``*.safetensors`` files (the
+      multi-file case requires an index to know what weights are expected),
+    - no ``config.json`` is present at the directory root (without it we
+      can't be confident this directory is a model checkpoint at all
+      versus, e.g., a tokenizer-only stash).
+
+    On a positive match every file actually on disk is reported with its
+    real size, identical to the recursive walk in the index path. The
+    index-driven "expected but missing" placeholders don't apply here:
+    if the single safetensors file isn't on disk, the directory simply
+    isn't complete, which is exactly what the iterdir-based scan reports.
+    """
+    safetensors_files = list(model_dir.glob("*.safetensors"))
+    if len(safetensors_files) != 1:
+        return None
+    if not (model_dir / "config.json").is_file():
+        return None
+
+    entries_by_path: dict[str, FileListEntry] = {}
+    if recursive:
+        for dirpath, _, filenames in os.walk(model_dir):
+            for filename in filenames:
+                if filename.endswith(".partial"):
+                    continue
+                full_path = Path(dirpath) / filename
+                rel_path = str(full_path.relative_to(model_dir))
+                entries_by_path[rel_path] = FileListEntry(
+                    type="file",
+                    path=rel_path,
+                    size=full_path.stat().st_size,
+                )
+    else:
+        for item in model_dir.iterdir():
+            if item.is_file() and not item.name.endswith(".partial"):
+                entries_by_path[item.name] = FileListEntry(
+                    type="file",
+                    path=item.name,
+                    size=item.stat().st_size,
+                )
+
+    return list(entries_by_path.values())
+
+
 def is_model_directory_complete(model_dir: Path, card: ModelCard | None = None) -> bool:
     """Check if a model directory contains all required weight files.
     Also checks for sibling weights repo.
@@ -363,9 +471,11 @@ async def _build_file_list_from_local_directory(
 ) -> list[FileListEntry] | None:
     """Build a file list from locally existing model files.
 
-    We can only figure out the files we need from safetensors index, so
-    a local directory must contain a *.safetensors.index.json and
-    safetensors listed there.
+    Accepts two layouts: the sharded ``*.safetensors.index.json`` layout
+    (where the index enumerates every expected weight file) and the
+    single-file ``model.safetensors`` + ``config.json`` layout used by
+    many small / quantized HuggingFace checkpoints. See
+    :func:`_scan_model_directory` for the precise contract.
     """
     normalized = model_id.normalize()
     for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
@@ -737,6 +847,9 @@ async def _download_file(
             ) as f:
                 while chunk := await r.content.read(8 * 1024 * 1024):
                     n_read = n_read + (await f.write(chunk))
+                    await f.flush()
+                    # Write companion metadata for peer download streaming
+                    await _write_partial_meta(partial_path, n_read, length, remote_hash)
                     on_progress(n_read, length, False)
 
     final_hash = await calc_hash(
@@ -752,8 +865,29 @@ async def _download_file(
             f"Downloaded file {target_dir / path} has hash {final_hash} but remote hash is {remote_hash}"
         )
     await aios.rename(partial_path, target_dir / path)
+    # Clean up companion metadata file
+    meta_path = Path(f"{partial_path}.meta")
+    if await aios.path.exists(meta_path):
+        await aios.remove(meta_path)
     on_progress(length, length, True)
     return target_dir / path
+
+
+async def _write_partial_meta(
+    partial_path: Path, safe_bytes: int, total: int, etag: str
+) -> None:
+    """Write companion .partial.meta file for peer download streaming.
+
+    This small JSON file tells the peer file server how many bytes of the
+    .partial file have been safely flushed to disk and are safe to serve.
+    """
+    meta_path = Path(f"{partial_path}.meta")
+    meta = json.dumps({"safe_bytes": safe_bytes, "total": total, "etag": etag})
+    # Write to temp then rename for atomicity
+    tmp_path = Path(f"{partial_path}.meta.tmp")
+    async with aiofiles.open(tmp_path, "w") as f:
+        await f.write(meta)
+    await aios.rename(tmp_path, meta_path)
 
 
 def calculate_repo_progress(

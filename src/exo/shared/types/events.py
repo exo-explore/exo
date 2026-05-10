@@ -1,5 +1,6 @@
 from datetime import datetime
-from typing import final
+from enum import Enum
+from typing import Literal, final
 
 from pydantic import Field
 
@@ -146,6 +147,58 @@ class InstanceLinkDeleted(BaseEvent):
     link_id: InstanceLinkId
 
 
+class DrafterPlacementDegradationReason(str, Enum):
+    """Why placement could not honour a model's ``drafter_eligible_nodes``.
+
+    Surfaced on :class:`DrafterPlacementDegraded` so the operator can see
+    *why* their asymmetric drafter placement was downgraded to legacy
+    single-device (or no) drafter, without crawling worker logs.
+    """
+
+    NoEligibleNodeAvailable = "NoEligibleNodeAvailable"
+    """No eligible node is alive in the topology (eligibility list refers
+    to nodes that are missing/timed-out)."""
+
+    AllEligibleNodesInTargetCycle = "AllEligibleNodesInTargetCycle"
+    """Every listed eligible node is already a target rank, so there's no
+    spare host to land the drafter on."""
+
+    NoReachablePathFromTargetRankZero = "NoReachablePathFromTargetRankZero"
+    """``MlxRing`` requires a socket connection from target rank 0 to the
+    drafter node; ``MlxJaccl`` requires an RDMA edge. None of the
+    eligible nodes provided one."""
+
+    InsufficientDrafterMemory = "InsufficientDrafterMemory"
+    """The first reachable eligible node lacks enough RAM for the chosen
+    drafter weights."""
+
+
+@final
+class DrafterPlacementDegraded(BaseEvent):
+    """Loud-but-graceful telemetry: asymmetric drafter requested, denied.
+
+    Emitted by the master when a model card declares
+    ``drafter_eligible_nodes`` but the placement layer cannot satisfy
+    the asymmetric topology. The corresponding ``InstanceCreated`` is
+    still emitted in the same step -- the user's request still
+    completes, just without the asymmetric speedup -- so the operator
+    sees both events and knows their cluster needs adjusting (e.g.
+    bring an eligible node online, free its RAM, fix the network
+    edge).
+
+    State transition: pass-through. No state mutation; this exists
+    purely for dashboard/CLI surfacing.
+    """
+
+    model_id: ModelId
+    instance_id: InstanceId | None = None
+    target_node_ids: list[NodeId]
+    eligible_nodes: list[NodeId]
+    reason: DrafterPlacementDegradationReason
+    fallback: Literal["single_device_drafter", "no_drafter"]
+    detail: str = ""
+
+
 Event = (
     TestEvent
     | TaskCreated
@@ -169,6 +222,7 @@ Event = (
     | CustomModelCardDeleted
     | InstanceLinkCreated
     | InstanceLinkDeleted
+    | DrafterPlacementDegraded
 )
 
 

@@ -170,7 +170,7 @@ class Topology:
             self.add_connection(conn)
 
     def remove_all_rdma_connections_touching(self, node_id: NodeId) -> None:
-        """Remove every RDMA edge incident to ``node_id`` (incoming or outgoing)."""
+        """Remove every incoming or outgoing RDMA edge touching node_id."""
         if node_id not in self._vertex_indices:
             return
         rx_idx = self._vertex_indices[node_id]

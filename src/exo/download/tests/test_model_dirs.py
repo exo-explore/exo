@@ -42,6 +42,19 @@ def _create_incomplete_model(model_dir: Path) -> None:
     # model.safetensors is missing
 
 
+def _create_single_file_safetensors_model(model_dir: Path) -> None:
+    """Create a complete model that ships a single safetensors with no index.
+
+    Mirrors the layout HuggingFace publishes for many small / quantized
+    single-file checkpoints (e.g. coupled MTP drafters) where there is no
+    ``model.safetensors.index.json``.
+    """
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "model.safetensors").write_bytes(b"weights")
+    (model_dir / "config.json").write_text('{"model_type": "test"}')
+    (model_dir / "tokenizer.json").write_text("{}")
+
+
 # ---------------------------------------------------------------------------
 # resolve_existing_model
 # ---------------------------------------------------------------------------
@@ -119,6 +132,60 @@ class TestResolveExistingModel:
             patch("exo.download.download_utils.EXO_MODELS_DIRS", (writable,)),
         ):
             assert resolve_existing_model(MODEL_ID) == ro2 / NORMALIZED
+
+    def test_finds_single_file_safetensors_model_without_index(
+        self, tmp_path: Path
+    ) -> None:
+        """Coupled MTP drafters (e.g. ``mlx-community/gemma-4-e2b-it-4bit``)
+        ship as a single ``model.safetensors`` plus ``config.json`` with no
+        ``model.safetensors.index.json``. ``resolve_existing_model`` must
+        accept that layout so the runtime can pick the drafter up natively
+        instead of needing a manual index bootstrap.
+        """
+        writable = tmp_path / "writable"
+        _create_single_file_safetensors_model(writable / NORMALIZED)
+        with (
+            patch("exo.download.download_utils.EXO_MODELS_READ_ONLY_DIRS", ()),
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (writable,)),
+        ):
+            assert resolve_existing_model(MODEL_ID) == writable / NORMALIZED
+
+    def test_skips_single_file_directory_without_config_json(
+        self, tmp_path: Path
+    ) -> None:
+        """A bare safetensors file without ``config.json`` is not a model
+        checkpoint -- the scanner must keep returning ``None`` so callers
+        don't mark such directories complete (e.g. tokenizer-only stashes).
+        """
+        writable = tmp_path / "writable"
+        model_dir = writable / NORMALIZED
+        model_dir.mkdir(parents=True)
+        (model_dir / "model.safetensors").write_bytes(b"weights")
+        with (
+            patch("exo.download.download_utils.EXO_MODELS_READ_ONLY_DIRS", ()),
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (writable,)),
+        ):
+            assert resolve_existing_model(MODEL_ID) is None
+
+    def test_skips_directory_with_multiple_safetensors_and_no_index(
+        self, tmp_path: Path
+    ) -> None:
+        """Multi-file safetensors layouts MUST keep their index file -- we
+        cannot infer the expected weight set from disk alone, so the
+        original "no index, no opinion" semantics still apply when there
+        are 2+ ``*.safetensors`` files.
+        """
+        writable = tmp_path / "writable"
+        model_dir = writable / NORMALIZED
+        model_dir.mkdir(parents=True)
+        (model_dir / "model-00001-of-00002.safetensors").write_bytes(b"a")
+        (model_dir / "model-00002-of-00002.safetensors").write_bytes(b"b")
+        (model_dir / "config.json").write_text('{"model_type": "test"}')
+        with (
+            patch("exo.download.download_utils.EXO_MODELS_READ_ONLY_DIRS", ()),
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (writable,)),
+        ):
+            assert resolve_existing_model(MODEL_ID) is None
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +326,37 @@ class TestDeleteModel:
         result = await delete_model(MODEL_ID)
         assert result is True
         assert not await aios.path.exists(model_dir)
+
+    async def test_deletes_symlinked_model_target(
+        self, dirs: tuple[Path, Path, Path], tmp_path: Path
+    ) -> None:
+        w1, _, _ = dirs
+        target_dir = tmp_path / "external-model-store" / "test-model"
+        _create_complete_model(target_dir)
+        model_link = w1 / NORMALIZED
+        model_link.symlink_to(target_dir, target_is_directory=True)
+
+        result = await delete_model(MODEL_ID)
+
+        assert result is True
+        assert not model_link.exists()
+        assert not target_dir.exists()
+
+    async def test_rejects_symlink_target_that_is_not_a_model_dir(
+        self, dirs: tuple[Path, Path, Path], tmp_path: Path
+    ) -> None:
+        w1, _, _ = dirs
+        target_dir = tmp_path / "not-a-model"
+        target_dir.mkdir()
+        (target_dir / "notes.txt").write_text("not model data")
+        model_link = w1 / NORMALIZED
+        model_link.symlink_to(target_dir, target_is_directory=True)
+
+        with pytest.raises(OSError, match="does not look like a model directory"):
+            await delete_model(MODEL_ID)
+
+        assert not model_link.exists()
+        assert target_dir.exists()
 
     async def test_deletes_from_multiple_writable_dirs(
         self, dirs: tuple[Path, Path, Path]

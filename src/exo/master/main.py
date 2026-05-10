@@ -1,10 +1,13 @@
+import shutil
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import anyio
 from loguru import logger
 
 from exo.master.placement import (
     add_instance_to_placements,
+    auto_place_prefill_siblings,
     cancel_unnecessary_downloads,
     delete_instance,
     get_transition_events,
@@ -36,6 +39,7 @@ from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     CustomModelCardAdded,
     CustomModelCardDeleted,
+    DrafterPlacementDegraded,
     Event,
     GlobalForwarderEvent,
     IndexedEvent,
@@ -53,7 +57,7 @@ from exo.shared.types.events import (
     TracesCollected,
     TracesMerged,
 )
-from exo.shared.types.instance_link import InstanceLink
+from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -73,6 +77,8 @@ from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
+
+_MAX_MASTER_SESSION_LOG_DIRS = 5
 
 
 def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
@@ -126,6 +132,7 @@ class Master:
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
         download_command_sender: Sender[ForwarderDownloadCommand],
+        event_log_root: Path = EXO_EVENT_LOG_DIR,
     ):
         self.node_id = node_id
         self.session_id = session_id
@@ -139,7 +146,12 @@ class Master:
         self.event_sender = event_sender
         self._system_id = SystemId()
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
-        self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
+        _prune_master_session_log_dirs(
+            event_log_root / "master", _session_log_dir_name(session_id)
+        )
+        self._event_log = DiskEventLog(
+            event_log_root / "master" / _session_log_dir_name(session_id)
+        )
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
 
@@ -161,6 +173,56 @@ class Master:
         logger.info("Stopping Master")
         self._tg.cancel_tasks()
 
+    def _select_text_generation_instance(self, command: TextGeneration) -> InstanceId:
+        prefill_only: set[InstanceId] = set()
+        for link in self.state.instance_links.values():
+            prefill_only.update(link.prefill_instances)
+        for link in self.state.instance_links.values():
+            prefill_only.difference_update(link.decode_instances)
+
+        if command.target_instance_id is not None:
+            target_instance = self.state.instances.get(command.target_instance_id)
+            if target_instance is None:
+                raise ValueError(
+                    f"No instance found for target {command.target_instance_id}"
+                )
+            if target_instance.shard_assignments.model_id != command.task_params.model:
+                raise ValueError(
+                    "Target instance "
+                    f"{command.target_instance_id} serves "
+                    f"{target_instance.shard_assignments.model_id}, "
+                    f"not {command.task_params.model}"
+                )
+            if command.target_instance_id in prefill_only:
+                raise ValueError(
+                    f"Target instance {command.target_instance_id} is "
+                    "prefill-only and cannot serve decode requests"
+                )
+            return command.target_instance_id
+
+        in_flight = {TaskStatus.Pending, TaskStatus.Running}
+        instance_task_counts: dict[InstanceId, int] = {}
+        for instance in self.state.instances.values():
+            if (
+                instance.shard_assignments.model_id == command.task_params.model
+                and instance.instance_id not in prefill_only
+            ):
+                task_count = sum(
+                    1
+                    for task in self.state.tasks.values()
+                    if task.instance_id == instance.instance_id
+                    and task.task_status in in_flight
+                )
+                instance_task_counts[instance.instance_id] = task_count
+
+        if not instance_task_counts:
+            raise ValueError(f"No instance found for model {command.task_params.model}")
+
+        return sorted(
+            instance_task_counts.keys(),
+            key=lambda instance_id: instance_task_counts[instance_id],
+        )[0]
+
     async def _command_processor(self) -> None:
         with self.command_receiver as commands:
             async for forwarder_command in commands:
@@ -174,42 +236,9 @@ class Master:
                         case TestCommand():
                             pass
                         case TextGeneration():
-                            prefill_only: set[InstanceId] = set()
-                            for link in self.state.instance_links.values():
-                                prefill_only.update(link.prefill_instances)
-                            for link in self.state.instance_links.values():
-                                prefill_only.difference_update(link.decode_instances)
-
-                            for instance in self.state.instances.values():
-                                if (
-                                    instance.shard_assignments.model_id
-                                    == command.task_params.model
-                                    and instance.instance_id not in prefill_only
-                                ):
-                                    in_flight = {TaskStatus.Pending, TaskStatus.Running}
-                                    task_count = sum(
-                                        1
-                                        for task in self.state.tasks.values()
-                                        if task.instance_id == instance.instance_id
-                                        and task.task_status in in_flight
-                                    )
-                                    instance_task_counts[instance.instance_id] = (
-                                        task_count
-                                    )
-
-                            if not instance_task_counts:
-                                raise ValueError(
-                                    f"No instance found for model {command.task_params.model}"
-                                )
-
-                            available_instance_ids = sorted(
-                                instance_task_counts.keys(),
-                                key=lambda instance_id: instance_task_counts[
-                                    instance_id
-                                ],
+                            decode_instance_id = self._select_text_generation_instance(
+                                command
                             )
-
-                            decode_instance_id = available_instance_ids[0]
                             task_id = TaskId()
                             params = command.task_params.model_copy(
                                 update={
@@ -358,6 +387,9 @@ class Master:
                                 )
                             generated_events.extend(transition_events)
                         case PlaceInstance():
+                            drafter_degradation_events: list[
+                                DrafterPlacementDegraded
+                            ] = []
                             placement = place_instance(
                                 command,
                                 self.state.topology,
@@ -366,11 +398,60 @@ class Master:
                                 self.state.node_network,
                                 download_status=self.state.downloads,
                                 node_rdma_ctl=self.state.node_rdma_ctl,
+                                on_drafter_placement_degraded=drafter_degradation_events.append,
                             )
+
+                            # Auto-place prefill-only siblings on operator-
+                            # designated nodes, then link them to each newly-
+                            # created decode instance. The link tells
+                            # ``_prefill_endpoint_for`` to spread incoming
+                            # requests' prefill traffic across the linked
+                            # nodes, which is the only architecturally
+                            # honest way to keep slot N's TTFT independent
+                            # of slot 0's prefill: dispatch them to
+                            # different GPUs in the cluster instead of
+                            # serialising on the target's single forward.
+                            if command.model_card.prefill_eligible_nodes:
+                                new_decode_ids = [
+                                    iid
+                                    for iid in placement
+                                    if iid not in self.state.instances
+                                ]
+                                for decode_id in new_decode_ids:
+                                    decode_inst = placement[decode_id]
+                                    (
+                                        new_prefill_instances,
+                                        new_prefill_ids,
+                                    ) = auto_place_prefill_siblings(
+                                        decode_instance_id=decode_id,
+                                        decode_instance=decode_inst,
+                                        model_card=command.model_card,
+                                        topology=self.state.topology,
+                                        current_instances=placement,
+                                        node_memory=self.state.node_memory,
+                                        node_network=self.state.node_network,
+                                        download_status=self.state.downloads,
+                                    )
+                                    placement = {
+                                        **placement,
+                                        **new_prefill_instances,
+                                    }
+                                    if new_prefill_ids:
+                                        generated_events.append(
+                                            InstanceLinkCreated(
+                                                link=InstanceLink(
+                                                    link_id=InstanceLinkId(),
+                                                    prefill_instances=new_prefill_ids,
+                                                    decode_instances=[decode_id],
+                                                )
+                                            )
+                                        )
+
                             transition_events = get_transition_events(
                                 self.state.instances, placement, self.state.tasks
                             )
                             generated_events.extend(transition_events)
+                            generated_events.extend(drafter_degradation_events)
                         case CreateInstance():
                             placement = add_instance_to_placements(
                                 command,
@@ -455,12 +536,51 @@ class Master:
 
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
+        # Codex P1 (PR #16 round-(N+9), master/main.py:486): the
+        # inactivity timeout MUST stay safely above ``NodeGatheredInfo``
+        # cadence jitter -- 5s was too tight (any node that didn't
+        # publish telemetry within 5s, e.g. when fast probes are
+        # unavailable or delayed, would be marked timed out and have
+        # its instances deleted in the same _plan loop). Because
+        # this loop now ticks every second, normal jitter caused
+        # repeated false-positive ``NodeTimedOut`` events and
+        # unnecessary instance churn. Restore the upstream-safe
+        # 30s budget while keeping the 1s tick so the master still
+        # reacts quickly when a node *does* genuinely time out.
+        node_inactivity_timeout = timedelta(seconds=30)
+        tick_interval_seconds = 1.0
+
         while True:
             # kill broken instances
             connected_node_ids = set(self.state.topology.list_nodes())
             for instance_id, instance in self.state.instances.items():
-                for node_id in instance.shard_assignments.node_to_runner:
+                # ``all_node_to_runner`` includes the drafter node for
+                # asymmetric placements, so a drafter-node disconnect
+                # tears the instance down on the same path as a target
+                # rank disconnect. Without this, the surviving target
+                # ranks would keep the instance alive but block on
+                # ``transport.forward()`` against a dead socket -- the
+                # drafter rank will not come back without a full
+                # placement rebuild, so deletion is the only consistent
+                # recovery path. ``shard_assignments.node_to_runner`` is
+                # a strict subset, so the symmetric (drafter-less) path
+                # behaves identically.
+                for node_id in instance.all_node_to_runner:
                     if node_id not in connected_node_ids:
+                        is_drafter_node = (
+                            instance.drafter_placement is not None
+                            and node_id == instance.drafter_placement.drafter_node_id
+                        )
+                        node_role = "drafter" if is_drafter_node else "shard"
+                        logger.warning(
+                            f"Deleting instance because a {node_role} "
+                            f"node is disconnected "
+                            f"instance_id={instance_id} "
+                            f"model_id={instance.shard_assignments.model_id} "
+                            f"missing_node={node_id} "
+                            f"missing_node_name={self._friendly_name(node_id)} "
+                            f"connected_nodes={self._topology_node_names()}"
+                        )
                         await self.event_sender.send(
                             InstanceDeleted(instance_id=instance_id)
                         )
@@ -469,11 +589,24 @@ class Master:
             # time out dead nodes
             for node_id, time in self.state.last_seen.items():
                 now = datetime.now(tz=timezone.utc)
-                if now - time > timedelta(seconds=30):
-                    logger.info(f"Manually removing node {node_id} due to inactivity")
+                if now - time > node_inactivity_timeout:
+                    impacted_instances = [
+                        str(instance_id)
+                        for instance_id, instance in self.state.instances.items()
+                        if node_id in instance.shard_assignments.node_to_runner
+                    ]
+                    logger.warning(
+                        "Timing out inactive node "
+                        f"node_id={node_id} node_name={self._friendly_name(node_id)} "
+                        f"last_seen={time.isoformat()} "
+                        f"age_seconds={(now - time).total_seconds():.3f} "
+                        f"last_event_applied_idx={self.state.last_event_applied_idx} "
+                        f"topology_nodes={self._topology_node_names()} "
+                        f"impacted_instances={impacted_instances}"
+                    )
                     await self.event_sender.send(NodeTimedOut(node_id=node_id))
 
-            await anyio.sleep(10)
+            await anyio.sleep(tick_interval_seconds)
 
     async def _event_processor(self) -> None:
         with self.local_event_receiver as local_events:
@@ -519,6 +652,15 @@ class Master:
             )
         )
 
+    def _friendly_name(self, node_id: NodeId) -> str:
+        identity = self.state.node_identities.get(node_id)
+        return identity.friendly_name if identity is not None else str(node_id)
+
+    def _topology_node_names(self) -> list[str]:
+        return [
+            self._friendly_name(node_id) for node_id in self.state.topology.list_nodes()
+        ]
+
     async def _handle_traces_collected(self, event: TracesCollected) -> None:
         task_id = event.task_id
         if task_id not in self._pending_traces:
@@ -540,7 +682,33 @@ class Master:
         await self.event_sender.send(
             TracesMerged(task_id=task_id, traces=all_trace_data)
         )
-
         del self._pending_traces[task_id]
         if task_id in self._expected_ranks:
             del self._expected_ranks[task_id]
+
+
+def _session_log_dir_name(session_id: SessionId) -> str:
+    return f"{session_id.master_node_id}-{session_id.election_clock}"
+
+
+def _prune_master_session_log_dirs(
+    master_log_root: Path, current_session_dir: str
+) -> None:
+    """Keep master session log directories bounded across elections."""
+    if not master_log_root.exists():
+        return
+
+    session_dirs = [
+        path
+        for path in master_log_root.iterdir()
+        if path.is_dir() and path.name != current_session_dir
+    ]
+    session_dirs.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    for old_dir in session_dirs[_MAX_MASTER_SESSION_LOG_DIRS - 1 :]:
+        try:
+            shutil.rmtree(old_dir)
+            logger.info(f"Pruned old master event log directory: {old_dir}")
+        except OSError as exc:
+            logger.opt(exception=exc).warning(
+                f"Failed to prune old master event log directory: {old_dir}"
+            )

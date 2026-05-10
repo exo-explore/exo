@@ -6,16 +6,27 @@ supports_tensor = true
 tasks = ["TextGeneration"]
 family = "qwen"
 quantization = "8bit"
-base_model = "Qwen3.6 35B A3B"
+base_model = "Qwen3.6 35B-A3B"
 capabilities = ["text", "thinking", "thinking_toggle", "vision"]
+# Hybrid Qwen 3.6 MoE (linear gated-delta + full-attention layers,
+# full_attention_interval=4, 256 experts × 8 active per token,
+# moe_intermediate_size=512) — paired with z-lab's DFlash drafter
+# (block-diffusion, block_size=16, target_layer_ids=[1,10,19,28,37],
+# num_target_layers=40).
+#
+# mlx-lm's qwen3_5_moe Model is a thin sanitize wrapper around
+# qwen3_5.Model (the MoE-vs-dense routing is handled inside
+# qwen3_5.DecoderLayer via SparseMoeBlock vs MLP on layer.mlp),
+# so our existing Qwen3_5DFlashTargetAdapter handles this target
+# transparently — no MoE-specific vendor work needed.
+coupled_drafter = "z-lab/Qwen3.6-35B-A3B-DFlash"
 reasoning_dialect = "post_last_user"
 context_length = 262144
 
 [storage_size]
-in_bytes = 37721128672
+in_bytes = 37580963840
 
-# Source: https://huggingface.co/Qwen/Qwen3.6-35B-A3B#best-practices
-# Source: https://unsloth.ai/docs/models/qwen3.5
+# Source: https://huggingface.co/Qwen/Qwen3.6-35B-A3B (best-practices)
 [sampling_defaults]
 temperature = 1.0
 top_p = 0.95
@@ -24,8 +35,6 @@ min_p = 0.0
 repetition_penalty = 1.0
 presence_penalty = 1.5
 
-# Source: https://huggingface.co/Qwen/Qwen3.6-35B-A3B#best-practices
-# Source: https://unsloth.ai/docs/models/qwen3.5
 [sampling_defaults.non_thinking]
 temperature = 0.7
 top_p = 0.8

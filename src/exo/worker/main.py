@@ -3,14 +3,15 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 import anyio
-from anyio import fail_after, to_thread
+from anyio import fail_after, move_on_after, to_thread
 from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
+from exo.download.peer_state import discover_peers_for_model
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
-from exo.shared.models.model_cards import ModelId, card_cache
+from exo.shared.models.model_cards import ModelId, add_to_card_cache, delete_custom_card
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     DeleteInstance,
@@ -20,6 +21,8 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, NodeId, SystemId
 from exo.shared.types.events import (
+    CustomModelCardAdded,
+    CustomModelCardDeleted,
     Event,
     IndexedEvent,
     InputChunkReceived,
@@ -38,6 +41,7 @@ from exo.shared.types.tasks import (
     CreateRunner,
     DownloadModel,
     ImageEdits,
+    ImageGeneration,
     LoadModel,
     Shutdown,
     Task,
@@ -47,7 +51,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
-from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.instances import DrafterPlacement, InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
@@ -56,6 +60,43 @@ from exo.utils.keyed_backoff import KeyedBackoff
 from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
 from exo.worker.runner.supervisor import RunnerSupervisor
+
+
+def _should_drop_generation_task_at_drafter(
+    *,
+    task: Task,
+    runner_id: RunnerId,
+    drafter_placement: DrafterPlacement | None,
+    node_id: NodeId,
+) -> bool:
+    """Return whether a task should be silently dropped because it
+    would otherwise be dispatched to a drafter runner that can't
+    handle it.
+
+    Generation tasks (``TextGeneration``, ``ImageGeneration``,
+    ``ImageEdits``) must never reach the drafter rank.
+    :class:`DrafterRunner` only accepts lifecycle tasks
+    (``ConnectToGroup``, ``LoadModel``, ``StartWarmup``,
+    ``Shutdown``) and raises ``ValueError`` for anything else, which
+    marks the runner failed and cascades into instance shutdown
+    during asymmetric serving. The asymmetric drafter produces draft
+    tokens via the spec-decode socket wire, driven by the target's
+    verify loop -- it does not participate in ``Task``-driven
+    user-facing generation.
+
+    Returns True iff:
+    - ``drafter_placement`` is set (asymmetric placement),
+    - ``node_id`` is the drafter node,
+    - ``runner_id`` resolves to the drafter runner, AND
+    - the task is a generation task.
+    """
+    if drafter_placement is None:
+        return False
+    if drafter_placement.drafter_node_id != node_id:
+        return False
+    if runner_id != drafter_placement.drafter_runner_id:
+        return False
+    return isinstance(task, (TextGeneration, ImageGeneration, ImageEdits))
 
 
 class Worker:
@@ -70,6 +111,7 @@ class Worker:
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         api_port: int,
+        peer_download_port: int,
     ):
         self.node_id: NodeId = node_id
         self.event_receiver = event_receiver
@@ -77,6 +119,14 @@ class Worker:
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.api_port = api_port
+        # Codex P2 (PR #16 round 3): the peer-download listener port is
+        # now per-process configurable instead of a module-level
+        # constant. Use the local value when computing
+        # ``discover_peers_for_model`` results because peers in the
+        # current architecture all bind the same port (cluster-wide
+        # convention enforced via ``EXO_PEER_DOWNLOAD_PORT`` /
+        # ``--peer-download-port``).
+        self._peer_download_port = peer_download_port
 
         self.state: State = State()
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
@@ -107,9 +157,8 @@ class Worker:
                 tg.start_soon(self._forward_info, info_recv)
                 tg.start_soon(self.plan_step)
                 tg.start_soon(self._event_applier)
+                tg.start_soon(self._reconcile_instance_backoff)
                 tg.start_soon(self._poll_connection_updates)
-                tg.start_soon(self._reconcile_custom_cards)
-
         finally:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")
@@ -151,6 +200,7 @@ class Worker:
                     self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
                         event.chunk
                     )
+
                     if (
                         len(self.input_chunk_buffer[cmd_id])
                         == self.input_chunk_counts[cmd_id]
@@ -171,18 +221,23 @@ class Worker:
                                 )
                             ] = img
 
-    async def _reconcile_custom_cards(self) -> None:
+                if isinstance(event, CustomModelCardAdded):
+                    await event.model_card.save_to_custom_dir()
+                    add_to_card_cache(event.model_card)
+
+                if isinstance(event, CustomModelCardDeleted):
+                    await delete_custom_card(event.model_id)
+
+    async def _reconcile_instance_backoff(self) -> None:
         while True:
             await anyio.sleep(1)
-            target = dict(self.state.custom_model_cards)
-            for model_id, card in target.items():
-                if card_cache.get(model_id) == card:
-                    continue
-                await card_cache.save(card)
+            self._reconcile_instance_backoff_once()
 
-            for card in await card_cache.list_all():
-                if card.model_id not in target:
-                    await card_cache.pop(card.model_id)
+    def _reconcile_instance_backoff_once(self) -> None:
+        live_instances = set(self.state.instances)
+        for instance_id in self._instance_backoff.tracked_keys():
+            if instance_id not in live_instances:
+                self._instance_backoff.reset(instance_id)
 
     async def plan_step(self):
         while True:
@@ -257,12 +312,19 @@ class Worker:
                             )
                         )
                     else:
+                        peers = discover_peers_for_model(
+                            self.node_id,
+                            self.state,
+                            shard.model_card.model_id.normalize(),
+                            self._peer_download_port,
+                        )
                         await self.download_command_sender.send(
                             ForwarderDownloadCommand(
                                 origin=self._system_id,
                                 command=StartDownload(
                                     target_node_id=self.node_id,
                                     shard_metadata=shard,
+                                    available_peers=peers,
                                 ),
                             )
                         )
@@ -361,14 +423,48 @@ class Worker:
                     await self._start_runner_task(task)
 
     async def shutdown(self):
+        self.event_sender.close()
+        self.command_sender.close()
+        self.download_command_sender.close()
+        for runner in self.runners.values():
+            runner.shutdown()
         self._tg.cancel_tasks()
-        await self._stopped.wait()
+        with move_on_after(5) as scope:
+            await self._stopped.wait()
+        if scope.cancel_called:
+            logger.warning("Timed out waiting for Worker shutdown")
 
     async def _start_runner_task(self, task: Task):
-        if (instance := self.state.instances.get(task.instance_id)) is not None:
-            await self.runners[
-                instance.shard_assignments.node_to_runner[self.node_id]
-            ].start_task(task)
+        if (instance := self.state.instances.get(task.instance_id)) is None:
+            return
+        # ``all_node_to_runner`` resolves both target and drafter ranks
+        # for asymmetric placement; ``node_to_runner`` alone misses the
+        # drafter rank because it lives on ``instance.drafter_placement``,
+        # not on ``shard_assignments``.
+        runner_id = instance.all_node_to_runner[self.node_id]
+        if _should_drop_generation_task_at_drafter(
+            task=task,
+            runner_id=runner_id,
+            drafter_placement=instance.drafter_placement,
+            node_id=self.node_id,
+        ):
+            logger.debug(
+                f"Dropping {task.__class__.__name__} task "
+                f"{task.task_id} on drafter node {self.node_id} "
+                f"(instance {task.instance_id}); drafter runner only "
+                f"accepts lifecycle tasks."
+            )
+            # Record the drop in the runner's local completion set so
+            # the planner does not re-select the same task on every
+            # 100ms tick. Otherwise the worker keeps re-emitting
+            # ``TaskCreated`` events and re-running this drop path
+            # for the lifetime of the request, which is pure
+            # control-plane churn under streaming or long-running
+            # generations. The target runner remains the authority
+            # for the *global* task lifecycle (Codex P2, PR #20).
+            self.runners[runner_id].mark_task_dropped_locally(task.task_id)
+            return
+        await self.runners[runner_id].start_task(task)
 
     def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""

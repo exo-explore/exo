@@ -60,9 +60,12 @@ class FakeShardDownloader(ShardDownloader):
     """Fake downloader that yields a single model with configurable status."""
 
     def __init__(
-        self, status: Literal["not_started", "in_progress", "complete"] = "not_started"
+        self,
+        status: Literal["not_started", "in_progress", "complete"] = "not_started",
+        downloaded: Memory | None = None,
     ) -> None:
         self._status: Literal["not_started", "in_progress", "complete"] = status
+        self._downloaded = downloaded or Memory.from_mb(95)
         self._progress_callbacks: list[
             Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]]
         ] = []
@@ -91,7 +94,7 @@ class FakeShardDownloader(ShardDownloader):
                 shard=SHARD,
                 completed_files=10,
                 total_files=13,
-                downloaded=Memory.from_mb(95),
+                downloaded=self._downloaded,
                 downloaded_this_session=Memory.from_bytes(0),
                 total=Memory.from_mb(100),
                 overall_speed=0,
@@ -239,11 +242,13 @@ async def test_incomplete_model_with_files_present_detected_as_complete() -> Non
                 await coordinator_task
 
 
-async def test_genuinely_incomplete_model_stays_pending() -> None:
+async def test_genuinely_unstarted_model_is_not_advertised_as_pending() -> None:
     """When the per-file size check says not_started and resolve_existing_model
-    returns None (model truly not complete), the model should correctly be
-    DownloadPending."""
-    downloader = FakeShardDownloader(status="not_started")
+    returns None with no downloaded bytes, the periodic catalog scan should not
+    emit a user-visible DownloadPending status."""
+    downloader = FakeShardDownloader(
+        status="not_started", downloaded=Memory.from_bytes(0)
+    )
     coordinator, _cmd_send, event_recv = _setup_coordinator(downloader)
 
     # Mock resolve_existing_model to return None (model not on disk)
@@ -255,15 +260,8 @@ async def test_genuinely_incomplete_model_stays_pending() -> None:
         try:
             events = await _collect_events(event_recv, timeout=1.5)
 
-            # The model should be DownloadPending
-            assert isinstance(
-                coordinator.download_status.get(MODEL_ID), DownloadPending
-            ), (
-                f"Expected DownloadPending but got "
-                f"{type(coordinator.download_status.get(MODEL_ID)).__name__}"
-            )
+            assert MODEL_ID not in coordinator.download_status
 
-            # Should have emitted a DownloadPending event
             pending_events = [
                 e
                 for e in events
@@ -271,9 +269,7 @@ async def test_genuinely_incomplete_model_stays_pending() -> None:
                 and isinstance(e.download_progress, DownloadPending)
                 and e.download_progress.shard_metadata.model_card.model_id == MODEL_ID
             ]
-            assert len(pending_events) > 0, (
-                "Expected at least one DownloadPending event"
-            )
+            assert len(pending_events) == 0
         finally:
             await coordinator.shutdown()
             coordinator_task.cancel()

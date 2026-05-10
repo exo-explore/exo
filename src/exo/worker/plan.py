@@ -87,13 +87,52 @@ def _kill_runner(
                 runner_id=runner_id,
             )
 
-        for (
-            global_runner_id
-        ) in runner.bound_instance.instance.shard_assignments.node_to_runner.values():
+        # Restart-cascade rule: only fires when our local rank is
+        # ``RunnerRunning`` (mid-task), which guarantees we previously
+        # cleared the bootstrap collective with every peer rank in lock-
+        # step (warmup-complete on all ranks is a precondition for
+        # ``RunnerRunning`` -- see ``handle_generation_tasks``). If a
+        # peer is now ``RunnerIdle``, that is a backward jump only
+        # reachable by a process restart; the transient ``RunnerFailed``
+        # was gossiped too briefly for the rule above to fire (the
+        # supervisor respawned the runner immediately and the new
+        # process emitted ``RunnerIdle`` right away). Without this rule
+        # the bootstrap predicate (``all_runners_connecting`` in
+        # ``_init_distributed_backend``) never fires and the respawned
+        # peer is stuck in ``RunnerIdle`` forever -- the failure mode
+        # observed in the K=8 sweep regression at 14:35:05.
+        #
+        # We restrict the trigger to ``RunnerRunning`` (not
+        # ``RunnerLoaded``/``RunnerReady``) because during initial
+        # bootstrap a peer can legitimately sit at ``RunnerIdle`` while
+        # we have completed our own loading -- ``LoadModel`` happens
+        # per-rank without a collective barrier (see ``runner.py``
+        # case ``LoadModel``), so warmup-gate predicates need to keep
+        # waiting rather than tearing the cluster down.
+        instance = runner.bound_instance.instance
+        # Use ``all_runner_ids`` (target + drafter) so the staleness
+        # predicate fires for asymmetric placements where the drafter
+        # is the only peer (single-target + drafter on a different
+        # node).
+        is_multi_rank_instance = len(instance.all_runner_ids) > 1
+        local_is_running = isinstance(runner.status, RunnerRunning)
+
+        for global_runner_id in instance.all_runner_ids:
             if runner_id == global_runner_id:
                 continue
 
-            if isinstance(all_runners.get(global_runner_id, None), RunnerFailed):
+            peer_status = all_runners.get(global_runner_id, None)
+            if isinstance(peer_status, RunnerFailed):
+                return Shutdown(
+                    instance_id=instance_id,
+                    runner_id=runner_id,
+                )
+
+            if (
+                is_multi_rank_instance
+                and local_is_running
+                and isinstance(peer_status, RunnerIdle)
+            ):
                 return Shutdown(
                     instance_id=instance_id,
                     runner_id=runner_id,
@@ -108,7 +147,12 @@ def _create_runner(
     instance_backoff: KeyedBackoff[InstanceId],
 ) -> CreateRunner | None:
     for instance in instances.values():
-        runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
+        # ``all_node_to_runner`` includes the asymmetric drafter rank
+        # when ``instance.drafter_placement`` is set, so the drafter
+        # node spawns its drafter runner the same way target nodes
+        # spawn target runners.
+        per_node_runners = instance.all_node_to_runner
+        runner_id = per_node_runners.get(node_id, None)
         if runner_id is None:
             continue
 
@@ -118,7 +162,7 @@ def _create_runner(
         # don't create runners if any other nodes have runners that have failed - wait for them to fix themselves first.
         instance_has_failed_runner = any(
             isinstance(all_runners.get(remote_runner_id), RunnerFailed)
-            for remote_runner_id in instance.shard_assignments.node_to_runner.values()
+            for remote_runner_id in per_node_runners.values()
             if remote_runner_id != runner_id
         )
         we_have_failed_before = isinstance(all_runners.get(runner_id), RunnerFailed)
@@ -148,6 +192,14 @@ def _model_needs_download(
     }
 
     for runner in runners.values():
+        # The drafter rank loads its model from disk; placement assumes
+        # the operator has pre-downloaded the drafter weights on the
+        # eligible node. Auto-download for drafter ranks is a TODO --
+        # for now, the drafter runner fails loudly at load time if the
+        # weights are missing and the user fixes the cluster.
+        if runner.bound_instance.is_drafter_rank:
+            continue
+
         model_id = runner.bound_instance.bound_shard.model_card.model_id
         if (
             isinstance(runner.status, RunnerIdle)
@@ -173,40 +225,68 @@ def _init_distributed_backend(
 ):
     for runner in runners.values():
         instance = runner.bound_instance.instance
-        shard_assignments = instance.shard_assignments
-
-        is_single_node_instance = len(shard_assignments.runner_to_shard) == 1
-        if is_single_node_instance:
-            continue
+        runner_id = runner.bound_instance.bound_runner_id
+        bound_instance = runner.bound_instance
 
         runner_is_idle = isinstance(runner.status, RunnerIdle)
-        all_runners_connecting = all(
-            isinstance(
-                all_runners.get(global_runner_id),
-                (RunnerConnecting, RunnerIdle),
-            )
-            for global_runner_id in shard_assignments.runner_to_shard
-        )
-
-        if not (runner_is_idle and all_runners_connecting):
+        if not runner_is_idle:
             continue
 
-        runner_id = runner.bound_instance.bound_runner_id
+        # Asymmetric drafter rank: dial-only, no ``mx.distributed`` init.
+        # Dispatch the ConnectToGroup task as soon as the drafter is
+        # idle. ``dial_target`` retries with backoff so an early dial
+        # before target rank 0 binds is recoverable. Decoupling the
+        # drafter from the target's collective barrier is what lets a
+        # multi-target asymmetric instance work without
+        # ``Group.split``.
+        if bound_instance.is_drafter_rank:
+            return ConnectToGroup(instance_id=instance.instance_id)
 
-        shard = runner.bound_instance.bound_shard
-        device_rank = shard.device_rank
-        world_size = shard.world_size
+        # Single-target symmetric: no mx.distributed group at all.
+        # Single-target asymmetric *with* a drafter still needs the
+        # target rank to enter ``ConnectToGroup`` so it can bind the
+        # drafter listener. Differentiate via the placement.
+        is_single_rank_target = instance.parent_group_size == 1
+        if is_single_rank_target and instance.drafter_placement is None:
+            continue
 
-        assert device_rank < world_size
-        assert device_rank >= 0
+        # Target-only barrier: drafter ranks are dispatched in the
+        # branch above and are NOT members of any ``mx.distributed``
+        # group under the v3+ wire. Iterate ``shard_assignments`` so
+        # we get the target ranks alone.
+        target_runner_ids = list(instance.shard_assignments.runner_to_shard.keys())
+        all_target_connecting = all(
+            isinstance(
+                all_runners.get(target_runner_id),
+                (RunnerConnecting, RunnerIdle),
+            )
+            for target_runner_id in target_runner_ids
+        )
 
-        accepting_ranks = device_rank < world_size - 1
+        if not all_target_connecting:
+            continue
 
-        # Rank = n-1
-        connecting_rank_ready = device_rank == world_size - 1 and all(
-            isinstance(all_runners.get(global_runner_id, None), RunnerConnecting)
-            for global_runner_id in shard_assignments.runner_to_shard
-            if global_runner_id != runner_id
+        if is_single_rank_target:
+            # Single target rank in asymmetric placement: it still has
+            # to enter ConnectToGroup to bind the drafter listener and
+            # accept the dial. No mx.distributed barrier to honour.
+            return ConnectToGroup(instance_id=instance.instance_id)
+
+        # Multi-target ranks: keep the original ordering -- earlier
+        # ranks dispatch immediately, the last target rank dispatches
+        # once every other target rank is already RunnerConnecting (or
+        # later).
+        parent_size = instance.parent_group_size  # target ranks only
+        parent_rank = bound_instance.parent_rank
+        assert parent_rank < parent_size
+        assert parent_rank >= 0
+
+        accepting_ranks = parent_rank < parent_size - 1
+
+        connecting_rank_ready = parent_rank == parent_size - 1 and all(
+            isinstance(all_runners.get(target_runner_id, None), RunnerConnecting)
+            for target_runner_id in target_runner_ids
+            if target_runner_id != runner_id
         )
 
         if not (accepting_ranks or connecting_rank_ready):
@@ -226,6 +306,10 @@ def _load_model(
         instance = runner.bound_instance.instance
         shard_assignments = instance.shard_assignments
 
+        # Target shards must all be downloaded before any rank loads;
+        # the drafter's pre-downloaded weights are the operator's
+        # responsibility (see _model_needs_download), so we don't gate
+        # on its DownloadCompleted entry here.
         all_local_downloads_complete = all(
             nid in global_download_status
             and any(
@@ -238,8 +322,19 @@ def _load_model(
         if not all_local_downloads_complete:
             continue
 
-        is_single_node_instance = len(instance.shard_assignments.runner_to_shard) == 1
-        if is_single_node_instance and isinstance(runner.status, RunnerIdle):
+        # Single-target SYMMETRIC instance: no mx.distributed group and
+        # no drafter wire, so the runner can skip the ConnectToGroup
+        # collective and go straight to LoadModel. Single-target
+        # ASYMMETRIC (drafter on a different node) still has to enter
+        # ConnectToGroup so target rank 0 can bind the drafter socket
+        # listener; it falls through to the barrier check below.
+        is_single_rank_target = instance.parent_group_size == 1
+        is_symmetric_placement = instance.drafter_placement is None
+        if (
+            is_single_rank_target
+            and is_symmetric_placement
+            and isinstance(runner.status, RunnerIdle)
+        ):
             return LoadModel(instance_id=instance.instance_id)
 
         is_runner_waiting = isinstance(runner.status, RunnerConnected)
@@ -249,7 +344,7 @@ def _load_model(
                 all_runners.get(global_runner_id, None),
                 (RunnerConnected, RunnerLoading, RunnerLoaded),
             )
-            for global_runner_id in shard_assignments.runner_to_shard
+            for global_runner_id in instance.all_runner_ids
         )
 
         if is_runner_waiting and all_ready_for_model:
@@ -264,34 +359,58 @@ def _ready_to_warmup(
 ) -> StartWarmup | None:
     for runner in runners.values():
         instance = runner.bound_instance.instance
-        shard_assignments = instance.shard_assignments
-        shard = runner.bound_instance.bound_shard
-        device_rank = shard.device_rank
         runner_id = runner.bound_instance.bound_runner_id
-        world_size = shard.world_size
+        bound_instance = runner.bound_instance
 
         is_runner_loaded = isinstance(runner.status, RunnerLoaded)
+        if not is_runner_loaded:
+            continue
 
-        assert device_rank < world_size
-        assert device_rank >= 0
+        # ``RunnerWarmingUp`` is the canonical "ready to run warmup" state
+        # for an accepting rank, but a peer that has already advanced past
+        # warmup (``RunnerReady``/``RunnerRunning``) is *strictly past*
+        # the barrier we care about. Asymmetric drafter rank warmup is
+        # near-instant (one forward pass) so it can race past
+        # ``RunnerWarmingUp`` before the connecting rank's plan loop
+        # observes it; without including the post-warmup states the
+        # connecting rank stalls in ``RunnerLoaded`` forever.
+        post_loaded_states = (
+            RunnerWarmingUp,
+            RunnerReady,
+            RunnerRunning,
+        )
 
-        # Rank != 0
-        accepting_ranks_ready = device_rank > 0 and all(
+        # Drafter rank: warmup is independent (one drafter forward) so
+        # dispatch as soon as the drafter is RunnerLoaded.
+        if bound_instance.is_drafter_rank:
+            return StartWarmup(instance_id=instance.instance_id)
+
+        # Target ranks: keep the rank-0-connector ordering across
+        # target-only ranks. The drafter rank is excluded from this
+        # barrier (its own warmup is independent).
+        parent_rank = bound_instance.parent_rank
+        parent_size = instance.parent_group_size  # target ranks only
+
+        assert parent_rank < parent_size
+        assert parent_rank >= 0
+
+        target_runner_ids = list(instance.shard_assignments.runner_to_shard.keys())
+
+        accepting_ranks_ready = parent_rank > 0 and all(
             isinstance(
-                all_runners.get(global_runner_id, None),
-                (RunnerLoaded, RunnerWarmingUp),
+                all_runners.get(target_runner_id, None),
+                (RunnerLoaded, *post_loaded_states),
             )
-            for global_runner_id in shard_assignments.runner_to_shard
+            for target_runner_id in target_runner_ids
         )
 
-        # Rank = 0
-        connecting_rank_ready = device_rank == 0 and all(
-            isinstance(all_runners.get(global_runner_id, None), RunnerWarmingUp)
-            for global_runner_id in shard_assignments.runner_to_shard
-            if global_runner_id != runner_id
+        connecting_rank_ready = parent_rank == 0 and all(
+            isinstance(all_runners.get(target_runner_id, None), post_loaded_states)
+            for target_runner_id in target_runner_ids
+            if target_runner_id != runner_id
         )
 
-        if is_runner_loaded and (accepting_ranks_ready or connecting_rank_ready):
+        if accepting_ranks_ready or connecting_rank_ready:
             return StartWarmup(instance_id=instance.instance_id)
 
     return None
@@ -338,7 +457,7 @@ def _pending_tasks(
 
             if isinstance(runner.status, (RunnerReady, RunnerRunning)) and all(
                 isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))
-                for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
+                for global_runner_id in runner.bound_instance.instance.all_runner_ids
             ):
                 return task
 

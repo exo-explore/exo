@@ -16,6 +16,7 @@ from exo.api.types import (
     ErrorInfo,
     ErrorResponse,
     FinishReason,
+    GenerationStats,
     Logprobs,
     LogprobsContentItem,
     StreamingChoiceResponse,
@@ -175,6 +176,9 @@ async def chat_request_to_text_generation(
         presence_penalty=request.presence_penalty,
         frequency_penalty=request.frequency_penalty,
         images=images,
+        use_drafter=request.use_drafter,
+        num_draft_tokens=request.num_draft_tokens,
+        draft_mode=request.draft_mode,
     )
 
 
@@ -309,6 +313,7 @@ async def collect_chat_response(
     finish_reason: FinishReason | None = None
     error_message: str | None = None
     last_usage: Usage | None = None
+    last_stats: GenerationStats | None = None
 
     async for chunk in chunk_stream:
         match chunk:
@@ -323,6 +328,12 @@ async def collect_chat_response(
                 if model is None:
                     model = chunk.model
                 last_usage = chunk.usage or last_usage
+                # ``stats`` is only populated on the final TokenChunk
+                # (when ``finish_reason`` is set); accumulate so the
+                # caller's response surfaces drafter telemetry. Earlier
+                # chunks have ``stats=None``; only the terminal one
+                # carries the GenerationStats value.
+                last_stats = chunk.stats or last_stats
                 if chunk.is_thinking:
                     thinking_parts.append(chunk.text)
                 else:
@@ -342,6 +353,7 @@ async def collect_chat_response(
                 if model is None:
                     model = chunk.model
                 last_usage = chunk.usage or last_usage
+                last_stats = chunk.stats or last_stats
                 tool_calls.extend(
                     ToolCall(
                         id=tool.id,
@@ -379,5 +391,6 @@ async def collect_chat_response(
             )
         ],
         usage=last_usage,
+        generation_stats=last_stats,
     ).model_dump_json()
     return
