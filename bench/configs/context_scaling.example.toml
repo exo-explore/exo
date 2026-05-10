@@ -55,8 +55,8 @@ output_dir = "bench/results"
 num_steps = 32 # K — number of equally-spaced ramp points
 # pp_step = 1024              # Δ — explicit override; otherwise auto-derived
 # fraction_of_max = 1.0       # use this fraction of max_position_embeddings
-tg = 64    # tokens generated per step
-warmup = 1 # warmup requests at pp=Δ
+tg = 64        # tokens generated per step
+# warmup = 2   # default: 2 (1 cache-disabled JIT warmup + 1 cache-priming warmup)
 # cold_controls = "auto"      # 4 evenly-spaced controls across the ramp, or:
 # cold_controls = "8192,16384,32768,40960"   # explicit pp values
 sleep_between_s = 1.0

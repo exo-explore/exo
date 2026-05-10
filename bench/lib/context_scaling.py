@@ -167,16 +167,33 @@ def run_cached_sweep(
         f"tg={params.tg}, warmup={params.warmup}, cached"
     )
 
-    # Warmup primes the cache with the first Δ-token prefix.
+    # Warmup discipline:
+    #   - First warmup runs with the prefix cache DISABLED. This triggers
+    #     the MLX kernel JIT compile + KV-buffer alloc for this exact
+    #     (Δ, dtype, batch) shape, but does NOT write a cache entry — so
+    #     the cold-with-JIT rate isn't fossilised.
+    #   - Subsequent warmups run with the prefix cache ENABLED. The
+    #     second one finds an empty cache, does a real cold prefill with
+    #     a HOT kernel, and writes the resulting rate into the cache
+    #     entry at pp=Δ.
+    #   - Step 0 (also cache-enabled) is then an exact hit on that entry
+    #     and reports the hot rate.
+    # Default warmup=2 gives both effects; warmup=1 still does the JIT
+    # warmup but leaves step 0 as a "none" hit (cold prefill at the hot
+    # kernel, creates the cache entry on the way through).
     for w in range(params.warmup):
-        logger.info(f"  warmup {w + 1}/{params.warmup} (pp={params.pp_step})")
+        is_jit_warmup = w == 0
+        kind = "JIT warmup" if is_jit_warmup else "cache-prime warmup"
+        logger.info(
+            f"  warmup {w + 1}/{params.warmup} ({kind}, pp={params.pp_step})"
+        )
         _run_request(
             client,
             session.full_model_id,
             params.pp_step,
             params.tg,
             sizer,
-            use_prefix_cache=True,
+            use_prefix_cache=not is_jit_warmup,
         )
 
     steps: list[StepResult] = []

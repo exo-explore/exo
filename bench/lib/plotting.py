@@ -58,14 +58,20 @@ class PlotInputs:
 
 @dataclass(frozen=True)
 class _RunSeries:
-    """Pre-extracted plot data for one results JSON."""
+    """Pre-extracted plot data for one results JSON.
+
+    ``cached_prefill_seconds`` is the cumulative cold-prefill estimate
+    (``T_cum`` from the methodology — read from ``derived.t_cum_seconds``).
+    ``control_prefill_seconds`` is the actual cold prefill time per
+    control (``pp_tokens / prompt_tps`` from the cold-control row).
+    """
 
     label: str
     cached_pp: list[int]
-    cached_prompt_tps: list[float]
+    cached_prefill_seconds: list[float]
     cached_gen_tps: list[float]
     control_pp: list[int]
-    control_prompt_tps: list[float]
+    control_prefill_seconds: list[float]
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +146,6 @@ def _label_for(data: dict[str, Any], label_tag: str | None) -> str:
 def _extract_series(data: dict[str, Any], label: str) -> _RunSeries:
     """Pre-extract typed lists from a context-scaling bench JSON."""
     cached_pp: list[int] = []
-    cached_prompt_tps: list[float] = []
     cached_gen_tps: list[float] = []
     for raw in _get_list(data, "runs"):  # type: ignore[reportAny]
         if not isinstance(raw, dict):
@@ -149,25 +154,38 @@ def _extract_series(data: dict[str, Any], label: str) -> _RunSeries:
         if _get_str(row, "phase") != "cached_sweep":
             continue
         cached_pp.append(_get_int(row, "pp_tokens"))
-        cached_prompt_tps.append(_get_float(row, "prompt_tps"))
         cached_gen_tps.append(_get_float(row, "generation_tps"))
 
+    # Cumulative cold-prefill estimate is computed in derive_summary and
+    # written to derived.t_cum_seconds (parallel to the cached steps).
+    derived = _get_dict(data, "derived")
+    t_cum_raw = _get_list(derived, "t_cum_seconds")
+    cached_prefill_seconds: list[float] = []
+    for raw in t_cum_raw:  # type: ignore[reportAny]
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            cached_prefill_seconds.append(float(raw))
+
+    # Cold controls give us the actual cold prefill time directly:
+    # pp_tokens / prompt_tps. Skip rows with zero/missing prompt_tps.
     control_pp: list[int] = []
-    control_prompt_tps: list[float] = []
+    control_prefill_seconds: list[float] = []
     for raw in _get_list(data, "cold_controls"):  # type: ignore[reportAny]
         if not isinstance(raw, dict):
             continue
         row = cast("dict[str, Any]", raw)
-        control_pp.append(_get_int(row, "pp_tokens"))
-        control_prompt_tps.append(_get_float(row, "prompt_tps"))
+        pp = _get_int(row, "pp_tokens")
+        tps = _get_float(row, "prompt_tps")
+        if pp > 0 and tps > 0:
+            control_pp.append(pp)
+            control_prefill_seconds.append(pp / tps)
 
     return _RunSeries(
         label=label,
         cached_pp=cached_pp,
-        cached_prompt_tps=cached_prompt_tps,
+        cached_prefill_seconds=cached_prefill_seconds,
         cached_gen_tps=cached_gen_tps,
         control_pp=control_pp,
-        control_prompt_tps=control_prompt_tps,
+        control_prefill_seconds=control_prefill_seconds,
     )
 
 
@@ -241,21 +259,25 @@ def _draw(series: list[_RunSeries], output: Path, *, title: str | None) -> None:
 
     for i, run in enumerate(series):
         color = _COLOR_CYCLE[i % len(_COLOR_CYCLE)]
-        top.plot(  # type: ignore[reportAny, reportUnknownMemberType]
-            run.cached_pp,
-            run.cached_prompt_tps,
-            "-o",
-            color=color,
-            label=run.label,
-        )
+        # Cumulative cold-prefill estimate (T_cum). Only plot points where
+        # we have a t_cum value — skip if derived was empty for this run.
+        n = min(len(run.cached_pp), len(run.cached_prefill_seconds))
+        if n > 0:
+            top.plot(  # type: ignore[reportAny, reportUnknownMemberType]
+                run.cached_pp[:n],
+                run.cached_prefill_seconds[:n],
+                "-o",
+                color=color,
+                label=run.label,
+            )
         if run.control_pp:
             top.scatter(  # type: ignore[reportAny, reportUnknownMemberType]
                 run.control_pp,
-                run.control_prompt_tps,
+                run.control_prefill_seconds,
                 marker="x",
                 s=80,
                 color=color,
-                label=f"{run.label} (cold)",
+                label=f"{run.label} (cold one-shot)",
             )
         bottom.plot(  # type: ignore[reportAny, reportUnknownMemberType]
             run.cached_pp,
@@ -265,8 +287,11 @@ def _draw(series: list[_RunSeries], output: Path, *, title: str | None) -> None:
             label=run.label,
         )
 
-    top.set_ylabel("prompt_tps (tok/s)")  # type: ignore[reportAny, reportUnknownMemberType]
-    top.set_title("prompt prefill throughput vs context size")  # type: ignore[reportAny, reportUnknownMemberType]
+    top.set_ylabel("prefill time (s)")  # type: ignore[reportAny, reportUnknownMemberType]
+    top.set_title(  # type: ignore[reportAny, reportUnknownMemberType]
+        "cumulative cold-prefill time vs context size "
+        "(line: T_cum estimate; ✕: cold one-shot control)"
+    )
     top.grid(True, alpha=0.3)  # type: ignore[reportAny, reportUnknownMemberType]
     top.legend(loc="best", fontsize=8)  # type: ignore[reportAny, reportUnknownMemberType]
 

@@ -77,8 +77,14 @@ def add_subparser(
     g.add_argument(
         "--warmup",
         type=int,
-        default=1,
-        help="Warmup requests at pp=Δ (primes the cache).",
+        default=2,
+        help="Warmup requests at pp=Δ before the measured ramp. "
+        "First warmup is cache-disabled (kernel JIT only); subsequent "
+        "warmups are cache-enabled (the second is the one that primes "
+        "the cache entry with a hot-kernel rate). Default 2 is the "
+        "sweet spot: warmup=0 leaves JIT cost in step 0; warmup=1 has "
+        "step 0 as a 'none' hit (still hot-kernel cold prefill, just "
+        "classified differently).",
     )
     g.add_argument(
         "--cold-controls",
