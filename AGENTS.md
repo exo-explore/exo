@@ -120,6 +120,81 @@ From .cursorrules:
 
 Tests use pytest-asyncio with `asyncio_mode = "auto"`. Tests are in `tests/` subdirectories alongside the code they test. The `EXO_TESTS=1` env var is set during tests.
 
+Integration tests live in `tests/` (root) and are opt-in via `--ignore=tests` in the default pytest addopts. They require an `eco`-managed cluster:
+
+```bash
+uv run pytest tests/ -v                    # constraint-driven host pick
+uv run pytest tests/ -v --hosts s4         # explicit host override
+```
+
+## Benchmarking
+
+Benchmarks live in `bench/`. The framework is a CLI with subcommands; each benchmark is a small library module under `bench/lib/<name>.py` plus a CLI front-end under `bench/cli/<name>.py`.
+
+```
+bench/
+├── lib/                       # composable, typed building blocks
+│   ├── prompt.py              # PromptSizer, load_tokenizer_for_bench
+│   ├── completion.py          # run_one_completion + typed payloads
+│   ├── session.py             # BenchSession (cluster + client + instance)
+│   ├── results.py             # RunMetadata, ResultsBundle, JSON schema
+│   ├── model_meta.py          # HF API: total weights size, max context, layers
+│   ├── cluster.py             # managed_cluster + managed_instance ctx-managers
+│   └── context_scaling.py     # prompt-TPS / decode-TPS vs context-size sweep
+├── cli/                       # CLI subcommands
+│   ├── _common.py             # shared argparse args + SharedOptions
+│   ├── context_scaling.py     # `python -m bench.cli context-scaling …`
+│   └── __main__.py            # subcommand dispatcher
+└── exo_bench.py, prefill_decode_bench.py
+                                # legacy CLI scripts; PromptSizer / run_one_completion
+                                # / load_tokenizer_for_bench are re-exports of bench.lib.
+```
+
+Run a benchmark:
+
+```bash
+# Defaults assume a multi-node, Thunderbolt-connected cluster with tensor
+# parallelism + JACCL: --sharding Tensor --comm MlxJaccl --thunderbolt a2a.
+# Memory + disk minimums are auto-derived from HF metadata.
+uv run python -m bench.cli context-scaling \
+  --model mlx-community/Qwen3-30B-A3B-4bit --nodes 2 --num-steps 32
+
+# Single-node smoke: opt out of TB / tensor / jaccl
+uv run python -m bench.cli context-scaling --hosts s4 \
+  --model mlx-community/Llama-3.2-1B-Instruct-4bit --num-steps 4 \
+  --sharding Pipeline --comm MlxRing --thunderbolt none
+
+# From a TOML config (CLI flags override config values)
+uv run python -m bench.cli context-scaling \
+  --config bench/configs/context_scaling.example.toml --hosts s4,s9
+```
+
+Shared CLI flags (every subcommand inherits these via `bench/cli/_common.py`):
+- `--config <path>.toml` — load run parameters from a TOML file
+- `--model`, `--sharding {Pipeline,Tensor}` (default Tensor), `--comm {MlxRing,MlxJaccl}` (default MlxJaccl), `--min-nodes` — placement
+- `--hosts`, `--nodes` (number of cluster hosts; distinct from `--min-nodes`), `--thunderbolt {a2a,ring,none}` (default a2a), `--chip` — host pool
+- `--min-memory-gb`, `--max-memory-gb`, `--min-disk-gb`, `--max-disk-gb` (minimums auto-derived from HF model size when not supplied)
+- `--evict-downloads` (default on; auto-evicts smallest-first when disk is short)
+- `--cleanup-instance` (default on; deletes the instance on exit)
+- `--output-dir`, `--tag key=value` (repeatable)
+
+Run a multi-run campaign from a single TOML file (each `[[runs]]` = its own cluster deploy + bench + teardown; `[defaults]` is shared, per-run keys override; `[plot]` triggers a comparison PNG):
+
+```bash
+uv run python -m bench.cli campaign bench/configs/llama-family-smoke.toml
+```
+
+Plot any results JSON to a PNG (auto-detects benchmark type from `metadata.benchmark`):
+
+```bash
+uv run python -m bench.cli plot bench/results/context_scaling/latest.json
+uv run python -m bench.cli plot a.json b.json --label-tag operator   # multi-run comparison
+```
+
+Adding a new benchmark = (1) write a `bench/lib/<name>.py` exposing a typed `run(session, params, bundle)` callable; (2) add a `bench/cli/<name>.py` with `add_subparser(...)` + `run(args) -> Path`; (3) register the imports in `bench/cli/__main__.py`. To enable plotting for the new benchmark, add a `render_<name>(inputs)` function in `bench/lib/plotting.py` and a dispatch entry in `bench/cli/plot.py::run`.
+
+Results land at `bench/results/<benchmark>/<run_id>.json` (with a `latest.json` symlink alongside) containing metadata (exo SHA, hostname, platform, ISO timestamps, methodology version, user tags), full cluster snapshot, the resolved + derived params, per-step rows, optional cold-control rows, and any derived summaries (e.g. `t_cum_seconds[]` for context-scaling).
+
 ## Dashboard UI Testing & Screenshots
 
 ### Building and Running the Dashboard

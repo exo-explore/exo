@@ -255,7 +255,7 @@ name = "contourpy"
 version = "1.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/58/01/1253e6698a07380cd31a736d248a3f2a50a7c88779a1813da27503cadc2a/contourpy-1.3.3.tar.gz", hash = "sha256:083e12155b210502d0bca491432bb04d56dc3432f95a979b429f2848c3dbe880", size = 13466174, upload-time = "2025-07-26T12:03:12.549Z" }
 wheels = [
@@ -507,6 +507,7 @@ dependencies = [
     { name = "lm-eval", extra = ["api", "math"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "loguru", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "math-verify", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "matplotlib", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "protobuf", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
     { name = "tiktoken", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
@@ -523,6 +524,7 @@ requires-dist = [
     { name = "lm-eval", extras = ["api", "math"], specifier = ">=0.4.0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "math-verify", specifier = ">=0.7.0" },
+    { name = "matplotlib", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "protobuf", specifier = ">=5.29.0" },
     { name = "tiktoken", specifier = ">=0.12.0" },
@@ -1144,15 +1146,15 @@ name = "matplotlib"
 version = "3.10.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "contourpy", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "cycler", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "fonttools", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "kiwisolver", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "numpy", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "packaging", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "pillow", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "pyparsing", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
-    { name = "python-dateutil", marker = "sys_platform == 'darwin' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "contourpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "cycler", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "fonttools", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "kiwisolver", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "packaging", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "pillow", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "pyparsing", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
+    { name = "python-dateutil", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8a/76/d3c6e3a13fe484ebe7718d14e269c9569c4eb0020a968a327acb3b9a8fe6/matplotlib-3.10.8.tar.gz", hash = "sha256:2299372c19d56bcd35cf05a2738308758d32b9eaed2371898d8f5bd33f084aa3", size = 34806269, upload-time = "2025-12-10T22:56:51.155Z" }
 wheels = [

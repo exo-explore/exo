@@ -24,9 +24,7 @@ import json
 import sys
 import threading
 import time
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 from statistics import mean
 from typing import Any
 
@@ -45,125 +43,44 @@ from exo_tools.harness import (
     wait_for_instance_ready,
 )
 from loguru import logger
-from transformers import AutoTokenizer
 
-# Monkey-patch for transformers 5.x compatibility
-# Kimi's tokenization_kimi.py imports bytes_to_unicode from the old location
-# which was moved in transformers 5.0.0rc2
-try:
-    import transformers.models.gpt2.tokenization_gpt2 as gpt2_tokenization
-    from transformers.convert_slow_tokenizer import bytes_to_unicode
+# PromptSizer / run_one_completion / load_tokenizer_for_bench are the
+# canonical, fully-typed implementations under bench/lib/. They are
+# re-exported here for backwards compatibility with prefill_decode_bench.py
+# and any other consumers of `from exo_bench import …`.
+from bench.lib.completion import run_one_completion as _lib_run_one_completion
+from bench.lib.prompt import (
+    PromptSizer as _LibPromptSizer,
+)
+from bench.lib.prompt import (
+    load_tokenizer_for_bench as _lib_load_tokenizer_for_bench,
+)
 
-    if not hasattr(gpt2_tokenization, "bytes_to_unicode"):
-        gpt2_tokenization.bytes_to_unicode = bytes_to_unicode  # type: ignore[attr-defined]
-except ImportError:
-    pass  # transformers < 5.0 or bytes_to_unicode not available
+PromptSizer = _LibPromptSizer
+load_tokenizer_for_bench = _lib_load_tokenizer_for_bench
 
 
-def load_tokenizer_for_bench(model_id: str) -> Any:
-    """
-    Load tokenizer for benchmarking, with special handling for Kimi models.
-
-    Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer.
-    This function replicates the logic from utils_mlx.py for bench compatibility.
-    """
-    model_id_lower = model_id.lower()
-
-    if "kimi-k2" in model_id_lower:
-        import importlib.util
-        import types
-
-        from huggingface_hub import snapshot_download
-
-        # Download/get the model path
-        model_path = Path(
-            snapshot_download(
-                model_id,
-                allow_patterns=["*.json", "*.py", "*.tiktoken", "*.model", "*.jinja"],
-            )
-        )
-
-        sys.path.insert(0, str(model_path))
-
-        # Load tool_declaration_ts first (tokenization_kimi imports it with relative import)
-        tool_decl_path = model_path / "tool_declaration_ts.py"
-        if tool_decl_path.exists():
-            spec = importlib.util.spec_from_file_location(
-                "tool_declaration_ts", tool_decl_path
-            )
-            if spec and spec.loader:
-                tool_decl_module = importlib.util.module_from_spec(spec)
-                sys.modules["tool_declaration_ts"] = tool_decl_module
-                spec.loader.exec_module(tool_decl_module)
-
-        # Load tokenization_kimi with patched source (convert relative to absolute import)
-        tok_path = model_path / "tokenization_kimi.py"
-        source = tok_path.read_text()
-        source = source.replace("from .tool_declaration_ts", "from tool_declaration_ts")
-        spec = importlib.util.spec_from_file_location("tokenization_kimi", tok_path)
-        if spec:
-            tok_module = types.ModuleType("tokenization_kimi")
-            tok_module.__file__ = str(tok_path)
-            sys.modules["tokenization_kimi"] = tok_module
-            exec(compile(source, tok_path, "exec"), tok_module.__dict__)  # noqa: S102
-            TikTokenTokenizer = tok_module.TikTokenTokenizer  # noqa: N806
-        else:
-            from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
-
-        hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(model_path)
-
-        # Patch encode to use internal tiktoken model directly
-        # transformers 5.x has a bug in the encode->pad path for slow tokenizers
-        def _patched_encode(text: str, **kwargs: object) -> list[int]:
-            # Pass allowed_special="all" to handle special tokens like <|im_user|>
-            return list(hf_tokenizer.model.encode(text, allowed_special="all"))
-
-        hf_tokenizer.encode = _patched_encode
-
-        return hf_tokenizer
-
-    # TODO: Change back to using only transformers
-    try:
-        return AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-    except (AttributeError, ValueError):
-        from huggingface_hub import snapshot_download
-        from transformers import PretrainedConfig
-
-        model_path = Path(
-            snapshot_download(
-                model_id,
-                allow_patterns=[
-                    "*.json",
-                    "*.py",
-                    "tokenizer.model",
-                    "*.tiktoken",
-                    "tiktoken.model",
-                    "*.txt",
-                    "*.jsonl",
-                    "*.jinja",
-                ],
-            )
-        )
-        stub_kwargs: dict[str, Any] = {}
-        config_file = model_path / "config.json"
-        if config_file.exists():
-            with open(config_file) as f:
-                raw = json.load(f)
-            for key in (
-                "model_type",
-                "max_position_embeddings",
-                "vocab_size",
-                "bos_token_id",
-                "eos_token_id",
-                "pad_token_id",
-            ):
-                if key in raw:
-                    stub_kwargs[key] = raw[key]
-        return AutoTokenizer.from_pretrained(
-            str(model_path),
-            config=PretrainedConfig(**stub_kwargs),
-            trust_remote_code=True,
-        )
+def run_one_completion(
+    client: ExoClient,
+    model_id: str,
+    pp_hint: int,
+    tg: int,
+    prompt_sizer: PromptSizer,
+    *,
+    use_prefix_cache: bool = False,
+    stream: bool = False,
+) -> tuple[dict[str, Any], int]:
+    """Backwards-compatible shim returning a plain ``dict`` row."""
+    row, pp_tokens = _lib_run_one_completion(
+        client,
+        model_id,
+        pp_hint,
+        tg,
+        prompt_sizer,
+        use_prefix_cache=use_prefix_cache,
+        stream=stream,
+    )
+    return dict(row), pp_tokens
 
 
 def format_peak_memory(b: float) -> str:
@@ -267,159 +184,6 @@ def parse_int_list(values: list[str]) -> list[int]:
             if part:
                 items.append(int(part))
     return items
-
-
-def run_one_completion(
-    client: ExoClient,
-    model_id: str,
-    pp_hint: int,
-    tg: int,
-    prompt_sizer: PromptSizer,
-    *,
-    use_prefix_cache: bool = False,
-    stream: bool = False,
-) -> tuple[dict[str, Any], int]:
-    content, pp_tokens = prompt_sizer.build(pp_hint)
-    payload: dict[str, Any] = {
-        "model": model_id,
-        "messages": [{"role": "user", "content": content}],
-        "max_tokens": tg,
-        "logprobs": False,
-        "use_prefix_cache": use_prefix_cache,
-    }
-
-    if not stream:
-        payload["stream"] = False
-        t0 = time.perf_counter()
-        out = client.post_bench_chat_completions(payload)
-        elapsed = time.perf_counter() - t0
-
-        stats = out.get("generation_stats")
-        choices = out.get("choices") or [{}]
-        message = choices[0].get("message", {}) if choices else {}
-        content = message.get("content") or ""
-        preview = content[:200] if content else ""
-    else:
-        tokens = 0
-        first_token_time = None
-        t0 = time.perf_counter()
-        text_parts: list[str] = []
-        stats = None
-
-        for raw_line in client.stream_bench_chat_completions(payload):
-            line = raw_line.strip()
-            if line.startswith(": generation_stats "):
-                with contextlib.suppress(json.JSONDecodeError):
-                    stats = json.loads(line[len(": generation_stats ") :])
-                continue
-            if not line.startswith("data: "):
-                continue
-            data = line[6:]
-            if data == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data)
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
-                if delta.get("content"):
-                    if first_token_time is None:
-                        first_token_time = time.perf_counter()
-                    tokens += 1
-                    text_parts.append(delta["content"])
-            except json.JSONDecodeError:
-                pass
-
-        elapsed = time.perf_counter() - t0
-        preview = "".join(text_parts)[:200]
-
-        if not stats:
-            ttft = (first_token_time - t0) if first_token_time else elapsed
-            gen_time = elapsed - ttft if tokens > 1 else elapsed
-            gen_tps = (tokens - 1) / gen_time if tokens > 1 and gen_time > 0 else 0.0
-            prompt_tps = pp_tokens / ttft if ttft > 0 else 0.0
-            stats = {
-                "prompt_tokens": pp_tokens,
-                "generation_tokens": tokens,
-                "prompt_tps": round(prompt_tps, 2),
-                "generation_tps": round(gen_tps, 2),
-                "peak_memory_usage": {"inBytes": 0},
-            }
-
-    return {
-        "elapsed_s": elapsed,
-        "output_text_preview": preview,
-        "stats": stats,
-    }, pp_tokens
-
-
-class PromptSizer:
-    def __init__(self, tokenizer: Any, atom: str = "a "):
-        self.tokenizer = tokenizer
-        self.atom = atom
-        self.count_fn = PromptSizer._make_counter(tokenizer)
-        self.base_tokens = self.count_fn("")
-
-    @staticmethod
-    def _make_counter(tokenizer: Any) -> Callable[[str], int]:
-        def count_fn(user_content: str) -> int:
-            messages = [{"role": "user", "content": user_content}]
-            try:
-                ids = tokenizer.apply_chat_template(
-                    messages, tokenize=True, add_generation_prompt=True
-                )
-            except ValueError:
-                # Models without a Jinja chat template (e.g. DeepSeek V4 which
-                # ships its own Python encoder). Use the exo-side V4 encoder.
-                from exo.worker.engines.mlx.deepseek_v4_encoding import (
-                    encode_messages as encode_v4,
-                )
-
-                prompt = encode_v4(messages, thinking_mode="thinking")
-                ids = tokenizer.encode(prompt, add_special_tokens=False)
-            # Fix for transformers 5.x
-            if hasattr(ids, "input_ids"):
-                ids = ids.input_ids
-            return int(len(ids))
-
-        return count_fn
-
-    def build(self, target_prompt_tokens: int) -> tuple[str, int]:
-        target = int(target_prompt_tokens)
-        if target < self.base_tokens:
-            raise RuntimeError(
-                f"Target ({target}) is smaller than template overhead ({self.base_tokens})."
-            )
-
-        # Estimate tokens per atom using a sample
-        sample_count = 100
-        sample_content = self.atom * sample_count
-        sample_tokens = self.count_fn(sample_content) - self.base_tokens
-        tokens_per_atom = sample_tokens / sample_count
-
-        # Estimate starting point
-        needed_tokens = target - self.base_tokens
-        estimated_atoms = int(needed_tokens / tokens_per_atom)
-
-        # Binary search to find exact atom count
-        low, high = 0, estimated_atoms * 2 + 100
-        while low < high:
-            mid = (low + high) // 2
-            tok = self.count_fn(self.atom * mid)
-            if tok < target:
-                low = mid + 1
-            else:
-                high = mid
-
-        content = self.atom * low
-        tok = self.count_fn(content)
-        logger.info(f"{tok=}")
-
-        if tok != target:
-            raise RuntimeError(
-                f"Overshot: got {tok} tokens (target {target}). "
-                f"Pick a different atom (try ' a' or '\\n' or '0 ')."
-            )
-
-        return content, tok
 
 
 def main() -> int:

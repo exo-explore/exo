@@ -1,0 +1,70 @@
+# Example context-scaling run configuration.
+#
+# Use it like this:
+#
+#   uv run python -m bench.cli context-scaling --config bench/configs/context_scaling.example.toml
+#
+# CLI flags placed after `--config` override individual values.
+#
+# All shared and subcommand-specific flags can appear here. Keys mirror the
+# CLI flag names with hyphens replaced by underscores. Boolean keys map to
+# `--key` / `--no-key`; lists are joined as CSV; the `[tags]` table maps to
+# repeated `--tag key=value` flags.
+#
+# NOTE: TOML scoping — once a `[table]` header is opened, all subsequent
+# top-level-looking assignments belong to that table until the next header.
+# Keep tables (like `[tags]`) at the END of the file.
+
+# ---- Model + placement ----
+model = "mlx-community/Qwen3-30B-A3B-4bit"
+# sharding = "Tensor"      # default: "Tensor"; pairs with --comm MlxJaccl + --thunderbolt a2a
+# comm = "MlxJaccl"        # default: "MlxJaccl" (RDMA over Thunderbolt)
+# min_nodes = 1
+
+# ---- Cluster ----
+# Either pin to specific hosts...
+# hosts = ["s4"]
+# ...or let eco pick hosts that satisfy the constraints below.
+# nodes = 1
+# chip = "M3 Ultra"        # eco chip name (case-insensitive substring); comment to allow any
+# thunderbolt = "a2a"      # default: "a2a" (clique, for Tensor+JACCL)
+# "ring" (cycle; for Pipeline+JACCL)
+# "none" (exclude TB; pair with sharding=Pipeline + comm=MlxRing for non-TB hosts)
+
+# Memory + disk minimums are auto-derived from the HF model size
+# (×1.30 + 1 GiB for memory, ×1.10 + 1 GiB for disk). Set any of these
+# explicitly to override the auto-derived value.
+# min_memory_gb = 96.0
+# max_memory_gb = 256.0    # leave bigger machines free for other workloads
+# min_disk_gb = 24.0
+# max_disk_gb = 4000.0
+
+# ---- Runtime ----
+# evict_downloads is true by default — frees disk smallest-first to fit
+# the bench model. Set to false to keep existing downloads.
+# evict_downloads = false
+
+# cleanup_instance is true by default — deletes the placed instance on exit.
+# Set to false to leave it running for debugging.
+# cleanup_instance = false
+
+# ---- Output ----
+output_dir = "bench/results"
+
+# ---- Context-scaling sweep ----
+num_steps = 32 # K — number of equally-spaced ramp points
+# pp_step = 1024              # Δ — explicit override; otherwise auto-derived
+# fraction_of_max = 1.0       # use this fraction of max_position_embeddings
+tg = 64    # tokens generated per step
+warmup = 1 # warmup requests at pp=Δ
+# cold_controls = "auto"      # 4 evenly-spaced controls across the ramp, or:
+# cold_controls = "8192,16384,32768,40960"   # explicit pp values
+sleep_between_s = 1.0
+
+# ---- Tags ----
+# Survive into metadata.tags in the output JSON; useful for filtering or
+# grouping runs across SHAs / hosts / configs. `$USER` is NOT expanded
+# (TOML is literal); pass `--tag operator=$USER` on the CLI for shell expansion.
+# Must be the LAST table in the file (see TOML scoping note above).
+[tags]
+run = "full"

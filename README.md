@@ -550,6 +550,120 @@ uv run bench/exo_bench.py \
 
 The tool outputs performance metrics including prompt tokens per second (prompt_tps), generation tokens per second (generation_tps), and peak memory usage for each configuration.
 
+### Composable benchmarks (CLI)
+
+For benchmarks that need an `eco`-managed cluster and a stable JSON result format, exo ships a CLI under `bench/cli/`. The CLI handles cluster lifecycle, instance placement, model-metadata resolution (HuggingFace), and result capture; benchmark logic lives in `bench/lib/` so each new benchmark is a small library module + a CLI subcommand.
+
+**Run the prompt-TPS / decode-TPS vs context-size sweep:**
+
+The defaults assume a multi-node, Thunderbolt-connected cluster with tensor parallelism + JACCL — the typical exo benchmarking setup:
+
+```bash
+# Defaults: --sharding Tensor --comm MlxJaccl --thunderbolt a2a, with
+# memory/disk minimums auto-derived from the HF model size. eco picks
+# `--nodes` hosts from its inventory that form a TB clique and satisfy
+# those constraints.
+uv run python -m bench.cli context-scaling \
+  --model mlx-community/Qwen3-30B-A3B-4bit --nodes 2 --num-steps 32
+
+# Pin to specific hosts (defaults still apply for sharding/comm/topology)
+uv run python -m bench.cli context-scaling --hosts s4,s9 \
+  --model mlx-community/Qwen3-30B-A3B-4bit --num-steps 16
+
+# Single-node smoke test: explicit single-node placement overrides
+uv run python -m bench.cli context-scaling --hosts s4 \
+  --model mlx-community/Llama-3.2-1B-Instruct-4bit --num-steps 4 \
+  --sharding Pipeline --comm MlxRing --thunderbolt none
+
+# Override the auto-derived ramp / cold controls
+uv run python -m bench.cli context-scaling --hosts s4,s9 --model X \
+  --pp-step 4096 --num-steps 32 --cold-controls 8192,32768,65536,131072
+
+# Custom output dir + tags
+uv run python -m bench.cli context-scaling --hosts s4,s9 --model X \
+  --output-dir bench/results/2026-05-10/ --tag operator=$USER --tag run=full
+
+# Run from a TOML config (CLI flags override values from the file)
+uv run python -m bench.cli context-scaling \
+  --config bench/configs/context_scaling.example.toml
+```
+
+**Shared flags (every benchmark subcommand has these):**
+
+- `--model` — HuggingFace model id (required)
+- `--config <path>.toml` — load run parameters from a TOML file
+- `--sharding {Pipeline,Tensor}` (default **Tensor**) — sharding mode
+- `--comm {MlxRing,MlxJaccl}` (default **MlxJaccl**) — inter-node comm mode
+- `--min-nodes N` (default 1) — minimum nodes for the placement
+- `--hosts s4,s9` — pin to specific hosts; bypasses constraint search
+- `--nodes N` (default 1) — number of cluster hosts to reserve when `--hosts` is unset (distinct from `--min-nodes`, which controls the model's instance placement)
+- `--thunderbolt {a2a,ring,none}` (default **a2a**) — required Thunderbolt topology
+- `--chip "M3 Ultra"` — required chip (substring match; comment to allow any)
+- `--min-memory-gb`, `--max-memory-gb`, `--min-disk-gb`, `--max-disk-gb` — host RAM / disk constraints. The minimums are auto-derived from the HF model size (×1.30 + 1 GiB for memory, ×1.10 + 1 GiB for disk) when not supplied; explicit values always win.
+- `--evict-downloads` (default **on**) — auto-evict existing models smallest-first on disk-full; pass `--no-evict-downloads` to keep
+- `--cleanup-instance` (default **on**) — delete the placed instance after exit; pass `--no-cleanup-instance` to leave it running for debugging
+- `--output-dir bench/results` — base directory for JSON results (subcommands add their own subfolder)
+- `--tag key=value` — append to `metadata.tags` (repeatable)
+
+**Context-scaling-specific flags:**
+
+- `--num-steps N` — number of equally-spaced ramp points (default 32)
+- `--pp-step Δ` — explicit Δ in tokens (overrides auto-derivation from `max_position_embeddings`)
+- `--fraction-of-max F` — when Δ is auto-derived, use `F × max_context` as the upper bound
+- `--tg` — tokens generated per step (default 64)
+- `--warmup` — warmup requests at `pp=Δ` (default 1)
+- `--cold-controls auto` (4 evenly-spaced points across the ramp) **or** `--cold-controls 8192,32768,…` (explicit pp values). Default: no cold controls.
+
+**Output:** each run writes `bench/results/<benchmark>/<run_id>.json` plus a `latest.json` symlink. The JSON contains metadata (exo SHA, hostname, platform, user tags), the full cluster snapshot at run start, the resolved + derived params, per-step rows, cold-control rows, and derived summaries (`t_cum_seconds`, `control_gaps`).
+
+**Multi-run campaigns** — `bench campaign` runs a list of bench invocations from a single TOML file. Each `[[runs]]` entry is its own cluster deploy + bench + teardown, with a shared `[defaults]` table for DRY config:
+
+```toml
+# bench/configs/llama-family-smoke.toml
+[defaults]
+nodes = 4
+num_steps = 8
+fraction_of_max = 0.5
+
+[[runs]]
+subcommand = "context-scaling"
+model = "mlx-community/Llama-3.2-3B-Instruct-4bit"
+[runs.tags]
+model_short = "llama-3.2-3b-4bit"
+
+[[runs]]
+subcommand = "context-scaling"
+model = "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
+[runs.tags]
+model_short = "llama-3.1-8b-4bit"
+
+[plot]
+label_tag = "model_short"
+```
+
+```bash
+uv run python -m bench.cli campaign bench/configs/llama-family-smoke.toml
+```
+
+After all runs finish, an optional `[plot]` table triggers a comparison plot per benchmark group (one PNG per benchmark type with ≥2 runs).
+
+**Plotting** — `bench plot` renders any results JSON to a 2-panel PNG (prompt_tps + generation_tps vs pp_tokens, cold controls overlaid as 'x' markers):
+
+```bash
+# Plot the most recent run next to its JSON
+uv run python -m bench.cli plot bench/results/context_scaling/latest.json
+
+# Compare multiple runs (one line per run; legend label = the chosen tag)
+uv run python -m bench.cli plot run_a.json run_b.json --label-tag operator
+
+# Custom output path + title
+uv run python -m bench.cli plot run.json --output /tmp/scaling.png --title "30B 4-node sweep"
+```
+
+The benchmark type is detected from each JSON's `metadata.benchmark`, so the same `plot` command will work for future benchmarks once their renderer is registered in `bench/lib/plotting.py`.
+
+Methodology for the context-scaling benchmark is documented in detail in `bench/lib/context_scaling.py`'s module docstring and in `bench/METHODOLOGY.md`.
+
 ---
 
 ## Hardware Accelerator Support

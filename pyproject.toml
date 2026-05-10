@@ -149,7 +149,9 @@ root = "src"
 
 [[tool.basedpyright.executionEnvironments]]
 root = "bench"
-extraPaths = ["tools/src"]
+# `.` keeps `from bench.lib.X import …` resolvable (pytest adds the project
+# root to sys.path; we want type-checking to agree with runtime).
+extraPaths = ["tools/src", "."]
 
 [[tool.basedpyright.executionEnvironments]]
 root = "tools/src"
@@ -224,9 +226,12 @@ extend-exclude = [
 extend-select = ["I", "N", "B", "A", "PIE", "SIM"]
 
 [tool.pytest.ini_options]
-pythonpath = "."
+pythonpath = ["."]
 asyncio_mode = "auto"
 markers = ["slow: marks tests as slow (deselected by default)"]
 env = ["EXO_TESTS=1"]
-addopts = "-m 'not slow' --ignore=tests"
+# `tests/` requires an eco cluster (opt-in). `tmp/` holds throwaway scripts
+# that run a top-level `sys.exit(...)` at import time, which otherwise blows
+# up the default pytest collection.
+addopts = "-m 'not slow' --ignore=tests --ignore=tmp"
 filterwarnings = ["ignore:builtin type Swig:DeprecationWarning"]

@@ -12,6 +12,7 @@ import atexit
 import contextlib
 import json
 import logging
+import math
 import os
 import signal
 import subprocess
@@ -25,6 +26,7 @@ from .client import ExoClient
 class Thunderbolt(str, Enum):
     A2A = "a2a"  # all-to-all (eco --tb-a2a)
     RING = "ring"  # ring topology (eco --tb-ring)
+    NONE = "none"  # exclude Thunderbolt-connected hosts (eco --no-thunderbolt)
 
 
 class Chip(str, Enum):
@@ -143,6 +145,9 @@ class EcoSession:
         thunderbolt: Thunderbolt | None = None,
         chip: Chip | None = None,
         min_memory_gb: float | None = None,
+        max_memory_gb: float | None = None,
+        min_disk_gb: float | None = None,
+        max_disk_gb: float | None = None,
         wait: bool = True,
         ref: str | None = _EXO_REF,
         timeout: int = 600,
@@ -151,18 +156,32 @@ class EcoSession:
 
         By default, deploys from local source via rsync. Set EXO_REF
         or pass ref= to deploy from a GitHub branch/tag instead (for CI).
+
+        Selection constraints (memory/disk in GiB, chip substring,
+        Thunderbolt topology) are forwarded as eco CLI flags. Pass
+        ``thunderbolt=Thunderbolt.NONE`` to exclude TB-connected hosts.
         """
         cmd: list[str] = ["eco", "--json", "start", "--deploy"]
         if hosts:
             cmd.extend(hosts)
         if count is not None:
             cmd.extend(["--count", str(count)])
-        if thunderbolt is not None:
+        if thunderbolt is Thunderbolt.NONE:
+            cmd.append("--no-thunderbolt")
+        elif thunderbolt is not None:
             cmd.append(f"--tb-{thunderbolt.value}")
         if chip is not None:
             cmd.extend(["--chip", chip.value])
+        # eco's GB args are integer-typed. Round mins up + maxes down so
+        # we never relax the user's constraint.
         if min_memory_gb is not None:
-            cmd.extend(["--min-memory", str(min_memory_gb)])
+            cmd.extend(["--min-memory", str(math.ceil(min_memory_gb))])
+        if max_memory_gb is not None:
+            cmd.extend(["--max-memory", str(math.floor(max_memory_gb))])
+        if min_disk_gb is not None:
+            cmd.extend(["--min-disk", str(math.ceil(min_disk_gb))])
+        if max_disk_gb is not None:
+            cmd.extend(["--max-disk", str(math.floor(max_disk_gb))])
         if wait:
             cmd.append("--wait")
         if ref:
