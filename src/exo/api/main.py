@@ -1863,6 +1863,7 @@ class API:
 
                         shutdown_ev.set()
         finally:
+            self._event_log.close()
             self.command_sender.close()
             self.event_receiver.close()
 
