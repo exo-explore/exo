@@ -37,6 +37,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     clear_prefill_sends,
     dist_chain_head,
     flush_prefill_sends,
+    reset_chain_head,
     set_pipeline_prefill,
     set_pipeline_queue_sends,
 )
@@ -193,7 +194,8 @@ def pipeline_parallel_prefill(
     This function is designed to match mlx_lm's stream_generate exactly in terms of
     side effects (given the same prefill step size)
     """
-    prefill_step_size = prefill_step_size // min(4, group.size())
+    world_size = group.size()
+    prefill_step_size = prefill_step_size // min(4, world_size)
 
     quantize_cache_fn: Callable[..., None] = functools.partial(
         maybe_quantize_kv_cache,
@@ -204,14 +206,18 @@ def pipeline_parallel_prefill(
 
     _prompt_cache: KVCacheType = prompt_cache
     rank = group.rank()
-    world_size = group.size()
 
-    # Build list of real prompt chunk sizes
+    # Build list of real prompt chunk sizes.
+    # For pipeline parallel to overlap stages, we need at least world_size real chunks;
+    # otherwise a single-chunk prompt serializes across ranks (each rank's recv blocks).
     total = len(prompt)
-    real_chunk_sizes: list[int] = []
     remaining = total - 1
+    chunk_size = min(
+        prefill_step_size, max(1, (remaining + world_size - 1) // world_size)
+    )
+    real_chunk_sizes: list[int] = []
     while remaining:
-        n = min(prefill_step_size, remaining)
+        n = min(chunk_size, remaining)
         real_chunk_sizes.append(n)
         remaining -= n
     n_real = len(real_chunk_sizes)
@@ -233,44 +239,76 @@ def pipeline_parallel_prefill(
 
     try:
         with mx.stream(generation_stream):
+            t_leading = time.perf_counter()
             for _ in range(n_leading):
                 if distributed_prompt_progress_callback is not None:
                     distributed_prompt_progress_callback()
+            logger.info(
+                f"[R{rank}] leading dummies ({n_leading}) took {(time.perf_counter() - t_leading) * 1000:.1f}ms"
+            )
 
             for i in range(n_real):
+                t_iter = time.perf_counter()
                 chunk_size = real_chunk_sizes[i]
+                t_model = time.perf_counter()
                 model(
                     prompt[processed : processed + chunk_size][None],
                     cache=_prompt_cache,
                 )
                 quantize_cache_fn(_prompt_cache)
+                t_after_model = time.perf_counter()
                 processed += chunk_size
 
                 if distributed_prompt_progress_callback is not None:
                     distributed_prompt_progress_callback()
+                t_after_cb = time.perf_counter()
 
                 flush_prefill_sends()
+                t_after_flush = time.perf_counter()
                 mx.eval([c.state for c in _prompt_cache])  # type: ignore
+                t_after_eval = time.perf_counter()
 
                 prompt_progress_callback(processed, total)
+                logger.info(
+                    f"[R{rank}] iter {i}/{n_real} ({chunk_size} tok): "
+                    f"model+quant {(t_after_model - t_model) * 1000:.1f}ms, "
+                    f"cb {(t_after_cb - t_after_model) * 1000:.1f}ms, "
+                    f"flush {(t_after_flush - t_after_cb) * 1000:.1f}ms, "
+                    f"eval {(t_after_eval - t_after_flush) * 1000:.1f}ms, "
+                    f"total {(time.perf_counter() - t_iter) * 1000:.1f}ms"
+                )
 
+            t_trailing = time.perf_counter()
             for _ in range(n_trailing):
                 if distributed_prompt_progress_callback is not None:
                     distributed_prompt_progress_callback()
+            logger.info(
+                f"[R{rank}] trailing dummies ({n_trailing}) took {(time.perf_counter() - t_trailing) * 1000:.1f}ms"
+            )
 
     finally:
         clear_prefill_sends()
 
     # Post-loop: process remaining 1 token + add +1 entry to match stream_generate.
-    for _ in range(2):
+    for j in range(2):
+        t_post = time.perf_counter()
         with mx.stream(generation_stream):
             model(prompt[-1:][None], cache=_prompt_cache)
             quantize_cache_fn(_prompt_cache)
         flush_prefill_sends()
+        logger.info(
+            f"[R{rank}] post-loop iter {j} took {(time.perf_counter() - t_post) * 1000:.1f}ms"
+        )
 
     assert _prompt_cache is not None
+    t_final = time.perf_counter()
     with mx.stream(generation_stream):
         mx.eval([c.state for c in _prompt_cache], dist_chain_head())  # type: ignore
+    mx.synchronize(mx.default_stream(mx.Device(mx.cpu)))
+    mx.synchronize(generation_stream)
+    logger.info(
+        f"[R{rank}] final eval+chain drain took {(time.perf_counter() - t_final) * 1000:.1f}ms"
+    )
 
     # Final callback matching generate_step
     prompt_progress_callback(total, total)
@@ -304,6 +342,8 @@ def prefill(
         return 0.0, 0, []
 
     logger.debug(f"Prefilling {num_tokens} tokens...")
+
+    reset_chain_head()
     start_time = time.perf_counter()
     has_ssm = has_non_kv_caches(cache)
     snapshots: list[CacheSnapshot] = []
@@ -336,7 +376,10 @@ def prefill(
     prefill_step_size = 4096
 
     try:
-        if is_pipeline and num_tokens >= prefill_step_size:
+        if is_pipeline:
+            logger.info(
+                f"prefill path: pipeline_parallel_prefill ({num_tokens} tokens)"
+            )
             set_pipeline_queue_sends(model, queue_sends=True)
             assert group is not None, "Pipeline prefill requires a distributed group"
             pipeline_parallel_prefill(
@@ -351,6 +394,10 @@ def prefill(
                 group=group,
             )
         else:
+            logger.info(
+                f"prefill path: stream_generate ({num_tokens} tokens, is_pipeline={is_pipeline})"
+            )
+            t_stream = time.perf_counter()
             # Use max_tokens=1 because max_tokens=0 does not work.
             # We just throw away the generated token - we only care about filling the cache
             for _ in stream_generate(
@@ -366,6 +413,9 @@ def prefill(
                 prompt_progress_callback=combined_progress_callback,
             ):
                 break  # Stop after first iteration - cache is now filled
+            logger.info(
+                f"stream_generate prefill took {(time.perf_counter() - t_stream) * 1000:.1f}ms"
+            )
     except PrefillCancelled:
         set_pipeline_queue_sends(model, queue_sends=False)
         set_pipeline_prefill(model, is_prefill=False)
@@ -545,6 +595,7 @@ def mlx_generate(
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
+    reset_chain_head()
     # TODO: Randomise task seed and set in taskparams, instead of hard coding as 42.
     seed = task.seed or 42
     mx.random.seed(seed)

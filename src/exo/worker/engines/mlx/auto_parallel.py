@@ -76,9 +76,11 @@ _last_dist_op: mx.array | None = None
 
 def _link(out: mx.array) -> mx.array:
     global _last_dist_op
-    marker = out if _last_dist_op is None else mx.depends(out, _last_dist_op)
+    raw = out
+    if _last_dist_op is not None:
+        out = mx.depends(out, _last_dist_op)
     mx.async_eval(out)
-    _last_dist_op = marker
+    _last_dist_op = raw
     return out
 
 
@@ -102,6 +104,11 @@ def flush_prefill_sends() -> None:
     for output, dst, group in _pending_prefill_sends:
         send(output, dst, group)
     _pending_prefill_sends.clear()
+
+
+def reset_chain_head() -> None:
+    global _last_dist_op
+    _last_dist_op = None
 
 
 def dist_chain_head() -> mx.array:
@@ -196,12 +203,12 @@ class PipelineLastLayer(CustomMlxLayer):
                 sent_output = output
             else:
                 sent_output = send(output, (self.r + 1) % self.s, self.group)
-            if cache is not None:
-                # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
-                # doesn't have .keys directly; access via first sub-cache.
-                _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
-                if hasattr(_cache, "keys"):  # pyright: ignore[reportAny]
-                    _cache.keys = mx.depends(_cache.keys, sent_output)  # type: ignore
+                if cache is not None:
+                    # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
+                    # doesn't have .keys directly; access via first sub-cache.
+                    _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
+                    if hasattr(_cache, "keys"):  # pyright: ignore[reportAny]
+                        _cache.keys = mx.depends(_cache.keys, sent_output)  # type: ignore
         else:
             sent_output = output
 

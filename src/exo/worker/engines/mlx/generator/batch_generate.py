@@ -49,6 +49,7 @@ from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     fix_unmatched_think_end_tokens,
     system_prompt_token_count,
+    mx_barrier
 )
 from exo.worker.engines.mlx.vision import (
     MediaRegion,
@@ -105,7 +106,7 @@ class ExoBatchGenerator:
         self._mlx_gen = MlxBatchGenerator(
             model=self.model,
             stop_tokens=[[t] for t in eos_ids_from_tokenizer(self.tokenizer)],
-            prefill_step_size=4096,
+            prefill_step_size=1,
         )
         self._step_count = 0
 
@@ -323,6 +324,8 @@ class ExoBatchGenerator:
             prefix_cache_hit=prefix_cache_hit,
             media_regions=media_regions,
         )
+
+        mx_barrier()
 
         return uid
 
