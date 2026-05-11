@@ -1,16 +1,20 @@
 import contextlib
 import signal
 from dataclasses import dataclass, field
-from typing import Self
+from os import PathLike
+from typing import Self, Callable
 
 import anyio
 from anyio import (
     BrokenResourceError,
     ClosedResourceError,
     EndOfStream,
+    AsyncFile,
 )
+from anyio.streams.text import TextReceiveStream
 from loguru import logger
 
+from exo.shared.constants import EXO_RUNNER_STDERR_LOG, EXO_RUNNER_STDOUT_LOG
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -42,6 +46,7 @@ from exo.shared.types.worker.runners import (
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.async_process import AsyncProcess
 from exo.utils.channels import MpReceiver, MpSender, Receiver, Sender, mp_channel
+from exo.utils.fs import ensure_parent_directory_exists
 from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint
 
@@ -71,11 +76,11 @@ class RunnerSupervisor:
 
     @classmethod
     def create(
-        cls,
-        *,
-        bound_instance: BoundInstance,
-        event_sender: Sender[Event],
-        initialize_timeout: float = 400,
+            cls,
+            *,
+            bound_instance: BoundInstance,
+            event_sender: Sender[Event],
+            initialize_timeout: float = 400,
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event]()
         task_sender, task_recv = mp_channel[Task]()
@@ -205,8 +210,8 @@ class RunnerSupervisor:
                         self.pending.pop(event.task_id).set()
                         continue
                     if (
-                        isinstance(event, TaskStatusUpdated)
-                        and event.task_status == TaskStatus.Complete
+                            isinstance(event, TaskStatusUpdated)
+                            and event.task_status == TaskStatus.Complete
                     ):
                         # If a task has just been completed, we should be working on it.
                         assert isinstance(
@@ -236,9 +241,9 @@ class RunnerSupervisor:
                     await self._check_runner(RuntimeError("Runner found to be dead"))
 
     async def _forward_runner_output(
-        self,
-        stream_name: str,
-        stream: Receiver[bytes],
+            self,
+            stream_name: str,
+            stream: Receiver[bytes],
     ) -> None:
         while True:
             try:
@@ -308,3 +313,96 @@ class RunnerSupervisor:
                 "Event sender already closed, unable to report runner failure"
             )
         self.shutdown()
+
+
+@dataclass(eq=False)
+class RunnerStdioHandler:
+    _stdout_rx: Receiver[bytes]
+    _stderr_rx: Receiver[bytes]
+    _stdout_log: AsyncFile[str]
+    _stderr_log: AsyncFile[str]
+
+    _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
+
+    @classmethod
+    async def create(
+            cls,
+            *,
+            stdout_rx: Receiver[bytes],
+            stderr_rx: Receiver[bytes],
+            stdout_log_path: PathLike[str] = EXO_RUNNER_STDOUT_LOG,
+            stderr_log_path: PathLike[str] = EXO_RUNNER_STDERR_LOG,
+    ) -> Self:
+        # these are append only logs used to gather data for log template mining
+        #
+        # TODO: in the future use [Drain3](https://github.com/logpai/Drain3)
+        #       to mine these logs
+        ensure_parent_directory_exists(stdout_log_path)
+        ensure_parent_directory_exists(stderr_log_path)
+        stdout_log = await anyio.open_file(stdout_log_path, "a")
+        stderr_log = await anyio.open_file(stderr_log_path, "a")
+
+        # instantiate and return
+        self = cls(
+            _stdout_rx=stdout_rx,
+            _stderr_rx=stderr_rx,
+            _stdout_log=stdout_log,
+            _stderr_log=stderr_log,
+        )
+        return self
+
+    async def run(self):
+        try:
+            async with self._tg as tg:
+                tg.start_soon(  # pyright: ignore[reportUnknownArgumentType]
+                    self._handle_runner_output,
+                    self._stdout_rx,
+                    self._stdout_log,
+                    lambda l: logger.info(f"Runner stdout: {l}"),  # pyright: ignore[reportUnknownLambdaType]
+                )
+                tg.start_soon(  # pyright: ignore[reportUnknownArgumentType]
+                    self._handle_runner_output,
+                    self._stderr_rx,
+                    self._stderr_log,
+                    lambda l: logger.warning(f"Runner stderr: {l}"),  # pyright: ignore[reportUnknownLambdaType]
+                )
+        finally:
+            # close up files
+            await self._stdout_log.aclose()
+            await self._stderr_log.aclose()
+
+    async def _handle_runner_output(
+            self, rx: Receiver[bytes], logfile: AsyncFile[str], log_line: Callable[[str], None]
+    ):
+        text_stream = TextReceiveStream(rx, encoding="utf-8", errors="replace")
+        pending_line = ""
+
+        async def handle_line(line: str):
+            # preserve whitespace for later log-mining
+            line = line.removesuffix("\r")
+            if not line:
+                return
+
+            # Send to logger & to task which processes errors
+            log_line(line)
+
+        try:
+            async for text in text_stream:
+                await logfile.write(text)
+                await logfile.flush()
+
+                # newline buffering
+                pending_line += text
+                lines = pending_line.split("\n")
+                pending_line = lines.pop()
+
+                for line in lines:
+                    await handle_line(line)
+
+        except (ClosedResourceError, BrokenResourceError):
+            logger.warning("Runner stdio stream closed before clean EOF")
+        finally:
+            await logfile.flush()
+
+            if pending_line:
+                await handle_line(pending_line)
