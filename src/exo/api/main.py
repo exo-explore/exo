@@ -1891,8 +1891,8 @@ class API:
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
-        # cfg.shutdown_timeout = 0.0
-        cfg.graceful_timeout = 0.0
+        cfg.shutdown_timeout = 0.0
+        # cfg.graceful_timeout = 0.0
         cfg.bind = [f"0.0.0.0:{self.port}"]
         # nb: shared.logging needs updating if any of this changes
         cfg.accesslog = None
