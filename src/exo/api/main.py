@@ -1886,9 +1886,17 @@ class API:
                     with anyio.CancelScope(shield=True):
                         shutdown_ev.set()
         finally:
-            self._event_log.close()
             self.command_sender.close()
             self.event_receiver.close()
+
+            # IMPORTANT: when new queues are added, update this (for proper shutdown semantics)
+            self._shutdown_queues(self._text_generation_queues)
+            self._shutdown_queues(self._image_generation_queues)
+
+    @staticmethod
+    def _shutdown_queues[K, V](queues: dict[K, Sender[V]]):
+        for v in queues.values():
+            v.close()
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
