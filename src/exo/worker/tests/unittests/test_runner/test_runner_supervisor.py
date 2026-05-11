@@ -17,11 +17,17 @@ from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerFailed, RunnerId
 from exo.utils.async_process import AsyncProcess
 from exo.utils.channels import channel, mp_channel
-from exo.worker.runner.supervisor import RunnerSupervisor
+from exo.worker.runner.supervisor import RunnerStdioHandler, RunnerSupervisor
 from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance
 
 
 class _DeadProcess:
+    def __init__(self):
+        rx1, _ = channel[bytes]()
+        rx2, _ = channel[bytes]()
+        self.stdout = rx1
+        self.stderr = rx2
+
     exitcode = -6
 
     def is_alive(self) -> bool:
@@ -42,10 +48,15 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
         node_id=NodeId("node-a"),
     )
 
+    proc = cast(AsyncProcess, cast(object, _DeadProcess()))
+    handler = await RunnerStdioHandler.create(
+        stdout_rx=proc.stdout, stderr_rx=proc.stderr
+    )
     supervisor = RunnerSupervisor(
         shard_metadata=bound_instance.bound_shard,
         bound_instance=bound_instance,
-        runner_process=cast(AsyncProcess, cast(object, _DeadProcess())),
+        runner_process=proc,
+        _runner_stdio_handler=handler,
         initialize_timeout=400,
         _ev_recv=ev_recv,
         _task_sender=task_sender,
