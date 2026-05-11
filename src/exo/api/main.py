@@ -50,6 +50,8 @@ from exo.api.keepalive import with_sse_keepalive
 from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
+    AgentEndpoint,
+    AgentEndpointList,
     BenchChatCompletionRequest,
     BenchChatCompletionResponse,
     BenchImageGenerationResponse,
@@ -120,6 +122,7 @@ from exo.api.types.openai_responses import (
     ResponsesRequest,
     ResponsesResponse,
 )
+from exo.download.download_utils import resolve_existing_model
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
@@ -134,10 +137,12 @@ from exo.shared.constants import (
 )
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
-from exo.shared.models import model_cards
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
+    add_to_card_cache,
+    get_card,
+    get_model_cards,
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
@@ -196,11 +201,12 @@ from exo.shared.types.text_generation import (
 )
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import AsymmetricTensorShardMetadata, Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
+from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
@@ -218,6 +224,11 @@ def _ensure_seed(params: AdvancedImageParams | None) -> AdvancedImageParams:
     if params.seed is None:
         return params.model_copy(update={"seed": random.randint(0, 2**32 - 1)})
     return params
+
+
+class TextRoute(FrozenModel):
+    model_id: ModelId
+    target_instance_id: InstanceId | None = None
 
 
 def _require_disaggregation_enabled() -> None:
@@ -351,11 +362,17 @@ class API:
         self.app.get("/v1/feature-flags")(self.get_feature_flags)
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
+        self.app.get("/v1/providers")(self.get_agent_endpoints)
+        self.app.get("/agents")(self.get_agent_endpoints)
+        self.app.get("/agents/{endpoint}/v1/models")(self.get_agent_models)
         self.app.post("/models/add")(self.add_custom_model)
         self.app.delete("/models/custom/{model_id:path}")(self.delete_custom_model)
         self.app.get("/models/search")(self.search_models)
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
+        )
+        self.app.post("/agents/{endpoint}/v1/chat/completions", response_model=None)(
+            self.agent_chat_completions
         )
         self.app.post("/bench/chat/completions", response_model=None)(
             self.bench_chat_completions
@@ -370,6 +387,9 @@ class API:
         self.app.get("/images/{image_id}")(self.get_image)
         self.app.post("/v1/messages", response_model=None)(self.claude_messages)
         self.app.post("/v1/responses", response_model=None)(self.openai_responses)
+        self.app.post("/agents/{endpoint}/v1/responses", response_model=None)(
+            self.agent_openai_responses
+        )
         self.app.post("/v1/cancel/{command_id}")(self.cancel_command)
 
         # Ollama API
@@ -418,6 +438,225 @@ class API:
                 detail=f"unable to find path '{path.replace('/', '.')}' in state json",
             ) from e
 
+    @staticmethod
+    def _slug_endpoint_component(value: str) -> str:
+        pieces: list[str] = []
+        previous_was_separator = False
+        for char in value.lower():
+            if char.isalnum():
+                pieces.append(char)
+                previous_was_separator = False
+            elif not previous_was_separator:
+                pieces.append("-")
+                previous_was_separator = True
+        return "".join(pieces).strip("-") or "model"
+
+    @classmethod
+    def _model_endpoint_name(cls, model_id: ModelId) -> str:
+        slug = cls._slug_endpoint_component(model_id.short())
+        digest = hashlib.sha256(str(model_id).encode("utf-8")).hexdigest()[:8]
+        return f"model-{slug}-{digest}"
+
+    @staticmethod
+    def _instance_endpoint_name(instance_id: InstanceId) -> str:
+        return f"inst-{instance_id}"
+
+    @staticmethod
+    def _request_origin(request: Request) -> str:
+        return str(request.base_url).rstrip("/")
+
+    @staticmethod
+    def _endpoint_urls(origin: str, name: str) -> tuple[str, str]:
+        agent_root = f"{origin}/agents/{name}"
+        return f"{agent_root}/v1", agent_root
+
+    @staticmethod
+    def _model_list_model_from_card(card: ModelCard) -> ModelListModel:
+        return ModelListModel(
+            id=card.model_id,
+            hugging_face_id=card.model_id,
+            name=card.model_id.short(),
+            description="",
+            tags=[],
+            storage_size_megabytes=card.storage_size.in_mb,
+            supports_tensor=card.supports_tensor,
+            tasks=[task.value for task in card.tasks],
+            is_custom=card.is_custom,
+            family=card.family,
+            quantization=card.quantization,
+            base_model=card.base_model,
+            capabilities=card.capabilities,
+            reasoning_dialect=card.reasoning_dialect,
+            drafter_model_ids=list(card.drafter_model_ids),
+            context_length=card.context_length,
+        )
+
+    def _list_agent_endpoints(self, request: Request) -> AgentEndpointList:
+        origin = self._request_origin(request)
+        endpoints = [
+            AgentEndpoint(
+                name="default",
+                kind="default",
+                openai_base_url=f"{origin}/v1",
+                claude_base_url=origin,
+                model_id=None,
+                target_instance_id=None,
+                active=True,
+                description="Default exo provider; routes by the request model.",
+            )
+        ]
+
+        model_ids = sorted(
+            {
+                instance.shard_assignments.model_id
+                for instance in self.state.instances.values()
+            },
+            key=str,
+        )
+        for model_id in model_ids:
+            name = self._model_endpoint_name(model_id)
+            openai_base_url, _claude_base_url = self._endpoint_urls(origin, name)
+            endpoints.append(
+                AgentEndpoint(
+                    name=name,
+                    kind="model",
+                    openai_base_url=openai_base_url,
+                    claude_base_url=None,
+                    model_id=model_id,
+                    target_instance_id=None,
+                    active=True,
+                    description=f"Model pool endpoint for {model_id}.",
+                )
+            )
+
+        for instance_id, instance in sorted(
+            self.state.instances.items(), key=lambda item: str(item[0])
+        ):
+            name = self._instance_endpoint_name(instance_id)
+            openai_base_url, _claude_base_url = self._endpoint_urls(origin, name)
+            endpoints.append(
+                AgentEndpoint(
+                    name=name,
+                    kind="instance",
+                    openai_base_url=openai_base_url,
+                    claude_base_url=None,
+                    model_id=instance.shard_assignments.model_id,
+                    target_instance_id=instance_id,
+                    active=True,
+                    description=f"Pinned instance endpoint for {instance_id}.",
+                )
+            )
+
+        return AgentEndpointList(data=endpoints)
+
+    def get_agent_endpoints(self, request: Request) -> AgentEndpointList:
+        return self._list_agent_endpoints(request)
+
+    def _resolve_agent_endpoint(self, endpoint: str, request: Request) -> AgentEndpoint:
+        for candidate in self._list_agent_endpoints(request).data:
+            if candidate.name == endpoint:
+                return candidate
+        raise HTTPException(
+            status_code=404, detail=f"Agent endpoint not found: {endpoint}"
+        )
+
+    def _model_card_from_state(self, agent_endpoint: AgentEndpoint) -> ModelCard | None:
+        if agent_endpoint.target_instance_id is not None:
+            instance = self.state.instances.get(agent_endpoint.target_instance_id)
+            if instance is None:
+                return None
+            for shard in instance.shard_assignments.runner_to_shard.values():
+                return shard.model_card
+            return None
+
+        if agent_endpoint.model_id is None:
+            return None
+        for instance in self.state.instances.values():
+            if instance.shard_assignments.model_id != agent_endpoint.model_id:
+                continue
+            for shard in instance.shard_assignments.runner_to_shard.values():
+                return shard.model_card
+        return None
+
+    async def get_agent_models(
+        self,
+        endpoint: str,
+        request: Request,
+        status: str | None = Query(default=None),
+    ) -> ModelList:
+        agent_endpoint = self._resolve_agent_endpoint(endpoint, request)
+        if agent_endpoint.kind == "default":
+            return await self.get_models(status=status)
+        if agent_endpoint.model_id is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agent endpoint has no model: {endpoint}",
+            )
+        card = self._model_card_from_state(agent_endpoint) or await ModelCard.load(
+            agent_endpoint.model_id
+        )
+        return ModelList(data=[self._model_list_model_from_card(card)])
+
+    def _resolve_text_generation_route(
+        self, model_id: ModelId, endpoint: str | None, request: Request | None
+    ) -> TextRoute:
+        if endpoint is None or endpoint == "default":
+            return TextRoute(model_id=model_id)
+        if request is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agent endpoint cannot be resolved without request context: {endpoint}",
+            )
+        agent_endpoint = self._resolve_agent_endpoint(endpoint, request)
+        if agent_endpoint.kind == "default":
+            return TextRoute(model_id=model_id)
+        if agent_endpoint.model_id is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agent endpoint has no model: {endpoint}",
+            )
+        return TextRoute(
+            model_id=agent_endpoint.model_id,
+            target_instance_id=agent_endpoint.target_instance_id,
+        )
+
+    async def _validate_text_route(self, route: TextRoute) -> None:
+        if route.target_instance_id is not None:
+            instance = self.state.instances.get(route.target_instance_id)
+            if instance is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No instance found for endpoint target {route.target_instance_id}",
+                )
+            if instance.shard_assignments.model_id != route.model_id:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"Agent endpoint target does not serve model {route.model_id}"
+                    ),
+                )
+            return
+
+        if not any(
+            instance.shard_assignments.model_id == route.model_id
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(route.model_id)
+            raise HTTPException(
+                status_code=404,
+                detail=f"No instance found for model {route.model_id}",
+            )
+
+    async def _send_routed_text_generation(
+        self, task_params: TextGenerationTaskParams, route: TextRoute
+    ) -> TextGeneration:
+        await self._validate_text_route(route)
+        routed_params = task_params.model_copy(update={"model": route.model_id})
+        return await self._send_text_generation_with_images(
+            routed_params,
+            target_instance_id=route.target_instance_id,
+        )
+
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
             model_card=await ModelCard.load(payload.model_id),
@@ -439,7 +678,19 @@ class API:
         instance = payload.instance
         model_card = await ModelCard.load(instance.shard_assignments.model_id)
         required_memory = model_card.storage_size
-        available_memory = self._calculate_total_available_memory()
+        placement_node_ids = list(instance.shard_assignments.node_to_runner)
+
+        if len(placement_node_ids) == 1:
+            node_id = placement_node_ids[0]
+            memory_usage = self.state.node_memory.get(node_id)
+            if memory_usage is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Missing memory information for placement node: {node_id}",
+                )
+            available_memory = memory_usage.ram_total
+        else:
+            available_memory = self._calculate_total_available_memory()
 
         if required_memory > available_memory:
             raise HTTPException(
@@ -504,7 +755,7 @@ class API:
     ) -> PlacementPreviewResponse:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
-        required_nodes = set(node_ids) if node_ids else None
+        allowed_nodes = set(node_ids) if node_ids else None
 
         if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
@@ -542,7 +793,8 @@ class API:
                     node_network=self.state.node_network,
                     topology=self.state.topology,
                     current_instances=self.state.instances,
-                    required_nodes=required_nodes,
+                    allowed_nodes=allowed_nodes,
+                    allow_single_node_total_memory=allowed_nodes is not None,
                     download_status=self.state.downloads,
                     node_rdma_ctl=self.state.node_rdma_ctl,
                 )
@@ -588,11 +840,32 @@ class API:
             memory_delta_by_node: dict[str, int] = {}
             if placement_node_ids:
                 total_bytes = model_card.storage_size.in_bytes
-                per_node = total_bytes // len(placement_node_ids)
-                remainder = total_bytes % len(placement_node_ids)
-                for index, node_id in enumerate(sorted(placement_node_ids, key=str)):
-                    extra = 1 if index < remainder else 0
-                    memory_delta_by_node[str(node_id)] = per_node + extra
+                asymmetric_shards: dict[NodeId, AsymmetricTensorShardMetadata] = {}
+                for (
+                    node_id,
+                    runner_id,
+                ) in shard_assignments.node_to_runner.items():
+                    shard_metadata = shard_assignments.runner_to_shard[runner_id]
+                    if isinstance(shard_metadata, AsymmetricTensorShardMetadata):
+                        asymmetric_shards[node_id] = shard_metadata
+                if asymmetric_shards:
+                    for node_id, shard_metadata in asymmetric_shards.items():
+                        rank_weight_fraction = (
+                            shard_metadata.ratio
+                            if shard_metadata.device_rank == 0
+                            else 1.0 - shard_metadata.ratio
+                        )
+                        memory_delta_by_node[str(node_id)] = int(
+                            total_bytes * rank_weight_fraction
+                        )
+                else:
+                    per_node = total_bytes // len(placement_node_ids)
+                    remainder = total_bytes % len(placement_node_ids)
+                    for index, node_id in enumerate(
+                        sorted(placement_node_ids, key=str)
+                    ):
+                        extra = 1 if index < remainder else 0
+                        memory_delta_by_node[str(node_id)] = per_node + extra
 
             if (
                 model_card.model_id,
@@ -811,12 +1084,16 @@ class API:
         )
 
     async def _send_text_generation_with_images(
-        self, task_params: TextGenerationTaskParams
+        self,
+        task_params: TextGenerationTaskParams,
+        target_instance_id: InstanceId | None = None,
     ) -> TextGeneration:
         task_params = task_params.with_card_sampling_defaults()
         images = task_params.images
         if not images:
-            command = TextGeneration(task_params=task_params)
+            command = TextGeneration(
+                task_params=task_params, target_instance_id=target_instance_id
+            )
             await self._send(command)
             return command
 
@@ -825,7 +1102,9 @@ class API:
         task_params = task_params.model_copy(
             update={"images": [], "image_hashes": all_hashes}
         )
-        command = TextGeneration(task_params=task_params)
+        command = TextGeneration(
+            task_params=task_params, target_instance_id=target_instance_id
+        )
 
         new_images: list[tuple[int, str]] = []
         for idx, (img, h) in enumerate(zip(images, hashes, strict=True)):
@@ -860,16 +1139,34 @@ class API:
         return command
 
     async def chat_completions(
-        self, payload: ChatCompletionRequest
+        self, payload: ChatCompletionRequest, request: Request
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
-        task_params = await chat_request_to_text_generation(payload)
-        resolved_model = await self._resolve_and_validate_text_model(
-            ModelId(task_params.model)
+        return await self._chat_completions_for_endpoint(
+            payload, request=request, endpoint=None
         )
-        task_params = task_params.model_copy(update={"model": resolved_model})
 
-        command = await self._send_text_generation_with_images(task_params)
+    async def agent_chat_completions(
+        self, endpoint: str, payload: ChatCompletionRequest, request: Request
+    ) -> ChatCompletionResponse | StreamingResponse:
+        """Endpoint-scoped OpenAI Chat Completions API."""
+        return await self._chat_completions_for_endpoint(
+            payload, request=request, endpoint=endpoint
+        )
+
+    async def _chat_completions_for_endpoint(
+        self,
+        payload: ChatCompletionRequest,
+        *,
+        request: Request,
+        endpoint: str | None,
+    ) -> ChatCompletionResponse | StreamingResponse:
+        task_params = await chat_request_to_text_generation(payload)
+        route = self._resolve_text_generation_route(
+            ModelId(task_params.model), endpoint, request
+        )
+
+        command = await self._send_routed_text_generation(task_params, route)
 
         if payload.stream:
             return StreamingResponse(
@@ -1519,22 +1816,43 @@ class API:
             )
 
     async def openai_responses(
-        self, payload: ResponsesRequest
+        self, payload: ResponsesRequest, request: Request
     ) -> ResponsesResponse | StreamingResponse:
         """OpenAI Responses API."""
-        task_params = await responses_request_to_text_generation(payload)
-        resolved_model = await self._resolve_and_validate_text_model(task_params.model)
-        task_params = task_params.model_copy(update={"model": resolved_model})
+        return await self._openai_responses_for_endpoint(
+            payload, request=request, endpoint=None
+        )
 
-        command = await self._send_text_generation_with_images(task_params)
+    async def agent_openai_responses(
+        self, endpoint: str, payload: ResponsesRequest, request: Request
+    ) -> ResponsesResponse | StreamingResponse:
+        """Endpoint-scoped OpenAI Responses API."""
+        return await self._openai_responses_for_endpoint(
+            payload, request=request, endpoint=endpoint
+        )
+
+    async def _openai_responses_for_endpoint(
+        self,
+        payload: ResponsesRequest,
+        *,
+        request: Request,
+        endpoint: str | None,
+    ) -> ResponsesResponse | StreamingResponse:
+        task_params = await responses_request_to_text_generation(payload)
+        route = self._resolve_text_generation_route(
+            task_params.model, endpoint, request
+        )
+
+        command = await self._send_routed_text_generation(task_params, route)
 
         if payload.stream:
             return StreamingResponse(
                 with_sse_keepalive(
                     generate_responses_stream(
                         command.command_id,
-                        payload.model,
+                        route.model_id,
                         self._token_chunk_stream(command.command_id),
+                        reasoning=payload.reasoning,
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1549,8 +1867,9 @@ class API:
             return StreamingResponse(
                 collect_responses_response(
                     command.command_id,
-                    payload.model,
+                    route.model_id,
                     self._token_chunk_stream(command.command_id),
+                    reasoning=payload.reasoning,
                 ),
                 media_type="application/json",
             )
@@ -1634,16 +1953,17 @@ class API:
     async def ollama_tags(self) -> OllamaTagsResponse:
         """Returns list of models in Ollama tags format. We return the downloaded ones only."""
 
-        downloaded_model_ids: set[ModelId] = set()
+        def none_if_empty(value: str) -> str | None:
+            return value or None
+
+        downloaded_model_ids: set[str] = set()
         for node_downloads in self.state.downloads.values():
             for dl in node_downloads:
                 if isinstance(dl, DownloadCompleted):
                     downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
 
         cards = [
-            c
-            for c in await model_cards.card_cache.list_all()
-            if c.model_id in downloaded_model_ids
+            c for c in await get_model_cards() if c.model_id in downloaded_model_ids
         ]
 
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1656,8 +1976,8 @@ class API:
                     size=card.storage_size.in_bytes,
                     digest="sha256:000000000000",
                     details=OllamaModelDetails(
-                        family=card.family or None,
-                        quantization_level=card.quantization or None,
+                        family=none_if_empty(card.family),
+                        quantization_level=none_if_empty(card.quantization),
                     ),
                 )
                 for card in cards
@@ -1720,7 +2040,7 @@ class API:
 
     async def get_models(self, status: str | None = Query(default=None)) -> ModelList:
         """Returns list of available models, optionally filtered by being downloaded."""
-        cards = await model_cards.card_cache.list_all()
+        cards = await get_model_cards()
 
         if status == "downloaded":
             downloaded_model_ids: set[str] = set()
@@ -1728,29 +2048,15 @@ class API:
                 for dl in node_downloads:
                     if isinstance(dl, DownloadCompleted):
                         downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
-            cards = [c for c in cards if c.model_id in downloaded_model_ids]
+            cards = [
+                c
+                for c in cards
+                if c.model_id in downloaded_model_ids
+                or resolve_existing_model(c.model_id, c) is not None
+            ]
 
         return ModelList(
-            data=[
-                ModelListModel(
-                    id=card.model_id,
-                    hugging_face_id=card.model_id,
-                    name=card.model_id.short(),
-                    description="",
-                    tags=[],
-                    storage_size_megabytes=card.storage_size.in_mb,
-                    supports_tensor=card.supports_tensor,
-                    tasks=[task.value for task in card.tasks],
-                    is_custom=card.is_custom,
-                    family=card.family,
-                    quantization=card.quantization,
-                    base_model=card.base_model,
-                    capabilities=card.capabilities,
-                    reasoning_dialect=card.reasoning_dialect,
-                    context_length=card.context_length,
-                )
-                for card in cards
-            ]
+            data=[self._model_list_model_from_card(card) for card in cards]
         )
 
     async def add_custom_model(self, payload: AddCustomModelParams) -> ModelListModel:
@@ -1771,7 +2077,7 @@ class API:
 
         # Immediately update the local cache so the subsequent GET /models
         # returns the new model without waiting for the event round-trip.
-        model_cards.card_cache.cc[card.model_id] = card
+        add_to_card_cache(card)
 
         return ModelListModel(
             id=card.model_id,
@@ -1787,7 +2093,7 @@ class API:
 
     async def delete_custom_model(self, model_id: ModelId) -> JSONResponse:
         """Delete a user-added custom model card and sync deletion across the cluster."""
-        card = model_cards.card_cache.get(model_id)
+        card = get_card(model_id)
         if card is None or not card.is_custom:
             raise HTTPException(status_code=404, detail="Custom model card not found")
 

@@ -1,11 +1,14 @@
+# pyright: reportPrivateUsage=false
+
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Sequence
 
 import anyio
 import pytest
 from loguru import logger
 
-from exo.master.main import Master
+from exo.master.main import _MAX_MASTER_SESSION_LOG_DIRS, Master
 from exo.routing.router import get_node_id_keypair
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.commands import (
@@ -15,7 +18,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     TextGeneration,
 )
-from exo.shared.types.common import ModelId, NodeId, SessionId, SystemId
+from exo.shared.types.common import Host, ModelId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
@@ -24,12 +27,14 @@ from exo.shared.types.events import (
     LocalForwarderEvent,
     NodeGatheredInfo,
     TaskCreated,
+    TestEvent,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     MemoryUsage,
 )
-from exo.shared.types.tasks import TaskStatus
+from exo.shared.types.state import State
+from exo.shared.types.tasks import TaskId, TaskStatus
 from exo.shared.types.tasks import TextGeneration as TextGenerationTask
 from exo.shared.types.text_generation import (
     InputMessage,
@@ -37,12 +42,15 @@ from exo.shared.types.text_generation import (
     TextGenerationTaskParams,
 )
 from exo.shared.types.worker.instances import (
+    InstanceId,
     InstanceMeta,
     MlxRingInstance,
     ShardAssignments,
 )
+from exo.shared.types.worker.runners import RunnerId
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 from exo.utils.channels import channel
+from exo.utils.disk_event_log import DiskEventLog
 
 
 @pytest.mark.asyncio
@@ -229,3 +237,226 @@ async def test_master():
 
         ev_send.close()
         await master.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_master_event_log_is_scoped_to_session(tmp_path: Path):
+    node_id = NodeId("master-node")
+    session_id = SessionId(master_node_id=node_id, election_clock=1)
+
+    stale_log = DiskEventLog(tmp_path / "master")
+    stale_log.append(TestEvent())
+    stale_log.close()
+
+    ge_sender, global_event_receiver = channel[GlobalForwarderEvent]()
+    _, co_receiver = channel[ForwarderCommand]()
+    local_event_sender, le_receiver = channel[LocalForwarderEvent]()
+    fcds, _fcdr = channel[ForwarderDownloadCommand]()
+    ev_send, _ev_recv = channel[Event]()
+
+    master = Master(
+        node_id,
+        session_id,
+        event_sender=ev_send,
+        global_event_sender=ge_sender,
+        local_event_receiver=le_receiver,
+        command_receiver=co_receiver,
+        download_command_sender=fcds,
+        event_log_root=tmp_path,
+    )
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(master.run)
+        await local_event_sender.send(
+            LocalForwarderEvent(
+                origin_idx=0,
+                origin=SystemId("Worker"),
+                session=session_id,
+                event=TestEvent(),
+            )
+        )
+
+        events: list[GlobalForwarderEvent] = []
+        while not events:
+            events = global_event_receiver.collect()
+            await anyio.sleep(0.001)
+
+        assert len(events) == 1
+        assert events[0].origin_idx == 0
+
+        ev_send.close()
+        await master.shutdown()
+        tg.cancel_scope.cancel()
+
+
+def test_master_prunes_old_session_log_directories(tmp_path: Path):
+    node_id = NodeId("master-node")
+    master_log_root = tmp_path / "master"
+    master_log_root.mkdir()
+
+    for clock in range(_MAX_MASTER_SESSION_LOG_DIRS + 3):
+        session_dir = master_log_root / f"{node_id}-{clock}"
+        session_dir.mkdir()
+        (session_dir / "events.bin").write_text("event", encoding="utf-8")
+
+    current_session = SessionId(master_node_id=node_id, election_clock=99)
+    ge_sender, _global_event_receiver = channel[GlobalForwarderEvent]()
+    _, co_receiver = channel[ForwarderCommand]()
+    _, le_receiver = channel[LocalForwarderEvent]()
+    fcds, _fcdr = channel[ForwarderDownloadCommand]()
+    ev_send, _ev_recv = channel[Event]()
+
+    master = Master(
+        node_id,
+        current_session,
+        event_sender=ev_send,
+        global_event_sender=ge_sender,
+        local_event_receiver=le_receiver,
+        command_receiver=co_receiver,
+        download_command_sender=fcds,
+        event_log_root=tmp_path,
+    )
+
+    session_dirs = [path for path in master_log_root.iterdir() if path.is_dir()]
+    assert len(session_dirs) == _MAX_MASTER_SESSION_LOG_DIRS
+    assert (master_log_root / f"{node_id}-99").exists()
+
+    master._event_log.close()
+
+
+def _test_model_card(model_id: ModelId) -> ModelCard:
+    return ModelCard(
+        model_id=model_id,
+        n_layers=1,
+        storage_size=Memory.from_bytes(1),
+        hidden_size=1,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+    )
+
+
+def _test_instance(model_id: ModelId, instance_id: InstanceId) -> MlxRingInstance:
+    node_id = NodeId(f"node-{instance_id}")
+    runner_id = RunnerId(f"runner-{instance_id}")
+    return MlxRingInstance(
+        instance_id=instance_id,
+        shard_assignments=ShardAssignments(
+            model_id=model_id,
+            runner_to_shard={
+                runner_id: PipelineShardMetadata(
+                    start_layer=0,
+                    end_layer=1,
+                    n_layers=1,
+                    model_card=_test_model_card(model_id),
+                    device_rank=0,
+                    world_size=1,
+                )
+            },
+            node_to_runner={node_id: runner_id},
+        ),
+        hosts_by_node={node_id: [Host(ip="127.0.0.1", port=1)]},
+        ephemeral_port=1,
+    )
+
+
+def _test_text_generation(
+    model_id: ModelId, target_instance_id: InstanceId | None = None
+) -> TextGeneration:
+    return TextGeneration(
+        task_params=TextGenerationTaskParams(
+            model=model_id,
+            input=[
+                InputMessage(role="user", content=InputMessageContent("hello")),
+            ],
+        ),
+        target_instance_id=target_instance_id,
+    )
+
+
+def _master_with_state(state: State) -> Master:
+    master = Master.__new__(Master)
+    master.state = state
+    return master
+
+
+def test_text_generation_without_target_keeps_least_loaded_selection() -> None:
+    model_id = ModelId("test-model")
+    busy_instance_id = InstanceId("busy-instance")
+    idle_instance_id = InstanceId("idle-instance")
+    busy_task_id = TaskId("busy-task")
+    master = _master_with_state(
+        State(
+            instances={
+                busy_instance_id: _test_instance(model_id, busy_instance_id),
+                idle_instance_id: _test_instance(model_id, idle_instance_id),
+            },
+            tasks={
+                busy_task_id: TextGenerationTask(
+                    task_id=busy_task_id,
+                    command_id=CommandId("busy-command"),
+                    instance_id=busy_instance_id,
+                    task_status=TaskStatus.Pending,
+                    task_params=_test_text_generation(model_id).task_params,
+                )
+            },
+        )
+    )
+
+    assert (
+        master._select_text_generation_instance(_test_text_generation(model_id))
+        == idle_instance_id
+    )
+
+
+def test_text_generation_with_target_instance_uses_that_instance() -> None:
+    model_id = ModelId("test-model")
+    target_instance_id = InstanceId("target-instance")
+    other_instance_id = InstanceId("other-instance")
+    master = _master_with_state(
+        State(
+            instances={
+                target_instance_id: _test_instance(model_id, target_instance_id),
+                other_instance_id: _test_instance(model_id, other_instance_id),
+            }
+        )
+    )
+
+    assert (
+        master._select_text_generation_instance(
+            _test_text_generation(model_id, target_instance_id=target_instance_id)
+        )
+        == target_instance_id
+    )
+
+
+def test_text_generation_with_invalid_target_does_not_create_task() -> None:
+    master = _master_with_state(State())
+
+    with pytest.raises(ValueError, match="No instance found for target"):
+        master._select_text_generation_instance(
+            _test_text_generation(
+                ModelId("test-model"),
+                target_instance_id=InstanceId("missing-instance"),
+            )
+        )
+
+
+def test_text_generation_with_target_model_mismatch_does_not_create_task() -> None:
+    target_instance_id = InstanceId("target-instance")
+    master = _master_with_state(
+        State(
+            instances={
+                target_instance_id: _test_instance(
+                    ModelId("served-model"), target_instance_id
+                )
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="serves served-model, not requested-model"):
+        master._select_text_generation_instance(
+            _test_text_generation(
+                ModelId("requested-model"),
+                target_instance_id=target_instance_id,
+            )
+        )

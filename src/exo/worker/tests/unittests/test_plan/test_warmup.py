@@ -5,6 +5,8 @@ from exo.shared.types.worker.runners import (
     RunnerIdle,
     RunnerLoaded,
     RunnerLoading,
+    RunnerReady,
+    RunnerRunning,
     RunnerWarmingUp,
 )
 from exo.utils.keyed_backoff import KeyedBackoff
@@ -319,6 +321,58 @@ def test_plan_does_not_start_warmup_for_accepting_rank_until_all_loaded_or_warmi
     )
 
     assert result is None
+
+
+def test_plan_starts_warmup_for_connecting_rank_when_peer_already_ready():
+    """
+    Regression test for the asymmetric drafter race: the drafter rank's
+    warmup is near-instant (one forward pass) so by the time the
+    connecting rank's plan loop polls for state the drafter has often
+    already advanced past ``RunnerWarmingUp`` to ``RunnerReady`` /
+    ``RunnerRunning``. The connecting rank must still treat that as
+    "the peer is past the warmup barrier" and start its own warmup,
+    otherwise it stalls in ``RunnerLoaded`` forever.
+    """
+    shard0 = get_pipeline_shard_metadata(MODEL_A_ID, device_rank=0, world_size=2)
+    shard1 = get_pipeline_shard_metadata(MODEL_A_ID, device_rank=1, world_size=2)
+    instance = get_mlx_ring_instance(
+        instance_id=INSTANCE_1_ID,
+        model_id=MODEL_A_ID,
+        node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
+        runner_to_shard={RUNNER_1_ID: shard0, RUNNER_2_ID: shard1},
+    )
+
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
+    local_runner = FakeRunnerSupervisor(
+        bound_instance=bound_instance, status=RunnerLoaded()
+    )
+
+    runners = {RUNNER_1_ID: local_runner}
+    instances = {INSTANCE_1_ID: instance}
+
+    for peer_status in (RunnerReady(), RunnerRunning()):
+        all_runners = {
+            RUNNER_1_ID: RunnerLoaded(),
+            RUNNER_2_ID: peer_status,
+        }
+        result = plan_mod.plan(
+            node_id=NODE_A,
+            runners=runners,  # type: ignore
+            global_download_status={NODE_A: []},
+            instances=instances,
+            all_runners=all_runners,
+            tasks={},
+            input_chunk_buffer={},
+            image_cache={},
+            instance_backoff=KeyedBackoff(),
+            download_backoff=KeyedBackoff(),
+        )
+        assert isinstance(result, StartWarmup), (
+            f"connecting rank should start warmup when peer is {type(peer_status).__name__}"
+        )
+        assert result.instance_id == INSTANCE_1_ID
 
 
 def test_plan_does_not_start_warmup_for_connecting_rank_until_others_warming():

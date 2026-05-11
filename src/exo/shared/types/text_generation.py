@@ -134,10 +134,44 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
 
     prefill_endpoint: str | None = None
 
-    def with_card_sampling_defaults(self) -> "TextGenerationTaskParams":
-        from exo.shared.models import model_cards
+    # Speculative-decoding per-request overrides. All default to `None`,
+    # meaning "use the runner's configured defaults".
+    #
+    # ``use_drafter=False`` forces non-speculative decoding for this
+    # request only -- useful for latency-sensitive paths where the
+    # drafter's prefill overhead isn't worth the throughput win.
+    # Equivalent to ``draft_mode="none"``; provided as a convenience for
+    # callers that don't want to think about drafter modes.
+    #
+    # ``num_draft_tokens`` lets the client tune K per-request (e.g. raise
+    # K for long completions, lower for short structured outputs).
+    #
+    # ``draft_mode`` selects between speculative-decoding strategies:
+    #   - ``"model"``: external drafter model (Gemma-4 e2b/e4b style)
+    #     via ``mlx_lm.speculative_generate_step``. Best for slow /
+    #     distributed targets; usually a net loss for fast
+    #     single-device targets.
+    #   - ``"pipelined"``: same drafter, but routed through exo's
+    #     custom :class:`PipelinedModelDrafter` with cross-round
+    #     speculation. Transport (in-process or remote drafter rank
+    #     via ``mx.distributed.send/recv`` over JACCL/RDMA or
+    #     ring/TCP) is selected by ``EXO_DRAFTER_TRANSPORT``. The
+    #     remote-transport case is the regime where the gain unlocks.
+    #   - ``"ngram"``: in-context suffix lookup (no drafter model).
+    #     Wins on RAG, summarisation, structured/code output where the
+    #     model echoes prompt content. Cost ~0 when no match is found,
+    #     so worst-case = baseline.
+    #   - ``"none"``: skip speculation entirely.
+    # If both ``draft_mode`` and ``use_drafter=False`` are set, the
+    # explicit ``draft_mode`` wins.
+    use_drafter: bool | None = None
+    num_draft_tokens: int | None = None
+    draft_mode: Literal["model", "pipelined", "ngram", "none"] | None = None
 
-        card = model_cards.card_cache.get(self.model)
+    def with_card_sampling_defaults(self) -> "TextGenerationTaskParams":
+        from exo.shared.models.model_cards import get_card
+
+        card = get_card(self.model)
         if card is None:
             return self
 

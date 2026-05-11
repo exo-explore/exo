@@ -29,6 +29,10 @@ class KeyedBackoff[K]:
         """Return the number of recorded attempts for a key."""
         return self._attempts.get(key, 0)
 
+    def tracked_keys(self) -> set[K]:
+        """Return keys that currently have recorded backoff state."""
+        return set(self._attempts) | set(self._last_time)
+
     def reset(self, key: K) -> None:
         """Reset backoff state for a key (e.g., on success)."""
         self._attempts.pop(key, None)

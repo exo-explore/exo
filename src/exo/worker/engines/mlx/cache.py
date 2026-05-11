@@ -358,7 +358,12 @@ class KVPrefixCache:
                 best_index, best_length = i, length
 
         if best_index is None:
-            return make_kv_cache(model), prompt_tokens, None, False
+            return (
+                make_kv_cache(model),
+                prompt_tokens,
+                None,
+                False,
+            )
 
         # For exact match: trim to max_length-1 so remaining has the last token
         # For partial match: trim to best_length, remaining has suffix to prefill
@@ -374,7 +379,12 @@ class KVPrefixCache:
 
         # No usable snapshot — need fresh cache
         if restore_snap is None and has_ssm:
-            return make_kv_cache(model), prompt_tokens, None, False
+            return (
+                make_kv_cache(model),
+                prompt_tokens,
+                None,
+                False,
+            )
 
         prompt_cache = deepcopy(self.caches[best_index])
         tokens_to_trim = cached_length - restore_pos
@@ -557,18 +567,121 @@ def get_memory_used_percentage() -> float:
     return float(mem.percent / 100)
 
 
+def _model_is_pipeline_parallel(model: Model) -> bool:
+    """True iff the model has pipeline-parallel layer wrappers installed.
+
+    Only the PP path is safe to combine with QuantizedKVCache right now:
+    the single-node BatchGenerator code path in mlx-lm calls
+    ``_merge_caches`` on every step (even for a single in-flight request),
+    and QuantizedKVCache does not implement ``merge``. Attempting to use
+    a quantized cache in that path crashes with::
+
+        <class 'mlx_lm.models.cache.QuantizedKVCache'> does not yet
+        support batching with history
+
+    Detecting PP mode by layer type is cheap and avoids threading the
+    distributed group through every cache call site.
+    """
+    try:
+        from exo.worker.engines.mlx.auto_parallel import (
+            PipelineFirstLayer,
+            PipelineLastLayer,
+        )
+    except Exception:
+        return False
+    layers = getattr(model, "layers", None)
+    if layers is None:
+        return False
+    for layer in layers:  # type: ignore[reportUnknownVariableType]
+        if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
+            return True
+    return False
+
+
 def make_kv_cache(
-    model: Model, max_kv_size: int | None = None, keep: int = 0
+    model: Model,
+    max_kv_size: int | None = None,
+    keep: int = 0,
 ) -> KVCacheType:
+    """Build a KV cache for ``model``.
+
+    Honors the model's own ``make_cache()`` factory when available so each
+    architecture gets the cache layout it was designed for (e.g. Gemma 4
+    returns a mix of ``RotatingKVCache`` for sliding-window layers and
+    ``KVCache`` for global-attention layers). This is exactly what
+    ``mlx_lm.speculative_generate_step`` expects when ``draft_model`` is
+    supplied -- it slices the supplied ``prompt_cache`` into target/drafter
+    halves of native shape and uses each model's own attention masks.
+    """
     assert hasattr(model, "layers")
 
     if hasattr(model, "make_cache"):
-        logger.info("Using MLX LM's make cache")
-        return model.make_cache()  # type: ignore
+        caches: list[
+            KVCache | RotatingKVCache | QuantizedKVCache | ArraysCache | CacheList
+        ] = list(model.make_cache())  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+        # Apply the same single-node safeguard used in the
+        # ``make_cache``-less branch below: ``QuantizedKVCache``
+        # cannot be combined with the single-node ``BatchGenerator``
+        # path because mlx-lm calls ``_merge_caches`` on every step
+        # and ``QuantizedKVCache`` doesn't implement ``merge``. Models
+        # with ``make_cache()`` (e.g. Gemma3 with mixed attention
+        # layers) used to skip this guard and would crash at runtime
+        # with::
+        #
+        #     <class 'mlx_lm.models.cache.QuantizedKVCache'> does not
+        #     yet support batching with history
+        #
+        # Pipeline-parallel deployments use a different generation
+        # path that does support quantized caches, so we honor
+        # ``EXO_KV_CACHE_BITS`` only when the model has PP layer
+        # wrappers installed.
+        if KV_CACHE_BITS is not None and _model_is_pipeline_parallel(model):
+            # Honor KV_CACHE_BITS even when the model provides its own
+            # make_cache(). Replace plain KVCache entries with
+            # QuantizedKVCache; leave ArraysCache (DeltaNet/SSM) and other
+            # cache types alone since they don't support quantization.
+            # The step=16384 here is internal to the QuantizedKVCache we
+            # are constructing (avoids mx.concatenate growth churn on the
+            # newly-allocated quantized buffer); we deliberately do NOT
+            # mutate ``step`` on plain KVCache instances returned by
+            # ``model.make_cache()`` -- that path now flows through to
+            # ``mlx_lm`` untouched so ``speculative_generate_step``
+            # receives caches whose allocation policy matches what each
+            # architecture's ``make_cache()`` declared.
+            quantized = 0
+            for i, c in enumerate(caches):
+                if isinstance(c, KVCache):
+                    qc = QuantizedKVCache(
+                        group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS
+                    )
+                    qc.step = 16384
+                    caches[i] = qc
+                    quantized += 1
+            logger.info(
+                f"Using quantized KV cache "
+                f"(bits={KV_CACHE_BITS}, group_size={CACHE_GROUP_SIZE}) "
+                f"for {quantized}/{len(caches)} layers"
+            )
+        else:
+            if KV_CACHE_BITS is not None:
+                logger.info(
+                    f"EXO_KV_CACHE_BITS={KV_CACHE_BITS} ignored in single-node mode "
+                    f"(QuantizedKVCache has no merge() support, "
+                    f"required by BatchGenerator); using model.make_cache() unmodified"
+                )
+            else:
+                logger.info("Using MLX LM's make cache")
+        return caches
 
     if max_kv_size is None:
-        if KV_CACHE_BITS is None:
-            logger.info("Using default KV cache")
+        if KV_CACHE_BITS is None or not _model_is_pipeline_parallel(model):
+            if KV_CACHE_BITS is not None:
+                logger.info(
+                    f"EXO_KV_CACHE_BITS={KV_CACHE_BITS} ignored in single-node mode "
+                    f"(QuantizedKVCache has no merge() support, required by BatchGenerator)"
+                )
+            else:
+                logger.info("Using default KV cache")
             return [KVCache() for _ in model.layers]
         else:
             logger.info("Using quantized KV cache")

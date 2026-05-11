@@ -1,5 +1,7 @@
 from .api import AddCustomModelParams as AddCustomModelParams
 from .api import AdvancedImageParams as AdvancedImageParams
+from .api import AgentEndpoint as AgentEndpoint
+from .api import AgentEndpointList as AgentEndpointList
 from .api import BenchChatCompletionRequest as BenchChatCompletionRequest
 from .api import BenchChatCompletionResponse as BenchChatCompletionResponse
 from .api import BenchImageGenerationResponse as BenchImageGenerationResponse

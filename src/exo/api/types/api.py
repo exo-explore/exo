@@ -1,6 +1,6 @@
 import time
 from collections.abc import Generator
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, Final, Literal, get_args
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
@@ -16,6 +16,24 @@ from exo.utils.pydantic_ext import FrozenModel
 FinishReason = Literal[
     "stop", "length", "tool_calls", "content_filter", "function_call", "error"
 ]
+
+# Upper bound for the per-request ``num_draft_tokens`` override. The runner
+# allocates a fixed wire-protocol budget at warmup (``EXO_NUM_DRAFT_TOKENS``,
+# default in ``defaults.py``), and per-request K is clamped to that budget
+# inside ``generate.py``. The API-level cap exists only as a sanity guard
+# against obviously-pathological inputs (negative values are blocked by
+# ``ge=1``; values like ``10**9`` would still crash the runner subprocess
+# via an unhandled ``ValueError`` if they escaped the API boundary).
+#
+# Codex flagged (PR #20 round 2 P2) that an earlier ``= 32`` cap was a
+# regression for benchmarking and tuning flows: those flows sweep larger K
+# values when the operator has explicitly raised ``EXO_NUM_DRAFT_TOKENS``
+# (e.g. K=64 on a fat target / drafter pair) and previously the runner
+# would handle them. The cap is intentionally raised to a value far above
+# any realistic budget so it never gates legitimate sweeps; the runner's
+# internal clamp in ``generate.py`` against ``EXO_NUM_DRAFT_TOKENS``
+# remains the authoritative bound.
+MAX_NUM_DRAFT_TOKENS_PER_REQUEST: Final[int] = 1024
 
 
 class ErrorInfo(BaseModel):
@@ -49,11 +67,32 @@ class ModelListModel(BaseModel):
     base_model: str = Field(default="")
     capabilities: list[str] = Field(default_factory=list)
     reasoning_dialect: ReasoningDialect = "none"
+    # Smaller draft models the runner can load alongside this target for
+    # speculative decoding. Listed in preference order (`fastest` first).
+    # Surfaced so dashboards and clients can pre-download a drafter and
+    # pick which one to use at request time.
+    drafter_model_ids: list[str] = Field(default_factory=list)
 
 
 class ModelList(BaseModel):
     object: Literal["list"] = "list"
     data: list[ModelListModel]
+
+
+class AgentEndpoint(BaseModel):
+    name: str
+    kind: Literal["default", "model", "instance"]
+    openai_base_url: str
+    claude_base_url: str | None
+    model_id: ModelId | None
+    target_instance_id: InstanceId | None
+    active: bool
+    description: str
+
+
+class AgentEndpointList(BaseModel):
+    object: Literal["list"] = "list"
+    data: list[AgentEndpoint]
 
 
 class ChatCompletionMessageText(BaseModel):
@@ -150,6 +189,120 @@ class ChatCompletionChoice(BaseModel):
     finish_reason: FinishReason | None = None
 
 
+class GenerationStats(BaseModel):
+    prompt_tps: float
+    generation_tps: float
+    prompt_tokens: int
+    generation_tokens: int
+    peak_memory_usage: Memory
+    prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
+    # Speculative-decoding telemetry. ``drafter_model_id`` is set whenever
+    # speculative decoding actually ran for this request (drafter loaded *and*
+    # not short-circuited by the short-skip threshold). ``accepted_draft_tokens``
+    # counts ``stream_generate`` outputs with ``from_draft=True``: those are
+    # tokens the drafter proposed *and* the target accepted. The user-facing
+    # speedup is approximately ``accepted_draft_tokens / generation_tokens``.
+    drafter_model_id: str | None = None
+    accepted_draft_tokens: int = 0
+    # Total drafts the drafter proposed across all spec-decode rounds.
+    # ``0`` means either the drafter didn't run or the drafter implementation
+    # doesn't surface proposal counts (currently only the pipelined drafter
+    # does). The classical per-position acceptance rate is
+    # ``accepted_draft_tokens / proposed_draft_tokens``; ``0`` here makes
+    # that property return ``None`` rather than divide-by-zero. ``mlx_lm``'s
+    # built-in ``stream_generate(draft_model=...)`` does not expose proposal
+    # counts at all, so external-model-drafter requests will leave this at 0
+    # while still populating ``accepted_draft_tokens``.
+    proposed_draft_tokens: int = 0
+    # Number of speculative-decoding rounds that actually ran. Each round
+    # proposes ``num_draft_tokens`` drafts (truncated near max_tokens).
+    # Useful for computing per-round latency in dashboards. ``0`` when the
+    # drafter didn't run or doesn't surface round counts.
+    spec_decode_rounds: int = 0
+    # K used for speculative_generate_step (None when drafter didn't run).
+    num_draft_tokens: int | None = None
+    # Drafting strategy that actually ran for this request: "model" for
+    # external-drafter spec decoding, "pipelined" for the pipelined+
+    # remote drafter, "ngram" for in-context suffix lookup, "eagle" /
+    # "lookahead" reserved for the upcoming auxiliary-head + Jacobi
+    # drafters, "none" for non-speculative. None when the engine doesn't
+    # surface drafting (e.g. image gen). Useful for telemetry dashboards
+    # to attribute throughput wins to a specific strategy when running
+    # mixed-mode A/B tests.
+    draft_mode: (
+        Literal["model", "pipelined", "ngram", "eagle", "lookahead", "none"] | None
+    ) = None
+    # Drafter architecture, when speculative decoding actually ran:
+    # ``"standard"`` -- external sibling LM via ``mlx_lm.stream_generate``
+    #   (the historical model-drafter / pipelined paths).
+    # ``"mtp"`` -- Multi-Token-Prediction coupled drafter (gemma4_assistant)
+    #   that consumes the target's last-layer hidden + per-layer-type shared
+    #   KV every round.
+    # ``"dflash"`` -- DFlash coupled drafter (qwen3_dflash) -- consumes a
+    #   concatenated multi-layer hidden tensor, no shared KV.
+    # ``None`` when ``draft_mode == "none"`` or the engine doesn't expose
+    # drafter telemetry. Surfaced separately from ``draft_mode`` so dashboards
+    # can disambiguate coupled vs. standard runs without re-shaping the
+    # ``DraftMode`` literal: the on-the-wire ``draft_mode`` for coupled runs
+    # remains ``"model"`` (the user-visible request mode) while ``drafter_kind``
+    # carries the architecture. ``"ngram"`` and ``"none"`` runs leave this
+    # ``None`` since there's no model-architecture distinction to surface.
+    drafter_kind: Literal["standard", "mtp", "dflash"] | None = None
+
+    @property
+    def drafter_acceptance_fraction(self) -> float | None:
+        """Fraction of *generated* tokens that came from the drafter.
+
+        ``None`` when no drafter ran for the request. This is a slight
+        misnomer relative to the speculative-decoding literature -- the true
+        acceptance rate would divide by the drafter's proposal count, which
+        ``stream_generate`` doesn't surface -- but it is the metric that
+        directly maps to wall-clock speedup, so it's what we display.
+        :attr:`drafter_acceptance_rate` exposes the classical metric for
+        the pipelined drafter (which tracks proposal counts).
+
+        Codex P2 (PR #19 round-(N+1)): n-gram speculation
+        (``draft_mode="ngram"``) intentionally runs without a drafter
+        model id because it's an in-process suffix-lookup over the
+        prompt + partial generation rather than a separate model.
+        Pre-fix this property returned ``None`` for every n-gram run
+        (because ``drafter_model_id is None``), which misreported
+        valid speculative runs as non-speculative in telemetry and
+        broke acceptance metrics for n-gram A/B tests. Trust
+        ``draft_mode`` as the canonical "did a drafter run?" signal:
+        accept any non-``"none"`` mode, and fall back to the legacy
+        ``drafter_model_id`` heuristic for streams that don't yet
+        carry ``draft_mode`` (older recorded benches, partial
+        responses).
+        """
+        if self.generation_tokens == 0:
+            return None
+        if self.draft_mode is None:
+            # Older payload: only model-mode telemetry was
+            # recorded historically.
+            if self.drafter_model_id is None:
+                return None
+        elif self.draft_mode == "none":
+            return None
+        return self.accepted_draft_tokens / self.generation_tokens
+
+    @property
+    def drafter_acceptance_rate(self) -> float | None:
+        """Classical acceptance rate: accepted / proposed (per-position).
+
+        ``None`` when the drafter didn't run *or* when it doesn't track
+        proposal counts (e.g. external-model drafter via mlx_lm). The
+        pipelined drafter tracks this. Differs from
+        :attr:`drafter_acceptance_fraction`: this divides by total drafts
+        proposed (the standard literature metric for drafter quality);
+        ``drafter_acceptance_fraction`` divides by total emitted tokens
+        (the metric for end-to-end speedup).
+        """
+        if self.drafter_model_id is None or self.proposed_draft_tokens == 0:
+            return None
+        return self.accepted_draft_tokens / self.proposed_draft_tokens
+
+
 class ChatCompletionResponse(BaseModel):
     id: str
     object: Literal["chat.completion"] = "chat.completion"
@@ -158,15 +311,14 @@ class ChatCompletionResponse(BaseModel):
     choices: list[ChatCompletionChoice | StreamingChoiceResponse]
     usage: Usage | None = None
     service_tier: str | None = None
-
-
-class GenerationStats(BaseModel):
-    prompt_tps: float
-    generation_tps: float
-    prompt_tokens: int
-    generation_tokens: int
-    peak_memory_usage: Memory
-    prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
+    # Non-OpenAI extension: full generation stats for the request,
+    # including spec-decode telemetry (drafter id, mode, K, accepted /
+    # proposed draft tokens, spec rounds, peak memory, prefill TPS).
+    # Standard OpenAI clients ignore unknown fields; exo's own benches
+    # and dashboards read this for drafter-effectiveness reporting.
+    # ``None`` for endpoints that don't run a generation pipeline (e.g.
+    # tool-call-only completions).
+    generation_stats: GenerationStats | None = None
 
 
 class ImageGenerationStats(BaseModel):
@@ -231,6 +383,36 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool | None = None
     user: str | None = None
+    # Speculative-decoding per-request overrides (item 9). These are exo
+    # extensions to the OpenAI Chat Completions schema -- standard clients
+    # ignore unknown fields and get the runner's defaults.
+    #
+    # ``use_drafter=False`` short-circuits to non-speculative; clients that
+    # want a finer-grained switch use ``draft_mode`` to pick a specific
+    # strategy. When both are set, the explicit ``draft_mode`` wins
+    # (matches ``TextGenerationTaskParams`` resolution in
+    # ``resolve_draft_mode``); see
+    # ``src/exo/worker/engines/mlx/generator/drafter.py``.
+    use_drafter: bool | None = None
+    num_draft_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_NUM_DRAFT_TOKENS_PER_REQUEST,
+        description=(
+            "Per-request override for the number of speculative draft tokens "
+            "per round (K). Validated as a positive integer up to "
+            f"{MAX_NUM_DRAFT_TOKENS_PER_REQUEST} (a sanity guard against "
+            "pathological values). The runner clamps K to its actual "
+            "wire-protocol budget (``EXO_NUM_DRAFT_TOKENS``) internally, so "
+            "benchmarking flows that sweep large K values are not gated by "
+            "this bound."
+        ),
+    )
+    # Per-request draft-strategy override. ``"model"`` uses the external
+    # drafter, ``"pipelined"`` uses the pipelined+remote drafter, ``"ngram"``
+    # uses CPU n-gram tables, ``"none"`` disables speculation. ``None`` defers
+    # to the model card / runner default. Mirrors ``draft_mode`` on the task.
+    draft_mode: Literal["model", "pipelined", "ngram", "none"] | None = None
 
 
 class BenchChatCompletionRequest(ChatCompletionRequest):

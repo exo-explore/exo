@@ -30,8 +30,9 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from exo_tools.client import ExoClient, ExoHttpError
-from exo_tools.harness import (
+from harness import (
+    ExoClient,
+    ExoHttpError,
     add_common_instance_args,
     capture_cluster_snapshot,
     find_existing_instance,

@@ -42,6 +42,7 @@ class EventRouter:
     _nack_attempts: int = field(init=False, default=0)
     _nack_base_seconds: float = field(init=False, default=0.5)
     _nack_cap_seconds: float = field(init=False, default=10.0)
+    _last_outbound_warning_size: int = field(init=False, default=0)
 
     async def run(self):
         try:
@@ -61,6 +62,12 @@ class EventRouter:
             for e_id, (time, event) in list(self.out_for_delivery.items()):
                 if anyio.current_time() > time + 5:
                     self.out_for_delivery[e_id] = (anyio.current_time(), event)
+                    logger.debug(
+                        "Retrying unacknowledged local event "
+                        f"event_id={e_id} origin_idx={event.origin_idx} "
+                        f"event_type={type(event.event).__name__} "
+                        f"out_for_delivery={len(self.out_for_delivery)}"
+                    )
                     await self.external_outbound.send(event)
 
     def sender(self) -> Sender[Event]:
@@ -93,6 +100,7 @@ class EventRouter:
                 idx += 1
                 await self.external_outbound.send(f_ev)
                 self.out_for_delivery[event.event_id] = (anyio.current_time(), f_ev)
+                self._log_outbound_pressure()
 
     async def _run_ext_in(self):
         buf = OrderedBuffer[Event]()
@@ -107,6 +115,11 @@ class EventRouter:
                 event_id = event.event.event_id
                 if event_id in self.out_for_delivery:
                     self.out_for_delivery.pop(event_id)
+                    logger.debug(
+                        "Acknowledged local event from global stream "
+                        f"event_id={event_id} origin_idx={event.origin_idx} "
+                        f"remaining_out_for_delivery={len(self.out_for_delivery)}"
+                    )
 
                 drained = buf.drain_indexed()
                 if drained:
@@ -118,6 +131,12 @@ class EventRouter:
                     self._nack_cancel_scope is None
                     or self._nack_cancel_scope.cancel_called
                 ):
+                    logger.warning(
+                        "Global event stream gap detected "
+                        f"received_idx={event.origin_idx} "
+                        f"next_expected_idx={buf.next_idx_to_release} "
+                        f"event_type={type(event.event).__name__}"
+                    )
                     # Request the next index.
                     self._tg.start_soon(self._nack_request, buf.next_idx_to_release)
                     continue
@@ -149,7 +168,10 @@ class EventRouter:
             try:
                 await anyio.sleep(delay)
                 logger.info(
-                    f"Nack attempt {self._nack_attempts}: Requesting Event Log from {since_idx}"
+                    "Requesting event log replay "
+                    f"nack_attempt={self._nack_attempts} since_idx={since_idx} "
+                    f"session={self.session_id} "
+                    f"out_for_delivery={len(self.out_for_delivery)}"
                 )
                 await self.command_sender.send(
                     ForwarderCommand(
@@ -160,3 +182,15 @@ class EventRouter:
             finally:
                 if self._nack_cancel_scope is scope:
                     self._nack_cancel_scope = None
+
+    def _log_outbound_pressure(self) -> None:
+        size = len(self.out_for_delivery)
+        if size < 10:
+            self._last_outbound_warning_size = 0
+            return
+        if size >= self._last_outbound_warning_size + 10:
+            self._last_outbound_warning_size = size
+            logger.warning(
+                "Local events awaiting master acknowledgement "
+                f"out_for_delivery={size} session={self.session_id}"
+            )

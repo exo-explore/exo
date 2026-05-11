@@ -8,14 +8,22 @@ family = "qwen"
 quantization = "8bit"
 base_model = "Qwen3.6 27B"
 capabilities = ["text", "thinking", "thinking_toggle", "vision"]
+# Hybrid Qwen 3.6 dense (linear gated-delta + full-attention layers,
+# full_attention_interval=4, 48 linear-attn + 16 full-attn) — paired
+# with z-lab's DFlash drafter (block-diffusion, block_size=16,
+# num_target_layers=64).
+#
+# Same hybrid architecture as Qwen3.5-4B but ~7x larger and one
+# generation newer (3.6 vs 3.5). The existing Qwen3_5DFlashTargetAdapter
+# handles this target unchanged.
+coupled_drafter = "z-lab/Qwen3.6-27B-DFlash"
 reasoning_dialect = "post_last_user"
 context_length = 262144
 
 [storage_size]
-in_bytes = 29500938720
+in_bytes = 28991029248
 
-# Source: https://huggingface.co/Qwen/Qwen3.6-27B#best-practices
-# Source: https://unsloth.ai/docs/models/qwen3.5
+# Source: https://huggingface.co/Qwen/Qwen3.6-27B (best-practices)
 [sampling_defaults]
 temperature = 1.0
 top_p = 0.95
@@ -24,8 +32,6 @@ min_p = 0.0
 repetition_penalty = 1.0
 presence_penalty = 1.5
 
-# Source: https://huggingface.co/Qwen/Qwen3.6-27B#best-practices
-# Source: https://unsloth.ai/docs/models/qwen3.5
 [sampling_defaults.non_thinking]
 temperature = 0.7
 top_p = 0.8

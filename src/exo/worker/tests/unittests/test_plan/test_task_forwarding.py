@@ -260,6 +260,65 @@ def test_plan_ignores_non_pending_or_non_chat_tasks():
     assert result is None
 
 
+def test_plan_skips_text_generation_tasks_already_in_runner_completed():
+    """Regression test for the drafter-drop hook (Codex P2, PR #20):
+    when a generation task has been recorded in ``runner.completed``
+    (the drafter side has dropped it), ``plan()`` must not re-select
+    it on the next 100ms tick. Without this, the planner produces a
+    fresh ``TaskCreated`` for the same task on every tick until the
+    target finishes.
+    """
+    shard0 = get_pipeline_shard_metadata(MODEL_A_ID, device_rank=0, world_size=2)
+    shard1 = get_pipeline_shard_metadata(MODEL_A_ID, device_rank=1, world_size=2)
+    instance = get_mlx_ring_instance(
+        instance_id=INSTANCE_1_ID,
+        model_id=MODEL_A_ID,
+        node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
+        runner_to_shard={RUNNER_1_ID: shard0, RUNNER_2_ID: shard1},
+    )
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
+    local_runner = FakeRunnerSupervisor(
+        bound_instance=bound_instance,
+        status=RunnerRunning(),
+        completed={TASK_1_ID},
+    )
+
+    runners = {RUNNER_1_ID: local_runner}
+    instances = {INSTANCE_1_ID: instance}
+    all_runners = {
+        RUNNER_1_ID: RunnerRunning(),
+        RUNNER_2_ID: RunnerRunning(),
+    }
+
+    pending_task = TextGeneration(
+        task_id=TASK_1_ID,
+        instance_id=INSTANCE_1_ID,
+        task_status=TaskStatus.Pending,
+        command_id=COMMAND_1_ID,
+        task_params=TextGenerationTaskParams(
+            model=MODEL_A_ID,
+            input=[InputMessage(role="user", content=InputMessageContent(""))],
+        ),
+    )
+
+    result = plan_mod.plan(
+        node_id=NODE_A,
+        runners=runners,  # type: ignore
+        global_download_status={NODE_A: [], NODE_B: []},
+        instances=instances,
+        all_runners=all_runners,
+        tasks={TASK_1_ID: pending_task},
+        input_chunk_buffer={},
+        image_cache={},
+        instance_backoff=KeyedBackoff(),
+        download_backoff=KeyedBackoff(),
+    )
+
+    assert result is None
+
+
 def test_plan_returns_none_when_nothing_to_do():
     """
     If there are healthy runners, no downloads needed, and no pending tasks,

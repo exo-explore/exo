@@ -40,4 +40,3 @@ bench/**/*.json
 tmp/models
 /build/exo
 /.claude/skills
-/.claude
