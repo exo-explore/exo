@@ -195,7 +195,7 @@ class RunnerSupervisor:
     )
 
     @classmethod
-    def create(
+    async def create(
         cls,
         *,
         bound_instance: BoundInstance,
@@ -217,7 +217,7 @@ class RunnerSupervisor:
             ),
             daemon=True,
         )
-        runner_stdio_handler = RunnerStdioHandler.create(
+        runner_stdio_handler = await RunnerStdioHandler.create(
             stdout_rx=runner_process.stdout, stderr_rx=runner_process.stderr
         )
 
