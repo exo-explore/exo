@@ -215,9 +215,9 @@ def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None)
 def _ensure_seed(params: AdvancedImageParams | None) -> AdvancedImageParams:
     """Ensure advanced params has a seed set for distributed consistency."""
     if params is None:
-        return AdvancedImageParams(seed=random.randint(0, 2**32 - 1))
+        return AdvancedImageParams(seed=random.randint(0, 2 ** 32 - 1))
     if params.seed is None:
-        return params.model_copy(update={"seed": random.randint(0, 2**32 - 1)})
+        return params.model_copy(update={"seed": random.randint(0, 2 ** 32 - 1)})
     return params
 
 
@@ -234,15 +234,15 @@ def _require_disaggregation_enabled() -> None:
 
 class API:
     def __init__(
-        self,
-        node_id: NodeId,
-        *,
-        port: int,
-        event_receiver: Receiver[IndexedEvent],
-        command_sender: Sender[ForwarderCommand],
-        download_command_sender: Sender[ForwarderDownloadCommand],
-        # This lets us pause the API if an election is running
-        election_receiver: Receiver[ElectionMessage],
+            self,
+            node_id: NodeId,
+            *,
+            port: int,
+            event_receiver: Receiver[IndexedEvent],
+            command_sender: Sender[ForwarderCommand],
+            download_command_sender: Sender[ForwarderDownloadCommand],
+            # This lets us pause the API if an election is running
+            election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
@@ -263,8 +263,8 @@ class API:
 
         @self.app.middleware("http")
         async def _log_requests(  # pyright: ignore[reportUnusedFunction]
-            request: Request,
-            call_next: Callable[[Request], Awaitable[StreamingResponse]],
+                request: Request,
+                call_next: Callable[[Request], Awaitable[StreamingResponse]],
         ) -> StreamingResponse:
             logger.debug(f"API request: {request.method} {request.url.path}")
             return await call_next(request)
@@ -284,8 +284,7 @@ class API:
 
         self._text_generation_queues: dict[
             CommandId,
-            Sender[TokenChunk | ErrorChunk |
-                   ToolCallChunk | PrefillProgressChunk],
+            Sender[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk],
         ] = {}
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
@@ -318,7 +317,7 @@ class API:
         self.app.exception_handler(HTTPException)(self.http_exception_handler)
 
     async def http_exception_handler(
-        self, _: Request, exc: HTTPException
+            self, _: Request, exc: HTTPException
     ) -> JSONResponse:
         err = ErrorResponse(
             error=ErrorInfo(
@@ -349,14 +348,12 @@ class API:
         self.app.get("/v1/instance-links")(self.list_instance_links)
         self.app.post("/v1/instance-links")(self.create_instance_link)
         self.app.put("/v1/instance-links/{link_id}")(self.update_instance_link)
-        self.app.delete(
-            "/v1/instance-links/{link_id}")(self.delete_instance_link)
+        self.app.delete("/v1/instance-links/{link_id}")(self.delete_instance_link)
         self.app.get("/v1/feature-flags")(self.get_feature_flags)
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/models/add")(self.add_custom_model)
-        self.app.delete(
-            "/models/custom/{model_id:path}")(self.delete_custom_model)
+        self.app.delete("/models/custom/{model_id:path}")(self.delete_custom_model)
         self.app.get("/models/search")(self.search_models)
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
@@ -367,30 +364,22 @@ class API:
         self.app.post("/v1/images/generations", response_model=None)(
             self.image_generations
         )
-        self.app.post(
-            "/bench/images/generations")(self.bench_image_generations)
-        self.app.post("/v1/images/edits",
-                      response_model=None)(self.image_edits)
+        self.app.post("/bench/images/generations")(self.bench_image_generations)
+        self.app.post("/v1/images/edits", response_model=None)(self.image_edits)
         self.app.post("/bench/images/edits")(self.bench_image_edits)
         self.app.get("/images")(self.list_images)
         self.app.get("/images/{image_id}")(self.get_image)
-        self.app.post("/v1/messages",
-                      response_model=None)(self.claude_messages)
-        self.app.post("/v1/responses",
-                      response_model=None)(self.openai_responses)
+        self.app.post("/v1/messages", response_model=None)(self.claude_messages)
+        self.app.post("/v1/responses", response_model=None)(self.openai_responses)
         self.app.post("/v1/cancel/{command_id}")(self.cancel_command)
 
         # Ollama API
         self.app.head("/ollama/")(self.ollama_version)
         self.app.head("/ollama/api/version")(self.ollama_version)
-        self.app.post("/ollama/api/chat",
-                      response_model=None)(self.ollama_chat)
-        self.app.post("/ollama/api/api/chat",
-                      response_model=None)(self.ollama_chat)
-        self.app.post("/ollama/api/v1/chat",
-                      response_model=None)(self.ollama_chat)
-        self.app.post("/ollama/api/generate",
-                      response_model=None)(self.ollama_generate)
+        self.app.post("/ollama/api/chat", response_model=None)(self.ollama_chat)
+        self.app.post("/ollama/api/api/chat", response_model=None)(self.ollama_chat)
+        self.app.post("/ollama/api/v1/chat", response_model=None)(self.ollama_chat)
+        self.app.post("/ollama/api/generate", response_model=None)(self.ollama_generate)
         self.app.get("/ollama/api/tags")(self.ollama_tags)
         self.app.get("/ollama/api/api/tags")(self.ollama_tags)
         self.app.get("/ollama/api/v1/tags")(self.ollama_tags)
@@ -402,8 +391,7 @@ class API:
         self.app.get("/state/{path:path}")(self.get_state)
         self.app.get("/events")(self.stream_events)
         self.app.post("/download/start")(self.start_download)
-        self.app.delete(
-            "/download/{node_id}/{model_id:path}")(self.delete_download)
+        self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.post("/download/cancel")(self.cancel_download)
         self.app.get("/v1/traces")(self.list_traces)
         self.app.post("/v1/traces/delete")(self.delete_traces)
@@ -448,7 +436,7 @@ class API:
         )
 
     async def create_instance(
-        self, payload: CreateInstanceParams
+            self, payload: CreateInstanceParams
     ) -> CreateInstanceResponse:
         instance = payload.instance
         model_card = await ModelCard.load(instance.shard_assignments.model_id)
@@ -473,11 +461,11 @@ class API:
         )
 
     async def get_placement(
-        self,
-        model_id: ModelId,
-        sharding: Sharding = Sharding.Pipeline,
-        instance_meta: InstanceMeta = InstanceMeta.MlxRing,
-        min_nodes: int = 1,
+            self,
+            model_id: ModelId,
+            sharding: Sharding = Sharding.Pipeline,
+            instance_meta: InstanceMeta = InstanceMeta.MlxRing,
+            min_nodes: int = 1,
     ) -> Instance:
         model_card = await ModelCard.load(model_id)
 
@@ -512,9 +500,9 @@ class API:
         return placements[new_ids[0]]
 
     async def get_placement_previews(
-        self,
-        model_id: ModelId,
-        node_ids: Annotated[list[NodeId] | None, Query()] = None,
+            self,
+            model_id: ModelId,
+            node_ids: Annotated[list[NodeId] | None, Query()] = None,
     ) -> PlacementPreviewResponse:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
@@ -536,8 +524,8 @@ class API:
                     [
                         (sharding, instance_meta, i)
                         for i in range(
-                            1, len(list(self.state.topology.list_nodes())) + 1
-                        )
+                        1, len(list(self.state.topology.list_nodes())) + 1
+                    )
                     ]
                 )
         # TODO: PDD
@@ -609,10 +597,10 @@ class API:
                     memory_delta_by_node[str(node_id)] = per_node + extra
 
             if (
-                model_card.model_id,
-                sharding,
-                instance_meta,
-                len(placement_node_ids),
+                    model_card.model_id,
+                    sharding,
+                    instance_meta,
+                    len(placement_node_ids),
             ) not in seen:
                 previews.append(
                     PlacementPreview(
@@ -663,19 +651,19 @@ class API:
         return list(self.state.instance_links.values())
 
     async def create_instance_link(
-        self, body: InstanceLinkBody
+            self, body: InstanceLinkBody
     ) -> InstanceLinkResponse:
         _require_disaggregation_enabled()
         return await self._set_instance_link(InstanceLinkId(), body)
 
     async def update_instance_link(
-        self, link_id: InstanceLinkId, body: InstanceLinkBody
+            self, link_id: InstanceLinkId, body: InstanceLinkBody
     ) -> InstanceLinkResponse:
         _require_disaggregation_enabled()
         return await self._set_instance_link(link_id, body)
 
     async def _set_instance_link(
-        self, link_id: InstanceLinkId, body: InstanceLinkBody
+            self, link_id: InstanceLinkId, body: InstanceLinkBody
     ) -> InstanceLinkResponse:
         command = SetInstanceLink(
             link_id=link_id,
@@ -688,7 +676,7 @@ class API:
         )
 
     async def delete_instance_link(
-        self, link_id: InstanceLinkId
+            self, link_id: InstanceLinkId
     ) -> InstanceLinkResponse:
         _require_disaggregation_enabled()
         command = DeleteInstanceLink(link_id=link_id)
@@ -717,7 +705,7 @@ class API:
         )
 
     async def _token_chunk_stream(
-        self, command_id: CommandId
+            self, command_id: CommandId
     ) -> AsyncGenerator[
         TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk, None
     ]:
@@ -728,7 +716,7 @@ class API:
         try:
             self._text_generation_queues[command_id], recv = channel[
                 TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk
-            ]()
+                ]()
 
             with recv as token_chunks:
                 async for chunk in token_chunks:
@@ -751,7 +739,7 @@ class API:
                 del self._text_generation_queues[command_id]
 
     async def _collect_text_generation_with_stats(
-        self, command_id: CommandId
+            self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
         sampler = PowerSampler(get_node_system=lambda: self.state.node_system)
         text_parts: list[str] = []
@@ -825,7 +813,7 @@ class API:
         )
 
     async def _send_text_generation_with_images(
-        self, task_params: TextGenerationTaskParams
+            self, task_params: TextGenerationTaskParams
     ) -> TextGeneration:
         task_params = task_params.with_card_sampling_defaults()
         images = task_params.images
@@ -834,8 +822,7 @@ class API:
             await self._send(command)
             return command
 
-        hashes = [hashlib.sha256(img.encode("ascii")).hexdigest()
-                  for img in images]
+        hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
         all_hashes = {idx: Base64ImageHash(h) for idx, h in enumerate(hashes)}
         task_params = task_params.model_copy(
             update={"images": [], "image_hashes": all_hashes}
@@ -855,8 +842,7 @@ class API:
         all_chunks: list[tuple[int, str]] = []
         for img_idx, img_data in new_images:
             for i in range(0, len(img_data), EXO_MAX_CHUNK_SIZE):
-                all_chunks.append(
-                    (img_idx, img_data[i: i + EXO_MAX_CHUNK_SIZE]))
+                all_chunks.append((img_idx, img_data[i: i + EXO_MAX_CHUNK_SIZE]))
 
         for global_idx, (img_idx, chunk_data) in enumerate(all_chunks):
             await self._send(
@@ -876,7 +862,7 @@ class API:
         return command
 
     async def chat_completions(
-        self, payload: ChatCompletionRequest
+            self, payload: ChatCompletionRequest
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
         task_params = await chat_request_to_text_generation(payload)
@@ -912,7 +898,7 @@ class API:
             )
 
     async def bench_chat_completions(
-        self, payload: BenchChatCompletionRequest
+            self, payload: BenchChatCompletionRequest
     ) -> BenchChatCompletionResponse | StreamingResponse:
         task_params = await chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
@@ -954,8 +940,8 @@ class API:
         Raises HTTPException 404 if no instance is found for the model.
         """
         if not any(
-            instance.shard_assignments.model_id == model_id
-            for instance in self.state.instances.values()
+                instance.shard_assignments.model_id == model_id
+                for instance in self.state.instances.values()
         ):
             await self._trigger_notify_user_to_download_model(model_id)
             raise HTTPException(
@@ -972,8 +958,8 @@ class API:
         model_card = await ModelCard.load(model)
         resolved_model = model_card.model_id
         if not any(
-            instance.shard_assignments.model_id == resolved_model
-            for instance in self.state.instances.values()
+                instance.shard_assignments.model_id == resolved_model
+                for instance in self.state.instances.values()
         ):
             await self._trigger_notify_user_to_download_model(resolved_model)
             raise HTTPException(
@@ -1000,8 +986,7 @@ class API:
     async def get_image(self, image_id: str) -> FileResponse:
         stored = self._image_store.get(Id(image_id))
         if stored is None:
-            raise HTTPException(
-                status_code=404, detail="Image not found or expired")
+            raise HTTPException(status_code=404, detail="Image not found or expired")
         return FileResponse(path=stored.file_path, media_type=stored.content_type)
 
     async def list_images(self, request: Request) -> ImageListResponse:
@@ -1025,7 +1010,7 @@ class API:
         return f"{scheme}://{host}/v1/images/{image_id}"
 
     async def image_generations(
-        self, request: Request, payload: ImageGenerationTaskParams
+            self, request: Request, payload: ImageGenerationTaskParams
     ) -> ImageGenerationResponse | StreamingResponse:
         """Handle image generation requests.
 
@@ -1065,24 +1050,23 @@ class API:
         )
 
     async def _generate_image_stream(
-        self,
-        request: Request,
-        command_id: CommandId,
-        num_images: int,
-        response_format: str,
+            self,
+            request: Request,
+            command_id: CommandId,
+            num_images: int,
+            response_format: str,
     ) -> AsyncGenerator[str, None]:
         """Generate SSE stream of partial and final images."""
         # Track chunks: {(image_index, is_partial): {chunk_index: data}}
         image_chunks: dict[tuple[int, bool], dict[int, str]] = {}
         image_total_chunks: dict[tuple[int, bool], int] = {}
-        image_metadata: dict[tuple[int, bool],
-                             tuple[int | None, int | None]] = {}
+        image_metadata: dict[tuple[int, bool], tuple[int | None, int | None]] = {}
         images_complete = 0
 
         try:
             self._image_generation_queues[command_id], recv = channel[
                 ImageChunk | ErrorChunk
-            ]()
+                ]()
 
             with recv as chunks:
                 async for chunk in chunks:
@@ -1137,13 +1121,11 @@ class API:
                             # Final image
                             if response_format == "url":
                                 image_bytes = base64.b64decode(full_data)
-                                content_type = _format_to_content_type(
-                                    chunk.format)
+                                content_type = _format_to_content_type(chunk.format)
                                 stored = self._image_store.store(
                                     image_bytes, content_type
                                 )
-                                url = self._build_image_url(
-                                    request, stored.image_id)
+                                url = self._build_image_url(request, stored.image_id)
                                 event_data = {
                                     "type": "final",
                                     "image_index": chunk.image_index,
@@ -1182,12 +1164,12 @@ class API:
                 del self._image_generation_queues[command_id]
 
     async def _collect_image_chunks(
-        self,
-        request: Request | None,
-        command_id: CommandId,
-        num_images: int,
-        response_format: str,
-        capture_stats: bool = False,
+            self,
+            request: Request | None,
+            command_id: CommandId,
+            num_images: int,
+            response_format: str,
+            capture_stats: bool = False,
     ) -> tuple[list[ImageData], ImageGenerationStats | None]:
         """Collect image chunks and optionally capture stats."""
         # Track chunks per image: {image_index: {chunk_index: data}}
@@ -1201,7 +1183,7 @@ class API:
         try:
             self._image_generation_queues[command_id], recv = channel[
                 ImageChunk | ErrorChunk
-            ]()
+                ]()
 
             while images_complete < num_images:
                 with recv as chunks:
@@ -1226,8 +1208,8 @@ class API:
                             stats = chunk.stats
 
                         if (
-                            len(image_chunks[chunk.image_index])
-                            == image_total_chunks[chunk.image_index]
+                                len(image_chunks[chunk.image_index])
+                                == image_total_chunks[chunk.image_index]
                         ):
                             images_complete += 1
 
@@ -1237,12 +1219,10 @@ class API:
             images: list[ImageData] = []
             for image_idx in range(num_images):
                 chunks_dict = image_chunks[image_idx]
-                full_data = "".join(chunks_dict[i]
-                                    for i in range(len(chunks_dict)))
+                full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
                 if response_format == "url" and request is not None:
                     image_bytes = base64.b64decode(full_data)
-                    content_type = _format_to_content_type(
-                        image_formats.get(image_idx))
+                    content_type = _format_to_content_type(image_formats.get(image_idx))
                     stored = self._image_store.store(image_bytes, content_type)
                     url = self._build_image_url(request, stored.image_id)
                     images.append(ImageData(b64_json=None, url=url))
@@ -1270,11 +1250,11 @@ class API:
                 del self._image_generation_queues[command_id]
 
     async def _collect_image_generation(
-        self,
-        request: Request,
-        command_id: CommandId,
-        num_images: int,
-        response_format: str,
+            self,
+            request: Request,
+            command_id: CommandId,
+            num_images: int,
+            response_format: str,
     ) -> ImageGenerationResponse:
         """Collect all image chunks (non-streaming) and return a single response."""
         images, _ = await self._collect_image_chunks(
@@ -1283,11 +1263,11 @@ class API:
         return ImageGenerationResponse(data=images)
 
     async def _collect_image_generation_with_stats(
-        self,
-        request: Request | None,
-        command_id: CommandId,
-        num_images: int,
-        response_format: str,
+            self,
+            request: Request | None,
+            command_id: CommandId,
+            num_images: int,
+            response_format: str,
     ) -> BenchImageGenerationResponse:
         sampler = PowerSampler(get_node_system=lambda: self.state.node_system)
         images: list[ImageData] = []
@@ -1303,7 +1283,7 @@ class API:
         )
 
     async def bench_image_generations(
-        self, request: Request, payload: BenchImageGenerationTaskParams
+            self, request: Request, payload: BenchImageGenerationTaskParams
     ) -> BenchImageGenerationResponse:
         payload = payload.model_copy(
             update={
@@ -1327,20 +1307,20 @@ class API:
         )
 
     async def _send_image_edits_command(
-        self,
-        image: UploadFile,
-        prompt: str,
-        model: ModelId,
-        n: int,
-        size: ImageSize,
-        response_format: Literal["url", "b64_json"],
-        input_fidelity: Literal["low", "high"],
-        stream: bool,
-        partial_images: int,
-        bench: bool,
-        quality: Literal["high", "medium", "low"],
-        output_format: Literal["png", "jpeg", "webp"],
-        advanced_params: AdvancedImageParams | None,
+            self,
+            image: UploadFile,
+            prompt: str,
+            model: ModelId,
+            n: int,
+            size: ImageSize,
+            response_format: Literal["url", "b64_json"],
+            input_fidelity: Literal["low", "high"],
+            stream: bool,
+            partial_images: int,
+            bench: bool,
+            quality: Literal["high", "medium", "low"],
+            output_format: Literal["png", "jpeg", "webp"],
+            advanced_params: AdvancedImageParams | None,
     ) -> ImageEdits:
         """Prepare and send an image edits command with chunked image upload."""
         resolved_model = await self._validate_image_model(model)
@@ -1396,26 +1376,25 @@ class API:
         return command
 
     async def image_edits(
-        self,
-        request: Request,
-        image: UploadFile = File(...),  # noqa: B008
-        prompt: str = Form(...),
-        model: str = Form(...),
-        n: int = Form(1),
-        size: str | None = Form(None),
-        response_format: Literal["url", "b64_json"] = Form("b64_json"),
-        input_fidelity: Literal["low", "high"] = Form("low"),
-        stream: str = Form("false"),
-        partial_images: str = Form("0"),
-        quality: Literal["high", "medium", "low"] = Form("medium"),
-        output_format: Literal["png", "jpeg", "webp"] = Form("png"),
-        advanced_params: str | None = Form(None),
+            self,
+            request: Request,
+            image: UploadFile = File(...),  # noqa: B008
+            prompt: str = Form(...),
+            model: str = Form(...),
+            n: int = Form(1),
+            size: str | None = Form(None),
+            response_format: Literal["url", "b64_json"] = Form("b64_json"),
+            input_fidelity: Literal["low", "high"] = Form("low"),
+            stream: str = Form("false"),
+            partial_images: str = Form("0"),
+            quality: Literal["high", "medium", "low"] = Form("medium"),
+            output_format: Literal["png", "jpeg", "webp"] = Form("png"),
+            advanced_params: str | None = Form(None),
     ) -> ImageGenerationResponse | StreamingResponse:
         """Handle image editing requests (img2img)."""
         # Parse string form values to proper types
         stream_bool = stream.lower() in ("true", "1", "yes")
-        partial_images_int = int(
-            partial_images) if partial_images.isdigit() else 0
+        partial_images_int = int(partial_images) if partial_images.isdigit() else 0
 
         parsed_advanced_params: AdvancedImageParams | None = None
         if advanced_params:
@@ -1459,18 +1438,18 @@ class API:
         )
 
     async def bench_image_edits(
-        self,
-        request: Request,
-        image: UploadFile = File(...),  # noqa: B008
-        prompt: str = Form(...),
-        model: str = Form(...),
-        n: int = Form(1),
-        size: str | None = Form(None),
-        response_format: Literal["url", "b64_json"] = Form("b64_json"),
-        input_fidelity: Literal["low", "high"] = Form("low"),
-        quality: Literal["high", "medium", "low"] = Form("medium"),
-        output_format: Literal["png", "jpeg", "webp"] = Form("png"),
-        advanced_params: str | None = Form(None),
+            self,
+            request: Request,
+            image: UploadFile = File(...),  # noqa: B008
+            prompt: str = Form(...),
+            model: str = Form(...),
+            n: int = Form(1),
+            size: str | None = Form(None),
+            response_format: Literal["url", "b64_json"] = Form("b64_json"),
+            input_fidelity: Literal["low", "high"] = Form("low"),
+            quality: Literal["high", "medium", "low"] = Form("medium"),
+            output_format: Literal["png", "jpeg", "webp"] = Form("png"),
+            advanced_params: str | None = Form(None),
     ) -> BenchImageGenerationResponse:
         """Handle benchmark image editing requests with generation stats."""
         parsed_advanced_params: AdvancedImageParams | None = None
@@ -1504,7 +1483,7 @@ class API:
         )
 
     async def claude_messages(
-        self, payload: ClaudeMessagesRequest
+            self, payload: ClaudeMessagesRequest
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
         task_params = await claude_request_to_text_generation(payload)
@@ -1542,7 +1521,7 @@ class API:
             )
 
     async def openai_responses(
-        self, payload: ResponsesRequest
+            self, payload: ResponsesRequest
     ) -> ResponsesResponse | StreamingResponse:
         """OpenAI Responses API."""
         task_params = await responses_request_to_text_generation(payload)
@@ -1583,7 +1562,7 @@ class API:
         return JSONResponse(content="Ollama is running")
 
     async def ollama_chat(
-        self, request: Request
+            self, request: Request
     ) -> OllamaChatResponse | StreamingResponse:
         """Ollama Chat API — accepts JSON regardless of Content-Type."""
         body = await request.body()
@@ -1619,7 +1598,7 @@ class API:
             )
 
     async def ollama_generate(
-        self, request: Request
+            self, request: Request
     ) -> OllamaGenerateResponse | StreamingResponse:
         """Ollama Generate API — accepts JSON regardless of Content-Type."""
         body = await request.body()
@@ -1661,8 +1640,7 @@ class API:
         for node_downloads in self.state.downloads.values():
             for dl in node_downloads:
                 if isinstance(dl, DownloadCompleted):
-                    downloaded_model_ids.add(
-                        dl.shard_metadata.model_card.model_id)
+                    downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
 
         cards = [
             c
@@ -1694,8 +1672,7 @@ class API:
         payload = OllamaShowRequest.model_validate_json(body)
         model_name = payload.name or payload.model
         if not model_name:
-            raise HTTPException(
-                status_code=400, detail="name or model is required")
+            raise HTTPException(status_code=400, detail="name or model is required")
         try:
             card = await ModelCard.load(ModelId(model_name))
         except Exception as exc:
@@ -1752,8 +1729,7 @@ class API:
             for node_downloads in self.state.downloads.values():
                 for dl in node_downloads:
                     if isinstance(dl, DownloadCompleted):
-                        downloaded_model_ids.add(
-                            dl.shard_metadata.model_card.model_id)
+                        downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
             cards = [c for c in cards if c.model_id in downloaded_model_ids]
 
         return ModelList(
@@ -1815,8 +1791,7 @@ class API:
         """Delete a user-added custom model card and sync deletion across the cluster."""
         card = model_cards.card_cache.get(model_id)
         if card is None or not card.is_custom:
-            raise HTTPException(
-                status_code=404, detail="Custom model card not found")
+            raise HTTPException(status_code=404, detail="Custom model card not found")
 
         await self.command_sender.send(
             ForwarderCommand(
@@ -1830,7 +1805,7 @@ class API:
         )
 
     async def search_models(
-        self, query: str = "", limit: int = 20
+            self, query: str = "", limit: int = 20
     ) -> list[HuggingFaceSearchResult]:
         """Search HuggingFace Hub — tries mlx-community first, falls back to all of HuggingFace."""
         from huggingface_hub import ModelInfo, list_models
@@ -1884,14 +1859,14 @@ class API:
                     await anyio.sleep_forever()
                 finally:
                     with anyio.CancelScope(shield=True):
+                        # IMPORTANT: when new queues are added, update this (for proper shutdown semantics)
+                        self._shutdown_queues(self._text_generation_queues)
+                        self._shutdown_queues(self._image_generation_queues)
+
                         shutdown_ev.set()
         finally:
             self.command_sender.close()
             self.event_receiver.close()
-
-            # IMPORTANT: when new queues are added, update this (for proper shutdown semantics)
-            self._shutdown_queues(self._text_generation_queues)
-            self._shutdown_queues(self._image_generation_queues)
 
     @staticmethod
     def _shutdown_queues[K, V](queues: dict[K, Sender[V]]):
@@ -1919,7 +1894,8 @@ class API:
                 )
             except LifespanTimeoutError as e:
                 logger.warning(
-                    "Graceful server shutdown timed out, some connections forcebly closed")
+                    "Graceful server shutdown timed out, some connections forcebly closed"
+                )
                 logger.opt(exception=e).debug("")
 
     async def _apply_state(self):
@@ -1931,23 +1907,21 @@ class API:
 
                 if isinstance(event, ChunkGenerated):
                     if queue := self._image_generation_queues.get(
-                        event.command_id, None
+                            event.command_id, None
                     ):
                         assert isinstance(event.chunk, ImageChunk)
                         try:
                             await queue.send(event.chunk)
                         except (BrokenResourceError, ClosedResourceError):
-                            self._image_generation_queues.pop(
-                                event.command_id, None)
+                            self._image_generation_queues.pop(event.command_id, None)
                     if queue := self._text_generation_queues.get(
-                        event.command_id, None
+                            event.command_id, None
                     ):
                         assert not isinstance(event.chunk, ImageChunk)
                         try:
                             await queue.send(event.chunk)
                         except (BrokenResourceError, ClosedResourceError):
-                            self._text_generation_queues.pop(
-                                event.command_id, None)
+                            self._text_generation_queues.pop(event.command_id, None)
                 if isinstance(event, InstanceDeleted):
                     self._close_streams_for_instance(event.instance_id)
                 if isinstance(event, TracesMerged):
@@ -1959,7 +1933,7 @@ class API:
             if task.instance_id != instance_id:
                 continue
             if not isinstance(
-                task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
+                    task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
             ):
                 continue
             if sender := self._text_generation_queues.pop(task.command_id, None):
@@ -2010,7 +1984,7 @@ class API:
         )
 
     async def start_download(
-        self, payload: StartDownloadParams
+            self, payload: StartDownloadParams
     ) -> StartDownloadResponse:
         command = StartDownload(
             target_node_id=payload.target_node_id,
@@ -2020,7 +1994,7 @@ class API:
         return StartDownloadResponse(command_id=command.command_id)
 
     async def delete_download(
-        self, node_id: NodeId, model_id: ModelId
+            self, node_id: NodeId, model_id: ModelId
     ) -> DeleteDownloadResponse:
         command = DeleteDownload(
             target_node_id=node_id,
@@ -2030,8 +2004,8 @@ class API:
         return DeleteDownloadResponse(command_id=command.command_id)
 
     async def cancel_download(
-        self,
-        payload: CancelDownloadParams,
+            self,
+            payload: CancelDownloadParams,
     ) -> CancelDownloadResponse:
         command = CancelDownload(
             target_node_id=payload.target_node_id,
@@ -2044,17 +2018,16 @@ class API:
     def _get_trace_path(task_id: str) -> Path:
         trace_path = EXO_TRACING_CACHE_DIR / f"trace_{task_id}.json"
         if not trace_path.resolve().is_relative_to(EXO_TRACING_CACHE_DIR.resolve()):
-            raise HTTPException(
-                status_code=400, detail=f"Invalid task ID: {task_id}")
+            raise HTTPException(status_code=400, detail=f"Invalid task ID: {task_id}")
         return trace_path
 
     async def list_traces(self) -> TraceListResponse:
         traces: list[TraceListItem] = []
 
         for trace_file in sorted(
-            EXO_TRACING_CACHE_DIR.glob("trace_*.json"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
+                EXO_TRACING_CACHE_DIR.glob("trace_*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
         ):
             # Extract task_id from filename (trace_{task_id}.json)
             task_id = trace_file.stem.removeprefix("trace_")
@@ -2076,8 +2049,7 @@ class API:
         trace_path = self._get_trace_path(task_id)
 
         if not trace_path.exists():
-            raise HTTPException(
-                status_code=404, detail=f"Trace not found: {task_id}")
+            raise HTTPException(status_code=404, detail=f"Trace not found: {task_id}")
 
         trace_events = load_trace_file(trace_path)
 
@@ -2099,8 +2071,7 @@ class API:
         trace_path = self._get_trace_path(task_id)
 
         if not trace_path.exists():
-            raise HTTPException(
-                status_code=404, detail=f"Trace not found: {task_id}")
+            raise HTTPException(status_code=404, detail=f"Trace not found: {task_id}")
 
         trace_events = load_trace_file(trace_path)
         stats = compute_stats(trace_events)
@@ -2139,8 +2110,7 @@ class API:
         trace_path = self._get_trace_path(task_id)
 
         if not trace_path.exists():
-            raise HTTPException(
-                status_code=404, detail=f"Trace not found: {task_id}")
+            raise HTTPException(status_code=404, detail=f"Trace not found: {task_id}")
 
         return FileResponse(
             path=trace_path,
