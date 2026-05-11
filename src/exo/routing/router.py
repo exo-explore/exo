@@ -1,7 +1,9 @@
+import os
 from collections.abc import Sequence
 from copy import copy
 from itertools import count
 from math import inf
+from pathlib import Path
 from typing import cast
 
 from anyio import (
@@ -16,6 +18,8 @@ from exo_net import (
 )
 from loguru import logger
 
+from exo.shared.constants import EXO_NODE_ZID
+from exo.shared.types.common import NodeId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
@@ -223,16 +227,17 @@ class Router:
                 await self._net.gossipsub_publish(topic, data)
 
 
-def get_node_id_keypair(
-    path: str | bytes | PathLike[str] | PathLike[bytes] = EXO_NODE_ID_KEYPAIR,
-) -> Keypair:
+def get_node_zid(
+    path: Path = EXO_NODE_ZID,
+) -> NodeId:
     """
     Obtains the :class:`Keypair` associated with this node-ID.
     Obtain the :class:`PeerId` by from it.
     """
     # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
-    return Keypair.generate()
+    return NodeId(os.urandom(16).hex())
 
+    """
     def lock_path(path: str | bytes | PathLike[str] | PathLike[bytes]) -> Path:
         return Path(str(path) + ".lock")
 
@@ -254,3 +259,4 @@ def get_node_id_keypair(
             keypair = Keypair.generate()
             f.write(keypair.to_bytes())
             return keypair
+    """

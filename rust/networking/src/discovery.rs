@@ -16,6 +16,7 @@ use tokio::{
 use zenoh::config::ZenohId;
 
 const GROUP: Ipv6Addr = Ipv6Addr::new(0xff12, 0, 0, 0, 0, 0, 0xe0a1, 0xde89);
+const MAGIC: [u8; 3] = *b"EXO";
 
 pub struct Discovery {
     sock: Arc<UdpSocket>,
@@ -84,7 +85,7 @@ impl Discovery {
         Ok(Self {
             sock,
             ifaces,
-            last_nonce: Default::default(),
+            last_nonce: Mutex::new(rand::random()),
             listen_port,
             zid,
             tick: interval(Duration::from_secs(1)),
@@ -101,7 +102,7 @@ impl Discovery {
                 }
                 res = self.sock.recv_from(&mut buf) => {
                     let Ok((bytes_read, addr)) = res else { continue; };
-                    if let Some(discovered) = self.respond(bytes_read, addr, &mut buf).await? {
+                    if let Some(discovered) = self.respond(bytes_read, addr, &buf).await? {
                         return Ok(discovered)
                     }
                 }
@@ -113,7 +114,7 @@ impl Discovery {
         &self,
         bytes_read: usize,
         addr: SocketAddr,
-        buf: &mut [u8],
+        buf: &[u8],
     ) -> io::Result<Option<Discovered>> {
         trace!(
             "raw recv: {bytes_read} bytes from {addr}: {:02x?}",
@@ -122,12 +123,12 @@ impl Discovery {
         if bytes_read < size_of::<Header>() {
             trace!("dropped: early EOF");
             return Ok(None);
-        };
+        }
         let header: &Header = bytemuck::from_bytes(&buf[0..size_of::<Header>()]);
-        if header.magic != *b"EXO" {
+        if header.magic != MAGIC {
             trace!("dropped: wrong magic");
             return Ok(None);
-        };
+        }
         let Ok(kind) = header.kind.try_into() else {
             trace!("dropped: unknown message kind {}", header.kind);
             return Ok(None);
@@ -146,15 +147,16 @@ impl Discovery {
                 }
 
                 // reply
+                trace!("replying to Hello({:?})", hello.nonce);
                 let mut reply_buf = [0u8; WhatsUp::buf_size()];
-                let reply = WhatsUp {
+                WhatsUp {
                     nonce: hello.nonce,
                     zid: self.zid.to_le_bytes(),
                     port_le: self.listen_port.to_le_bytes(),
-                };
-                reply.write_into(&mut reply_buf);
+                }
+                .write_into(&mut reply_buf);
 
-                for i in 0..4 {
+                for i in 1..6 {
                     if self
                         .sock
                         .send_to(&reply_buf, addr)
@@ -165,10 +167,10 @@ impl Discovery {
                         trace!(
                             "sent {} bytes to {addr} after {} attempt(s)",
                             WhatsUp::buf_size(),
-                            i + 1
+                            i
                         );
                         break;
-                    };
+                    }
                     tokio::time::sleep(Duration::from_millis(300)).await;
                 }
                 Ok(None)
@@ -180,7 +182,7 @@ impl Discovery {
                     return Ok(None);
                 }
                 let whats_up: &WhatsUp = bytemuck::from_bytes(&buf[size_of::<Header>()..total]);
-                if whats_up.nonce == [0u8; 8] || whats_up.nonce != *self.last_nonce.lock() {
+                if whats_up.nonce != *self.last_nonce.lock() {
                     trace!("dropped: stale nonce");
                     return Ok(None);
                 }
@@ -196,9 +198,11 @@ impl Discovery {
                     trace!("dropped: self zenoh id");
                     return Ok(None);
                 }
-                // discovered
+                // discovery success!
+                // the incoming port is our listen port;
+                // overwrite it with the whats_up port corresponding to the remote zenoh service
                 let addr = {
-                    let mut x = v6.clone();
+                    let mut x = v6;
                     x.set_port(u16::from_le_bytes(whats_up.port_le));
                     x
                 };
@@ -208,15 +212,13 @@ impl Discovery {
     }
 
     async fn announce(&self) -> io::Result<()> {
+        let mut buf = [0u8; Hello::buf_size()];
         let nonce = rand::random();
         *self.last_nonce.lock() = nonce;
-        let hello = Hello { nonce };
-
-        let mut buf = [0u8; Hello::buf_size()];
-        hello.write_into(&mut buf);
+        Hello { nonce }.write_into(&mut buf);
 
         let addrs = self.ifaces.lock().clone();
-        debug!("announcing {hello:?} to {addrs:?}");
+        debug!("announcing Hello({nonce:?}) to {addrs:?}");
         // rev so .remove() doesn't break things
         for (i, addr) in addrs.into_iter().enumerate().rev() {
             match self.sock.send_to(&buf, addr).await {
@@ -236,7 +238,7 @@ pub trait Message: Pod {
     const KIND: Kind;
     fn header() -> Header {
         Header {
-            magic: *b"EXO",
+            magic: MAGIC,
             kind: Self::KIND as u8,
         }
     }
@@ -267,8 +269,8 @@ impl TryFrom<u8> for Kind {
     type Error = UnknownKind;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(Kind::Hello),
-            1 => Ok(Kind::WhatsUp),
+            0 => Ok(Self::Hello),
+            1 => Ok(Self::WhatsUp),
             _ => Err(UnknownKind),
         }
     }
