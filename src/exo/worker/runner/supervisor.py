@@ -1,17 +1,17 @@
+import codecs
 import contextlib
 import signal
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import Self, Callable
+from typing import Callable, Self
 
 import anyio
 from anyio import (
+    AsyncFile,
     BrokenResourceError,
     ClosedResourceError,
     EndOfStream,
-    AsyncFile,
 )
-from anyio.streams.text import TextReceiveStream
 from loguru import logger
 
 from exo.shared.constants import EXO_RUNNER_STDERR_LOG, EXO_RUNNER_STDOUT_LOG
@@ -55,10 +55,127 @@ DECODE_TIMEOUT_SECONDS = 5
 
 
 @dataclass(eq=False)
+class RunnerStdioHandler:
+    _stdout_rx: Receiver[bytes]
+    _stderr_rx: Receiver[bytes]
+    _stdout_log: AsyncFile[str]
+    _stderr_log: AsyncFile[str]
+
+    _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
+
+    @classmethod
+    async def create(
+            cls,
+            *,
+            stdout_rx: Receiver[bytes],
+            stderr_rx: Receiver[bytes],
+            stdout_log_path: PathLike[str] = EXO_RUNNER_STDOUT_LOG,
+            stderr_log_path: PathLike[str] = EXO_RUNNER_STDERR_LOG,
+    ) -> Self:
+        # these are append only logs used to gather data for log template mining
+        #
+        # TODO: in the future use [Drain3](https://github.com/logpai/Drain3)
+        #       to mine these logs
+        ensure_parent_directory_exists(stdout_log_path)
+        ensure_parent_directory_exists(stderr_log_path)
+        stdout_log = await anyio.open_file(stdout_log_path, "a")
+        stderr_log = await anyio.open_file(stderr_log_path, "a")
+
+        # instantiate and return
+        self = cls(
+            _stdout_rx=stdout_rx,
+            _stderr_rx=stderr_rx,
+            _stdout_log=stdout_log,
+            _stderr_log=stderr_log,
+        )
+        return self
+
+    async def run(self):
+        try:
+            async with self._tg as tg:
+                tg.start_soon(  # pyright: ignore[reportUnknownArgumentType]
+                    self._handle_runner_output,
+                    self._stdout_rx,
+                    self._stdout_log,
+                    lambda line: logger.info(f"Runner stdout: {line}"),  # pyright: ignore[reportUnknownLambdaType]
+                )
+                tg.start_soon(  # pyright: ignore[reportUnknownArgumentType]
+                    self._handle_runner_output,
+                    self._stderr_rx,
+                    self._stderr_log,
+                    lambda line: logger.warning(f"Runner stderr: {line}"),  # pyright: ignore[reportUnknownLambdaType]
+                )
+        finally:
+            # close up files
+            await self._stdout_log.aclose()
+            await self._stderr_log.aclose()
+
+    async def _handle_runner_output(
+            self, rx: Receiver[bytes], logfile: AsyncFile[str], log_line: Callable[[str], None]
+    ):
+        # TODO: right now it logs them as warnings, but in the future they should be split
+        #       into being logged AND a seperate task which tries to best-effort figure out cause
+        #       of error and package into error enum, which then is used by rest of app to act on it;
+        #       inferring what the error is would be done by pattern-matching in the text for things
+        #       e.g. certain VLLM error codes and so on
+
+        # not using TextReceiveStream because it doesn't do final=True handling on errors
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        pending_line = ""
+
+        async def handle_line(line: str):
+            # preserve whitespace for later log-mining
+            line = line.removesuffix("\r")
+            if not line:
+                return
+
+            # Send to logger & error recovery task
+            log_line(line)
+            # TODO: error recovery task
+
+        async def handle_text(text: str):
+            nonlocal pending_line
+
+            if not text:
+                return
+
+            await logfile.write(text)
+            await logfile.flush()
+
+            # newline buffering
+            pending_line += text
+            lines = pending_line.split("\n")
+            pending_line = lines.pop()
+
+            for line in lines:
+                await handle_line(line)
+
+        async def finish():
+            nonlocal pending_line
+
+            await handle_text(decoder.decode(b"", final=True))
+            await logfile.flush()
+
+            if pending_line:
+                await handle_line(pending_line)
+                pending_line = ""
+
+        try:
+            while True:
+                await handle_text(decoder.decode(await rx.receive(), final=False))
+        except EndOfStream:
+            await finish()
+        except (ClosedResourceError, BrokenResourceError):
+            await finish()
+            logger.warning("Runner stdio stream closed before clean EOF")
+
+
+@dataclass(eq=False)
 class RunnerSupervisor:
     shard_metadata: ShardMetadata
     bound_instance: BoundInstance
     runner_process: AsyncProcess
+    _runner_stdio_handler: RunnerStdioHandler
     initialize_timeout: float
     _ev_recv: MpReceiver[Event]
     _task_sender: MpSender[Task]
@@ -97,6 +214,10 @@ class RunnerSupervisor:
             ),
             daemon=True,
         )
+        runner_stdio_handler = RunnerStdioHandler.create(
+            stdout_rx=runner_process.stdout,
+            stderr_rx=runner_process.stderr
+        )
 
         shard_metadata = bound_instance.bound_shard
 
@@ -104,6 +225,7 @@ class RunnerSupervisor:
             bound_instance=bound_instance,
             shard_metadata=shard_metadata,
             runner_process=runner_process,
+            _runner_stdio_handler=runner_stdio_handler,
             initialize_timeout=initialize_timeout,
             _ev_recv=ev_recv,
             _task_sender=task_sender,
@@ -116,22 +238,9 @@ class RunnerSupervisor:
     async def run(self):
         try:
             async with self._tg as tg:
-                # start the process itself
+                # start the process itself & handle its stdout/stderr
                 await tg.start(self.runner_process.run)
-
-                # start tasks to drain/collect stdout/stderr into usable errors
-                #
-                # TODO: right now it logs them as warnings, but in the future they should be split
-                #       into being logged AND a seperate task which tries to best-effort figure out cause
-                #       of error and package into error enum, which then is used by rest of app to act on it;
-                #       inferring what the error is would be done by pattern-matching in the text for things
-                #       e.g. certain VLLM error codes and so on
-                tg.start_soon(
-                    self._forward_runner_output, "stdout", self.runner_process.stdout
-                )
-                tg.start_soon(
-                    self._forward_runner_output, "stderr", self.runner_process.stderr
-                )
+                tg.start_soon(self._runner_stdio_handler.run)
 
                 tg.start_soon(self._watch_runner)
                 tg.start_soon(self._forward_events)
@@ -240,25 +349,6 @@ class RunnerSupervisor:
                 if not self.runner_process.is_alive():
                     await self._check_runner(RuntimeError("Runner found to be dead"))
 
-    async def _forward_runner_output(
-            self,
-            stream_name: str,
-            stream: Receiver[bytes],
-    ) -> None:
-        while True:
-            try:
-                chunk = await stream.receive()
-            except (EndOfStream, ClosedResourceError, BrokenResourceError):
-                return
-
-            message = chunk.decode("utf-8", errors="replace").rstrip()
-            if not message:
-                continue
-            if stream_name == "stderr":
-                logger.warning(f"Runner stderr: {message}")
-            else:
-                logger.debug(f"Runner stdout: {message}")
-
     async def _check_runner(self, e: Exception) -> None:
         if not self._cancel_watch_runner.cancel_called:
             self._cancel_watch_runner.cancel()
@@ -313,96 +403,3 @@ class RunnerSupervisor:
                 "Event sender already closed, unable to report runner failure"
             )
         self.shutdown()
-
-
-@dataclass(eq=False)
-class RunnerStdioHandler:
-    _stdout_rx: Receiver[bytes]
-    _stderr_rx: Receiver[bytes]
-    _stdout_log: AsyncFile[str]
-    _stderr_log: AsyncFile[str]
-
-    _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
-
-    @classmethod
-    async def create(
-            cls,
-            *,
-            stdout_rx: Receiver[bytes],
-            stderr_rx: Receiver[bytes],
-            stdout_log_path: PathLike[str] = EXO_RUNNER_STDOUT_LOG,
-            stderr_log_path: PathLike[str] = EXO_RUNNER_STDERR_LOG,
-    ) -> Self:
-        # these are append only logs used to gather data for log template mining
-        #
-        # TODO: in the future use [Drain3](https://github.com/logpai/Drain3)
-        #       to mine these logs
-        ensure_parent_directory_exists(stdout_log_path)
-        ensure_parent_directory_exists(stderr_log_path)
-        stdout_log = await anyio.open_file(stdout_log_path, "a")
-        stderr_log = await anyio.open_file(stderr_log_path, "a")
-
-        # instantiate and return
-        self = cls(
-            _stdout_rx=stdout_rx,
-            _stderr_rx=stderr_rx,
-            _stdout_log=stdout_log,
-            _stderr_log=stderr_log,
-        )
-        return self
-
-    async def run(self):
-        try:
-            async with self._tg as tg:
-                tg.start_soon(  # pyright: ignore[reportUnknownArgumentType]
-                    self._handle_runner_output,
-                    self._stdout_rx,
-                    self._stdout_log,
-                    lambda l: logger.info(f"Runner stdout: {l}"),  # pyright: ignore[reportUnknownLambdaType]
-                )
-                tg.start_soon(  # pyright: ignore[reportUnknownArgumentType]
-                    self._handle_runner_output,
-                    self._stderr_rx,
-                    self._stderr_log,
-                    lambda l: logger.warning(f"Runner stderr: {l}"),  # pyright: ignore[reportUnknownLambdaType]
-                )
-        finally:
-            # close up files
-            await self._stdout_log.aclose()
-            await self._stderr_log.aclose()
-
-    async def _handle_runner_output(
-            self, rx: Receiver[bytes], logfile: AsyncFile[str], log_line: Callable[[str], None]
-    ):
-        text_stream = TextReceiveStream(rx, encoding="utf-8", errors="replace")
-        pending_line = ""
-
-        async def handle_line(line: str):
-            # preserve whitespace for later log-mining
-            line = line.removesuffix("\r")
-            if not line:
-                return
-
-            # Send to logger & to task which processes errors
-            log_line(line)
-
-        try:
-            async for text in text_stream:
-                await logfile.write(text)
-                await logfile.flush()
-
-                # newline buffering
-                pending_line += text
-                lines = pending_line.split("\n")
-                pending_line = lines.pop()
-
-                for line in lines:
-                    await handle_line(line)
-
-        except (ClosedResourceError, BrokenResourceError):
-            logger.warning("Runner stdio stream closed before clean EOF")
-        finally:
-            await logfile.flush()
-
-            if pending_line:
-                await handle_line(pending_line)
