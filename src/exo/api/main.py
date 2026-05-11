@@ -1906,9 +1906,9 @@ class API:
         cfg.errorlog = "-"
         cfg.logger_class = InterceptLogger
 
-        # prevents hangs when mid-request
-        cfg.shutdown_timeout = 1  # seconds
-        cfg.graceful_timeout = 3  # seconds
+        # prevents hangs when mid-request and connection refuses to close
+        cfg.graceful_timeout = 2  # seconds
+        cfg.shutdown_timeout = 3  # seconds
 
         with anyio.CancelScope(shield=True):
             try:
