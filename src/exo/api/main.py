@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve
 from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
+from hypercorn.utils import LifespanTimeoutError
 from loguru import logger
 
 from exo.api.adapters.chat_completions import (
@@ -1891,19 +1892,27 @@ class API:
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
-        cfg.shutdown_timeout = 0.0
-        # cfg.graceful_timeout = 0.0
         cfg.bind = [f"0.0.0.0:{self.port}"]
         # nb: shared.logging needs updating if any of this changes
         cfg.accesslog = None
         cfg.errorlog = "-"
         cfg.logger_class = InterceptLogger
+
+        # prevents hangs when mid-request
+        cfg.shutdown_timeout = 1  # seconds
+        cfg.graceful_timeout = 3  # seconds
+
         with anyio.CancelScope(shield=True):
-            await serve(
-                cast(ASGIFramework, self.app),
-                cfg,
-                shutdown_trigger=ev.wait,
-            )
+            try:
+                await serve(
+                    cast(ASGIFramework, self.app),
+                    cfg,
+                    shutdown_trigger=ev.wait,
+                )
+            except LifespanTimeoutError as e:
+                logger.warning(
+                    "Graceful server shutdown timed out, some connections forcebly closed")
+                logger.opt(exception=e).debug("")
 
     async def _apply_state(self):
         with self.event_receiver as events:
