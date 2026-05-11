@@ -345,18 +345,19 @@ def find_ip_prioritised(
 ) -> str | None:
     """Find an IP address between nodes with prioritization.
 
-    Priority: ethernet > wifi > unknown > thunderbolt
+    Interface type drives the primary preference (TB first for ring, ethernet
+    first for the RDMA coordinator). Address class is only a tiebreaker that
+    keeps RFC1918 LAN ahead of CGNAT-class addresses (e.g. Tailscale 100.64/10)
+    when a peer advertises multiple socket-reachable IPs of the same type.
     """
     ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
+    if not ips:
+        return None
+
     other_network = node_network.get(other_node_id, NodeNetworkInfo())
     ip_to_type = {
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
-
-    if not ips:
-        ips = _fallback_interface_ips(other_network)
-        if not ips:
-            return None
 
     # Ring should prioritise fastest connection. As a best-effort, we prioritise TB.
     # TODO: Profile and get actual connection speeds.
@@ -382,41 +383,25 @@ def find_ip_prioritised(
     return min(
         ips,
         key=lambda ip: (
-            _address_priority(ip),
             type_priority.get(ip_to_type.get(ip, "unknown"), 5),
+            _address_priority(ip),
         ),
     )
 
 
-def _fallback_interface_ips(node_network: NodeNetworkInfo) -> list[str]:
-    """Return advertised node IPs when topology only has non-socket edges."""
-    return [
-        iface.ip_address
-        for iface in node_network.interfaces
-        if _is_candidate_host_ip(iface.ip_address)
-    ]
-
-
-def _is_candidate_host_ip(ip: str) -> bool:
-    if ":" in ip:
-        return False
-    return not (ip.startswith("127.") or ip == "0.0.0.0")
-
-
 def _address_priority(ip: str) -> int:
+    """RFC1918 LAN addresses are preferred; everything else (CGNAT/Tailscale,
+    link-local, public) is treated identically and only ranked by interface
+    type."""
     if ip.startswith(("192.168.", "10.")):
         return 0
     if ip.startswith("172."):
         try:
             second_octet = int(ip.split(".")[1])
         except (IndexError, ValueError):
-            return 3
+            return 1
         if 16 <= second_octet <= 31:
             return 0
-    if ip.startswith("100."):
-        return 2
-    if ip.startswith("169.254."):
-        return 3
     return 1
 
 

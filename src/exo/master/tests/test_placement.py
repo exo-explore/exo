@@ -624,9 +624,14 @@ def test_place_mlx_jaccl_rejects_when_node_rdma_ctl_missing(model_card: ModelCar
         )
 
 
-def test_ring_placement_uses_advertised_lan_ips_for_rdma_only_topology(
+def test_ring_placement_prefers_lan_ip_over_tailscale_ip(
     model_card: ModelCard,
 ) -> None:
+    """When MlxRing neighbours have multiple socket-reachable IPs of the same
+    interface type, the LAN address (RFC1918) should win over the Tailscale
+    CGNAT-class address (100.64/10). Exercises ``_address_priority`` as the
+    tiebreaker for ``ring=True`` placements.
+    """
     topology = Topology()
     model_card = model_card.model_copy(
         update={
@@ -646,6 +651,28 @@ def test_ring_placement_uses_advertised_lan_ips_for_rdma_only_topology(
     topology.add_connection(
         Connection(source=node_b, sink=node_a, edge=create_rdma_connection(2))
     )
+    for ip_a, ip_b in (
+        ("192.168.1.10", "192.168.1.11"),
+        ("100.64.0.10", "100.64.0.11"),
+    ):
+        topology.add_connection(
+            Connection(
+                source=node_a,
+                sink=node_b,
+                edge=SocketConnection(
+                    sink_multiaddr=Multiaddr(address=f"/ip4/{ip_b}/tcp/52415")
+                ),
+            )
+        )
+        topology.add_connection(
+            Connection(
+                source=node_b,
+                sink=node_a,
+                edge=SocketConnection(
+                    sink_multiaddr=Multiaddr(address=f"/ip4/{ip_a}/tcp/52415")
+                ),
+            )
+        )
 
     node_memory = {
         node_a: create_node_memory(1000),
@@ -656,14 +683,24 @@ def test_ring_placement_uses_advertised_lan_ips_for_rdma_only_topology(
             interfaces=[
                 NetworkInterfaceInfo(
                     name="en9", ip_address="192.168.1.10", interface_type="ethernet"
-                )
+                ),
+                NetworkInterfaceInfo(
+                    name="utun0",
+                    ip_address="100.64.0.10",
+                    interface_type="ethernet",
+                ),
             ]
         ),
         node_b: NodeNetworkInfo(
             interfaces=[
                 NetworkInterfaceInfo(
                     name="en9", ip_address="192.168.1.11", interface_type="ethernet"
-                )
+                ),
+                NetworkInterfaceInfo(
+                    name="utun0",
+                    ip_address="100.64.0.11",
+                    interface_type="ethernet",
+                ),
             ]
         ),
     }
@@ -676,13 +713,21 @@ def test_ring_placement_uses_advertised_lan_ips_for_rdma_only_topology(
     instance = list(placements.values())[0]
     assert isinstance(instance, MlxRingInstance)
     assert len(instance.shard_assignments.node_to_runner) == 2
-    assert any(host.ip == "192.168.1.11" for host in instance.hosts_by_node[node_a])
-    assert any(host.ip == "192.168.1.10" for host in instance.hosts_by_node[node_b])
+    # Every dialed neighbour host should be on the LAN, never on Tailscale.
+    for hosts in instance.hosts_by_node.values():
+        for host in hosts:
+            if host.port != 0 and host.ip != "0.0.0.0":
+                assert host.ip.startswith("192.168.1."), host
 
 
-def test_jaccl_placement_uses_advertised_lan_ip_for_rdma_coordinator(
+def test_jaccl_placement_prefers_lan_ip_over_tailscale_ip(
     model_card: ModelCard,
 ) -> None:
+    """When a peer is socket-reachable over both LAN (192.168/16) and a
+    CGNAT-class address (100.64/10, e.g. Tailscale), the JACCL coordinator
+    should pick the LAN IP. This exercises ``_address_priority`` as the
+    tiebreaker among same-type ethernet edges.
+    """
     topology = Topology()
     model_card = model_card.model_copy(
         update={
@@ -705,6 +750,43 @@ def test_jaccl_placement_uses_advertised_lan_ip_for_rdma_coordinator(
     topology.add_connection(
         Connection(source=node_b, sink=node_a, edge=create_rdma_connection(2))
     )
+    # Both LAN and Tailscale socket edges are advertised in both directions.
+    topology.add_connection(
+        Connection(
+            source=node_a,
+            sink=node_b,
+            edge=SocketConnection(
+                sink_multiaddr=Multiaddr(address="/ip4/192.168.1.11/tcp/52415")
+            ),
+        )
+    )
+    topology.add_connection(
+        Connection(
+            source=node_a,
+            sink=node_b,
+            edge=SocketConnection(
+                sink_multiaddr=Multiaddr(address="/ip4/100.64.0.11/tcp/52415")
+            ),
+        )
+    )
+    topology.add_connection(
+        Connection(
+            source=node_b,
+            sink=node_a,
+            edge=SocketConnection(
+                sink_multiaddr=Multiaddr(address="/ip4/192.168.1.10/tcp/52415")
+            ),
+        )
+    )
+    topology.add_connection(
+        Connection(
+            source=node_b,
+            sink=node_a,
+            edge=SocketConnection(
+                sink_multiaddr=Multiaddr(address="/ip4/100.64.0.10/tcp/52415")
+            ),
+        )
+    )
 
     node_memory = {
         node_a: create_node_memory(1000),
@@ -715,14 +797,24 @@ def test_jaccl_placement_uses_advertised_lan_ip_for_rdma_coordinator(
             interfaces=[
                 NetworkInterfaceInfo(
                     name="en9", ip_address="192.168.1.10", interface_type="ethernet"
-                )
+                ),
+                NetworkInterfaceInfo(
+                    name="utun0",
+                    ip_address="100.64.0.10",
+                    interface_type="ethernet",
+                ),
             ]
         ),
         node_b: NodeNetworkInfo(
             interfaces=[
                 NetworkInterfaceInfo(
                     name="en9", ip_address="192.168.1.11", interface_type="ethernet"
-                )
+                ),
+                NetworkInterfaceInfo(
+                    name="utun0",
+                    ip_address="100.64.0.11",
+                    interface_type="ethernet",
+                ),
             ]
         ),
     }
@@ -750,15 +842,22 @@ def test_jaccl_placement_uses_advertised_lan_ip_for_rdma_coordinator(
     instance = list(placements.values())[0]
     assert isinstance(instance, MlxJacclInstance)
     assert len(instance.shard_assignments.node_to_runner) == 2
-    assert any(
-        coordinator.startswith("192.168.1.")
+    non_rank_zero = [
+        coordinator
         for coordinator in instance.jaccl_coordinators.values()
-    )
+        if not coordinator.startswith("0.0.0.0:")
+    ]
+    # Every dialled coordinator should be on the LAN, never on Tailscale.
+    assert non_rank_zero, "expected at least one non-rank-0 coordinator"
+    assert all(c.startswith("192.168.1.") for c in non_rank_zero), non_rank_zero
 
 
 def test_placement_prefers_socket_reachable_rank_zero(
     model_card: ModelCard,
 ) -> None:
+    """``_prefer_socket_reachable_rank_zero`` rotates the cycle so the node
+    with the most inbound socket edges becomes rank 0 (the listener).
+    """
     topology = Topology()
     model_card = model_card.model_copy(
         update={
@@ -778,8 +877,36 @@ def test_placement_prefers_socket_reachable_rank_zero(
     topology.add_connection(
         Connection(source=peer, sink=listener, edge=create_rdma_connection(2))
     )
+    # One socket edge in the listener->peer direction so the ring placement
+    # can resolve an IP for peer.
     topology.add_connection(
-        Connection(source=peer, sink=listener, edge=create_socket_connection(10))
+        Connection(
+            source=listener,
+            sink=peer,
+            edge=SocketConnection(
+                sink_multiaddr=Multiaddr(address="/ip4/192.168.1.11/tcp/52415")
+            ),
+        )
+    )
+    # Two distinct socket edges to the listener so it dominates the inbound
+    # count and the rotation prefers it as rank 0.
+    topology.add_connection(
+        Connection(
+            source=peer,
+            sink=listener,
+            edge=SocketConnection(
+                sink_multiaddr=Multiaddr(address="/ip4/192.168.1.10/tcp/52415")
+            ),
+        )
+    )
+    topology.add_connection(
+        Connection(
+            source=peer,
+            sink=listener,
+            edge=SocketConnection(
+                sink_multiaddr=Multiaddr(address="/ip4/192.168.1.10/tcp/52416")
+            ),
+        )
     )
 
     node_memory = {
