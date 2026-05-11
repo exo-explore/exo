@@ -232,6 +232,7 @@ class ExoBatchGenerator:
                     )
 
             if not remote_prefilled:
+                mx_barrier(self.group)
                 _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
                     self.model,
                     self.tokenizer,
@@ -325,7 +326,7 @@ class ExoBatchGenerator:
             media_regions=media_regions,
         )
 
-        mx_barrier()
+        mx_barrier(self.group)
 
         return uid
 

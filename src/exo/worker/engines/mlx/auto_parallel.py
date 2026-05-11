@@ -76,11 +76,10 @@ _last_dist_op: mx.array | None = None
 
 def _link(out: mx.array) -> mx.array:
     global _last_dist_op
-    raw = out
     if _last_dist_op is not None:
         out = mx.depends(out, _last_dist_op)
     mx.async_eval(out)
-    _last_dist_op = raw
+    _last_dist_op = out
     return out
 
 
@@ -89,11 +88,9 @@ def send(x: mx.array, dst: int, group: mx.distributed.Group) -> mx.array:
 
 
 def recv_like(x: mx.array, src: int, group: mx.distributed.Group) -> mx.array:
-    received = _link(
+    return _link(
         mx.distributed.recv_like(x, src, group=group, stream=mx.Device(mx.cpu))
     )
-    mx.eval(received)
-    return received
 
 
 def all_gather(x: mx.array, group: mx.distributed.Group) -> mx.array:

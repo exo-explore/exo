@@ -94,6 +94,17 @@ def copy_rotating_kv_cache(cache: RotatingKVCache) -> RotatingKVCache | None:
     return snap
 
 
+def copy_kv_cache(cache: KVCache) -> KVCache:
+    snap = KVCache()
+    snap.offset = cache.offset
+    if cache.keys is not None:
+        assert cache.values is not None
+        snap.keys = _detached_copy(cache.keys)
+        snap.values = _detached_copy(cache.values)
+        mx.eval(snap.keys, snap.values)
+    return snap
+
+
 def _copy_arrays_cache(ac: ArraysCache) -> ArraysCache:
     entries: list[mx.array | None] = []
     for entry in ac.cache:  # type: ignore[reportUnknownMemberType]
@@ -182,6 +193,41 @@ def copy_snapshot_entry(
             return _copy_v4_cache(entry)
 
 
+def copy_cache_entry(
+    entry: KVCache
+    | RotatingKVCache
+    | QuantizedKVCache
+    | ArraysCache
+    | CacheList
+    | DeepseekV4Cache,
+) -> (
+    KVCache
+    | RotatingKVCache
+    | QuantizedKVCache
+    | ArraysCache
+    | CacheList
+    | DeepseekV4Cache
+):
+    match entry:
+        case KVCache():
+            return copy_kv_cache(entry)
+        case RotatingKVCache():
+            snap = copy_rotating_kv_cache(entry)
+            return snap if snap is not None else deepcopy(entry)
+        case QuantizedKVCache():
+            return deepcopy(entry)
+        case ArraysCache():
+            return _copy_arrays_cache(entry)
+        case CacheList():
+            return _copy_cache_list(entry)
+        case DeepseekV4Cache():
+            return _copy_v4_cache(entry)
+
+
+def copy_kv_cache_state(cache: KVCacheType) -> KVCacheType:
+    return [copy_cache_entry(entry) for entry in cache]
+
+
 def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
     states: list[
         RotatingKVCache | ArraysCache | CacheList | DeepseekV4Cache | None
@@ -261,7 +307,7 @@ class KVPrefixCache:
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         self._evict_if_needed()
         self.prompts.append(prompt_tokens)
-        self.caches.append(deepcopy(cache))
+        self.caches.append(copy_kv_cache_state(cache))
         self._snapshots.append(ssm_snapshots)
         self._media_regions.append(media_regions or [])
         self.prefill_tps.append(prefill_tps)
@@ -288,7 +334,7 @@ class KVPrefixCache:
             merged.extend(snapshots)
 
         self.prompts[index] = prompt_tokens
-        self.caches[index] = deepcopy(cache)
+        self.caches[index] = copy_kv_cache_state(cache)
         self._snapshots[index] = merged or None
         self._media_regions[index] = media_regions or []
         self.prefill_tps[index] = prefill_tps
@@ -377,7 +423,7 @@ class KVPrefixCache:
         if restore_snap is None and has_ssm:
             return make_kv_cache(model), prompt_tokens, None, False
 
-        prompt_cache = deepcopy(self.caches[best_index])
+        prompt_cache = copy_kv_cache_state(self.caches[best_index])
         tokens_to_trim = cached_length - restore_pos
         if tokens_to_trim > 0:
             trim_cache(prompt_cache, tokens_to_trim, restore_snap)

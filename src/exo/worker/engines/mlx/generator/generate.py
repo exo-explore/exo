@@ -306,6 +306,7 @@ def pipeline_parallel_prefill(
         mx.eval([c.state for c in _prompt_cache], dist_chain_head())  # type: ignore
     mx.synchronize(mx.default_stream(mx.Device(mx.cpu)))
     mx.synchronize(generation_stream)
+    reset_chain_head()
     logger.info(
         f"[R{rank}] final eval+chain drain took {(time.perf_counter() - t_final) * 1000:.1f}ms"
     )
@@ -769,6 +770,7 @@ def mlx_generate(
     usage: Usage | None = None
     logger.info("Starting decode")
     mx_barrier(group)
+    reset_chain_head()
 
     for completion_tokens, out in enumerate(
         stream_generate(
