@@ -3,7 +3,8 @@ revision = 3
 requires-python = "==3.13.*"
 resolution-markers = [
     "sys_platform == 'darwin'",
-    "sys_platform == 'linux'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "platform_machine != 'aarch64' and sys_platform == 'linux'",
 ]
 supported-markers = [
     "sys_platform == 'darwin'",
@@ -432,7 +433,8 @@ cuda12 = [
 cuda13 = [
     { name = "mlx", version = "0.31.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx", version = "0.32.0.dev20260429+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "(sys_platform == 'darwin' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13')" },
-    { name = "mlx-cuda-13", marker = "sys_platform == 'linux'" },
+    { name = "mlx-cuda-13", version = "0.31.2", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.31.2-py3-none-manylinux_2_35_aarch64.whl" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13')" },
+    { name = "mlx-cuda-13", version = "0.31.2", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.31.2-py3-none-manylinux_2_35_x86_64.whl" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-cuda13') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-cuda12' and extra == 'extra-3-exo-cuda13') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda12') or (extra == 'extra-3-exo-cpu' and extra == 'extra-3-exo-cuda13')" },
     { name = "mlx-lm", marker = "sys_platform == 'linux'" },
     { name = "mlx-vlm", marker = "sys_platform == 'linux'" },
 ]
@@ -462,12 +464,13 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mflux", marker = "sys_platform == 'darwin'", specifier = "==0.17.2" },
     { name = "mlx", marker = "sys_platform == 'darwin'", git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks" },
-    { name = "mlx", marker = "sys_platform == 'linux' and extra == 'cpu'", specifier = "==0.31.1" },
-    { name = "mlx", marker = "sys_platform == 'linux' and extra == 'cuda12'", specifier = "==0.31.1" },
-    { name = "mlx", marker = "sys_platform == 'linux' and extra == 'cuda13'", specifier = "==0.31.1" },
-    { name = "mlx-cpu", marker = "sys_platform == 'linux' and extra == 'cpu'", specifier = "==0.31.1" },
+    { name = "mlx", marker = "sys_platform == 'linux' and extra == 'cpu'", specifier = "==0.31.2" },
+    { name = "mlx", marker = "sys_platform == 'linux' and extra == 'cuda12'", specifier = "==0.31.2" },
+    { name = "mlx", marker = "sys_platform == 'linux' and extra == 'cuda13'", specifier = "==0.31.2" },
+    { name = "mlx-cpu", marker = "sys_platform == 'linux' and extra == 'cpu'", specifier = "==0.31.2" },
     { name = "mlx-cuda-12", marker = "sys_platform == 'linux' and extra == 'cuda12'", specifier = "==0.31.1" },
-    { name = "mlx-cuda-13", marker = "sys_platform == 'linux' and extra == 'cuda13'", specifier = "==0.31.1" },
+    { name = "mlx-cuda-13", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'cuda13'", url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.31.2-py3-none-manylinux_2_35_aarch64.whl" },
+    { name = "mlx-cuda-13", marker = "platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'cuda13'", url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.31.2-py3-none-manylinux_2_35_x86_64.whl" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin'", git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Fdeepseek-v4" },
     { name = "mlx-lm", marker = "sys_platform == 'linux' and extra == 'cpu'", git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Fdeepseek-v4" },
     { name = "mlx-lm", marker = "sys_platform == 'linux' and extra == 'cuda12'", git = "https://github.com/rltakashige/mlx-lm?branch=leo%2Fdeepseek-v4" },
@@ -1283,7 +1286,8 @@ name = "mlx"
 version = "0.31.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "sys_platform == 'linux'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "platform_machine != 'aarch64' and sys_platform == 'linux'",
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/44/45/04465da443634b23fb11670bbd2f7538b1ed43ffc5e0de44a95b3c29e9c1/mlx-0.31.1-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:9a6d3410fc951bd28508fed9c1ab5d9903f6f6bb101c3a5d63d4191d49a384a1", size = 574268, upload-time = "2026-03-12T02:16:17.27Z" },
@@ -1303,11 +1307,11 @@ resolution-markers = [
 
 [[package]]
 name = "mlx-cpu"
-version = "0.31.1"
+version = "0.31.2"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/01/e3/2f832234ede13002ee84088772c3a73ee6efd9bcbd6d7a7b243e8cef7e3b/mlx_cpu-0.31.1-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:8c5a1366efa6be47bec573a31bb224127d0e11c07fe789c3a11a0fc50ad595e3", size = 8696444, upload-time = "2026-03-11T23:20:56.259Z" },
-    { url = "https://files.pythonhosted.org/packages/a1/1a/c17fad043443085578312efd05656246333ee3719ee94b69be43ebc77b23/mlx_cpu-0.31.1-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:27578a396f08431dd2cc089e755ef58f77d16261d9e91bd0f230157bc1662911", size = 10279829, upload-time = "2026-03-11T23:20:58.536Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/a3/5e62e9d4ebec89f1805b10dad74863815335f3048d5afd4b2640d474d809/mlx_cpu-0.31.2-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:0bfd8292d1d88ff1e5ea0a3202510a2cb61e0f212a69a364cee50aea4a175000", size = 8678191, upload-time = "2026-04-22T01:12:15.982Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/5b/4a0cfe9f7e25bf4a9d7fee9d03be8f56d4aa5949deedda0d8e1437d8b6f2/mlx_cpu-0.31.2-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:32bd40b8e7351b64b15921db5c24305726f97673e2fc512b1d5dc6727bb2f414", size = 10252297, upload-time = "2026-04-22T01:12:18.478Z" },
 ]
 
 [[package]]
@@ -1327,17 +1331,52 @@ wheels = [
 
 [[package]]
 name = "mlx-cuda-13"
-version = "0.31.1"
-source = { registry = "https://pypi.org/simple" }
+version = "0.31.2"
+source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.31.2-py3-none-manylinux_2_35_aarch64.whl" }
+resolution-markers = [
+    "platform_machine == 'aarch64' and sys_platform == 'linux'",
+]
 dependencies = [
-    { name = "nvidia-cublas", marker = "sys_platform == 'linux'" },
-    { name = "nvidia-cuda-nvrtc", marker = "sys_platform == 'linux'" },
-    { name = "nvidia-cudnn-cu13", marker = "sys_platform == 'linux'" },
-    { name = "nvidia-nccl-cu13", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cublas", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-cuda-nvrtc", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-cudnn-cu13", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-nccl-cu13", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/aa/25/aed9ea8e12545ca041db7ed3f72320e02d72ca15f8ca1b8a4829c77ff249/mlx_cuda_13-0.31.1-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:fcbc4ac3764b5bfac7814f7fd8ad6369d9b5d1279d0b3b3bc62878b572e8580a", size = 68100167, upload-time = "2026-03-12T00:25:59.321Z" },
-    { url = "https://files.pythonhosted.org/packages/4c/ea/2afd41bf2edad64519f42ed8cb3de518ede7fed34723ac20fc99686ab1ef/mlx_cuda_13-0.31.1-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:21b71c3be67667ee966b603c5a7c77016c415af345477f05cb867b4f7e2d6060", size = 71020480, upload-time = "2026-03-12T00:26:03.873Z" },
+    { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.31.2-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:08882d523cd48f4c1855b95d96b595fb67e77aecad29d37b295b94f8f14f888e" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "nvidia-cublas" },
+    { name = "nvidia-cuda-nvrtc" },
+    { name = "nvidia-cudnn-cu13", specifier = "==9.*" },
+    { name = "nvidia-nccl-cu13" },
+]
+
+[[package]]
+name = "mlx-cuda-13"
+version = "0.31.2"
+source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.31.2-py3-none-manylinux_2_35_x86_64.whl" }
+resolution-markers = [
+    "platform_machine != 'aarch64' and sys_platform == 'linux'",
+]
+dependencies = [
+    { name = "nvidia-cublas", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-cuda-nvrtc", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-cudnn-cu13", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-nccl-cu13", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+]
+wheels = [
+    { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.31.2-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:b9fa06991628dde5abfaa73ccadb2d30d39874b94bcb76710e88b8bab0e200ab" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "nvidia-cublas" },
+    { name = "nvidia-cuda-nvrtc" },
+    { name = "nvidia-cudnn-cu13", specifier = "==9.*" },
+    { name = "nvidia-nccl-cu13" },
 ]
 
 [[package]]
