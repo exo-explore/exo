@@ -6,7 +6,7 @@ use zenoh::Result;
 async fn main() -> Result<()> {
     zenoh::init_log_from_env_or("info");
     info!("Opening session...");
-    let cfg = networking::cfg(rand::random(), 0)?;
+    let cfg = networking::cfg(rand::random(), 52414)?;
     let session = networking::open(cfg, 52414).await?;
     let _tok = session
         .z

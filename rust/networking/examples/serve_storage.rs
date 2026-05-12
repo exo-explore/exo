@@ -20,6 +20,18 @@ async fn main() -> Result<()> {
         .history(true)
         .callback(|tok| println!("{tok:?}"))
         .await?;
+
+    let _sub2 = session
+        .z
+        .declare_subscriber("storage/mem1/**")
+        .callback(|sample| {
+            info!(
+                "receiverd {} bytes on {}",
+                sample.payload().len(),
+                sample.key_expr()
+            )
+        });
+
     tokio::signal::ctrl_c().await?;
     Ok(())
 }
