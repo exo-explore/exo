@@ -9,8 +9,8 @@ import anyio
 from anyio import (
     AsyncFile,
     BrokenResourceError,
+    CancelScope,
     ClosedResourceError,
-    EndOfStream,
 )
 from loguru import logger
 
@@ -106,9 +106,9 @@ class RunnerStdioHandler:
                     lambda line: logger.warning(f"Runner stderr: {line}"),  # pyright: ignore[reportUnknownLambdaType]
                 )
         finally:
-            # close up files
-            await self._stdout_log.aclose()
-            await self._stderr_log.aclose()
+            with CancelScope(shield=True):
+                await self._stdout_log.aclose()
+                await self._stderr_log.aclose()
 
     async def _handle_runner_output(
         self,
@@ -153,24 +153,20 @@ class RunnerStdioHandler:
             for line in lines:
                 await handle_line(line)
 
-        async def finish():
-            nonlocal pending_line
-
-            await handle_text(decoder.decode(b"", final=True))
-            await logfile.flush()
-
-            if pending_line:
-                await handle_line(pending_line)
-                pending_line = ""
-
         try:
-            while True:
-                await handle_text(decoder.decode(await rx.receive(), final=False))
-        except EndOfStream:
-            await finish()
+            with rx:
+                async for chunk in rx:
+                    await handle_text(decoder.decode(chunk, final=False))
         except (ClosedResourceError, BrokenResourceError):
-            await finish()
             logger.warning("Runner stdio stream closed before clean EOF")
+        finally:
+            with CancelScope(shield=True):
+                await handle_text(decoder.decode(b"", final=True))
+                await logfile.flush()
+
+                if pending_line:
+                    await handle_line(pending_line)
+                    pending_line = ""
 
 
 @dataclass(eq=False)
