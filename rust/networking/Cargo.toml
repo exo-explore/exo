@@ -18,3 +18,6 @@ bytemuck = { workspace = true, features = ["derive"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true

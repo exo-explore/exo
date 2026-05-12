@@ -1,0 +1,19 @@
+use env_logger::Env;
+use log::info;
+use networking;
+use zenoh::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    env_logger::try_init_from_env(Env::new().default_filter_or("info")).expect("logger failed");
+    info!("Opening session...");
+    let cfg = networking::cfg(rand::random(), 52414)?;
+    let session = networking::open(cfg, 52414).await?;
+    let _tok = session
+        .z
+        .liveliness()
+        .declare_token(format!("nodes/{}/live", session.z.zid()))
+        .await?;
+    tokio::signal::ctrl_c().await?;
+    Ok(())
+}

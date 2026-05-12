@@ -1852,6 +1852,7 @@ version = "0.0.1"
 dependencies = [
  "async-stream",
  "bytemuck",
+ "env_logger",
  "futures-lite",
  "log",
  "netwatcher",

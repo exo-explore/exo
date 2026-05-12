@@ -25,6 +25,7 @@ pub fn cfg(identity: u128, listen_port: u16) -> Result<zenoh::Config> {
     cfg.insert_json5("scouting/gossip/multihop", "true")?;
     cfg.insert_json5("namespace", &format!("{namespace:?}"))?;
     cfg.insert_json5("transport/link/tx/batch_size", "9216")?;
+    cfg.insert_json5("transport/link/rx/buffer_size", "16777216")?;
     cfg.insert_json5("timestamping/enabled", "true")?;
     cfg.insert_json5("plugins/storage_manager/__required__", "true")?;
     cfg.insert_json5(

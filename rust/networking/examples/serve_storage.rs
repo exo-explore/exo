@@ -1,10 +1,13 @@
+use std::time::Duration;
+
+use env_logger::Env;
 use log::info;
 use networking;
 use zenoh::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    zenoh::init_log_from_env_or("info");
+    env_logger::try_init_from_env(Env::new().default_filter_or("info")).expect("logger failed");
     info!("Opening session...");
     let cfg = networking::cfg(rand::random(), 52414)?;
     let session = networking::open(cfg, 52414).await?;
@@ -18,20 +21,52 @@ async fn main() -> Result<()> {
         .liveliness()
         .declare_subscriber("nodes/*/live")
         .history(true)
-        .callback(|tok| println!("{tok:?}"))
+        .callback(|tok| {
+            info!(
+                "{:?}",
+                tok.key_expr()
+                    .to_string()
+                    .strip_prefix("nodes/")
+                    .and_then(|it| it.strip_suffix("/live"))
+            )
+        })
         .await?;
 
-    let _sub2 = session
-        .z
-        .declare_subscriber("storage/mem1/**")
-        .callback(|sample| {
+    let watch = async {
+        for _ in 0..1000 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            session
+                .z
+                .get("**")
+                .callback(|reply| {
+                    let sample = reply.into_result().expect("no errs");
+                    info!(
+                        "got {} bytes on {}",
+                        sample.payload().len(),
+                        sample.key_expr()
+                    )
+                })
+                .await?;
+        }
+        Result::<()>::Ok(())
+    };
+    let subs = session.z.declare_subscriber("**").await?;
+
+    let mut i = 0;
+    let _a = async {
+        while let Ok(sample) = subs.recv_async().await {
+            i += 1;
             info!(
-                "receiverd {} bytes on {}",
+                "[{i}] received {} bytes on {}",
                 sample.payload().len(),
                 sample.key_expr()
             )
-        });
-
-    tokio::signal::ctrl_c().await?;
+        }
+    };
+    tokio::select! {
+        _ = watch => {},
+        _ = _a => {},
+        _ = tokio::signal::ctrl_c() => {},
+    }
     Ok(())
 }
