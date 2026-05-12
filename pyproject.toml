@@ -47,7 +47,7 @@ dev = [
 build = ["nanobind"]
 mlx-none = ["anyio"]
 mlx = [
-  "mlx==0.31.2",
+  "mlx==0.32.0",
   "mlx-lm",
   "mlx-vlm>=0.3.11",
   "mflux==0.17.5",
@@ -61,12 +61,12 @@ mlx = [
 mlx-cpu = ["exo[mlx]", "mlx-cpu==0.31.2; sys_platform == 'linux'"]
 mlx-cuda12 = [
   "exo[mlx]",
-  "mlx-cuda-12==0.31.1; sys_platform == 'linux'",
+  "mlx-cuda-12==0.32.0; sys_platform == 'linux'",
   "nvidia-ml-py>=13.595.45",
 ]
 mlx-cuda13 = [
   "exo[mlx]",
-  "mlx-cuda-13==0.31.2; sys_platform == 'linux'",
+  "mlx-cuda-13==0.32.0; sys_platform == 'linux'",
   "nvidia-ml-py>=13.595.45",
 ]
 
@@ -79,7 +79,12 @@ members = ["rust/exo_pyo3_bindings", "bench", "tools"]
 
 [tool.uv.sources]
 exo-pyo3-bindings = { workspace = true }
-mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
+mlx = [
+  { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" },
+  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine != 'aarch64'" },
+
+]
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
 mflux = { git = "https://github.com/evanev7/mflux", branch = "exo2" }
 torch = [
@@ -87,9 +92,13 @@ torch = [
   { index = "pytorch-cu128", marker = "sys_platform == 'linux' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13' " },
   { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'mlx-cuda13'" },
 ]
+mlx-cuda-12 = [
+  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_12-0.32.0-py3-none-manylinux_2_35_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_12-0.32.0-py3-none-manylinux_2_35_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine != 'aarch64'" },
+]
 mlx-cuda-13 = [
-  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.31.2-py3-none-manylinux_2_35_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
-  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.31.2-py3-none-manylinux_2_35_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine != 'aarch64'" },
+  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.32.0-py3-none-manylinux_2_35_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.32.0-py3-none-manylinux_2_35_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine != 'aarch64'" },
 ]
 torchvision = [
   { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'mlx-cpu' and extra != 'mlx-cuda13' and extra != 'mlx-cuda12'" },
@@ -177,22 +186,7 @@ root = "tools/src"
 required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
-constraint-dependencies = [
-  "torch==2.10.0; extra == 'mlx-cpu'",
-  "torch==2.10.0; extra == 'mlx-cuda12'",
-  "torch==2.10.0; extra == 'mlx-cuda13'",
-
-  "torchaudio==2.10.0; extra == 'mlx-cpu'",
-  "torchaudio==2.10.0; extra == 'mlx-cuda12'",
-  "torchaudio==2.10.0; extra == 'mlx-cuda13'",
-
-  "torchvision==0.25.0; extra == 'mlx-cpu'",
-  "torchvision==0.25.0; extra == 'mlx-cuda12'",
-  "torchvision==0.25.0; extra == 'mlx-cuda13'",
-]
-
-override-dependencies = ["opencv-python; python_version < '0'", 
-]
+override-dependencies = ["opencv-python; python_version < '0'"]
 conflicts = [
   [
     { extra = "mlx-cuda13" },

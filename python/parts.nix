@@ -264,7 +264,9 @@ in
         runtimeInputs = [ pkgs.python313 ];
         text = ''exec python ${path} "$@"'';
       };
-      cuda12Set = mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_12) pkgs; members = { exo = [ "mlx-cuda12" ]; }; };
+      # if someone is particularly interested in cuda12 support in nix, please open an issue.
+      # until then, it's more hassle than its worth
+      #cuda12Set = mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_12) pkgs; members = { exo = [ "mlx-cuda12" ]; }; };
       cuda13Set = mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_13) pkgs; members = { exo = [ "mlx-cuda13" ]; }; };
     in
     {
@@ -278,7 +280,7 @@ in
         # used by ./tests/run_exo_on.sh
         exo-get-all-models-on-cluster = mkSimplePythonScript "exo-get-all-models-on-cluster" (inputs.self + /tests/get_all_models_on_cluster.py);
       } // lib.optionalAttrs isLinux {
-        exo-cuda-12 = cuda12Set.exo;
+        #exo-cuda-12 = cuda12Set.exo;
         exo-cuda-13 = cuda13Set.exo;
       };
 
