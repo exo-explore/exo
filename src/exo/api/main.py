@@ -104,6 +104,7 @@ from exo.api.types.claude_api import (
     ClaudeMessagesResponse,
 )
 from exo.api.types.ollama_api import (
+    OllamaCapability,
     OllamaChatRequest,
     OllamaChatResponse,
     OllamaGenerateRequest,
@@ -138,6 +139,7 @@ from exo.shared.models import model_cards
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
+    ModelTask,
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
@@ -375,6 +377,9 @@ class API:
         # Ollama API
         self.app.head("/ollama/")(self.ollama_version)
         self.app.head("/ollama/api/version")(self.ollama_version)
+        self.app.post("/ollama/v1/chat/completions", response_model=None)(
+            self.chat_completions
+        )
         self.app.post("/ollama/api/chat", response_model=None)(self.ollama_chat)
         self.app.post("/ollama/api/api/chat", response_model=None)(self.ollama_chat)
         self.app.post("/ollama/api/v1/chat", response_model=None)(self.ollama_chat)
@@ -1678,6 +1683,20 @@ class API:
                 status_code=404, detail=f"Model not found: {model_name}"
             ) from exc
 
+        capabilities: list[OllamaCapability] = []
+        if ModelTask.TextGeneration in card.tasks:
+            capabilities.extend(("completion", "tools"))
+        if card.vision is not None:
+            capabilities.append("vision")
+
+        architecture = card.family or "unknown"
+        model_info: dict[str, Any] = {
+            "general.architecture": architecture,
+            "general.basename": card.base_model or str(card.model_id),
+        }
+        if card.context_length > 0:
+            model_info[f"{architecture}.context_length"] = card.context_length
+
         return OllamaShowResponse(
             modelfile=f"FROM {card.model_id}",
             template="{{ .Prompt }}",
@@ -1685,6 +1704,8 @@ class API:
                 family=card.family or None,
                 quantization_level=card.quantization or None,
             ),
+            model_info=model_info,
+            capabilities=capabilities,
         )
 
     async def ollama_ps(self) -> OllamaPsResponse:
@@ -1707,7 +1728,7 @@ class API:
 
     async def ollama_version(self) -> dict[str, str]:
         """Returns version information for Ollama API compatibility."""
-        return {"version": "exo v1.0"}
+        return {"version": "1.0.0"}
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
