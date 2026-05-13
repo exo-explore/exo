@@ -1859,6 +1859,7 @@ dependencies = [
  "parking_lot",
  "rand 0.10.1",
  "tokio",
+ "tracing",
  "zenoh",
  "zenoh-plugin-storage-manager",
  "zenoh-plugin-trait",

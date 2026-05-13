@@ -23,11 +23,13 @@ async fn main() -> Result<()> {
         .history(true)
         .callback(|tok| {
             info!(
-                "{:?}",
+                "{}: {}",
+                tok.kind(),
                 tok.key_expr()
                     .to_string()
                     .strip_prefix("nodes/")
                     .and_then(|it| it.strip_suffix("/live"))
+                    .unwrap()
             )
         })
         .await?;

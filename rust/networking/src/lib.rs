@@ -20,6 +20,8 @@ pub fn cfg(identity: u128, listen_port: u16) -> Result<zenoh::Config> {
     cfg.insert_json5("scouting/multicast/enabled", "false")?;
     cfg.insert_json5("scouting/multicast/autoconnect", "[]")?;
     cfg.insert_json5("scouting/gossip/multihop", "true")?;
+    cfg.insert_json5("adminspace/enabled", "true")?;
+    //cfg.insert_json5("transport/link/tx/batch_size", "9216")?;
     cfg.insert_json5("transport/link/rx/buffer_size", "16777216")?;
     cfg.insert_json5("timestamping/enabled", "true")?;
     cfg.insert_json5("plugins/storage_manager/__required__", "true")?;
@@ -63,7 +65,7 @@ pub async fn open(cfg: zenoh::Config, listen_port: u16) -> Result<Session> {
 
             let Ok(locator) =
                 Locator::new("tcp", discovered.addr.to_string(), "").inspect_err(|e| {
-                    log::warn!("failed to pass locator from addr: {e}");
+                    log::warn!("failed to parse locator from addr: {e}");
                 })
             else {
                 continue;

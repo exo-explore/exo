@@ -21,3 +21,4 @@ workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
+tracing = "0.1.44"
