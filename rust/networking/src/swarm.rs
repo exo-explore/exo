@@ -10,7 +10,9 @@ use zenoh::Result;
 use zenoh::Session;
 use zenoh::handlers::FifoChannelHandler;
 use zenoh::liveliness::LivelinessToken;
+use zenoh::pubsub::Publisher;
 use zenoh::pubsub::Subscriber;
+use zenoh::qos::CongestionControl;
 use zenoh::sample::Sample;
 use zenoh::sample::SampleKind;
 
@@ -37,7 +39,7 @@ pub enum FromSwarm {
     Expired {},
 }
 
-pub type Topics = HashMap<String, Subscriber<()>>;
+pub type Topics = HashMap<String, (Subscriber<()>, Publisher<'static>)>;
 pub struct Swarm {
     pub session: crate::Session,
     from_client: mpsc::Receiver<ToSwarm>,
@@ -116,17 +118,24 @@ async fn on_message(
             data,
             result_sender,
         } => {
-            let res = session.put(format!("topics/{topic}"), data).await;
+            let res = match topics.get(&topic) {
+                Some(topic) => topic.1.put(data).await,
+                None => {
+                    // TODO: this should be an error but the python FromSwarm is somewhat nondeterministic
+                    Ok(()) //Err("not subscribed to topic!".into()),
+                }
+            };
             _ = result_sender.send(res);
         }
         ToSwarm::Unsubscribe {
             topic,
             result_sender,
         } => {
-            let Some((_, subscriber)) = topics.remove_entry(&topic) else {
+            let Some((_, (subscriber, publisher))) = topics.remove_entry(&topic) else {
                 _ = result_sender.send(false);
                 return;
             };
+            _ = publisher.undeclare().await;
             _ = subscriber.undeclare().await;
             _ = result_sender.send(true);
         }
@@ -139,7 +148,20 @@ async fn on_message(
                 _ = result_sender.send(Ok(false));
                 return;
             }
-            let subscriber = match session
+
+            let publisher_res = session
+                .declare_publisher(format!("topics/{topic}"))
+                .congestion_control(CongestionControl::Block)
+                .await;
+            let publisher = match publisher_res {
+                Ok(p) => p,
+                Err(e) => {
+                    _ = result_sender.send(Err(e));
+                    return;
+                }
+            };
+
+            let subscriber_res = session
                 .declare_subscriber(format!("topics/{topic}"))
                 .allowed_origin(zenoh::sample::Locality::Remote)
                 .callback({
@@ -155,15 +177,16 @@ async fn on_message(
                         });
                     }
                 })
-                .await
-            {
-                Ok(p) => p,
+                .await;
+            let subscriber = match subscriber_res {
+                Ok(s) => s,
                 Err(e) => {
                     _ = result_sender.send(Err(e));
                     return;
                 }
             };
-            assert!(topics.insert(topic, subscriber).is_none());
+
+            assert!(topics.insert(topic, (subscriber, publisher)).is_none());
             _ = result_sender.send(Ok(true));
         }
     }

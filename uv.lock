@@ -24,7 +24,7 @@ prerelease-mode = "allow"
 members = [
     "exo",
     "exo-bench",
-    "exo-net",
+    "exo-rs",
     "exo-tools",
 ]
 overrides = [{ name = "opencv-python", marker = "python_full_version < '0'" }]
@@ -622,9 +622,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "exo-net"
+name = "exo-rs"
 version = "0.3.0"
-source = { editable = "rust/exo_net" }
+source = { editable = "rust/exo_rs" }
 
 [package.dev-dependencies]
 dev = [
@@ -637,7 +637,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "exo-net", editable = "rust/exo_net" },
+    { name = "exo-rs", editable = "rust/exo_rs" },
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]

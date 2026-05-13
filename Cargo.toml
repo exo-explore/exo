@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["rust/exo_net", "rust/networking"]
+members = ["rust/exo_rs", "rust/networking"]
 
 [workspace.package]
 version = "0.0.1"

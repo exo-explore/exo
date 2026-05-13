@@ -1,5 +1,7 @@
 use std::{
-    io::{self, ErrorKind},
+    env,
+    hash::{DefaultHasher, Hash, Hasher},
+    io,
     net::{Ipv6Addr, SocketAddr, SocketAddrV6},
     sync::Arc,
     time::Duration,
@@ -20,7 +22,8 @@ const MAGIC: [u8; 3] = *b"EXO";
 
 pub struct Discovery {
     sock: Arc<UdpSocket>,
-    ifaces: Arc<Mutex<Vec<SocketAddr>>>,
+    ifaces: Arc<Mutex<Vec<SocketAddrV6>>>,
+    namespace: [u8; 8],
     last_nonce: Mutex<[u8; 8]>,
     /// the port of the service we are doing discovery for - transmitted to peers
     listen_port: u16,
@@ -29,12 +32,25 @@ pub struct Discovery {
     _sync: Mutex<WatchHandle>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Discovered {
+    pub zid: ZenohId,
+    pub addr: SocketAddrV6,
+}
+
 impl Discovery {
     pub async fn new(zid: ZenohId, listen_port: u16) -> io::Result<Self> {
+        let namespace = {
+            let mut hasher = DefaultHasher::new();
+            env::var("EXO_ZENOH_NAMESPACE")
+                .unwrap_or_else(|_| "exo".to_string())
+                .hash(&mut hasher);
+            hasher.finish().to_le_bytes()
+        };
         let discovery_port = 52413;
         let sock = Arc::new(UdpSocket::bind(format!("[::]:{discovery_port}")).await?);
         //sock.set_multicast_loop_v6(false)?;
-        let ifaces: Arc<Mutex<Vec<SocketAddr>>> = Default::default();
+        let ifaces: Arc<Mutex<Vec<SocketAddrV6>>> = Default::default();
         let _sync = Mutex::new(
             netwatcher::watch_interfaces_with_callback({
                 let sock = sock.clone();
@@ -47,27 +63,26 @@ impl Discovery {
                         {
                             continue;
                         }
-                        if let Err(e) = sock.join_multicast_v6(&GROUP, *iface_idx).inspect(|_| {
-                            ifaces.lock().push(SocketAddr::V6(SocketAddrV6::new(
-                                GROUP, 52413, 0, *iface_idx,
-                            )))
-                        }) {
-                            if let Some(iface) = update.interfaces.get(&iface_idx) {
-                                warn!(
-                                    "failed to join multicast v6 for interface {}: {e}",
-                                    iface.name
-                                )
+
+                        match sock.join_multicast_v6(&GROUP, *iface_idx) {
+                            Ok(()) => ifaces
+                                .lock()
+                                .push(SocketAddrV6::new(GROUP, 52413, 0, *iface_idx)),
+                            Err(e) if e.kind() != io::ErrorKind::AddrInUse => {
+                                // skip AddrInUse - just means we've already joined the mv6
+                                if let Some(iface) = update.interfaces.get(&iface_idx) {
+                                    warn!(
+                                        "failed to join multicast v6 for interface {}: {e}",
+                                        iface.name
+                                    )
+                                }
                             }
+                            _ => {}
                         }
                     }
                     for iface_idx in update.diff.removed {
-                        ifaces.lock().retain(|addr| {
-                            if let SocketAddr::V6(v6) = addr {
-                                v6.scope_id() != iface_idx
-                            } else {
-                                true
-                            }
-                        });
+                        ifaces.lock().retain(|addr| addr.scope_id() != iface_idx);
+
                         if let Err(e) = sock.leave_multicast_v6(&GROUP, iface_idx) {
                             if let Some(iface) = update.interfaces.get(&iface_idx) {
                                 warn!(
@@ -84,6 +99,7 @@ impl Discovery {
         );
         Ok(Self {
             sock,
+            namespace,
             ifaces,
             last_nonce: Mutex::new(rand::random()),
             listen_port,
@@ -145,21 +161,24 @@ impl Discovery {
                     trace!("dropped: local hello nonce");
                     return Ok(None);
                 }
+                if hello.namespace != self.namespace {
+                    trace!("dropped: different namespace");
+                    return Ok(None);
+                }
 
                 // reply
                 trace!("replying to Hello({:?})", hello.nonce);
-                let mut reply_buf = [0u8; WhatsUp::buf_size()];
-                WhatsUp {
+                let reply = WhatsUp {
                     nonce: hello.nonce,
                     zid: self.zid.to_le_bytes(),
                     port_le: self.listen_port.to_le_bytes(),
                 }
-                .write_into(&mut reply_buf);
+                .alloc();
 
                 for i in 1..6 {
                     if self
                         .sock
-                        .send_to(&reply_buf, addr)
+                        .send_to(&reply, addr)
                         .await
                         .inspect_err(|e| debug!("send to {addr} failed: {e}"))
                         .is_ok_and(|sent| sent == WhatsUp::buf_size())
@@ -212,10 +231,13 @@ impl Discovery {
     }
 
     async fn announce(&self) -> io::Result<()> {
-        let mut buf = [0u8; Hello::buf_size()];
         let nonce = rand::random();
         *self.last_nonce.lock() = nonce;
-        Hello { nonce }.write_into(&mut buf);
+        let buf = Hello {
+            nonce,
+            namespace: self.namespace,
+        }
+        .alloc();
 
         let addrs = self.ifaces.lock().clone();
         debug!("announcing Hello({nonce:?}) to {addrs:?}");
@@ -223,7 +245,7 @@ impl Discovery {
         for (i, addr) in addrs.into_iter().enumerate().rev() {
             match self.sock.send_to(&buf, addr).await {
                 Ok(bytes) => trace!("sent {bytes} to {addr}"),
-                Err(e) if e.kind() == ErrorKind::HostUnreachable => {
+                Err(e) if e.kind() == io::ErrorKind::HostUnreachable => {
                     debug!("disabling discovery address {addr}: {e}");
                     _ = self.ifaces.lock().swap_remove(i);
                 }
@@ -242,12 +264,6 @@ pub trait Message: Pod {
             kind: Self::KIND as u8,
         }
     }
-    fn write_into(&self, buf: &mut [u8]) {
-        let total = size_of::<Header>() + size_of::<Self>();
-        assert!(total <= buf.len());
-        buf[0..size_of::<Header>()].copy_from_slice(bytemuck::bytes_of(&Self::header()));
-        buf[size_of::<Header>()..total].copy_from_slice(bytemuck::bytes_of(self));
-    }
 }
 
 #[repr(u8)]
@@ -256,12 +272,6 @@ pub trait Message: Pod {
 pub enum Kind {
     Hello = 0,
     WhatsUp = 1,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Discovered {
-    pub zid: ZenohId,
-    pub addr: SocketAddrV6,
 }
 
 pub struct UnknownKind;
@@ -275,6 +285,23 @@ impl TryFrom<u8> for Kind {
         }
     }
 }
+// should be a trait, but const in traits isnt stabilized. this lets alloc :: Self -> [u8; Self::buf_size()]
+macro_rules! impl_alloc {
+    ($a:ident) => {
+        impl $a {
+            const fn buf_size() -> usize {
+                size_of::<Header>() + size_of::<Self>()
+            }
+            pub fn alloc(self) -> [u8; Self::buf_size()] {
+                let mut buf = [0u8; Self::buf_size()];
+                buf[0..size_of::<Header>()].copy_from_slice(bytemuck::bytes_of(&Self::header()));
+                buf[size_of::<Header>()..Self::buf_size()]
+                    .copy_from_slice(bytemuck::bytes_of(&self));
+                buf
+            }
+        }
+    };
+}
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct Header {
@@ -286,15 +313,12 @@ pub struct Header {
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct Hello {
     pub nonce: [u8; 8],
-}
-impl Hello {
-    const fn buf_size() -> usize {
-        size_of::<Header>() + size_of::<Self>()
-    }
+    pub namespace: [u8; 8],
 }
 impl Message for Hello {
     const KIND: Kind = Kind::Hello;
 }
+impl_alloc!(Hello);
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -303,11 +327,7 @@ pub struct WhatsUp {
     pub zid: [u8; 16],
     pub port_le: [u8; 2],
 }
-impl WhatsUp {
-    const fn buf_size() -> usize {
-        size_of::<Header>() + size_of::<Self>()
-    }
-}
 impl Message for WhatsUp {
     const KIND: Kind = Kind::WhatsUp;
 }
+impl_alloc!(WhatsUp);

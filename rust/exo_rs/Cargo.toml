@@ -1,5 +1,5 @@
 [package]
-name = "exo_net"
+name = "exo_rs"
 version = { workspace = true }
 edition = { workspace = true }
 publish = false
@@ -7,7 +7,7 @@ publish = false
 [lib]
 doctest = false
 path = "src/lib.rs"
-name = "exo_net"
+name = "exo_rs"
 
 # "cdylib" needed to produce shared library for Python to import
 # "rlib" needed for stub-gen to run

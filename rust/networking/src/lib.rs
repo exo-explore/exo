@@ -1,5 +1,3 @@
-use std::env;
-
 use tokio::task::JoinHandle;
 use zenoh::{Result, Session as ZSession, config::Locator};
 use zenoh_plugin_storage_manager::StoragesPlugin;
@@ -14,7 +12,6 @@ pub mod swarm;
 
 pub fn cfg(identity: u128, listen_port: u16) -> Result<zenoh::Config> {
     assert!(listen_port != 0, "must used defined listen port port");
-    let namespace = env::var("EXO_ZENOH_NAMESPACE").unwrap_or_else(|_| "exo".to_string());
     let mut cfg = zenoh::Config::default();
     // todo: cleanup
     cfg.insert_json5("id", &format!("\"{identity:x}\""))?;
@@ -23,8 +20,6 @@ pub fn cfg(identity: u128, listen_port: u16) -> Result<zenoh::Config> {
     cfg.insert_json5("scouting/multicast/enabled", "false")?;
     cfg.insert_json5("scouting/multicast/autoconnect", "[]")?;
     cfg.insert_json5("scouting/gossip/multihop", "true")?;
-    cfg.insert_json5("namespace", &format!("{namespace:?}"))?;
-    cfg.insert_json5("transport/link/tx/batch_size", "9216")?;
     cfg.insert_json5("transport/link/rx/buffer_size", "16777216")?;
     cfg.insert_json5("timestamping/enabled", "true")?;
     cfg.insert_json5("plugins/storage_manager/__required__", "true")?;

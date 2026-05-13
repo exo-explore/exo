@@ -46,7 +46,7 @@ class _InterceptHandler(logging.Handler):
 def logger_setup(log_file: Path | None, verbosity: int = 0):
     """Set up logging for this process - formatting, file handles, verbosity and output"""
 
-    logging.getLogger("exo_net").setLevel(logging.INFO)
+    logging.getLogger("exo_rs").setLevel(logging.INFO)
     logging.getLogger("networking").setLevel(logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)

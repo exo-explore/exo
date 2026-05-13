@@ -23,7 +23,11 @@ async fn main() -> Result<()> {
     let key_expr = "stream/data";
     let payload = "n".repeat(n_bytes);
 
-    let pubs = session.z.declare_publisher(key_expr).await?;
+    let pubs = session
+        .z
+        .declare_publisher(key_expr)
+        .congestion_control(zenoh::qos::CongestionControl::Block)
+        .await?;
     let pubs_l = pubs.matching_listener().await?;
     if !pubs.matching_status().await?.matching() {
         while !pubs_l.recv_async().await?.matching() {}

@@ -110,7 +110,7 @@
               nixpkgs-fmt.enable = true;
               ruff-format = {
                 enable = true;
-                excludes = [ "rust/exo_net/exo_net.pyi" ];
+                excludes = [ "rust/exo_rs/exo_rs.pyi" ];
               };
               rustfmt = {
                 enable = true;

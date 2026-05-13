@@ -3,7 +3,7 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "exo_net"
+name = "exo_rs"
 version = "0.3.0"
 description = "Add your description here"
 readme = "README.md"
@@ -15,10 +15,10 @@ requires-python = ">=3.13"
 dependencies = []
 
 [dependency-groups]
-dev = ["exo-net", "pytest>=8.4.0", "pytest-asyncio>=1.0.0"]
+dev = ["exo_rs", "pytest>=8.4.0", "pytest-asyncio>=1.0.0"]
 
 [tool.maturin]
-module-name = "exo_net"
+module-name = "exo_rs"
 features = ["pyo3/extension-module", "pyo3/experimental-async"]
 
 [tool.pytest.ini_options]

@@ -12,7 +12,7 @@ from anyio import (
     move_on_after,
     sleep_forever,
 )
-from exo_net import (
+from exo_rs import (
     NetworkingHandle,
     PyFromSwarm,
 )
