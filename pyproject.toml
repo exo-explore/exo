@@ -15,20 +15,16 @@ dependencies = [
   "huggingface-hub>=1.8.0",
   "psutil>=7.0.0",
   "loguru>=0.7.3",
-  "exo-pyo3-bindings",                         # rust bindings
+  "exo-pyo3-bindings",               # rust bindings
   "anyio==4.11.0",
-  "mlx==0.31.2; sys_platform == 'darwin'",
-  "mlx-lm; sys_platform=='darwin'",
-  "tiktoken>=0.12.0",                          # required for kimi k2 tokenizer
+  "tiktoken>=0.12.0",                # required for kimi k2 tokenizer
   "hypercorn>=0.18.0",
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",
   "tomlkit>=0.14.0",
-  "mflux==0.17.2; sys_platform == 'darwin'",
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
-  "mlx-vlm>=0.3.11; sys_platform == 'darwin'",
   "transformers>=5.6.2",
 ]
 
@@ -49,26 +45,29 @@ dev = [
 
 [project.optional-dependencies]
 build = ["nanobind"]
-cpu = [
-  "mlx==0.31.1; sys_platform == 'linux'",
-  "mlx-cpu==0.31.1; sys_platform == 'linux'",
-  "mlx-lm; sys_platform == 'linux'",
-  "mlx-vlm>=0.3.11; sys_platform== 'linux'",
-  "torch>=2.10.0; sys_platform == 'linux'",
+mlx-none = ["anyio"]
+mlx = [
+  "mlx==0.32.0",
+  "mlx-lm",
+  "mlx-vlm>=0.3.11",
+  "mflux==0.17.5",
+  "torch==2.10.0; sys_platform == 'darwin'",
+  "torch==2.10.0; sys_platform == 'linux'",
+  "torchaudio==2.10.0; sys_platform == 'darwin'",
+  "torchaudio==2.10.0; sys_platform == 'linux'",
+  "torchvision==0.25.0; sys_platform == 'darwin'",
+  "torchvision==0.25.0; sys_platform == 'linux'",
 ]
-cuda12 = [
-  "mlx==0.31.1; sys_platform == 'linux'",
-  "mlx-cuda-12==0.31.1; sys_platform == 'linux'",
-  "mlx-lm; sys_platform == 'linux'",
-  "mlx-vlm>=0.3.11; sys_platform== 'linux'",
-  "torch>=2.10.0; sys_platform == 'linux'",
+mlx-cpu = ["exo[mlx]", "mlx-cpu==0.31.2; sys_platform == 'linux'"]
+mlx-cuda12 = [
+  "exo[mlx]",
+  "mlx-cuda-12==0.32.0; sys_platform == 'linux'",
+  "nvidia-ml-py>=13.595.45",
 ]
-cuda13 = [
-  "mlx==0.31.1; sys_platform == 'linux'",
-  "mlx-cuda-13==0.31.1; sys_platform == 'linux'",
-  "mlx-lm; sys_platform == 'linux'",
-  "mlx-vlm>=0.3.11; sys_platform== 'linux'",
-  "torch>=2.10.0; sys_platform == 'linux'",
+mlx-cuda13 = [
+  "exo[mlx]",
+  "mlx-cuda-13==0.32.0; sys_platform == 'linux'",
+  "nvidia-ml-py>=13.595.45",
 ]
 
 ###
@@ -80,14 +79,37 @@ members = ["rust/exo_pyo3_bindings", "bench", "tools"]
 
 [tool.uv.sources]
 exo-pyo3-bindings = { workspace = true }
-mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" }
-mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
-torch = [
-  { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'cuda13' and extra != 'cpu' and extra != 'cuda12'" },
-  { index = "pytorch-cu120", marker = "sys_platform == 'linux' and extra == 'cuda12' and extra != 'cpu' and extra != 'cuda13'" },
-  { index = "pytorch-cpu", marker = "(extra != 'cuda12' and extra != 'cuda13' and sys_platform == 'linux') or sys_platform == 'darwin'" },
+mlx = [
+  { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" },
+  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine != 'aarch64'" },
+
 ]
-vllm = { git = "https://github.com/hmellor/vllm.git", branch = "transformers-v5" }
+mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
+mflux = { git = "https://github.com/evanev7/mflux", branch = "exo2" }
+torch = [
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'mlx-cpu' and extra != 'mlx-cuda13' and extra != 'mlx-cuda12'" },
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13' " },
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'mlx-cuda13'" },
+]
+mlx-cuda-12 = [
+  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_12-0.32.0-py3-none-manylinux_2_35_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_12-0.32.0-py3-none-manylinux_2_35_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine != 'aarch64'" },
+]
+mlx-cuda-13 = [
+  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.32.0-py3-none-manylinux_2_35_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.32.0-py3-none-manylinux_2_35_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine != 'aarch64'" },
+]
+torchvision = [
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'mlx-cpu' and extra != 'mlx-cuda13' and extra != 'mlx-cuda12'" },
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13'" },
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'mlx-cuda13'" },
+]
+torchaudio = [
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'mlx-cpu' and extra != 'mlx-cuda13' and extra != 'mlx-cuda12'" },
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13'" },
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'mlx-cuda13'" },
+]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
@@ -95,8 +117,8 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [[tool.uv.index]]
-name = "pytorch-cu120"
-url = "https://download.pytorch.org/whl/cu120"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [[tool.uv.index]]
@@ -164,11 +186,14 @@ root = "tools/src"
 required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
-conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }, { extra = "cpu" }]]
-constraint-dependencies = ["transformers>=5.6.2"]
-override-dependencies = [
-  "mlx==0.31.1; sys_platform=='linux'",
-  "mlx; sys_platform=='darwin'",
+override-dependencies = ["opencv-python; python_version < '0'"]
+conflicts = [
+  [
+    { extra = "mlx-cuda13" },
+    { extra = "mlx-cuda12" },
+    { extra = "mlx-cpu" },
+    { extra = "mlx-none" },
+  ],
 ]
 
 [tool.uv.extra-build-dependencies]
@@ -183,6 +208,7 @@ mlx = [
   "ninja",
 ]
 mlx-lm = ["setuptools"]
+mflux = ["uv_build"]
 xgrammar = [
   "nanobind",
   "setuptools",
