@@ -238,7 +238,7 @@ async def generate_chat_stream(
                         code=500,
                     )
                 )
-                yield f"data: {error_response.model_dump_json()}\n\n"
+                yield f"data: {error_response.model_dump_json(exclude_none=True)}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
@@ -269,7 +269,7 @@ async def generate_chat_stream(
                     ],
                     usage=last_usage,
                 )
-                yield f"data: {tool_response.model_dump_json()}\n\n"
+                yield f"data: {tool_response.model_dump_json(exclude_none=True)}\n\n"
                 if chunk.stats is not None:
                     yield f": generation_stats {chunk.stats.model_dump_json()}\n\n"
                 yield "data: [DONE]\n\n"
@@ -283,7 +283,7 @@ async def generate_chat_stream(
                     chunk_response = chunk_response.model_copy(
                         update={"usage": last_usage}
                     )
-                yield f"data: {chunk_response.model_dump_json()}\n\n"
+                yield f"data: {chunk_response.model_dump_json(exclude_none=True)}\n\n"
 
                 if chunk.finish_reason is not None:
                     if chunk.stats is not None:
@@ -379,5 +379,5 @@ async def collect_chat_response(
             )
         ],
         usage=last_usage,
-    ).model_dump_json()
+    ).model_dump_json(exclude_none=True)
     return
