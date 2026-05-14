@@ -803,10 +803,6 @@ _MLX_FORCE_OOM_OVERSHOOT_NUMERATOR = 11
 _MLX_FORCE_OOM_OVERSHOOT_DENOMINATOR = 10
 
 
-def _ceil_div(numerator: int, denominator: int) -> int:
-    return -(-numerator // denominator)
-
-
 def get_mlx_force_oom_size(available_ram: int) -> int:
     """
     Return the square matrix side length for an MLX Metal OOM probe.
@@ -818,12 +814,15 @@ def get_mlx_force_oom_size(available_ram: int) -> int:
     if available_ram <= 0:
         raise ValueError("available_ram must be positive")
 
-    target_live_bytes = _ceil_div(
+    def ceil_div(numerator: int, denominator: int) -> int:
+        return -(-numerator // denominator)
+
+    target_live_bytes = ceil_div(
         available_ram * _MLX_FORCE_OOM_OVERSHOOT_NUMERATOR,
         _MLX_FORCE_OOM_OVERSHOOT_DENOMINATOR,
     )
-    target_matrix_bytes = _ceil_div(target_live_bytes, _MLX_FORCE_OOM_LIVE_MATRICES)
-    target_elements = _ceil_div(target_matrix_bytes, _MLX_FORCE_OOM_DTYPE_BYTES)
+    target_matrix_bytes = ceil_div(target_live_bytes, _MLX_FORCE_OOM_LIVE_MATRICES)
+    target_elements = ceil_div(target_matrix_bytes, _MLX_FORCE_OOM_DTYPE_BYTES)
 
     # Round the square-matrix side length up so the requested allocation crosses
     # the target even when the ideal element count is not a perfect square.
