@@ -19,6 +19,8 @@ from exo.worker.runner.llm_inference.batch_generator import (
     SequentialGenerator,
 )
 from exo.worker.runner.llm_inference.tool_parsers import make_mlx_parser
+
+from ...runner.runner import RunnerTerminationError
 from .cache import KVPrefixCache
 from .types import Model
 from .utils_mlx import (
@@ -26,7 +28,6 @@ from .utils_mlx import (
     load_mlx_items,
 )
 from .vision import VisionProcessor
-from ...runner.runner import RunnerTerminationError
 
 
 @dataclass

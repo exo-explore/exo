@@ -5,7 +5,7 @@ import time
 import traceback
 from dataclasses import dataclass
 from enum import Enum
-from typing import BinaryIO, Self, Optional
+from typing import BinaryIO, Optional, Self
 
 from anyio import ClosedResourceError, EndOfStream
 

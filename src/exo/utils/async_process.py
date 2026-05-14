@@ -19,8 +19,8 @@ from anyio import (
     create_task_group,
     move_on_after,
     sleep,
-    wait_readable,
     to_thread,
+    wait_readable,
 )
 from anyio.abc import TaskStatus
 from loguru import logger
