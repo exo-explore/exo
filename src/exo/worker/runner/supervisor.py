@@ -73,12 +73,12 @@ class RunnerStdioHandler:
 
     @classmethod
     async def create(
-            cls,
-            *,
-            stdout_rx: Receiver[bytes],
-            stderr_rx: Receiver[bytes],
-            stdout_log_path: PathLike[str] = EXO_RUNNER_STDOUT_LOG,
-            stderr_log_path: PathLike[str] = EXO_RUNNER_STDERR_LOG,
+        cls,
+        *,
+        stdout_rx: Receiver[bytes],
+        stderr_rx: Receiver[bytes],
+        stdout_log_path: PathLike[str] = EXO_RUNNER_STDOUT_LOG,
+        stderr_log_path: PathLike[str] = EXO_RUNNER_STDERR_LOG,
     ) -> Self:
         # these are append only logs used to gather data for log template mining
         #
@@ -121,11 +121,11 @@ class RunnerStdioHandler:
                 await self._stderr_log.aclose()
 
     async def _handle_runner_output(
-            self,
-            rx: Receiver[bytes],
-            logfile: AsyncFile[str],
-            log_line: Callable[[str], None],
-            record_diagnostic_line: Callable[[str], None],
+        self,
+        rx: Receiver[bytes],
+        logfile: AsyncFile[str],
+        log_line: Callable[[str], None],
+        record_diagnostic_line: Callable[[str], None],
     ):
         # The diagnostic collector is deliberately line-level for now. It records
         # bounded stderr context and known failure anchors; the supervisor
@@ -202,11 +202,11 @@ class RunnerSupervisor:
 
     @classmethod
     async def create(
-            cls,
-            *,
-            bound_instance: BoundInstance,
-            event_sender: Sender[Event],
-            initialize_timeout: float = 400,
+        cls,
+        *,
+        bound_instance: BoundInstance,
+        event_sender: Sender[Event],
+        initialize_timeout: float = 400,
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event | RunnerTerminationError]()
         task_sender, task_recv = mp_channel[Task]()
@@ -330,8 +330,8 @@ class RunnerSupervisor:
                         self.pending.pop(event.task_id).set()
                         continue
                     if (
-                            isinstance(event, TaskStatusUpdated)
-                            and event.task_status == TaskStatus.Complete
+                        isinstance(event, TaskStatusUpdated)
+                        and event.task_status == TaskStatus.Complete
                     ):
                         # If a task has just been completed, we should be working on it.
                         assert isinstance(
