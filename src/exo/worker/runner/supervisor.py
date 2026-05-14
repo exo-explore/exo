@@ -342,8 +342,9 @@ class RunnerSupervisor:
                         self.in_progress.pop(event.task_id, None)
                         self.completed.add(event.task_id)
                     await self._event_sender.send(event)
-        except (ClosedResourceError, BrokenResourceError) as e:
-            await self._check_runner(e)
+        except (ClosedResourceError, BrokenResourceError):
+            # this is the happy path shutdown - we don't need to spam log with it
+            await self._check_runner()
         finally:
             for tid in self.pending:
                 self.pending[tid].set()
@@ -355,7 +356,7 @@ class RunnerSupervisor:
                 if not self.runner_process.is_alive():
                     await self._check_runner(RuntimeError("Runner found to be dead"))
 
-    async def _check_runner(self, e: Exception) -> None:
+    async def _check_runner(self, e: Exception | None = None) -> None:
         if not self._cancel_watch_runner.cancel_called:
             self._cancel_watch_runner.cancel()
         logger.info("Checking runner's status")
@@ -380,7 +381,11 @@ class RunnerSupervisor:
         else:
             cause = f"exitcode={rc}"
 
-        logger.opt(exception=e).error(f"Runner terminated with {cause}")
+        # Record why runner has shut down
+        if e is not None:
+            logger.opt(exception=e).error(f"Runner terminated with {cause}")
+        else:
+            logger.error(f"Runner terminated with {cause}")
 
         for task in self.in_progress.values():
             if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
