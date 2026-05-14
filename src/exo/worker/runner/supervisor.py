@@ -395,6 +395,7 @@ class RunnerSupervisor:
             if isinstance(e, RunnerTerminationError) and (
                 (err := e.get_exception()) is not None
             ):
+                logger.error("ouuu we recovered exception :)")
                 e = err
 
             # Record how runner shut down, try exception, resort to RunnerTerminationError fallback
