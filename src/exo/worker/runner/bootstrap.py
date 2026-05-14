@@ -52,6 +52,13 @@ class RunnerTerminationError:
         if self.pickled_exception is None:
             return None
 
+        # this adds best-effort pickling support for failed runner
+        from tblib import (  # pyright: ignore[reportMissingTypeStubs]
+            pickling_support,
+        )
+
+        pickling_support.install()  # pyright: ignore[reportUnknownMemberType]
+
         # should not catch unpickle error - wrong bytes should never intentionally be set
         e = pickle.loads(self.pickled_exception)  # pyright: ignore[reportAny]
         if not isinstance(e, Exception):
