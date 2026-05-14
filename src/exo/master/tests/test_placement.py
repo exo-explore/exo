@@ -47,7 +47,11 @@ from exo.shared.types.worker.instances import (
     MlxRingInstance,
 )
 from exo.shared.types.worker.runners import ShardAssignments
-from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
+from exo.shared.types.worker.shards import (
+    AsymmetricTensorShardMetadata,
+    PipelineShardMetadata,
+    Sharding,
+)
 
 
 @pytest.fixture
@@ -499,6 +503,307 @@ def test_tensor_rdma_backend_connectivity_matrix(
             assert len(ip_part.split(".")) == 4
 
 
+def test_qwen3_5_tensor_auto_upgrade_requires_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    topology = Topology()
+    large_node = NodeId()
+    small_node = NodeId()
+    topology.add_node(large_node)
+    topology.add_node(small_node)
+    topology.add_connection(
+        Connection(source=large_node, sink=small_node, edge=create_rdma_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=small_node, sink=large_node, edge=create_rdma_connection(2))
+    )
+    topology.add_connection(
+        Connection(source=large_node, sink=small_node, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=small_node, sink=large_node, edge=create_socket_connection(2))
+    )
+
+    model_card = ModelCard(
+        model_id=ModelId("mlx-community/Qwen3.5-72B-8bit"),
+        storage_size=Memory.from_bytes(130_648_036_320),
+        n_layers=48,
+        hidden_size=3072,
+        num_key_value_heads=8,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+        family="qwen",
+        base_model="Qwen3.5 72B",
+    )
+    command = PlaceInstance(
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxJaccl,
+        command_id=CommandId(),
+        model_card=model_card,
+        min_nodes=2,
+    )
+
+    node_rdma_ctl = {
+        large_node: NodeRdmaCtlStatus(enabled=True),
+        small_node: NodeRdmaCtlStatus(enabled=True),
+    }
+    placements_without_opt_in = place_instance(
+        command,
+        topology,
+        {},
+        {
+            large_node: create_node_memory(128_000_000_000),
+            small_node: create_node_memory(48_000_000_000),
+        },
+        {
+            large_node: create_node_network(),
+            small_node: create_node_network(),
+        },
+        node_rdma_ctl=node_rdma_ctl,
+    )
+    instance_without_opt_in = next(iter(placements_without_opt_in.values()))
+    large_runner_without_opt_in = (
+        instance_without_opt_in.shard_assignments.node_to_runner[large_node]
+    )
+    large_shard_without_opt_in = (
+        instance_without_opt_in.shard_assignments.runner_to_shard[
+            large_runner_without_opt_in
+        ]
+    )
+    assert not isinstance(large_shard_without_opt_in, AsymmetricTensorShardMetadata)
+
+    monkeypatch.setenv("EXO_ENABLE_ASYMMETRIC_TP_AUTO_UPGRADE", "1")
+
+    placements = place_instance(
+        command,
+        topology,
+        {},
+        {
+            large_node: create_node_memory(128_000_000_000),
+            small_node: create_node_memory(48_000_000_000),
+        },
+        {
+            large_node: create_node_network(),
+            small_node: create_node_network(),
+        },
+        node_rdma_ctl=node_rdma_ctl,
+    )
+
+    instance = next(iter(placements.values()))
+    large_runner = instance.shard_assignments.node_to_runner[large_node]
+    small_runner = instance.shard_assignments.node_to_runner[small_node]
+    large_shard = instance.shard_assignments.runner_to_shard[large_runner]
+    small_shard = instance.shard_assignments.runner_to_shard[small_runner]
+
+    assert isinstance(large_shard, AsymmetricTensorShardMetadata)
+    assert isinstance(small_shard, AsymmetricTensorShardMetadata)
+    assert large_shard.device_rank == 0
+    assert small_shard.device_rank == 1
+    assert large_shard.ratio == small_shard.ratio == 0.75
+
+
+def test_qwen3_5_tensor_auto_upgrade_ignores_non_two_node_cycles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    topology = Topology()
+    node_id_a = NodeId()
+    node_id_b = NodeId()
+    node_id_c = NodeId()
+    topology.add_node(node_id_a)
+    topology.add_node(node_id_b)
+    topology.add_node(node_id_c)
+    topology.add_connection(
+        Connection(source=node_id_a, sink=node_id_b, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_id_b, sink=node_id_c, edge=create_socket_connection(2))
+    )
+    topology.add_connection(
+        Connection(source=node_id_c, sink=node_id_a, edge=create_socket_connection(3))
+    )
+
+    model_card = ModelCard(
+        model_id=ModelId("mlx-community/Qwen3.5-72B-8bit"),
+        storage_size=Memory.from_bytes(140_000_000_000),
+        n_layers=48,
+        hidden_size=3072,
+        num_key_value_heads=6,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+        family="qwen",
+        base_model="Qwen3.5 72B",
+    )
+    command = PlaceInstance(
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxRing,
+        command_id=CommandId(),
+        model_card=model_card,
+        min_nodes=3,
+    )
+
+    monkeypatch.setenv("EXO_ENABLE_ASYMMETRIC_TP_AUTO_UPGRADE", "1")
+
+    placements = place_instance(
+        command,
+        topology,
+        {},
+        {
+            node_id_a: create_node_memory(128_000_000_000),
+            node_id_b: create_node_memory(128_000_000_000),
+            node_id_c: create_node_memory(48_000_000_000),
+        },
+        {
+            node_id_a: create_node_network(),
+            node_id_b: create_node_network(),
+            node_id_c: create_node_network(),
+        },
+    )
+
+    instance = next(iter(placements.values()))
+    assert len(instance.shard_assignments.node_to_runner) == 3
+    assert all(
+        not isinstance(shard, AsymmetricTensorShardMetadata)
+        for shard in instance.shard_assignments.runner_to_shard.values()
+    )
+
+
+def test_asymmetric_tensor_rejects_unreachable_largest_rank_zero() -> None:
+    topology = Topology()
+    large_node = NodeId()
+    small_node = NodeId()
+    topology.add_node(large_node)
+    topology.add_node(small_node)
+    topology.add_connection(
+        Connection(source=large_node, sink=small_node, edge=create_rdma_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=small_node, sink=large_node, edge=create_rdma_connection(2))
+    )
+    topology.add_connection(
+        Connection(source=large_node, sink=small_node, edge=create_socket_connection(3))
+    )
+
+    model_card = ModelCard(
+        model_id=ModelId("mlx-community/Qwen3.5-72B-8bit"),
+        storage_size=Memory.from_bytes(130_648_036_320),
+        n_layers=48,
+        hidden_size=3072,
+        num_key_value_heads=8,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+        family="qwen",
+        base_model="Qwen3.5 72B",
+    )
+    command = PlaceInstance(
+        sharding=Sharding.AsymmetricTensor,
+        instance_meta=InstanceMeta.MlxRing,
+        command_id=CommandId(),
+        model_card=model_card,
+        min_nodes=2,
+    )
+
+    with pytest.raises(ValueError, match="rank-0 node socket-reachable"):
+        place_instance(
+            command,
+            topology,
+            {},
+            {
+                large_node: create_node_memory(128_000_000_000),
+                small_node: create_node_memory(48_000_000_000),
+            },
+            {
+                large_node: create_node_network(),
+                small_node: create_node_network(),
+            },
+        )
+
+
+def test_asymmetric_tensor_rejects_qwen3_5_with_unsplittable_kv_heads() -> None:
+    topology = Topology()
+    large_node = NodeId()
+    small_node = NodeId()
+    topology.add_node(large_node)
+    topology.add_node(small_node)
+    topology.add_connection(
+        Connection(source=large_node, sink=small_node, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=small_node, sink=large_node, edge=create_socket_connection(2))
+    )
+
+    model_card = ModelCard(
+        model_id=ModelId("mlx-community/Qwen3.5-122B-A10B-8bit"),
+        storage_size=Memory.from_bytes(130_648_036_320),
+        n_layers=48,
+        hidden_size=3072,
+        num_key_value_heads=2,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+        family="qwen",
+        base_model="Qwen3.5 122B A10B",
+    )
+    command = PlaceInstance(
+        sharding=Sharding.AsymmetricTensor,
+        instance_meta=InstanceMeta.MlxRing,
+        command_id=CommandId(),
+        model_card=model_card,
+        min_nodes=2,
+    )
+
+    with pytest.raises(ValueError, match="No valid asymmetric ratio"):
+        place_instance(
+            command,
+            topology,
+            {},
+            {
+                large_node: create_node_memory(128_000_000_000),
+                small_node: create_node_memory(48_000_000_000),
+            },
+            {
+                large_node: create_node_network(),
+                small_node: create_node_network(),
+            },
+        )
+
+
+def test_asymmetric_tensor_rejects_unsupported_model_family(
+    model_card: ModelCard,
+) -> None:
+    topology = Topology()
+    node_id_a = NodeId()
+    node_id_b = NodeId()
+    topology.add_node(node_id_a)
+    topology.add_node(node_id_b)
+    topology.add_connection(
+        Connection(source=node_id_a, sink=node_id_b, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_id_b, sink=node_id_a, edge=create_socket_connection(2))
+    )
+    command = PlaceInstance(
+        sharding=Sharding.AsymmetricTensor,
+        instance_meta=InstanceMeta.MlxRing,
+        command_id=CommandId(),
+        model_card=model_card,
+        min_nodes=2,
+    )
+
+    with pytest.raises(ValueError, match="Supported: Qwen3.5"):
+        place_instance(
+            command,
+            topology,
+            {},
+            {
+                node_id_a: create_node_memory(2_000_000),
+                node_id_b: create_node_memory(2_000_000),
+            },
+            {
+                node_id_a: create_node_network(),
+                node_id_b: create_node_network(),
+            },
+        )
+
+
 def _build_three_node_rdma_topology() -> tuple[
     Topology, NodeId, NodeId, NodeId, dict[NodeId, NodeNetworkInfo]
 ]:
@@ -622,6 +927,196 @@ def test_place_mlx_jaccl_rejects_when_node_rdma_ctl_missing(model_card: ModelCar
             node_network,
             node_rdma_ctl=node_rdma_ctl,
         )
+
+
+def test_ring_placement_uses_advertised_lan_ips_for_rdma_only_topology(
+    model_card: ModelCard,
+) -> None:
+    topology = Topology()
+    model_card = model_card.model_copy(
+        update={
+            "storage_size": Memory.from_bytes(1500),
+            "n_layers": 12,
+        }
+    )
+
+    node_a = NodeId()
+    node_b = NodeId()
+
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_connection(
+        Connection(source=node_a, sink=node_b, edge=create_rdma_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_b, sink=node_a, edge=create_rdma_connection(2))
+    )
+
+    node_memory = {
+        node_a: create_node_memory(1000),
+        node_b: create_node_memory(1000),
+    }
+    node_network = {
+        node_a: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en9", ip_address="192.168.1.10", interface_type="ethernet"
+                )
+            ]
+        ),
+        node_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en9", ip_address="192.168.1.11", interface_type="ethernet"
+                )
+            ]
+        ),
+    }
+
+    command = place_instance_command(model_card)
+    command = command.model_copy(update={"min_nodes": 2})
+
+    placements = place_instance(command, topology, {}, node_memory, node_network)
+
+    instance = list(placements.values())[0]
+    assert isinstance(instance, MlxRingInstance)
+    assert len(instance.shard_assignments.node_to_runner) == 2
+    assert any(host.ip == "192.168.1.11" for host in instance.hosts_by_node[node_a])
+    assert any(host.ip == "192.168.1.10" for host in instance.hosts_by_node[node_b])
+
+
+def test_jaccl_placement_uses_advertised_lan_ip_for_rdma_coordinator(
+    model_card: ModelCard,
+) -> None:
+    topology = Topology()
+    model_card = model_card.model_copy(
+        update={
+            "storage_size": Memory.from_bytes(1500),
+            "n_layers": 12,
+            "hidden_size": 32,
+            "num_key_value_heads": 8,
+            "supports_tensor": True,
+        }
+    )
+
+    node_a = NodeId()
+    node_b = NodeId()
+
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_connection(
+        Connection(source=node_a, sink=node_b, edge=create_rdma_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_b, sink=node_a, edge=create_rdma_connection(2))
+    )
+
+    node_memory = {
+        node_a: create_node_memory(1000),
+        node_b: create_node_memory(1000),
+    }
+    node_network = {
+        node_a: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en9", ip_address="192.168.1.10", interface_type="ethernet"
+                )
+            ]
+        ),
+        node_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en9", ip_address="192.168.1.11", interface_type="ethernet"
+                )
+            ]
+        ),
+    }
+    command = PlaceInstance(
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxJaccl,
+        command_id=CommandId(),
+        model_card=model_card,
+        min_nodes=2,
+    )
+
+    node_rdma_ctl = {
+        node_a: NodeRdmaCtlStatus(enabled=True),
+        node_b: NodeRdmaCtlStatus(enabled=True),
+    }
+    placements = place_instance(
+        command,
+        topology,
+        {},
+        node_memory,
+        node_network,
+        node_rdma_ctl=node_rdma_ctl,
+    )
+
+    instance = list(placements.values())[0]
+    assert isinstance(instance, MlxJacclInstance)
+    assert len(instance.shard_assignments.node_to_runner) == 2
+    assert any(
+        coordinator.startswith("192.168.1.")
+        for coordinator in instance.jaccl_coordinators.values()
+    )
+
+
+def test_placement_prefers_socket_reachable_rank_zero(
+    model_card: ModelCard,
+) -> None:
+    topology = Topology()
+    model_card = model_card.model_copy(
+        update={
+            "storage_size": Memory.from_bytes(1500),
+            "n_layers": 12,
+        }
+    )
+
+    listener = NodeId()
+    peer = NodeId()
+
+    topology.add_node(listener)
+    topology.add_node(peer)
+    topology.add_connection(
+        Connection(source=listener, sink=peer, edge=create_rdma_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=peer, sink=listener, edge=create_rdma_connection(2))
+    )
+    topology.add_connection(
+        Connection(source=peer, sink=listener, edge=create_socket_connection(10))
+    )
+
+    node_memory = {
+        listener: create_node_memory(1000),
+        peer: create_node_memory(1000),
+    }
+    node_network = {
+        listener: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en9", ip_address="192.168.1.10", interface_type="ethernet"
+                )
+            ]
+        ),
+        peer: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en9", ip_address="192.168.1.11", interface_type="ethernet"
+                )
+            ]
+        ),
+    }
+
+    command = place_instance_command(model_card)
+    command = command.model_copy(update={"min_nodes": 2})
+
+    placements = place_instance(command, topology, {}, node_memory, node_network)
+
+    instance = list(placements.values())[0]
+    runner_id = instance.shard_assignments.node_to_runner[listener]
+    shard = instance.shard_assignments.runner_to_shard[runner_id]
+    assert shard.device_rank == 0
 
 
 def _make_task(

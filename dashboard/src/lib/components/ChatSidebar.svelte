@@ -213,6 +213,8 @@
       const [shardTag] = getTaggedValue(firstShardWrapped);
       if (shardTag === "PipelineShardMetadata") sharding = "Pipeline";
       else if (shardTag === "TensorShardMetadata") sharding = "Tensor";
+      else if (shardTag === "AsymmetricTensorShardMetadata")
+        sharding = "Asymmetric Tensor";
       else if (shardTag === "PrefillDecodeShardMetadata")
         sharding = "Prefill/Decode";
     }

@@ -9,6 +9,7 @@ from exo.utils.pydantic_ext import TaggedModel
 
 class Sharding(str, Enum):
     Tensor = "Tensor"
+    AsymmetricTensor = "AsymmetricTensor"
     Pipeline = "Pipeline"
 
 
@@ -79,6 +80,34 @@ class TensorShardMetadata(BaseShardMetadata):
     pass
 
 
+@final
+class AsymmetricTensorShardMetadata(BaseShardMetadata):
+    """
+    Asymmetric tensor parallelism shard metadata.
+
+    Unlike standard tensor parallelism which splits weights 50/50 (or equally
+    across N nodes), asymmetric TP splits weights proportionally to each node's
+    available memory. This enables heterogeneous clusters (e.g. 128GB + 48GB)
+    to run models using tensor parallelism where equal splits wouldn't fit.
+
+    Each node holds a different fraction of each weight tensor, but ALL nodes
+    compute every layer simultaneously. The all_sum reduction still works
+    correctly because (x_a @ W_a^T) + (x_b @ W_b^T) = x @ W^T regardless
+    of how W is partitioned.
+    """
+
+    ratio: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Split point for rank 0, shared across all ranks. "
+        "e.g. 0.75 means rank 0 gets the first 75% and rank 1 gets the last 25%. "
+        "Every rank stores the same value so all workers agree on the split.",
+    )
+
+
 ShardMetadata: TypeAlias = (
-    PipelineShardMetadata | CfgShardMetadata | TensorShardMetadata
+    PipelineShardMetadata
+    | CfgShardMetadata
+    | TensorShardMetadata
+    | AsymmetricTensorShardMetadata
 )
