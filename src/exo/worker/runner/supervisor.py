@@ -49,6 +49,9 @@ from exo.utils.channels import MpReceiver, MpSender, Receiver, Sender, mp_channe
 from exo.utils.fs import ensure_parent_directory_exists
 from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint
+from exo.worker.runner.diagnostics import (
+    RunnerDiagnosticCollector,
+)
 
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
@@ -60,6 +63,9 @@ class RunnerStdioHandler:
     _stderr_rx: Receiver[bytes]
     _stdout_log: AsyncFile[str]
     _stderr_log: AsyncFile[str]
+    _diagnostics: RunnerDiagnosticCollector = field(
+        default_factory=RunnerDiagnosticCollector
+    )
 
     _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
 
@@ -98,12 +104,14 @@ class RunnerStdioHandler:
                     self._stdout_rx,
                     self._stdout_log,
                     lambda line: logger.info(f"Runner stdout: {line}"),  # pyright: ignore[reportUnknownLambdaType]
+                    lambda _: None,  # pyright: ignore[reportUnknownLambdaType]
                 )
                 tg.start_soon(  # pyright: ignore[reportUnknownArgumentType]
                     self._handle_runner_output,
                     self._stderr_rx,
                     self._stderr_log,
                     lambda line: logger.warning(f"Runner stderr: {line}"),  # pyright: ignore[reportUnknownLambdaType]
+                    self._diagnostics.record_line,
                 )
         finally:
             with CancelScope(shield=True):
@@ -115,12 +123,12 @@ class RunnerStdioHandler:
         rx: Receiver[bytes],
         logfile: AsyncFile[str],
         log_line: Callable[[str], None],
+        record_diagnostic_line: Callable[[str], None],
     ):
-        # TODO: right now it logs them as warnings, but in the future they should be split
-        #       into being logged AND a seperate task which tries to best-effort figure out cause
-        #       of error and package into error enum, which then is used by rest of app to act on it;
-        #       inferring what the error is would be done by pattern-matching in the text for things
-        #       e.g. certain VLLM error codes and so on
+        # The diagnostic collector is deliberately line-level for now. It records
+        # bounded stderr context and known failure anchors; the supervisor
+        # correlates those hints with the runner exit status before surfacing an
+        # error.
 
         # not using TextReceiveStream because it doesn't do final=True handling on errors
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -134,7 +142,7 @@ class RunnerStdioHandler:
 
             # Send to logger & error recovery task
             log_line(line)
-            # TODO: error recovery task
+            record_diagnostic_line(line)
 
         async def handle_text(text: str):
             nonlocal pending_line
