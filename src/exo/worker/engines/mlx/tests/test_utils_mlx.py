@@ -4,13 +4,19 @@ import pytest
 
 from exo.worker.engines.mlx.utils_mlx import (
     _available_memory_from_macmon_output,
-    get_mlx_force_oom_allocation_bytes,
     get_mlx_force_oom_size,
 )
+
+_MLX_FORCE_OOM_DTYPE_BYTES = 4
+_MLX_FORCE_OOM_LIVE_MATRICES = 3
 
 
 def _target_live_bytes(available_ram: int) -> int:
     return -(-(available_ram * 11) // 10)
+
+
+def _allocation_bytes(size: int) -> int:
+    return _MLX_FORCE_OOM_LIVE_MATRICES * size * size * _MLX_FORCE_OOM_DTYPE_BYTES
 
 
 def test_get_mlx_force_oom_size_targets_slightly_above_available_memory() -> None:
@@ -18,10 +24,8 @@ def test_get_mlx_force_oom_size_targets_slightly_above_available_memory() -> Non
 
     size = get_mlx_force_oom_size(available_ram)
 
-    assert get_mlx_force_oom_allocation_bytes(size) >= _target_live_bytes(available_ram)
-    assert get_mlx_force_oom_allocation_bytes(size - 1) < _target_live_bytes(
-        available_ram
-    )
+    assert _allocation_bytes(size) >= _target_live_bytes(available_ram)
+    assert _allocation_bytes(size - 1) < _target_live_bytes(available_ram)
     assert 39_000 <= size <= 41_000
 
 

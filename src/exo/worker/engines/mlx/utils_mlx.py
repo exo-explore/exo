@@ -807,22 +807,6 @@ def _ceil_div(numerator: int, denominator: int) -> int:
     return -(-numerator // denominator)
 
 
-def _ceil_sqrt(value: int) -> int:
-    if value <= 0:
-        raise ValueError("value must be positive")
-    root = isqrt(value)
-    if root * root == value:
-        return root
-    return root + 1
-
-
-def get_mlx_force_oom_allocation_bytes(size: int) -> int:
-    """Return bytes used by the three float32 matrices that should tip MLX over."""
-    if size <= 0:
-        raise ValueError("size must be positive")
-    return _MLX_FORCE_OOM_LIVE_MATRICES * size * size * _MLX_FORCE_OOM_DTYPE_BYTES
-
-
 def get_mlx_force_oom_size(available_ram: int) -> int:
     """
     Return the square matrix side length for an MLX Metal OOM probe.
@@ -840,7 +824,13 @@ def get_mlx_force_oom_size(available_ram: int) -> int:
     )
     target_matrix_bytes = _ceil_div(target_live_bytes, _MLX_FORCE_OOM_LIVE_MATRICES)
     target_elements = _ceil_div(target_matrix_bytes, _MLX_FORCE_OOM_DTYPE_BYTES)
-    return _ceil_sqrt(target_elements)
+
+    # Round the square-matrix side length up so the requested allocation crosses
+    # the target even when the ideal element count is not a perfect square.
+    root = isqrt(target_elements)
+    if root * root == target_elements:
+        return root
+    return root + 1
 
 
 def _available_memory_from_macmon_output(output: str) -> int | None:
@@ -853,46 +843,40 @@ def _available_memory_from_macmon_output(output: str) -> int | None:
         return None
 
 
-def _read_macmon_available_memory() -> int | None:
-    macmon_path = os.getenv("EXO_MACMON_PATH") or shutil.which("macmon")
-    if macmon_path is None:
-        return None
-
-    try:
-        result = subprocess.run(
-            [macmon_path, "pipe", "--samples", "1", "--interval", "100"],
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-
-    if result.returncode != 0:
-        return None
-    return _available_memory_from_macmon_output(result.stdout)
-
-
-def _get_available_unified_memory() -> int:
-    if sys.platform == "darwin":
-        macmon_available = _read_macmon_available_memory()
-        if macmon_available is not None:
-            return macmon_available
-
-    import psutil
-
-    mem: int = psutil.virtual_memory().available
-    return mem
-
-
 def mlx_force_oom2() -> None:
     """
     Force an MLX Metal OOM using the current machine's available unified memory.
     """
     mx.set_default_device(mx.gpu)
     mx.clear_cache()
-    size = get_mlx_force_oom_size(_get_available_unified_memory())
+
+    available_memory: int | None = None
+    if sys.platform == "darwin":
+        macmon_path = os.getenv("EXO_MACMON_PATH") or shutil.which("macmon")
+        if macmon_path is not None:
+            try:
+                result = subprocess.run(
+                    [macmon_path, "pipe", "--samples", "1", "--interval", "100"],
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                    timeout=5,
+                )
+            except (OSError, subprocess.SubprocessError):
+                result = None
+
+            if result is not None and result.returncode == 0:
+                # macmon reports unified RAM in use more accurately on Apple
+                # Silicon; subtract usage from total via the parser above.
+                available_memory = _available_memory_from_macmon_output(result.stdout)
+
+    if available_memory is None:
+        import psutil
+
+        mem: int = psutil.virtual_memory().available
+        available_memory = mem
+
+    size = get_mlx_force_oom_size(available_memory)
 
     a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
     b = mx.random.uniform(shape=(size, size), dtype=mx.float32)
