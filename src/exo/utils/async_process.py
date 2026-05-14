@@ -206,17 +206,13 @@ class AsyncProcess:
 
     async def _terminate_if_still_alive(self) -> None:
         process = self._process
-        if process is None:
-            return
-
-        if self.exitcode is not None:
+        if process is None or self.exitcode is not None:
             return
 
         with contextlib.suppress(ValueError):
-            if not process.is_alive():
-                return
-
             await to_thread.run_sync(process.join, _JOIN_GRACE_SECONDS)
+            if self.exitcode is not None or not process.is_alive():
+                return
 
             logger.warning("Child process didn't shut down successfully, terminating")
             process.terminate()
