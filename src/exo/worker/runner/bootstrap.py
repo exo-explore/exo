@@ -80,6 +80,8 @@ def entrypoint(
         try:
             event_sender.close()
             task_receiver.close()
+        except Exception as e:
+            logger.info(f"we have one => {e.__repr__()}")
         finally:
             event_sender.join()
             task_receiver.join()
