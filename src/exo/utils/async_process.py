@@ -20,6 +20,7 @@ from anyio import (
     move_on_after,
     sleep,
     wait_readable,
+    to_thread,
 )
 from anyio.abc import TaskStatus
 from loguru import logger
@@ -29,6 +30,7 @@ from exo.utils.channels import Receiver, Sender, channel
 _STDOUT_FD = 1
 _STDERR_FD = 2
 _READ_CHUNK_SIZE = 64 * 1024
+_JOIN_GRACE_SECONDS = 3
 _TERMINATE_GRACE_SECONDS = 10.0
 _TERMINATE_RETRY_GRACE_SECONDS = 2.0
 _TERMINATE_ATTEMPTS = 10
@@ -38,13 +40,13 @@ _KILL_GRACE_SECONDS = 5.0
 @final
 class AsyncProcess:
     def __init__(
-        self,
-        target: Callable[..., object] | None = None,
-        name: str | None = None,
-        args: Iterable[object] = (),
-        kwargs: Mapping[str, object] | None = None,
-        *,
-        daemon: bool | None = None,
+            self,
+            target: Callable[..., object] | None = None,
+            name: str | None = None,
+            args: Iterable[object] = (),
+            kwargs: Mapping[str, object] | None = None,
+            *,
+            daemon: bool | None = None,
     ) -> None:
         # setup state
         self._target = target
@@ -214,6 +216,8 @@ class AsyncProcess:
             if not process.is_alive():
                 return
 
+            await to_thread.run_sync(process.join, _JOIN_GRACE_SECONDS)
+
             logger.warning("Child process didn't shut down successfully, terminating")
             process.terminate()
             with move_on_after(_TERMINATE_GRACE_SECONDS):
@@ -246,11 +250,11 @@ class AsyncProcess:
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
 def _run_with_captured_stdio(
-    stdout: DupFd,
-    stderr: DupFd,
-    target: Callable[..., object] | None,
-    *target_args: object,
-    **target_kwargs: object,
+        stdout: DupFd,
+        stderr: DupFd,
+        target: Callable[..., object] | None,
+        *target_args: object,
+        **target_kwargs: object,
 ) -> None:
     stdout_fd = stdout.detach()
     stderr_fd = stderr.detach()
