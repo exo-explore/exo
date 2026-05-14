@@ -391,18 +391,11 @@ class RunnerSupervisor:
             cause: str = f"exitcode={rc}"
 
         if e is not None:
-            # Process RunnerTerminationError if possible
-            if isinstance(e, RunnerTerminationError) and (
-                (err := e.get_exception()) is not None
-            ):
-                logger.error("ouuu we recovered exception :)")
-                e = err
-
             # Record how runner shut down, try exception, resort to RunnerTerminationError fallback
             if isinstance(e, Exception):
                 logger.opt(exception=e).error(f"Runner terminated with {cause}")
             else:
-                cause = f"{cause}\nUnpickleable error: {e}"
+                cause = f"{cause}\nRunner error: {e}"
                 logger.error(f"Runner terminated with {cause}")
         else:
             logger.error(f"Runner terminated with {cause}")

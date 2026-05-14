@@ -1,5 +1,4 @@
 import os
-import pickle
 import resource
 import traceback
 from dataclasses import dataclass
@@ -22,22 +21,9 @@ class RunnerTerminationError:
     exception_message: str
     exception_repr: str
     traceback: str
-    pickled_exception: bytes | None
 
     @classmethod
     def from_exception(cls, e: Exception) -> Self:
-        try:
-            # this adds best-effort pickling support for failed runner
-            from tblib import (  # pyright: ignore[reportMissingTypeStubs]
-                pickling_support,
-            )
-
-            pickling_support.install(e)  # pyright: ignore[reportUnknownMemberType]
-
-            pickled_exception = pickle.dumps(e, protocol=pickle.HIGHEST_PROTOCOL)
-        except pickle.PicklingError:
-            pickled_exception = None
-
         return cls(
             exception_type=type(e).__qualname__,
             exception_message=str(e),
@@ -45,25 +31,7 @@ class RunnerTerminationError:
             traceback="".join(
                 traceback.TracebackException.from_exception(e).format(chain=True)
             ),
-            pickled_exception=pickled_exception,
         )
-
-    def get_exception(self) -> Exception | None:
-        if self.pickled_exception is None:
-            return None
-
-        # this adds best-effort pickling support for failed runner
-        from tblib import (  # pyright: ignore[reportMissingTypeStubs]
-            pickling_support,
-        )
-
-        pickling_support.install()  # pyright: ignore[reportUnknownMemberType]
-
-        # should not catch unpickle error - wrong bytes should never intentionally be set
-        e = pickle.loads(self.pickled_exception)  # pyright: ignore[reportAny]
-        if not isinstance(e, Exception):
-            raise TypeError("The pickled object is not an exception")
-        return e
 
     def __str__(self) -> str:
         return f"{self.exception_type}: {self.exception_message}\n{self.traceback}"
@@ -92,8 +60,6 @@ def entrypoint(
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
-        raise TypeError()
-
         event_sender_downcast: MpSender[Event] = cast(MpSender[Event], event_sender)
 
         from exo.worker.runner.runner import Runner
