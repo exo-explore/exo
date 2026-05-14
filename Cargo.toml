@@ -57,6 +57,35 @@ zenoh-plugin-trait = "=1.9.0"
 netwatcher = "0.6.0"
 bytemuck = "1.25.0"
 
+[patch.crates-io]
+zenoh = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-buffers = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-codec = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-collections = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-config = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-core = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-crypto = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-keyexpr = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-commons = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-quic = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-quic_datagram = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-tcp = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-tls = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-udp = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-unixsock_stream = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-ws = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-macros = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-plugin-trait = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-protocol = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-result = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-runtime = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-sync = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-task = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-transport = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-util = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh_backend_traits = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+
 [workspace.lints.rust]
 static_mut_refs = "warn"      # Or use "warn" instead of deny
 incomplete_features = "allow"
