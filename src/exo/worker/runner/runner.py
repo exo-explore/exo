@@ -79,13 +79,14 @@ class RunnerTerminationError:
             pickled_exception = pickle.dumps(e)
         except pickle.PicklingError:
             pickled_exception = None
+        args = tuple(repr(arg) for arg in e.args)  # pyright: ignore[reportAny]
 
         return cls(
             exception_module=type(e).__module__,
             exception_type=type(e).__qualname__,
             exception_message=str(e),
             exception_repr=repr(e),
-            exception_args_repr=tuple(repr(arg) for arg in e.args),  # pyright: ignore[reportAny]
+            exception_args_repr=args,
             traceback="".join(
                 traceback.TracebackException.from_exception(e).format(chain=True)
             ),
@@ -128,7 +129,7 @@ class Runner:
         self,
         bound_instance: BoundInstance,
         builder: Builder,
-        event_sender: MpSender[Event | RunnerTerminationError],
+        event_sender: MpSender[Event],
         task_receiver: MpReceiver[Task],
     ):
         self.event_sender = event_sender

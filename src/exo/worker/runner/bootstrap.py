@@ -1,5 +1,6 @@
 import os
 import resource
+from typing import cast
 
 import loguru
 
@@ -36,6 +37,8 @@ def entrypoint(
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
+        event_sender_downcast: MpSender[Event] = cast(MpSender[Event], event_sender)
+
         from exo.worker.runner.runner import Runner
 
         builder: Builder
@@ -43,7 +46,7 @@ def entrypoint(
             from exo.worker.engines.image.builder import MfluxBuilder
 
             builder = MfluxBuilder(
-                event_sender, cancel_receiver, bound_instance.bound_shard
+                event_sender_downcast, cancel_receiver, bound_instance.bound_shard
             )
         else:
             from exo.worker.engines.mlx.patches import apply_mlx_patches
@@ -55,11 +58,11 @@ def entrypoint(
             # evil sharing of the event sender
             builder = MlxBuilder(
                 model_id=bound_instance.bound_shard.model_card.model_id,
-                event_sender=event_sender,
+                event_sender=event_sender_downcast,
                 cancel_receiver=cancel_receiver,
             )
 
-        runner = Runner(bound_instance, builder, event_sender, task_receiver)
+        runner = Runner(bound_instance, builder, event_sender_downcast, task_receiver)
         runner.main()
     except ClosedResourceError:
         logger.warning("Runner communication closed unexpectedly")
