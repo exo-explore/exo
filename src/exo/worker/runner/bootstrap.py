@@ -18,11 +18,9 @@ logger: "loguru.Logger" = loguru.logger
 
 @dataclass(frozen=True)
 class RunnerTerminationError:
-    exception_module: str
     exception_type: str
     exception_message: str
     exception_repr: str
-    exception_args_repr: tuple[str, ...]
     traceback: str
     pickled_exception: bytes | None
 
@@ -32,14 +30,11 @@ class RunnerTerminationError:
             pickled_exception = pickle.dumps(e)
         except pickle.PicklingError:
             pickled_exception = None
-        args = tuple(repr(arg) for arg in e.args)  # pyright: ignore[reportAny]
 
         return cls(
-            exception_module=type(e).__module__,
             exception_type=type(e).__qualname__,
             exception_message=str(e),
             exception_repr=repr(e),
-            exception_args_repr=args,
             traceback="".join(
                 traceback.TracebackException.from_exception(e).format(chain=True)
             ),
@@ -55,6 +50,9 @@ class RunnerTerminationError:
         if not isinstance(e, Exception):
             raise TypeError("The pickled object is not an exception")
         return e
+
+    def __str__(self) -> str:
+        return f"{self.exception_type}: {self.exception_message}\n{self.traceback}"
 
 
 def entrypoint(

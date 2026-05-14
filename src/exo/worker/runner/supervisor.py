@@ -321,8 +321,9 @@ class RunnerSupervisor:
             with self._ev_recv as events:
                 async for event in events:
                     if isinstance(event, RunnerTerminationError):
-                        raise TypeError("placeholder error")
-                        continue  # TODO: handle event here!!!
+                        # try to get exception if possible
+                        await self._check_runner(event)
+                        break
                     if isinstance(event, RunnerStatusUpdated):
                         self.status = event.runner_status
                     if isinstance(event, TaskAcknowledged):
@@ -360,7 +361,9 @@ class RunnerSupervisor:
                 if not self.runner_process.is_alive():
                     await self._check_runner(RuntimeError("Runner found to be dead"))
 
-    async def _check_runner(self, e: Exception | None = None) -> None:
+    async def _check_runner(
+        self, e: RunnerTerminationError | Exception | None = None
+    ) -> None:
         if not self._cancel_watch_runner.cancel_called:
             self._cancel_watch_runner.cancel()
         logger.info("Checking runner's status")
@@ -385,10 +388,21 @@ class RunnerSupervisor:
             except Exception:
                 cause = f"signal={sig}"
         else:
-            cause = f"exitcode={rc}"
+            cause: str = f"exitcode={rc}"
 
-        if e is not None:  # Record how runner shut down
-            logger.opt(exception=e).error(f"Runner terminated with {cause}")
+        if e is not None:
+            # Process RunnerTerminationError if possible
+            if isinstance(e, RunnerTerminationError) and (
+                (err := e.get_exception()) is not None
+            ):
+                e = err
+
+            # Record how runner shut down, try exception, resort to RunnerTerminationError fallback
+            if isinstance(e, Exception):
+                logger.opt(exception=e).error(f"Runner terminated with {cause}")
+            else:
+                cause = f"{cause}\nUnpickleable error: {e}"
+                logger.error(f"Runner terminated with {cause}")
         else:
             logger.error(f"Runner terminated with {cause}")
 
