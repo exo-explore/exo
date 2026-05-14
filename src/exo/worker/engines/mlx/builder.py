@@ -19,7 +19,6 @@ from exo.worker.runner.llm_inference.batch_generator import (
     SequentialGenerator,
 )
 from exo.worker.runner.llm_inference.tool_parsers import make_mlx_parser
-
 from .cache import KVPrefixCache
 from .types import Model
 from .utils_mlx import (
@@ -27,12 +26,13 @@ from .utils_mlx import (
     load_mlx_items,
 )
 from .vision import VisionProcessor
+from ...runner.runner import RunnerTerminationError
 
 
 @dataclass
 class MlxBuilder(Builder):
     model_id: ModelId
-    event_sender: MpSender[Event]
+    event_sender: MpSender[Event | RunnerTerminationError]
     cancel_receiver: MpReceiver[TaskId]
     inference_model: Model | None = None
     tokenizer: TokenizerWrapper | None = None

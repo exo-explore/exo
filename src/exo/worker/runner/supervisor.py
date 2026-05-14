@@ -51,6 +51,7 @@ from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import entrypoint
 from exo.worker.runner.diagnostics import (
     RunnerDiagnosticCollector,
+    RunnerUnknown,
 )
 
 PREFILL_TIMEOUT_SECONDS = 60
@@ -63,7 +64,7 @@ class RunnerStdioHandler:
     _stderr_rx: Receiver[bytes]
     _stdout_log: AsyncFile[str]
     _stderr_log: AsyncFile[str]
-    _diagnostics: RunnerDiagnosticCollector = field(
+    diagnostics: RunnerDiagnosticCollector = field(
         default_factory=RunnerDiagnosticCollector
     )
 
@@ -71,12 +72,12 @@ class RunnerStdioHandler:
 
     @classmethod
     async def create(
-            cls,
-            *,
-            stdout_rx: Receiver[bytes],
-            stderr_rx: Receiver[bytes],
-            stdout_log_path: PathLike[str] = EXO_RUNNER_STDOUT_LOG,
-            stderr_log_path: PathLike[str] = EXO_RUNNER_STDERR_LOG,
+        cls,
+        *,
+        stdout_rx: Receiver[bytes],
+        stderr_rx: Receiver[bytes],
+        stdout_log_path: PathLike[str] = EXO_RUNNER_STDOUT_LOG,
+        stderr_log_path: PathLike[str] = EXO_RUNNER_STDERR_LOG,
     ) -> Self:
         # these are append only logs used to gather data for log template mining
         #
@@ -119,11 +120,11 @@ class RunnerStdioHandler:
                 await self._stderr_log.aclose()
 
     async def _handle_runner_output(
-            self,
-            rx: Receiver[bytes],
-            logfile: AsyncFile[str],
-            log_line: Callable[[str], None],
-            record_diagnostic_line: Callable[[str], None],
+        self,
+        rx: Receiver[bytes],
+        logfile: AsyncFile[str],
+        log_line: Callable[[str], None],
+        record_diagnostic_line: Callable[[str], None],
     ):
         # The diagnostic collector is deliberately line-level for now. It records
         # bounded stderr context and known failure anchors; the supervisor
@@ -184,7 +185,7 @@ class RunnerSupervisor:
     runner_process: AsyncProcess
     _runner_stdio_handler: RunnerStdioHandler
     initialize_timeout: float
-    _ev_recv: MpReceiver[Event]
+    _ev_recv: MpReceiver[Event | Exception]
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
     _cancel_sender: MpSender[TaskId]
@@ -200,13 +201,13 @@ class RunnerSupervisor:
 
     @classmethod
     async def create(
-            cls,
-            *,
-            bound_instance: BoundInstance,
-            event_sender: Sender[Event],
-            initialize_timeout: float = 400,
+        cls,
+        *,
+        bound_instance: BoundInstance,
+        event_sender: Sender[Event],
+        initialize_timeout: float = 400,
     ) -> Self:
-        ev_send, ev_recv = mp_channel[Event]()
+        ev_send, ev_recv = mp_channel[Event | None]()
         task_sender, task_recv = mp_channel[Task]()
         cancel_sender, cancel_recv = mp_channel[TaskId]()
 
@@ -325,8 +326,8 @@ class RunnerSupervisor:
                         self.pending.pop(event.task_id).set()
                         continue
                     if (
-                            isinstance(event, TaskStatusUpdated)
-                            and event.task_status == TaskStatus.Complete
+                        isinstance(event, TaskStatusUpdated)
+                        and event.task_status == TaskStatus.Complete
                     ):
                         # If a task has just been completed, we should be working on it.
                         assert isinstance(
@@ -366,6 +367,8 @@ class RunnerSupervisor:
                 await self.runner_process.stop()
         rc = self.runner_process.exitcode
         logger.info(f"Runner exited with exit code {rc}")
+
+        # If exit code is 0 then the transient errors were recoverable, meaning we don't need runner diagnostics
         if rc == 0:
             return
 
@@ -381,12 +384,16 @@ class RunnerSupervisor:
         else:
             cause = f"exitcode={rc}"
 
-        # Record why runner has shut down
-        if e is not None:
+        if e is not None:  # Record how runner shut down
             logger.opt(exception=e).error(f"Runner terminated with {cause}")
         else:
             logger.error(f"Runner terminated with {cause}")
 
+        diagnostics = [
+            d
+            for d in self._runner_stdio_handler.diagnostics.diagnostics()
+            if not isinstance(d, RunnerUnknown)
+        ]
         for task in self.in_progress.values():
             if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
                 with anyio.CancelScope(shield=True):
@@ -395,6 +402,7 @@ class RunnerSupervisor:
                             command_id=task.command_id,
                             chunk=ErrorChunk(
                                 model=self.shard_metadata.model_card.model_id,
+                                diagnostics=diagnostics,
                                 error_message=(
                                     "Runner shutdown before completing command "
                                     f"({cause})"
@@ -404,7 +412,9 @@ class RunnerSupervisor:
                     )
 
         try:
-            self.status = RunnerFailed(error_message=f"Terminated ({cause})")
+            self.status = RunnerFailed(
+                error_message=f"Terminated ({cause})", diagnostics=diagnostics
+            )
             with anyio.CancelScope(shield=True):
                 await self._event_sender.send(
                     RunnerStatusUpdated(

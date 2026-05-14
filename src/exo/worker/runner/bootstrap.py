@@ -3,22 +3,22 @@ import resource
 
 import loguru
 
-from exo.shared.types.events import Event, RunnerStatusUpdated
+from exo.shared.types.events import Event
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
-from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.engines.base import Builder
+from exo.worker.runner.runner import RunnerTerminationError
 
 logger: "loguru.Logger" = loguru.logger
 
 
 def entrypoint(
-        bound_instance: BoundInstance,
-        event_sender: MpSender[Event],
-        task_receiver: MpReceiver[Task],
-        cancel_receiver: MpReceiver[TaskId],
-        _logger: "loguru.Logger",
+    bound_instance: BoundInstance,
+    event_sender: MpSender[Event | RunnerTerminationError],
+    task_receiver: MpReceiver[Task],
+    cancel_receiver: MpReceiver[TaskId],
+    _logger: "loguru.Logger",
 ) -> None:
     global logger
     logger = _logger
@@ -39,8 +39,6 @@ def entrypoint(
         from exo.worker.runner.runner import Runner
 
         builder: Builder
-
-        raise TypeError()
         if bound_instance.is_image_model:
             from exo.worker.engines.image.builder import MfluxBuilder
 
@@ -69,12 +67,7 @@ def entrypoint(
         logger.opt(exception=e).warning(
             f"Runner {bound_instance.bound_runner_id} crashed with critical exception {e}"
         )
-        event_sender.send(
-            RunnerStatusUpdated(
-                runner_id=bound_instance.bound_runner_id,
-                runner_status=RunnerFailed(error_message=str(e)),
-            )
-        )
+        event_sender.send(RunnerTerminationError.from_exception(e))
         raise SystemExit(1) from e
     finally:
         try:

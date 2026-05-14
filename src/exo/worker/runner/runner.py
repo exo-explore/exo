@@ -1,9 +1,11 @@
+import pickle
 import queue
 import threading
 import time
+import traceback
 from dataclasses import dataclass
 from enum import Enum
-from typing import BinaryIO
+from typing import BinaryIO, Self, Optional
 
 from anyio import ClosedResourceError, EndOfStream
 
@@ -61,6 +63,46 @@ PREFILL_PICKUP_TIMEOUT_SECONDS = 3
 PREFILL_FINISH_TIMEOUT_SECONDS = 300
 
 
+@dataclass(frozen=True)
+class RunnerTerminationError:
+    exception_module: str
+    exception_type: str
+    exception_message: str
+    exception_repr: str
+    exception_args_repr: tuple[str, ...]
+    traceback: str
+    pickled_exception: bytes | None
+
+    @classmethod
+    def from_exception(cls, e: Exception) -> Self:
+        try:
+            pickled_exception = pickle.dumps(e)
+        except pickle.PicklingError:
+            pickled_exception = None
+
+        return cls(
+            exception_module=type(e).__module__,
+            exception_type=type(e).__qualname__,
+            exception_message=str(e),
+            exception_repr=repr(e),
+            exception_args_repr=tuple(repr(arg) for arg in e.args),  # pyright: ignore[reportAny]
+            traceback="".join(
+                traceback.TracebackException.from_exception(e).format(chain=True)
+            ),
+            pickled_exception=pickled_exception,
+        )
+
+    def get_exception(self) -> Optional[Exception]:
+        if self.pickled_exception is None:
+            return None
+
+        # should not catch unpickle error - wrong bytes should never intentionally be set
+        e = pickle.loads(self.pickled_exception)  # pyright: ignore[reportAny]
+        if not isinstance(e, Exception):
+            raise TypeError("The pickled object is not an exception")
+        return e
+
+
 @dataclass
 class PrefillTask:
     request: PrefillRequest
@@ -86,7 +128,7 @@ class Runner:
         self,
         bound_instance: BoundInstance,
         builder: Builder,
-        event_sender: MpSender[Event],
+        event_sender: MpSender[Event | RunnerTerminationError],
         task_receiver: MpReceiver[Task],
     ):
         self.event_sender = event_sender

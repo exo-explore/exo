@@ -11,7 +11,6 @@ from exo.api.types import (
 )
 from exo.shared.models.model_cards import ModelId
 from exo.utils.pydantic_ext import TaggedModel
-
 from .common import CommandId
 
 
@@ -32,6 +31,7 @@ class TokenChunk(BaseChunk):
 
 class ErrorChunk(BaseChunk):
     error_message: str
+    diagnostics: list[KnownRunnerDiagnostic]
     finish_reason: Literal["error"] = "error"
 
 

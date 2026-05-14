@@ -49,12 +49,11 @@ class RunnerUnknown(BaseRunnerDiagnostic):
     pass
 
 
-RunnerDiagnostic = (
-        RunnerMetalGpuTimeout
-        | RunnerRingTransportError
-        | RunnerRingSocketReceivingError
-        | RunnerUnknown
+KnownRunnerDiagnostic = (
+    RunnerMetalGpuTimeout | RunnerRingTransportError | RunnerRingSocketReceivingError
 )
+
+RunnerDiagnostic = KnownRunnerDiagnostic | RunnerUnknown
 
 
 @final
@@ -80,8 +79,8 @@ class RunnerDiagnosticCollector:
         # `RunnerRingSocketReceivingError` usually happens a few times before `RunnerRingTransportError`
         #  therefore we deduplicate and only keep last `RunnerRingSocketReceivingError`
         if len(self._diagnostics) > 0 and (
-                isinstance(self._diagnostics[-1], RunnerRingSocketReceivingError) and
-                isinstance(diagnostic, RunnerRingSocketReceivingError)
+            isinstance(self._diagnostics[-1], RunnerRingSocketReceivingError)
+            and isinstance(diagnostic, RunnerRingSocketReceivingError)
         ):
             self._diagnostics[-1] = diagnostic
             return
@@ -92,8 +91,8 @@ class RunnerDiagnosticCollector:
         return tuple(self._diagnostics)
 
     def _classify_line(
-            self, line: str, evidence: tuple[str, ...]
-    ) -> RunnerDiagnostic | None:
+        self, line: str, evidence: tuple[str, ...]
+    ) -> KnownRunnerDiagnostic | None:
         if metal_error := _parse_metal_gpu_timeout(line, evidence):
             return metal_error
 
@@ -110,7 +109,7 @@ class RunnerDiagnosticCollector:
 
 
 def _parse_metal_gpu_timeout(
-        line: str, evidence: tuple[str, ...]
+    line: str, evidence: tuple[str, ...]
 ) -> RunnerMetalGpuTimeout | None:
     match = _METAL_GPU_TIMEOUT_RE.match(line)
     if match is None:
@@ -123,7 +122,7 @@ def _parse_metal_gpu_timeout(
 
 
 def _parse_ring_socket_error(
-        line: str, evidence: tuple[str, ...]
+    line: str, evidence: tuple[str, ...]
 ) -> RunnerRingSocketReceivingError | None:
     match = _RING_SOCKET_ERRNO_RE.match(line)
     if match is None:

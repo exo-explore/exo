@@ -47,6 +47,7 @@ from exo.worker.engines.image.generate import (
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
 )
+from exo.worker.runner.runner import RunnerTerminationError
 
 
 def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
@@ -97,7 +98,7 @@ def _send_traces_if_enabled(
 
 @dataclass
 class MfluxBuilder(Builder):
-    event_sender: MpSender[Event]
+    event_sender: MpSender[Event | RunnerTerminationError]
     cancel_receiver: MpReceiver[TaskId]
     shard_metadata: ShardMetadata | None = None
     image_model: DistributedImageModel | None = None
