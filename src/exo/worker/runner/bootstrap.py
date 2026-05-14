@@ -27,7 +27,14 @@ class RunnerTerminationError:
     @classmethod
     def from_exception(cls, e: Exception) -> Self:
         try:
-            pickled_exception = pickle.dumps(e)
+            # this adds best-effort pickling support for failed runner
+            from tblib import (  # pyright: ignore[reportMissingTypeStubs]
+                pickling_support,
+            )
+
+            pickling_support.install(e)  # pyright: ignore[reportUnknownMemberType]
+
+            pickled_exception = pickle.dumps(e, protocol=pickle.HIGHEST_PROTOCOL)
         except pickle.PicklingError:
             pickled_exception = None
 
