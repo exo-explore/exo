@@ -2,6 +2,7 @@ import os
 import resource
 
 import loguru
+from antlr4 import IllegalStateException
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId
@@ -14,11 +15,11 @@ logger: "loguru.Logger" = loguru.logger
 
 
 def entrypoint(
-    bound_instance: BoundInstance,
-    event_sender: MpSender[Event],
-    task_receiver: MpReceiver[Task],
-    cancel_receiver: MpReceiver[TaskId],
-    _logger: "loguru.Logger",
+        bound_instance: BoundInstance,
+        event_sender: MpSender[Event],
+        task_receiver: MpReceiver[Task],
+        cancel_receiver: MpReceiver[TaskId],
+        _logger: "loguru.Logger",
 ) -> None:
     global logger
     logger = _logger
@@ -39,6 +40,8 @@ def entrypoint(
         from exo.worker.runner.runner import Runner
 
         builder: Builder
+
+        raise IllegalStateException("ee")
 
         if bound_instance.is_image_model:
             from exo.worker.engines.image.builder import MfluxBuilder
@@ -62,7 +65,6 @@ def entrypoint(
 
         runner = Runner(bound_instance, builder, event_sender, task_receiver)
         runner.main()
-
     except ClosedResourceError:
         logger.warning("Runner communication closed unexpectedly")
     except Exception as e:
@@ -75,6 +77,7 @@ def entrypoint(
                 runner_status=RunnerFailed(error_message=str(e)),
             )
         )
+        raise SystemExit(1) from e
     finally:
         try:
             event_sender.close()
