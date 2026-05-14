@@ -54,7 +54,7 @@ let
           # Install from pre-built wheel
           nativeBuildInputs = [ final.pyprojectWheelHook ];
           dontStrip = true;
-          passthru = prev.exo-pyo3-bindings.passthru or { };
+          passthru = prev.exo-rs.passthru or { };
 
           postInstall = ''
             local siteDir=$out/${final.python.sitePackages}/exo_rs
@@ -224,7 +224,7 @@ let
           ++ lib.optionals isDarwin [ pkgs.macmon ];
           passthru = {
             venv = venv name;
-            evenv = ((pythonSet.overrideScope editableOverlay).mkVirtualEnv "${name}-evenv" (members // { exo = (members.exo or [ ]) ++ [ "dev" ]; })).overrideAttrs (_: {
+            evenv = ((pythonSet.overrideScope editableOverlay).mkVirtualEnv "${name}-evenv" (members // { exo = (members.exo or [ ]) ++ [ "dev" ]; exo-rs = [ ]; })).overrideAttrs (_: {
               venvSkip = [ "lib/python${python.pythonVersion}/site-packages/mlx/share/cmake/*" "lib/python${python.pythonVersion}/site-packages/build_backend.py" ];
             });
           } // lib.optionalAttrs cudaSupport {
