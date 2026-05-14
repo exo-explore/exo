@@ -2,7 +2,6 @@ import os
 import resource
 
 import loguru
-from antlr4 import IllegalStateException
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId
@@ -41,8 +40,7 @@ def entrypoint(
 
         builder: Builder
 
-        raise IllegalStateException("ee")
-
+        raise TypeError()
         if bound_instance.is_image_model:
             from exo.worker.engines.image.builder import MfluxBuilder
 
