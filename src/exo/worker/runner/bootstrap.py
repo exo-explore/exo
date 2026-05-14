@@ -75,7 +75,7 @@ def entrypoint(
                 runner_status=RunnerFailed(error_message=str(e)),
             )
         )
-        os._exit(1)
+        exit(1)
     finally:
         try:
             event_sender.close()
