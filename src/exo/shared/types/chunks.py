@@ -33,8 +33,11 @@ class TokenChunk(BaseChunk):
 
 class ErrorChunk(BaseChunk):
     error_message: str
-    diagnostics: list[KnownRunnerDiagnostic]
     finish_reason: Literal["error"] = "error"
+
+    # NOTE: this is a bad place to put this, creates semantic overlap/confusion;
+    #       at some point someone put this somewhere else, thanks :)
+    diagnostics: list[KnownRunnerDiagnostic] = []
 
 
 class ToolCallChunk(BaseChunk):
