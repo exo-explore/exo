@@ -1,10 +1,13 @@
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
 from collections.abc import Generator
+from math import isqrt
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -58,6 +61,7 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
     TensorShardMetadata,
 )
+from exo.utils.info_gatherer.macmon import MacmonMetrics
 from exo.worker.engines.mlx.auto_parallel import (
     get_inner_model,
     get_layers,
@@ -88,7 +92,7 @@ class HostList(RootModel[list[str]]):
 
 
 def mlx_distributed_init(
-    bound_instance: BoundInstance,
+        bound_instance: BoundInstance,
 ) -> mx.distributed.Group:
     """
     Initialize MLX distributed.
@@ -148,7 +152,7 @@ def mlx_distributed_init(
 
 
 def initialize_mlx(
-    bound_instance: BoundInstance,
+        bound_instance: BoundInstance,
 ) -> mx.distributed.Group:
     # should we unseed it?
     # TODO: pass in seed from params
@@ -161,8 +165,8 @@ def initialize_mlx(
 
 
 def load_mlx_items(
-    bound_instance: BoundInstance,
-    group: mx.distributed.Group | None,
+        bound_instance: BoundInstance,
+        group: mx.distributed.Group | None,
 ) -> Generator[
     ModelLoadingResponse, None, tuple[Model, TokenizerWrapper, "VisionProcessor | None"]
 ]:
@@ -230,8 +234,8 @@ def load_mlx_items(
 
 
 def shard_and_load(
-    shard_metadata: ShardMetadata,
-    group: mx.distributed.Group,
+        shard_metadata: ShardMetadata,
+        group: mx.distributed.Group,
 ) -> Generator[ModelLoadingResponse, None, tuple[nn.Module, TokenizerWrapper]]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
@@ -320,10 +324,10 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     elif "gpt-oss" in model_id_lower:
         return [200002, 200012]
     elif (
-        "qwen3.5" in model_id_lower
-        or "qwen-3.5" in model_id_lower
-        or "qwen3.6" in model_id_lower
-        or "qwen-3.6" in model_id_lower
+            "qwen3.5" in model_id_lower
+            or "qwen-3.5" in model_id_lower
+            or "qwen3.6" in model_id_lower
+            or "qwen-3.6" in model_id_lower
     ):
         # For Qwen3.5 / Qwen3.6: 248046 (<|im_end|>), 248044 (<|endoftext|>)
         return [248046, 248044]
@@ -333,7 +337,7 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
 
 
 def load_tokenizer_for_model_id(
-    model_id: ModelId, model_path: Path, *, trust_remote_code: bool = TRUST_REMOTE_CODE
+        model_id: ModelId, model_path: Path, *, trust_remote_code: bool = TRUST_REMOTE_CODE
 ) -> TokenizerWrapper:
     """
     Load tokenizer for a model given its ID and local path.
@@ -383,13 +387,15 @@ def load_tokenizer_for_model_id(
         else:
             from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
 
-        hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(model_path)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(
+            model_path)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
         # Patch encode to use internal tiktoken model directly
         # transformers 5.x has a bug in the encode->pad path for slow tokenizers
         def _patched_encode(text: str, **_kwargs: object) -> list[int]:
             # Pass allowed_special="all" to handle special tokens like <|im_user|>
-            return list(hf_tokenizer.model.encode(text, allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+            return list(hf_tokenizer.model.encode(text,
+                                                  allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
         hf_tokenizer.encode = _patched_encode
         return TokenizerWrapper(
@@ -513,7 +519,7 @@ def _strip_v4_thinking_markers(content: str) -> str:
 
 
 def consolidate_system_messages(
-    messages: list[dict[str, Any]],
+        messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """
     System messages almost exclusively must go at the start of a message
@@ -539,9 +545,9 @@ def consolidate_system_messages(
 
 
 def render_chat_template(
-    tokenizer: TokenizerWrapper,
-    messages: list[dict[str, Any]],
-    task_params: TextGenerationTaskParams,
+        tokenizer: TokenizerWrapper,
+        messages: list[dict[str, Any]],
+        task_params: TextGenerationTaskParams,
 ) -> str:
     """
     Convert TextGenerationTaskParams to a chat template prompt.
@@ -656,8 +662,8 @@ def render_chat_template(
 
 
 def apply_chat_template(
-    tokenizer: TokenizerWrapper,
-    task_params: TextGenerationTaskParams,
+        tokenizer: TokenizerWrapper,
+        task_params: TextGenerationTaskParams,
 ) -> str:
     messages: list[dict[str, ChatTemplateValue]] = []
     if task_params.chat_template_messages is not None:
@@ -682,8 +688,8 @@ def apply_chat_template(
 
 
 def system_prompt_token_count(
-    task_params: TextGenerationTaskParams,
-    tokenizer: TokenizerWrapper,
+        task_params: TextGenerationTaskParams,
+        tokenizer: TokenizerWrapper,
 ) -> int:
     """Approximate token count of the system prompt portion of the input."""
     parts: list[str] = []
@@ -715,7 +721,7 @@ def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> b
 
 
 def fix_unmatched_think_end_tokens(
-    tokens: mx.array, tokenizer: TokenizerWrapper
+        tokens: mx.array, tokenizer: TokenizerWrapper
 ) -> mx.array:
     if not tokenizer.has_thinking:
         return tokens
@@ -786,6 +792,113 @@ def mlx_force_oom(size: int = 200000) -> None:
     a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
     b = mx.random.uniform(shape=(size, size), dtype=mx.float32)
     mx.eval(a, b)
+    c = mx.matmul(a, b)  # (size,size)
+    d = mx.matmul(a, c)  # (size,size)
+    e = mx.matmul(b, c)  # (size,size)
+    f = mx.sigmoid(d + e)  # (size,size)
+    mx.eval(f)
+
+
+_MLX_FORCE_OOM_DTYPE_BYTES = 4
+_MLX_FORCE_OOM_LIVE_MATRICES = 3
+_MLX_FORCE_OOM_OVERSHOOT_NUMERATOR = 11
+_MLX_FORCE_OOM_OVERSHOOT_DENOMINATOR = 10
+
+
+def _ceil_div(numerator: int, denominator: int) -> int:
+    return -(-numerator // denominator)
+
+
+def _ceil_sqrt(value: int) -> int:
+    if value <= 0:
+        raise ValueError("value must be positive")
+    root = isqrt(value)
+    if root * root == value:
+        return root
+    return root + 1
+
+
+def get_mlx_force_oom_allocation_bytes(size: int) -> int:
+    """Return bytes used by the three float32 matrices that should tip MLX over."""
+    if size <= 0:
+        raise ValueError("size must be positive")
+    return _MLX_FORCE_OOM_LIVE_MATRICES * size * size * _MLX_FORCE_OOM_DTYPE_BYTES
+
+
+def get_mlx_force_oom_size(available_ram: int) -> int:
+    """
+    Return the square matrix side length for an MLX Metal OOM probe.
+
+    The legacy constants map to roughly three live float32 matrices exceeding
+    available unified memory. Keep each single matrix below available memory so
+    MLX reaches the Metal allocation path instead of rejecting the shape early.
+    """
+    if available_ram <= 0:
+        raise ValueError("available_ram must be positive")
+
+    target_live_bytes = _ceil_div(
+        available_ram * _MLX_FORCE_OOM_OVERSHOOT_NUMERATOR,
+        _MLX_FORCE_OOM_OVERSHOOT_DENOMINATOR,
+    )
+    target_matrix_bytes = _ceil_div(target_live_bytes, _MLX_FORCE_OOM_LIVE_MATRICES)
+    target_elements = _ceil_div(target_matrix_bytes, _MLX_FORCE_OOM_DTYPE_BYTES)
+    return _ceil_sqrt(target_elements)
+
+
+def _available_memory_from_macmon_output(output: str) -> int | None:
+    lines = output.strip().splitlines()
+    if not lines:
+        return None
+    try:
+        return MacmonMetrics.from_raw_json(lines[0]).memory.ram_available.in_bytes
+    except ValueError:
+        return None
+
+
+def _read_macmon_available_memory() -> int | None:
+    macmon_path = os.getenv("EXO_MACMON_PATH") or shutil.which("macmon")
+    if macmon_path is None:
+        return None
+
+    try:
+        result = subprocess.run(
+            [macmon_path, "pipe", "--samples", "1", "--interval", "100"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if result.returncode != 0:
+        return None
+    return _available_memory_from_macmon_output(result.stdout)
+
+
+def _get_available_unified_memory() -> int:
+    if sys.platform == "darwin":
+        macmon_available = _read_macmon_available_memory()
+        if macmon_available is not None:
+            return macmon_available
+
+    import psutil
+
+    mem: int = psutil.virtual_memory().available
+    return mem
+
+
+def mlx_force_oom2() -> None:
+    """
+    Force an MLX Metal OOM using the current machine's available unified memory.
+    """
+    mx.set_default_device(mx.gpu)
+    mx.clear_cache()
+    size = get_mlx_force_oom_size(_get_available_unified_memory())
+
+    a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
+    b = mx.random.uniform(shape=(size, size), dtype=mx.float32)
+    mx.eval(a, b)
     c = mx.matmul(a, b)
     d = mx.matmul(a, c)
     e = mx.matmul(b, c)
@@ -819,9 +932,9 @@ def set_wired_limit_for_model(model_size: Memory):
 
 
 def mlx_cleanup(
-    model: Model | None,
-    tokenizer: TokenizerWrapper | None,
-    group: mx.distributed.Group | None,
+        model: Model | None,
+        tokenizer: TokenizerWrapper | None,
+        group: mx.distributed.Group | None,
 ) -> None:
     del model, tokenizer, group
     mx.clear_cache()
@@ -886,13 +999,13 @@ def _parse_kimi_tool_calls(text: str):
 
 
 def mx_all_gather_tasks(
-    tasks: list[TextGeneration],
-    group: mx.distributed.Group | None,
+        tasks: list[TextGeneration],
+        group: mx.distributed.Group | None,
 ) -> tuple[list[TextGeneration], list[TextGeneration]]:
     def encode_task_id(task_id: TaskId) -> list[int]:
         utf8_task_id = task_id.encode()
         return [
-            int.from_bytes(utf8_task_id[i : i + 1]) for i in range(len(utf8_task_id))
+            int.from_bytes(utf8_task_id[i: i + 1]) for i in range(len(utf8_task_id))
         ]
 
     def decode_task_id(encoded_task_id: list[int]) -> TaskId:
