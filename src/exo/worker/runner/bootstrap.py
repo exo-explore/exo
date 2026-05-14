@@ -60,8 +60,6 @@ def entrypoint(
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
-        raise TypeError("i am an evil error :)")
-
         event_sender_downcast: MpSender[Event] = cast(MpSender[Event], event_sender)
 
         from exo.worker.runner.runner import Runner
