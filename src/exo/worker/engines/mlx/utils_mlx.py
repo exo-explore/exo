@@ -387,15 +387,13 @@ def load_tokenizer_for_model_id(
         else:
             from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
 
-        hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(
-            model_path)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(model_path)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
         # Patch encode to use internal tiktoken model directly
         # transformers 5.x has a bug in the encode->pad path for slow tokenizers
         def _patched_encode(text: str, **_kwargs: object) -> list[int]:
             # Pass allowed_special="all" to handle special tokens like <|im_user|>
-            return list(hf_tokenizer.model.encode(text,
-                                                  allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+            return list(hf_tokenizer.model.encode(text, allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
         hf_tokenizer.encode = _patched_encode
         return TokenizerWrapper(
