@@ -48,12 +48,11 @@ from exo.utils.async_process import AsyncProcess
 from exo.utils.channels import MpReceiver, MpSender, Receiver, Sender, mp_channel
 from exo.utils.fs import ensure_parent_directory_exists
 from exo.utils.task_group import TaskGroup
-from exo.worker.runner.bootstrap import entrypoint
+from exo.worker.runner.bootstrap import RunnerTerminationError, entrypoint
 from exo.worker.runner.diagnostics import (
     RunnerDiagnosticCollector,
     RunnerUnknown,
 )
-from exo.worker.runner.runner import RunnerTerminationError
 
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5

@@ -17,6 +17,7 @@ from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerFailed, RunnerId
 from exo.utils.async_process import AsyncProcess
 from exo.utils.channels import channel, mp_channel
+from exo.worker.runner.bootstrap import RunnerTerminationError
 from exo.worker.runner.supervisor import RunnerStdioHandler, RunnerSupervisor
 from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance
 
@@ -39,7 +40,7 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     event_sender, event_receiver = channel[Event]()
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
-    _, ev_recv = mp_channel[Event]()
+    _, ev_recv = mp_channel[Event | RunnerTerminationError]()
 
     bound_instance: BoundInstance = get_bound_mlx_ring_instance(
         instance_id=InstanceId("instance-a"),

@@ -1,6 +1,9 @@
 import os
+import pickle
 import resource
-from typing import cast
+import traceback
+from dataclasses import dataclass
+from typing import Self, cast
 
 import loguru
 
@@ -9,9 +12,49 @@ from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.engines.base import Builder
-from exo.worker.runner.runner import RunnerTerminationError
 
 logger: "loguru.Logger" = loguru.logger
+
+
+@dataclass(frozen=True)
+class RunnerTerminationError:
+    exception_module: str
+    exception_type: str
+    exception_message: str
+    exception_repr: str
+    exception_args_repr: tuple[str, ...]
+    traceback: str
+    pickled_exception: bytes | None
+
+    @classmethod
+    def from_exception(cls, e: Exception) -> Self:
+        try:
+            pickled_exception = pickle.dumps(e)
+        except pickle.PicklingError:
+            pickled_exception = None
+        args = tuple(repr(arg) for arg in e.args)  # pyright: ignore[reportAny]
+
+        return cls(
+            exception_module=type(e).__module__,
+            exception_type=type(e).__qualname__,
+            exception_message=str(e),
+            exception_repr=repr(e),
+            exception_args_repr=args,
+            traceback="".join(
+                traceback.TracebackException.from_exception(e).format(chain=True)
+            ),
+            pickled_exception=pickled_exception,
+        )
+
+    def get_exception(self) -> Exception | None:
+        if self.pickled_exception is None:
+            return None
+
+        # should not catch unpickle error - wrong bytes should never intentionally be set
+        e = pickle.loads(self.pickled_exception)  # pyright: ignore[reportAny]
+        if not isinstance(e, Exception):
+            raise TypeError("The pickled object is not an exception")
+        return e
 
 
 def entrypoint(
