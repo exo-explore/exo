@@ -6,17 +6,20 @@
     topologyData,
     downloads,
     nodeDisk,
+    nodeStorageConfig,
     refreshState,
     lastUpdate as lastUpdateStore,
     startDownload,
     cancelDownload,
     deleteDownload,
+    setStorageConfig,
   } from "$lib/stores/app.svelte";
   import {
     getDownloadTag,
     extractModelIdFromDownload,
     extractShardMetadata,
   } from "$lib/utils/downloads";
+  import { addToast } from "$lib/stores/toast.svelte";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
 
   type CellStatus =
@@ -36,7 +39,15 @@
         total: number;
         modelDirectory?: string;
       }
-    | { kind: "failed"; modelDirectory?: string }
+    | { kind: "failed"; errorMessage?: string; modelDirectory?: string }
+    | {
+        kind: "rejected";
+        reason: string;
+        requiredBytes: number;
+        availableBytes: number;
+        limitBytes?: number;
+        modelDirectory?: string;
+      }
     | { kind: "not_present" };
 
   type ModelCardInfo = {
@@ -62,11 +73,14 @@
     label: string;
     diskAvailable?: number;
     diskTotal?: number;
+    storageLimit?: number;
+    storagePolicy?: "manual" | "auto-evict";
   };
 
   const data = $derived(topologyData());
   const downloadsData = $derived(downloads());
   const nodeDiskData = $derived(nodeDisk());
+  const storageConfigData = $derived(nodeStorageConfig());
 
   function getNodeLabel(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -123,10 +137,37 @@
     return Math.min(100, Math.max(0, value as number));
   }
 
+  function getNodeUsedStorage(nodeId: string): number {
+    const nodeDownloads = downloadsData?.[nodeId];
+    if (!nodeDownloads || !Array.isArray(nodeDownloads)) return 0;
+    let total = 0;
+    for (const entry of nodeDownloads) {
+      const tagged = getDownloadTag(entry);
+      if (!tagged) continue;
+      const [tag, payload] = tagged;
+      if (tag === "ModelReady") {
+        total += getBytes(payload.total);
+      } else if (tag === "ModelDownloading") {
+        const prog = (payload.download_progress ?? payload.downloadProgress) as
+          | Record<string, unknown>
+          | undefined;
+        if (prog) total += getBytes(prog.downloaded);
+      }
+    }
+    return total;
+  }
+
+  function storageBarColor(percent: number): string {
+    if (percent >= 90) return "bg-red-500";
+    if (percent >= 70) return "bg-yellow-500";
+    return "bg-green-500";
+  }
+
   const CELL_PRIORITY: Record<CellStatus["kind"], number> = {
-    completed: 4,
-    downloading: 3,
-    pending: 2,
+    completed: 5,
+    downloading: 4,
+    pending: 3,
+    rejected: 2,
     failed: 1,
     not_present: 0,
   };
@@ -179,6 +220,80 @@
   let nodeColumns = $state<NodeColumn[]>([]);
   let infoRow = $state<ModelRow | null>(null);
 
+  let storageConfigNode = $state<NodeColumn | null>(null);
+  let configMaxGb = $state<number | null>(null);
+  let configNoLimit = $state(true);
+  let configPolicy = $state<"manual" | "auto-evict">("manual");
+  let configSaving = $state(false);
+  let configApplyAll = $state(false);
+  let configDiskTotalGb = $derived(
+    storageConfigNode
+      ? Math.round((storageConfigNode.diskTotal ?? 0) / 1024 ** 3)
+      : 0,
+  );
+  let configEffectiveCapacityGb = $derived.by(() => {
+    if (!storageConfigNode) return 0;
+    const diskAvail = storageConfigNode.diskAvailable ?? 0;
+    const exoUsed = getNodeUsedStorage(storageConfigNode.nodeId);
+    return Math.round((diskAvail + exoUsed) / 1024 ** 3);
+  });
+  let configLimitExceedsDisk = $derived(
+    !configNoLimit &&
+      configMaxGb != null &&
+      configMaxGb > configEffectiveCapacityGb &&
+      configEffectiveCapacityGb > 0,
+  );
+
+  function openStorageConfig(col: NodeColumn) {
+    storageConfigNode = col;
+    if (col.storageLimit != null) {
+      configNoLimit = false;
+      configMaxGb = Math.round(col.storageLimit / 1024 ** 3);
+    } else {
+      configNoLimit = true;
+      configMaxGb = null;
+    }
+    configPolicy = col.storagePolicy ?? "manual";
+    configApplyAll = false;
+  }
+
+  async function freeSpaceAndRetry(
+    nodeId: string,
+    shardMetadata: Record<string, unknown>,
+  ) {
+    try {
+      const col = nodeColumns.find((c) => c.nodeId === nodeId);
+      const limitGb = col?.storageLimit ? col.storageLimit / 1024 ** 3 : null;
+      await setStorageConfig([nodeId], limitGb, "auto-evict");
+      await startDownload(nodeId, shardMetadata);
+      refreshState();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }
+
+  async function saveStorageConfig() {
+    if (!storageConfigNode) return;
+    configSaving = true;
+    try {
+      const maxGb = configNoLimit ? null : configMaxGb;
+      const nodeIds = configApplyAll ? null : [storageConfigNode.nodeId];
+      await setStorageConfig(nodeIds, maxGb, configPolicy);
+      storageConfigNode = null;
+      refreshState();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: `Failed to save storage config: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    } finally {
+      configSaving = false;
+    }
+  }
+
   $effect(() => {
     try {
       if (!downloadsData || Object.keys(downloadsData).length === 0) {
@@ -190,11 +305,14 @@
       const allNodeIds = Object.keys(downloadsData);
       const columns: NodeColumn[] = allNodeIds.map((nodeId) => {
         const diskInfo = nodeDiskData?.[nodeId];
+        const storageConfig = storageConfigData?.[nodeId];
         return {
           nodeId,
           label: getNodeLabel(nodeId),
           diskAvailable: diskInfo?.available?.inBytes,
           diskTotal: diskInfo?.total?.inBytes,
+          storageLimit: storageConfig?.maxStorage?.inBytes ?? undefined,
+          storagePolicy: storageConfig?.storagePolicy,
         };
       });
 
@@ -235,10 +353,14 @@
             ((payload.model_directory ?? payload.modelDirectory) as string) ||
             undefined;
           let cell: CellStatus;
-          if (tag === "DownloadCompleted") {
+          if (tag === "ModelReady") {
             const totalBytes = getBytes(payload.total);
-            cell = { kind: "completed", totalBytes, modelDirectory };
-          } else if (tag === "DownloadOngoing") {
+            cell = {
+              kind: "completed",
+              totalBytes,
+              modelDirectory,
+            };
+          } else if (tag === "ModelDownloading") {
             const rawProgress =
               payload.download_progress ?? payload.downloadProgress ?? {};
             const prog = rawProgress as Record<string, unknown>;
@@ -258,8 +380,21 @@
               etaMs,
               modelDirectory,
             };
-          } else if (tag === "DownloadFailed") {
-            cell = { kind: "failed", modelDirectory };
+          } else if (tag === "ModelRejected") {
+            cell = {
+              kind: "rejected",
+              reason: (payload.reason as string) ?? "Storage limit exceeded",
+              requiredBytes: getBytes(payload.required),
+              availableBytes: getBytes(payload.available),
+              limitBytes: getBytes(payload.limit),
+              modelDirectory,
+            };
+          } else if (tag === "ModelDownloadFailed") {
+            const errorMessage =
+              (payload.error_message as string) ??
+              (payload.errorMessage as string) ??
+              undefined;
+            cell = { kind: "failed", errorMessage, modelDirectory };
           } else {
             const downloaded = getBytes(
               payload.downloaded ??
@@ -285,12 +420,13 @@
       }
 
       function rowSortKey(row: ModelRow): number {
-        // in progress (4) -> completed (3) -> paused (2) -> not started (1) -> not present (0)
+        // in progress (4) -> completed (3) -> rejected/paused (2) -> not started (1) -> not present (0)
         let best = 0;
         for (const cell of Object.values(row.cells)) {
           let score = 0;
           if (cell.kind === "downloading") score = 4;
           else if (cell.kind === "completed") score = 3;
+          else if (cell.kind === "rejected") score = 2;
           else if (cell.kind === "pending" && cell.downloaded > 0)
             score = 2; // paused
           else if (cell.kind === "pending" || cell.kind === "failed") score = 1; // not started
@@ -460,15 +596,57 @@
                 Model
               </th>
               {#each nodeColumns as col}
+                {@const usedStorage = getNodeUsedStorage(col.nodeId)}
+                {@const quotaLimit = col.storageLimit}
+                {@const diskAvail = col.diskAvailable ?? 0}
+                {@const storageMax =
+                  quotaLimit != null
+                    ? Math.min(quotaLimit, diskAvail + usedStorage)
+                    : diskAvail + usedStorage}
+                {@const storagePercent =
+                  storageMax > 0
+                    ? Math.min(100, (usedStorage / storageMax) * 100)
+                    : 0}
                 <th
                   class="px-4 py-3 text-[11px] uppercase tracking-wider text-exo-light-gray font-medium text-center whitespace-nowrap min-w-[120px]"
                 >
-                  <div>{col.label}</div>
-                  {#if col.diskAvailable != null}
-                    <div
-                      class="text-[9px] text-white/70 normal-case tracking-normal mt-0.5"
+                  <div class="flex items-center justify-center gap-1">
+                    <span>{col.label}</span>
+                    <button
+                      type="button"
+                      class="p-0.5 rounded hover:bg-white/10 transition-colors"
+                      onclick={() => openStorageConfig(col)}
+                      title="Storage settings"
+                      aria-label="Storage settings for {col.label}"
                     >
-                      {formatBytes(col.diskAvailable)} free
+                      <svg
+                        class="w-3.5 h-3.5 text-white/40 hover:text-exo-yellow transition-colors"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                      >
+                        <path
+                          fill-rule="evenodd"
+                          d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  {#if storageMax > 0}
+                    <div class="text-[9px] normal-case tracking-normal mt-1">
+                      <div
+                        class="w-full h-1.5 bg-white/10 rounded-full overflow-hidden"
+                      >
+                        <div
+                          class="h-full rounded-full transition-all duration-300 {storageBarColor(
+                            storagePercent,
+                          )}"
+                          style="width: {storagePercent.toFixed(1)}%"
+                        ></div>
+                      </div>
+                      <div class="text-white/60 mt-0.5">
+                        {formatBytes(usedStorage)} / {formatBytes(storageMax)}
+                      </div>
                     </div>
                   {/if}
                 </th>
@@ -636,36 +814,85 @@
                           <span class="text-white/40 text-sm">...</span>
                         {/if}
                       </div>
-                    {:else if cell.kind === "failed"}
+                    {:else if cell.kind === "rejected"}
                       <div
                         class="flex flex-col items-center gap-1"
-                        title="Download failed"
+                        title={cell.reason}
                       >
                         <svg
-                          class="w-7 h-7 text-red-400"
+                          class="w-7 h-7 text-orange-400"
                           viewBox="0 0 20 20"
                           fill="currentColor"
                         >
                           <path
                             fill-rule="evenodd"
-                            d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                            d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
                             clip-rule="evenodd"
                           ></path>
                         </svg>
-                        <div class="flex gap-1">
-                          {#if row.shardMetadata}
+                        <span class="text-[10px] text-orange-400/80"
+                          >Need {formatBytes(cell.requiredBytes)}</span
+                        >
+                        <span class="text-[10px] text-white/50"
+                          >{formatBytes(cell.availableBytes)} avail</span
+                        >
+                        {#if row.shardMetadata}
+                          <div class="flex items-center gap-2 mt-0.5">
+                            <button
+                              type="button"
+                              class="text-[9px] text-white/50 hover:text-orange-300 transition-colors cursor-pointer border border-white/10 hover:border-orange-400/40 rounded px-1.5 py-0.5"
+                              onclick={() =>
+                                freeSpaceAndRetry(
+                                  col.nodeId,
+                                  row.shardMetadata!,
+                                )}
+                              title="Switch to auto-evict, remove least-recently-used models, and retry download"
+                            >
+                              Free space & retry
+                            </button>
                             <button
                               type="button"
                               class="text-white/50 hover:text-exo-yellow transition-colors cursor-pointer"
                               onclick={() =>
                                 startDownload(col.nodeId, row.shardMetadata!)}
-                              title="Retry download on this node"
+                              title="Retry download (without freeing space)"
                             >
                               {@render downloadIcon()}
                             </button>
-                          {/if}
-                          {@render deleteButton(col.nodeId, row.modelId)}
+                          </div>
+                        {/if}
+                      </div>
+                    {:else if cell.kind === "failed"}
+                      <div class="flex flex-col items-center gap-1">
+                        <!-- Error icon with tooltip -->
+                        <div class="relative group">
+                          <svg
+                            class="w-7 h-7 text-red-400 cursor-help"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                          >
+                            <path
+                              fill-rule="evenodd"
+                              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                              clip-rule="evenodd"
+                            ></path>
+                          </svg>
+                          <div
+                            class="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-3 py-2 bg-black/95 border border-red-500/30 rounded-lg text-[10px] text-red-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 max-w-[300px] text-center"
+                          >
+                            {cell.errorMessage ?? "Download failed"}
+                          </div>
                         </div>
+                        {#if row.shardMetadata}
+                          <button
+                            type="button"
+                            class="text-[9px] text-white/50 hover:text-exo-yellow transition-colors cursor-pointer border border-white/10 hover:border-exo-yellow/40 rounded px-1.5 py-0.5"
+                            onclick={() =>
+                              startDownload(col.nodeId, row.shardMetadata!)}
+                          >
+                            Retry
+                          </button>
+                        {/if}
                       </div>
                     {:else}
                       <div
@@ -817,9 +1044,11 @@
                       ? 'bg-green-500/10 text-green-400/80 border border-green-500/20'
                       : cellStatus.kind === 'downloading'
                         ? 'bg-exo-yellow/10 text-exo-yellow/80 border border-exo-yellow/20'
-                        : cellStatus.kind === 'failed'
-                          ? 'bg-red-500/10 text-red-400/80 border border-red-500/20'
-                          : 'bg-white/5 text-white/50 border border-white/10'}"
+                        : cellStatus.kind === 'rejected'
+                          ? 'bg-orange-500/10 text-orange-400/80 border border-orange-500/20'
+                          : cellStatus.kind === 'failed'
+                            ? 'bg-red-500/10 text-red-400/80 border border-red-500/20'
+                            : 'bg-white/5 text-white/50 border border-white/10'}"
                   >
                     {col.label}
                     {#if cellStatus.kind === "downloading" && "percentage" in cellStatus}
@@ -844,8 +1073,221 @@
   </div>
 {/if}
 
+<!-- Storage config modal -->
+{#if storageConfigNode}
+  <div
+    class="fixed inset-0 z-[60] bg-black/60"
+    transition:fade={{ duration: 150 }}
+    onclick={() => (storageConfigNode = null)}
+    role="presentation"
+  ></div>
+  <div
+    class="fixed z-[60] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(80vw,360px)] bg-exo-dark-gray border border-exo-yellow/10 rounded-lg shadow-2xl p-4"
+    transition:fly={{ y: 10, duration: 200, easing: cubicOut }}
+    role="dialog"
+    aria-modal="true"
+    onkeydown={(e) => {
+      if (e.key === "Escape") storageConfigNode = null;
+    }}
+  >
+    <div class="flex items-start justify-between mb-4">
+      <h3 class="font-mono text-sm text-white">
+        Storage — {configApplyAll ? "All nodes" : storageConfigNode.label}
+      </h3>
+      <button
+        type="button"
+        class="p-1 rounded hover:bg-white/10 transition-colors text-white/50"
+        onclick={() => (storageConfigNode = null)}
+        aria-label="Close storage settings"
+      >
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+          <path
+            d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"
+          />
+        </svg>
+      </button>
+    </div>
+
+    <div class="space-y-4">
+      <!-- Apply to all nodes -->
+      {#if nodeColumns.length > 1}
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            bind:checked={configApplyAll}
+            class="accent-exo-yellow w-4 h-4"
+          />
+          <span class="text-xs font-mono text-white/80">Apply to all nodes</span
+          >
+        </label>
+      {/if}
+
+      <!-- No limit checkbox -->
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          bind:checked={configNoLimit}
+          onchange={() => {
+            if (!configNoLimit && configMaxGb == null) {
+              configMaxGb = configDiskTotalGb || 50;
+            }
+          }}
+          class="accent-exo-yellow w-4 h-4"
+        />
+        <span class="text-xs font-mono text-white/80">Unlimited storage</span>
+      </label>
+
+      <!-- Max storage slider -->
+      <div class="space-y-1.5">
+        <div class="flex items-baseline justify-between">
+          <label
+            class="text-[11px] font-mono text-white/50 uppercase tracking-wider"
+            for="storage-max-gb"
+          >
+            Max storage
+          </label>
+          <span
+            class="text-xs font-mono tabular-nums transition-opacity {configNoLimit
+              ? 'opacity-30'
+              : 'text-white'}"
+          >
+            {configMaxGb ?? 0} GB
+          </span>
+        </div>
+        <input
+          id="storage-max-gb"
+          type="range"
+          min="1"
+          max={Math.max(configDiskTotalGb, configMaxGb ?? 1)}
+          step="1"
+          bind:value={configMaxGb}
+          disabled={configNoLimit}
+          class="slider w-full h-1.5 rounded-full appearance-none cursor-pointer
+            disabled:opacity-30 disabled:cursor-not-allowed"
+        />
+        <div
+          class="flex justify-between text-[10px] font-mono text-white/30 transition-opacity {configNoLimit
+            ? 'opacity-30'
+            : ''}"
+        >
+          <span>1 GB</span>
+          <span>{Math.max(configDiskTotalGb, configMaxGb ?? 1)} GB</span>
+        </div>
+      </div>
+
+      <!-- Disk capacity warning -->
+      {#if configLimitExceedsDisk}
+        <div
+          class="flex items-start gap-2 px-3 py-2 rounded bg-orange-500/10 border border-orange-500/20"
+        >
+          <svg
+            class="w-4 h-4 text-orange-400 shrink-0 mt-0.5"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path
+              fill-rule="evenodd"
+              d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+              clip-rule="evenodd"
+            />
+          </svg>
+          <p class="text-[10px] text-orange-300/80 font-mono">
+            Disk only has {configEffectiveCapacityGb} GB available for models. The
+            {configMaxGb} GB limit has no effect.
+          </p>
+        </div>
+      {/if}
+
+      <!-- Policy selector -->
+      <div class="space-y-1.5">
+        <div
+          class="text-[11px] font-mono text-white/50 uppercase tracking-wider"
+        >
+          Eviction policy
+        </div>
+        <div class="flex gap-1">
+          <button
+            type="button"
+            class="flex-1 px-3 py-1.5 rounded text-xs font-mono transition-colors
+              {configPolicy === 'manual'
+              ? 'bg-exo-yellow/20 text-exo-yellow border border-exo-yellow/40'
+              : 'bg-exo-black/40 text-white/50 border border-exo-medium-gray/30 hover:text-white/70'}"
+            onclick={() => (configPolicy = "manual")}
+          >
+            Manual
+          </button>
+          <button
+            type="button"
+            class="flex-1 px-3 py-1.5 rounded text-xs font-mono transition-colors
+              {configPolicy === 'auto-evict'
+              ? 'bg-exo-yellow/20 text-exo-yellow border border-exo-yellow/40'
+              : 'bg-exo-black/40 text-white/50 border border-exo-medium-gray/30 hover:text-white/70'}"
+            onclick={() => (configPolicy = "auto-evict")}
+          >
+            Auto-evict
+          </button>
+        </div>
+        <p class="text-[10px] text-white/40 font-mono">
+          {#if configPolicy === "manual"}
+            Downloads that exceed the limit are rejected. Delete models
+            manually.
+          {:else}
+            Oldest unused models are automatically removed to make room.
+          {/if}
+        </p>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="flex justify-end gap-2 mt-5">
+      <button
+        type="button"
+        class="px-3 py-1.5 rounded text-xs font-mono text-white/50 hover:text-white/70 transition-colors"
+        onclick={() => (storageConfigNode = null)}
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="px-3 py-1.5 rounded text-xs font-mono bg-exo-yellow/20 text-exo-yellow border border-exo-yellow/40 hover:bg-exo-yellow/30 transition-colors disabled:opacity-50"
+        onclick={saveStorageConfig}
+        disabled={configSaving ||
+          (!configNoLimit && (configMaxGb == null || configMaxGb <= 0))}
+      >
+        {configSaving ? "Saving..." : "Save"}
+      </button>
+    </div>
+  </div>
+{/if}
+
 <style>
   table {
     min-width: max-content;
+  }
+
+  .slider {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #f5c518;
+    cursor: pointer;
+  }
+  .slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: none;
+    background: #f5c518;
+    cursor: pointer;
+  }
+  .slider:disabled::-webkit-slider-thumb {
+    cursor: not-allowed;
+  }
+  .slider:disabled::-moz-range-thumb {
+    cursor: not-allowed;
   }
 </style>

@@ -21,11 +21,11 @@ from exo.download.shard_downloader import ShardDownloader
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.commands import ForwarderDownloadCommand
 from exo.shared.types.common import NodeId
-from exo.shared.types.events import Event, NodeDownloadProgress
+from exo.shared.types.events import Event, IndexedEvent, NodeDownloadProgress
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import (
-    DownloadCompleted,
-    DownloadPending,
+    ModelNotDownloading,
+    ModelReady,
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 from exo.utils.channels import Receiver, Sender, channel
@@ -128,11 +128,13 @@ def _setup_coordinator(
 ]:
     cmd_send, cmd_recv = channel[ForwarderDownloadCommand]()
     event_send, event_recv = channel[Event]()
+    _indexed_send, indexed_recv = channel[IndexedEvent]()
     wrapped = SingletonShardDownloader(downloader)
     coordinator = DownloadCoordinator(
         node_id=NODE_ID,
         shard_downloader=wrapped,
         download_command_receiver=cmd_recv,
+        event_receiver=indexed_recv,
         event_sender=event_send,
     )
     return coordinator, cmd_send, event_recv
@@ -153,14 +155,14 @@ async def _collect_events(
 
 
 async def test_completed_status_not_downgraded_by_rescan() -> None:
-    """A model already marked DownloadCompleted must not revert to
-    DownloadPending when the periodic rescan reports a non-complete
+    """A model already marked ModelReady must not revert to
+    ModelNotDownloading when the periodic rescan reports a non-complete
     file-size status (regression test for #1918)."""
     downloader = FakeShardDownloader(status="not_started")
     coordinator, _cmd_send, event_recv = _setup_coordinator(downloader)
 
     # Pre-seed the coordinator with a completed status for the model
-    completed = DownloadCompleted(
+    completed = ModelReady(
         node_id=NODE_ID,
         shard_metadata=SHARD,
         total=Memory.from_mb(100),
@@ -174,21 +176,21 @@ async def test_completed_status_not_downgraded_by_rescan() -> None:
         # Wait for the rescan to process (it should skip the completed model)
         events = await _collect_events(event_recv, timeout=1.5)
 
-        # The model must still be DownloadCompleted — not downgraded
-        assert isinstance(coordinator.download_status[MODEL_ID], DownloadCompleted), (
-            f"Expected DownloadCompleted but got {type(coordinator.download_status[MODEL_ID]).__name__}"
+        # The model must still be ModelReady — not downgraded
+        assert isinstance(coordinator.download_status[MODEL_ID], ModelReady), (
+            f"Expected ModelReady but got {type(coordinator.download_status[MODEL_ID]).__name__}"
         )
 
-        # No DownloadPending event should have been emitted for this model
+        # No ModelNotDownloading event should have been emitted for this model
         pending_events = [
             e
             for e in events
             if isinstance(e, NodeDownloadProgress)
-            and isinstance(e.download_progress, DownloadPending)
+            and isinstance(e.download_progress, ModelNotDownloading)
             and e.download_progress.shard_metadata.model_card.model_id == MODEL_ID
         ]
         assert len(pending_events) == 0, (
-            f"Expected no DownloadPending events for completed model, got {len(pending_events)}"
+            f"Expected no ModelNotDownloading events for completed model, got {len(pending_events)}"
         )
     finally:
         await coordinator.shutdown()
@@ -200,7 +202,7 @@ async def test_completed_status_not_downgraded_by_rescan() -> None:
 async def test_incomplete_model_with_files_present_detected_as_complete() -> None:
     """When the per-file size check says not_started but resolve_existing_model
     confirms the model directory is complete, the model should be marked
-    DownloadCompleted (regression test for #1918 — initial scan case)."""
+    ModelReady (regression test for #1918 — initial scan case)."""
     downloader = FakeShardDownloader(status="not_started")
     coordinator, _cmd_send, event_recv = _setup_coordinator(downloader)
 
@@ -213,25 +215,21 @@ async def test_incomplete_model_with_files_present_detected_as_complete() -> Non
         try:
             events = await _collect_events(event_recv, timeout=1.5)
 
-            # The model should be DownloadCompleted (resolve_existing_model confirmed it)
-            assert isinstance(
-                coordinator.download_status.get(MODEL_ID), DownloadCompleted
-            ), (
-                f"Expected DownloadCompleted but got "
+            # The model should be ModelReady (resolve_existing_model confirmed it)
+            assert isinstance(coordinator.download_status.get(MODEL_ID), ModelReady), (
+                f"Expected ModelReady but got "
                 f"{type(coordinator.download_status.get(MODEL_ID)).__name__}"
             )
 
-            # Should have emitted a DownloadCompleted event
+            # Should have emitted a ModelReady event
             completed_events = [
                 e
                 for e in events
                 if isinstance(e, NodeDownloadProgress)
-                and isinstance(e.download_progress, DownloadCompleted)
+                and isinstance(e.download_progress, ModelReady)
                 and e.download_progress.shard_metadata.model_card.model_id == MODEL_ID
             ]
-            assert len(completed_events) > 0, (
-                "Expected at least one DownloadCompleted event"
-            )
+            assert len(completed_events) > 0, "Expected at least one ModelReady event"
         finally:
             await coordinator.shutdown()
             coordinator_task.cancel()
@@ -242,7 +240,7 @@ async def test_incomplete_model_with_files_present_detected_as_complete() -> Non
 async def test_genuinely_incomplete_model_stays_pending() -> None:
     """When the per-file size check says not_started and resolve_existing_model
     returns None (model truly not complete), the model should correctly be
-    DownloadPending."""
+    ModelNotDownloading."""
     downloader = FakeShardDownloader(status="not_started")
     coordinator, _cmd_send, event_recv = _setup_coordinator(downloader)
 
@@ -255,24 +253,24 @@ async def test_genuinely_incomplete_model_stays_pending() -> None:
         try:
             events = await _collect_events(event_recv, timeout=1.5)
 
-            # The model should be DownloadPending
+            # The model should be ModelNotDownloading
             assert isinstance(
-                coordinator.download_status.get(MODEL_ID), DownloadPending
+                coordinator.download_status.get(MODEL_ID), ModelNotDownloading
             ), (
-                f"Expected DownloadPending but got "
+                f"Expected ModelNotDownloading but got "
                 f"{type(coordinator.download_status.get(MODEL_ID)).__name__}"
             )
 
-            # Should have emitted a DownloadPending event
+            # Should have emitted a ModelNotDownloading event
             pending_events = [
                 e
                 for e in events
                 if isinstance(e, NodeDownloadProgress)
-                and isinstance(e.download_progress, DownloadPending)
+                and isinstance(e.download_progress, ModelNotDownloading)
                 and e.download_progress.shard_metadata.model_card.model_id == MODEL_ID
             ]
             assert len(pending_events) > 0, (
-                "Expected at least one DownloadPending event"
+                "Expected at least one ModelNotDownloading event"
             )
         finally:
             await coordinator.shutdown()

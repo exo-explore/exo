@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable
-from copy import copy
 from datetime import timedelta
 from pathlib import Path
 from typing import AsyncIterator, Callable
@@ -77,9 +76,7 @@ class NoopShardDownloader(ShardDownloader):
     async def get_shard_download_status_for_shard(
         self, shard: ShardMetadata
     ) -> RepoDownloadProgress:
-        dp = copy(NOOP_DOWNLOAD_PROGRESS)
-        dp.shard = shard
-        return dp
+        return NOOP_DOWNLOAD_PROGRESS.model_copy(update={"shard": shard})
 
 
 NOOP_DOWNLOAD_PROGRESS = RepoDownloadProgress(

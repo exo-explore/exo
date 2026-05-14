@@ -19,9 +19,9 @@ from exo.shared.types.commands import (
     StartDownload,
 )
 from exo.shared.types.common import NodeId, SystemId
-from exo.shared.types.events import Event, NodeDownloadProgress
+from exo.shared.types.events import Event, IndexedEvent, NodeDownloadProgress
 from exo.shared.types.memory import Memory
-from exo.shared.types.worker.downloads import DownloadCompleted
+from exo.shared.types.worker.downloads import ModelReady
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 from exo.utils.channels import Receiver, Sender, channel
 
@@ -132,6 +132,7 @@ async def test_re_download_after_delete_completes() -> None:
     cmd_send: Sender[ForwarderDownloadCommand]
     cmd_send, cmd_recv = channel[ForwarderDownloadCommand]()
     event_send, event_recv = channel[Event]()
+    _idx_send, idx_recv = channel[IndexedEvent]()
 
     fake_downloader = FakeShardDownloader()
     wrapped_downloader = SingletonShardDownloader(fake_downloader)
@@ -139,6 +140,7 @@ async def test_re_download_after_delete_completes() -> None:
         node_id=NODE_ID,
         shard_downloader=wrapped_downloader,
         download_command_receiver=cmd_recv,
+        event_receiver=idx_recv,
         event_sender=event_send,
     )
 
@@ -194,7 +196,7 @@ async def test_re_download_after_delete_completes() -> None:
 
 async def _wait_for_download_completed(
     event_recv: Receiver[Event], model_id: ModelId, timeout: float = 2.0
-) -> DownloadCompleted | None:
+) -> ModelReady | None:
     """Drain events until we see a DownloadCompleted for the given model, or timeout."""
     try:
         async with asyncio.timeout(timeout):
@@ -202,7 +204,7 @@ async def _wait_for_download_completed(
                 event = await event_recv.receive()
                 if (
                     isinstance(event, NodeDownloadProgress)
-                    and isinstance(event.download_progress, DownloadCompleted)
+                    and isinstance(event.download_progress, ModelReady)
                     and event.download_progress.shard_metadata.model_card.model_id
                     == model_id
                 ):
