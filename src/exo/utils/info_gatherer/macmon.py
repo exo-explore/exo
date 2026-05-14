@@ -1,3 +1,6 @@
+import os
+import shutil
+import subprocess
 from typing import Self
 
 from pydantic import BaseModel
@@ -68,3 +71,41 @@ class MacmonMetrics(TaggedModel):
     @classmethod
     def from_raw_json(cls, json: str) -> Self:
         return cls.from_raw(RawMacmonMetrics.model_validate_json(json))
+
+
+def read_macmon_metrics_once(
+    macmon_path: str | None = None,
+    *,
+    timeout: float = 5,
+) -> MacmonMetrics | None:
+    """
+    Read a single macmon sample, returning None when macmon is unavailable.
+    """
+    resolved_macmon_path = (
+        macmon_path or os.getenv("EXO_MACMON_PATH") or shutil.which("macmon")
+    )
+    if resolved_macmon_path is None:
+        return None
+
+    try:
+        result = subprocess.run(
+            [resolved_macmon_path, "pipe", "--samples", "1", "--interval", "100"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    lines = result.stdout.strip().splitlines()
+    if not lines:
+        return None
+
+    try:
+        return MacmonMetrics.from_raw_json(lines[0])
+    except ValueError:
+        return None

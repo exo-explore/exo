@@ -1,8 +1,6 @@
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -61,7 +59,7 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
     TensorShardMetadata,
 )
-from exo.utils.info_gatherer.macmon import MacmonMetrics
+from exo.utils.info_gatherer.macmon import read_macmon_metrics_once
 from exo.worker.engines.mlx.auto_parallel import (
     get_inner_model,
     get_layers,
@@ -832,16 +830,6 @@ def get_mlx_force_oom_size(available_ram: int) -> int:
     return root + 1
 
 
-def _available_memory_from_macmon_output(output: str) -> int | None:
-    lines = output.strip().splitlines()
-    if not lines:
-        return None
-    try:
-        return MacmonMetrics.from_raw_json(lines[0]).memory.ram_available.in_bytes
-    except ValueError:
-        return None
-
-
 def mlx_force_oom2() -> None:
     """
     Force an MLX Metal OOM using the current machine's available unified memory.
@@ -851,23 +839,9 @@ def mlx_force_oom2() -> None:
 
     available_memory: int | None = None
     if sys.platform == "darwin":
-        macmon_path = os.getenv("EXO_MACMON_PATH") or shutil.which("macmon")
-        if macmon_path is not None:
-            try:
-                result = subprocess.run(
-                    [macmon_path, "pipe", "--samples", "1", "--interval", "100"],
-                    capture_output=True,
-                    check=False,
-                    text=True,
-                    timeout=5,
-                )
-            except (OSError, subprocess.SubprocessError):
-                result = None
-
-            if result is not None and result.returncode == 0:
-                # macmon reports unified RAM in use more accurately on Apple
-                # Silicon; subtract usage from total via the parser above.
-                available_memory = _available_memory_from_macmon_output(result.stdout)
+        macmon_metrics = read_macmon_metrics_once()
+        if macmon_metrics is not None:
+            available_memory = macmon_metrics.memory.ram_available.in_bytes
 
     if available_memory is None:
         import psutil
