@@ -113,7 +113,7 @@ class RunnerStdioHandler:
                     self._stderr_rx,
                     self._stderr_log,
                     lambda line: logger.warning(f"Runner stderr: {line}"),  # pyright: ignore[reportUnknownLambdaType]
-                    self._diagnostics.record_line,
+                    self.diagnostics.record_line,
                 )
         finally:
             with CancelScope(shield=True):
