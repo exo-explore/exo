@@ -18,9 +18,7 @@ def test_get_mlx_force_oom_size_targets_slightly_above_available_memory() -> Non
 
     size = get_mlx_force_oom_size(available_ram)
 
-    assert get_mlx_force_oom_allocation_bytes(size) >= _target_live_bytes(
-        available_ram
-    )
+    assert get_mlx_force_oom_allocation_bytes(size) >= _target_live_bytes(available_ram)
     assert get_mlx_force_oom_allocation_bytes(size - 1) < _target_live_bytes(
         available_ram
     )
