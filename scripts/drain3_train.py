@@ -434,7 +434,7 @@ def build_parser() -> argparse.ArgumentParser:
 def parse_train_args(
     parser: argparse.ArgumentParser, argv: Sequence[str] | None
 ) -> Drain3TrainArgs:
-    parsed = cast(ParsedArgs, parser.parse_args(argv, namespace=ParsedArgs()))
+    parsed = parser.parse_args(argv, namespace=ParsedArgs())
     return Drain3TrainArgs(
         input_log=parsed.input_log,
         output_dir=parsed.output_dir,
