@@ -835,28 +835,39 @@ def mlx_force_oom2(size: int | None = None):
         root = isqrt(mat_elem)
         return root if root**2 == mat_elem else root + 1
 
+    def oom(size: int):
+        mx.set_default_device(mx.gpu)
+        mx.clear_cache()
+        a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
+        print("alloc-a")
+        b = mx.random.uniform(shape=(size, size), dtype=mx.float32)
+        print("alloc-b")
+        mx.eval(a, b)
+        print("eval-ab")
+        c = mx.matmul(a, b)  # (size,size)
+        print("mm-c")
+        d = mx.matmul(a, c)  # (size,size)
+        print("mm-d")
+        e = mx.matmul(b, c)  # (size,size)
+        print("mm-e")
+        f = mx.sigmoid(d + e)  # (size,size)
+        print("mm-f")
+        mx.eval(f)
+        print("eval-f")
+
     # use supplied size, or computer appropriate size otherwise
     size = size if size is not None else get_size(get_memory())
     print(f"size {size}")
+    while True:
+        try:
+            oom(size)
+            break
+        except RuntimeError as e:
+            print(f"message is: {str(e)}")
 
-    mx.set_default_device(mx.gpu)
-    mx.clear_cache()
-    a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
-    print("alloc-a")
-    b = mx.random.uniform(shape=(size, size), dtype=mx.float32)
-    print("alloc-b")
-    mx.eval(a, b)
-    print("eval-ab")
-    c = mx.matmul(a, b)  # (size,size)
-    print("mm-c")
-    d = mx.matmul(a, c)  # (size,size)
-    print("mm-d")
-    e = mx.matmul(b, c)  # (size,size)
-    print("mm-e")
-    f = mx.sigmoid(d + e)  # (size,size)
-    print("mm-f")
-    mx.eval(f)
-    print("eval-f")
+            # adjust size downwards to avoid explicit python exception
+            size = int(float(size) * 0.9)
+
     mlx_force_oom2()
 
 
