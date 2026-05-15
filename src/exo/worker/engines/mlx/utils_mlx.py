@@ -798,7 +798,9 @@ def mlx_force_oom(size: int = 200000) -> None:
 
 def mlx_force_oom2(size: int | None = None):
     """
-    Force an MLX Metal OOM using the current machine's available unified memory.
+    Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
+
+    NOTE: probably only works correctly on Apple unified memory
     """
 
     def ceil_div(num: int, den: int) -> int:
@@ -809,12 +811,12 @@ def mlx_force_oom2(size: int | None = None):
         if sys.platform == "darwin":
             macmon_metrics = read_macmon_metrics_once()
             if macmon_metrics is not None:
-                available_memory = macmon_metrics.memory.ram_available.in_bytes
+                m = macmon_metrics.memory
+                available_memory = m.ram_available.in_bytes + m.swap_available.in_bytes
 
         if available_memory is None:
-            available_memory = MemoryUsage.from_psutil(
-                override_memory=None
-            ).ram_available.in_bytes
+            m = MemoryUsage.from_psutil(override_memory=None)
+            available_memory = m.ram_available.in_bytes + m.swap_available.in_bytes
 
         print(f"found {available_memory / 1024**3} GB")
         return available_memory
