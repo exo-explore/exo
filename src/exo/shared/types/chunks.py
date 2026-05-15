@@ -12,7 +12,7 @@ from exo.api.types import (
 from exo.shared.models.model_cards import ModelId
 from exo.utils.pydantic_ext import TaggedModel
 
-from ...worker.runner.diagnostics import KnownRunnerDiagnostic
+from exo.worker.runner.diagnostics import KnownRunnerDiagnostic
 from .common import CommandId
 
 
