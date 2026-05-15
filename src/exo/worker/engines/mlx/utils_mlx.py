@@ -812,11 +812,11 @@ def mlx_force_oom2(size: int | None = None):
             macmon_metrics = read_macmon_metrics_once()
             if macmon_metrics is not None:
                 m = macmon_metrics.memory
-                available_memory = m.ram_available.in_bytes + m.swap_available.in_bytes
+                available_memory = m.ram_total.in_bytes + m.swap_total.in_bytes
 
         if available_memory is None:
             m = MemoryUsage.from_psutil(override_memory=None)
-            available_memory = m.ram_available.in_bytes + m.swap_available.in_bytes
+            available_memory = m.ram_total.in_bytes + m.swap_total.in_bytes
 
         print(f"found {available_memory / 1024**3} GB")
         return available_memory
