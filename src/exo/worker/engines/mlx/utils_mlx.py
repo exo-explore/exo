@@ -816,9 +816,6 @@ def mlx_force_oom2(bytes_alloc: int = 1024**5):  # the default is 1 petabyte lol
         # allocate a lot
         z = mx.zeros(shape=(size, size), dtype=mx.float32)
         t1 = [mx.random.uniform(shape=(size, size), dtype=mx.float32) for _ in range(2)]
-        print("t1-run")
-        mx.eval(*t1)
-        print("t1-eval")
 
         # mat mul cycle
         t2: list[mx.array] = []
