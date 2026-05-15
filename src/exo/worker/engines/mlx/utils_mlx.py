@@ -45,6 +45,7 @@ from pydantic import RootModel
 from exo.download.download_utils import build_model_path
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
+from exo.shared.types.profiling import MemoryUsage
 from exo.shared.types.tasks import TaskId, TextGeneration
 from exo.shared.types.text_generation import ChatTemplateValue, TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
@@ -844,10 +845,9 @@ def mlx_force_oom2() -> None:
             available_memory = macmon_metrics.memory.ram_available.in_bytes
 
     if available_memory is None:
-        import psutil
-
-        mem: int = psutil.virtual_memory().available
-        available_memory = mem
+        available_memory = MemoryUsage.from_psutil(
+            override_memory=None
+        ).ram_available.in_bytes
 
     size = get_mlx_force_oom_size(available_memory)
 
