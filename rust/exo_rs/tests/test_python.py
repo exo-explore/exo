@@ -1,9 +1,9 @@
 import asyncio
+import os
 
 import pytest
 from _pytest.capture import CaptureFixture
-from exo_pyo3_bindings import (
-    Keypair,
+from exo_rs import (
     NetworkingHandle,
     Pidfile,
     PyFromSwarm,
@@ -13,7 +13,7 @@ from exo_pyo3_bindings import (
 @pytest.mark.asyncio
 async def test_sleep_on_multiple_items() -> None:
     print("PYTHON: starting handle")
-    h = NetworkingHandle(Keypair.generate(), [], 0)
+    h = NetworkingHandle.new(os.urandom(16), [], 0)
     print("PYTHON: handle started")
 
     rt = asyncio.create_task(_await_recv(h))

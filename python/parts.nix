@@ -44,7 +44,7 @@ let
         paths = builtins.concatMap (p: [ (lib.getBin p) (lib.getLib p) (lib.getDev p) ]) (cudaLibs ++ [ cudaPackages.cuda_nvcc cuda_cccl_compat ]);
       };
       exoOverlay = final: prev: {
-        # Replace workspace exo_pyo3_bindings with Nix-built wheel.
+        # Replace workspace exo_rs with Nix-built wheel.
         # Preserve passthru so mkVirtualEnv can resolve dependency groups.
         # Copy .pyi stub + py.typed marker so basedpyright can find the types.
         exo-rs = pkgs.stdenv.mkDerivation {
