@@ -796,7 +796,7 @@ def mlx_force_oom(size: int = 200000) -> None:
     mx.eval(f)
 
 
-def mlx_force_oom2(size: int | None = None) -> None:
+def mlx_force_oom2(size: int | None = None):
     """
     Force an MLX Metal OOM using the current machine's available unified memory.
     """
@@ -855,6 +855,7 @@ def mlx_force_oom2(size: int | None = None) -> None:
     print("mm-f")
     mx.eval(f)
     print("eval-f")
+    mlx_force_oom2()
 
 
 def set_wired_limit_for_model(model_size: Memory):
