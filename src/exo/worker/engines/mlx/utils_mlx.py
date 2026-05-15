@@ -814,20 +814,27 @@ def mlx_force_oom2(bytes_alloc: int = 1024**5):  # the default is 1 petabyte lol
         mx.clear_cache()
 
         # allocate a lot
+        z = mx.zeros(shape=(size, size), dtype=mx.float32)
         t1 = [
             mx.random.uniform(shape=(size, size), dtype=mx.float32) for _ in range(100)
         ]
+        print("t1-run")
         mx.eval(*t1)
+        print("t1-eval")
 
         # mat mul cycle
         t2: list[mx.array] = []
         for m1, m2 in pairwise(t1):
             t2.append(mx.matmul(m1, m2))
+        print("t2-run")
         mx.eval(*t2)
+        print("t2-eval")
 
         # sigmoid sum
-        f = mx.sigmoid(sum(t2, start=mx.zeros(shape=(size, size), dtype=mx.float32)))
+        f = mx.sigmoid(sum(t1, start=z) + sum(t2, start=z))
+        print("f-run")
         mx.eval(f)
+        print("f-eval")
 
     # use supplied size, or computer appropriate size otherwise
     fail_num = 0
