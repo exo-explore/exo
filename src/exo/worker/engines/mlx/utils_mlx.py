@@ -60,7 +60,6 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
     TensorShardMetadata,
 )
-from exo.utils.info_gatherer.macmon import read_macmon_metrics_once
 from exo.worker.engines.mlx.auto_parallel import (
     get_inner_model,
     get_layers,
@@ -831,6 +830,7 @@ def mlx_force_oom2(bytes_alloc: int = 1024**5):  # the default is 1 petabyte lol
         mx.eval(f)
 
     # use supplied size, or computer appropriate size otherwise
+    fail_num = 0
     while True:
         try:
             print(f"size {bytes_alloc / 1024**3} GB")
@@ -844,7 +844,8 @@ def mlx_force_oom2(bytes_alloc: int = 1024**5):  # the default is 1 petabyte lol
                 raise RuntimeError(
                     "Tried to get max buffer, but wrong error format"
                 ) from e
-            bytes_alloc = int(max_bytes.group("max_bytes"))
+            bytes_alloc = round(int(max_bytes.group("max_bytes")) * 0.95**fail_num)
+            fail_num += 1
 
     mlx_force_oom2()
 
