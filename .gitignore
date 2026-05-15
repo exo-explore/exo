@@ -18,7 +18,6 @@ digest.txt
 app/EXO/build/
 dist/
 
-
 # rust
 target/
 **/*.rs.bk
@@ -41,3 +40,4 @@ tmp/models
 /build/exo
 /.claude/skills
 /.claude
+/.codex
