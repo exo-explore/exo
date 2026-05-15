@@ -840,13 +840,21 @@ def mlx_force_oom2(size: int | None = None) -> None:
     mx.set_default_device(mx.gpu)
     mx.clear_cache()
     a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
+    print("alloc-a")
     b = mx.random.uniform(shape=(size, size), dtype=mx.float32)
+    print("alloc-b")
     mx.eval(a, b)
+    print("eval-ab")
     c = mx.matmul(a, b)  # (size,size)
+    print("mm-c")
     d = mx.matmul(a, c)  # (size,size)
+    print("mm-d")
     e = mx.matmul(b, c)  # (size,size)
+    print("mm-e")
     f = mx.sigmoid(d + e)  # (size,size)
+    print("mm-f")
     mx.eval(f)
+    print("eval-f")
 
 
 def set_wired_limit_for_model(model_size: Memory):
