@@ -4,6 +4,7 @@ import gzip
 import json
 import re
 from pathlib import Path
+from typing import cast
 
 from exo.utils.drain3_training import (
     ClusterRow,
@@ -86,10 +87,14 @@ def test_template_outputs_are_stable(tmp_path: Path) -> None:
         "7\t3\tworker <*> started",
         "2\t1\tpath\\tchanged\\nagain",
     ]
-    payload = json.loads(templates_json_path.read_text(encoding="utf-8"))
+    payload = cast(
+        dict[str, object],
+        json.loads(templates_json_path.read_text(encoding="utf-8")),
+    )
     assert payload["messages_trained"] == 4
     assert payload["lines_per_second"] == 2.0
-    assert payload["clusters"][0] == {
+    clusters = cast(list[dict[str, object]], payload["clusters"])
+    assert clusters[0] == {
         "cluster_id": 7,
         "size": 3,
         "template": "worker <*> started",

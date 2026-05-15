@@ -14,14 +14,17 @@ loaded by later Drain3 tooling.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import re
 import sys
 import time
 from collections import Counter
 from collections.abc import Sequence
+from contextlib import ExitStack
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Protocol, cast
 
 from exo.utils.drain3_training import (
     DEFAULT_MASKS,
@@ -35,19 +38,116 @@ from exo.utils.drain3_training import (
 )
 
 
+class DrainCluster(Protocol):
+    cluster_id: int
+    size: int
+
+    def get_template(self) -> str: ...
+
+
+class DrainCore(Protocol):
+    clusters: Sequence[DrainCluster]
+
+
+class TemplateMinerProtocol(Protocol):
+    drain: DrainCore
+
+    def add_log_message(self, log_message: str) -> dict[str, str | int]: ...
+
+    def save_state(self, snapshot_reason: str) -> None: ...
+
+
+class TemplateMinerFactory(Protocol):
+    def __call__(
+        self, *, persistence_handler: object, config: object
+    ) -> TemplateMinerProtocol: ...
+
+
+class TemplateMinerConfigProtocol(Protocol):
+    mask_prefix: str
+    mask_suffix: str
+    masking_instructions: Sequence[object]
+    drain_sim_th: float
+    drain_depth: int
+    drain_max_children: int
+    drain_max_clusters: int | None
+    drain_extra_delimiters: Sequence[str]
+    profiling_enabled: bool
+
+    def load(self, config_filename: str) -> None: ...
+
+
+class TemplateMinerConfigFactory(Protocol):
+    def __call__(self) -> TemplateMinerConfigProtocol: ...
+
+
+class FilePersistenceFactory(Protocol):
+    def __call__(self, file_path: str) -> object: ...
+
+
+class MaskingInstructionFactory(Protocol):
+    def __call__(self, regex_pattern: str, mask_with: str) -> object: ...
+
+
+@dataclass(frozen=True)
 class Drain3Modules:
-    template_miner: Any
-    template_miner_config: Any
-    file_persistence: Any
-    masking_instruction: Any
+    template_miner: TemplateMinerFactory
+    template_miner_config: TemplateMinerConfigFactory
+    file_persistence: FilePersistenceFactory
+    masking_instruction: MaskingInstructionFactory
+
+
+@dataclass(frozen=True)
+class Drain3TrainArgs:
+    input_log: Path
+    output_dir: Path | None
+    state: Path | None
+    config: Path | None
+    message_regex: str | None
+    drop_unmatched: bool
+    include_empty: bool
+    encoding: str
+    max_lines: int | None
+    write_matches: bool
+    progress_interval: int
+    top: int
+    sim_th: float | None
+    depth: int | None
+    max_children: int | None
+    max_clusters: int | None
+    extra_delimiter: Sequence[str]
+    no_default_masks: bool
+    profiling: bool
+
+
+class ParsedArgs(argparse.Namespace):
+    input_log: Path
+    output_dir: Path | None
+    state: Path | None
+    config: Path | None
+    message_regex: str | None
+    drop_unmatched: bool
+    include_empty: bool
+    encoding: str
+    max_lines: int | None
+    write_matches: bool
+    progress_interval: int
+    top: int
+    sim_th: float | None
+    depth: int | None
+    max_children: int | None
+    max_clusters: int | None
+    extra_delimiter: list[str]
+    no_default_masks: bool
+    profiling: bool
 
 
 def load_drain3_modules() -> Drain3Modules:
     try:
-        from drain3 import TemplateMiner
-        from drain3.file_persistence import FilePersistence
-        from drain3.masking import MaskingInstruction
-        from drain3.template_miner_config import TemplateMinerConfig
+        drain3_module = importlib.import_module("drain3")
+        file_persistence_module = importlib.import_module("drain3.file_persistence")
+        masking_module = importlib.import_module("drain3.masking")
+        config_module = importlib.import_module("drain3.template_miner_config")
     except ModuleNotFoundError as exc:
         if exc.name == "drain3":
             raise SystemExit(
@@ -56,15 +156,25 @@ def load_drain3_modules() -> Drain3Modules:
             ) from exc
         raise
 
-    modules = Drain3Modules()
-    modules.template_miner = TemplateMiner
-    modules.template_miner_config = TemplateMinerConfig
-    modules.file_persistence = FilePersistence
-    modules.masking_instruction = MaskingInstruction
-    return modules
+    return Drain3Modules(
+        template_miner=cast(
+            TemplateMinerFactory, getattr(drain3_module, "TemplateMiner")
+        ),
+        template_miner_config=cast(
+            TemplateMinerConfigFactory, getattr(config_module, "TemplateMinerConfig")
+        ),
+        file_persistence=cast(
+            FilePersistenceFactory, getattr(file_persistence_module, "FilePersistence")
+        ),
+        masking_instruction=cast(
+            MaskingInstructionFactory, getattr(masking_module, "MaskingInstruction")
+        ),
+    )
 
 
-def build_config(args: argparse.Namespace, modules: Drain3Modules) -> Any:
+def build_config(
+    args: Drain3TrainArgs, modules: Drain3Modules
+) -> TemplateMinerConfigProtocol:
     config = modules.template_miner_config()
     if args.config is not None:
         config.load(str(args.config))
@@ -92,7 +202,7 @@ def build_config(args: argparse.Namespace, modules: Drain3Modules) -> Any:
     return config
 
 
-def cluster_rows(template_miner: Any) -> list[ClusterRow]:
+def cluster_rows(template_miner: TemplateMinerProtocol) -> list[ClusterRow]:
     clusters = sorted(
         template_miner.drain.clusters,
         key=lambda cluster: (-cluster.size, cluster.cluster_id),
@@ -107,7 +217,7 @@ def cluster_rows(template_miner: Any) -> list[ClusterRow]:
     ]
 
 
-def train_log_file(args: argparse.Namespace) -> TrainingSummary:
+def train_log_file(args: Drain3TrainArgs) -> TrainingSummary:
     input_path = args.input_log.resolve()
     if not input_path.is_file():
         raise FileNotFoundError(f"Input log file not found: {input_path}")
@@ -138,13 +248,12 @@ def train_log_file(args: argparse.Namespace) -> TrainingSummary:
         open_log_file(input_path, args.encoding) as log_file,
         changes_jsonl_path.open("w", encoding="utf-8") as changes_file,
     ):
-        matches_file_context = (
-            matches_jsonl_path.open("w", encoding="utf-8")
-            if matches_jsonl_path is not None
-            else None
-        )
-        try:
-            matches_file = matches_file_context.__enter__() if matches_file_context else None
+        with ExitStack() as stack:
+            matches_file = (
+                stack.enter_context(matches_jsonl_path.open("w", encoding="utf-8"))
+                if matches_jsonl_path is not None
+                else None
+            )
             for raw_line in log_file:
                 lines_read += 1
                 if args.max_lines is not None and lines_read > args.max_lines:
@@ -162,7 +271,7 @@ def train_log_file(args: argparse.Namespace) -> TrainingSummary:
                     skipped_empty += 1
                     continue
 
-                result = dict(template_miner.add_log_message(message))
+                result = template_miner.add_log_message(message)
                 change_type = str(result.get("change_type", "unknown"))
                 change_counts[change_type] += 1
                 messages_trained += 1
@@ -195,10 +304,6 @@ def train_log_file(args: argparse.Namespace) -> TrainingSummary:
                         f"{rate:.1f} lines/sec",
                         file=sys.stderr,
                     )
-        finally:
-            if matches_file_context is not None:
-                matches_file_context.__exit__(None, None, None)
-
     if messages_trained == 0:
         raise RuntimeError("No log messages were trained from the input file")
 
@@ -328,6 +433,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse_train_args(
+    parser: argparse.ArgumentParser, argv: Sequence[str] | None
+) -> Drain3TrainArgs:
+    parsed = cast(ParsedArgs, parser.parse_args(argv, namespace=ParsedArgs()))
+    return Drain3TrainArgs(
+        input_log=parsed.input_log,
+        output_dir=parsed.output_dir,
+        state=parsed.state,
+        config=parsed.config,
+        message_regex=parsed.message_regex,
+        drop_unmatched=parsed.drop_unmatched,
+        include_empty=parsed.include_empty,
+        encoding=parsed.encoding,
+        max_lines=parsed.max_lines,
+        write_matches=parsed.write_matches,
+        progress_interval=parsed.progress_interval,
+        top=parsed.top,
+        sim_th=parsed.sim_th,
+        depth=parsed.depth,
+        max_children=parsed.max_children,
+        max_clusters=parsed.max_clusters,
+        extra_delimiter=parsed.extra_delimiter,
+        no_default_masks=parsed.no_default_masks,
+        profiling=parsed.profiling,
+    )
+
+
 def print_summary(summary: TrainingSummary, top: int) -> None:
     rate = summary.messages_trained / summary.elapsed_seconds
     print(
@@ -358,7 +490,7 @@ def print_summary(summary: TrainingSummary, top: int) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parse_train_args(parser, argv)
     try:
         summary = train_log_file(args)
     except Exception as exc:
