@@ -796,68 +796,48 @@ def mlx_force_oom(size: int = 200000) -> None:
     mx.eval(f)
 
 
-_MLX_FORCE_OOM_DTYPE_BYTES = 4
-_MLX_FORCE_OOM_LIVE_MATRICES = 3
-_MLX_FORCE_OOM_OVERSHOOT_NUMERATOR = 11
-_MLX_FORCE_OOM_OVERSHOOT_DENOMINATOR = 10
-
-
-def get_mlx_force_oom_size(available_ram: int) -> int:
-    """
-    Return the square matrix side length for an MLX Metal OOM probe.
-
-    The legacy constants map to roughly three live float32 matrices exceeding
-    available unified memory. Keep each single matrix below available memory so
-    MLX reaches the Metal allocation path instead of rejecting the shape early.
-    """
-    if available_ram <= 0:
-        raise ValueError("available_ram must be positive")
-
-    def ceil_div(numerator: int, denominator: int) -> int:
-        return -(-numerator // denominator)
-
-    target_live_bytes = ceil_div(
-        available_ram * _MLX_FORCE_OOM_OVERSHOOT_NUMERATOR,
-        _MLX_FORCE_OOM_OVERSHOOT_DENOMINATOR,
-    )
-    target_matrix_bytes = ceil_div(target_live_bytes, _MLX_FORCE_OOM_LIVE_MATRICES)
-    target_elements = ceil_div(target_matrix_bytes, _MLX_FORCE_OOM_DTYPE_BYTES)
-
-    # Round the square-matrix side length up so the requested allocation crosses
-    # the target even when the ideal element count is not a perfect square.
-    root = isqrt(target_elements)
-    if root * root == target_elements:
-        return root
-    return root + 1
-
-
-def mlx_force_oom2() -> None:
+def mlx_force_oom2(size: int | None = None) -> None:
     """
     Force an MLX Metal OOM using the current machine's available unified memory.
     """
+
+    def ceil_div(num: int, den: int) -> int:
+        return -(-num // den)
+
+    def get_memory():
+        available_memory: int | None = None
+        if sys.platform == "darwin":
+            macmon_metrics = read_macmon_metrics_once()
+            if macmon_metrics is not None:
+                available_memory = macmon_metrics.memory.ram_available.in_bytes
+
+        if available_memory is None:
+            available_memory = MemoryUsage.from_psutil(
+                override_memory=None
+            ).ram_available.in_bytes
+        return available_memory
+
+    def get_size(memory: int):
+        mem_target = ceil_div(memory * 11, 10)  # overshoot by 1.1x
+        mat_mem = ceil_div(mem_target, 3)  # per-matrix memory (3 live matrices)
+        mat_elem = ceil_div(mat_mem, 4)  # per-matrix elements (4 bytes per elem)
+
+        # square root to get size (round up if not integer)
+        root = isqrt(mat_elem)
+        return root if root**2 == mat_elem else root + 1
+
+    # use supplied size, or computer appropriate size otherwise
+    size = size if size is not None else get_size(get_memory())
+
     mx.set_default_device(mx.gpu)
     mx.clear_cache()
-
-    available_memory: int | None = None
-    if sys.platform == "darwin":
-        macmon_metrics = read_macmon_metrics_once()
-        if macmon_metrics is not None:
-            available_memory = macmon_metrics.memory.ram_available.in_bytes
-
-    if available_memory is None:
-        available_memory = MemoryUsage.from_psutil(
-            override_memory=None
-        ).ram_available.in_bytes
-
-    size = get_mlx_force_oom_size(available_memory)
-
     a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
     b = mx.random.uniform(shape=(size, size), dtype=mx.float32)
     mx.eval(a, b)
-    c = mx.matmul(a, b)
-    d = mx.matmul(a, c)
-    e = mx.matmul(b, c)
-    f = mx.sigmoid(d + e)
+    c = mx.matmul(a, b)  # (size,size)
+    d = mx.matmul(a, c)  # (size,size)
+    e = mx.matmul(b, c)  # (size,size)
+    f = mx.sigmoid(d + e)  # (size,size)
     mx.eval(f)
 
 
