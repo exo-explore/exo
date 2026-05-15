@@ -816,12 +816,12 @@ def mlx_force_oom2(size: int | None = None) -> None:
                 override_memory=None
             ).ram_available.in_bytes
 
-        print(f"found {available_memory}")
+        print(f"found {available_memory / 1024**3} GB")
         return available_memory
 
     def get_size(memory: int):
         mem_target = ceil_div(memory * 11, 10)  # overshoot by 1.1x
-        print(f"targeting {mem_target}")
+        print(f"targeting {mem_target / 1024**3} GB")
 
         mat_mem = ceil_div(mem_target, 3)  # per-matrix memory (3 live matrices)
         print(f"memory per matrix {mat_mem}")
