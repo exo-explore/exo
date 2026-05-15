@@ -256,16 +256,6 @@ impl Discovery {
     }
 }
 
-pub trait Message: Pod {
-    const KIND: Kind;
-    fn header() -> Header {
-        Header {
-            magic: MAGIC,
-            kind: Self::KIND as u8,
-        }
-    }
-}
-
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 // packet & version
@@ -285,7 +275,11 @@ impl TryFrom<u8> for Kind {
         }
     }
 }
-// should be a trait, but const in traits isnt stabilized. this lets alloc :: Self -> [u8; Self::buf_size()]
+
+pub trait Message: Pod {
+    const KIND: Kind;
+}
+// should be part of the Message trait, but const in traits isnt stabilized. this lets alloc :: Self -> [u8; Self::buf_size()]
 macro_rules! impl_alloc {
     ($a:ident) => {
         impl $a {
@@ -294,7 +288,10 @@ macro_rules! impl_alloc {
             }
             pub fn alloc(self) -> [u8; Self::buf_size()] {
                 let mut buf = [0u8; Self::buf_size()];
-                buf[0..size_of::<Header>()].copy_from_slice(bytemuck::bytes_of(&Self::header()));
+                buf[0..size_of::<Header>()].copy_from_slice(bytemuck::bytes_of(&Header {
+                    magic: MAGIC,
+                    kind: Self::KIND as u8,
+                }));
                 buf[size_of::<Header>()..Self::buf_size()]
                     .copy_from_slice(bytemuck::bytes_of(&self));
                 buf
@@ -302,6 +299,7 @@ macro_rules! impl_alloc {
         }
     };
 }
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct Header {

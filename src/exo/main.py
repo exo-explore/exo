@@ -340,7 +340,9 @@ def main_inner(args: "Args"):
 
     logger.info(f"pid = {os.getpid()}")
     if os.getenv("EXO_LIBP2P_NAMESPACE"):
-        raise ValueError("EXO_LIBP2P_NAMESPACE has been removed - use EXO_ZENOH_NAMESPACE instead")
+        raise ValueError(
+            "EXO_LIBP2P_NAMESPACE has been removed - use EXO_ZENOH_NAMESPACE instead"
+        )
     logger.info(f"EXO_ZENOH_NAMESPACE: {os.getenv('EXO_ZENOH_NAMESPACE')}")
 
     if args.offline:
