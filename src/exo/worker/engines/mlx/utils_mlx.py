@@ -802,6 +802,11 @@ def mlx_force_oom2(bytes_alloc: int = 1024**5):  # the default is 1 petabyte lol
     NOTE: probably only works correctly on Apple unified memory
     """
 
+    # TODO: I give up. this either uses swap (inconsistently) and only sometimes OOMs
+    #       or if I tune it to be more aggressive then it kerenel panics entirely;
+    #       there MIGHT be a way to make it not use swap memory but I'm not determined enough
+    #       to figure out how :)
+
     def get_size(memory: int):
         mat_elem = -(-memory // 4)  # per-matrix elements (4 bytes per elem)
 
