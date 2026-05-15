@@ -81,8 +81,10 @@ class _CardCache:
                     card = card.model_copy(update={"is_custom": True})
                 if self.get(card.model_id) is None:
                     self.cc[card.model_id] = card
-            except (ValidationError, TOMLKitError):
-                pass
+            except (ValidationError, TOMLKitError) as e:
+                logger.opt(exception=e).warning(
+                    f"failed to validate model card at {toml_file}"
+                )
 
     async def refresh(self) -> None:
         for path in _BUILTIN_CARD_DIRS:
@@ -196,6 +198,11 @@ class ModelCard(FrozenModel):
     @classmethod
     def _validate_tasks(cls, v: list[str | ModelTask]) -> list[ModelTask]:
         return [item if isinstance(item, ModelTask) else ModelTask(item) for item in v]
+
+    @field_validator("backends", mode="before")
+    @classmethod
+    def _validate_backends(cls, v: list[str | Backend]) -> list[Backend]:
+        return [item if isinstance(item, Backend) else Backend(item) for item in v]
 
     async def save(self, path: Path) -> None:
         async with await open_file(path, "w") as f:
