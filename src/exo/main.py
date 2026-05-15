@@ -3,6 +3,7 @@ import multiprocessing as mp
 import os
 import resource
 import signal
+import sys
 from dataclasses import dataclass, field
 from typing import Self
 
@@ -17,12 +18,14 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_id_keypair
-from exo.shared.constants import EXO_LOG
+from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.daemon import detach_stdio_to_devnull
+from exo.utils.pidfile import PidfileLockError, acquire_exo_pidfile
+from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
 
@@ -67,6 +70,9 @@ class Node:
         )
 
         logger.info(f"Starting node {node_id}")
+
+        # Errors the very first time exo is run as dir doesn't exist
+        EXO_DEFAULT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
         # Create DownloadCoordinator (unless --no-downloads)
         if not args.no_downloads:
@@ -192,7 +198,6 @@ class Node:
                         self.router.receiver(topics.GLOBAL_EVENTS),
                         self.router.sender(topics.LOCAL_EVENTS),
                     )
-                    self._tg.start_soon(self.event_router.run)
 
                 if (
                     result.session_id.master_node_id == self.node_id
@@ -258,20 +263,33 @@ class Node:
                         self._tg.start_soon(self.worker.run)
                     if self.api:
                         self.api.reset(result.won_clock, self.event_router.receiver())
+                    self._tg.start_soon(self.event_router.run)
                 else:
                     if self.api:
                         self.api.unpause(result.won_clock)
 
 
 def main():
+    # Exit early if no PID file (not compatible with double-for daemonization yet)
+    try:
+        pidfile = acquire_exo_pidfile()
+    except PidfileLockError as exception:
+        print(exception, file=sys.stderr)
+        raise SystemExit(1) from exception
+
     args = Args.parse()
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
     mp.set_start_method("spawn", force=True)
+
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
+    if args.no_stdio:
+        detach_stdio_to_devnull()
+        logger.info("Detached stdio to /dev/null")
+
     logger.info(f"{'=' * 40}")
     logger.info(f"Starting EXO | pid={os.getpid()}")
     logger.info(f"{'=' * 40}")
@@ -306,9 +324,10 @@ def main():
     finally:
         logger.info("EXO Shutdown complete")
         logger_cleanup()
+        del pidfile
 
 
-class Args(CamelCaseModel):
+class Args(FrozenModel):
     verbosity: int = 0
     force_master: bool = False
     spawn_api: bool = False
@@ -319,6 +338,7 @@ class Args(CamelCaseModel):
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
+    no_stdio: bool = False
     bootstrap_peers: list[str] = []
     libp2p_port: int
 
@@ -377,6 +397,11 @@ class Args(CamelCaseModel):
             "--no-batch",
             action="store_true",
             help="Disable continuous batching, use sequential generation",
+        )
+        parser.add_argument(
+            "--no-stdio",
+            action="store_true",
+            help="Detach stdin/stdout/stderr to /dev/null after logging is configured",
         )
         parser.add_argument(
             "--bootstrap-peers",

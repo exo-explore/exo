@@ -25,7 +25,7 @@ from loguru import logger
 
 from exo.shared.constants import EXO_NODE_ID_KEYPAIR
 from exo.utils.channels import Receiver, Sender, channel
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 
 from .connection_message import ConnectionMessage
@@ -36,7 +36,7 @@ from .topics import CONNECTION_MESSAGES, PublishPolicy, TypedTopic
 # of preventing feedback, as it does not ask for a system id so cannot tell
 # which message is coming/going to which system.
 # This is currently only relevant for Election
-class TopicRouter[T: CamelCaseModel]:
+class TopicRouter[T: FrozenModel]:
     def __init__(
         self,
         topic: TypedTopic[T],
@@ -114,7 +114,7 @@ class Router:
         )
 
     def __init__(self, handle: NetworkingHandle):
-        self.topic_routers: dict[str, TopicRouter[CamelCaseModel]] = {}
+        self.topic_routers: dict[str, TopicRouter[FrozenModel]] = {}
         send, recv = channel[tuple[str, bytes]]()
         self.networking_receiver: Receiver[tuple[str, bytes]] = recv
         self._net: NetworkingHandle = handle
@@ -122,18 +122,18 @@ class Router:
         self._id_count = count()
         self._tg: TaskGroup = TaskGroup()
 
-    async def register_topic[T: CamelCaseModel](self, topic: TypedTopic[T]):
+    async def register_topic[T: FrozenModel](self, topic: TypedTopic[T]):
         send = self._tmp_networking_sender
         if send:
             self._tmp_networking_sender = None
         else:
             send = self.networking_receiver.clone_sender()
         router = TopicRouter[T](topic, send)
-        self.topic_routers[topic.topic] = cast(TopicRouter[CamelCaseModel], router)
+        self.topic_routers[topic.topic] = cast(TopicRouter[FrozenModel], router)
         if self._tg.is_running():
             await self._networking_subscribe(topic.topic)
 
-    def sender[T: CamelCaseModel](self, topic: TypedTopic[T]) -> Sender[T]:
+    def sender[T: FrozenModel](self, topic: TypedTopic[T]) -> Sender[T]:
         router = self.topic_routers.get(topic.topic, None)
         # There's gotta be a way to do this without THIS many asserts
         assert router is not None
@@ -141,7 +141,7 @@ class Router:
         sender = cast(TopicRouter[T], router).new_sender()
         return sender
 
-    def receiver[T: CamelCaseModel](self, topic: TypedTopic[T]) -> Receiver[T]:
+    def receiver[T: FrozenModel](self, topic: TypedTopic[T]) -> Receiver[T]:
         router = self.topic_routers.get(topic.topic, None)
         # There's gotta be a way to do this without THIS many asserts
 
@@ -150,7 +150,7 @@ class Router:
         assert router.topic.model_type == topic.model_type
 
         send, recv = channel[T]()
-        router.senders.add(cast(Sender[CamelCaseModel], send))
+        router.senders.add(cast(Sender[FrozenModel], send))
 
         return recv
 

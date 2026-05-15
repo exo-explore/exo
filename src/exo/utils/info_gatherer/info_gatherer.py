@@ -14,6 +14,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from exo.shared.constants import EXO_CONFIG_FILE, EXO_DEFAULT_MODELS_DIR
+from exo.shared.types.backends import Backend
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     DiskUsage,
@@ -353,6 +354,35 @@ async def _gather_iface_map() -> dict[str, str] | None:
     return ports
 
 
+def _has_nvml_cuda() -> bool:
+    try:
+        import pynvml as nvml  # pyright: ignore[reportMissingModuleSource]
+    except ImportError:
+        return False
+    try:
+        nvml.nvmlInit()
+        try:
+            return nvml.nvmlDeviceGetCount() > 0
+        finally:
+            nvml.nvmlShutdown()
+    except Exception:
+        return False
+
+
+class NodeBackends(TaggedModel):
+    backends: list[Backend]
+
+    @classmethod
+    async def gather(cls) -> Self:
+        backends: list[Backend] = [Backend.MlxCpu]
+        if IS_DARWIN:
+            backends.append(Backend.MlxMetal)
+        if await to_thread.run_sync(_has_nvml_cuda):
+            backends.append(Backend.MlxCuda)
+            backends.append(Backend.Vllm)
+        return cls(backends=backends)
+
+
 GatheredInfo = (
     MacmonMetrics
     | MemoryUsage
@@ -365,6 +395,7 @@ GatheredInfo = (
     | MiscData
     | StaticNodeInformation
     | NodeDiskUsage
+    | NodeBackends
 )
 
 
@@ -427,6 +458,8 @@ class InfoGatherer:
             nc = await NodeConfig.gather()
             if nc is not None:
                 await self.info_sender.send(nc)
+
+            await self.info_sender.send(await NodeBackends.gather())
 
     def shutdown(self):
         self._tg.cancel_tasks()

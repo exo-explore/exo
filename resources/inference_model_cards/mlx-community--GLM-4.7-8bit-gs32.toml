@@ -8,8 +8,15 @@ family = "glm"
 quantization = "8bit"
 base_model = "GLM 4.7"
 capabilities = ["text", "thinking", "thinking_toggle"]
-
+reasoning_dialect = "post_last_user"
 context_length = 202752
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 396963397248
+
+# Source: https://huggingface.co/zai-org/GLM-4.7
+# Source: https://unsloth.ai/docs/models/glm-4.7-flash
+# Source: https://docs.z.ai/api-reference/llm/chat-completion
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95

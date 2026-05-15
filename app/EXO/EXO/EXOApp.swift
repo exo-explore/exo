@@ -22,6 +22,7 @@ struct EXOApp: App {
     @StateObject private var updater: SparkleUpdater
     @StateObject private var thunderboltBridgeService: ThunderboltBridgeService
     @StateObject private var settingsWindowController: SettingsWindowController
+    @StateObject private var bugReportWindowController: BugReportWindowController
     private let terminationObserver: TerminationObserver
     private let firstLaunchPopout = FirstLaunchPopout()
     private let ciContext = CIContext(options: nil)
@@ -46,6 +47,7 @@ struct EXOApp: App {
         let thunderboltBridge = ThunderboltBridgeService(clusterStateService: service)
         _thunderboltBridgeService = StateObject(wrappedValue: thunderboltBridge)
         _settingsWindowController = StateObject(wrappedValue: SettingsWindowController())
+        _bugReportWindowController = StateObject(wrappedValue: BugReportWindowController())
         enableLaunchAtLoginIfNeeded()
         // Install LaunchDaemon to disable Thunderbolt Bridge on startup (prevents network loops)
         NetworkSetupHelper.promptAndInstallIfNeeded()
@@ -66,6 +68,7 @@ struct EXOApp: App {
                 .environmentObject(updater)
                 .environmentObject(thunderboltBridgeService)
                 .environmentObject(settingsWindowController)
+                .environmentObject(bugReportWindowController)
         } label: {
             menuBarIcon
                 .onReceive(controller.$isFirstLaunchReady) { ready in

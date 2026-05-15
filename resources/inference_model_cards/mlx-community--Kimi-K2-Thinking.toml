@@ -8,8 +8,13 @@ family = "kimi"
 quantization = ""
 base_model = "Kimi K2"
 capabilities = ["text", "thinking", "thinking_toggle"]
-
+reasoning_dialect = "suffix"
 context_length = 262144
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 706522120192
+
+# Source: https://huggingface.co/moonshotai/Kimi-K2-Thinking
+# Source: https://platform.kimi.ai/docs/guide/use-kimi-k2-thinking-model
+[sampling_defaults]
+temperature = 1.0

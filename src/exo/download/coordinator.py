@@ -16,7 +16,8 @@ from exo.download.download_utils import (
 )
 from exo.download.shard_downloader import ShardDownloader
 from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_MODELS_READ_ONLY_DIRS
-from exo.shared.models.model_cards import ModelId, get_model_cards
+from exo.shared.models import model_cards
+from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
     CancelDownload,
     DeleteDownload,
@@ -88,7 +89,9 @@ class DownloadCoordinator:
 
         try:
             if progress.status == "complete":
-                found = await to_thread.run_sync(resolve_existing_model, model_id)
+                found = await to_thread.run_sync(
+                    resolve_existing_model, model_id, callback_shard.model_card
+                )
                 if found is not None:
                     completed = self._completed_from_path(
                         callback_shard, found, progress.total
@@ -193,7 +196,9 @@ class DownloadCoordinator:
                 return
 
         # Check all model directories for pre-existing complete models
-        found_path = await to_thread.run_sync(resolve_existing_model, model_id)
+        found_path = await to_thread.run_sync(
+            resolve_existing_model, model_id, shard.model_card
+        )
         if found_path is not None:
             logger.info(f"DownloadCoordinator: Model {model_id} found at {found_path}")
             completed = self._completed_from_path(
@@ -220,7 +225,9 @@ class DownloadCoordinator:
         )
 
         if initial_progress.status == "complete":
-            found = await to_thread.run_sync(resolve_existing_model, model_id)
+            found = await to_thread.run_sync(
+                resolve_existing_model, model_id, shard.model_card
+            )
             if found is not None:
                 completed = self._completed_from_path(
                     shard, found, initial_progress.total
@@ -351,7 +358,9 @@ class DownloadCoordinator:
 
                     if progress.status == "complete":
                         found = await to_thread.run_sync(
-                            resolve_existing_model, model_id
+                            resolve_existing_model,
+                            model_id,
+                            progress.shard.model_card,
                         )
                         if found is not None:
                             status: DownloadProgress = self._completed_from_path(
@@ -365,7 +374,30 @@ class DownloadCoordinator:
                                 model_directory=self._default_model_dir(model_id),
                             )
                     elif progress.status in ["in_progress", "not_started"]:
-                        if progress.downloaded_this_session.in_bytes == 0:
+                        # TODO(ciaran): temporary solution
+                        # Don't downgrade a model that is already confirmed complete.
+                        if isinstance(
+                            self.download_status.get(model_id), DownloadCompleted
+                        ):
+                            continue
+                        # The per-file size check compares local files against
+                        # the latest HF "main" revision, which is a moving
+                        # target.  When HF updates text files (README, YAML,
+                        # jinja) in a new commit, the cached file list has new
+                        # sizes while local files still match the old revision.
+                        # Fall back to the authoritative completeness check
+                        # (is_model_directory_complete) which validates that all
+                        # safetensors weight files are present.
+                        found = await to_thread.run_sync(
+                            resolve_existing_model,
+                            model_id,
+                            progress.shard.model_card,
+                        )
+                        if found is not None:
+                            status = self._completed_from_path(
+                                progress.shard, found, progress.total
+                            )
+                        elif progress.downloaded_this_session.in_bytes == 0:
                             status = DownloadPending(
                                 node_id=self.node_id,
                                 shard_metadata=progress.shard,
@@ -391,7 +423,7 @@ class DownloadCoordinator:
                     )
                 # Scan read-only directories for pre-downloaded models
                 if EXO_MODELS_READ_ONLY_DIRS:
-                    for card in await get_model_cards():
+                    for card in await model_cards.card_cache.list_all():
                         mid = card.model_id
                         if mid in self.active_downloads:
                             continue
@@ -400,7 +432,9 @@ class DownloadCoordinator:
                             (DownloadCompleted, DownloadOngoing, DownloadFailed),
                         ):
                             continue
-                        found = await to_thread.run_sync(resolve_existing_model, mid)
+                        found = await to_thread.run_sync(
+                            resolve_existing_model, mid, card
+                        )
                         if found is not None and is_read_only_model_dir(found):
                             path_shard = PipelineShardMetadata(
                                 model_card=card,

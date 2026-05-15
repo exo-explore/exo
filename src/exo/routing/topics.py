@@ -8,7 +8,7 @@ from exo.shared.types.events import (
     GlobalForwarderEvent,
     LocalForwarderEvent,
 )
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 
 
 class PublishPolicy(str, Enum):
@@ -21,7 +21,7 @@ class PublishPolicy(str, Enum):
 
 
 @dataclass  # (frozen=True)
-class TypedTopic[T: CamelCaseModel]:
+class TypedTopic[T: FrozenModel]:
     topic: str
     publish_policy: PublishPolicy
 

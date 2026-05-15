@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
+from hypercorn.utils import LifespanTimeoutError
 from loguru import logger
 
 from exo.api.adapters.chat_completions import (
@@ -79,6 +80,8 @@ from exo.api.types import (
     ImageListItem,
     ImageListResponse,
     ImageSize,
+    InstanceLinkBody,
+    InstanceLinkResponse,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -101,6 +104,7 @@ from exo.api.types.claude_api import (
     ClaudeMessagesResponse,
 )
 from exo.api.types.ollama_api import (
+    OllamaCapability,
     OllamaChatRequest,
     OllamaChatResponse,
     OllamaGenerateRequest,
@@ -122,6 +126,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
+    ENABLE_DISAGGREGATION,
     EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
@@ -130,12 +135,11 @@ from exo.shared.constants import (
 )
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
+from exo.shared.models import model_cards
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
-    add_to_card_cache,
-    get_card,
-    get_model_cards,
+    ModelTask,
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
@@ -154,6 +158,7 @@ from exo.shared.types.commands import (
     DeleteCustomModelCard,
     DeleteDownload,
     DeleteInstance,
+    DeleteInstanceLink,
     DownloadCommand,
     ForwarderCommand,
     ForwarderDownloadCommand,
@@ -161,6 +166,7 @@ from exo.shared.types.commands import (
     ImageGeneration,
     PlaceInstance,
     SendInputChunk,
+    SetInstanceLink,
     StartDownload,
     TaskCancelled,
     TaskFinished,
@@ -174,6 +180,7 @@ from exo.shared.types.events import (
     InstanceDeleted,
     TracesMerged,
 )
+from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
@@ -185,7 +192,10 @@ from exo.shared.types.tasks import (
 from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
-from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    Base64ImageHash,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
@@ -212,6 +222,17 @@ def _ensure_seed(params: AdvancedImageParams | None) -> AdvancedImageParams:
     return params
 
 
+def _require_disaggregation_enabled() -> None:
+    if not ENABLE_DISAGGREGATION:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail=(
+                "Prefill/decode disaggregation is disabled. "
+                "Set ENABLE_DISAGGREGATION=true to enable."
+            ),
+        )
+
+
 class API:
     def __init__(
         self,
@@ -234,6 +255,7 @@ class API:
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
+        self._sent_image_hashes: set[str] = set()
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -283,6 +305,7 @@ class API:
         self.event_receiver.close()
         self.event_receiver = event_receiver
         self._tg.start_soon(self._apply_state)
+        self._sent_image_hashes = set()
 
     def unpause(self, result_clock: int):
         logger.info("Unpausing API")
@@ -323,6 +346,11 @@ class API:
         self.app.get("/instance/previews")(self.get_placement_previews)
         self.app.get("/instance/{instance_id}")(self.get_instance)
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
+        self.app.get("/v1/instance-links")(self.list_instance_links)
+        self.app.post("/v1/instance-links")(self.create_instance_link)
+        self.app.put("/v1/instance-links/{link_id}")(self.update_instance_link)
+        self.app.delete("/v1/instance-links/{link_id}")(self.delete_instance_link)
+        self.app.get("/v1/feature-flags")(self.get_feature_flags)
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/models/add")(self.add_custom_model)
@@ -331,7 +359,9 @@ class API:
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
         )
-        self.app.post("/bench/chat/completions")(self.bench_chat_completions)
+        self.app.post("/bench/chat/completions", response_model=None)(
+            self.bench_chat_completions
+        )
         self.app.post("/v1/images/generations", response_model=None)(
             self.image_generations
         )
@@ -347,6 +377,9 @@ class API:
         # Ollama API
         self.app.head("/ollama/")(self.ollama_version)
         self.app.head("/ollama/api/version")(self.ollama_version)
+        self.app.post("/ollama/v1/chat/completions", response_model=None)(
+            self.chat_completions
+        )
         self.app.post("/ollama/api/chat", response_model=None)(self.ollama_chat)
         self.app.post("/ollama/api/api/chat", response_model=None)(self.ollama_chat)
         self.app.post("/ollama/api/v1/chat", response_model=None)(self.ollama_chat)
@@ -449,9 +482,11 @@ class API:
                 ),
                 node_memory=self.state.node_memory,
                 node_network=self.state.node_network,
+                node_backends=self.state.node_backends,
                 topology=self.state.topology,
                 current_instances=self.state.instances,
                 download_status=self.state.downloads,
+                node_rdma_ctl=self.state.node_rdma_ctl,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -511,10 +546,12 @@ class API:
                     ),
                     node_memory=self.state.node_memory,
                     node_network=self.state.node_network,
+                    node_backends=self.state.node_backends,
                     topology=self.state.topology,
                     current_instances=self.state.instances,
                     required_nodes=required_nodes,
                     download_status=self.state.downloads,
+                    node_rdma_ctl=self.state.node_rdma_ctl,
                 )
             except ValueError as exc:
                 if (model_card.model_id, sharding, instance_meta, 0) not in seen:
@@ -608,6 +645,49 @@ class API:
             message="Command received.",
             command_id=command.command_id,
             instance_id=instance_id,
+        )
+
+    async def get_feature_flags(self) -> dict[str, bool]:
+        return {"disaggregation": ENABLE_DISAGGREGATION}
+
+    async def list_instance_links(self) -> list[InstanceLink]:
+        if not ENABLE_DISAGGREGATION:
+            return []
+        return list(self.state.instance_links.values())
+
+    async def create_instance_link(
+        self, body: InstanceLinkBody
+    ) -> InstanceLinkResponse:
+        _require_disaggregation_enabled()
+        return await self._set_instance_link(InstanceLinkId(), body)
+
+    async def update_instance_link(
+        self, link_id: InstanceLinkId, body: InstanceLinkBody
+    ) -> InstanceLinkResponse:
+        _require_disaggregation_enabled()
+        return await self._set_instance_link(link_id, body)
+
+    async def _set_instance_link(
+        self, link_id: InstanceLinkId, body: InstanceLinkBody
+    ) -> InstanceLinkResponse:
+        command = SetInstanceLink(
+            link_id=link_id,
+            prefill_instances=list(body.prefill_instances),
+            decode_instances=list(body.decode_instances),
+        )
+        await self._send(command)
+        return InstanceLinkResponse(
+            message="Command received.", command_id=command.command_id
+        )
+
+    async def delete_instance_link(
+        self, link_id: InstanceLinkId
+    ) -> InstanceLinkResponse:
+        _require_disaggregation_enabled()
+        command = DeleteInstanceLink(link_id=link_id)
+        await self._send(command)
+        return InstanceLinkResponse(
+            message="Command received.", command_id=command.command_id
         )
 
     async def cancel_command(self, command_id: CommandId) -> CancelCommandResponse:
@@ -737,11 +817,10 @@ class API:
             "TODO: we should send a notification to the user to download the model"
         )
 
-    _sent_image_hashes: set[str] = set()
-
     async def _send_text_generation_with_images(
         self, task_params: TextGenerationTaskParams
     ) -> TextGeneration:
+        task_params = task_params.with_card_sampling_defaults()
         images = task_params.images
         if not images:
             command = TextGeneration(task_params=task_params)
@@ -749,23 +828,19 @@ class API:
             return command
 
         hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
+        all_hashes = {idx: Base64ImageHash(h) for idx, h in enumerate(hashes)}
+        task_params = task_params.model_copy(
+            update={"images": [], "image_hashes": all_hashes}
+        )
+        command = TextGeneration(task_params=task_params)
 
-        cached_hashes: dict[int, str] = {}
         new_images: list[tuple[int, str]] = []
         for idx, (img, h) in enumerate(zip(images, hashes, strict=True)):
-            if h in self._sent_image_hashes:
-                cached_hashes[idx] = h
-            else:
+            if h not in self._sent_image_hashes:
                 self._sent_image_hashes.add(h)
                 new_images.append((idx, img))
 
-        wrapped_hashes = {idx: Base64Image(h) for idx, h in cached_hashes.items()}
-
         if not new_images:
-            task_params = task_params.model_copy(
-                update={"images": [], "image_hashes": wrapped_hashes}
-            )
-            command = TextGeneration(task_params=task_params)
             await self._send(command)
             return command
 
@@ -773,16 +848,6 @@ class API:
         for img_idx, img_data in new_images:
             for i in range(0, len(img_data), EXO_MAX_CHUNK_SIZE):
                 all_chunks.append((img_idx, img_data[i : i + EXO_MAX_CHUNK_SIZE]))
-
-        task_params = task_params.model_copy(
-            update={
-                "images": [],
-                "image_hashes": wrapped_hashes,
-                "total_input_chunks": len(all_chunks),
-                "image_count": len(new_images),
-            }
-        )
-        command = TextGeneration(task_params=task_params)
 
         for global_idx, (img_idx, chunk_data) in enumerate(all_chunks):
             await self._send(
@@ -839,16 +904,38 @@ class API:
 
     async def bench_chat_completions(
         self, payload: BenchChatCompletionRequest
-    ) -> BenchChatCompletionResponse:
+    ) -> BenchChatCompletionResponse | StreamingResponse:
         task_params = await chat_request_to_text_generation(payload)
         resolved_model = await self._resolve_and_validate_text_model(
             ModelId(task_params.model)
         )
         task_params = task_params.model_copy(update={"model": resolved_model})
 
-        task_params = task_params.model_copy(update={"stream": False, "bench": True})
+        task_params = task_params.model_copy(
+            update={
+                "stream": False,
+                "bench": True,
+                "use_prefix_cache": payload.use_prefix_cache,
+            }
+        )
 
         command = await self._send_text_generation_with_images(task_params)
+
+        if payload.stream:
+            return StreamingResponse(
+                with_sse_keepalive(
+                    generate_chat_stream(
+                        command.command_id,
+                        self._token_chunk_stream(command.command_id),
+                    ),
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "close",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
         return await self._collect_text_generation_with_stats(command.command_id)
 
@@ -1554,17 +1641,16 @@ class API:
     async def ollama_tags(self) -> OllamaTagsResponse:
         """Returns list of models in Ollama tags format. We return the downloaded ones only."""
 
-        def none_if_empty(value: str) -> str | None:
-            return value or None
-
-        downloaded_model_ids: set[str] = set()
+        downloaded_model_ids: set[ModelId] = set()
         for node_downloads in self.state.downloads.values():
             for dl in node_downloads:
                 if isinstance(dl, DownloadCompleted):
                     downloaded_model_ids.add(dl.shard_metadata.model_card.model_id)
 
         cards = [
-            c for c in await get_model_cards() if c.model_id in downloaded_model_ids
+            c
+            for c in await model_cards.card_cache.list_all()
+            if c.model_id in downloaded_model_ids
         ]
 
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1577,8 +1663,8 @@ class API:
                     size=card.storage_size.in_bytes,
                     digest="sha256:000000000000",
                     details=OllamaModelDetails(
-                        family=none_if_empty(card.family),
-                        quantization_level=none_if_empty(card.quantization),
+                        family=card.family or None,
+                        quantization_level=card.quantization or None,
                     ),
                 )
                 for card in cards
@@ -1599,6 +1685,20 @@ class API:
                 status_code=404, detail=f"Model not found: {model_name}"
             ) from exc
 
+        capabilities: list[OllamaCapability] = []
+        if ModelTask.TextGeneration in card.tasks:
+            capabilities.extend(("completion", "tools"))
+        if card.vision is not None:
+            capabilities.append("vision")
+
+        architecture = card.family or "unknown"
+        model_info: dict[str, Any] = {
+            "general.architecture": architecture,
+            "general.basename": card.base_model or str(card.model_id),
+        }
+        if card.context_length > 0:
+            model_info[f"{architecture}.context_length"] = card.context_length
+
         return OllamaShowResponse(
             modelfile=f"FROM {card.model_id}",
             template="{{ .Prompt }}",
@@ -1606,6 +1706,8 @@ class API:
                 family=card.family or None,
                 quantization_level=card.quantization or None,
             ),
+            model_info=model_info,
+            capabilities=capabilities,
         )
 
     async def ollama_ps(self) -> OllamaPsResponse:
@@ -1628,7 +1730,7 @@ class API:
 
     async def ollama_version(self) -> dict[str, str]:
         """Returns version information for Ollama API compatibility."""
-        return {"version": "exo v1.0"}
+        return {"version": "1.0.0"}
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
@@ -1641,7 +1743,7 @@ class API:
 
     async def get_models(self, status: str | None = Query(default=None)) -> ModelList:
         """Returns list of available models, optionally filtered by being downloaded."""
-        cards = await get_model_cards()
+        cards = await model_cards.card_cache.list_all()
 
         if status == "downloaded":
             downloaded_model_ids: set[str] = set()
@@ -1667,6 +1769,7 @@ class API:
                     quantization=card.quantization,
                     base_model=card.base_model,
                     capabilities=card.capabilities,
+                    reasoning_dialect=card.reasoning_dialect,
                     context_length=card.context_length,
                 )
                 for card in cards
@@ -1691,7 +1794,7 @@ class API:
 
         # Immediately update the local cache so the subsequent GET /models
         # returns the new model without waiting for the event round-trip.
-        add_to_card_cache(card)
+        model_cards.card_cache.cc[card.model_id] = card
 
         return ModelListModel(
             id=card.model_id,
@@ -1707,7 +1810,7 @@ class API:
 
     async def delete_custom_model(self, model_id: ModelId) -> JSONResponse:
         """Delete a user-added custom model card and sync deletion across the cluster."""
-        card = get_card(model_id)
+        card = model_cards.card_cache.get(model_id)
         if card is None or not card.is_custom:
             raise HTTPException(status_code=404, detail="Custom model card not found")
 
@@ -1777,11 +1880,20 @@ class API:
                     await anyio.sleep_forever()
                 finally:
                     with anyio.CancelScope(shield=True):
+                        # IMPORTANT: when new queues are added, update this (for proper shutdown semantics)
+                        self._shutdown_queues(self._text_generation_queues)
+                        self._shutdown_queues(self._image_generation_queues)
+
                         shutdown_ev.set()
         finally:
             self._event_log.close()
             self.command_sender.close()
             self.event_receiver.close()
+
+    @staticmethod
+    def _shutdown_queues[K, V](queues: dict[K, Sender[V]]):
+        for v in queues.values():
+            v.close()
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
@@ -1790,12 +1902,23 @@ class API:
         cfg.accesslog = None
         cfg.errorlog = "-"
         cfg.logger_class = InterceptLogger
+
+        # prevents hangs when mid-request and connection refuses to close
+        cfg.graceful_timeout = 2  # seconds
+        cfg.shutdown_timeout = 3  # seconds
+
         with anyio.CancelScope(shield=True):
-            await serve(
-                cast(ASGIFramework, self.app),
-                cfg,
-                shutdown_trigger=ev.wait,
-            )
+            try:
+                await serve(
+                    cast(ASGIFramework, self.app),
+                    cfg,
+                    shutdown_trigger=ev.wait,
+                )
+            except LifespanTimeoutError as e:
+                logger.warning(
+                    "Graceful server shutdown timed out, some connections forcebly closed"
+                )
+                logger.opt(exception=e).debug("")
 
     async def _apply_state(self):
         with self.event_receiver as events:

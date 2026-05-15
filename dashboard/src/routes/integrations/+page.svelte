@@ -14,6 +14,7 @@
 
   let modelCapabilities = $state<Record<string, string[]>>({});
   let modelContextLengths = $state<Record<string, number>>({});
+  let modelReasoningDialects = $state<Record<string, string>>({});
 
   const runningModels = $derived.by(() => {
     const models: string[] = [];
@@ -88,10 +89,12 @@
   let codexModel = $state("");
   let codexMcpPath = $state("/Users/username");
   let openClawModel = $state("");
+  let piModel = $state("");
   $effect(() => {
     const def = modelsBySize.length > 0 ? modelsBySize[0] : "your-model-id";
     codexModel = def;
     openClawModel = def;
+    piModel = def;
   });
 
   const claudeShellCommand = $derived(
@@ -130,12 +133,34 @@
     for (const modelId of runningModels) {
       const caps = modelCapabilities[modelId] || [];
       const ctxLen = modelContextLengths[modelId] || 0;
+      const dialect = modelReasoningDialects[modelId];
       const entry: Record<string, unknown> = { name: modelId };
       if (ctxLen > 0) {
         entry.limit = { context: ctxLen, output: Math.min(ctxLen, 16384) };
       }
       if (caps.includes("vision")) {
         entry.modalities = { input: ["text", "image"], output: ["text"] };
+      }
+      // Reasoning round-trip: opencode's `interleaved` field tells the
+      // openai-compatible adapter to send the assistant's prior
+      // reasoning_content back in subsequent turns. Emit it for dialects
+      // whose chat templates use prior reasoning:
+      //   - `tool_conditional` (DeepSeek V3.2 / V4): wrapper preserves all
+      //     reasoning when tools are present.
+      //   - `post_last_user` (Qwen3-Thinking, GLM 4.5+, MiniMax M2.x):
+      //     Jinja template reads reasoning_content for assistant turns since
+      //     the last user message — exactly the tool-chain window.
+      //   - `channel` (gpt-oss / Harmony): the model's Jinja template reads
+      //     `message.thinking` rather than `message.reasoning_content`, but
+      //     the server bridges `reasoning_content` → `thinking` before
+      //     rendering, so the round-trip works through the standard field.
+      // `suffix` (Kimi): reasoning lives in content; no separate field path.
+      if (
+        dialect === "tool_conditional" ||
+        dialect === "post_last_user" ||
+        dialect === "channel"
+      ) {
+        entry.interleaved = { field: "reasoning_content" };
       }
       models[modelId] = entry;
     }
@@ -218,6 +243,55 @@
     ),
   );
 
+  const piModelsJson = $derived.by(() => {
+    const models: Record<string, unknown>[] = [];
+    for (const modelId of runningModels) {
+      const caps = modelCapabilities[modelId] || [];
+      const ctxLen = modelContextLengths[modelId] || 0;
+      const entry: Record<string, unknown> = { id: modelId };
+      if (caps.includes("vision")) {
+        entry.input = ["text", "image"];
+      }
+      // Mark thinking-capable models so pi surfaces its thinking-level selector
+      // for them. exo capability strings: "thinking" (model emits reasoning
+      // content) and "thinking_toggle" (user can turn it on/off).
+      if (caps.includes("thinking") || caps.includes("thinking_toggle")) {
+        entry.reasoning = true;
+      }
+      if (ctxLen > 0) {
+        entry.contextWindow = ctxLen;
+      }
+      models.push(entry);
+    }
+    if (models.length === 0) {
+      models.push({ id: "your-model-id" });
+    }
+    return JSON.stringify(
+      {
+        providers: {
+          exo: {
+            baseUrl: `${apiUrl}/v1`,
+            api: "openai-completions",
+            apiKey: "exo",
+            compat: {
+              supportsDeveloperRole: false,
+              // exo's OpenAI surface takes a boolean `enable_thinking` toggle,
+              // not graded effort levels, so disable pi's `reasoning_effort`
+              // parameter and use the matching top-level-boolean format.
+              supportsReasoningEffort: false,
+              thinkingFormat: "qwen",
+            },
+            models,
+          },
+        },
+      },
+      null,
+      2,
+    );
+  });
+
+  const piShellCommand = $derived(`pi --provider exo --model ${piModel}`);
+
   const ollamaCommand = $derived(
     `OLLAMA_HOST=${apiUrl}/ollama ollama run ${modelsBySize.length > 0 ? modelsBySize[0] : "your-model-id"}`,
   );
@@ -277,6 +351,7 @@
     "OpenCode",
     "Codex",
     "OpenClaw",
+    "Pi",
     "Open WebUI",
     "n8n",
     "Firefox",
@@ -298,16 +373,25 @@
     try {
       const resp = await fetch("/v1/models");
       const data = (await resp.json()) as {
-        data: { id: string; capabilities: string[]; context_length: number }[];
+        data: {
+          id: string;
+          capabilities: string[];
+          context_length: number;
+          reasoning_dialect?: string;
+        }[];
       };
       const caps: Record<string, string[]> = {};
       const ctxs: Record<string, number> = {};
+      const dialects: Record<string, string> = {};
       for (const model of data.data) {
         caps[model.id] = model.capabilities || [];
         if (model.context_length > 0) ctxs[model.id] = model.context_length;
+        if (model.reasoning_dialect)
+          dialects[model.id] = model.reasoning_dialect;
       }
       modelCapabilities = caps;
       modelContextLengths = ctxs;
+      modelReasoningDialects = dialects;
     } catch {
       /* ignore */
     }
@@ -513,6 +597,33 @@
           subtitle="Run in terminal"
           description="After saving the config, run these commands to fix metadata and start the gateway."
           config={`openclaw doctor --fix${(modelCapabilities[openClawModel] || []).includes("vision") ? `\nopenclaw models set-image exo/${openClawModel}` : ""}\nopenclaw gateway &\nopenclaw dashboard`}
+          language="bash"
+        />
+      {:else if activeTab === "Pi"}
+        {#if runningModels.length > 1}
+          <div class="text-xs">
+            <span
+              class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1"
+              >Model</span
+            >
+            <select bind:value={piModel} class={selectClass}>
+              {#each runningModels as model}
+                <option value={model}>{model.split("/").pop()}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+        <IntegrationCard
+          title="Models Config"
+          subtitle="~/.pi/agent/models.json"
+          description="Register exo as a custom provider in pi. Create or edit this file, then run pi and pick an exo model via /model. Install pi with: npm install -g @mariozechner/pi-coding-agent"
+          config={piModelsJson}
+        />
+        <IntegrationCard
+          title="Shell Command"
+          subtitle="Run in terminal"
+          description="Launch pi directly with the exo provider and model selected."
+          config={piShellCommand}
           language="bash"
         />
       {:else if activeTab === "Open WebUI"}

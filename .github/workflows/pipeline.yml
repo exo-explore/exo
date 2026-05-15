@@ -91,9 +91,6 @@ jobs:
             nix build .#metal-toolchain
           fi
 
-          # Build mlx (depends on metal-toolchain)
-          nix build .#mlx
-
       - name: Build all Nix outputs
         run: |
           nix flake show --json | jq -r '

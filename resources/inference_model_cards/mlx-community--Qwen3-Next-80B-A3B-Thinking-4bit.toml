@@ -8,8 +8,15 @@ family = "qwen"
 quantization = "4bit"
 base_model = "Qwen3 Next 80B"
 capabilities = ["text", "thinking", "thinking_toggle"]
-
+reasoning_dialect = "post_last_user"
 context_length = 262144
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 47080074240
+
+# Source: https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Thinking#best-practices
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0

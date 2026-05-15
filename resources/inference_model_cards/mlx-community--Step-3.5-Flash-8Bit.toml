@@ -10,6 +10,18 @@ base_model = "Step 3.5 Flash"
 capabilities = ["text", "thinking", "thinking_toggle"]
 
 context_length = 262144
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 209082699847
+
+# Source: https://huggingface.co/stepfun-ai/Step-3.5-Flash/discussions/3
+# Source: https://github.com/stepfun-ai/Step-3.5-Flash/blob/main/llama.cpp/docs/step3.5-flash.md
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95
+
+# Source: https://huggingface.co/stepfun-ai/Step-3.5-Flash/discussions/3
+# Source: https://github.com/stepfun-ai/Step-3.5-Flash/blob/main/llama.cpp/docs/step3.5-flash.md
+[sampling_defaults.thinking]
+temperature = 1.0
+top_p = 0.95

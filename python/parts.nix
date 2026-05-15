@@ -1,18 +1,48 @@
 { inputs, ... }:
-{
-  perSystem =
-    { config, self', pkgs, lib, system, ... }:
+let
+  # Load workspace from uv.lock
+  workspace = inputs.uv2nix.lib.workspace.loadWorkspace {
+    workspaceRoot = ../.;
+  };
+
+  mkPythonSet = { pkgs, lib, self', members }:
     let
-      # Load workspace from uv.lock
-      workspace = inputs.uv2nix.lib.workspace.loadWorkspace {
-        workspaceRoot = inputs.self;
+      inherit (pkgs.stdenv.hostPlatform) isLinux isDarwin isx86_64;
+      inherit (pkgs.config) cudaSupport;
+      inherit (pkgs) cudaPackages;
+      libmlx_source =
+        if (builtins.elem "mlx-cuda13" members.exo or [ ]) then "mlx-cuda-13"
+        else if (builtins.elem "mlx-cuda12" members.exo or [ ]) then "mlx-cuda-12"
+        else "mlx-cpu";
+      python = pkgs.python313;
+
+      cuda_cccl_compat = pkgs.runCommand "cuda-cccl-compat" { } ''
+        mkdir -p $out/include
+        ln -s ${cudaPackages.cuda_cccl}/include $out/include/cccl
+      '';
+      cudaLibs = with cudaPackages; [
+        cuda_crt
+        cuda_cudart
+        cuda_cccl
+        cuda_cupti
+        cuda_nvrtc
+        cuda_nvtx
+        cudnn
+        libcufile
+        libcublas
+        libcufft
+        libcurand
+        libcusolver
+        libcusparse
+        libcusparse_lt
+        libnvjitlink
+        libnvshmem
+        nccl
+      ];
+      cudaRoot = pkgs.symlinkJoin {
+        name = "cuda-merged-exo";
+        paths = builtins.concatMap (p: [ (lib.getBin p) (lib.getLib p) (lib.getDev p) ]) (cudaLibs ++ [ cudaPackages.cuda_nvcc cuda_cccl_compat ]);
       };
-
-      # Create overlay from workspace
-      # Use wheels from PyPI for most packages; we override mlx with our pure Nix Metal build
-      overlay = workspace.mkPyprojectOverlay { sourcePreference = "wheel"; };
-
-      # Override overlay to inject Nix-built components
       exoOverlay = final: prev: {
         # Replace workspace exo_pyo3_bindings with Nix-built wheel.
         # Preserve passthru so mkVirtualEnv can resolve dependency groups.
@@ -32,187 +62,240 @@
           '';
         };
       };
+      buildSystemsOverlay = final: prev:
+        lib.optionalAttrs isDarwin
+          {
+            mlx = prev.mlx.overrideAttrs (old:
+              let
+                # Static dependencies included directly during compilation
+                gguf-tools = pkgs.fetchFromGitHub {
+                  owner = "antirez";
+                  repo = "gguf-tools";
+                  rev = "8fa6eb65236618e28fd7710a0fba565f7faa1848";
+                  hash = "sha256-15FvyPOFqTOr5vdWQoPnZz+mYH919++EtghjozDlnSA=";
+                };
 
-      python = pkgs.python313;
+                metal_cpp = pkgs.fetchzip {
+                  url = "https://developer.apple.com/metal/cpp/files/metal-cpp_26.zip";
+                  hash = "sha256-7n2eI2lw/S+Us6l7YPAATKwcIbRRpaQ8VmES7S8ZjY8=";
+                };
 
-      # Overlay to provide build systems and custom packages
-      buildSystemsOverlay = final: prev: {
-        # mlx-lm is a git dependency that needs setuptools
-        mlx-lm = prev.mlx-lm.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
-          ];
-        });
-        # rouge-score and sacrebleu don't declare setuptools as a build dependency
-        rouge-score = prev.rouge-score.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
-          ];
-        });
-        sacrebleu = prev.sacrebleu.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
-          ];
-        });
-        sqlitedict = prev.sqlitedict.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
-          ];
-        });
-        word2number = prev.word2number.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-            final.setuptools
-          ];
-        });
-      } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-        # Use our pure Nix-built MLX with Metal support (macOS only)
-        mlx = self'.packages.mlx;
+                nanobind = pkgs.fetchFromGitHub {
+                  owner = "wjakob";
+                  repo = "nanobind";
+                  rev = "v2.10.2";
+                  hash = "sha256-io44YhN+VpfHFWyvvLWSanRgbzA0whK8WlDNRi3hahU=";
+                  fetchSubmodules = true;
+                };
+              in
+              {
+                nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.cmake self'.packages.metal-toolchain ];
+                # TODO: non-sdk_26 support
+                buildInputs = (old.buildInputs or [ ])
+                ++ [ gguf-tools pkgs.fmt pkgs.nlohmann_json pkgs.apple-sdk_26 ];
+                patches = [
+                  (pkgs.replaceVars ../nix/darwin-build-fixes.patch {
+                    sdkVersion = pkgs.apple-sdk_26.version;
+                    inherit (self'.packages.metal-toolchain) metalVersion;
+                  })
+                ];
+                postPatch = ''
+                  substituteInPlace mlx/backend/cpu/jit_compiler.cpp \
+                    --replace-fail "g++" "${lib.getExe' pkgs.stdenv.cc "c++"}"
+                '';
+
+                DEV_RELEASE = 1;
+                CMAKE_ARGS = toString ([
+                  (lib.cmakeBool "USE_SYSTEM_FMT" true)
+                  (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_GGUFLIB" "${gguf-tools}")
+                  (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_JSON" "${pkgs.nlohmann_json.src}")
+                  (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_NANOBIND" "${nanobind}")
+                  (lib.cmakeBool "FETCHCONTENT_FULLY_DISCONNECTED" true)
+                  (lib.cmakeBool "MLX_BUILD_CPU" true)
+                  (lib.cmakeBool "MLX_BUILD_METAL" true)
+                  (lib.cmakeOptionType "string" "CMAKE_INSTALL_LIBDIR" "lib")
+                  (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_METAL_CPP" "${metal_cpp}")
+                  (lib.cmakeOptionType "string" "CMAKE_OSX_DEPLOYMENT_TARGET" "${pkgs.apple-sdk_26.version}")
+                  (lib.cmakeOptionType "filepath" "CMAKE_OSX_SYSROOT" "${pkgs.apple-sdk_26.passthru.sdkroot}")
+                ] ++ lib.optionals (isDarwin && isx86_64) [
+                  (lib.cmakeBool "MLX_ENABLE_X64_MAC" true)
+                ]);
+                SDKROOT = pkgs.apple-sdk_26.passthru.sdkroot;
+                MACOSX_DEPLOYMENT_TARGET = pkgs.apple-sdk_26.version;
+              });
+          } // lib.optionalAttrs isLinux {
+          mlx = prev.mlx.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ lib.optionals cudaSupport [ pkgs.autoAddDriverRunpath ];
+            buildInputs = old.buildInputs ++ lib.optionals cudaSupport cudaLibs;
+            postInstall = ''
+              cp -r "${final.${libmlx_source}}/${final.python.sitePackages}/mlx" "$out/${final.python.sitePackages}/mlx/"
+            '';
+            autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
+          });
+        } // lib.optionalAttrs cudaSupport {
+          "${libmlx_source}" = prev."${libmlx_source}".overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
+            buildInputs = old.buildInputs ++ cudaLibs;
+            autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
+          });
+          nvidia-cufile = prev.nvidia-cufile.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
+            buildInputs = old.buildInputs ++ [ pkgs.rdma-core ];
+          });
+          nvidia-cusolver = prev.nvidia-cusolver.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
+            buildInputs = old.buildInputs ++ cudaLibs;
+          });
+          nvidia-nvshmem-cu13 = prev.nvidia-nvshmem-cu13.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
+            buildInputs = old.buildInputs ++ [ pkgs.rdma-core pkgs.pmix pkgs.libfabric pkgs.ucx pkgs.openmpi ];
+          });
+          nvidia-cusparse = prev.nvidia-cusparse.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
+            buildInputs = old.buildInputs ++ cudaLibs;
+          });
+          torch = prev.torch.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
+            buildInputs = old.buildInputs ++ cudaLibs;
+            autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
+          });
+          torchaudio = prev.torchaudio.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
+            buildInputs = old.buildInputs ++ [ cudaPackages.cuda_cudart ];
+            preFixup = "addAutoPatchelfSearchPath '${final.torch}'";
+          });
+          torchvision = prev.torchvision.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
+            preFixup = "addAutoPatchelfSearchPath '${final.torch}'";
+          });
+
+          torch-c-dlpack-ext = prev.torch-c-dlpack-ext.overrideAttrs (old: {
+            buildInputs = old.buildInputs ++ cudaLibs;
+            autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
+            preFixup = "addAutoPatchelfSearchPath '${final.torch}'";
+          });
+
+        } // lib.optionalAttrs (cudaSupport && isx86_64) {
+          numba = prev.numba.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.tbb ];
+          });
+        };
+      pyprojectOverlay = workspace.mkPyprojectOverlay {
+        sourcePreference = "wheel";
+        dependencies = members;
       };
-
-      # Additional overlay for Linux-specific fixes (type checking env).
-      # Native wheels have shared lib dependencies we don't need at type-check time.
-      linuxOverlay = final: prev:
-        let
-          ignoreMissing = drv: drv.overrideAttrs { autoPatchelfIgnoreMissingDeps = [ "*" ]; };
-          nvidiaPackages = lib.filterAttrs (name: _: lib.hasPrefix "nvidia-" name) prev;
-        in
-        lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
-          (lib.mapAttrs (_: ignoreMissing) nvidiaPackages) // {
-            mlx = ignoreMissing prev.mlx;
-            mlx-cuda-13 = prev.mlx-cuda-13.overrideAttrs (old: {
-              buildInputs = (old.buildInputs or [ ]) ++ [
-                final.nvidia-cublas
-                final.nvidia-cuda-nvrtc
-                final.nvidia-cudnn-cu13
-                final.nvidia-nccl-cu13
-              ];
-              preFixup = ''
-                addAutoPatchelfSearchPath ${final.nvidia-cublas}
-                addAutoPatchelfSearchPath ${final.nvidia-cuda-nvrtc}
-                addAutoPatchelfSearchPath ${final.nvidia-cudnn-cu13}
-                addAutoPatchelfSearchPath ${final.nvidia-nccl-cu13}
-              '';
-              autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
-            });
-            torch = ignoreMissing prev.torch;
-            triton = ignoreMissing prev.triton;
-          }
-        );
-
+      editableOverlay = workspace.mkEditablePyprojectOverlay {
+        # Use environment variable pointing to editable root directory
+        root = "$REPO_ROOT";
+        members = [ "exo" "exo-bench" ];
+      };
       pythonSet = (pkgs.callPackage inputs.pyproject-nix.build.packages {
         inherit python;
       }).overrideScope (
         lib.composeManyExtensions [
           inputs.pyproject-build-systems.overlays.default
-          overlay
+          pyprojectOverlay
           exoOverlay
           buildSystemsOverlay
-          linuxOverlay
         ]
       );
-      # mlx-cpu and mlx-cuda-13 both ship mlx/ site-packages files; keep first.
-      # mlx-cpu/mlx-cuda-13 and nvidia-cudnn-cu12/cu13 ship overlapping files.
-      venvCollisionPaths = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-        "lib/python3.13/site-packages/mlx*"
-        "lib/python3.13/site-packages/nvidia*"
-      ];
+      # mlx and mlx-cuda ship clashing cmake files - we dont need them at runtime anyway
+      venv = name: (pythonSet.mkVirtualEnv "${name}-venv" members).overrideAttrs (_: { venvSkip = [ "lib/python${python.pythonVersion}/site-packages/mlx/share/cmake/*" "lib/python${python.pythonVersion}/site-packages/build_backend.py" ]; });
+      mkApp =
+        let
+          libPath = lib.makeLibraryPath (
+            [ pkgs.stdenv.cc.cc.lib ] ++ lib.optionals cudaSupport [ cudaRoot ]
+          );
+        in
+        text: name: pkgs.writeShellApplication {
+          inherit name;
+          text = ''
+            LD_LIBRARY_PATH="${libPath}''${LD_LIBRARY_PATH:+:}''${LD_LIBRARY_PATH:-}" exec \
+              ${lib.optionalString cudaSupport "nixglhost "} ${text}
+          '';
+          runtimeEnv = {
+            EXO_DASHBOARD_DIR = self'.packages.dashboard;
+            EXO_RESOURCES_DIR = inputs.self + /resources;
+          };
+          runtimeInputs = [
+            (venv name)
+          ] ++ lib.optionals cudaSupport [ pkgs.nix-gl-host ]
+          ++ lib.optionals isDarwin [ pkgs.macmon ];
+          passthru = {
+            venv = venv name;
+            evenv = ((pythonSet.overrideScope editableOverlay).mkVirtualEnv "${name}-evenv" (members // { exo = (members.exo or [ ]) ++ [ "dev" ]; })).overrideAttrs (_: {
+              venvSkip = [ "lib/python${python.pythonVersion}/site-packages/mlx/share/cmake/*" "lib/python${python.pythonVersion}/site-packages/build_backend.py" ];
+            });
+          } // lib.optionalAttrs cudaSupport {
+            inherit cudaRoot;
+          };
+        };
 
-      # Exclude bench deps from main env (bench has its own benchVenv)
-      exoDeps = removeAttrs workspace.deps.default [ "exo-bench" ];
-
-      exoVenv = (pythonSet.mkVirtualEnv "exo-env" exoDeps).overrideAttrs {
-        venvIgnoreCollisions = venvCollisionPaths;
-      };
+    in
+    {
+      inherit venv;
+      mkPythonScript = path: mkApp ''python ${path} "$@"'';
+      exo = mkApp ''exo "$@"'' "exo";
+    };
+in
+{
+  perSystem =
+    { self', pkgs, unfreePkgs, lib, ... }:
+    let
+      inherit (pkgs.stdenv.hostPlatform) isLinux;
+      inherit (mkPythonSet { inherit self' pkgs lib; members = { exo = [ "mlx-cpu" ]; }; }) exo;
 
       # Virtual environment with dev dependencies for testing
-      testVenv = (pythonSet.mkVirtualEnv "exo-test-env" (
-        exoDeps // {
-          exo = [ "dev" ]; # Include pytest, pytest-asyncio, pytest-env
-        }
-      )).overrideAttrs {
-        venvIgnoreCollisions = venvCollisionPaths;
+      testVenv = (mkPythonSet {
+        inherit self' pkgs lib; members = {
+        exo = [ "dev" "mlx-cpu" ]; # Include pytest, pytest-asyncio, pytest-env
       };
+      }).venv "exo-test";
 
-      mkPythonScript = name: path: pkgs.writeShellApplication {
-        inherit name;
-        runtimeInputs = [ exoVenv ];
-        runtimeEnv = {
-          EXO_DASHBOARD_DIR = self'.packages.dashboard;
-          EXO_RESOURCES_DIR = inputs.self + /resources;
-        };
-        text = ''exec python ${path} "$@"'';
+      mkBenchScript = (mkPythonSet {
+        inherit self' pkgs lib; members = {
+        exo = [ "mlx-cpu" ];
+        exo-bench = [ ]; # Include pytest, pytest-asyncio, pytest-env
       };
-
-      benchVenv = pythonSet.mkVirtualEnv "exo-bench-env" {
-        exo-bench = [ ];
-      };
-
-      mkBenchScript = name: path: pkgs.writeShellApplication {
-        inherit name;
-        runtimeInputs = [ benchVenv ];
-        text = ''exec python ${path} "$@"'';
-      };
+      }).mkPythonScript;
 
       mkSimplePythonScript = name: path: pkgs.writeShellApplication {
         inherit name;
         runtimeInputs = [ pkgs.python313 ];
         text = ''exec python ${path} "$@"'';
       };
-
-      exoPackage = pkgs.runCommand "exo"
-        {
-          nativeBuildInputs = [ pkgs.makeWrapper ];
-        }
-        ''
-          mkdir -p $out/bin
-
-          # Create wrapper script
-          makeWrapper ${exoVenv}/bin/exo $out/bin/exo \
-            --set EXO_DASHBOARD_DIR ${self'.packages.dashboard} \
-            --set EXO_RESOURCES_DIR ${inputs.self + /resources} \
-            ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "--prefix PATH : ${pkgs.macmon}/bin"}
-        '';
+      # if someone is particularly interested in cuda12 support in nix, please open an issue.
+      # until then, it's more hassle than its worth
+      #cuda12Set = mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_12) pkgs; members = { exo = [ "mlx-cuda12" ]; }; };
+      cuda13Set = mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_13) pkgs; members = { exo = [ "mlx-cuda13" ]; }; };
     in
     {
-      # Python package only available on macOS (requires MLX/Metal)
-      packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin
-        {
-          exo = exoPackage;
-          # Test environment for running pytest outside of Nix sandbox (needs GPU access)
-          exo-test-env = testVenv;
-        } // {
-
-        inherit python;
-
+      packages = {
+        inherit exo;
+        # for running tests in ci
+        exo-test-env = testVenv;
         exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
         exo-eval = mkBenchScript "exo-eval" (inputs.self + /bench/exo_eval.py);
         exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);
+        # used by ./tests/run_exo_on.sh
         exo-get-all-models-on-cluster = mkSimplePythonScript "exo-get-all-models-on-cluster" (inputs.self + /tests/get_all_models_on_cluster.py);
-        exo-mlx-bandwidth-test = mkPythonScript "exo-mlx-bandwidth-test" (inputs.self + /bench/test_mlx_bandwidth.py);
+      } // lib.optionalAttrs isLinux {
+        #exo-cuda-12 = cuda12Set.exo;
+        exo-cuda-13 = cuda13Set.exo;
       };
 
       checks = {
-        # Ruff linting (works on all platforms)
         lint = pkgs.runCommand "ruff-lint" { } ''
           export RUFF_CACHE_DIR="$TMPDIR/ruff-cache"
           ${pkgs.ruff}/bin/ruff check ${inputs.self}
           touch $out
         '';
 
-        # Hermetic basedpyright type checking
-        typecheck = pkgs.runCommand "typecheck"
-          {
-            nativeBuildInputs = [
-              testVenv
-              pkgs.basedpyright
-            ];
-          }
-          ''
-            cd ${inputs.self}
-            export HOME=$TMPDIR
-            basedpyright --pythonpath ${testVenv}/bin/python
-            touch $out
-          '';
+        typecheck = pkgs.runCommand "typecheck" { nativeBuildInputs = [ testVenv ]; } ''
+          cd ${inputs.self}
+          basedpyright
+          touch $out
+        '';
       };
     };
 }

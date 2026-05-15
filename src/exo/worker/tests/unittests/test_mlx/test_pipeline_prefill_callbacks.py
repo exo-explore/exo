@@ -17,6 +17,7 @@ import pytest
 
 from exo.shared.constants import EXO_DEFAULT_MODELS_DIR
 from exo.shared.models.model_cards import ModelCard, ModelTask
+from exo.shared.types.backends import Backend
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
@@ -37,6 +38,7 @@ def _model_card() -> ModelCard:
         hidden_size=2880,
         supports_tensor=False,
         tasks=[ModelTask.TextGeneration],
+        backends=[Backend.MlxMetal],
     )
 
 
@@ -174,9 +176,12 @@ def _run_pipeline_device(
             n_layers=TOTAL_LAYERS,
         )
 
-        model, tokenizer = shard_and_load(
-            shard_meta, group, on_timeout=None, on_layer_loaded=None
-        )
+        gen = shard_and_load(shard_meta, group)
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            model, tokenizer = stop.value
         model = cast(Any, model)
 
         prompt, task = _build_prompt(tokenizer, prompt_tokens)

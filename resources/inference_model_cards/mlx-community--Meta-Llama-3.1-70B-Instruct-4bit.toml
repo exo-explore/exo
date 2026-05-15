@@ -10,6 +10,12 @@ base_model = "Llama 3.1 70B"
 capabilities = ["text"]
 
 context_length = 131072
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 40652242944
+
+# Source: https://huggingface.co/meta-llama/Meta-Llama-3.1-70B-Instruct/blob/main/generation_config.json
+# Source: https://huggingface.co/unsloth/Meta-Llama-3.1-70B-Instruct/blob/main/generation_config.json
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.9

@@ -4,6 +4,7 @@ import re
 import sys
 import tempfile
 import time
+from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -43,7 +44,6 @@ from pydantic import RootModel
 from exo.download.download_utils import build_model_path
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import Model
 from exo.shared.types.tasks import TaskId, TextGeneration
 from exo.shared.types.text_generation import ChatTemplateValue, TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
@@ -51,6 +51,7 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
+from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import (
     CfgShardMetadata,
     PipelineShardMetadata,
@@ -58,17 +59,13 @@ from exo.shared.types.worker.shards import (
     TensorShardMetadata,
 )
 from exo.worker.engines.mlx.auto_parallel import (
-    LayerLoadedCallback,
-    TimeoutCallback,
-    eval_with_timeout,
     get_inner_model,
     get_layers,
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.types import Model
 from exo.worker.runner.bootstrap import logger
-
-Group = mx.distributed.Group
 
 
 def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
@@ -84,10 +81,6 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
     )
 
 
-class ModelLoadingTimeoutError(Exception):
-    pass
-
-
 class HostList(RootModel[list[str]]):
     @classmethod
     def from_hosts(cls, hosts: list[Host]) -> "HostList":
@@ -96,7 +89,7 @@ class HostList(RootModel[list[str]]):
 
 def mlx_distributed_init(
     bound_instance: BoundInstance,
-) -> Group:
+) -> mx.distributed.Group:
     """
     Initialize MLX distributed.
     """
@@ -122,7 +115,8 @@ def mlx_distributed_init(
 
                 os.environ["MLX_HOSTFILE"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
-                os.environ["MLX_RING_VERBOSE"] = "1"
+                # os.environ["MLX_RING_VERBOSE"] = "1"  # NOTE: we don't use it enough to care (turn on again if need to)
+
                 group = mx.distributed.init(backend="ring", strict=True)
 
             case MlxJacclInstance(
@@ -155,7 +149,7 @@ def mlx_distributed_init(
 
 def initialize_mlx(
     bound_instance: BoundInstance,
-) -> Group:
+) -> mx.distributed.Group:
     # should we unseed it?
     # TODO: pass in seed from params
     mx.random.seed(42)
@@ -168,10 +162,12 @@ def initialize_mlx(
 
 def load_mlx_items(
     bound_instance: BoundInstance,
-    group: Group | None,
-    on_timeout: TimeoutCallback | None,
-    on_layer_loaded: LayerLoadedCallback | None,
-) -> "tuple[Model, TokenizerWrapper, VisionProcessor | None]":
+    group: mx.distributed.Group | None,
+) -> Generator[
+    ModelLoadingResponse, None, tuple[Model, TokenizerWrapper, "VisionProcessor | None"]
+]:
+    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
+
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
@@ -184,8 +180,7 @@ def load_mlx_items(
             total = len(layers)
             for i, layer in enumerate(layers):
                 mx.eval(layer)  # type: ignore
-                if on_layer_loaded is not None:
-                    on_layer_loaded(i, total)
+                yield ModelLoadingResponse(layers_loaded=i, total=total)
         except ValueError as e:
             logger.opt(exception=e).debug(
                 "Model architecture doesn't support layer-by-layer progress tracking",
@@ -198,18 +193,14 @@ def load_mlx_items(
     else:
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
-        model, tokenizer = shard_and_load(
+        model, tokenizer = yield from shard_and_load(
             bound_instance.bound_shard,
             group=group,
-            on_timeout=on_timeout,
-            on_layer_loaded=on_layer_loaded,
         )
         end_time = time.perf_counter()
         logger.info(
             f"Time taken to shard and load model: {(end_time - start_time):.2f}s"
         )
-
-    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
     mx.clear_cache()
 
@@ -218,9 +209,20 @@ def load_mlx_items(
     if vision_config is not None:
         from exo.worker.engines.mlx.vision import VisionProcessor
 
-        vision_processor: VisionProcessor | None = VisionProcessor(
-            vision_config, bound_instance.bound_shard.model_card.model_id
-        )
+        vision_start_time = time.perf_counter()
+        try:
+            vision_processor: VisionProcessor | None = VisionProcessor(
+                vision_config, bound_instance.bound_shard.model_card.model_id
+            )
+            vision_processor.load()
+            logger.info(
+                f"Time taken to load vision weights: {(time.perf_counter() - vision_start_time):.2f}s"
+            )
+        except Exception as e:
+            logger.opt(exception=e).error(
+                "Failed to load vision weights — disabling vision for this runner"
+            )
+            vision_processor = None
     else:
         vision_processor = None
 
@@ -229,10 +231,8 @@ def load_mlx_items(
 
 def shard_and_load(
     shard_metadata: ShardMetadata,
-    group: Group,
-    on_timeout: TimeoutCallback | None,
-    on_layer_loaded: LayerLoadedCallback | None,
-) -> tuple[nn.Module, TokenizerWrapper]:
+    group: mx.distributed.Group,
+) -> Generator[ModelLoadingResponse, None, tuple[nn.Module, TokenizerWrapper]]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
     model, _ = load_model(model_path, lazy=True, strict=False)
@@ -260,27 +260,14 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
-    # Estimate timeout based on model size (5x default for large queued workloads)
-    base_timeout = float(os.environ.get("EXO_MODEL_LOAD_TIMEOUT", "300"))
-    model_size = get_weights_size(shard_metadata)
-    timeout_seconds = base_timeout + model_size.in_gb
-    logger.info(
-        f"Evaluating model parameters with timeout of {timeout_seconds:.0f}s "
-        f"(model size: {model_size.in_gb:.1f}GB)"
-    )
-
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
-            model = tensor_auto_parallel(
-                model, group, timeout_seconds, on_timeout, on_layer_loaded
-            )
+            model = yield from tensor_auto_parallel(model, group)
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
-            model = pipeline_auto_parallel(
-                model, group, shard_metadata, on_layer_loaded=on_layer_loaded
-            )
-            eval_with_timeout(model.parameters(), timeout_seconds, on_timeout)
+            model = yield from pipeline_auto_parallel(model, group, shard_metadata)
+            mx.eval(model.parameters())
         case CfgShardMetadata():
             raise ValueError(
                 "CfgShardMetadata is not supported for text model loading - "
@@ -324,17 +311,21 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     model_id_lower = model_id.lower()
     if "kimi-k2" in model_id_lower:
         return [163586]
-    elif "glm-5" in model_id_lower or "glm-4.7" in model_id_lower:
-        # For GLM-5 and GLM-4.7
+    elif "glm-5" in model_id_lower:
         # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
         return [154820, 154827, 154829]
     elif "glm" in model_id_lower:
-        # For GLM-4.5 and older
+        # For GLM-4.7 and older
         return [151336, 151329, 151338]
     elif "gpt-oss" in model_id_lower:
         return [200002, 200012]
-    elif "qwen3.5" in model_id_lower or "qwen-3.5" in model_id_lower:
-        # For Qwen3.5: 248046 (<|im_end|>), 248044 (<|endoftext|>)
+    elif (
+        "qwen3.5" in model_id_lower
+        or "qwen-3.5" in model_id_lower
+        or "qwen3.6" in model_id_lower
+        or "qwen-3.6" in model_id_lower
+    ):
+        # For Qwen3.5 / Qwen3.6: 248046 (<|im_end|>), 248044 (<|endoftext|>)
         return [248046, 248044]
     elif "gemma-4" in model_id_lower or "gemma-3" in model_id_lower:
         return [1, 106, 50]
@@ -495,6 +486,32 @@ def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
     return "deepseek-v3.2" in task_params.model.lower()
 
 
+def _needs_v4_encoding(task_params: TextGenerationTaskParams) -> bool:
+    return "deepseek-v4" in task_params.model.lower()
+
+
+def _v4_reasoning_effort(task_params: TextGenerationTaskParams) -> str | None:
+    effort = task_params.reasoning_effort
+    if effort == "xhigh":
+        return "max"
+    if effort == "high":
+        return "high"
+    return None
+
+
+def _strip_v4_thinking_markers(content: str) -> str:
+    """Remove `<think>…</think>` blocks and any stray `<think>`/`</think>` tags
+    from prior-turn assistant content.
+
+    The V4 encoder drops `reasoning_content` for older turns when
+    `drop_thinking=True`"""
+    block = re.compile(r"<think>.*?</think>", re.DOTALL)
+    if not content:
+        return content
+    cleaned = block.sub("", content)
+    return cleaned.replace("<think>", "").replace("</think>", "")
+
+
 def consolidate_system_messages(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -544,7 +561,7 @@ def render_chat_template(
         formatted_messages = formatted_messages[:-1]
 
     if _needs_dsml_encoding(task_params):
-        from exo.worker.engines.mlx.dsml_encoding import encode_messages
+        from exo.worker.engines.mlx.vendor.dsml_encoding import encode_messages
 
         prompt = encode_messages(
             messages=formatted_messages,
@@ -556,11 +573,50 @@ def render_chat_template(
         )
         if partial_assistant_content:
             prompt += partial_assistant_content
-        logger.info(prompt)
+        return prompt
+
+    if _needs_v4_encoding(task_params):
+        from exo.worker.engines.mlx.vendor.deepseek_v4_encoding import (
+            encode_messages as encode_messages_v4,
+        )
+
+        v4_messages = [dict(m) for m in formatted_messages]
+        for msg in v4_messages:
+            if msg.get("role") == "assistant":
+                content = msg.get("content")
+                if isinstance(content, str):
+                    msg["content"] = _strip_v4_thinking_markers(content)
+        if task_params.tools:
+            for msg in v4_messages:
+                if msg.get("role") in ("system", "developer"):
+                    msg["tools"] = task_params.tools
+                    break
+            else:
+                v4_messages.insert(
+                    0, {"role": "system", "content": "", "tools": task_params.tools}
+                )
+
+        prompt = encode_messages_v4(
+            messages=v4_messages,
+            thinking_mode="chat"
+            if task_params.enable_thinking is False
+            else "thinking",
+            reasoning_effort=_v4_reasoning_effort(task_params),
+        )
+        if partial_assistant_content:
+            prompt += partial_assistant_content
         return prompt
 
     for msg in formatted_messages:
         _normalize_tool_calls(msg)
+
+    # Put reasoning content in thinking block for GPT OSS
+    if "gpt-oss" in task_params.model.lower():
+        for msg in formatted_messages:
+            if msg.get("role") == "assistant" and "thinking" not in msg:
+                rc = msg.get("reasoning_content")
+                if isinstance(rc, str) and rc:
+                    msg["thinking"] = rc
 
     extra_kwargs: dict[str, Any] = {}
     if task_params.enable_thinking is not None:
@@ -620,7 +676,7 @@ def apply_chat_template(
             messages.append({"role": msg.role, "content": msg.content})
 
     prompt = render_chat_template(tokenizer, messages, task_params)
-    logger.info(prompt)
+    logger.debug(prompt)
 
     return prompt
 
@@ -763,7 +819,9 @@ def set_wired_limit_for_model(model_size: Memory):
 
 
 def mlx_cleanup(
-    model: Model | None, tokenizer: TokenizerWrapper | None, group: Group | None
+    model: Model | None,
+    tokenizer: TokenizerWrapper | None,
+    group: mx.distributed.Group | None,
 ) -> None:
     del model, tokenizer, group
     mx.clear_cache()
@@ -772,7 +830,7 @@ def mlx_cleanup(
     gc.collect()
 
 
-def mx_any(bool_: bool, group: Group | None) -> bool:
+def mx_any(bool_: bool, group: mx.distributed.Group | None) -> bool:
     if group is None:
         return bool_
     num_true = mx.distributed.all_sum(
@@ -782,7 +840,7 @@ def mx_any(bool_: bool, group: Group | None) -> bool:
     return num_true.item() > 0
 
 
-def mx_barrier(group: Group | None):
+def mx_barrier(group: mx.distributed.Group | None):
     if group is None:
         return
     mx.eval(
