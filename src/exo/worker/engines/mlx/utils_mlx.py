@@ -815,12 +815,19 @@ def mlx_force_oom2(size: int | None = None) -> None:
             available_memory = MemoryUsage.from_psutil(
                 override_memory=None
             ).ram_available.in_bytes
+
+        print(f"found {available_memory}")
         return available_memory
 
     def get_size(memory: int):
         mem_target = ceil_div(memory * 11, 10)  # overshoot by 1.1x
+        print(f"targeting {mem_target}")
+
         mat_mem = ceil_div(mem_target, 3)  # per-matrix memory (3 live matrices)
+        print(f"memory per matrix {mat_mem}")
+
         mat_elem = ceil_div(mat_mem, 4)  # per-matrix elements (4 bytes per elem)
+        print(f"elem per matrix {mat_mem}")
 
         # square root to get size (round up if not integer)
         root = isqrt(mat_elem)
@@ -828,6 +835,7 @@ def mlx_force_oom2(size: int | None = None) -> None:
 
     # use supplied size, or computer appropriate size otherwise
     size = size if size is not None else get_size(get_memory())
+    print(f"size {size}")
 
     mx.set_default_device(mx.gpu)
     mx.clear_cache()
