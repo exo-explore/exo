@@ -21,7 +21,6 @@ stdenv.mkDerivation {
   makeFlags = [
     "PREFIX=${placeholder "out"}"
     "ETCDIR=${placeholder "out"}/etc"
-  ]
-  ++ lib.optional stdenv.isDarwin "LDLIBS=''";
+  ];
 }
 
