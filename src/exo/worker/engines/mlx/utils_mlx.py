@@ -1,3 +1,4 @@
+from itertools import pairwise
 import json
 import os
 import re
@@ -45,7 +46,6 @@ from pydantic import RootModel
 from exo.download.download_utils import build_model_path
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage
 from exo.shared.types.tasks import TaskId, TextGeneration
 from exo.shared.types.text_generation import ChatTemplateValue, TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
@@ -796,40 +796,15 @@ def mlx_force_oom(size: int = 200000) -> None:
     mx.eval(f)
 
 
-def mlx_force_oom2(size: int | None = None):
+def mlx_force_oom2(bytes_alloc: int = 1024**5):  # the default is 1 petabyte lol
     """
     Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
 
     NOTE: probably only works correctly on Apple unified memory
     """
 
-    def ceil_div(num: int, den: int) -> int:
-        return -(-num // den)
-
-    def get_memory():
-        available_memory: int | None = None
-        if sys.platform == "darwin":
-            macmon_metrics = read_macmon_metrics_once()
-            if macmon_metrics is not None:
-                m = macmon_metrics.memory
-                available_memory = m.ram_total.in_bytes + m.swap_total.in_bytes
-
-        if available_memory is None:
-            m = MemoryUsage.from_psutil(override_memory=None)
-            available_memory = m.ram_total.in_bytes + m.swap_total.in_bytes
-
-        print(f"found {available_memory / 1024**3} GB")
-        return available_memory
-
     def get_size(memory: int):
-        mem_target = ceil_div(memory * 13, 10)  # overshoot by 1.3x
-        print(f"targeting {mem_target / 1024**3} GB")
-
-        mat_mem = ceil_div(mem_target, 3)  # per-matrix memory (3 live matrices)
-        print(f"memory per matrix {mat_mem}")
-
-        mat_elem = ceil_div(mat_mem, 4)  # per-matrix elements (4 bytes per elem)
-        print(f"elem per matrix {mat_mem}")
+        mat_elem = -(-memory // 4)  # per-matrix elements (4 bytes per elem)
 
         # square root to get size (round up if not integer)
         root = isqrt(mat_elem)
@@ -838,22 +813,28 @@ def mlx_force_oom2(size: int | None = None):
     def oom(size: int):
         mx.set_default_device(mx.gpu)
         mx.clear_cache()
-        a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
-        b = mx.random.uniform(shape=(size, size), dtype=mx.float32)
-        mx.eval(a, b)
-        c = mx.matmul(a, b)  # (size,size)
-        d = mx.matmul(b, c)  # (size,size)
-        mx.eval(c, d)
-        e = mx.matmul(a, c)  # (size,size)
-        f = mx.sigmoid(d + e + b)  # (size,size)
+
+        # allocate a lot
+        t1 = [
+            mx.random.uniform(shape=(size, size), dtype=mx.float32) for _ in range(100)
+        ]
+        mx.eval(*t1)
+
+        # mat mul cycle
+        t2: list[mx.array] = []
+        for m1, m2 in pairwise(t1):
+            t2.append(mx.matmul(m1, m2))
+        mx.eval(*t2)
+
+        # sigmoid sum
+        f = mx.sigmoid(sum(t2, start=mx.zeros(shape=(size, size), dtype=mx.float32)))
         mx.eval(f)
 
     # use supplied size, or computer appropriate size otherwise
-    size = size if size is not None else get_size(get_memory())
-    print(f"size {size}")
     while True:
         try:
-            oom(size)
+            print(f"size {bytes_alloc / 1024**3} GB")
+            oom(get_size(bytes_alloc))
             break
         except RuntimeError as e:
             max_bytes = re.compile(
@@ -863,8 +844,7 @@ def mlx_force_oom2(size: int | None = None):
                 raise RuntimeError(
                     "Tried to get max buffer, but wrong error format"
                 ) from e
-            max_bytes = int(max_bytes.group("max_bytes"))
-            size = get_size(max_bytes)
+            bytes_alloc = int(max_bytes.group("max_bytes"))
 
     mlx_force_oom2()
 
