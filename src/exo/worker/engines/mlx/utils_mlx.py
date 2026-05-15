@@ -856,10 +856,15 @@ def mlx_force_oom2(size: int | None = None):
             oom(size)
             break
         except RuntimeError as e:
-            print(f"message is: {str(e)}")
-
-            # adjust size downwards to avoid explicit python exception
-            size = int(float(size) * 0.9)
+            max_bytes = re.compile(
+                r"\[metal::malloc\] Attempting to allocate (?:\d+) bytes which is greater than the maximum allowed buffer size of (?P<max_bytes>\d+) bytes."
+            ).match(str(e))
+            if max_bytes is None:
+                raise RuntimeError(
+                    "Tried to get max buffer, but wrong error format"
+                ) from e
+            max_bytes = int(max_bytes.group("max_bytes"))
+            size = get_size(max_bytes)
 
     mlx_force_oom2()
 
