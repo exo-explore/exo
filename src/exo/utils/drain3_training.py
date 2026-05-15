@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
-
 DEFAULT_MASKS: tuple[tuple[str, str], ...] = (
     (
         r"((?<=[^A-Za-z0-9])|^)"
