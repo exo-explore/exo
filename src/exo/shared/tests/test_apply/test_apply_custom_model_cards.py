@@ -1,5 +1,6 @@
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelCard, ModelTask
+from exo.shared.types.backends import Backend
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import (
     CustomModelCardAdded,
@@ -18,6 +19,7 @@ def _model_card(model_id: ModelId) -> ModelCard:
         hidden_size=1,
         supports_tensor=True,
         tasks=[ModelTask.TextGeneration],
+        backends=[Backend.MlxMetal],
     )
 
 

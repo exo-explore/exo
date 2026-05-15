@@ -199,6 +199,7 @@ class ResumableShardDownloader(ShardDownloader):
             hidden_size=1,
             supports_tensor=False,
             tasks=[ModelTask.TextGeneration],
+            backends=shard.model_card.backends,
         )
         return PipelineShardMetadata(
             model_card=vision_card,
