@@ -157,17 +157,15 @@ def load_drain3_modules() -> Drain3Modules:
         raise
 
     return Drain3Modules(
-        template_miner=cast(
-            TemplateMinerFactory, getattr(drain3_module, "TemplateMiner")
-        ),
+        template_miner=cast(TemplateMinerFactory, vars(drain3_module)["TemplateMiner"]),
         template_miner_config=cast(
-            TemplateMinerConfigFactory, getattr(config_module, "TemplateMinerConfig")
+            TemplateMinerConfigFactory, vars(config_module)["TemplateMinerConfig"]
         ),
         file_persistence=cast(
-            FilePersistenceFactory, getattr(file_persistence_module, "FilePersistence")
+            FilePersistenceFactory, vars(file_persistence_module)["FilePersistence"]
         ),
         masking_instruction=cast(
-            MaskingInstructionFactory, getattr(masking_module, "MaskingInstruction")
+            MaskingInstructionFactory, vars(masking_module)["MaskingInstruction"]
         ),
     )
 
@@ -247,63 +245,63 @@ def train_log_file(args: Drain3TrainArgs) -> TrainingSummary:
     with (
         open_log_file(input_path, args.encoding) as log_file,
         changes_jsonl_path.open("w", encoding="utf-8") as changes_file,
+        ExitStack() as stack,
     ):
-        with ExitStack() as stack:
-            matches_file = (
-                stack.enter_context(matches_jsonl_path.open("w", encoding="utf-8"))
-                if matches_jsonl_path is not None
-                else None
+        matches_file = (
+            stack.enter_context(matches_jsonl_path.open("w", encoding="utf-8"))
+            if matches_jsonl_path is not None
+            else None
+        )
+        for raw_line in log_file:
+            lines_read += 1
+            if args.max_lines is not None and lines_read > args.max_lines:
+                break
+
+            message = extract_message(
+                raw_line,
+                message_regex,
+                drop_unmatched=args.drop_unmatched,
             )
-            for raw_line in log_file:
-                lines_read += 1
-                if args.max_lines is not None and lines_read > args.max_lines:
-                    break
+            if message is None:
+                skipped_unmatched += 1
+                continue
+            if not message and not args.include_empty:
+                skipped_empty += 1
+                continue
 
-                message = extract_message(
-                    raw_line,
-                    message_regex,
-                    drop_unmatched=args.drop_unmatched,
+            result = template_miner.add_log_message(message)
+            change_type = str(result.get("change_type", "unknown"))
+            change_counts[change_type] += 1
+            messages_trained += 1
+
+            if change_type != "none":
+                change_record = {
+                    "line_number": lines_read,
+                    "message": message,
+                    **result,
+                }
+                changes_file.write(json.dumps(change_record, sort_keys=True) + "\n")
+
+            if matches_file is not None:
+                match_record = {
+                    "line_number": lines_read,
+                    "message": message,
+                    **result,
+                }
+                matches_file.write(json.dumps(match_record, sort_keys=True) + "\n")
+
+            if (
+                args.progress_interval > 0
+                and messages_trained % args.progress_interval == 0
+            ):
+                elapsed = time.monotonic() - start_time
+                rate = messages_trained / elapsed if elapsed > 0 else 0.0
+                print(
+                    f"Processed {messages_trained} messages, "
+                    f"{len(template_miner.drain.clusters)} clusters, "
+                    f"{rate:.1f} lines/sec",
+                    file=sys.stderr,
                 )
-                if message is None:
-                    skipped_unmatched += 1
-                    continue
-                if not message and not args.include_empty:
-                    skipped_empty += 1
-                    continue
-
-                result = template_miner.add_log_message(message)
-                change_type = str(result.get("change_type", "unknown"))
-                change_counts[change_type] += 1
-                messages_trained += 1
-
-                if change_type != "none":
-                    change_record = {
-                        "line_number": lines_read,
-                        "message": message,
-                        **result,
-                    }
-                    changes_file.write(json.dumps(change_record, sort_keys=True) + "\n")
-
-                if matches_file is not None:
-                    match_record = {
-                        "line_number": lines_read,
-                        "message": message,
-                        **result,
-                    }
-                    matches_file.write(json.dumps(match_record, sort_keys=True) + "\n")
-
-                if (
-                    args.progress_interval > 0
-                    and messages_trained % args.progress_interval == 0
-                ):
-                    elapsed = time.monotonic() - start_time
-                    rate = messages_trained / elapsed if elapsed > 0 else 0.0
-                    print(
-                        f"Processed {messages_trained} messages, "
-                        f"{len(template_miner.drain.clusters)} clusters, "
-                        f"{rate:.1f} lines/sec",
-                        file=sys.stderr,
-                    )
     if messages_trained == 0:
         raise RuntimeError("No log messages were trained from the input file")
 
