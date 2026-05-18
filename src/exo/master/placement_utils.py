@@ -359,12 +359,24 @@ def find_ip_prioritised(
     # TODO: Profile and get actual connection speeds.
     if ring:
         priority = {
-            "thunderbolt": 0,
-            "maybe_ethernet": 1,
-            "ethernet": 2,
-            "wifi": 3,
-            "unknown": 4,
+            "thunderbolt": 1,
+            "maybe_ethernet": 2,
+            "ethernet": 3,
+            "wifi": 4,
+            "unknown": 5,
         }
+
+        def _ring_ip_key(ip: str) -> int:
+            # 192.168.100.0/24 is the dedicated raw-TB4 subnet. macOS classifies
+            # it as "maybe_ethernet" via the en1 bridge, but ring TCP reliably
+            # works here (verified <0.5ms RTT). Give it explicit priority 0 so it
+            # always beats bridge0 aliases (192.168.2.x) which cause EHOSTUNREACH
+            # in spawned ring subprocesses.
+            if ip.startswith("192.168.100."):
+                return 0
+            return priority.get(ip_to_type.get(ip, "unknown"), 5)
+
+        return min(ips, key=_ring_ip_key)
 
     # RDMA prefers ethernet coordinator
     else:
