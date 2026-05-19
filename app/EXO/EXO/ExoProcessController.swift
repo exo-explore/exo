@@ -9,11 +9,14 @@ private let enableImageModelsKey = "EXOEnableImageModels"
 private let offlineModeKey = "EXOOfflineMode"
 private let fastSynchEnabledKey = "EXOFastSynchEnabled"
 private let onboardingCompletedKey = "EXOOnboardingCompleted"
+private let defaultModelsDirKey = "EXODefaultModelsDir"
+private let additionalModelsDirsKey = "EXOAdditionalModelsDirs"
+private let readOnlyModelsDirsKey = "EXOReadOnlyModelsDirs"
 private let customEnvironmentVariablesKey = "EXOCustomEnvironmentVariables"
 
 /// A user-defined environment variable that is injected into the exo child
-/// process at launch. Used to pass arbitrary key/value settings to exo
-/// without having to add first-class UI for each one.
+/// process at launch. Used as an escape hatch for env vars that don't have
+/// first-class typed UI in Settings.
 struct CustomEnvironmentVariable: Codable, Identifiable, Equatable {
     var id: UUID
     var key: String
@@ -104,6 +107,30 @@ final class ExoProcessController: ObservableObject {
     {
         didSet {
             UserDefaults.standard.set(fastSynchEnabled, forKey: fastSynchEnabledKey)
+        }
+    }
+    @Published var defaultModelsDir: String = {
+        return UserDefaults.standard.string(forKey: defaultModelsDirKey) ?? ""
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(defaultModelsDir, forKey: defaultModelsDirKey)
+        }
+    }
+    @Published var additionalModelsDirs: String = {
+        return UserDefaults.standard.string(forKey: additionalModelsDirsKey) ?? ""
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(additionalModelsDirs, forKey: additionalModelsDirsKey)
+        }
+    }
+    @Published var readOnlyModelsDirs: String = {
+        return UserDefaults.standard.string(forKey: readOnlyModelsDirsKey) ?? ""
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(readOnlyModelsDirs, forKey: readOnlyModelsDirsKey)
         }
     }
     @Published var customEnvironmentVariables: [CustomEnvironmentVariable] = {
@@ -364,8 +391,21 @@ final class ExoProcessController: ObservableObject {
 
         environment["PATH"] = paths.joined(separator: ":")
 
+        let trimmedDefaultModelsDir = defaultModelsDir.trimmingCharacters(in: .whitespaces)
+        if !trimmedDefaultModelsDir.isEmpty {
+            environment["EXO_DEFAULT_MODELS_DIR"] = trimmedDefaultModelsDir
+        }
+        let trimmedAdditionalModelsDirs = additionalModelsDirs.trimmingCharacters(in: .whitespaces)
+        if !trimmedAdditionalModelsDirs.isEmpty {
+            environment["EXO_MODELS_DIRS"] = trimmedAdditionalModelsDirs
+        }
+        let trimmedReadOnlyModelsDirs = readOnlyModelsDirs.trimmingCharacters(in: .whitespaces)
+        if !trimmedReadOnlyModelsDirs.isEmpty {
+            environment["EXO_MODELS_READ_ONLY_DIRS"] = trimmedReadOnlyModelsDirs
+        }
+
         // Apply user-defined arbitrary environment variables last so that
-        // power users can override any of the built-in keys above when
+        // power users can override any of the typed fields above when
         // necessary. Empty keys are ignored.
         for variable in customEnvironmentVariables {
             let trimmedKey = variable.key.trimmingCharacters(in: .whitespaces)

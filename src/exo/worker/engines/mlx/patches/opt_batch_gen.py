@@ -58,6 +58,7 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     self._current_tokens = self._next_tokens
     self._current_logprobs = self._next_logprobs
     inputs = self._current_tokens
+    assert inputs is not None, "_step requires initialized _next_tokens"
 
     buf = _get_buffer(self)
     buf.ready = buf.pending
@@ -87,7 +88,7 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
         sampled = self.fallback_sampler(logprobs)
 
     self._next_tokens = sampled
-    self._next_logprobs = list(logprobs)
+    self._next_logprobs = logprobs
 
     if buf.needs_topk:
         batch_size = len(self.uids)
@@ -106,19 +107,29 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
         )
         mx.async_eval(
             self._next_tokens,
-            *self._next_logprobs,
+            self._next_logprobs,
             pending_indices,
             pending_values,
             pending_selected,
         )
     else:
-        mx.async_eval(self._next_tokens, *self._next_logprobs)
+        mx.async_eval(self._next_tokens, self._next_logprobs)
 
-    mx.eval(inputs, *self._current_logprobs)
+    current_lp = self._current_logprobs
+    if isinstance(current_lp, mx.array):
+        mx.eval(inputs, current_lp)
+    elif current_lp:
+        mx.eval(inputs, *current_lp)
+    else:
+        mx.eval(inputs)
+
     token_list = cast(list[int], inputs.tolist())
     for sti, ti in zip(self.tokens, token_list, strict=True):
         sti.append(ti)
-    return token_list, self._current_logprobs
+
+    if isinstance(current_lp, mx.array):
+        current_lp = list(current_lp)
+    return token_list, current_lp
 
 
 def apply_batch_gen_patch() -> None:

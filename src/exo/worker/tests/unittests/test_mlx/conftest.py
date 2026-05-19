@@ -12,12 +12,13 @@ import mlx.nn as nn
 
 from exo.shared.constants import EXO_DEFAULT_MODELS_DIR
 from exo.shared.models.model_cards import ModelCard, ModelTask
+from exo.shared.types.backends import Backend
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import Model
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.shared.types.worker.shards import PipelineShardMetadata, TensorShardMetadata
 from exo.worker.engines.mlx.generator.generate import mlx_generate
+from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import apply_chat_template, shard_and_load
 
 
@@ -88,6 +89,7 @@ def run_gpt_oss_pipeline_device(
                 hidden_size=2880,
                 supports_tensor=False,
                 tasks=[ModelTask.TextGeneration],
+                backends=[Backend.MlxMetal],
             ),
             device_rank=rank,
             world_size=world_size,
@@ -96,9 +98,12 @@ def run_gpt_oss_pipeline_device(
             n_layers=24,
         )
 
-        model, tokenizer = shard_and_load(
-            shard_meta, group, on_timeout=None, on_layer_loaded=None
-        )
+        gen = shard_and_load(shard_meta, group)
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            model, tokenizer = stop.value
         model = cast(Model, model)
 
         # Generate a prompt of exact token length
@@ -166,6 +171,7 @@ def run_gpt_oss_tensor_parallel_device(
                 hidden_size=2880,
                 supports_tensor=True,
                 tasks=[ModelTask.TextGeneration],
+                backends=[Backend.MlxMetal],
             ),
             device_rank=rank,
             world_size=world_size,
@@ -174,9 +180,12 @@ def run_gpt_oss_tensor_parallel_device(
             n_layers=24,
         )
 
-        model, tokenizer = shard_and_load(
-            shard_meta, group, on_timeout=None, on_layer_loaded=None
-        )
+        gen = shard_and_load(shard_meta, group)
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            model, tokenizer = stop.value
         model = cast(Model, model)
 
         base_text = "The quick brown fox jumps over the lazy dog. "

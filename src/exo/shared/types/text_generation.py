@@ -8,10 +8,28 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, WrapValidator
 
+from exo.shared.logging import logger
 from exo.shared.types.common import ModelId, TruncatingString
 
 MessageRole = Literal["user", "assistant", "system", "developer", "tool"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+# How a model wants prior-turn reasoning content handled. Drives both the
+# server-side encoder (drop vs keep) and the integration configs we emit
+# (e.g. opencode's per-model `interleaved` flag).
+#   - "none":            model has no reasoning channel.
+#   - "post_last_user":  reasoning is only meaningful for the latest assistant
+#                        turn; older turns can drop it (drop_thinking=True).
+#   - "suffix":          reasoning is embedded in the assistant content as a
+#                        suffix/prefix; round-tripping content already covers
+#                        it (no separate `reasoning_content` round-trip).
+#   - "channel":         reasoning lives on a dedicated channel (Harmony, etc.)
+#                        and must be sent back verbatim every turn.
+#   - "tool_conditional": always round-trip when the conversation has tools;
+#                        the model relies on prior reasoning to chain tool
+#                        calls (DeepSeek V3.2 / V4).
+ReasoningDialect = Literal[
+    "none", "post_last_user", "suffix", "channel", "tool_conditional"
+]
 
 
 def resolve_reasoning_params(
@@ -97,6 +115,7 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     stream: bool = False
     tools: list[dict[str, Any]] | None = None
     bench: bool = False
+    use_prefix_cache: bool = False
     top_k: int | None = None
     stop: str | list[str] | None = None
     seed: int | None = None
@@ -108,7 +127,45 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     min_p: float | None = None
     repetition_penalty: float | None = None
     repetition_context_size: int | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
     images: list[Base64Image] = Field(default_factory=list)
     image_hashes: dict[int, Base64ImageHash] = Field(default_factory=dict)
-    total_input_chunks: int = 0
-    image_count: int = 0
+
+    prefill_endpoint: str | None = None
+
+    def with_card_sampling_defaults(self) -> "TextGenerationTaskParams":
+        from exo.shared.models import model_cards
+
+        card = model_cards.card_cache.get(self.model)
+        if card is None:
+            return self
+
+        flat = card.sampling_defaults
+        if self.enable_thinking is True and flat.thinking is not None:
+            card_values = flat.thinking
+        elif self.enable_thinking is False and flat.non_thinking is not None:
+            card_values = flat.non_thinking
+        else:
+            card_values = flat
+
+        def resolve[T](request: T | None, card_value: T | None) -> T | None:
+            return request if request is not None else card_value
+
+        updates = {
+            "temperature": resolve(self.temperature, card_values.temperature),
+            "top_p": resolve(self.top_p, card_values.top_p),
+            "top_k": resolve(self.top_k, card_values.top_k),
+            "min_p": resolve(self.min_p, card_values.min_p),
+            "repetition_penalty": resolve(
+                self.repetition_penalty, card_values.repetition_penalty
+            ),
+            "presence_penalty": resolve(
+                self.presence_penalty, card_values.presence_penalty
+            ),
+            "frequency_penalty": resolve(
+                self.frequency_penalty, card_values.frequency_penalty
+            ),
+        }
+        logger.debug(f"Using sampling params for {self.model}:\n{updates}")
+        return self.model_copy(update=updates)

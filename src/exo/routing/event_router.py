@@ -72,6 +72,7 @@ class EventRouter:
         return send
 
     def receiver(self) -> Receiver[IndexedEvent]:
+        assert not self._tg.is_running()
         send, recv = channel[IndexedEvent]()
         self.internal_outbound.append(send)
         return recv

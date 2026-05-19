@@ -3,24 +3,54 @@
 # EXO Uninstaller Script
 #
 # This script removes all EXO system components that persist after deleting the app.
-# Run with: sudo ./uninstall-exo.sh
+# Run with: sudo ./uninstall-exo.sh [--keep-models]
+#
+# Options:
+#   --keep-models   Preserve ~/.exo/models when removing the EXO data directory.
 #
 # Components removed:
 # - LaunchDaemon: /Library/LaunchDaemons/io.exo.networksetup.plist
 # - Network script: /Library/Application Support/EXO/
 # - Log files: /var/log/io.exo.networksetup.*
 # - Network location: "exo"
+# - EXO data directory: ~/.exo (or all of ~/.exo except models/ when --keep-models is set)
 # - Launch at login registration
 #
 
 set -euo pipefail
 
+KEEP_MODELS=0
+for arg in "$@"; do
+  case "$arg" in
+  --keep-models)
+    KEEP_MODELS=1
+    ;;
+  -h | --help)
+    echo "Usage: sudo ./uninstall-exo.sh [--keep-models]"
+    echo "  --keep-models   Preserve ~/.exo/models when removing the EXO data directory."
+    exit 0
+    ;;
+  *)
+    echo "Unknown argument: $arg" >&2
+    echo "Usage: sudo ./uninstall-exo.sh [--keep-models]" >&2
+    exit 2
+    ;;
+  esac
+done
+
 LABEL="io.exo.networksetup"
-SCRIPT_DEST="/Library/Application Support/EXO/disable_bridge_enable_dhcp.sh"
+# Current script path. Older installs used a different filename; keep the
+# legacy path here so a fresh uninstall still cleans up upgraded machines.
+CURRENT_SCRIPT_DEST="/Library/Application Support/EXO/disable_bridge.sh"
+LEGACY_SCRIPT_DEST="/Library/Application Support/EXO/disable_bridge_enable_dhcp.sh"
 PLIST_DEST="/Library/LaunchDaemons/io.exo.networksetup.plist"
 LOG_OUT="/var/log/${LABEL}.log"
 LOG_ERR="/var/log/${LABEL}.err.log"
 APP_BUNDLE_ID="io.exo.EXO"
+
+# Resolve the invoking user's home, even when run via sudo.
+USER_HOME="$(eval echo "~${SUDO_USER:-$USER}")"
+EXO_DIR="$USER_HOME/.exo"
 
 # Colors for output
 RED='\033[0;31m'
@@ -69,11 +99,17 @@ else
   echo_warn "LaunchDaemon plist not found (already removed?)"
 fi
 
-# Remove the script and parent directory
-if [[ -f $SCRIPT_DEST ]]; then
-  rm -f "$SCRIPT_DEST"
-  echo_info "Removed network setup script"
-else
+# Remove the script (current and legacy filenames) — backwards-compatible:
+# tolerate either, both, or neither being present.
+removed_any_script=0
+for script in "$CURRENT_SCRIPT_DEST" "$LEGACY_SCRIPT_DEST"; do
+  if [[ -f $script ]]; then
+    rm -f "$script"
+    echo_info "Removed network setup script: $script"
+    removed_any_script=1
+  fi
+done
+if [[ $removed_any_script -eq 0 ]]; then
   echo_warn "Network setup script not found (already removed?)"
 fi
 
@@ -115,6 +151,22 @@ if networksetup -listnetworkservices 2>/dev/null | grep -q "Thunderbolt Bridge";
   echo_info "Re-enabled Thunderbolt Bridge"
 fi
 
+# Remove EXO data directory (~/.exo)
+EXO_DIR_REMOVED=""
+if [[ -d $EXO_DIR ]]; then
+  if [[ $KEEP_MODELS == "1" && -d "$EXO_DIR/models" ]]; then
+    find "$EXO_DIR" -mindepth 1 -maxdepth 1 ! -name models -exec rm -rf {} +
+    EXO_DIR_REMOVED="kept_models"
+    echo_info "Removed ~/.exo (preserved models/)"
+  else
+    rm -rf "$EXO_DIR"
+    EXO_DIR_REMOVED="full"
+    echo_info "Removed ~/.exo"
+  fi
+else
+  echo_warn "~/.exo not found (already removed?)"
+fi
+
 # Note about launch at login registration
 # SMAppService-based login items cannot be removed from a shell script.
 # They can only be unregistered from within the app itself or manually via System Settings.
@@ -144,6 +196,10 @@ echo "  • Network setup LaunchDaemon"
 echo "  • Network configuration script"
 echo "  • Log files"
 echo "  • 'exo' network location"
+case "$EXO_DIR_REMOVED" in
+full) echo "  • EXO data directory (~/.exo)" ;;
+kept_models) echo "  • EXO data directory (~/.exo, models preserved)" ;;
+esac
 echo ""
 echo "Your network has been restored to use the 'Automatic' location."
 echo "Thunderbolt Bridge has been re-enabled (if present)."

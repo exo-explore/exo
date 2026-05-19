@@ -7,9 +7,11 @@
 mod allow_threading;
 mod ident;
 mod networking;
+mod pidfile;
 
 use crate::ident::PyKeypair;
 use crate::networking::networking_submodule;
+use crate::pidfile::pidfile_submodule;
 use pyo3::prelude::PyModule;
 use pyo3::types::PyModuleMethods;
 use pyo3::{Bound, PyResult, pyclass, pymodule};
@@ -164,6 +166,7 @@ fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     //       too many importing issues...
     m.add_class::<PyKeypair>()?;
     networking_submodule(m)?;
+    pidfile_submodule(m)?;
 
     // top-level constructs
     // TODO: ...

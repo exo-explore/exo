@@ -1,4 +1,3 @@
-import random
 from collections.abc import Mapping
 from copy import deepcopy
 from typing import Sequence
@@ -14,6 +13,7 @@ from exo.master.placement_utils import (
 )
 from exo.shared.models.model_cards import ModelId
 from exo.shared.topology import Topology
+from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
     CancelDownload,
     CreateInstance,
@@ -29,7 +29,7 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo, NodeRdmaCtlStatus
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -46,11 +46,12 @@ from exo.shared.types.worker.instances import (
     MlxRingInstance,
 )
 from exo.shared.types.worker.shards import Sharding
+from exo.utils.ports import random_ephemeral_port
 
-
-def random_ephemeral_port() -> int:
-    port = random.randint(49153, 65535)
-    return port - 1 if port <= 52415 else port
+INSTANCE_META_BACKENDS: dict[InstanceMeta, list[Backend]] = {
+    InstanceMeta.MlxRing: [Backend.MlxMetal, Backend.MlxCuda, Backend.MlxCpu],
+    InstanceMeta.MlxJaccl: [Backend.MlxMetal],
+}
 
 
 def add_instance_to_placements(
@@ -108,8 +109,10 @@ def place_instance(
     current_instances: Mapping[InstanceId, Instance],
     node_memory: Mapping[NodeId, MemoryUsage],
     node_network: Mapping[NodeId, NodeNetworkInfo],
+    node_backends: Mapping[NodeId, list[Backend]],
     required_nodes: set[NodeId] | None = None,
     download_status: Mapping[NodeId, Sequence[DownloadProgress]] | None = None,
+    node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
@@ -133,12 +136,16 @@ def place_instance(
                 f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_card.model_id}"
             )
         # TODO: the condition here for tensor parallel is not correct, but it works good enough for now.
+        # DeepSeek V4 is MQA (num_key_value_heads=1) but its sharding strategy
+        # head-parallelises wq_b/wo_a and shards MoE experts instead of splitting
+        # KV heads, so the kv-head divisibility check doesn't apply.
+        is_deepseek_v4 = command.model_card.base_model.startswith("DeepSeek V4")
         kv_heads = command.model_card.num_key_value_heads
         cycles_with_sufficient_memory = [
             cycle
             for cycle in cycles_with_sufficient_memory
             if command.model_card.hidden_size % len(cycle) == 0
-            and (kv_heads is None or kv_heads % len(cycle) == 0)
+            and (is_deepseek_v4 or kv_heads is None or kv_heads % len(cycle) == 0)
         ]
         if not cycles_with_sufficient_memory:
             raise ValueError(
@@ -153,11 +160,55 @@ def place_instance(
         raise ValueError(
             "Pipeline parallelism is not supported for DeepSeek V3.1 (8-bit)"
         )
+    if (
+        command.sharding == Sharding.Pipeline
+        and command.model_card.base_model.startswith("Gemma 4")
+    ):
+        cycles_with_sufficient_memory = [
+            cycle for cycle in cycles_with_sufficient_memory if len(cycle) == 1
+        ]
+        if not cycles_with_sufficient_memory:
+            raise ValueError(
+                "Pipeline parallelism is not supported for Gemma 4; use tensor parallelism instead."
+            )
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
 
+    required_backends = set(INSTANCE_META_BACKENDS[command.instance_meta]) & set(
+        command.model_card.backends
+    )
+    if not required_backends:
+        raise ValueError(
+            f"Model {command.model_card.model_id} backends "
+            f"{sorted(b.value for b in command.model_card.backends)} cannot satisfy engine "
+            f"{command.instance_meta.value} which requires "
+            f"{sorted(b.value for b in INSTANCE_META_BACKENDS[command.instance_meta])}"
+        )
+    smallest_cycles = [
+        cycle
+        for cycle in smallest_cycles
+        if all(
+            set(node_backends.get(node_id, [])) & required_backends for node_id in cycle
+        )
+    ]
+    if not smallest_cycles:
+        raise ValueError(
+            f"No cycle where every node supports a backend in "
+            f"{sorted(b.value for b in required_backends)} for {command.model_card.model_id}"
+        )
+
+    rdma_ctl_status = node_rdma_ctl or {}
+
+    def _all_rdma_ctl_enabled(cycle: Cycle) -> bool:
+        return all(
+            ((status := rdma_ctl_status.get(node_id)) is not None and status.enabled)
+            for node_id in cycle
+        )
+
     smallest_rdma_cycles = [
-        cycle for cycle in smallest_cycles if topology.is_rdma_cycle(cycle)
+        cycle
+        for cycle in smallest_cycles
+        if topology.is_rdma_cycle(cycle) and _all_rdma_ctl_enabled(cycle)
     ]
 
     if command.instance_meta == InstanceMeta.MlxJaccl:
@@ -193,8 +244,12 @@ def place_instance(
 
     # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
     if len(selected_cycle) == 1:
-        command.instance_meta = InstanceMeta.MlxRing
-        command.sharding = Sharding.Pipeline
+        command = command.model_copy(
+            update={
+                "instance_meta": InstanceMeta.MlxRing,
+                "sharding": Sharding.Pipeline,
+            }
+        )
 
     shard_assignments = get_shard_assignments(
         command.model_card, selected_cycle, command.sharding, node_memory

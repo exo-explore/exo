@@ -46,9 +46,12 @@ pyo3-async-runtimes = { version = "0.27.0", features = [
 ] }
 pyo3-log = "0.13.2"
 
+pidfile-rs = "0.3"
+
 # macro dependencies
 extend = { workspace = true }
 delegate = { workspace = true }
+thiserror = "2.0"
 
 # async runtime
 tokio = { workspace = true, features = ["full", "tracing"] }

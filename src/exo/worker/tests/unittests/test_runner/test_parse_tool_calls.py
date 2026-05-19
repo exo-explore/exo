@@ -9,17 +9,14 @@ from exo.worker.runner.llm_inference.model_output_parsers import parse_tool_call
 from exo.worker.runner.llm_inference.tool_parsers import make_mlx_parser
 
 
-def _make_responses(
-    texts: list[str],
-    finish_on_last: bool = True,
-) -> Generator[GenerationResponse]:
+def _make_responses(texts: list[str]) -> Generator[GenerationResponse]:
     """Create a sequence of GenerationResponses from text strings."""
     for i, text in enumerate(texts):
         is_last = i == len(texts) - 1
         yield GenerationResponse(
             text=text,
             token=i,
-            finish_reason="stop" if (is_last and finish_on_last) else None,
+            finish_reason="stop" if is_last else None,
             usage=None,
         )
 
@@ -39,7 +36,7 @@ class TestParseToolCalls:
         texts = ["<tool_call>", "test_fn", "</tool_call>"]
         results = list(
             parse_tool_calls(
-                _make_responses(texts, finish_on_last=False),
+                _make_responses(texts),
                 _dummy_parser,
                 tools=None,
             )
@@ -78,7 +75,7 @@ class TestParseToolCalls:
         texts = ["<tool_call>", "bad content", "</tool_call>"]
         results = list(
             parse_tool_calls(
-                _make_responses(texts, finish_on_last=False),
+                _make_responses(texts),
                 make_mlx_parser("<tool_call>", "</tool_call>", _failing_parser),
                 tools=None,
             )

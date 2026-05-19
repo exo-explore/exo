@@ -7,10 +7,10 @@ import psutil
 
 from exo.shared.types.memory import Memory
 from exo.shared.types.thunderbolt import ThunderboltIdentifier
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 
 
-class MemoryUsage(CamelCaseModel):
+class MemoryUsage(FrozenModel):
     ram_total: Memory
     ram_available: Memory
     swap_total: Memory
@@ -40,7 +40,7 @@ class MemoryUsage(CamelCaseModel):
         )
 
 
-class DiskUsage(CamelCaseModel):
+class DiskUsage(FrozenModel):
     """Disk space usage for the models directory."""
 
     total: Memory
@@ -56,7 +56,7 @@ class DiskUsage(CamelCaseModel):
         )
 
 
-class SystemPerformanceProfile(CamelCaseModel):
+class SystemPerformanceProfile(FrozenModel):
     # TODO: flops_fp16: float
 
     gpu_usage: float = 0.0
@@ -69,13 +69,13 @@ class SystemPerformanceProfile(CamelCaseModel):
 InterfaceType = Literal["wifi", "ethernet", "maybe_ethernet", "thunderbolt", "unknown"]
 
 
-class NetworkInterfaceInfo(CamelCaseModel):
+class NetworkInterfaceInfo(FrozenModel):
     name: str
     ip_address: str
     interface_type: InterfaceType = "unknown"
 
 
-class NodeIdentity(CamelCaseModel):
+class NodeIdentity(FrozenModel):
     """Static and slow-changing node identification data."""
 
     model_id: str = "Unknown"
@@ -85,25 +85,25 @@ class NodeIdentity(CamelCaseModel):
     os_build_version: str = "Unknown"
 
 
-class NodeNetworkInfo(CamelCaseModel):
+class NodeNetworkInfo(FrozenModel):
     """Network interface information for a node."""
 
     interfaces: Sequence[NetworkInterfaceInfo] = []
 
 
-class NodeThunderboltInfo(CamelCaseModel):
+class NodeThunderboltInfo(FrozenModel):
     """Thunderbolt interface identifiers for a node."""
 
     interfaces: Sequence[ThunderboltIdentifier] = []
 
 
-class NodeRdmaCtlStatus(CamelCaseModel):
+class NodeRdmaCtlStatus(FrozenModel):
     """Whether RDMA is enabled on this node (via rdma_ctl)."""
 
     enabled: bool
 
 
-class ThunderboltBridgeStatus(CamelCaseModel):
+class ThunderboltBridgeStatus(FrozenModel):
     """Whether the Thunderbolt Bridge network service is enabled on this node."""
 
     enabled: bool

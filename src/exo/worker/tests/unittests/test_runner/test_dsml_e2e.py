@@ -1,13 +1,13 @@
 import json
 from collections.abc import Generator
-from typing import Any
+from typing import Any, cast
 
 from exo.shared.types.common import ModelId
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ToolCallResponse,
 )
-from exo.worker.engines.mlx.dsml_encoding import (
+from exo.worker.engines.mlx.vendor.dsml_encoding import (
     ASSISTANT_TOKEN,
     BOS_TOKEN,
     DSML_TOKEN,
@@ -20,7 +20,26 @@ from exo.worker.engines.mlx.dsml_encoding import (
     encode_messages,
     parse_dsml_output,
 )
-from exo.worker.runner.llm_inference.model_output_parsers import parse_deepseek_v32
+from exo.worker.runner.llm_inference.model_output_parsers import (
+    parse_deepseek_v4,
+    parse_deepseek_v32,
+    parse_thinking_models,
+)
+
+
+def _parse_deepseek_with_thinking(
+    source: Generator[GenerationResponse | None],
+    starts_in_thinking: bool = False,
+) -> Generator[GenerationResponse | ToolCallResponse | None]:
+    return parse_deepseek_v32(
+        parse_thinking_models(
+            source,
+            think_start=THINKING_START,
+            think_end=THINKING_END,
+            starts_in_thinking=starts_in_thinking,
+        )
+    )
+
 
 # ── Shared fixtures ──────────────────────────────────────────────
 
@@ -333,9 +352,7 @@ class TestE2EThinkingAndToolCall:
         assert prompt.endswith(THINKING_START)
 
         # Simulate: model outputs <think>, thinks, closes thinking, then tool call.
-        # In the full pipeline, parse_thinking_models handles the case where
-        # <think> is in the prompt. Here we test parse_deepseek_v32 directly,
-        # which detects <think>/<think> markers in the stream.
+        # Use the full production chain (parse_thinking_models → parse_deepseek_v32).
         model_tokens = [
             THINKING_START,
             "The user wants weather",
@@ -353,7 +370,7 @@ class TestE2EThinkingAndToolCall:
             TOOL_CALLS_END,
         ]
 
-        results = list(parse_deepseek_v32(_simulate_tokens(model_tokens)))
+        results = list(_parse_deepseek_with_thinking(_simulate_tokens(model_tokens)))
 
         gen_results = [r for r in results if isinstance(r, GenerationResponse)]
         tool_results = [r for r in results if isinstance(r, ToolCallResponse)]
@@ -387,7 +404,7 @@ class TestE2EThinkingAndToolCall:
         prompt_no_think = encode_messages(
             messages, tools=_WEATHER_TOOLS, thinking_mode="chat"
         )
-        assert prompt_no_think.endswith(THINKING_END)
+        assert not prompt_no_think.endswith(THINKING_START)
 
         # Both should have the same tool definitions
         assert "get_weather" in prompt_think
@@ -597,7 +614,9 @@ class TestE2EFullRoundTrip:
             f"</{DSML_TOKEN}invoke>\n",
             TOOL_CALLS_END,
         ]
-        results_1 = list(parse_deepseek_v32(_simulate_tokens(model_tokens_1)))
+        results_1 = list(
+            _parse_deepseek_with_thinking(_simulate_tokens(model_tokens_1))
+        )
 
         # Verify: thinking tokens + tool call
         gen_1 = [r for r in results_1 if isinstance(r, GenerationResponse)]
@@ -660,7 +679,9 @@ class TestE2EFullRoundTrip:
             THINKING_END,
             "The weather in Hangzhou is currently cloudy with temperatures between 7°C and 13°C.",
         ]
-        results_2 = list(parse_deepseek_v32(_simulate_tokens(model_tokens_2)))
+        results_2 = list(
+            _parse_deepseek_with_thinking(_simulate_tokens(model_tokens_2))
+        )
 
         gen_2 = [r for r in results_2 if isinstance(r, GenerationResponse)]
         tool_2 = [r for r in results_2 if isinstance(r, ToolCallResponse)]
@@ -1034,3 +1055,128 @@ class TestApplyChatTemplateWithToolCalls:
         assert "get_weather" in prompt
         assert "Tokyo" in prompt
         assert "Sunny" in prompt
+
+
+class TestE2EDeepseekV4ToolCallParsing:
+    """V4 emits `<｜DSML｜tool_calls>` (outer) wrapping `<｜DSML｜invoke …>` calls
+    (the V4-Flash chat template promises this exact structure). Parser must
+    extract the tool name + parameters back out."""
+
+    def test_v4_tool_call_extracted_from_clean_output(self):
+        """Clean V4 DSML output should yield a ToolCallResponse with the
+        invoked tool name and parameter values — not bleed through as text."""
+        # Realistic token splits matching the V4 tokenizer's known behavior:
+        #   `<｜DSML｜tool_calls>` -> ['<', '｜DSML｜', 'tool', '_c', 'alls', '>']
+        # The model emits tokens one-by-one in this multi-token pattern.
+        model_tokens = [
+            "<",
+            DSML_TOKEN,
+            "tool",
+            "_c",
+            "alls",
+            ">",
+            "\n<",
+            DSML_TOKEN,
+            "invoke",
+            ' name="read"',
+            ">\n<",
+            DSML_TOKEN,
+            "parameter",
+            ' name="filePath" string="true"',
+            ">",
+            "/Users/l2/PycharmProjects/exo",
+            "</",
+            DSML_TOKEN,
+            "parameter",
+            ">\n</",
+            DSML_TOKEN,
+            "invoke",
+            ">\n</",
+            DSML_TOKEN,
+            "tool",
+            "_c",
+            "alls",
+            ">",
+        ]
+
+        results = list(parse_deepseek_v4(_simulate_tokens(model_tokens)))
+
+        tool_results = [r for r in results if isinstance(r, ToolCallResponse)]
+        text_results = [r for r in results if isinstance(r, GenerationResponse)]
+
+        assert len(tool_results) == 1, (
+            f"expected one ToolCallResponse, got {len(tool_results)} tool + "
+            f"{len(text_results)} text results: text="
+            f"{''.join(r.text for r in text_results)!r}"
+        )
+        tool_calls = tool_results[0].tool_calls
+        assert len(tool_calls) == 1
+        assert tool_calls[0].name == "read"
+        args = cast(dict[str, str], json.loads(tool_calls[0].arguments))
+        assert args == {"filePath": "/Users/l2/PycharmProjects/exo"}
+
+    def test_v4_tool_call_after_thinking_block(self):
+        """V4 reasoning models start in `<think>` and emit DSML tool calls
+        after `</think>`. The thinking parser must hand a complete tool-call
+        block off to `parse_deepseek_v4` without dropping markers."""
+        # `</think>` token-splits into ['</think>'] in V4's tokenizer, so the
+        # thinking parser sees it as a single token. Emit thinking, then the
+        # DSML tool call.
+        model_tokens = [
+            "<think>",
+            "The user wants me to explore the codebase.",
+            "</think>",
+            "<",
+            DSML_TOKEN,
+            "tool",
+            "_c",
+            "alls",
+            ">",
+            "\n<",
+            DSML_TOKEN,
+            "invoke",
+            ' name="read"',
+            ">\n<",
+            DSML_TOKEN,
+            "parameter",
+            ' name="filePath" string="true"',
+            ">",
+            "/Users/l2/PycharmProjects/exo",
+            "</",
+            DSML_TOKEN,
+            "parameter",
+            ">\n</",
+            DSML_TOKEN,
+            "invoke",
+            ">\n</",
+            DSML_TOKEN,
+            "tool",
+            "_c",
+            "alls",
+            ">",
+        ]
+
+        results = list(
+            parse_deepseek_v4(
+                parse_thinking_models(
+                    _simulate_tokens(model_tokens),
+                    think_start="<think>",
+                    think_end="</think>",
+                    starts_in_thinking=True,
+                )
+            )
+        )
+
+        tool_results = [r for r in results if isinstance(r, ToolCallResponse)]
+        text_results = [r for r in results if isinstance(r, GenerationResponse)]
+        non_thinking_text = "".join(r.text for r in text_results if not r.is_thinking)
+
+        assert len(tool_results) == 1, (
+            f"expected ToolCallResponse, got {len(tool_results)} tool + "
+            f"non-thinking text {non_thinking_text!r}"
+        )
+        tool_calls = tool_results[0].tool_calls
+        assert len(tool_calls) == 1
+        assert tool_calls[0].name == "read"
+        args = cast(dict[str, str], json.loads(tool_calls[0].arguments))
+        assert args == {"filePath": "/Users/l2/PycharmProjects/exo"}

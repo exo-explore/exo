@@ -1,14 +1,13 @@
 # Check tasks are complete before runner is ever ready.
-import unittest.mock
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Callable
 
-import mlx.core as mx
 import pytest
 
+import exo.worker.engines.mlx.builder as mlx_builder
 import exo.worker.runner.llm_inference.batch_generator as mlx_batch_generator
 import exo.worker.runner.llm_inference.model_output_parsers as mlx_model_output_parsers
-import exo.worker.runner.llm_inference.runner as mlx_runner
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -46,6 +45,8 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import mp_channel
+from exo.worker.engines.mlx.builder import MlxBuilder
+from exo.worker.runner.runner import Runner
 
 from ...constants import (
     CHAT_COMPLETION_TASK_ID,
@@ -111,17 +112,26 @@ CHAT_TASK = TextGeneration(
 
 def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Event]):
     for test_event, true_event in zip(test_events, true_events, strict=True):
-        test_event.event_id = true_event.event_id
+        test_event = test_event.model_copy(update={"event_id": true_event.event_id})
         assert test_event == true_event, f"{test_event} != {true_event}"
+
+
+@dataclass
+class MockLoadOutput:
+    layers_loaded: int
+    total: int
 
 
 @pytest.fixture
 def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     # initialize_mlx returns a mock group
-    monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(MockGroup()))
-    monkeypatch.setattr(
-        mlx_runner, "load_mlx_items", make_nothin((1, MockTokenizer, None))
-    )
+    monkeypatch.setattr(mlx_builder, "initialize_mlx", make_nothin(MockGroup()))
+
+    def lmi_gen():
+        yield MockLoadOutput(1, 1)
+        return (1, MockTokenizer, None)
+
+    monkeypatch.setattr(mlx_builder, "load_mlx_items", make_nothin(lmi_gen()))
     monkeypatch.setattr(mlx_batch_generator, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_batch_generator, "_check_for_debug_prompts", nothin)
     monkeypatch.setattr(mlx_batch_generator, "mx_any", make_nothin(False))
@@ -141,6 +151,11 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
         mlx_model_output_parsers, "detect_thinking_prompt_suffix", make_nothin(False)
     )
     monkeypatch.setattr(mlx_batch_generator, "ExoBatchGenerator", FakeExoBatchGenerator)
+
+    def _no_prefill_server(_self: Runner) -> int | None:
+        return None
+
+    monkeypatch.setattr(Runner, "_start_prefill_server", _no_prefill_server)
 
 
 class FakeExoBatchGenerator:
@@ -264,17 +279,18 @@ def _run(tasks: Iterable[Task], send_after_ready: list[Task] | None = None):
         # this is some c++ nonsense
         task_receiver.close = nothin
         task_receiver.join = nothin
-        with unittest.mock.patch(
-            "exo.worker.runner.llm_inference.runner.mx.distributed.all_gather",
-            make_nothin(mx.array([1])),
-        ):
-            runner = mlx_runner.Runner(
-                bound_instance,
-                event_sender,  # pyright: ignore[reportArgumentType]
-                task_receiver,
-                cancel_receiver,
-            )
-            runner.main()
+        builder = MlxBuilder(
+            bound_instance.bound_shard.model_card.model_id,
+            event_sender,  # pyright: ignore[reportArgumentType]
+            cancel_receiver,
+        )
+        runner = Runner(
+            bound_instance,
+            builder,
+            event_sender,  # pyright: ignore[reportArgumentType]
+            task_receiver,
+        )
+        runner.main()
 
         return event_sender.events
 
@@ -318,6 +334,10 @@ def test_events_processed_in_correct_order(patch_out_mlx: pytest.MonkeyPatch):
                 runner_status=RunnerLoading(layers_loaded=0, total_layers=32),
             ),
             TaskAcknowledged(task_id=LOAD_TASK_ID),
+            RunnerStatusUpdated(
+                runner_id=RUNNER_1_ID,
+                runner_status=RunnerLoading(layers_loaded=1, total_layers=1),
+            ),
             TaskStatusUpdated(task_id=LOAD_TASK_ID, task_status=TaskStatus.Complete),
             RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerLoaded()),
             TaskStatusUpdated(task_id=WARMUP_TASK_ID, task_status=TaskStatus.Running),

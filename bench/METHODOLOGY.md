@@ -28,7 +28,7 @@ Chat template formatting means that it may be impossible to attain very small pp
 
 When a request reaches the server via the `/bench/chat/completions` endpoint, three things change compared to a normal chat completion:
 
-- **KV prefix cache is disabled**. Every request starts from a cold cache, ensuring prefill timing is not affected by prior requests.
+- **KV prefix cache is disabled by default**. Every request starts from a cold cache, ensuring prefill timing is not affected by prior requests. See [Prefix Cache Mode](#prefix-cache-mode) for the `--use-prefix-cache` option.
 - **EOS tokens are banned**. A logits processor suppresses all end-of-sequence tokens, forcing the model to generate exactly `max_tokens` tokens. This guarantees consistent generation length for fair TPS comparison — the model cannot short-circuit a run by stopping early.
 - **No model output parsing**. The bench collection path concatenates raw token text without any model-specific post-processing (thinking tag extraction, structured output handling, etc.). This is to avoid model outputs such as tool parsing or any structural mistakes from breaking the benchmark - we are testing for speed; see Exo-Eval for performance metrics.
 
@@ -91,6 +91,22 @@ agg_gen_tps = per_req_tps * concurrency
 ```
 
 `max` is used instead of `mean` because all requests run in parallel against the same model. The fastest request's generation rate represents the system's per-stream throughput capacity; multiplying by concurrency gives aggregate throughput.
+
+---
+
+## Prefix Cache Mode
+
+When `--use-prefix-cache` is passed, the KV prefix cache remains active during benchmarking. This speeds up repeated runs by skipping redundant prefill work, which is useful when prompt processing is not the focus of the benchmark (e.g. when measuring generation throughput or power consumption across many configurations).
+
+Each response includes a `prefix_cache_hit` field (`"none"`, `"partial"`, or `"exact"`):
+
+- **none**: Cold prefill — no cached KV state was available. The reported `prompt_tps` is the real prefill throughput.
+- **partial**: A prefix of the prompt was found in cache. Only the remaining tokens were prefilled. The reported `prompt_tps` reflects the real throughput on the uncached portion. This occurs when multiple ascending `--pp` values share a common prefix (e.g. `--pp 1000,5000` — the 5000-token prompt reuses the 1000-token cache entry and prefills the remaining 4000 tokens).
+- **exact**: The entire prompt was found in cache (e.g. same `--pp` value on a `--repeat`). No prefill work was done. The reported `prompt_tps` is the TPS from when the cache entry was originally created, not a new measurement.
+
+**Prompt TPS is approximate in this mode.** Exact-hit runs report the stored TPS from the original cold/partial prefill rather than a freshly measured value. For accurate cold prefill numbers, run without `--use-prefix-cache`.
+
+Ascending `--pp` order (e.g. `--pp 1000,5000,10000`) gives the most useful data: each size gets a meaningful partial hit except the first which is cold. Descending order produces exact hits with approximate TPS from a longer prompt's original run.
 
 ---
 

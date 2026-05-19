@@ -8,8 +8,15 @@ family = "deepseek"
 quantization = "4bit"
 base_model = "DeepSeek V3.2"
 capabilities = ["text", "thinking", "thinking_toggle"]
+reasoning_dialect = "tool_conditional"
 
 context_length = 131072
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 378086226621
+
+# Source: https://huggingface.co/deepseek-ai/DeepSeek-V3.2/blob/main/generation_config.json
+# Source: https://docs.vllm.ai/projects/recipes/en/latest/DeepSeek/DeepSeek-V3_2.html
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95

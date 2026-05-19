@@ -24,9 +24,9 @@ from transformers import AutoTokenizer
 
 # Import batch_generate to activate the right-padding BatchKVCache patch
 import exo.worker.engines.mlx.generator.batch_generate  # noqa: F401
-from exo.shared.types.mlx import Model
 from exo.worker.engines.mlx.cache import encode_prompt, make_kv_cache
 from exo.worker.engines.mlx.generator.generate import prefill
+from exo.worker.engines.mlx.types import Model
 
 NUM_STEPS = 20
 

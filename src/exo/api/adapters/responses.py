@@ -23,6 +23,7 @@ from exo.api.types.openai_responses import (
     FunctionCallInputItem,
     FunctionCallOutputInputItem,
     ImageGenerationCallInputItem,
+    InputTokensDetails,
     ItemReferenceInputItem,
     LocalShellCallInputItem,
     LocalShellCallOutputInputItem,
@@ -30,6 +31,7 @@ from exo.api.types.openai_responses import (
     McpApprovalResponseInputItem,
     McpCallInputItem,
     McpListToolsInputItem,
+    OutputTokensDetails,
     ReasoningInputItem,
     ResponseCompletedEvent,
     ResponseContentPart,
@@ -82,9 +84,24 @@ from exo.shared.types.text_generation import (
 )
 
 
+def _build_response_usage(usage: Usage) -> ResponseUsage:
+    """Build a ResponseUsage from the internal Usage type."""
+    return ResponseUsage(
+        input_tokens=usage.prompt_tokens,
+        input_tokens_details=InputTokensDetails(
+            cached_tokens=usage.prompt_tokens_details.cached_tokens,
+        ),
+        output_tokens=usage.completion_tokens,
+        output_tokens_details=OutputTokensDetails(
+            reasoning_tokens=usage.completion_tokens_details.reasoning_tokens,
+        ),
+        total_tokens=usage.total_tokens,
+    )
+
+
 def _format_sse(event: ResponsesStreamEvent) -> str:
     """Format a streaming event as an SSE message."""
-    return f"event: {event.type}\ndata: {event.model_dump_json()}\n\n"
+    return f"event: {event.type}\ndata: {event.model_dump_json(exclude_none=True)}\n\n"
 
 
 def _extract_content(content: str | list[ResponseContentPart]) -> str:
@@ -93,6 +110,23 @@ def _extract_content(content: str | list[ResponseContentPart]) -> str:
         return content
     return "".join(
         part.text for part in content if not isinstance(part, ResponseInputImagePart)
+    )
+
+
+def _append_tool_call(
+    chat_template_messages: list[dict[str, Any]], tool_call: dict[str, Any]
+) -> None:
+    if chat_template_messages:
+        prev = chat_template_messages[-1]
+        if prev.get("role") == "assistant" and isinstance(prev.get("content"), str):
+            existing: list[dict[str, Any]] | None = prev.get("tool_calls")
+            if existing is None:
+                prev["tool_calls"] = [tool_call]
+            else:
+                existing.append(tool_call)
+            return
+    chat_template_messages.append(
+        {"role": "assistant", "content": "", "tool_calls": [tool_call]}
     )
 
 
@@ -165,59 +199,44 @@ async def responses_request_to_text_generation(
                     | McpCallInputItem()
                     | CustomToolCallInputItem()
                 ):
-                    chat_template_messages.append(
+                    _append_tool_call(
+                        chat_template_messages,
                         {
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [
-                                {
-                                    "id": item.call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": item.name,
-                                        "arguments": item.arguments,
-                                    },
-                                }
-                            ],
-                        }
+                            "id": item.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": item.name,
+                                "arguments": item.arguments,
+                            },
+                        },
                     )
                 case (
                     LocalShellCallInputItem()
                     | ShellCallInputItem()
                     | ComputerCallInputItem()
                 ):
-                    chat_template_messages.append(
+                    _append_tool_call(
+                        chat_template_messages,
                         {
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [
-                                {
-                                    "id": item.call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": item.type,
-                                        "arguments": json.dumps(item.action),
-                                    },
-                                }
-                            ],
-                        }
+                            "id": item.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": item.type,
+                                "arguments": json.dumps(item.action),
+                            },
+                        },
                     )
                 case ApplyPatchCallInputItem():
-                    chat_template_messages.append(
+                    _append_tool_call(
+                        chat_template_messages,
                         {
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [
-                                {
-                                    "id": item.call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": "apply_patch",
-                                        "arguments": json.dumps({"patch": item.patch}),
-                                    },
-                                }
-                            ],
-                        }
+                            "id": item.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": "apply_patch",
+                                "arguments": json.dumps({"patch": item.patch}),
+                            },
+                        },
                     )
                 case (
                     WebSearchCallInputItem()
@@ -237,21 +256,16 @@ async def responses_request_to_text_generation(
                         args = {"prompt": item.prompt}
                     else:
                         args = {"query": item.query}
-                    chat_template_messages.append(
+                    _append_tool_call(
+                        chat_template_messages,
                         {
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [
-                                {
-                                    "id": item.call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": item.type,
-                                        "arguments": json.dumps(args),
-                                    },
-                                }
-                            ],
-                        }
+                            "id": item.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": item.type,
+                                "arguments": json.dumps(args),
+                            },
+                        },
                     )
                 case (
                     FunctionCallOutputInputItem()
@@ -303,21 +317,16 @@ async def responses_request_to_text_generation(
                             }
                         )
                 case McpApprovalRequestInputItem():
-                    chat_template_messages.append(
+                    _append_tool_call(
+                        chat_template_messages,
                         {
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [
-                                {
-                                    "id": item.call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": item.name,
-                                        "arguments": item.arguments,
-                                    },
-                                }
-                            ],
-                        }
+                            "id": item.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": item.name,
+                                "arguments": item.arguments,
+                            },
+                        },
                     )
                 case McpApprovalResponseInputItem():
                     chat_template_messages.append(
@@ -436,13 +445,7 @@ async def collect_responses_response(
         raise ValueError(error_message)
 
     # Create usage from usage data if available
-    usage = None
-    if last_usage is not None:
-        usage = ResponseUsage(
-            input_tokens=last_usage.prompt_tokens,
-            output_tokens=last_usage.completion_tokens,
-            total_tokens=last_usage.total_tokens,
-        )
+    usage = _build_response_usage(last_usage) if last_usage is not None else None
 
     output: list[ResponseItem] = []
     if thinking_parts:
@@ -468,7 +471,7 @@ async def collect_responses_response(
         output=output,
         output_text=accumulated_text,
         usage=usage,
-    ).model_dump_json()
+    ).model_dump_json(exclude_none=True)
     return
 
 
@@ -791,13 +794,7 @@ async def generate_responses_stream(
     yield _format_sse(item_done)
 
     # Create usage from usage data if available
-    usage = None
-    if last_usage is not None:
-        usage = ResponseUsage(
-            input_tokens=last_usage.prompt_tokens,
-            output_tokens=last_usage.completion_tokens,
-            total_tokens=last_usage.total_tokens,
-        )
+    usage = _build_response_usage(last_usage) if last_usage is not None else None
 
     # response.completed
     output: list[ResponseItem] = []

@@ -8,8 +8,13 @@ family = "glm"
 quantization = "8bit"
 base_model = "GLM 4.5 Air"
 capabilities = ["text", "thinking", "thinking_toggle"]
-
+reasoning_dialect = "post_last_user"
 context_length = 131072
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 122406567936
+
+# Source: https://docs.z.ai/api-reference/llm/chat-completion
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95

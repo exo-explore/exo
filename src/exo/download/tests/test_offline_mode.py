@@ -1,5 +1,7 @@
 """Tests for offline/air-gapped mode."""
 
+import os
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -231,3 +233,64 @@ class TestFetchFileListOffline:
         raise FileNotFoundError."""
         with pytest.raises(FileNotFoundError, match="No internet"):
             await fetch_file_list_with_cache(model_id, "main", skip_internet=True)
+
+
+class TestFileListCacheTTL:
+    async def test_uses_fresh_cache_without_fetching(
+        self, model_id: ModelId, temp_models_dir: Path
+    ) -> None:
+        from pydantic import TypeAdapter
+
+        cache_dir = temp_models_dir / "caches" / model_id.normalize()
+        await aios.makedirs(cache_dir, exist_ok=True)
+
+        cached_list = [
+            FileListEntry(type="file", path="model.safetensors", size=1000),
+        ]
+        cache_file = cache_dir / f"{model_id.normalize()}--main--file_list.json"
+        async with aiofiles.open(cache_file, "w") as f:
+            await f.write(
+                TypeAdapter(list[FileListEntry]).dump_json(cached_list).decode()
+            )
+
+        with patch(
+            "exo.download.download_utils.fetch_file_list_with_retry",
+            new_callable=AsyncMock,
+        ) as mock_fetch:
+            result = await fetch_file_list_with_cache(model_id, "main")
+
+        assert result == cached_list
+        mock_fetch.assert_not_called()
+
+    async def test_refetches_when_cache_older_than_ttl(
+        self, model_id: ModelId, temp_models_dir: Path
+    ) -> None:
+        from pydantic import TypeAdapter
+
+        from exo.download.download_utils import (
+            _FILE_LIST_CACHE_TTL_SECS,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        cache_dir = temp_models_dir / "caches" / model_id.normalize()
+        await aios.makedirs(cache_dir, exist_ok=True)
+
+        stale_list = [FileListEntry(type="file", path="stale.bin", size=1)]
+        cache_file = cache_dir / f"{model_id.normalize()}--main--file_list.json"
+        async with aiofiles.open(cache_file, "w") as f:
+            await f.write(
+                TypeAdapter(list[FileListEntry]).dump_json(stale_list).decode()
+            )
+
+        old_mtime = time.time() - _FILE_LIST_CACHE_TTL_SECS - 60
+        os.utime(cache_file, (old_mtime, old_mtime))
+
+        fresh_list = [FileListEntry(type="file", path="fresh.bin", size=2)]
+        with patch(
+            "exo.download.download_utils.fetch_file_list_with_retry",
+            new_callable=AsyncMock,
+            return_value=fresh_list,
+        ) as mock_fetch:
+            result = await fetch_file_list_with_cache(model_id, "main")
+
+        assert result == fresh_list
+        mock_fetch.assert_called_once()

@@ -5,7 +5,8 @@ from pydantic import model_validator
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import Id, NodeId
 from exo.shared.types.worker.shards import ShardMetadata
-from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
+from exo.utils.pydantic_ext import FrozenModel, TaggedModel
+from exo.worker.runner.diagnostics import KnownRunnerDiagnostic
 
 
 class RunnerId(Id):
@@ -47,7 +48,7 @@ class RunnerWarmingUp(BaseRunnerStatus):
 
 
 class RunnerReady(BaseRunnerStatus):
-    pass
+    prefill_server_port: int | None = None
 
 
 class RunnerRunning(BaseRunnerStatus):
@@ -64,6 +65,7 @@ class RunnerShutdown(BaseRunnerStatus):
 
 class RunnerFailed(BaseRunnerStatus):
     error_message: str | None = None
+    diagnostics: list[KnownRunnerDiagnostic]
 
 
 RunnerStatus = (
@@ -81,7 +83,7 @@ RunnerStatus = (
 )
 
 
-class ShardAssignments(CamelCaseModel):
+class ShardAssignments(FrozenModel):
     model_id: ModelId
     runner_to_shard: Mapping[RunnerId, ShardMetadata]
     node_to_runner: Mapping[NodeId, RunnerId]
