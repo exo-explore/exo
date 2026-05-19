@@ -103,7 +103,6 @@ impl BabelRuntime {
     #[tracing::instrument(skip(state_send))]
     pub(crate) async fn spawn(
         advertised: Ipv6Net,
-        iface: &str,
         state_send: watch::Sender<Arc<BabelState>>,
     ) -> Result<Self> {
         tokio::fs::create_dir_all(PRIVATE_DIR).await?;
@@ -122,10 +121,15 @@ impl BabelRuntime {
             .arg(format!("redistribute local ip {advertised}"))
             .arg("-C")
             .arg("redistribute local deny")
-            .arg(iface)
             .spawn()
         {
-            Ok(proc) => proc,
+            Ok(proc) => {
+                tracing::info!(
+                    "babeld spawned PID={}",
+                    proc.id().expect("babeld process shouldn't die this early")
+                );
+                proc
+            }
             Err(e) => {
                 tracing::warn!(error=%e, "failed to spawn babeld");
                 return Err(e.into());

@@ -10,7 +10,7 @@ stdenv.mkDerivation {
   src = fetchgit {
     url = "https://github.com/AndreiCravtov/babeld.git";
     fetchSubmodules = true;
-    sha256 = "sha256-/qsoMSRhtwa/2hvACtFwbl+563o+TKxWMS684D+g8mk=";
+    sha256 = "sha256-Z4fZNh9ZdWRaTrUxgbXZnDCqvG6m4F/CND3ApyavbLw=";
   };
 
   outputs = [

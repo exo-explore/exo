@@ -23,15 +23,10 @@ pub enum Babble {
 #[tracing::instrument(skip(state_send, recv))]
 pub async fn babel(
     advertised: Ipv6Net,
-    mut recv: mpsc::Receiver<Babble>,
+    recv: mpsc::Receiver<Babble>,
     state_send: watch::Sender<Arc<BabelState>>,
 ) -> Result<()> {
-    // Cannot spawn babeld without at least one interface to monitor.
-    let Some(Babble::AddIface(iface)) = recv.recv().await else {
-        return Ok(());
-    };
-
-    let mut runtime = BabelRuntime::spawn(advertised, &iface, state_send).await?;
+    let mut runtime = BabelRuntime::spawn(advertised, state_send).await?;
     let res1 = runtime.run(recv).await;
     let res2 = runtime.shutdown().await;
     res1.and(res2)

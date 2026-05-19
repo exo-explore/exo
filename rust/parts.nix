@@ -118,7 +118,7 @@
           );
           babblerd = pkgs.writeShellApplication {
             name = "babblerd";
-            runtimeInputs = [ self'.packages.babeld ];
+            runtimeInputs = [ pkgs.babeld ];
             text = ''
               exec ${babblerd-unwrapped}/bin/babblerd "$@"
             '';

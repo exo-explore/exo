@@ -94,6 +94,7 @@
                   };
                   cargoHash = "sha256-Epj3L+db1flGNK5y6yfSig8piEiXTz15lPo/FNkqlkA=";
                 };
+                babeld = final.callPackage ./nix/babeld.nix { };
               })
             ];
           };
@@ -132,7 +133,6 @@
 
           packages = {
             default = self'.packages.exo;
-            babeld = pkgs.callPackage ./nix/babeld.nix { };
           } //
           lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
             metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
