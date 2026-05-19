@@ -6,8 +6,11 @@ This is the current handoff for a new session picking up `babblerd` work.
 
 - Repo: `/home/royalguard/Desktop/exo-all/networking-related/exo-babbler`
 - Branch: `babbler`
-- Current HEAD when this handoff was refreshed: `5bf8f62f` (`added iperf3`)
+- Current HEAD when this handoff was refreshed: `2f038588` (`en0 en1 infinite cost`)
 - Recent relevant commits:
+  - `2f038588` deprioritizes `en0` and `en1` with maximum finite neighbour cost
+  - `b02cf2cb` adds temporary `enN -> N * 100` link scoring
+  - `5a158a51` adds Babel neighbour-cost parsing/command support
   - `5bf8f62f` added iperf3
   - `af0b6e17` remove first interface requirement
   - `82adc5d9` it builds
@@ -29,10 +32,11 @@ The current architecture is the right one:
 
 So the main remaining work is now:
 
-- route-selection debugging
-- restart/convergence robustness
-- load/backpressure/throughput behavior
-- eventually link scoring across multiple admissible wired links
+- dataplane throughput and overload behavior
+- making full-blast UDP recover cleanly
+- restart/convergence robustness around transient route choices
+- eventually replacing the temporary `enN` link scoring with measured link
+  quality
 
 ## Why The Old Approach Failed
 
@@ -128,12 +132,13 @@ Automatic measured link scoring is not part of the MVP. The current temporary
 policy is a simple Mac heuristic: for most `enN` links, set an absolute
 synthetic base cost around `N * 100` with `coef-256 0` and
 `bias-256 N * 100 * 256`, so lower-numbered Thunderbolt-style interfaces are
-preferred over high-numbered interfaces such as `en18`. `en0` is temporarily
 preferred over high-numbered interfaces such as `en18`. `en0` and `en1` are
-temporarily assigned the maximum finite `bias-256` value so shared low-index
-networks do not dominate the direct-link smoke tests. This is intentionally a
-temporary selection aid so raw throughput work can assume the good direct links
-are chosen.
+temporarily assigned the maximum finite `bias-256` value (`16776704`, yielding
+cost `65534` with `coef-256 0`) so shared low-index networks do not dominate
+the direct-link smoke tests. This is intentionally a temporary selection aid so
+raw throughput work can assume the good direct links are chosen after
+convergence. Immediately after a restart, Babel may still transiently install a
+bad high-cost route until better neighbour state arrives.
 
 ## Very Important Fix After Earlier Handovers
 
@@ -184,6 +189,14 @@ Fast-path traits:
 - `socket2` UDP sockets
 - immutable FIB snapshot swaps over `crossbeam-channel`
 - no lock on packet lookup path
+- ready TUN/UDP fds are drained up to fairness budgets
+- UDP receive uses a stack buffer slice directly, not `to_vec()`
+- each `FibSnapshot` is compiled into dataplane-local fast routes that include
+  direct socket slots, so packets no longer clone `FibEntry` or do an ifname
+  lookup to find the output socket
+- dataplane counters are logged periodically when active: TUN RX/TX, UDP RX/TX,
+  TUN-to-UDP, forwarded, local-delivered, no-route, invalid, hop-limit, and
+  UDP/TUN `WouldBlock` drops
 
 ## What Works
 
@@ -192,34 +205,67 @@ These things are now real:
 - one-hop two-node `ping6`
 - adjacent dataplane path
 - small low-rate UDP matrix
+- single-hop forwarded UDP at `100M` with no loss in the latest smoke test
 - encapsulation / decapsulation itself
 - basic generic TCP correctness after convergence
+- steady-state route choice avoiding `en0`/`en1` after the temporary cost policy
+  has converged
+- full-bandwidth direct overlay tests that show a repeatable `1-1.5 Gbit/s`
+  dataplane ceiling rather than a basic correctness failure
 
-A very important live proof point:
+Latest route examples after convergence:
 
-On a failing restart-sensitive `e11 -> e16` case, the dataplane itself still did the right work:
-
-- `e11` emitted the encapsulated packet on `en3`
-- `e16` received that UDP packet on `en18`
-- `e16` dataplane delivered the inner packet into TUN
-- the local stack generated a reply packet
-
-So the dataplane is not fundamentally broken anymore.
+- `e2 -> e11`: direct on `en3`, metric `300`
+- `e2 -> e16`: single-hop via `e4` on `en2`, metric `400`
+- `e4 -> e16`: direct on `en2`, metric `200`
+- `e16 -> e2`: single-hop via `e11` on `en2`, metric `400`
 
 ## What Is Still Broken
 
-The main remaining live problem is restart/convergence behavior and path selection quality.
+The main remaining live problem is dataplane throughput and overload behavior.
 
-Observed failure shape:
+Observed latest performance shape:
 
-- after restart, a node can receive and decapsulate correctly
-- but the return packet gets resolved onto a worse path, often `en1`, instead of the direct Thunderbolt link
-- this creates blackholes or severe instability
+- direct physical UDP without the software router is about `11 Gbit/s`
+  according to the latest external baseline,
+- direct overlay UDP is about `1.46 Gbit/s` received,
+- direct overlay TCP is about `1.24 Gbit/s` received,
+- single-hop overlay TCP is about `1.07 Gbit/s` received,
+- single-hop overlay UDP at `-b 0` receives around `1.11-1.16 Gbit/s` during
+  the run but loses `12-14%` and can wedge the path until `babblerd` is
+  restarted.
 
 So the current blocker is:
 
-- control-plane / derived-FIB route choice under broad multi-link admission
-- not “UDP overlay cannot carry packets”
+- not “UDP overlay cannot carry packets”,
+- not primarily “Babel selected the wrong steady-state route”,
+- but packet processing cost, syscall/copy overhead, and drop/recovery behavior
+  when the dataplane is overdriven.
+
+Restart/convergence route quality is still worth watching. Immediately after a
+restart, Babel can transiently install high-cost `en0`/`en1` routes before the
+better neighbours converge. But after convergence, the current `enN` policy is
+good enough for throughput work.
+
+At `11 Gbit/s` with `1452` byte inner packets, the budget is about `947 kpps`,
+or `1.06 us/packet`. The latest direct overlay result at `1.46 Gbit/s` is about
+`126 kpps`, or `8 us/packet`. Closing the gap means cutting per-packet cost by
+roughly `7-8x`, increasing effective packet size with jumbo/aggregation, or
+both.
+
+Near-term cost audit before jumbo/aggregation:
+
+- A transit node needs one UDP receive syscall and one UDP send syscall per
+  forwarded packet, so standard-MTU `11 Gbit/s` implies nearly `1.9M` UDP
+  syscalls/sec on that node.
+- Rust-level cleanup alone is unlikely to recover a full `7-8x`, but avoidable
+  hot-path work should still be removed before blaming the architecture.
+- First targets now landed: remove the per-packet `socket.ifname` clone on UDP
+  ingress, use `recv` instead of `recv_from` when the peer address is not
+  needed, and reuse packet buffers instead of stack-zeroing a new array per
+  packet.
+- Next candidates are connected per-neighbour output sockets and
+  `iroh-quinn-udp`'s Apple `sendmsg_x`/`recvmsg_x` batching.
 
 ## Very Important macOS Receive-Side Finding
 
@@ -235,7 +281,8 @@ Implication:
 - do not trust “which socket woke up” as authoritative ingress truth on macOS
 - if receive-side interface attribution matters, use peer scope-id and likely ancillary packet metadata later
 
-This is a real quirk, but it is not the primary blocker for the current restart blackhole.
+This is a real quirk, but it is not the primary explanation for the current
+order-of-magnitude throughput gap.
 
 ## Key Local FIB Caveat
 
@@ -247,9 +294,11 @@ In `src/fib.rs`, `FibBuilder` collapses multiple installed host routes by choosi
 - then `refmetric`
 - then `handle`
 
-So if restart churn leaves multiple `installed=yes` candidates, babblerd’s derived `FibSnapshot` can still be part of why traffic goes via `en1`.
+So if restart churn leaves multiple `installed=yes` candidates, babblerd’s
+derived `FibSnapshot` can still be part of why traffic transiently goes via
+`en0`/`en1`.
 
-That means the next debug pass must compare all three:
+If route-choice anomalies reappear, compare all three:
 
 1. raw Babel route events / dump
 2. current `BabelState`
@@ -286,23 +335,28 @@ Key facts:
   `/home/royalguard/Desktop/exo-all/networking-related/iperf3`.
   Commit `962e05b` adds `%scopeID` rendering for link-local IPv6 output.
 
-## Current Docs Are Mostly Accurate
+## Current Docs Status
 
 Read:
 
 - `shortcuts.md`
 - `future_architectural_directions.md`
+- `lab_topology_reference.md`
 
 They correctly capture:
 
 - broad admissibility is acceptable for v1 reachability
-- flat wired costs are not enough for good best-path choice
+- flat wired costs are not enough for good best-path choice, hence the
+  temporary `enN` policy
 - forked `babeld` now has the `neighbour-cost` primitive needed for temporary
   external cost steering
-- throughput testing must be repeated once route selection is biased toward the
-  intended fast direct links
-- restart-sensitive failures are now dominated by route selection, not dataplane decode
-- there is still debt around interface identity, macOS receive attribution, IPC/authz, and incomplete ICMP/PMTUD behavior
+- the route-selection heuristic is now active and good enough after convergence
+  to expose dataplane throughput limits
+- the latest direct/single-hop `iperf3` results and the `11 Gbit/s` direct UDP
+  baseline
+- the remaining debt around backpressure, batching/aggregation, jumbo MTU,
+  interface identity, macOS receive attribution, IPC/authz, and incomplete
+  ICMP/PMTUD behavior
 
 ## Important Remaining Technical Debt
 
@@ -315,7 +369,10 @@ Still unresolved:
 - no ICMPv6 Time Exceeded
 - no Packet Too Big handling
 - no real backpressure/queueing; `WouldBlock` is still drop-on-backpressure
-- sustained throughput still needs a clean measurement pass on biased fast links
+- counters are logged but not yet exposed as a structured public status surface
+- direct overlay throughput is still about `1.46 Gbit/s`, far below the
+  `11 Gbit/s` direct physical UDP baseline
+- full-blast single-hop UDP can destabilize the overlay path after the run
 - macOS receive-side interface attribution needs a better long-term path
 - multi-link path selection still uses a temporary `enN -> N * 100`
   absolute-cost heuristic, not measured scoring
@@ -327,24 +384,31 @@ These are settled enough for now:
 
 - overlay architecture itself
 - TUN + userspace UDP forwarding model
-- one-packet-per-datagram framing
+- one-packet-per-datagram framing as the MVP correctness model; batching or
+  aggregation can now be evaluated as a performance extension
 - control plane on Tokio, dataplane on dedicated thread
 - exact-match `/128` FIB for v1
 - `tun-rs` packet I/O on macOS instead of raw fd reads/writes
 - disabling Babel kernel installs and owning `EXO_ULA_PREFIX -> tunX` locally
 
-## Best Next Debugging Step
+## Best Next Performance Step
 
-For the restart-sensitive `en1` misroute, inspect all three together for a single problematic `/128` pair:
+Use the current route heuristic and focus on dataplane cost.
 
-1. raw Babel route events over time
-2. current `BabelState`
-3. derived `FibSnapshot`
+Capture each run with:
+
+1. `iperf3` sender/receiver summaries
+2. `babblerd` dataplane counter deltas
+3. CPU usage on sender, transit node, and receiver
+4. route/FIB snapshots before and after the run
+5. whether bidirectional `ping6` still works after the run
 
 Goal:
 
-- determine whether the bad path is already in Babel’s installed route set
-- or introduced when `FibBuilder` collapses multiple `installed=yes` routes
+- separate CPU/syscall ceiling from UDP/TUN backpressure,
+- explain the single-hop UDP wedge,
+- and decide whether the next implementation step should be batching,
+  aggregation, jumbo MTU support, or multi-core sharding.
 
 The temporary `neighbour-cost` policy now lives in `babel/link_policy.rs`.
 For each live neighbour on an `enN` interface, `babblerd` sets `coef-256 0`.
@@ -354,14 +418,20 @@ view aligned. `en0` and `en1` are the temporary exceptions: they get the
 largest finite `bias-256` value so they lose to the explicit direct-link
 interfaces during smoke tests.
 
+If route-choice bugs reappear, then inspect all three together for the
+problematic `/128` pair: raw Babel route events over time, current `BabelState`,
+and derived `FibSnapshot`.
+
 ## Best Next Live Tests
 
 1. full directed `ping6` matrix on node `/128`s
 2. small directed UDP matrix
-3. short soak tests on adjacent and two-hop pairs
-4. restart/convergence tests
-5. physical churn tests
-6. for failures, always capture:
+3. direct overlay TCP/UDP `-b 0` with counter capture
+4. single-hop overlay TCP/UDP `-b 0` with counter capture
+5. short soak tests on adjacent and two-hop pairs
+6. restart/convergence tests
+7. physical churn tests
+8. for failures, always capture:
    - symptom
    - raw Babel route state / dump
    - current `BabelState`
@@ -373,9 +443,9 @@ interfaces during smoke tests.
 
 The project is now in the:
 
-- route-selection debugging
-- restart convergence
 - throughput / backpressure robustness
+- overload recovery
+- restart convergence sanity-checking
 
 phase.
 
@@ -385,5 +455,8 @@ The current main question is not “can the overlay forward packets at all?”
 
 It is:
 
-- why do restart-time and multi-link route choices still select worse return paths
-- and whether that bad choice originates in Babel’s installed set or in local FIB collapse
+- why the userspace router tops out around `1-1.5 Gbit/s` when direct physical
+  UDP can reach about `11 Gbit/s`
+- and how much of that gap comes from one-packet-per-datagram syscalls/copies,
+  single-thread processing, TUN/UDP backpressure, or recoverability bugs under
+  overload

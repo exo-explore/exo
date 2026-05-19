@@ -101,7 +101,9 @@ pub mod if_watcher {
         }
 
         fn is_real_interface(&self) -> bool {
-            // macos is weird. en0 & en1 are ethernet & wifi (varies which is which by device). en3+ is thunderbolt, but at some point becomes usb ethernet.
+            // macOS interface names are only a broad bootstrap signal here:
+            // Thunderbolt links are not limited to en2/en3, and high-numbered
+            // en* devices can be unrelated USB/Ethernet adapters.
             if self.name().strip_prefix("en").is_none()
             //.and_then(|s| s.parse::<u8>().ok())
             //.is_none_or(|_n| false)

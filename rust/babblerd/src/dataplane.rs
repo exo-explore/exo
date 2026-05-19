@@ -50,6 +50,7 @@ const COUNTER_LOG_INTERVAL: Duration = Duration::from_secs(5);
 const UDP_SOCKET_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 const TUN_DRAIN_BUDGET: usize = 64;
 const UDP_DRAIN_BUDGET: usize = 64;
+const PACKET_BUFFER_BYTES: usize = PHYSICAL_LINK_MTU as usize;
 
 pub struct DataplaneConfig {
     pub tun_device: Arc<SyncDevice>,
@@ -90,6 +91,8 @@ struct DataplaneWorker {
     counters: DataplaneCounters,
     last_counter_log: Instant,
     last_logged_counters: DataplaneCounters,
+    tun_buf: Box<[u8; PACKET_BUFFER_BYTES]>,
+    udp_buf: Box<[u8; PACKET_BUFFER_BYTES]>,
 }
 
 struct InterfaceSocket {
@@ -103,6 +106,19 @@ struct FastFibEntry {
     next_hop_ll: Ipv6Addr,
     socket_slot: usize,
     mtu: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PacketWriteOutcome {
+    Sent(usize),
+    WouldBlock,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UdpRecvOutcome {
+    Packet(usize),
+    WouldBlock,
+    Error,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -303,6 +319,8 @@ impl DataplaneWorker {
             counters: DataplaneCounters::default(),
             last_counter_log: Instant::now(),
             last_logged_counters: DataplaneCounters::default(),
+            tun_buf: Box::new([0u8; PACKET_BUFFER_BYTES]),
+            udp_buf: Box::new([0u8; PACKET_BUFFER_BYTES]),
         };
         worker.reconcile_sockets()?;
         Ok(worker)
@@ -380,8 +398,7 @@ impl DataplaneWorker {
     }
 
     fn handle_one_tun_packet(&mut self) -> Result<bool> {
-        let mut buf = [0u8; PHYSICAL_LINK_MTU as usize];
-        let packet_len = match self.tun_device.recv(&mut buf) {
+        let packet_len = match self.tun_device.recv(self.tun_buf.as_mut()) {
             Ok(len) => len,
             Err(err) if err.kind() == ErrorKind::WouldBlock => return Ok(false),
             Err(err) => return Err(err).wrap_err("reading inner packet from TUN"),
@@ -394,7 +411,7 @@ impl DataplaneWorker {
 
         tracing::debug!(bytes = packet_len, "dataplane read inner packet from TUN");
 
-        let packet = &buf[..packet_len];
+        let packet = &self.tun_buf[..packet_len];
         let Some(dst) = ipv6_destination(packet) else {
             self.counters.invalid_packet_drops += 1;
             tracing::debug!("dropping invalid inner packet from TUN");
@@ -419,29 +436,22 @@ impl DataplaneWorker {
             mtu = route.mtu,
             "dataplane resolved route for TUN packet"
         );
-        if self.try_send_via_route(packet, route, "sending packet from TUN")? {
+        let send_result = send_via_route(&self.sockets, self.udp_port, packet, route);
+        if self.handle_udp_send_result(send_result, route, "sending packet from TUN")? {
             self.counters.tun_to_udp_packets += 1;
         }
         Ok(true)
     }
 
     fn handle_one_udp_packet(&mut self, slab_key: usize) -> Result<bool> {
-        let Some(socket) = self.sockets.get_mut(slab_key) else {
+        let Some(socket) = self.sockets.get(slab_key) else {
             return Err(eyre!("unknown UDP socket token"));
         };
 
-        let mut buf = [0u8; PHYSICAL_LINK_MTU as usize];
-        let recv_result = socket.socket.recv_from(&mut buf);
-        let ifname = socket.ifname.clone();
-        let (packet_len, peer) = match recv_result {
-            Ok(res) => res,
-            Err(err) if err.kind() == ErrorKind::WouldBlock => return Ok(false),
-            Err(err) => {
-                tracing::warn!(
-                    interface = %ifname,
-                    error = %err,
-                    "failed to receive UDP packet on dataplane socket"
-                );
+        let packet_len = match recv_udp_packet(socket, self.udp_buf.as_mut())? {
+            UdpRecvOutcome::Packet(len) => len,
+            UdpRecvOutcome::WouldBlock => return Ok(false),
+            UdpRecvOutcome::Error => {
                 self.best_effort_reconcile();
                 return Ok(false);
             }
@@ -449,22 +459,13 @@ impl DataplaneWorker {
         self.counters.udp_rx_packets += 1;
         self.counters.udp_rx_bytes += packet_len as u64;
 
-        tracing::debug!(
-            interface = %ifname,
-            peer = %peer,
-            bytes = packet_len,
-            "dataplane received UDP packet"
-        );
-
-        let packet = &mut buf[..packet_len];
+        let packet = &self.udp_buf[..packet_len];
         let Some(dst) = ipv6_destination(packet) else {
             self.counters.invalid_packet_drops += 1;
-            tracing::debug!(peer = %peer, "dropping invalid UDP payload");
+            tracing::debug!("dropping invalid UDP payload");
             return Ok(true);
         };
         tracing::debug!(
-            interface = %ifname,
-            peer = %peer,
             destination = %dst,
             bytes = packet_len,
             "dataplane parsed UDP payload destination"
@@ -472,19 +473,18 @@ impl DataplaneWorker {
 
         if self.is_local(dst) {
             tracing::debug!(
-                interface = %ifname,
-                peer = %peer,
                 destination = %dst,
                 bytes = packet_len,
                 "dataplane delivering UDP payload to TUN"
             );
-            if self.write_tun_packet(packet)? {
+            let write_result = write_tun_packet(&self.tun_device, packet);
+            if self.handle_tun_write_result(write_result)? {
                 self.counters.local_delivered_packets += 1;
             }
             return Ok(true);
         }
 
-        if !decrement_hop_limit(packet) {
+        if !has_forwardable_hop_limit(packet) {
             self.counters.hop_limit_drops += 1;
             tracing::debug!(destination = %dst, "dropping packet with exhausted hop limit");
             return Ok(true);
@@ -495,6 +495,10 @@ impl DataplaneWorker {
             tracing::debug!(destination = %dst, "dataplane has no route for forwarded UDP packet");
             return Ok(true);
         };
+
+        let packet = &mut self.udp_buf[..packet_len];
+        debug_assert!(decrement_hop_limit(packet));
+
         tracing::debug!(
             destination = %dst,
             socket_slot = route.socket_slot,
@@ -502,7 +506,8 @@ impl DataplaneWorker {
             mtu = route.mtu,
             "dataplane resolved route for forwarded UDP packet"
         );
-        if self.try_send_via_route(packet, route, "forwarding UDP packet")? {
+        let send_result = send_via_route(&self.sockets, self.udp_port, packet, route);
+        if self.handle_udp_send_result(send_result, route, "forwarding UDP packet")? {
             self.counters.udp_forwarded_packets += 1;
         }
         Ok(true)
@@ -516,60 +521,22 @@ impl DataplaneWorker {
         self.fast_routes.get(&host_key(addr)).copied()
     }
 
-    fn send_via_route(&mut self, packet: &[u8], route: FastFibEntry) -> Result<bool> {
-        let Some(socket) = self.sockets.get_mut(route.socket_slot) else {
-            return Err(eyre!("stale UDP socket slot {}", route.socket_slot));
-        };
-
-        let peer = SocketAddr::V6(SocketAddrV6::new(
-            route.next_hop_ll,
-            self.udp_port,
-            0,
-            socket.ifindex,
-        ));
-        tracing::debug!(
-            interface = %socket.ifname,
-            ifindex = socket.ifindex,
-            peer = %peer,
-            bytes = packet.len(),
-            "dataplane sending UDP packet"
-        );
-        match socket.socket.send_to(packet, peer) {
-            Ok(sent) => {
-                self.counters.udp_tx_packets += 1;
-                self.counters.udp_tx_bytes += sent as u64;
-                tracing::debug!(
-                    interface = %socket.ifname,
-                    ifindex = socket.ifindex,
-                    peer = %peer,
-                    bytes = sent,
-                    "dataplane sent UDP packet"
-                );
-                Ok(true)
-            }
-            Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                self.counters.udp_send_would_block_drops += 1;
-                tracing::debug!(
-                    interface = %socket.ifname,
-                    ifindex = socket.ifindex,
-                    peer = %peer,
-                    bytes = packet.len(),
-                    "dropping dataplane packet because UDP socket send would block"
-                );
-                Ok(false)
-            }
-            Err(err) => Err(err).wrap_err_with(|| format!("sending packet via {}", socket.ifname)),
-        }
-    }
-
-    fn try_send_via_route(
+    fn handle_udp_send_result(
         &mut self,
-        packet: &[u8],
+        result: Result<PacketWriteOutcome>,
         route: FastFibEntry,
         context: &str,
     ) -> Result<bool> {
-        match self.send_via_route(packet, route) {
-            Ok(sent) => Ok(sent),
+        match result {
+            Ok(PacketWriteOutcome::Sent(sent)) => {
+                self.counters.udp_tx_packets += 1;
+                self.counters.udp_tx_bytes += sent as u64;
+                Ok(true)
+            }
+            Ok(PacketWriteOutcome::WouldBlock) => {
+                self.counters.udp_send_would_block_drops += 1;
+                Ok(false)
+            }
             Err(err) => {
                 self.counters.udp_send_errors += 1;
                 tracing::warn!(
@@ -585,22 +552,18 @@ impl DataplaneWorker {
         }
     }
 
-    fn write_tun_packet(&mut self, packet: &[u8]) -> Result<bool> {
-        match self.tun_device.send(packet) {
-            Ok(_) => {
+    fn handle_tun_write_result(&mut self, result: Result<PacketWriteOutcome>) -> Result<bool> {
+        match result {
+            Ok(PacketWriteOutcome::Sent(sent)) => {
                 self.counters.tun_tx_packets += 1;
-                self.counters.tun_tx_bytes += packet.len() as u64;
+                self.counters.tun_tx_bytes += sent as u64;
                 Ok(true)
             }
-            Err(err) if err.kind() == ErrorKind::WouldBlock => {
+            Ok(PacketWriteOutcome::WouldBlock) => {
                 self.counters.tun_send_would_block_drops += 1;
-                tracing::debug!(
-                    bytes = packet.len(),
-                    "dropping dataplane packet because TUN reinjection would block"
-                );
                 Ok(false)
             }
-            Err(err) => Err(err).wrap_err("writing inner packet to TUN"),
+            Err(err) => Err(err),
         }
     }
 
@@ -835,6 +798,90 @@ impl DataplaneWorker {
     }
 }
 
+fn recv_udp_packet(socket: &InterfaceSocket, buf: &mut [u8]) -> Result<UdpRecvOutcome> {
+    match socket.socket.recv(buf) {
+        Ok(packet_len) => {
+            tracing::debug!(
+                interface = %socket.ifname,
+                bytes = packet_len,
+                "dataplane received UDP packet"
+            );
+            Ok(UdpRecvOutcome::Packet(packet_len))
+        }
+        Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(UdpRecvOutcome::WouldBlock),
+        Err(err) => {
+            tracing::warn!(
+                interface = %socket.ifname,
+                error = %err,
+                "failed to receive UDP packet on dataplane socket"
+            );
+            Ok(UdpRecvOutcome::Error)
+        }
+    }
+}
+
+fn send_via_route(
+    sockets: &Slab<InterfaceSocket>,
+    udp_port: u16,
+    packet: &[u8],
+    route: FastFibEntry,
+) -> Result<PacketWriteOutcome> {
+    let Some(socket) = sockets.get(route.socket_slot) else {
+        return Err(eyre!("stale UDP socket slot {}", route.socket_slot));
+    };
+
+    let peer = SocketAddr::V6(SocketAddrV6::new(
+        route.next_hop_ll,
+        udp_port,
+        0,
+        socket.ifindex,
+    ));
+    tracing::debug!(
+        interface = %socket.ifname,
+        ifindex = socket.ifindex,
+        peer = %peer,
+        bytes = packet.len(),
+        "dataplane sending UDP packet"
+    );
+    match socket.socket.send_to(packet, peer) {
+        Ok(sent) => {
+            tracing::debug!(
+                interface = %socket.ifname,
+                ifindex = socket.ifindex,
+                peer = %peer,
+                bytes = sent,
+                "dataplane sent UDP packet"
+            );
+            Ok(PacketWriteOutcome::Sent(sent))
+        }
+        Err(err) if err.kind() == ErrorKind::WouldBlock => {
+            tracing::debug!(
+                interface = %socket.ifname,
+                ifindex = socket.ifindex,
+                peer = %peer,
+                bytes = packet.len(),
+                "dropping dataplane packet because UDP socket send would block"
+            );
+            Ok(PacketWriteOutcome::WouldBlock)
+        }
+        Err(err) => Err(err).wrap_err_with(|| format!("sending packet via {}", socket.ifname)),
+    }
+}
+
+fn write_tun_packet(tun_device: &SyncDevice, packet: &[u8]) -> Result<PacketWriteOutcome> {
+    match tun_device.send(packet) {
+        Ok(sent) => Ok(PacketWriteOutcome::Sent(sent)),
+        Err(err) if err.kind() == ErrorKind::WouldBlock => {
+            tracing::debug!(
+                bytes = packet.len(),
+                "dropping dataplane packet because TUN reinjection would block"
+            );
+            Ok(PacketWriteOutcome::WouldBlock)
+        }
+        Err(err) => Err(err).wrap_err("writing inner packet to TUN"),
+    }
+}
+
 fn compile_fast_routes<S>(
     fib: &FibSnapshot,
     ifname_to_slab: &HashMap<Box<str>, usize, S>,
@@ -967,6 +1014,13 @@ fn decrement_hop_limit(packet: &mut [u8]) -> bool {
     }
     *hop_limit -= 1;
     true
+}
+
+fn has_forwardable_hop_limit(packet: &[u8]) -> bool {
+    if packet.len() < 40 || packet[0] >> 4 != 6 {
+        return false;
+    }
+    packet[7] > 1
 }
 
 #[cfg(test)]

@@ -148,8 +148,9 @@ of shortcuts that should be revisited later.
   - Replace the watcher-side bootstrap heuristic with a stronger admission
     policy (neighbor proof, richer metadata, or both), so Babel does not need
     broad speculative interface admission just to discover the right links.
-  - Characterize raw throughput with the temporary macOS `en0`/`en1`
-    deprioritization plus `enN -> N * 100` neighbour-cost policy active.
+  - Keep validating route choice during restart/convergence, but treat the
+    temporary macOS `en0`/`en1` deprioritization plus `enN -> N * 100`
+    neighbour-cost policy as good enough for steady-state throughput work.
   - Later, replace that heuristic with measured link-quality scoring so broadly
     admissible direct links can be ranked by actual observed quality.
 
@@ -188,37 +189,41 @@ of shortcuts that should be revisited later.
   - `src/fib.rs`
   - `src/routing_stack.rs`
   Why this is a shortcut:
-  - The current lab state has reliable ICMPv6 reachability and now also basic
-    generic TCP correctness after convergence: a direct `nc` TCP send across
-    the overlay succeeds and the server receives the payload.
-  - Sustained throughput testing is still not clean. Earlier `iperf3` results
-    were confounded by Babel selecting much slower equal-cost interfaces instead
-    of the intended fast direct Thunderbolt-style links.
+  - The current lab state has reliable ICMPv6 reachability, basic generic TCP
+    correctness after convergence, a clean `100M` single-hop UDP smoke test,
+    and direct/single-hop full-bandwidth `iperf3` measurements.
+  - Earlier `iperf3` results were confounded by route selection. That is no
+    longer the main explanation after the temporary `neighbour-cost` policy:
+    direct overlay UDP still tops out around `1.46 Gbit/s`, while direct
+    physical UDP without the software router is about `11 Gbit/s`.
+  - The first round of hot-path cleanup is in: readiness drains have fairness
+    budgets, UDP receive no longer allocates a `Vec`, `FibSnapshot`s are
+    compiled into dataplane-local fast routes with socket slots, and dataplane
+    counters are logged periodically.
   - The current code also still treats `WouldBlock` on UDP send and TUN
     reinjection as drop-on-backpressure behavior. That is now visible in logs,
     but it is not yet a proper queued/backpressured forwarding model.
-  - So the remaining blocker is no longer "can non-ICMP traffic work at all",
-    but "force route selection onto the intended fast links, then measure raw
-    dataplane throughput".
-  - Restart-sensitive failures are now narrowed further than "the dataplane is
-    broken". In live `e11 -> e16` debugging, `e11` emitted the encapsulated
-    packet on the expected direct link, `e16` received it, delivered it into
-    the TUN, and the local stack generated a reply. The failure happened on the
-    return path because `e16`'s current FIB resolved the reply toward `en1`
-    instead of the direct link back to `e11`.
-  - That means the current post-restart blackholes are now dominated by
-    control-plane / FIB route selection under broad admissibility, not by the
-    dataplane failing to decapsulate or reinject packets.
+  - Single-hop UDP at `-b 0` can receive around `1.1 Gbit/s` during the run but
+    with heavy loss and a post-test overlay wedge until `babblerd` is
+    restarted. That points at overload/recovery behavior, not basic packet
+    decoding.
   - There is no ICMPv6 Time Exceeded generation yet.
   - There is no Packet Too Big handling yet.
   - No-route and invalid-packet cases are mostly tracing-and-drop behavior.
   Follow-up:
-  - Characterize raw throughput with the temporary `neighbour-cost` route
-    selection heuristic active.
+  - Use dataplane counter deltas, CPU measurements, and route/FIB snapshots
+    around each `iperf3` run to separate syscall/CPU ceiling from UDP/TUN
+    backpressure.
+  - The first avoidable per-packet costs have been removed: no heap allocation
+    for UDP receive logging, no peer-address decoding when it is not needed,
+    and no per-packet zeroed buffer construction.
+  - Benchmark batching, aggregation, jumbo MTU support, and eventually
+    multi-core dataplane sharding. At `11 Gbit/s` with the current `1452` byte
+    TUN MTU, the budget is about `947 kpps`, or `1.06 us/packet`; the current
+    direct overlay result is roughly `126 kpps`, or `8 us/packet`.
   - Later, replace the suffix heuristic with measured scoring and investigate
     how that should interact with restart/convergence behavior.
-  - Add proper ICMPv6 error generation and tighter packet-validation behavior
-    once the first end-to-end forwarding path is validated.
+  - Add proper ICMPv6 error generation and tighter packet-validation behavior.
 
 - `TunDevice` is still a thin platform-specific wrapper with some rough edges.
   Files:

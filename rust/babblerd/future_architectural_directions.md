@@ -37,28 +37,45 @@ that connects to the public socket and periodically sends keepalive commands.
 That is only a testing scaffold so the routing stack stays on without a real
 frontend process yet. It should be removed once a real controller exists.
 
-It is also enough structure to begin building the actual dataplane without
-needing to perfect every IPC and control-plane detail first.
+It is also enough structure to improve the actual dataplane without needing to
+perfect every IPC and control-plane detail first.
 
-Stable one-hop forwarding is now proven on the four-Mac Thunderbolt lab for an
-adjacent pair after switching dataplane TUN I/O on macOS to `tun-rs`
-`SyncDevice::recv`/`send` instead of raw fd `read`/`write`.
+Stable forwarding is now proven on the four-Mac Thunderbolt lab:
 
-Steady-state ICMPv6 reachability is also now green across the full four-node
-lab ring, and small generic TCP application payloads now work too once the
-mesh has converged. The current remaining gap is no longer basic correctness of
-non-ICMP transport traffic. Sustained throughput testing is now mostly blocked
-on forcing Babel to choose the intended fast direct links; earlier `iperf3`
-results were heavily confounded by equal-cost selection of much slower
-interfaces.
+- adjacent overlay traffic works,
+- single-hop forwarded UDP works at modest rates,
+- steady-state ICMPv6 reachability is green across the full ring,
+- small generic TCP application payloads work after convergence,
+- and the temporary `enN` link-cost policy successfully keeps steady-state
+  routes away from `en0`/`en1` and toward the intended lower-numbered direct
+  Thunderbolt-style links.
 
-So the current architecture is good enough for continued correctness and
-reliability bring-up, but serious performance work should assume a temporary
-link-cost heuristic is in place first.
+The current remaining gap is no longer basic dataplane correctness or forcing
+Babel onto the intended route. The route-selection heuristic is now good enough
+to expose the next bottleneck: raw dataplane throughput and overload behavior.
+
+The latest lab numbers put the userspace overlay far below the direct physical
+UDP baseline:
+
+- direct UDP without the software router: about `11 Gbit/s` observed outside
+  the overlay,
+- direct overlay UDP, `e4 -> e16`, `iperf3 -6 -u -b 0 -t 10`: about
+  `1.46 Gbit/s` received with negligible loss,
+- direct overlay TCP, `e4 -> e16`, `iperf3 -6 -b 0 -t 10`: about
+  `1.24 Gbit/s` received,
+- single-hop overlay UDP, `e2 -> e16`, `iperf3 -6 -u -b 0 -t 10`: server
+  intervals around `1.11-1.16 Gbit/s` with `12-14%` loss, followed by an
+  unstable/wedged overlay path until `babblerd` was restarted,
+- single-hop overlay TCP, `e2 -> e16`, `iperf3 -6 -b 0 -t 10`: about
+  `1.07 Gbit/s` received.
+
+So the architecture is good enough for continued correctness bring-up, but
+serious performance work should now treat packet processing cost, syscalls,
+copies, batching, and backpressure as the main suspects.
 
 ## The Most Important Architectural Decision
 
-The current codebase is already good enough to serve as the shell around a
+The current codebase is already good enough to serve as the shell around the
 first real dataplane.
 
 That means the next major effort should **not** automatically be:
@@ -72,32 +89,36 @@ working end-to-end system.
 
 The next big milestone should be:
 
-- a real UDP dataplane,
-- driven by the current daemon core and current Babel-derived state,
-- with a basic but coherent forwarding model.
+- make the existing UDP dataplane observable enough to explain overload,
+- make the forwarding path robust when the sender exceeds what the router can
+  currently drain,
+- and then reduce per-packet cost enough to move beyond the current
+  `1-1.5 Gbit/s` overlay ceiling.
 
-In other words: move from “control plane with architecture” to “working router
-with acceptable architecture”.
+In other words: the project has moved from “build the router” to “make the
+router fast and predictable under load”.
 
 ## Near-Term Goal
 
-The near-term target is:
+The near-term target is now:
 
-> a basic end-to-end MVC where:
+> a measurable end-to-end router where:
 >
 > - the daemon has a stable node identity,
 > - the daemon can be kept alive by the frontend,
 > - the daemon maintains Babel-derived routing state,
-> - the daemon can forward packets through a UDP overlay between nodes,
-> - and the frontend can inspect enough daemon state to be useful.
+> - the daemon forwards through the UDP overlay between nodes,
+> - the route heuristic selects the intended fast links after convergence,
+> - and overload is visible through counters rather than guessed from `iperf3`
+>   alone.
 
-This does **not** require the final IPC architecture first.
+This still does **not** require the final IPC architecture first.
 
 ## Recommended Next Phase
 
-### 1. Validate and harden the first UDP dataplane
+### 1. Harden and measure the UDP dataplane
 
-This should be the next major feature.
+This is the current major feature.
 
 The basic pieces are now in place:
 
@@ -119,16 +140,26 @@ The basic pieces are now in place:
   admitted interfaces that still do not have usable sockets.
 - the stable-link packet path is now working on the lab ring for adjacent
   one-hop traffic.
+- the dataplane now drains ready TUN and UDP fds up to fairness budgets instead
+  of handling only one packet per readiness event.
+- the dataplane logs useful packet/drop counters every few seconds when active:
+  TUN RX/TX, UDP RX/TX, TUN-to-UDP, forwarded, local-delivered, no-route,
+  invalid, hop-limit, and UDP/TUN `WouldBlock` drops.
+- the UDP receive path now mutates the stack buffer slice directly instead of
+  allocating a `Vec` per received packet.
+- the dataplane compiles each `FibSnapshot` into a local fast route table that
+  stores direct socket slots, avoiding the old per-packet `FibEntry` clone and
+  route-ifname-to-socket lookup.
 
 So the next step is no longer “invent or wire the modules”.
 
 It is:
 
-- extend live validation from adjacent one-hop traffic to multi-hop and churn,
-- harden the remaining dataplane failure/reporting behavior under interface
-  churn,
-- confirm the interface-bound UDP socket model behaves correctly on the target
-  machines,
+- explain the current `1-1.5 Gbit/s` ceiling against packet counters and host
+  CPU/syscall behavior,
+- make full-blast UDP overload recover cleanly instead of destabilizing the
+  path,
+- compare direct, single-hop, and multi-hop runs with the same counter set,
 - and then fill the first obvious protocol gaps such as ICMPv6 error handling.
 
 One caveat that is now proven on the lab Macs: the current macOS receive path
@@ -193,33 +224,94 @@ networks do not dominate Thunderbolt-style links during throughput smoke tests.
 This is not a robust scoring model; it is a temporary selection heuristic so
 raw throughput work can proceed on the intended fast links.
 
-The current sustained-throughput investigation is therefore focused on two
-nearer-term issues before any serious performance tuning:
+The current sustained-throughput investigation is therefore focused on the
+dataplane hot path and overload behavior:
 
-- understanding whether load-induced loss is primarily backpressure on UDP
-  socket send / TUN reinjection,
-- and separating that from the now-proven macOS receive-side interface
-  attribution oddities.
+- direct overlay UDP tops out around `1.46 Gbit/s` in the latest test, far
+  below the `11 Gbit/s` direct physical UDP baseline,
+- single-hop overlay UDP can receive around `1.1 Gbit/s` during full-blast
+  `-b 0` tests, but with heavy loss and a post-test path wedge,
+- full-blast UDP should be treated as a stress/failure test until the
+  backpressure story is better,
+- route selection is still important during convergence, but after the mesh
+  settles the `enN` policy is no longer the main explanation for the throughput
+  gap.
 
-The live restart-sensitive failures are now narrowed more precisely than that.
-On the four-Mac lab, a restarted node can receive an encapsulated packet, push
-it through local TUN delivery successfully, and still blackhole the exchange
-because the generated return packet is resolved onto a worse broad-admission
-path (for example `en1`) instead of the direct Thunderbolt neighbour that just
-delivered the request.
+At the current fixed MTU, approaching `11 Gbit/s` is a packet-rate problem.
+Ignoring Ethernet/IP/UDP overhead, the per-packet budget is:
 
-So the current main blocker for reliable restart/churn behavior is not "the
-dataplane cannot receive or decapsulate packets". It is "the control plane can
-still choose an asymmetric installed route that is valid enough for Babel to
-advertise, but poor enough to break or destabilize the actual return path".
+```text
+packet_budget_seconds = dataplane_packet_bytes * 8 / target_bits_per_second
+```
 
-That strengthens the case for the planned future link-quality policy:
+For `11 Gbit/s`:
 
-- broad admissibility is still the right v1 reachability rule,
-- but equally admissible wired links need a better ranking signal than today's
-  flat wired costs,
-- otherwise restart-time route selection can still land on a functionally worse
-  path even when a direct high-quality neighbour exists.
+- `1452` byte packets, the current derived TUN MTU: about `947 kpps`, or
+  `1.06 us/packet`.
+- `1500` byte packets: about `917 kpps`, or `1.09 us/packet`.
+- `1200` byte packets: about `1.15 Mpps`, or `873 ns/packet`.
+- `9000` byte jumbo packets: about `153 kpps`, or `6.55 us/packet`.
+- `64` byte minimum-size packets: about `21.5 Mpps`, or `46.5 ns/packet`.
+
+So for MTU-sized `iperf3` traffic this is not a "few nanoseconds per packet"
+target, but it is roughly a one-microsecond total budget per packet. That
+budget has to cover all user/kernel crossings, copies, route lookup, hop-limit
+mutation on forwarded packets, UDP send/receive, TUN read/write, and scheduler
+overhead. The latest direct overlay result of `1.46 Gbit/s` at `1452` bytes
+corresponds to roughly `126 kpps`, or about `8 us/packet`, so getting near
+`11 Gbit/s` means shrinking per-packet cost by around `7-8x` or reducing packet
+rate with larger packets/aggregation.
+
+Likely optimization directions, in priority order:
+
+- keep improving counters and expose them over the public state surface, so
+  tests can distinguish no-route, UDP send backpressure, TUN reinjection
+  backpressure, invalid packets, forwarding, and local delivery without log
+  scraping;
+- add recovery/backpressure policy for overload rather than just
+  drop-on-`WouldBlock`;
+- use OS packet batching where the target platform allows it
+  (`recvmmsg`/`sendmmsg` on Linux; macOS options are more constrained);
+- consider overlay aggregation, where one outer UDP datagram carries several
+  inner packets, to amortize syscall and UDP/IP overhead;
+- explore jumbo MTUs on the Thunderbolt links, because `9000` byte packets
+  reduce the `11 Gbit/s` packet rate from about `947 kpps` to about `153 kpps`;
+- consider multi-core dataplane sharding once single-thread costs are
+  measured, because one dedicated thread is a likely ceiling for this design;
+- treat kernel-bypass or moving more forwarding into the kernel as a separate
+  architecture track if `11 Gbit/s` at standard MTU is a hard requirement on
+  macOS.
+
+Before jumbo frames or overlay aggregation, the current per-packet cost audit
+points at these near-term bottlenecks:
+
+- A transit packet still implies one UDP receive syscall and one UDP send
+  syscall in the forwarding process. At `11 Gbit/s` and `1452` byte packets,
+  that is roughly `947 kpps`, or nearly `1.9M` UDP syscalls/sec on the transit
+  node before counting TUN work on endpoints. That alone makes a full `7-8x`
+  improvement unlikely from ordinary Rust-level cleanup.
+- The UDP ingress path was still cloning `socket.ifname` for every received
+  packet just to support logging/error context. Because `Box<str>::clone()`
+  allocates, that is an avoidable heap allocation per overlay packet.
+- UDP ingress used `recv_from` even though the peer address is not needed for
+  forwarding. Decoding the source address is useful for debugging but should
+  not be mandatory hot-path work.
+- TUN and UDP packet buffers were stack-created as zeroed arrays for each
+  packet. Reusing worker-owned buffers avoids repeated stack initialization and
+  keeps the packet loop closer to "syscall, parse, lookup, syscall".
+- The send path still builds a `SocketAddrV6` and uses `send_to` per packet.
+  A future connected per-neighbour output-socket model could remove that
+  address construction and let the kernel cache more route state.
+- The crate already depends on `iroh-quinn-udp` with the Apple fast datapath,
+  which exposes `sendmsg_x`/`recvmsg_x` batching. That preserves one UDP
+  datagram per inner packet but reduces syscall count, so it is the most likely
+  path toward a large standard-MTU speedup if jumbo/aggregation are deferred.
+
+The first low-risk cleanup pass has now landed: UDP ingress no longer clones
+`ifname`, UDP receive uses `recv` rather than `recv_from`, and TUN/UDP packet
+buffers are worker-owned instead of stack-created for every packet. These are
+worth doing, but they should be expected to remove avoidable overhead rather
+than close the full `7-8x` gap by themselves.
 
 The current tree now owns the kernel route that steers overlay traffic into the
 resident TUN interface:
@@ -232,7 +324,7 @@ resident TUN interface:
 That means local application traffic can now be steered into the overlay once
 the UDP dataplane is active.
 
-The first version can stay simple:
+The current MVP can stay simple:
 
 - one UDP datagram carries exactly one inner IPv6 packet,
 - no custom framing,
@@ -241,15 +333,15 @@ The first version can stay simple:
 - no relays,
 - no multiplexed control/data protocol.
 
-The dataplane should:
+The dataplane currently does this basic loop:
 
-- read packets from TUN,
-- classify local-delivery vs forwarding,
-- look up next-hop information from a derived forwarding view,
-- send encapsulated packets to direct neighbors over UDP,
-- receive UDP packets from neighbors,
-- decapsulate them,
-- either inject them locally into TUN or forward them onward.
+- reads packets from TUN,
+- classifies local-delivery vs forwarding,
+- looks up next-hop information from a derived forwarding view,
+- sends encapsulated packets to direct neighbors over UDP,
+- receives UDP packets from neighbors,
+- decapsulates them,
+- either injects them locally into TUN or forwards them onward.
 
 This gives the project a real “V” and “M” to go with the current daemon/control
 shell.
@@ -278,7 +370,7 @@ The current code now reflects that direction:
 - `BabelState` is still the protocol mirror,
 - `FibSnapshot` is the dataplane view.
 
-The next layer should be a derived forwarding table/FIB that:
+The derived forwarding layer should keep moving toward a table that:
 
 - is keyed by destination prefix or node address,
 - only keeps the routes the dataplane should actually use,
@@ -302,7 +394,7 @@ The current `ServiceState` is useful, but it is only lifecycle state:
 
 That is not the same thing as routing readiness.
 
-Once the dataplane exists, a separate readiness/status view should exist too.
+Now that the dataplane exists, a separate readiness/status view should exist too.
 For example, the frontend may want to distinguish:
 
 - daemon is idle,
@@ -315,10 +407,10 @@ For example, the frontend may want to distinguish:
 That should be modeled separately from `ServiceState`, not by making
 `ServiceState::On` carry too much meaning.
 
-## What Can Wait Until After the Dataplane Exists
+## What Can Wait Until After Throughput Bring-Up
 
-These are still desirable, but they do not need to block the first end-to-end
-router:
+These are still desirable, but they do not need to block the current
+throughput/backpressure work:
 
 ### `zbus` / D-Bus-style IPC
 
@@ -329,7 +421,7 @@ But the current line protocol is good enough for:
 - `keepalive <ttl_ms>`
 - `get-state`
 
-while the dataplane is being built.
+while the dataplane is being measured and tuned.
 
 So `zbus` should remain a planned improvement, not the immediate blocker.
 
@@ -341,32 +433,34 @@ a single global keepalive deadline.
 That is a real architectural improvement, but it is control-plane polish rather
 than dataplane unblocker.
 
-It can happen after the first router path works.
+It can happen after the current router path is faster and better characterized.
 
 ### Structured diagnostics/debug output
 
 Right now diagnostics are tracing-only.
 
-That is acceptable for development while the dataplane is first being brought
-up.
+That is acceptable for development while the dataplane is being characterized.
 
 A configurable debug stream or structured diagnostics feed should be added
 later, preferably once the public IPC shape is stabilized.
 
-## The First Dataplane Should Stay Intentionally Small
+## The MVP Dataplane Should Stay Intentionally Small
 
-The first version should avoid solving every future overlay concern.
+The MVP version should avoid solving every future overlay concern.
 
 It should **not** attempt to solve:
 
 - encryption,
 - authentication,
 - path quality metrics beyond what Babel already provides,
-- batching,
 - relay protocols,
 - or multi-transport negotiation.
 
-The first version should prove the simplest useful thing:
+Batching and packet aggregation are now valid throughput experiments, but they
+should be evaluated as dataplane optimizations rather than bundled with
+unrelated control-plane redesign.
+
+The current version has proven the simplest useful thing:
 
 - stable node addresses,
 - UDP transport between neighbors,
@@ -374,24 +468,29 @@ The first version should prove the simplest useful thing:
 - TUN injection/extraction,
 - packet forwarding that actually works end-to-end.
 
-If that works, the rest can be improved incrementally.
+The rest can be improved incrementally.
 
-## Architectural Path After the First Dataplane Works
+## Architectural Path After the MVP Dataplane Works
 
-Once the basic dataplane exists and works, the likely next path is:
+Now that the basic dataplane exists and works, the likely next path is:
 
-1. Improve the public state/readiness model.
-2. Replace the ad-hoc control socket with `zbus`.
-3. Replace the single keepalive deadline with per-client leases.
-4. Tighten interface admission beyond the current broad heuristic.
-5. Pin and explicitly invoke the exact forked `babeld`.
-7. Harden node-id file mode checks and other local security edges.
-8. Revisit diagnostics streaming.
-9. Revisit platform abstractions around TUN / transport / forwarding.
+1. Expose dataplane counters and route/FIB state through a better public status
+   surface.
+2. Make overload/backpressure behavior recoverable and measurable.
+3. Benchmark batching, aggregation, jumbo MTUs, and eventually multi-core
+   dataplane options.
+4. Replace the temporary `enN` link policy with measured link-quality scoring.
+5. Replace the ad-hoc control socket with `zbus`.
+6. Replace the single keepalive deadline with per-client leases.
+7. Tighten interface admission beyond the current broad heuristic.
+8. Pin and explicitly invoke the exact forked `babeld`.
+9. Harden node-id file mode checks and other local security edges.
+10. Revisit diagnostics streaming.
+11. Revisit platform abstractions around TUN / transport / forwarding.
 
 That ordering is intentional:
 
-- prove the router first,
+- keep the router measurable while improving throughput,
 - then harden and refine the daemon architecture around it.
 
 ## Guiding Principle
@@ -407,5 +506,5 @@ over:
 That does **not** mean ignoring architecture.
 
 It means using the current architecture as a platform for the next real
-capability, rather than repeatedly polishing the control shell before the
-dataplane exists.
+capability, rather than polishing the control shell ahead of the dataplane's
+current throughput and overload problems.
