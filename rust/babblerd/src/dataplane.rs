@@ -17,7 +17,7 @@
 //!   snapshot-local slot numbers.
 
 use std::hash::BuildHasher;
-use std::io::{self, ErrorKind};
+use std::io::{self, ErrorKind, IoSliceMut};
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6, UdpSocket};
 use std::num::NonZeroU32;
 use std::os::fd::AsRawFd;
@@ -30,6 +30,7 @@ use arrayvec::ArrayVec;
 use color_eyre::eyre::{Result, WrapErr, eyre};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use hashbrown::{HashMap, HashSet};
+use iroh_quinn_udp::{BATCH_SIZE, RecvMeta, Transmit, UdpSockRef, UdpSocketState};
 use mio::net::UdpSocket as MioUdpSocket;
 use mio::unix::SourceFd;
 use mio::{Events, Interest, Poll, Token};
@@ -51,6 +52,8 @@ const UDP_SOCKET_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 const TUN_DRAIN_BUDGET: usize = 64;
 const UDP_DRAIN_BUDGET: usize = 64;
 const PACKET_BUFFER_BYTES: usize = PHYSICAL_LINK_MTU as usize;
+const MAX_GRO_SEGMENTS: usize = 64;
+const UDP_RECV_BUFFER_BYTES: usize = PACKET_BUFFER_BYTES * MAX_GRO_SEGMENTS;
 
 pub struct DataplaneConfig {
     pub tun_device: Arc<SyncDevice>,
@@ -92,13 +95,19 @@ struct DataplaneWorker {
     last_counter_log: Instant,
     last_logged_counters: DataplaneCounters,
     tun_buf: Box<[u8; PACKET_BUFFER_BYTES]>,
-    udp_buf: Box<[u8; PACKET_BUFFER_BYTES]>,
+    udp_batch: UdpRecvBatch,
 }
 
 struct InterfaceSocket {
     ifname: Box<str>,
     ifindex: u32,
     socket: MioUdpSocket,
+    udp_state: UdpSocketState,
+}
+
+struct UdpRecvBatch {
+    buffers: Vec<Box<[u8]>>,
+    metas: Vec<RecvMeta>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,7 +125,7 @@ enum PacketWriteOutcome {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UdpRecvOutcome {
-    Packet(usize),
+    Packets(usize),
     WouldBlock,
     Error,
 }
@@ -216,6 +225,46 @@ impl DataplaneCounters {
             || self.udp_send_would_block_drops != 0
             || self.tun_send_would_block_drops != 0
             || self.udp_send_errors != 0
+    }
+}
+
+impl UdpRecvBatch {
+    fn new() -> Self {
+        let buffers = (0..BATCH_SIZE)
+            .map(|_| vec![0u8; UDP_RECV_BUFFER_BYTES].into_boxed_slice())
+            .collect();
+        let metas = vec![RecvMeta::default(); BATCH_SIZE];
+        Self { buffers, metas }
+    }
+
+    fn recv_from(&mut self, socket: &InterfaceSocket, max_packets: usize) -> io::Result<usize> {
+        let batch_len = max_packets.min(BATCH_SIZE).min(self.buffers.len());
+        if batch_len == 0 {
+            return Ok(0);
+        }
+
+        // The socket is nonblocking. OS batch receive returns the packets already
+        // queued for this fd; it must not wait for `batch_len` packets.
+        let mut slices = ArrayVec::<IoSliceMut<'_>, BATCH_SIZE>::new();
+        for buffer in self.buffers.iter_mut().take(batch_len) {
+            slices.push(IoSliceMut::new(buffer.as_mut()));
+        }
+
+        socket.socket.try_io(|| {
+            socket.udp_state.recv(
+                UdpSockRef::from(&socket.socket),
+                slices.as_mut_slice(),
+                &mut self.metas[..batch_len],
+            )
+        })
+    }
+}
+
+fn udp_meta_stride(meta: RecvMeta) -> usize {
+    if meta.stride == 0 || meta.stride > meta.len {
+        meta.len.max(1)
+    } else {
+        meta.stride
     }
 }
 
@@ -320,7 +369,7 @@ impl DataplaneWorker {
             last_counter_log: Instant::now(),
             last_logged_counters: DataplaneCounters::default(),
             tun_buf: Box::new([0u8; PACKET_BUFFER_BYTES]),
-            udp_buf: Box::new([0u8; PACKET_BUFFER_BYTES]),
+            udp_batch: UdpRecvBatch::new(),
         };
         worker.reconcile_sockets()?;
         Ok(worker)
@@ -389,10 +438,17 @@ impl DataplaneWorker {
     }
 
     fn drain_udp_ready(&mut self, slab_key: usize) -> Result<()> {
-        for _ in 0..UDP_DRAIN_BUDGET {
-            if !self.handle_one_udp_packet(slab_key)? {
+        let mut remaining_budget = UDP_DRAIN_BUDGET;
+        while remaining_budget > 0 {
+            let received_buffers = match self.recv_udp_batch(slab_key, remaining_budget)? {
+                Some(received_buffers) => received_buffers,
+                None => break,
+            };
+            let processed_packets = self.handle_udp_batch(received_buffers)?;
+            if processed_packets == 0 {
                 break;
             }
+            remaining_budget = remaining_budget.saturating_sub(processed_packets);
         }
         Ok(())
     }
@@ -443,27 +499,78 @@ impl DataplaneWorker {
         Ok(true)
     }
 
-    fn handle_one_udp_packet(&mut self, slab_key: usize) -> Result<bool> {
+    fn recv_udp_batch(&mut self, slab_key: usize, max_packets: usize) -> Result<Option<usize>> {
         let Some(socket) = self.sockets.get(slab_key) else {
             return Err(eyre!("unknown UDP socket token"));
         };
 
-        let packet_len = match recv_udp_packet(socket, self.udp_buf.as_mut())? {
-            UdpRecvOutcome::Packet(len) => len,
-            UdpRecvOutcome::WouldBlock => return Ok(false),
+        let received_buffers = match recv_udp_packets(socket, &mut self.udp_batch, max_packets)? {
+            UdpRecvOutcome::Packets(count) => count,
+            UdpRecvOutcome::WouldBlock => return Ok(None),
             UdpRecvOutcome::Error => {
                 self.best_effort_reconcile();
-                return Ok(false);
+                return Ok(None);
             }
         };
+        Ok(Some(received_buffers))
+    }
+
+    fn handle_udp_batch(&mut self, received_buffers: usize) -> Result<usize> {
+        let mut processed_packets = 0usize;
+
+        for buffer_index in 0..received_buffers {
+            let Some(meta) = self.udp_batch.metas.get(buffer_index).copied() else {
+                continue;
+            };
+            let Some(buffer) = self.udp_batch.buffers.get(buffer_index) else {
+                continue;
+            };
+            let available_len = meta.len.min(buffer.len());
+            if meta.len > buffer.len() {
+                self.counters.invalid_packet_drops += 1;
+                tracing::warn!(
+                    packet_len = meta.len,
+                    buffer_len = buffer.len(),
+                    "dropping truncated UDP receive batch buffer"
+                );
+                continue;
+            }
+            if available_len == 0 {
+                self.handle_one_udp_payload(buffer_index, 0, 0)?;
+                processed_packets += 1;
+                continue;
+            }
+
+            let stride = udp_meta_stride(meta);
+            let mut start = 0usize;
+            while start < available_len {
+                let end = start.saturating_add(stride).min(available_len);
+                self.handle_one_udp_payload(buffer_index, start, end)?;
+                processed_packets += 1;
+                start = end;
+            }
+        }
+
+        Ok(processed_packets)
+    }
+
+    fn handle_one_udp_payload(
+        &mut self,
+        buffer_index: usize,
+        packet_start: usize,
+        packet_end: usize,
+    ) -> Result<()> {
+        let packet_len = packet_end.saturating_sub(packet_start);
         self.counters.udp_rx_packets += 1;
         self.counters.udp_rx_bytes += packet_len as u64;
 
-        let packet = &self.udp_buf[..packet_len];
-        let Some(dst) = ipv6_destination(packet) else {
+        let Some(dst) = ({
+            let packet = &self.udp_batch.buffers[buffer_index][packet_start..packet_end];
+            ipv6_destination(packet)
+        }) else {
             self.counters.invalid_packet_drops += 1;
             tracing::debug!("dropping invalid UDP payload");
-            return Ok(true);
+            return Ok(());
         };
         tracing::debug!(
             destination = %dst,
@@ -477,27 +584,35 @@ impl DataplaneWorker {
                 bytes = packet_len,
                 "dataplane delivering UDP payload to TUN"
             );
-            let write_result = write_tun_packet(&self.tun_device, packet);
+            let write_result = {
+                let packet = &self.udp_batch.buffers[buffer_index][packet_start..packet_end];
+                write_tun_packet(&self.tun_device, packet)
+            };
             if self.handle_tun_write_result(write_result)? {
                 self.counters.local_delivered_packets += 1;
             }
-            return Ok(true);
+            return Ok(());
         }
 
-        if !has_forwardable_hop_limit(packet) {
+        if !{
+            let packet = &self.udp_batch.buffers[buffer_index][packet_start..packet_end];
+            has_forwardable_hop_limit(packet)
+        } {
             self.counters.hop_limit_drops += 1;
             tracing::debug!(destination = %dst, "dropping packet with exhausted hop limit");
-            return Ok(true);
+            return Ok(());
         }
 
         let Some(route) = self.lookup_fast_route(dst) else {
             self.counters.no_route_drops += 1;
             tracing::debug!(destination = %dst, "dataplane has no route for forwarded UDP packet");
-            return Ok(true);
+            return Ok(());
         };
 
-        let packet = &mut self.udp_buf[..packet_len];
-        debug_assert!(decrement_hop_limit(packet));
+        {
+            let packet = &mut self.udp_batch.buffers[buffer_index][packet_start..packet_end];
+            debug_assert!(decrement_hop_limit(packet));
+        }
 
         tracing::debug!(
             destination = %dst,
@@ -506,11 +621,14 @@ impl DataplaneWorker {
             mtu = route.mtu,
             "dataplane resolved route for forwarded UDP packet"
         );
-        let send_result = send_via_route(&self.sockets, self.udp_port, packet, route);
+        let send_result = {
+            let packet = &self.udp_batch.buffers[buffer_index][packet_start..packet_end];
+            send_via_route(&self.sockets, self.udp_port, packet, route)
+        };
         if self.handle_udp_send_result(send_result, route, "forwarding UDP packet")? {
             self.counters.udp_forwarded_packets += 1;
         }
-        Ok(true)
+        Ok(())
     }
 
     fn is_local(&self, addr: Ipv6Addr) -> bool {
@@ -713,6 +831,8 @@ impl DataplaneWorker {
         ifindex: u32,
         mut socket: MioUdpSocket,
     ) -> Result<usize> {
+        let udp_state = UdpSocketState::new(UdpSockRef::from(&socket))
+            .wrap_err_with(|| format!("initializing UDP fast-path state for {}", ifname))?;
         let entry = self.sockets.vacant_entry();
         let slab_key = entry.key();
         let token = Token(slab_key + 1);
@@ -724,6 +844,7 @@ impl DataplaneWorker {
             ifname,
             ifindex,
             socket,
+            udp_state,
         });
         Ok(slab_key)
     }
@@ -798,22 +919,27 @@ impl DataplaneWorker {
     }
 }
 
-fn recv_udp_packet(socket: &InterfaceSocket, buf: &mut [u8]) -> Result<UdpRecvOutcome> {
-    match socket.socket.recv(buf) {
-        Ok(packet_len) => {
+fn recv_udp_packets(
+    socket: &InterfaceSocket,
+    batch: &mut UdpRecvBatch,
+    max_packets: usize,
+) -> Result<UdpRecvOutcome> {
+    match batch.recv_from(socket, max_packets) {
+        Ok(received_buffers) if received_buffers > 0 => {
             tracing::debug!(
                 interface = %socket.ifname,
-                bytes = packet_len,
-                "dataplane received UDP packet"
+                received_buffers,
+                "dataplane received UDP packet batch"
             );
-            Ok(UdpRecvOutcome::Packet(packet_len))
+            Ok(UdpRecvOutcome::Packets(received_buffers))
         }
+        Ok(_) => Ok(UdpRecvOutcome::WouldBlock),
         Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(UdpRecvOutcome::WouldBlock),
         Err(err) => {
             tracing::warn!(
                 interface = %socket.ifname,
                 error = %err,
-                "failed to receive UDP packet on dataplane socket"
+                "failed to receive UDP packet batch on dataplane socket"
             );
             Ok(UdpRecvOutcome::Error)
         }
@@ -843,16 +969,27 @@ fn send_via_route(
         bytes = packet.len(),
         "dataplane sending UDP packet"
     );
-    match socket.socket.send_to(packet, peer) {
-        Ok(sent) => {
+    let transmit = Transmit {
+        destination: peer,
+        ecn: None,
+        contents: packet,
+        segment_size: None,
+        src_ip: None,
+    };
+    match socket.socket.try_io(|| {
+        socket
+            .udp_state
+            .try_send(UdpSockRef::from(&socket.socket), &transmit)
+    }) {
+        Ok(()) => {
             tracing::debug!(
                 interface = %socket.ifname,
                 ifindex = socket.ifindex,
                 peer = %peer,
-                bytes = sent,
+                bytes = packet.len(),
                 "dataplane sent UDP packet"
             );
-            Ok(PacketWriteOutcome::Sent(sent))
+            Ok(PacketWriteOutcome::Sent(packet.len()))
         }
         Err(err) if err.kind() == ErrorKind::WouldBlock => {
             tracing::debug!(
@@ -1025,16 +1162,20 @@ fn has_forwardable_hop_limit(packet: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv6Addr;
+    use std::net::{Ipv6Addr, UdpSocket as StdUdpSocket};
+    use std::time::Duration;
 
     use ahash::RandomState;
     use hashbrown::{HashMap, HashSet};
+    use mio::net::UdpSocket as MioUdpSocket;
 
     use crate::fib::{FibEntry, FibSnapshot, host_key};
 
     use super::{
-        FastFibEntry, SocketAction, compile_fast_routes, decrement_hop_limit,
-        has_missing_admitted_sockets, ipv6_destination, plan_socket_actions,
+        BATCH_SIZE, FastFibEntry, InterfaceSocket, RecvMeta, SocketAction, UdpRecvBatch,
+        UdpRecvOutcome, UdpSockRef, UdpSocketState, compile_fast_routes, decrement_hop_limit,
+        has_missing_admitted_sockets, ipv6_destination, plan_socket_actions, recv_udp_packets,
+        udp_meta_stride,
     };
 
     fn sample_ipv6_packet(dst: Ipv6Addr, hop_limit: u8) -> Vec<u8> {
@@ -1061,6 +1202,50 @@ mod tests {
         assert!(decrement_hop_limit(&mut packet));
         assert_eq!(packet[7], 1);
         assert!(!decrement_hop_limit(&mut packet));
+    }
+
+    #[test]
+    fn udp_meta_stride_falls_back_to_single_datagram() {
+        let mut meta = RecvMeta::default();
+        meta.len = 1452;
+        meta.stride = 0;
+        assert_eq!(udp_meta_stride(meta), 1452);
+
+        meta.stride = 4096;
+        assert_eq!(udp_meta_stride(meta), 1452);
+
+        meta.stride = 484;
+        assert_eq!(udp_meta_stride(meta), 484);
+    }
+
+    #[test]
+    fn udp_batch_recv_returns_single_datagram_without_full_batch() {
+        let receiver = StdUdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+        let receiver_addr = receiver.local_addr().unwrap();
+        let receiver = MioUdpSocket::from_std(receiver);
+        let udp_state = UdpSocketState::new(UdpSockRef::from(&receiver)).unwrap();
+        let socket = InterfaceSocket {
+            ifname: "lo0".into(),
+            ifindex: 0,
+            socket: receiver,
+            udp_state,
+        };
+
+        let sender = StdUdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+        let payload = sample_ipv6_packet("fde0::1234".parse().unwrap(), 32);
+        sender.send_to(&payload, receiver_addr).unwrap();
+
+        let mut batch = UdpRecvBatch::new();
+        let started = std::time::Instant::now();
+        let outcome = recv_udp_packets(&socket, &mut batch, BATCH_SIZE).unwrap();
+
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "batched UDP receive should not wait for a full batch"
+        );
+        assert_eq!(outcome, UdpRecvOutcome::Packets(1));
+        assert_eq!(batch.metas[0].len, payload.len());
+        assert_eq!(&batch.buffers[0][..payload.len()], payload.as_slice());
     }
 
     #[test]

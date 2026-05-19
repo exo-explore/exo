@@ -230,10 +230,12 @@ Observed latest performance shape:
   according to the latest external baseline,
 - direct overlay UDP is about `1.46 Gbit/s` received,
 - direct overlay TCP is about `1.24 Gbit/s` received,
-- single-hop overlay TCP is about `1.07 Gbit/s` received,
+- single-hop overlay TCP is about `1.07-1.08 Gbit/s` received,
 - single-hop overlay UDP at `-b 0` receives around `1.11-1.16 Gbit/s` during
-  the run but loses `12-14%` and can wedge the path until `babblerd` is
-  restarted.
+  one run and loses `12-14%`; a later run sent about `1.32 Gbit/s` and
+  delivered about `1.16M` packets according to dataplane counters, but the
+  `iperf3` control connection broke before a valid receiver summary was
+  produced and the overlay path needed a `babblerd` restart to recover.
 
 So the current blocker is:
 
@@ -261,11 +263,33 @@ Near-term cost audit before jumbo/aggregation:
 - Rust-level cleanup alone is unlikely to recover a full `7-8x`, but avoidable
   hot-path work should still be removed before blaming the architecture.
 - First targets now landed: remove the per-packet `socket.ifname` clone on UDP
-  ingress, use `recv` instead of `recv_from` when the peer address is not
-  needed, and reuse packet buffers instead of stack-zeroing a new array per
+  ingress, avoid source-address decoding when the peer address is not needed,
+  and reuse packet buffers instead of stack-zeroing a new array per packet.
+- Initial `iroh-quinn-udp` wiring has landed. The dataplane still keeps `mio`
+  sockets for readiness, but each socket also has a `UdpSocketState`; receives
+  can batch through the crate's Apple `recvmsg_x` path or Linux `recvmmsg`
+  path, and sends go through the same abstraction. This is not QUIC.
+- Next candidates are connected per-neighbour output sockets and true output
+  batching: collect same-peer/same-size packets and send them as one
+  `Transmit` with `segment_size` set, instead of one transmit call per forwarded
   packet.
-- Next candidates are connected per-neighbour output sockets and
-  `iroh-quinn-udp`'s Apple `sendmsg_x`/`recvmsg_x` batching.
+- Batching invariant: never wait for a full batch. Receive batching must return
+  whatever is already queued on the nonblocking fd, and future output batching
+  must flush partial batches at drain boundaries or peer/size changes.
+
+Control traffic terminology:
+
+- Babel protocol packets should stay on the direct link-local `en*`
+  interfaces that `babblerd` explicitly adds to `babeld`; the TUN/overlay
+  interface is not added to Babel.
+- `iperf3` data, the `iperf3` TCP control/session connection, and `ping6` to a
+  peer ULA do traverse the overlay because they are addressed to node ULAs.
+- Full overlay load can still perturb Babel indirectly through shared physical
+  NIC queues, kernel buffers, and CPU scheduling, but Babel packets are not
+  being encapsulated by the software router in the normal design.
+- Therefore "protect control traffic" means making measurements and recovery
+  less fragile; it is not a direct explanation for the order-of-magnitude
+  throughput gap.
 
 ## Very Important macOS Receive-Side Finding
 
@@ -406,7 +430,8 @@ Capture each run with:
 Goal:
 
 - separate CPU/syscall ceiling from UDP/TUN backpressure,
-- explain the single-hop UDP wedge,
+- explain the single-hop UDP wedge and distinguish overlay application-control
+  failure from Babel route churn,
 - and decide whether the next implementation step should be batching,
   aggregation, jumbo MTU support, or multi-core sharding.
 

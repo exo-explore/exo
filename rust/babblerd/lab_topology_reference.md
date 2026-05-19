@@ -100,10 +100,15 @@ Latest findings:
   negligible loss.
 - Direct overlay `e4 -> e16`, TCP `-b 0`: about `1.24 Gbit/s` received.
 - Single-hop overlay `e2 -> e16`, UDP `-b 100M`: `100 Mbit/s` with no loss.
-- Single-hop overlay `e2 -> e16`, UDP `-b 0`: server intervals around
-  `1.11-1.16 Gbit/s`, but with `12-14%` loss and a post-test path wedge until
-  `babblerd` was restarted.
-- Single-hop overlay `e2 -> e16`, TCP `-b 0`: about `1.07 Gbit/s` received.
+- Single-hop overlay `e2 -> e16`, UDP `-b 0`: earlier server intervals were
+  around `1.11-1.16 Gbit/s` with `12-14%` loss. A later run sent about
+  `1.32 Gbit/s`; dataplane counters showed roughly `1.16M` packets delivered
+  at `e16`, but the `iperf3` control connection broke before a receiver
+  summary was produced. Treat that as an overload/control-path failure, not as
+  a zero-throughput receiver result. The overlay path then needed a
+  `babblerd` restart to recover.
+- Single-hop overlay `e2 -> e16`, TCP `-b 0`: about `1.07-1.08 Gbit/s`
+  received, with route/path recovery sometimes lagging briefly after the run.
 
 For MTU-sized traffic, `11 Gbit/s` is roughly a one-microsecond packet budget:
 with the current `1452` byte TUN MTU it is about `947 kpps`, or
@@ -112,6 +117,16 @@ with the current `1452` byte TUN MTU it is about `947 kpps`, or
 packet cost, syscalls/copies, batching or aggregation, jumbo MTU opportunities,
 and overload recovery rather than assuming the remaining gap is Babel route
 selection.
+
+Babel protocol packets should not traverse the software router. `babblerd`
+starts `babeld` without startup interfaces and later adds only eligible
+physical `en*` interfaces through the local control socket; the TUN/overlay
+interface is not added to Babel. What does traverse the overlay is traffic
+addressed to node ULAs, including `iperf3` data, the `iperf3` TCP control
+connection, and `ping6` to a peer ULA. Full overlay load can still indirectly
+perturb Babel by consuming shared NIC queues, kernel buffers, and CPU time on
+the same physical interfaces, but it is not because Babel's link-local packets
+are being encapsulated by `babblerd`.
 
 ## Important Current Note
 

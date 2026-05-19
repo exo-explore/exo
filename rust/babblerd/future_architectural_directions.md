@@ -64,8 +64,11 @@ UDP baseline:
 - direct overlay TCP, `e4 -> e16`, `iperf3 -6 -b 0 -t 10`: about
   `1.24 Gbit/s` received,
 - single-hop overlay UDP, `e2 -> e16`, `iperf3 -6 -u -b 0 -t 10`: server
-  intervals around `1.11-1.16 Gbit/s` with `12-14%` loss, followed by an
-  unstable/wedged overlay path until `babblerd` was restarted,
+  intervals around `1.11-1.16 Gbit/s` with `12-14%` loss in one run; a later
+  run sent about `1.32 Gbit/s` and dataplane counters showed about `1.16M`
+  packets delivered, but the `iperf3` control connection broke before a valid
+  receiver summary was produced and the overlay path needed a `babblerd`
+  restart to recover,
 - single-hop overlay TCP, `e2 -> e16`, `iperf3 -6 -b 0 -t 10`: about
   `1.07 Gbit/s` received.
 
@@ -230,12 +233,33 @@ dataplane hot path and overload behavior:
 - direct overlay UDP tops out around `1.46 Gbit/s` in the latest test, far
   below the `11 Gbit/s` direct physical UDP baseline,
 - single-hop overlay UDP can receive around `1.1 Gbit/s` during full-blast
-  `-b 0` tests, but with heavy loss and a post-test path wedge,
+  `-b 0` tests; a later run sent about `1.32 Gbit/s` and delivered roughly
+  `1.16M` packets at the receiver according to dataplane counters, but the
+  `iperf3` control connection broke before a receiver summary was produced and
+  the overlay path needed a restart to recover,
 - full-blast UDP should be treated as a stress/failure test until the
   backpressure story is better,
 - route selection is still important during convergence, but after the mesh
   settles the `enN` policy is no longer the main explanation for the throughput
   gap.
+
+Be precise about "control traffic" during these tests. Babel's own protocol
+packets should remain link-local traffic on the direct physical `en*`
+interfaces that `babblerd` explicitly gives to `babeld`; the TUN/overlay
+interface is not a Babel interface. The overlay does carry traffic addressed to
+node ULAs, including `iperf3` payload, the `iperf3` TCP control/session
+connection, and `ping6` to peer ULAs. Saturating the overlay can still disturb
+Babel indirectly through shared physical NIC queues, socket buffers, and CPU
+scheduling, but not because Babel packets are routed through the userspace
+overlay.
+
+That distinction matters for the next diagnosis step. Protecting or separating
+control traffic may make tests less fragile and may avoid `iperf3` control
+connection failures, but it does not by itself close the `7-8x` dataplane
+throughput gap. When a full-load run wedges the path, capture raw Babel state,
+the derived `BabelState`, the dataplane FIB/socket map, dataplane counters, and
+host route state before concluding whether the failure is route churn, overlay
+queue exhaustion, or application-control failure.
 
 At the current fixed MTU, approaching `11 Gbit/s` is a packet-rate problem.
 Ignoring Ethernet/IP/UDP overhead, the per-packet budget is:
@@ -270,8 +294,11 @@ Likely optimization directions, in priority order:
   scraping;
 - add recovery/backpressure policy for overload rather than just
   drop-on-`WouldBlock`;
-- use OS packet batching where the target platform allows it
-  (`recvmmsg`/`sendmmsg` on Linux; macOS options are more constrained);
+- keep expanding OS packet batching where the target platform allows it. The
+  dataplane now receives through `iroh-quinn-udp`, which maps to
+  `recvmsg_x`/`sendmsg_x` on Apple fast builds and `recvmmsg` on Linux-like
+  Unix. Transmit still sends one packet at a time from the forwarding loop, so
+  real output batching remains future work;
 - consider overlay aggregation, where one outer UDP datagram carries several
   inner packets, to amortize syscall and UDP/IP overhead;
 - explore jumbo MTUs on the Thunderbolt links, because `9000` byte packets
@@ -293,25 +320,33 @@ points at these near-term bottlenecks:
 - The UDP ingress path was still cloning `socket.ifname` for every received
   packet just to support logging/error context. Because `Box<str>::clone()`
   allocates, that is an avoidable heap allocation per overlay packet.
-- UDP ingress used `recv_from` even though the peer address is not needed for
-  forwarding. Decoding the source address is useful for debugging but should
-  not be mandatory hot-path work.
+- UDP ingress previously used `recv_from` even though the peer address is not
+  needed for forwarding. Decoding the source address is useful for debugging
+  but should not be mandatory hot-path work.
 - TUN and UDP packet buffers were stack-created as zeroed arrays for each
   packet. Reusing worker-owned buffers avoids repeated stack initialization and
   keeps the packet loop closer to "syscall, parse, lookup, syscall".
-- The send path still builds a `SocketAddrV6` and uses `send_to` per packet.
-  A future connected per-neighbour output-socket model could remove that
-  address construction and let the kernel cache more route state.
-- The crate already depends on `iroh-quinn-udp` with the Apple fast datapath,
-  which exposes `sendmsg_x`/`recvmsg_x` batching. That preserves one UDP
-  datagram per inner packet but reduces syscall count, so it is the most likely
-  path toward a large standard-MTU speedup if jumbo/aggregation are deferred.
+- The send path still builds a `SocketAddrV6` and emits one `iroh-quinn-udp`
+  transmit per packet. A future connected per-neighbour output-socket model
+  could remove that address construction and let the kernel cache more route
+  state.
+- The dataplane now uses `iroh-quinn-udp` with the Apple fast datapath, which
+  exposes `sendmsg_x`/`recvmsg_x` batching. This is not a QUIC routing change;
+  the useful part is Quinn's UDP socket layer. The current patch batches
+  receive calls and routes transmit through the same abstraction, but still
+  emits one transmit call per forwarded packet. The next useful version should
+  group same-peer/same-size packets into a single `Transmit` with
+  `segment_size` set.
+- Any output batching must be opportunistic, not latency-gating. A single ready
+  packet must still be sent immediately; batching should flush at the end of a
+  poll/drain slice or when the next packet targets a different peer/size, never
+  wait for a full batch.
 
 The first low-risk cleanup pass has now landed: UDP ingress no longer clones
-`ifname`, UDP receive uses `recv` rather than `recv_from`, and TUN/UDP packet
-buffers are worker-owned instead of stack-created for every packet. These are
-worth doing, but they should be expected to remove avoidable overhead rather
-than close the full `7-8x` gap by themselves.
+`ifname`, packet buffers are worker-owned instead of stack-created for every
+packet, and UDP I/O goes through `iroh-quinn-udp` so the OS-specific fast path
+is selected by the crate. These are worth doing, but they should be expected to
+remove avoidable overhead rather than close the full `7-8x` gap by themselves.
 
 The current tree now owns the kernel route that steers overlay traffic into the
 resident TUN interface:

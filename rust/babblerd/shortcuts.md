@@ -205,8 +205,11 @@ of shortcuts that should be revisited later.
     but it is not yet a proper queued/backpressured forwarding model.
   - Single-hop UDP at `-b 0` can receive around `1.1 Gbit/s` during the run but
     with heavy loss and a post-test overlay wedge until `babblerd` is
-    restarted. That points at overload/recovery behavior, not basic packet
-    decoding.
+    restarted. A later `-b 0` run sent about `1.32 Gbit/s` and dataplane
+    counters showed about `1.16M` packets delivered, but the `iperf3` control
+    connection failed before a valid receiver summary and the path needed a
+    restart to recover. That points at overload/recovery and test-control
+    fragility, not basic packet decoding.
   - There is no ICMPv6 Time Exceeded generation yet.
   - There is no Packet Too Big handling yet.
   - No-route and invalid-packet cases are mostly tracing-and-drop behavior.
@@ -217,10 +220,19 @@ of shortcuts that should be revisited later.
   - The first avoidable per-packet costs have been removed: no heap allocation
     for UDP receive logging, no peer-address decoding when it is not needed,
     and no per-packet zeroed buffer construction.
-  - Benchmark batching, aggregation, jumbo MTU support, and eventually
+  - Initial `iroh-quinn-udp` wiring is in: `mio` still owns readiness, but UDP
+    receive/send calls now go through Quinn's UDP socket layer, which selects
+    Apple `recvmsg_x`/`sendmsg_x` or Linux `recvmmsg` internally where
+    available. True output batching is still future work, and it must flush
+    partial batches rather than wait for a full batch.
+  - Benchmark output batching, aggregation, jumbo MTU support, and eventually
     multi-core dataplane sharding. At `11 Gbit/s` with the current `1452` byte
     TUN MTU, the budget is about `947 kpps`, or `1.06 us/packet`; the current
     direct overlay result is roughly `126 kpps`, or `8 us/packet`.
+  - Do not describe Babel packets as going through the software router in the
+    normal design. Babel should be direct-interface link-local traffic on the
+    `en*` interfaces that `babblerd` gives to `babeld`; overlay load can still
+    disturb it indirectly through shared NIC/kernel/CPU resources.
   - Later, replace the suffix heuristic with measured scoring and investigate
     how that should interact with restart/convergence behavior.
   - Add proper ICMPv6 error generation and tighter packet-validation behavior.
