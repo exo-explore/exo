@@ -30,7 +30,8 @@ use tokio::time::{Duration, MissedTickBehavior, timeout};
 use crate::babel::Babble;
 use crate::babel::command::BabelCommand;
 use crate::babel::line::parse::ParseError;
-use crate::babel::line::{self, BabelLine, HeaderLine, Status};
+use crate::babel::line::{self, BabelLine, Event, HeaderLine, NeighbourEvent, Status};
+use crate::babel::link_policy;
 use crate::babel::state::BabelState;
 use crate::{BabbleError, Result};
 
@@ -337,6 +338,36 @@ impl BabelRuntime {
         }
     }
 
+    #[tracing::instrument(skip(self))]
+    async fn reconcile_neighbour_cost_policy(&mut self) -> io::Result<()> {
+        let commands = self
+            .state
+            .neighbours
+            .values()
+            .filter_map(link_policy::command_for_neighbour_state)
+            .collect::<Vec<_>>();
+
+        for command in commands {
+            tracing::info!(%command, "applying en-index neighbour-cost policy");
+            let command = BabelCommand::NeighbourCost(command);
+            self.query(&command).await?;
+        }
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self, neighbour))]
+    async fn apply_neighbour_cost_policy(&mut self, neighbour: &NeighbourEvent) -> io::Result<()> {
+        let Some(command) = link_policy::command_for_neighbour_event(neighbour) else {
+            return Ok(());
+        };
+
+        tracing::info!(%command, "applying en-index neighbour-cost policy");
+        let command = BabelCommand::NeighbourCost(command);
+        self.query(&command).await?;
+        Ok(())
+    }
+
     #[tracing::instrument(skip_all)]
     pub(crate) async fn run(&mut self, mut recv: mpsc::Receiver<Babble>) -> Result<()> {
         match self.start_monitoring().await? {
@@ -358,6 +389,8 @@ impl BabelRuntime {
             }
         }
 
+        self.reconcile_neighbour_cost_policy().await?;
+
         loop {
             tokio::select! {
                 babble = recv.recv() => {
@@ -369,6 +402,7 @@ impl BabelRuntime {
                         Babble::AddIface(iface) => {
                             let cmd = BabelCommand::Interface(iface);
                             self.query(&cmd).await?;
+                            self.reconcile_neighbour_cost_policy().await?;
                         }
                         Babble::SetNeighbourCost(neighbour_cost) => {
                             let cmd = BabelCommand::NeighbourCost(neighbour_cost);
@@ -392,8 +426,17 @@ impl BabelRuntime {
                     };
                     match self.observe_line(line)? {
                         Ok(parsed) => {
+                            let neighbour = match &parsed {
+                                BabelLine::Event(Event::Neighbour(neighbour)) => {
+                                    Some(neighbour.clone())
+                                }
+                                _ => None,
+                            };
                             if let Some(status) = self.reduce_live_line(parsed)? {
                                 tracing::debug!(?status, "ignoring unsolicited status line from babeld");
+                            }
+                            if let Some(neighbour) = neighbour {
+                                self.apply_neighbour_cost_policy(&neighbour).await?;
                             }
                         }
                         Err(err) => {

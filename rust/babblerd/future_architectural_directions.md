@@ -182,12 +182,14 @@ The measured scoring system is still post-MVP work. It likely requires:
 - and then validating that Babel path selection consistently prefers the better
   direct link when multiple usable adjacencies exist.
 
-For MVP, the planned policy is deliberately simpler: on macOS, bias neighbours
-by the numeric suffix of the outgoing `enN` interface, roughly `N * 100`, so
-lower-numbered links such as `en2`, `en3`, and `en4` win over high-numbered
-links such as `en18`. This is not a robust scoring model; it is a temporary
-selection heuristic so raw throughput work can proceed on the intended fast
-links.
+For MVP, `babblerd` now applies a deliberately simpler policy: for each live
+neighbour on an `enN` interface, it sends `neighbour-cost` with
+`coef-256 0` and `bias-256 N * 100 * 256`. That makes Babel treat the native
+base cost as an absolute synthetic interface-index cost of roughly `N * 100`,
+so lower-numbered links such as `en2`, `en3`, and `en4` win over
+high-numbered links such as `en18`. This is not a robust scoring model; it is
+a temporary selection heuristic so raw throughput work can proceed on the
+intended fast links.
 
 The current sustained-throughput investigation is therefore focused on two
 nearer-term issues before any serious performance tuning:
@@ -379,9 +381,8 @@ Once the basic dataplane exists and works, the likely next path is:
 1. Improve the public state/readiness model.
 2. Replace the ad-hoc control socket with `zbus`.
 3. Replace the single keepalive deadline with per-client leases.
-4. Add the temporary `enN -> N * 100` neighbour-cost policy for macOS.
-5. Tighten interface admission beyond the current broad heuristic.
-6. Pin and explicitly invoke the exact forked `babeld`.
+4. Tighten interface admission beyond the current broad heuristic.
+5. Pin and explicitly invoke the exact forked `babeld`.
 7. Harden node-id file mode checks and other local security edges.
 8. Revisit diagnostics streaming.
 9. Revisit platform abstractions around TUN / transport / forwarding.

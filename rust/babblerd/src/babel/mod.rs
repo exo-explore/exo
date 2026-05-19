@@ -6,6 +6,7 @@ use crate::Result;
 
 pub mod command;
 pub mod line;
+pub mod link_policy;
 pub mod runtime;
 pub mod state;
 

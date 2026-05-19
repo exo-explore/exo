@@ -140,14 +140,14 @@ of shortcuts that should be revisited later.
     long-term admission policy.
   - When multiple admissible wired links exist, Babel's native wired scoring
     still treats them essentially flatly.
-  - The forked `babeld` now gives `babblerd` a way to bias those links through
-    `neighbour-cost`, but no automatic scoring policy has landed yet.
+  - `babblerd` now applies a temporary `enN -> N * 100` absolute-cost policy
+    with forked `babeld`'s `neighbour-cost` command.
   Follow-up:
   - Replace the watcher-side bootstrap heuristic with a stronger admission
     policy (neighbor proof, richer metadata, or both), so Babel does not need
     broad speculative interface admission just to discover the right links.
-  - Add the temporary macOS `enN -> N * 100` neighbour-cost policy so lower
-    numbered interfaces are preferred for MVP throughput testing.
+  - Characterize raw throughput with the temporary macOS `enN -> N * 100`
+    neighbour-cost policy active.
   - Later, replace that heuristic with measured link-quality scoring so broadly
     admissible direct links can be ranked by actual observed quality.
 
@@ -211,11 +211,8 @@ of shortcuts that should be revisited later.
   - There is no Packet Too Big handling yet.
   - No-route and invalid-packet cases are mostly tracing-and-drop behavior.
   Follow-up:
-  - Characterize raw throughput after the temporary `neighbour-cost` route
-    selection heuristic is active.
-  - Use forked `babeld`'s `neighbour-cost` support to steer away from bad
-    equal-cost choices during MVP testing, starting with the temporary macOS
-    `enN -> N * 100` bias.
+  - Characterize raw throughput with the temporary `neighbour-cost` route
+    selection heuristic active.
   - Later, replace the suffix heuristic with measured scoring and investigate
     how that should interact with restart/convergence behavior.
   - Add proper ICMPv6 error generation and tighter packet-validation behavior

@@ -124,9 +124,10 @@ Recent fork behavior that matters to `babblerd`:
 - `dump`/`monitor` neighbour lines now include `external-bias-256` and
   `external-coef-256` before `cost`.
 
-Automatic measured link scoring is not part of the MVP. The near-term intended
-policy is a simple Mac heuristic: for `enN`, apply a cost bias around `N * 100`
-so lower-numbered Thunderbolt-style interfaces are preferred over high-numbered
+Automatic measured link scoring is not part of the MVP. The current temporary
+policy is a simple Mac heuristic: for `enN`, set an absolute synthetic base
+cost around `N * 100` with `coef-256 0` and `bias-256 N * 100 * 256`, so
+lower-numbered Thunderbolt-style interfaces are preferred over high-numbered
 interfaces such as `en18`. This is intentionally a temporary selection aid so
 raw throughput work can assume the good direct links are chosen.
 
@@ -312,9 +313,9 @@ Still unresolved:
 - no real backpressure/queueing; `WouldBlock` is still drop-on-backpressure
 - sustained throughput still needs a clean measurement pass on biased fast links
 - macOS receive-side interface attribution needs a better long-term path
-- multi-link path selection is still too naive
-- automatic link-scoring policy is not implemented yet; the temporary MVP plan
-  is an `enN -> N * 100` cost-bias heuristic on macOS
+- multi-link path selection still uses a temporary `enN -> N * 100`
+  absolute-cost heuristic, not measured scoring
+- automatic measured link-scoring policy is not implemented yet
 
 ## What Not To Revisit Right Now
 
@@ -341,10 +342,11 @@ Goal:
 - determine whether the bad path is already in Babel’s installed route set
 - or introduced when `FibBuilder` collapses multiple `installed=yes` routes
 
-If equal-cost multi-link route choice is the problem, use the forked `babeld`
-`neighbour-cost` command as the temporary v1 policy knob. Prefer that over
-local FIB depreference so the distributed Babel view and the dataplane view
-stay aligned.
+The temporary `neighbour-cost` policy now lives in `babel/link_policy.rs`.
+For each live neighbour on an `enN` interface, `babblerd` sets
+`coef-256 0` and `bias-256 N * 100 * 256`, so Babel sees lower-numbered
+interfaces as cheaper while keeping the distributed Babel view and dataplane
+view aligned.
 
 ## Best Next Live Tests
 
