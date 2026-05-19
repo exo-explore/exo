@@ -47,13 +47,14 @@ adjacent pair after switching dataplane TUN I/O on macOS to `tun-rs`
 Steady-state ICMPv6 reachability is also now green across the full four-node
 lab ring, and small generic TCP application payloads now work too once the
 mesh has converged. The current remaining gap is no longer basic correctness of
-non-ICMP transport traffic, but sustained throughput under load: current
-`iperf3` testing transfers an initial burst and then collapses into heavy
-retransmits and near-zero receive-side throughput.
+non-ICMP transport traffic. Sustained throughput testing is now mostly blocked
+on forcing Babel to choose the intended fast direct links; earlier `iperf3`
+results were heavily confounded by equal-cost selection of much slower
+interfaces.
 
 So the current architecture is good enough for continued correctness and
-reliability bring-up, but serious performance work should wait until that
-throughput-collapse behavior is understood.
+reliability bring-up, but serious performance work should assume a temporary
+link-cost heuristic is in place first.
 
 ## The Most Important Architectural Decision
 
@@ -142,12 +143,18 @@ The likely long-term fix is to move receive-side interface attribution onto
 ancillary packet metadata (`IPV6_PKTINFO` / receive-interface data) rather than
 inferring it from which socket woke up.
 
+The forked `babeld` used by the Nix build can now start with no managed
+interfaces as long as `babblerd` gives it a read-write local control socket.
+That means `babblerd` no longer waits for a first interface before spawning
+`babeld`; it starts `babeld` immediately and sends `interface <ifname>` commands
+later as the watcher discovers eligible links.
+
 For the current four-Mac Thunderbolt lab, the broad macOS `en*` watcher
 heuristic has proven too permissive in practice. The dataplane now corrects
 that somewhat by only owning sockets on interfaces that Babel has actually
-formed neighbour adjacencies on, but the watcher/bootstrap side is still broad
-and may still need a per-host allowlist during bring-up while the long-term
-admission policy is refined.
+formed neighbour adjacencies on, but the watcher/bootstrap side is still broad.
+The env allowlist should remain an escape hatch, not the default topology
+description.
 
 The current broad-admission behavior is acceptable for v1 as long as point to
 point and multihop forwarding remain reliable, but it does mean that multiple
@@ -161,17 +168,26 @@ The desired longer-term policy is:
 - but rank competing links by measured quality rather than treating all wired
   links as equivalent.
 
-That future link-scoring direction likely requires:
+The forked `babeld` now has the primitive needed for this: the read-write local
+socket accepts `neighbour-cost` commands, and neighbour monitor lines report the
+active `external-bias-256` and `external-coef-256` fields. Those values are
+fixed-point controls in units of `1/256`: the bias is additive, and the
+coefficient multiplies the native base cost before the RTT penalty is added.
+
+The measured scoring system is still post-MVP work. It likely requires:
 
 - computing local link metrics such as latency, loss, and possibly sustainable
   throughput without generating excessive probe traffic,
-- sharing or projecting those metrics into the distributed routing view in a
-  way Babel can actually consume,
-- and then teaching the Babel path-selection logic to prefer the better direct
-  link when multiple usable adjacencies exist.
+- feeding those metrics into `neighbour-cost`,
+- and then validating that Babel path selection consistently prefers the better
+  direct link when multiple usable adjacencies exist.
 
-That is explicitly post-v1 work. For the first version, correctness and
-reliability of the multihop mesh matter more than optimal link preference.
+For MVP, the planned policy is deliberately simpler: on macOS, bias neighbours
+by the numeric suffix of the outgoing `enN` interface, roughly `N * 100`, so
+lower-numbered links such as `en2`, `en3`, and `en4` win over high-numbered
+links such as `en18`. This is not a robust scoring model; it is a temporary
+selection heuristic so raw throughput work can proceed on the intended fast
+links.
 
 The current sustained-throughput investigation is therefore focused on two
 nearer-term issues before any serious performance tuning:
@@ -363,11 +379,12 @@ Once the basic dataplane exists and works, the likely next path is:
 1. Improve the public state/readiness model.
 2. Replace the ad-hoc control socket with `zbus`.
 3. Replace the single keepalive deadline with per-client leases.
-4. Tighten interface admission beyond the current broad heuristic.
-5. Pin and explicitly invoke the exact forked `babeld`.
-6. Harden node-id file mode checks and other local security edges.
-7. Revisit diagnostics streaming.
-8. Revisit platform abstractions around TUN / transport / forwarding.
+4. Add the temporary `enN -> N * 100` neighbour-cost policy for macOS.
+5. Tighten interface admission beyond the current broad heuristic.
+6. Pin and explicitly invoke the exact forked `babeld`.
+7. Harden node-id file mode checks and other local security edges.
+8. Revisit diagnostics streaming.
+9. Revisit platform abstractions around TUN / transport / forwarding.
 
 That ordering is intentional:
 

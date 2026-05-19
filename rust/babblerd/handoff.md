@@ -4,25 +4,17 @@ This is the current handoff for a new session picking up `babblerd` work.
 
 ## Repo / Branch / State
 
-- Repo: `/home/royalguard/Desktop/exo-all/exo`
+- Repo: `/home/royalguard/Desktop/exo-all/networking-related/exo-babbler`
 - Branch: `babbler`
-- Current HEAD: `b0f508ac` (`fix babbler ula prefix`)
+- Current HEAD when this handoff was refreshed: `5bf8f62f` (`added iperf3`)
 - Recent relevant commits:
-  - `b0f508ac` fix babbler ula prefix
-  - `2e17eb03` retry skipped dataplane sockets
-  - `4efc883f` dedup unchanged fib snapshots
-  - `79a5a84b` instrument dataplane backpressure
-  - `f0140a81` trim dataplane logs for live testing
-  - `df2760b6` admit dataplane interfaces from babel neighbours
-  - `e1e4643e` use tun-rs packet io in dataplane
-- Current working tree state when this was written:
-  - modified: `rust/babblerd/shortcuts.md`
-  - modified: `rust/babblerd/future_architectural_directions.md`
-  - untracked: `.codex`
-- Local checks pass:
-  - `cargo fmt -p babblerd`
-  - `cargo check -p babblerd`
-  - `cargo test -p babblerd`
+  - `5bf8f62f` added iperf3
+  - `af0b6e17` remove first interface requirement
+  - `82adc5d9` it builds
+  - `59747529` no longer need optional build flags
+  - earlier dataplane bring-up commits remain relevant, but the local repo has
+    since moved to `networking-related/exo-babbler`
+- Do not trust this file for working-tree cleanliness; run `git status --short`.
 
 ## Core Conclusion
 
@@ -107,6 +99,36 @@ This is the v1 forwarding model:
 - timer-driven socket reconcile retry in dataplane, so deduped unchanged FIB snapshots do not suppress retries forever
 - dataplane exit supervision back into routing stack / daemon
 - macOS dataplane uses `tun-rs` packet I/O (`SyncDevice::recv/send`), not raw fd reads/writes
+
+## Important Forked `babeld` Changes
+
+The Nix build now uses a forked `babeld` from
+`/home/royalguard/Desktop/exo-all/networking-related/babeld`, packaged as
+`1.13.1+local`.
+
+Recent fork behavior that matters to `babblerd`:
+
+- `babeld` can start with no managed interfaces when a read-write local control
+  socket exists.
+- `babblerd` now spawns `babeld` immediately and adds interfaces later with
+  local-socket `interface <ifname>` commands from the watcher.
+- `kernel-install false` is still used so `babeld` performs route selection and
+  reports installed routes without touching kernel routes.
+- `neighbour-cost <ifname> <link-local-neighbour> bias-256 <bias> coef-256 <coef>`
+  is available for external link-cost steering.
+- `bias-256` is a signed fixed-point additive value in units of `1/256`.
+  `256` adds one Babel cost unit and `-256` subtracts one.
+- `coef-256` is an unsigned fixed-point multiplier in units of `1/256`.
+  `256` is neutral, `128` halves the native base cost, and `0` ignores the
+  native base cost while still adding the RTT penalty.
+- `dump`/`monitor` neighbour lines now include `external-bias-256` and
+  `external-coef-256` before `cost`.
+
+Automatic measured link scoring is not part of the MVP. The near-term intended
+policy is a simple Mac heuristic: for `enN`, apply a cost bias around `N * 100`
+so lower-numbered Thunderbolt-style interfaces are preferred over high-numbered
+interfaces such as `en18`. This is intentionally a temporary selection aid so
+raw throughput work can assume the good direct links are chosen.
 
 ## Very Important Fix After Earlier Handovers
 
@@ -252,8 +274,12 @@ Key facts:
 - current start command:
   - `cd ~/babeld-exo && git pull && RUST_LOG=info sudo -E nix run .#babblerd --impure`
 - temporary internal keepalive client exists, so no external `nc -U ...` client is needed just to keep daemon alive
-- remote `iperf3` exists at:
-  - `/opt/homebrew/bin/iperf3`
+- `iperf3` is provided by the flake:
+  - `nix run .#iperf3 -- -s`
+  - `nix run .#iperf3 -- -c <addr>`
+- The current `iperf3` source is the fork at
+  `/home/royalguard/Desktop/exo-all/networking-related/iperf3`.
+  Commit `962e05b` adds `%scopeID` rendering for link-local IPv6 output.
 
 ## Current Docs Are Mostly Accurate
 
@@ -266,7 +292,10 @@ They correctly capture:
 
 - broad admissibility is acceptable for v1 reachability
 - flat wired costs are not enough for good best-path choice
-- throughput under load is still bad
+- forked `babeld` now has the `neighbour-cost` primitive needed for temporary
+  external cost steering
+- throughput testing must be repeated once route selection is biased toward the
+  intended fast direct links
 - restart-sensitive failures are now dominated by route selection, not dataplane decode
 - there is still debt around interface identity, macOS receive attribution, IPC/authz, and incomplete ICMP/PMTUD behavior
 
@@ -281,9 +310,11 @@ Still unresolved:
 - no ICMPv6 Time Exceeded
 - no Packet Too Big handling
 - no real backpressure/queueing; `WouldBlock` is still drop-on-backpressure
-- throughput collapses under sustained load
+- sustained throughput still needs a clean measurement pass on biased fast links
 - macOS receive-side interface attribution needs a better long-term path
 - multi-link path selection is still too naive
+- automatic link-scoring policy is not implemented yet; the temporary MVP plan
+  is an `enN -> N * 100` cost-bias heuristic on macOS
 
 ## What Not To Revisit Right Now
 
@@ -310,12 +341,10 @@ Goal:
 - determine whether the bad path is already in Babel’s installed route set
 - or introduced when `FibBuilder` collapses multiple `installed=yes` routes
 
-If equal-cost multi-link route choice is the problem, add only one temporary v1 policy knob:
-
-- either Babel interface-cost bias
-- or local FIB depreference
-
-Do not do both at once.
+If equal-cost multi-link route choice is the problem, use the forked `babeld`
+`neighbour-cost` command as the temporary v1 policy knob. Prefer that over
+local FIB depreference so the distributed Babel view and the dataplane view
+stay aligned.
 
 ## Best Next Live Tests
 

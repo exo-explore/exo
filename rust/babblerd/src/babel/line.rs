@@ -82,6 +82,8 @@ pub struct NeighbourEvent {
     pub txcost: u32,
     pub rtt_millis: Option<u32>,
     pub rttcost: Option<u32>,
+    pub external_bias_256: i32,
+    pub external_coef_256: u32,
     pub cost: u32,
 }
 
@@ -147,6 +149,7 @@ pub struct RouteEvent {
 ///               " reach " hex " ureach " hex
 ///               " rxcost " uint " txcost " uint
 ///               (" rtt " millis " rttcost " uint)?
+///               (" external-bias-256 " int " external-coef-256 " uint)?
 ///               " cost " uint
 ///
 /// xroute     ::= "xroute " prefix "-" prefix
@@ -177,6 +180,10 @@ pub struct RouteEvent {
 ///   fallbacks in `babeld` such as `???` are not treated as part of the formal grammar.
 pub mod parse {
     use crate::babel::Eui64;
+    use crate::babel::command::{
+        NEIGHBOUR_COST_BIAS_256_MAX, NEIGHBOUR_COST_BIAS_256_MIN, NEIGHBOUR_COST_COEF_256_MAX,
+        NEIGHBOUR_COST_COEF_256_MIN,
+    };
     use crate::babel::line::{
         BabelLine, Event, EventKind, HeaderLine, InterfaceEvent, NeighbourEvent, RouteEvent,
         Status, XRouteEvent,
@@ -189,7 +196,7 @@ pub mod parse {
     };
     use thiserror::Error;
     use winnow::{
-        ascii::{dec_uint, hex_uint, space1},
+        ascii::{dec_int, dec_uint, hex_uint, space1},
         combinator::{alt, eof, opt, preceded, terminated},
         error::ContextError,
         prelude::*,
@@ -380,6 +387,8 @@ pub mod parse {
         let _ = " txcost ".parse_next(input)?;
         let txcost = dec_uint::<_, u32, _>.parse_next(input)?;
         let rtt = opt(parse_rtt_clause).parse_next(input)?;
+        let external_cost = opt(parse_external_cost_clause).parse_next(input)?;
+        let (external_bias_256, external_coef_256) = external_cost.unwrap_or((0, 256));
         let _ = " cost ".parse_next(input)?;
         let cost = dec_uint::<_, u32, _>.parse_next(input)?;
 
@@ -394,6 +403,8 @@ pub mod parse {
             txcost,
             rtt_millis: rtt.map(|(millis, _)| millis),
             rttcost: rtt.map(|(_, cost)| cost),
+            external_bias_256,
+            external_coef_256,
             cost,
         })
     }
@@ -458,6 +469,32 @@ pub mod parse {
         let _ = " rttcost ".parse_next(input)?;
         let rttcost = dec_uint::<_, u32, _>.parse_next(input)?;
         Ok((millis, rttcost))
+    }
+
+    fn parse_external_cost_clause(input: &mut &str) -> ModalResult<(i32, u32)> {
+        let _ = " external-bias-256 ".parse_next(input)?;
+        let bias_256 = parse_external_bias_256.parse_next(input)?;
+        let _ = " external-coef-256 ".parse_next(input)?;
+        let coef_256 = parse_external_coef_256.parse_next(input)?;
+        Ok((bias_256, coef_256))
+    }
+
+    fn parse_external_bias_256(input: &mut &str) -> ModalResult<i32> {
+        let value = dec_int::<_, i32, _>.parse_next(input)?;
+        if (NEIGHBOUR_COST_BIAS_256_MIN..=NEIGHBOUR_COST_BIAS_256_MAX).contains(&value) {
+            Ok(value)
+        } else {
+            Err(winnow::error::ErrMode::Backtrack(ContextError::new()))
+        }
+    }
+
+    fn parse_external_coef_256(input: &mut &str) -> ModalResult<u32> {
+        let value = dec_uint::<_, u32, _>.parse_next(input)?;
+        if (NEIGHBOUR_COST_COEF_256_MIN..=NEIGHBOUR_COST_COEF_256_MAX).contains(&value) {
+            Ok(value)
+        } else {
+            Err(winnow::error::ErrMode::Backtrack(ContextError::new()))
+        }
     }
 
     fn parse_kind(input: &mut &str) -> ModalResult<EventKind> {
@@ -618,8 +655,70 @@ mod tests {
                 txcost: 96,
                 rtt_millis: Some(123),
                 rttcost: Some(32),
+                external_bias_256: 0,
+                external_coef_256: 256,
                 cost: 128,
             }))
+        );
+
+        assert_eq!(
+            parse_line(
+                "change neighbour 7ffdeadbeef address fe80::1 if en2 reach ffff ureach 000f rxcost 96 txcost 96 external-bias-256 -512 external-coef-256 128 cost 48"
+            )
+                .unwrap(),
+            BabelLine::Event(Event::Neighbour(NeighbourEvent {
+                kind: EventKind::Change,
+                handle: 0x7ffdeadbeef,
+                address: IpAddr::from_str("fe80::1").unwrap(),
+                ifname: "en2".into(),
+                reach: 0xffff,
+                ureach: 0x000f,
+                rxcost: 96,
+                txcost: 96,
+                rtt_millis: None,
+                rttcost: None,
+                external_bias_256: -512,
+                external_coef_256: 128,
+                cost: 48,
+            }))
+        );
+
+        assert_eq!(
+            parse_line(
+                "change neighbour 7ffdeadbeef address fe80::1 if en2 reach ffff ureach 000f rxcost 96 txcost 96 rtt 0.123 rttcost 32 external-bias-256 512 external-coef-256 512 cost 224"
+            )
+                .unwrap(),
+            BabelLine::Event(Event::Neighbour(NeighbourEvent {
+                kind: EventKind::Change,
+                handle: 0x7ffdeadbeef,
+                address: IpAddr::from_str("fe80::1").unwrap(),
+                ifname: "en2".into(),
+                reach: 0xffff,
+                ureach: 0x000f,
+                rxcost: 96,
+                txcost: 96,
+                rtt_millis: Some(123),
+                rttcost: Some(32),
+                external_bias_256: 512,
+                external_coef_256: 512,
+                cost: 224,
+            }))
+        );
+    }
+
+    #[test]
+    fn parse_neighbour_event_rejects_out_of_range_external_cost() {
+        assert!(
+            parse_line(
+                "change neighbour 7ffdeadbeef address fe80::1 if en2 reach ffff ureach 000f rxcost 96 txcost 96 external-bias-256 16776705 external-coef-256 256 cost 96"
+            )
+            .is_err()
+        );
+        assert!(
+            parse_line(
+                "change neighbour 7ffdeadbeef address fe80::1 if en2 reach ffff ureach 000f rxcost 96 txcost 96 external-bias-256 0 external-coef-256 65536 cost 96"
+            )
+            .is_err()
         );
     }
 

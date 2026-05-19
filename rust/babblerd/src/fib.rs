@@ -249,6 +249,8 @@ mod tests {
             txcost: 96,
             rtt_millis: Some(1),
             rttcost: Some(0),
+            external_bias_256: 0,
+            external_coef_256: 256,
             cost: 96,
         })
     }

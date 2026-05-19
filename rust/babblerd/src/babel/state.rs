@@ -50,6 +50,8 @@ pub struct NeighbourState {
     pub txcost: u32,
     pub rtt_millis: Option<u32>,
     pub rttcost: Option<u32>,
+    pub external_bias_256: i32,
+    pub external_coef_256: u32,
     pub cost: u32,
 }
 
@@ -178,6 +180,8 @@ impl From<NeighbourEvent> for NeighbourState {
             txcost: event.txcost,
             rtt_millis: event.rtt_millis,
             rttcost: event.rttcost,
+            external_bias_256: event.external_bias_256,
+            external_coef_256: event.external_coef_256,
             cost: event.cost,
         }
     }
@@ -287,10 +291,17 @@ mod tests {
             txcost: 128,
             rtt_millis: Some(42),
             rttcost: Some(10),
+            external_bias_256: 4096,
+            external_coef_256: 128,
             cost: 224,
         }));
         assert_eq!(state.neighbours.len(), 1);
         assert_eq!(state.neighbours.get(&0xabc).unwrap().ifname.as_ref(), "en3");
+        assert_eq!(
+            state.neighbours.get(&0xabc).unwrap().external_bias_256,
+            4096
+        );
+        assert_eq!(state.neighbours.get(&0xabc).unwrap().external_coef_256, 128);
 
         state.apply(Event::Neighbour(NeighbourEvent {
             kind: EventKind::Flush,
@@ -303,6 +314,8 @@ mod tests {
             txcost: 0,
             rtt_millis: None,
             rttcost: None,
+            external_bias_256: 0,
+            external_coef_256: 256,
             cost: 0,
         }));
         assert!(state.neighbours.is_empty());

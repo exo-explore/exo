@@ -35,7 +35,10 @@ PBProbe profiler for link-local lab links.
 - Discover the current link-local addresses and interface names on the Mac mini
   ring via SSH.
 - Build or run the PBProbe example on the relevant remotes.
-- Run `iperf3` over the same link-local scoped addresses as the baseline.
+- Run the flake-provided forked `iperf3` over the same link-local scoped
+  addresses as the baseline. The fork at
+  `/home/royalguard/Desktop/exo-all/networking-related/iperf3` includes commit
+  `962e05b`, which renders `%scopeID` for link-local IPv6 output.
 - Compare PBProbe estimates against `iperf3` with a reasonable tolerance.
 - If estimates are outside tolerance, adjust only algorithm parameters or
   implementation bugs, not the scoring target.

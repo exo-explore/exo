@@ -109,11 +109,13 @@ of shortcuts that should be revisited later.
   - Add a typed Babel config/config-statement layer.
 
 - The runtime still depends on fork-specific `babeld` behavior
-  (`kernel-install false`) while spawning `"babeld"` from `PATH`.
+  while spawning `"babeld"` from `PATH`.
   Files:
   - `src/babel/runtime.rs`
   - `../nix/babeld.nix`
   Why this is a shortcut:
+  - The current fork supplies `kernel-install false`, no-interface startup, and
+    the `neighbour-cost` local-socket command.
   - It assumes the right binary is on `PATH`.
   - The Nix packaging is still not pinned to a specific revision.
   Follow-up:
@@ -136,16 +138,18 @@ of shortcuts that should be revisited later.
   - But the watcher/bootstrap side is still using the coarse `en*` heuristic,
     and the env allowlist is still just a bring-up escape hatch rather than the
     long-term admission policy.
-  - When multiple admissible wired links exist, Babel's current wired scoring
-    still treats them essentially flatly, so path selection is based on Babel's
-    existing costs rather than measured latency/throughput differences between
-    those direct links.
+  - When multiple admissible wired links exist, Babel's native wired scoring
+    still treats them essentially flatly.
+  - The forked `babeld` now gives `babblerd` a way to bias those links through
+    `neighbour-cost`, but no automatic scoring policy has landed yet.
   Follow-up:
   - Replace the watcher-side bootstrap heuristic with a stronger admission
     policy (neighbor proof, richer metadata, or both), so Babel does not need
     broad speculative interface admission just to discover the right links.
-  - Add a future link-quality scoring path so broadly admissible direct links
-    can still be ranked by actual observed quality rather than flat wired cost.
+  - Add the temporary macOS `enN -> N * 100` neighbour-cost policy so lower
+    numbered interfaces are preferred for MVP throughput testing.
+  - Later, replace that heuristic with measured link-quality scoring so broadly
+    admissible direct links can be ranked by actual observed quality.
 
 - The dataplane now derives immutable FIB snapshots and runs on a dedicated
   thread, but it still assumes interface names are the stable long-lived
@@ -185,14 +189,15 @@ of shortcuts that should be revisited later.
   - The current lab state has reliable ICMPv6 reachability and now also basic
     generic TCP correctness after convergence: a direct `nc` TCP send across
     the overlay succeeds and the server receives the payload.
-  - But sustained throughput is still not healthy. In live `iperf3` testing, a
-    TCP flow transfers an initial burst and then stalls with heavy retransmits
-    and near-zero receive-side throughput.
+  - Sustained throughput testing is still not clean. Earlier `iperf3` results
+    were confounded by Babel selecting much slower equal-cost interfaces instead
+    of the intended fast direct Thunderbolt-style links.
   - The current code also still treats `WouldBlock` on UDP send and TUN
     reinjection as drop-on-backpressure behavior. That is now visible in logs,
     but it is not yet a proper queued/backpressured forwarding model.
   - So the remaining blocker is no longer "can non-ICMP traffic work at all",
-    but "why does sustained transport performance collapse under load".
+    but "force route selection onto the intended fast links, then measure raw
+    dataplane throughput".
   - Restart-sensitive failures are now narrowed further than "the dataplane is
     broken". In live `e11 -> e16` debugging, `e11` emitted the encapsulated
     packet on the expected direct link, `e16` received it, delivered it into
@@ -206,13 +211,13 @@ of shortcuts that should be revisited later.
   - There is no Packet Too Big handling yet.
   - No-route and invalid-packet cases are mostly tracing-and-drop behavior.
   Follow-up:
-  - Characterize the throughput collapse under load, starting with route churn,
-    multi-interface path selection, and loss/retransmit behavior on the direct
-    lab edge.
-  - Investigate why the current Babel-selected installed routes can prefer
-    higher-cost `en1` return paths over direct Thunderbolt neighbours after
-    restart, and how that should interact with the eventual measured link
-    scoring policy.
+  - Characterize raw throughput after the temporary `neighbour-cost` route
+    selection heuristic is active.
+  - Use forked `babeld`'s `neighbour-cost` support to steer away from bad
+    equal-cost choices during MVP testing, starting with the temporary macOS
+    `enN -> N * 100` bias.
+  - Later, replace the suffix heuristic with measured scoring and investigate
+    how that should interact with restart/convergence behavior.
   - Add proper ICMPv6 error generation and tighter packet-validation behavior
     once the first end-to-end forwarding path is validated.
 

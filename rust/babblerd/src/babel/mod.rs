@@ -13,11 +13,15 @@ use runtime::BabelRuntime;
 
 /// An EUI-64 type aliased to [`macaddr::MacAddr8`].
 pub type Eui64 = macaddr::MacAddr8;
+pub use command::{
+    NeighbourCostBias256, NeighbourCostCoef256, NeighbourCostCommand, NeighbourCostCommandError,
+};
 pub use state::BabelState;
 
 #[derive(Debug)]
 pub enum Babble {
     AddIface(Box<str>),
+    SetNeighbourCost(NeighbourCostCommand),
 }
 
 #[tracing::instrument(skip(state_send, recv))]

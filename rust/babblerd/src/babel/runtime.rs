@@ -370,6 +370,10 @@ impl BabelRuntime {
                             let cmd = BabelCommand::Interface(iface);
                             self.query(&cmd).await?;
                         }
+                        Babble::SetNeighbourCost(neighbour_cost) => {
+                            let cmd = BabelCommand::NeighbourCost(neighbour_cost);
+                            self.query(&cmd).await?;
+                        }
                     }
                 },
                 line = self.read.next_line() => {

@@ -45,6 +45,23 @@ If broad interface discovery causes unrelated links to interfere with a
 specific debug run, `BABBLER_INTERFACE_ALLOWLIST` is still available as a
 temporary escape hatch. Do not use it as the default lab topology description.
 
+`babblerd` no longer needs to wait for an initial interface before starting
+`babeld`. The forked `babeld` can start with no managed interfaces, and
+`babblerd` adds interfaces later through the read-write local control socket.
+
+## `iperf3`
+
+Use the flake-provided forked `iperf3` when testing this branch:
+
+```sh
+nix run .#iperf3 -- -s
+nix run .#iperf3 -- -c <addr>
+```
+
+The current fork lives at
+`/home/royalguard/Desktop/exo-all/networking-related/iperf3`; commit `962e05b`
+adds `%scopeID` rendering for link-local IPv6 output.
+
 ## Important Current Note
 
 - With the current codebase, `babblerd` has an internal dummy keepalive client.
