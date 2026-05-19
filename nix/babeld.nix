@@ -4,7 +4,7 @@
 }:
 stdenv.mkDerivation {
   pname = "babeld";
-  version = "1.13.2-rc";
+  version = "1.13.1+local";
 
   # TODO: pin to specific version/revision, or better yet, use a patch file
   src = fetchgit {

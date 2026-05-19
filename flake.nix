@@ -82,7 +82,7 @@
             overlays = [
               inputs.nixglhost.overlays.default
               (import ./nix/apple-sdk-overlay.nix)
-              (final: _: {
+              (final: prev: {
                 macmon = final.rustPlatform.buildRustPackage {
                   pname = "macmon";
                   version = "git";
@@ -95,6 +95,14 @@
                   cargoHash = "sha256-Epj3L+db1flGNK5y6yfSig8piEiXTz15lPo/FNkqlkA=";
                 };
                 babeld = final.callPackage ./nix/babeld.nix { };
+                iperf3 = prev.iperf3.overrideAttrs (_old: {
+                  version = "3.21+local";
+                  src = final.fetchgit {
+                    url = "https://github.com/AndreiCravtov/iperf.git";
+                    fetchSubmodules = true;
+                    sha256 = "sha256-2laL7DrEVZxC7sVieaRXBACzMri7YOpu/yO7sC+t3aI=";
+                  };
+                });
               })
             ];
           };
@@ -133,6 +141,7 @@
 
           packages = {
             default = self'.packages.exo;
+            iperf3 = pkgs.iperf3;
           } //
           lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
             metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
