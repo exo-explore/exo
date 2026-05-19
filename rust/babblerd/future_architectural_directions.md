@@ -184,12 +184,14 @@ The measured scoring system is still post-MVP work. It likely requires:
 
 For MVP, `babblerd` now applies a deliberately simpler policy: for each live
 neighbour on an `enN` interface, it sends `neighbour-cost` with
-`coef-256 0` and `bias-256 N * 100 * 256`. That makes Babel treat the native
-base cost as an absolute synthetic interface-index cost of roughly `N * 100`,
-so lower-numbered links such as `en2`, `en3`, and `en4` win over
-high-numbered links such as `en18`. This is not a robust scoring model; it is
-a temporary selection heuristic so raw throughput work can proceed on the
-intended fast links.
+`coef-256 0`. Most `enN` links get `bias-256 N * 100 * 256`, making Babel
+treat the native base cost as an absolute synthetic interface-index cost of
+roughly `N * 100`, so lower-numbered links such as `en2`, `en3`, and `en4`
+win over high-numbered links such as `en18`. `en0` and `en1` are temporarily
+deprioritized with the maximum finite `bias-256` value so shared low-index
+networks do not dominate Thunderbolt-style links during throughput smoke tests.
+This is not a robust scoring model; it is a temporary selection heuristic so
+raw throughput work can proceed on the intended fast links.
 
 The current sustained-throughput investigation is therefore focused on two
 nearer-term issues before any serious performance tuning:

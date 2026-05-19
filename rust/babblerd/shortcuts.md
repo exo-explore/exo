@@ -141,13 +141,15 @@ of shortcuts that should be revisited later.
   - When multiple admissible wired links exist, Babel's native wired scoring
     still treats them essentially flatly.
   - `babblerd` now applies a temporary `enN -> N * 100` absolute-cost policy
-    with forked `babeld`'s `neighbour-cost` command.
+    with forked `babeld`'s `neighbour-cost` command, except that `en0` and
+    `en1` are assigned the maximum finite cost so shared low-index networks do
+    not win simply because their interface indexes are small.
   Follow-up:
   - Replace the watcher-side bootstrap heuristic with a stronger admission
     policy (neighbor proof, richer metadata, or both), so Babel does not need
     broad speculative interface admission just to discover the right links.
-  - Characterize raw throughput with the temporary macOS `enN -> N * 100`
-    neighbour-cost policy active.
+  - Characterize raw throughput with the temporary macOS `en0`/`en1`
+    deprioritization plus `enN -> N * 100` neighbour-cost policy active.
   - Later, replace that heuristic with measured link-quality scoring so broadly
     admissible direct links can be ranked by actual observed quality.
 

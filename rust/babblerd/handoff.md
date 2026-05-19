@@ -125,11 +125,15 @@ Recent fork behavior that matters to `babblerd`:
   `external-coef-256` before `cost`.
 
 Automatic measured link scoring is not part of the MVP. The current temporary
-policy is a simple Mac heuristic: for `enN`, set an absolute synthetic base
-cost around `N * 100` with `coef-256 0` and `bias-256 N * 100 * 256`, so
-lower-numbered Thunderbolt-style interfaces are preferred over high-numbered
-interfaces such as `en18`. This is intentionally a temporary selection aid so
-raw throughput work can assume the good direct links are chosen.
+policy is a simple Mac heuristic: for most `enN` links, set an absolute
+synthetic base cost around `N * 100` with `coef-256 0` and
+`bias-256 N * 100 * 256`, so lower-numbered Thunderbolt-style interfaces are
+preferred over high-numbered interfaces such as `en18`. `en0` is temporarily
+preferred over high-numbered interfaces such as `en18`. `en0` and `en1` are
+temporarily assigned the maximum finite `bias-256` value so shared low-index
+networks do not dominate the direct-link smoke tests. This is intentionally a
+temporary selection aid so raw throughput work can assume the good direct links
+are chosen.
 
 ## Very Important Fix After Earlier Handovers
 
@@ -343,10 +347,12 @@ Goal:
 - or introduced when `FibBuilder` collapses multiple `installed=yes` routes
 
 The temporary `neighbour-cost` policy now lives in `babel/link_policy.rs`.
-For each live neighbour on an `enN` interface, `babblerd` sets
-`coef-256 0` and `bias-256 N * 100 * 256`, so Babel sees lower-numbered
+For each live neighbour on an `enN` interface, `babblerd` sets `coef-256 0`.
+Most `enN` links use `bias-256 N * 100 * 256`, so Babel sees lower-numbered
 interfaces as cheaper while keeping the distributed Babel view and dataplane
-view aligned.
+view aligned. `en0` and `en1` are the temporary exceptions: they get the
+largest finite `bias-256` value so they lose to the explicit direct-link
+interfaces during smoke tests.
 
 ## Best Next Live Tests
 

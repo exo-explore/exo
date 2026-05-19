@@ -1,12 +1,16 @@
 //! Temporary link-selection policy for broad macOS interface admission.
 //!
 //! The current MVP admits every usable interface and then steers Babel by
-//! assigning each `enN` neighbour an absolute synthetic base cost of `N * 100`.
-//! This is intentionally a stopgap until measured link scoring lands.
+//! assigning each `enN` neighbour an absolute synthetic base cost of `N * 100`,
+//! except that `en0` and `en1` are assigned the largest finite Babel cost. This is
+//! intentionally a stopgap until measured link scoring lands.
 
 use std::net::IpAddr;
 
-use crate::babel::command::{NeighbourCostBias256, NeighbourCostCoef256, NeighbourCostCommand};
+use crate::babel::command::{
+    NEIGHBOUR_COST_BIAS_256_MAX, NeighbourCostBias256, NeighbourCostCoef256,
+    NeighbourCostCommand,
+};
 use crate::babel::line::{EventKind, NeighbourEvent};
 use crate::babel::state::NeighbourState;
 
@@ -70,10 +74,14 @@ fn command_for_neighbour(
 
 fn desired_en_index_cost(ifname: &str) -> Option<DesiredNeighbourCost> {
     let index = parse_en_index(ifname)?;
-    let bias_256 = u64::from(index)
-        .checked_mul(EN_INDEX_COST_UNITS)?
-        .checked_mul(FIXED_POINT_SCALE)?;
-    let bias_256 = i32::try_from(bias_256).ok()?;
+    let bias_256 = if index <= 1 {
+        NEIGHBOUR_COST_BIAS_256_MAX
+    } else {
+        let bias_256 = u64::from(index)
+            .checked_mul(EN_INDEX_COST_UNITS)?
+            .checked_mul(FIXED_POINT_SCALE)?;
+        i32::try_from(bias_256).ok()?
+    };
     let bias_256 = NeighbourCostBias256::new(bias_256)?;
     let coef_256 = NeighbourCostCoef256::new(ABSOLUTE_COST_COEF_256)
         .expect("absolute-cost coefficient is within babeld's accepted range");
@@ -142,8 +150,29 @@ mod tests {
     }
 
     #[test]
+    fn en_index_policy_deprioritizes_en0_and_en1() {
+        let command = command_for_neighbour_event(&neighbour_event("en0", 0, 256)).unwrap();
+        assert_eq!(
+            command.to_string(),
+            "neighbour-cost en0 fe80::1 bias-256 16776704 coef-256 0"
+        );
+
+        let command = command_for_neighbour_event(&neighbour_event("en1", 0, 256)).unwrap();
+        assert_eq!(
+            command.to_string(),
+            "neighbour-cost en1 fe80::1 bias-256 16776704 coef-256 0"
+        );
+    }
+
+    #[test]
     fn en_index_policy_skips_already_configured_neighbour() {
         assert!(command_for_neighbour_state(&neighbour_state("en2", 51_200, 0)).is_none());
+        assert!(
+            command_for_neighbour_state(&neighbour_state("en0", 16_776_704, 0)).is_none()
+        );
+        assert!(
+            command_for_neighbour_state(&neighbour_state("en1", 16_776_704, 0)).is_none()
+        );
     }
 
     #[test]
