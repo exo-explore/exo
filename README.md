@@ -395,6 +395,9 @@ Sample response:
 }
 ```
 
+This command is asynchronous. Before sending inference requests, wait until
+`/state` shows the new instance for this model and its runners are ready.
+
 ---
 
 **3. Send a chat completion**

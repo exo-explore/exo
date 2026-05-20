@@ -66,7 +66,7 @@ Creates a new model instance in the cluster.
 ```
 
 **Response:**
-JSON description of the created instance.
+Command acknowledgement. Instance creation is asynchronous; clients should poll `/state` or `/instance/{instance_id}` until the instance runners are ready before sending inference requests for that model.
 
 ### Delete Instance
 
@@ -123,17 +123,18 @@ Computes a placement for a potential instance without creating it.
 **Response:**
 JSON object describing the proposed placement / instance configuration.
 
-### Place Instance (Dry Operation)
+### Place Instance
 
 **POST** `/place_instance`
 
-Performs a placement operation for an instance (planning step), without necessarily creating it.
+Places an instance for a model using the server's placement logic.
 
 **Request body:**
 JSON describing the instance to be placed.
 
 **Response:**
-Placement result.
+Command acknowledgement. The instance may not be ready immediately; wait for it
+to appear ready in cluster state before sending inference requests.
 
 ## 3. Models
 
