@@ -11,6 +11,7 @@ from exo.api.types import (
 )
 from exo.shared.models.model_cards import ModelId
 from exo.utils.pydantic_ext import TaggedModel
+from exo.worker.runner.diagnostics import KnownRunnerDiagnostic
 
 from .common import CommandId
 
@@ -33,6 +34,10 @@ class TokenChunk(BaseChunk):
 class ErrorChunk(BaseChunk):
     error_message: str
     finish_reason: Literal["error"] = "error"
+
+    # NOTE: this is a bad place to put this, creates semantic overlap/confusion;
+    #       at some point someone put this somewhere else, thanks :)
+    diagnostics: list[KnownRunnerDiagnostic] = []
 
 
 class ToolCallChunk(BaseChunk):

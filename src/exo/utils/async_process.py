@@ -19,6 +19,7 @@ from anyio import (
     create_task_group,
     move_on_after,
     sleep,
+    to_thread,
     wait_readable,
 )
 from anyio.abc import TaskStatus
@@ -29,10 +30,11 @@ from exo.utils.channels import Receiver, Sender, channel
 _STDOUT_FD = 1
 _STDERR_FD = 2
 _READ_CHUNK_SIZE = 64 * 1024
-_TERMINATE_GRACE_SECONDS = 10.0
+_JOIN_GRACE_SECONDS = 3.0
+_TERMINATE_GRACE_SECONDS = 5.0
 _TERMINATE_RETRY_GRACE_SECONDS = 2.0
 _TERMINATE_ATTEMPTS = 10
-_KILL_GRACE_SECONDS = 5.0
+_KILL_GRACE_SECONDS = 2.0
 
 
 @final
@@ -204,14 +206,12 @@ class AsyncProcess:
 
     async def _terminate_if_still_alive(self) -> None:
         process = self._process
-        if process is None:
-            return
-
-        if self.exitcode is not None:
+        if process is None or self.exitcode is not None:
             return
 
         with contextlib.suppress(ValueError):
-            if not process.is_alive():
+            await to_thread.run_sync(process.join, _JOIN_GRACE_SECONDS)
+            if self.exitcode is not None or not process.is_alive():
                 return
 
             logger.warning("Child process didn't shut down successfully, terminating")

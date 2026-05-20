@@ -7,6 +7,7 @@ from typing import AsyncIterator, Callable
 
 from exo.download.download_utils import RepoDownloadProgress
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
+from exo.shared.types.backends import Backend
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
@@ -93,6 +94,7 @@ NOOP_DOWNLOAD_PROGRESS = RepoDownloadProgress(
             hidden_size=1,
             supports_tensor=False,
             tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
         ),
         device_rank=0,
         world_size=1,

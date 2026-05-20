@@ -101,7 +101,7 @@ def _build_response_usage(usage: Usage) -> ResponseUsage:
 
 def _format_sse(event: ResponsesStreamEvent) -> str:
     """Format a streaming event as an SSE message."""
-    return f"event: {event.type}\ndata: {event.model_dump_json()}\n\n"
+    return f"event: {event.type}\ndata: {event.model_dump_json(exclude_none=True)}\n\n"
 
 
 def _extract_content(content: str | list[ResponseContentPart]) -> str:
@@ -471,7 +471,7 @@ async def collect_responses_response(
         output=output,
         output_text=accumulated_text,
         usage=usage,
-    ).model_dump_json()
+    ).model_dump_json(exclude_none=True)
     return
 
 

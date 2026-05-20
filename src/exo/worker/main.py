@@ -223,7 +223,7 @@ class Worker:
             # lets not kill the worker if a runner is unresponsive
             match task:
                 case CreateRunner():
-                    self._create_supervisor(task)
+                    await self._create_supervisor(task)
                     self._instance_backoff.record_attempt(task.instance_id)
                     await self.event_sender.send(
                         TaskStatusUpdated(
@@ -370,9 +370,9 @@ class Worker:
                 instance.shard_assignments.node_to_runner[self.node_id]
             ].start_task(task)
 
-    def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
+    async def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""
-        runner = RunnerSupervisor.create(
+        runner = await RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
         )

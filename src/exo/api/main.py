@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
+from hypercorn.utils import LifespanTimeoutError
 from loguru import logger
 
 from exo.api.adapters.chat_completions import (
@@ -103,6 +104,7 @@ from exo.api.types.claude_api import (
     ClaudeMessagesResponse,
 )
 from exo.api.types.ollama_api import (
+    OllamaCapability,
     OllamaChatRequest,
     OllamaChatResponse,
     OllamaGenerateRequest,
@@ -137,6 +139,7 @@ from exo.shared.models import model_cards
 from exo.shared.models.model_cards import (
     ModelCard,
     ModelId,
+    ModelTask,
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
@@ -374,6 +377,9 @@ class API:
         # Ollama API
         self.app.head("/ollama/")(self.ollama_version)
         self.app.head("/ollama/api/version")(self.ollama_version)
+        self.app.post("/ollama/v1/chat/completions", response_model=None)(
+            self.chat_completions
+        )
         self.app.post("/ollama/api/chat", response_model=None)(self.ollama_chat)
         self.app.post("/ollama/api/api/chat", response_model=None)(self.ollama_chat)
         self.app.post("/ollama/api/v1/chat", response_model=None)(self.ollama_chat)
@@ -476,6 +482,7 @@ class API:
                 ),
                 node_memory=self.state.node_memory,
                 node_network=self.state.node_network,
+                node_backends=self.state.node_backends,
                 topology=self.state.topology,
                 current_instances=self.state.instances,
                 download_status=self.state.downloads,
@@ -539,6 +546,7 @@ class API:
                     ),
                     node_memory=self.state.node_memory,
                     node_network=self.state.node_network,
+                    node_backends=self.state.node_backends,
                     topology=self.state.topology,
                     current_instances=self.state.instances,
                     required_nodes=required_nodes,
@@ -1677,6 +1685,20 @@ class API:
                 status_code=404, detail=f"Model not found: {model_name}"
             ) from exc
 
+        capabilities: list[OllamaCapability] = []
+        if ModelTask.TextGeneration in card.tasks:
+            capabilities.extend(("completion", "tools"))
+        if card.vision is not None:
+            capabilities.append("vision")
+
+        architecture = card.family or "unknown"
+        model_info: dict[str, Any] = {
+            "general.architecture": architecture,
+            "general.basename": card.base_model or str(card.model_id),
+        }
+        if card.context_length > 0:
+            model_info[f"{architecture}.context_length"] = card.context_length
+
         return OllamaShowResponse(
             modelfile=f"FROM {card.model_id}",
             template="{{ .Prompt }}",
@@ -1684,6 +1706,8 @@ class API:
                 family=card.family or None,
                 quantization_level=card.quantization or None,
             ),
+            model_info=model_info,
+            capabilities=capabilities,
         )
 
     async def ollama_ps(self) -> OllamaPsResponse:
@@ -1706,7 +1730,7 @@ class API:
 
     async def ollama_version(self) -> dict[str, str]:
         """Returns version information for Ollama API compatibility."""
-        return {"version": "exo v1.0"}
+        return {"version": "1.0.0"}
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
@@ -1856,11 +1880,20 @@ class API:
                     await anyio.sleep_forever()
                 finally:
                     with anyio.CancelScope(shield=True):
+                        # IMPORTANT: when new queues are added, update this (for proper shutdown semantics)
+                        self._shutdown_queues(self._text_generation_queues)
+                        self._shutdown_queues(self._image_generation_queues)
+
                         shutdown_ev.set()
         finally:
             self._event_log.close()
             self.command_sender.close()
             self.event_receiver.close()
+
+    @staticmethod
+    def _shutdown_queues[K, V](queues: dict[K, Sender[V]]):
+        for v in queues.values():
+            v.close()
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
@@ -1869,12 +1902,23 @@ class API:
         cfg.accesslog = None
         cfg.errorlog = "-"
         cfg.logger_class = InterceptLogger
+
+        # prevents hangs when mid-request and connection refuses to close
+        cfg.graceful_timeout = 2  # seconds
+        cfg.shutdown_timeout = 3  # seconds
+
         with anyio.CancelScope(shield=True):
-            await serve(
-                cast(ASGIFramework, self.app),
-                cfg,
-                shutdown_trigger=ev.wait,
-            )
+            try:
+                await serve(
+                    cast(ASGIFramework, self.app),
+                    cfg,
+                    shutdown_trigger=ev.wait,
+                )
+            except LifespanTimeoutError as e:
+                logger.warning(
+                    "Graceful server shutdown timed out, some connections forcebly closed"
+                )
+                logger.opt(exception=e).debug("")
 
     async def _apply_state(self):
         with self.event_receiver as events:

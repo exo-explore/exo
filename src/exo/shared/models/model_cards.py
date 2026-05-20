@@ -26,6 +26,7 @@ from exo.shared.constants import (
     EXO_MODELS_DIRS,
     RESOURCES_DIR,
 )
+from exo.shared.types.backends import Backend
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.text_generation import ReasoningDialect
@@ -80,8 +81,10 @@ class _CardCache:
                     card = card.model_copy(update={"is_custom": True})
                 if self.get(card.model_id) is None:
                     self.cc[card.model_id] = card
-            except (ValidationError, TOMLKitError):
-                pass
+            except (ValidationError, TOMLKitError) as e:
+                logger.opt(exception=e).warning(
+                    f"failed to validate model card at {toml_file}"
+                )
 
     async def refresh(self) -> None:
         for path in _BUILTIN_CARD_DIRS:
@@ -164,6 +167,7 @@ class ModelCard(FrozenModel):
     quantization: str = ""
     base_model: str = ""
     capabilities: list[str] = []
+    backends: list[Backend]
     reasoning_dialect: ReasoningDialect = "none"
     context_length: int = 0
     uses_cfg: bool = False
@@ -194,6 +198,11 @@ class ModelCard(FrozenModel):
     @classmethod
     def _validate_tasks(cls, v: list[str | ModelTask]) -> list[ModelTask]:
         return [item if isinstance(item, ModelTask) else ModelTask(item) for item in v]
+
+    @field_validator("backends", mode="before")
+    @classmethod
+    def _validate_backends(cls, v: list[str | Backend]) -> list[Backend]:
+        return [item if isinstance(item, Backend) else Backend(item) for item in v]
 
     async def save(self, path: Path) -> None:
         async with await open_file(path, "w") as f:
@@ -247,6 +256,9 @@ class ModelCard(FrozenModel):
             trust_remote_code=False,
             is_custom=True,
             vision=config_data.vision,
+            backends=list(
+                Backend
+            ),  # all backends — we don't know what an arbitrary HF model supports; let placement gate decide
         )
 
 

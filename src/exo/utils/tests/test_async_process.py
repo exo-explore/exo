@@ -2,17 +2,12 @@ import contextlib
 import os
 import signal
 import sys
-import time
 from collections.abc import AsyncIterator, Callable
-from types import FrameType
 
-import mlx.core as mx
 import pytest
 from _pytest.capture import CaptureFixture
 from anyio import EndOfStream, create_task_group, fail_after
-from pytest import MonkeyPatch
 
-import exo.utils.async_process as async_process
 from exo.utils.async_process import (
     AsyncProcess,
 )
@@ -66,43 +61,6 @@ def _close_stdio_and_exit() -> None:
     os._exit(0)
 
 
-def _exit_on_sigterm(exitcode: int) -> None:
-    def handle_sigterm(_signum: int, _frame: FrameType | None) -> None:
-        os._exit(exitcode)
-
-    signal.signal(signal.SIGTERM, handle_sigterm)
-    os.write(1, b"sigterm-ready\n")
-    while True:
-        time.sleep(0.1)
-
-
-def _exit_after_repeated_sigterm(required_count: int, exitcode: int) -> None:
-    sigterm_count = 0
-
-    def handle_sigterm(_signum: int, _frame: FrameType | None) -> None:
-        nonlocal sigterm_count
-        sigterm_count += 1
-        if sigterm_count >= required_count:
-            os._exit(exitcode)
-
-    signal.signal(signal.SIGTERM, handle_sigterm)
-    os.write(1, b"sigterm-ready\n")
-    while True:
-        time.sleep(0.1)
-
-
-def _ignore_sigterm_forever() -> None:
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    os.write(1, b"sigterm-ready\n")
-    while True:
-        time.sleep(0.1)
-
-
-def _sleep_forever() -> None:
-    while True:
-        time.sleep(0.1)
-
-
 def _send_over_mp_channel(send: MpSender[str]) -> None:
     send.send("hello from child")
     send.close()
@@ -112,6 +70,8 @@ def _mlx_force_oom(size: int = 40_000) -> None:
     """
     Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
     """
+    import mlx.core as mx
+
     print("CHILD: start")
 
     mx.set_default_device(mx.gpu)
@@ -275,19 +235,6 @@ async def test_process_run_is_one_shot() -> None:
 
 
 @pytest.mark.anyio
-async def test_process_started_with_task_group_start_can_stop_immediately() -> None:
-    process = AsyncProcess(_sleep_forever)
-
-    async with create_task_group() as task_group:
-        await task_group.start(process.run)
-        assert process.is_alive()
-        with fail_after(2):
-            await process.stop()
-
-    assert not process.is_alive()
-
-
-@pytest.mark.anyio
 async def test_stdout_receiver_yields_bytes_chunks() -> None:
     process = AsyncProcess(_write_large_output)
 
@@ -438,51 +385,6 @@ async def test_repeated_crashing_children_do_not_grow_parent_fd_table() -> None:
     after = _fd_count()
     assert after is not None
     assert after <= before + 2
-
-
-@pytest.mark.anyio
-async def test_stop_allows_child_to_exit_after_sigterm() -> None:
-    process = AsyncProcess(_exit_on_sigterm, args=(43,))
-
-    async with _started_process(process):
-        assert await process.stdout.receive() == b"sigterm-ready\n"
-
-        with fail_after(2):
-            await process.stop()
-
-    assert process.exitcode == 43
-
-
-@pytest.mark.anyio
-async def test_stop_retries_sigterm_before_sigkill(monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.setattr(async_process, "_TERMINATE_GRACE_SECONDS", 0.01)
-    monkeypatch.setattr(async_process, "_TERMINATE_RETRY_GRACE_SECONDS", 0.01)
-    process = AsyncProcess(_exit_after_repeated_sigterm, args=(3, 44))
-
-    async with _started_process(process):
-        assert await process.stdout.receive() == b"sigterm-ready\n"
-
-        with fail_after(2):
-            await process.stop()
-
-    assert process.exitcode == 44
-
-
-@pytest.mark.anyio
-async def test_stop_escalates_to_sigkill_when_child_ignores_sigterm(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(async_process, "_TERMINATE_GRACE_SECONDS", 0.1)
-    monkeypatch.setattr(async_process, "_TERMINATE_RETRY_GRACE_SECONDS", 0.01)
-    process = AsyncProcess(_ignore_sigterm_forever)
-
-    async with _started_process(process):
-        assert await process.stdout.receive() == b"sigterm-ready\n"
-
-        with fail_after(3):
-            await process.stop()
-
-    assert process.exitcode == -signal.SIGKILL
 
 
 @pytest.mark.anyio

@@ -10,7 +10,7 @@ base_model = "GLM-5.1"
 capabilities = ["text", "thinking"]
 reasoning_dialect = "post_last_user"
 context_length = 202752
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 1487822475264
 

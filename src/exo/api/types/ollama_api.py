@@ -11,6 +11,16 @@ from exo.shared.models.model_cards import ModelId
 
 OllamaRole = Literal["system", "user", "assistant", "tool"]
 OllamaDoneReason = Literal["stop", "length", "tool_call", "error"]
+OllamaCapability = Literal[
+    "completion",
+    "tools",
+    "insert",
+    "vision",
+    "embedding",
+    "thinking",
+    "image",
+    "audio",
+]
 
 
 class OllamaToolFunction(BaseModel, frozen=True):
@@ -133,6 +143,7 @@ class OllamaShowResponse(BaseModel, frozen=True, strict=True):
     template: str | None = None
     details: OllamaModelDetails | None = None
     model_info: dict[str, Any] | None = None
+    capabilities: list[OllamaCapability] = []
 
 
 class OllamaPsModel(BaseModel, frozen=True, strict=True):

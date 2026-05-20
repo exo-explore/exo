@@ -86,7 +86,7 @@ def test_plan_kills_runner_when_sibling_failed():
     instances = {INSTANCE_1_ID: instance}
     all_runners = {
         RUNNER_1_ID: RunnerReady(),
-        RUNNER_2_ID: RunnerFailed(error_message="boom"),
+        RUNNER_2_ID: RunnerFailed(error_message="boom", diagnostics=[]),
     }
 
     result = plan_mod.plan(
