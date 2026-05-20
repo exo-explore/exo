@@ -639,10 +639,14 @@ class API:
     async def await_instance(
         self,
         model_id: ModelId,
-        timeout_seconds: float = Query(default=30.0, ge=0.0, le=300.0),
+        timeout_seconds: float = Query(default=0.0, ge=0.0, le=300.0),
     ) -> StreamingResponse:
+        _sleep = 0.1
+
         async def _stream() -> AsyncGenerator[str, None]:
-            deadline = anyio.current_time() + timeout_seconds
+            deadline = (
+                None if timeout_seconds == 0 else anyio.current_time() + timeout_seconds
+            )
 
             while True:
                 for instance in self.state.instances.values():
@@ -651,15 +655,18 @@ class API:
                         yield f"data: {payload.model_dump_json()}\n\n"
                         return
 
-                remaining = deadline - anyio.current_time()
-                if remaining <= 0:
-                    payload = AwaitInstanceTimeoutMessage(
-                        message=f"No instance found for model {model_id}"
-                    )
-                    yield f"data: {payload.model_dump_json()}\n\n"
-                    return
+                if deadline is None:
+                    await anyio.sleep(_sleep)
+                else:
+                    remaining = deadline - anyio.current_time()
+                    if remaining <= 0:
+                        payload = AwaitInstanceTimeoutMessage(
+                            message=f"No instance found for model {model_id}"
+                        )
+                        yield f"data: {payload.model_dump_json()}\n\n"
+                        return
 
-                await anyio.sleep(min(0.1, remaining))
+                    await anyio.sleep(min(_sleep, remaining))
 
         return StreamingResponse(
             with_sse_keepalive(_stream()),
