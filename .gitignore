@@ -38,6 +38,8 @@ bench/**/*.json
 # tmp
 tmp/models
 /build/exo
+/.agents
 /.claude/skills
 /.claude
 /.codex
+skills-lock.json
