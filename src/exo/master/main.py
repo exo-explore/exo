@@ -174,6 +174,7 @@ class Master:
                         case TestCommand():
                             pass
                         case TextGeneration():
+                            # set-difference => prefill-only nodes
                             prefill_only: set[InstanceId] = set()
                             for link in self.state.instance_links.values():
                                 prefill_only.update(link.prefill_instances)
@@ -181,11 +182,13 @@ class Master:
                                 prefill_only.difference_update(link.decode_instances)
 
                             for instance in self.state.instances.values():
+                                # NON-prefill-only instances matching the model ID
                                 if (
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                     and instance.instance_id not in prefill_only
                                 ):
+                                    # count in-flight tasks of that instance
                                     in_flight = {TaskStatus.Pending, TaskStatus.Running}
                                     task_count = sum(
                                         1
@@ -197,6 +200,7 @@ class Master:
                                         task_count
                                     )
 
+                            # there are no NON-prefill-only instances matching this model ID
                             if not instance_task_counts:
                                 raise ValueError(
                                     f"No instance found for model {command.task_params.model}"

@@ -916,9 +916,7 @@ class API:
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
         task_params = await chat_request_to_text_generation(payload)
-        validated_model = await self._validate_model_has_instance(
-            ModelId(task_params.model)
-        )
+        validated_model = await self._validate_model_has_instance(task_params.model)
         task_params = task_params.model_copy(update={"model": validated_model})
 
         command = await self._send_text_generation_with_images(task_params)
