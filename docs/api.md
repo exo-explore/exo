@@ -66,7 +66,9 @@ Creates a new model instance in the cluster.
 ```
 
 **Response:**
-Command acknowledgement. Instance creation is asynchronous; clients should poll `/state` or `/instance/{instance_id}` until the instance runners are ready before sending inference requests for that model.
+Command acknowledgement. Instance creation is asynchronous; clients should wait
+for the model to appear through `/instance/await` before sending inference
+requests for that model.
 
 ### Delete Instance
 
@@ -93,6 +95,31 @@ Returns details of a specific instance.
 
 **Response:**
 JSON description of the instance.
+
+### Await Instance
+
+**GET** `/instance/await?model_id=...&timeout_seconds=0`
+
+Waits until API state contains an instance for the requested model. The response
+is an SSE stream so clients receive keep-alive comments while waiting.
+
+**Query parameters:**
+
+* `model_id`: string, required
+* `timeout_seconds`: float, optional, default `0`. `0` waits indefinitely;
+  positive values time out after that many seconds. Maximum positive value:
+  `300`.
+
+**Stream messages:**
+
+```text
+data: {"type": "ready", "instance": {...}}
+
+data: {"type": "timeout", "message": "No instance found for model ..."}
+```
+
+The HTTP status is `200` for both messages because the stream starts before the
+final result is known. The `type` field disambiguates the terminal message.
 
 ### Preview Placements
 
@@ -134,7 +161,7 @@ JSON describing the instance to be placed.
 
 **Response:**
 Command acknowledgement. The instance may not be ready immediately; wait for it
-to appear ready in cluster state before sending inference requests.
+to appear through `/instance/await` before sending inference requests.
 
 ## 3. Models
 
@@ -640,10 +667,11 @@ GET     /events
 
 # Instance Management
 POST    /instance
-GET     /instance/{instance_id}
-DELETE  /instance/{instance_id}
+GET     /instance/await
 GET     /instance/previews
 GET     /instance/placement
+GET     /instance/{instance_id}
+DELETE  /instance/{instance_id}
 POST    /place_instance
 
 # Models

@@ -395,8 +395,17 @@ Sample response:
 }
 ```
 
-This command is asynchronous. Before sending inference requests, wait until
-`/state` shows the new instance for this model and its runners are ready.
+This command is asynchronous. Before sending inference requests, wait until the
+API sees the new instance for this model:
+
+```bash
+curl -N "http://localhost:52415/instance/await?model_id=mlx-community/Llama-3.2-1B-Instruct-4bit"
+```
+
+The endpoint returns an SSE stream. A successful wait emits a message with
+`"type": "ready"` and the matching instance; a timeout emits `"type": "timeout"`.
+By default it waits indefinitely. Set `timeout_seconds` to a positive value to
+bound the wait.
 
 ---
 

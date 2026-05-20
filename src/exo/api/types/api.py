@@ -291,6 +291,16 @@ class DeleteInstanceResponse(BaseModel):
     instance_id: InstanceId
 
 
+class AwaitInstanceReadyMessage(BaseModel):
+    type: Literal["ready"] = "ready"
+    instance: Instance
+
+
+class AwaitInstanceTimeoutMessage(BaseModel):
+    type: Literal["timeout"] = "timeout"
+    message: str
+
+
 class CancelCommandResponse(BaseModel):
     message: str
     command_id: CommandId

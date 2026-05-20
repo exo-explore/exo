@@ -50,6 +50,8 @@ from exo.api.keepalive import with_sse_keepalive
 from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
+    AwaitInstanceReadyMessage,
+    AwaitInstanceTimeoutMessage,
     BenchChatCompletionRequest,
     BenchChatCompletionResponse,
     BenchImageGenerationResponse,
@@ -344,6 +346,7 @@ class API:
         self.app.post("/place_instance")(self.place_instance)
         self.app.get("/instance/placement")(self.get_placement)
         self.app.get("/instance/previews")(self.get_placement_previews)
+        self.app.get("/instance/await", response_model=None)(self.await_instance)
         self.app.get("/instance/{instance_id}")(self.get_instance)
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
         self.app.get("/v1/instance-links")(self.list_instance_links)
@@ -632,6 +635,41 @@ class API:
         if instance_id not in self.state.instances:
             raise HTTPException(status_code=404, detail="Instance not found")
         return self.state.instances[instance_id]
+
+    async def await_instance(
+        self,
+        model_id: ModelId,
+        timeout_seconds: float = Query(default=30.0, ge=0.0, le=300.0),
+    ) -> StreamingResponse:
+        async def _stream() -> AsyncGenerator[str, None]:
+            deadline = anyio.current_time() + timeout_seconds
+
+            while True:
+                for instance in self.state.instances.values():
+                    if instance.shard_assignments.model_id == model_id:
+                        payload = AwaitInstanceReadyMessage(instance=instance)
+                        yield f"data: {payload.model_dump_json()}\n\n"
+                        return
+
+                remaining = deadline - anyio.current_time()
+                if remaining <= 0:
+                    payload = AwaitInstanceTimeoutMessage(
+                        message=f"No instance found for model {model_id}"
+                    )
+                    yield f"data: {payload.model_dump_json()}\n\n"
+                    return
+
+                await anyio.sleep(min(0.1, remaining))
+
+        return StreamingResponse(
+            with_sse_keepalive(_stream()),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "close",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     async def delete_instance(self, instance_id: InstanceId) -> DeleteInstanceResponse:
         if instance_id not in self.state.instances:
