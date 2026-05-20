@@ -13,6 +13,7 @@ from exo.master.placement import (
 from exo.master.placement_utils import find_ip_prioritised
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
+from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.commands import (
     AddCustomModelCard,
     CreateInstance,
@@ -34,6 +35,7 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
+    ChunkGenerated,
     CustomModelCardAdded,
     CustomModelCardDeleted,
     Event,
@@ -198,39 +200,51 @@ class Master:
                                     )
 
                             if not instance_task_counts:
-                                raise ValueError(
-                                    f"No instance found for model {command.task_params.model}"
+                                # Send off error chunk so related state closes down
+                                error_message = (
+                                    "No runnable instance found for model "
+                                    f"{command.task_params.model}"
                                 )
-
-                            available_instance_ids = sorted(
-                                instance_task_counts.keys(),
-                                key=lambda instance_id: instance_task_counts[
-                                    instance_id
-                                ],
-                            )
-
-                            decode_instance_id = available_instance_ids[0]
-                            task_id = TaskId()
-                            params = command.task_params.model_copy(
-                                update={
-                                    "prefill_endpoint": _prefill_endpoint_for(
-                                        self.state, decode_instance_id
-                                    ),
-                                }
-                            )
-                            generated_events.append(
-                                TaskCreated(
-                                    task_id=task_id,
-                                    task=TextGenerationTask(
-                                        task_id=task_id,
+                                logger.warning(error_message)
+                                generated_events.append(
+                                    ChunkGenerated(
                                         command_id=command.command_id,
-                                        instance_id=decode_instance_id,
-                                        task_status=TaskStatus.Pending,
-                                        task_params=params,
-                                    ),
+                                        chunk=ErrorChunk(
+                                            model=command.task_params.model,
+                                            error_message=error_message,
+                                        ),
+                                    )
                                 )
-                            )
-                            self.command_task_mapping[command.command_id] = task_id
+                            else:
+                                available_instance_ids = sorted(
+                                    instance_task_counts.keys(),
+                                    key=lambda instance_id: instance_task_counts[
+                                        instance_id
+                                    ],
+                                )
+
+                                decode_instance_id = available_instance_ids[0]
+                                task_id = TaskId()
+                                params = command.task_params.model_copy(
+                                    update={
+                                        "prefill_endpoint": _prefill_endpoint_for(
+                                            self.state, decode_instance_id
+                                        ),
+                                    }
+                                )
+                                generated_events.append(
+                                    TaskCreated(
+                                        task_id=task_id,
+                                        task=TextGenerationTask(
+                                            task_id=task_id,
+                                            command_id=command.command_id,
+                                            instance_id=decode_instance_id,
+                                            task_status=TaskStatus.Pending,
+                                            task_params=params,
+                                        ),
+                                    )
+                                )
+                                self.command_task_mapping[command.command_id] = task_id
                         case ImageGeneration():
                             for instance in self.state.instances.values():
                                 if (
