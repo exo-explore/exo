@@ -69,6 +69,13 @@ class RunnerSupervisor:
         default_factory=anyio.CancelScope, init=False
     )
 
+
+    def _runner_is_alive(self) -> bool:
+        try:
+            return self.runner_process.is_alive()
+        except ValueError:
+            return False
+
     @classmethod
     def create(
         cls,
@@ -131,14 +138,14 @@ class RunnerSupervisor:
 
             await to_thread.run_sync(self.runner_process.join, 5)
 
-            if self.runner_process.is_alive():
+            if self._runner_is_alive():
                 logger.warning(
                     "Runner process didn't shutdown succesfully, terminating"
                 )
                 self.runner_process.terminate()
                 self.runner_process.join(timeout=10)
 
-                if not self.runner_process.is_alive():
+                if not self._runner_is_alive():
                     logger.warning("Terminated nicely in the first attempt!")
 
                 else:
@@ -146,7 +153,7 @@ class RunnerSupervisor:
                     for i in range(2, 11):
                         self.runner_process.terminate()
                         self.runner_process.join(timeout=2)
-                        if not self.runner_process.is_alive():
+                        if not self._runner_is_alive():
                             logger.warning(f"That took {i} attempts :)")
                             break
                     # Try even harder to kill
@@ -155,7 +162,7 @@ class RunnerSupervisor:
                             "Runner process didn't respond to SIGTERM, killing"
                         )
                         j = 0
-                        while self.runner_process.is_alive():
+                        while self._runner_is_alive():
                             j += 1
                             self.runner_process.kill()
                             self.runner_process.join(timeout=5)
@@ -246,14 +253,14 @@ class RunnerSupervisor:
         with self._cancel_watch_runner:
             while True:
                 await anyio.sleep(5)
-                if not self.runner_process.is_alive():
+                if not self._runner_is_alive():
                     await self._check_runner(RuntimeError("Runner found to be dead"))
 
     async def _check_runner(self, e: Exception) -> None:
         if not self._cancel_watch_runner.cancel_called:
             self._cancel_watch_runner.cancel()
         logger.info("Checking runner's status")
-        if self.runner_process.is_alive():
+        if self._runner_is_alive():
             logger.info("Runner was found to be alive, attempting to join process")
             await to_thread.run_sync(self.runner_process.join, 5)
         rc = self.runner_process.exitcode
