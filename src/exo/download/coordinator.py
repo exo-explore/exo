@@ -151,7 +151,7 @@ class DownloadCoordinator:
                 tg.start_soon(self._command_processor)
                 tg.start_soon(self._emit_existing_download_progress)
         finally:
-            # don't forget to clean up resources (does this need a cancel-shield??)
+            # don't forget to clean up resources
             self.download_command_receiver.close()
             self.event_sender.close()
 

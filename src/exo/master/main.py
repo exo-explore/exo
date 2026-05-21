@@ -174,7 +174,6 @@ class Master:
     async def shutdown(self):
         logger.info("Stopping Master")
         self._tg.cancel_tasks()
-        # shouldn't there be a wait-stopped signal/event like in worker?
 
     async def _command_processor(self) -> None:
         with self.command_receiver as commands:

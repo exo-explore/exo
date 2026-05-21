@@ -119,7 +119,6 @@ class Worker:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")
 
-            # (don't you need a cancel shield here??)
             self.event_sender.close()
             self.command_sender.close()
             self.download_command_sender.close()
