@@ -134,9 +134,10 @@ class Sender[T](AnyioSender[T]):
             self.close = e.patch(self.close)
             self.aclose = e.patch(self.aclose)
             self.statistics = e.patch(self.statistics)
-            self.__enter__ = e.patch(self.__enter__)
-            self.__exit__ = e.patch(self.__exit__)
-            self.__del__ = e.patch(self.__del__)
+            # TODO: instance-patching dunder methods doesn't work in python
+            # self.__enter__ = e.patch(self.__enter__)
+            # self.__exit__ = e.patch(self.__exit__)
+            # self.__del__ = e.patch(self.__del__)
 
         self.err_config = error_override_config
 
@@ -173,7 +174,8 @@ class Receiver[T](AnyioReceiver[T]):
 
             # overridden methods
             self.clone = e.patch(self.clone)
-            self.__enter__ = e.patch(self.__enter__)
+            # TODO: instance-patching dunder methods doesn't work in python
+            # self.__enter__ = e.patch(self.__enter__)
 
             # parent methods
             self.receive_nowait = e.patch(self.receive_nowait)
@@ -181,8 +183,9 @@ class Receiver[T](AnyioReceiver[T]):
             self.close = e.patch(self.close)
             self.aclose = e.patch(self.aclose)
             self.statistics = e.patch(self.statistics)
-            self.__exit__ = e.patch(self.__exit__)
-            self.__del__ = e.patch(self.__del__)
+            # TODO: instance-patching dunder methods doesn't work in python
+            # self.__exit__ = e.patch(self.__exit__)
+            # self.__del__ = e.patch(self.__del__)
 
         self.err_config = error_override_config
 
