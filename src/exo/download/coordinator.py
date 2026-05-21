@@ -76,13 +76,6 @@ class DownloadCoordinator:
             self._tg.cancel_tasks()
             await anyio_checkpoint()
 
-    def _send_event_nowait(self, e: Event):
-        try:
-            self.event_sender.send_nowait(e)
-        except (BrokenResourceError, ClosedResourceError):
-            # Event router has been closed - stop download coordinator & yield
-            self._tg.cancel_tasks()
-
     @staticmethod
     def _default_model_dir(model_id: ModelId) -> str:
         return str(EXO_DEFAULT_MODELS_DIR / model_id.normalize())
@@ -276,9 +269,9 @@ class DownloadCoordinator:
             return
 
         # Start actual download
-        self._start_download_task(shard, initial_progress)
+        await self._start_download_task(shard, initial_progress)
 
-    def _start_download_task(
+    async def _start_download_task(
         self, shard: ShardMetadata, initial_progress: RepoDownloadProgress
     ) -> None:
         model_id = shard.model_card.model_id
@@ -293,7 +286,7 @@ class DownloadCoordinator:
             model_directory=self._default_model_dir(model_id),
         )
         self.download_status[model_id] = status
-        self._send_event_nowait(NodeDownloadProgress(download_progress=status))
+        await self._send_event(NodeDownloadProgress(download_progress=status))
 
         async def download_wrapper(cancel_scope: anyio.CancelScope) -> None:
             try:
