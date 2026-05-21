@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
-from hypercorn.utils import LifespanTimeoutError
+from hypercorn.utils import LifespanTimeoutError, ShutdownError
 from loguru import logger
 
 from exo.api.adapters.chat_completions import (
@@ -1914,6 +1914,10 @@ class API:
                     cfg,
                     shutdown_trigger=ev.wait,
                 )
+                if not ev.is_set():
+                    raise ShutdownError(
+                        "Server exited without shutdown trigger - exiting abnormally"
+                    )
             except LifespanTimeoutError as e:
                 logger.warning(
                     "Graceful server shutdown timed out, some connections forcebly closed"
