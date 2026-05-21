@@ -2,11 +2,12 @@ import contextlib
 import multiprocessing as mp
 from dataclasses import dataclass, field
 from functools import wraps
+from inspect import iscoroutinefunction
 from math import inf
 from multiprocessing.synchronize import Event
 from queue import Empty, Full
-from types import TracebackType
-from typing import Any, Callable, Self, override
+from types import CoroutineType, TracebackType
+from typing import Any, Callable, NoReturn, Self, cast, overload, override
 
 from anyio import (
     BrokenResourceError,
@@ -45,25 +46,65 @@ class ErrorOverride:
         default=WouldBlock,
     )
 
-    def patch[**P, R](self, fn: Callable[P, R], /) -> Callable[P, R]:
+    @overload
+    def patch[**P, R](
+        self,
+        fn: Callable[P, CoroutineType[Any, Any, R]],
+        /,
+    ) -> Callable[P, CoroutineType[Any, Any, R]]: ...
+
+    @overload
+    def patch[**P, R](
+        self,
+        fn: Callable[P, R],
+        /,
+    ) -> Callable[P, R]: ...
+
+    def patch[**P, R](self, fn: Callable[P, Any], /) -> Callable[P, Any]:
         """
         Returns a function with all these exceptions replaced by their overrides
         """
 
-        @wraps(fn)
-        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-            try:
-                return fn(*args, **kwargs)
-            except ClosedResourceError as e:
-                raise self.closed_resource_error from e
-            except BrokenResourceError as e:
-                raise self.broken_resource_error from e
-            except EndOfStream as e:
-                raise self.end_of_stream from e
-            except WouldBlock as e:
-                raise self.would_block from e
+        if iscoroutinefunction(fn):
+            async_fn = cast(Callable[P, CoroutineType[Any, Any, R]], fn)
 
-        return wrapper
+            @wraps(async_fn)
+            async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+                try:
+                    return await async_fn(*args, **kwargs)
+                except ClosedResourceError as e:
+                    self._raise_replace(self.closed_resource_error, e)
+                except BrokenResourceError as e:
+                    self._raise_replace(self.broken_resource_error, e)
+                except EndOfStream as e:
+                    self._raise_replace(self.end_of_stream, e)
+                except WouldBlock as e:
+                    self._raise_replace(self.would_block, e)
+
+            return async_wrapper
+        else:
+            sync_fn = cast(Callable[P, R], fn)
+
+            @wraps(sync_fn)
+            def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+                try:
+                    return sync_fn(*args, **kwargs)
+                except ClosedResourceError as e:
+                    self._raise_replace(self.closed_resource_error, e)
+                except BrokenResourceError as e:
+                    self._raise_replace(self.broken_resource_error, e)
+                except EndOfStream as e:
+                    self._raise_replace(self.end_of_stream, e)
+                except WouldBlock as e:
+                    self._raise_replace(self.would_block, e)
+
+            return sync_wrapper
+
+    @staticmethod
+    def _raise_replace(replacement: type[BaseException], e: BaseException) -> NoReturn:
+        if isinstance(e, replacement):
+            raise
+        raise replacement() from e
 
 
 class Sender[T](AnyioSender[T]):
