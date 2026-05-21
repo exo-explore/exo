@@ -1,13 +1,15 @@
 import contextlib
 import multiprocessing as mp
 from dataclasses import dataclass, field
+from functools import wraps
 from math import inf
 from multiprocessing.synchronize import Event
 from queue import Empty, Full
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Callable, Self, override
 
 from anyio import (
+    BrokenResourceError,
     CapacityLimiter,
     ClosedResourceError,
     EndOfStream,
@@ -21,34 +23,139 @@ from anyio.streams.memory import (
     MemoryObjectSendStream as AnyioSender,
 )
 from anyio.streams.memory import (
+    MemoryObjectStreamState,
+)
+from anyio.streams.memory import (
     MemoryObjectStreamState as AnyioState,
 )
 
 
+@dataclass(eq=False)
+class ErrorOverride:
+    closed_resource_error: type[ClosedResourceError] = field(
+        default=ClosedResourceError,
+    )
+    broken_resource_error: type[BrokenResourceError] = field(
+        default=BrokenResourceError,
+    )
+    end_of_stream: type[EndOfStream] = field(
+        default=EndOfStream,
+    )
+    would_block: type[WouldBlock] = field(
+        default=WouldBlock,
+    )
+
+    def patch[**P, R](self, fn: Callable[P, R], /) -> Callable[P, R]:
+        """
+        Returns a function with all these exceptions replaced by their overrides
+        """
+
+        @wraps(fn)
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            try:
+                return fn(*args, **kwargs)
+            except ClosedResourceError as e:
+                raise self.closed_resource_error from e
+            except BrokenResourceError as e:
+                raise self.broken_resource_error from e
+            except EndOfStream as e:
+                raise self.end_of_stream from e
+            except WouldBlock as e:
+                raise self.would_block from e
+
+        return wrapper
+
+
 class Sender[T](AnyioSender[T]):
+    def __init__(
+        self,
+        state: MemoryObjectStreamState[T],
+        error_override_config: ErrorOverride | None,
+    ):
+        super().__init__(_state=state)
+
+        # patch the methods we want to override errors for
+        #
+        # NOTE: it is very important that new methods which are added,
+        #       and which can throw, are patched in this block
+        if (e := error_override_config) is not None:
+            # new methods of this class
+            self.clone_receiver = e.patch(self.clone_receiver)
+
+            # overridden methods
+            self.clone = e.patch(self.clone)
+
+            # parent methods
+            self.send_nowait = e.patch(
+                self.send_nowait
+            )  # TODO: this may be excessive me-thinks??
+            self.send = e.patch(self.send)
+            self.close = e.patch(self.close)
+            self.aclose = e.patch(self.aclose)
+            self.statistics = e.patch(self.statistics)
+            self.__enter__ = e.patch(self.__enter__)
+            self.__exit__ = e.patch(self.__exit__)
+            self.__del__ = e.patch(self.__del__)
+
+        self.err_config = error_override_config
+
+    @override
     def clone(self) -> "Sender[T]":
         if self._closed:
             raise ClosedResourceError
-        return Sender(_state=self._state)
+        return Sender(self._state, self.err_config)
 
     def clone_receiver(self) -> "Receiver[T]":
         """Constructs a Receiver using a Senders shared state - similar to calling Receiver.clone() without needing the receiver"""
         if self._closed:
             raise ClosedResourceError
-        return Receiver(_state=self._state)
+        return Receiver(self._state, self.err_config)
 
 
 class Receiver[T](AnyioReceiver[T]):
+    def __init__(
+        self,
+        state: MemoryObjectStreamState[T],
+        error_override_config: ErrorOverride | None,
+    ):
+        super().__init__(_state=state)
+
+        # patch the methods we want to override errors for
+        #
+        # NOTE: it is very important that new methods which are added,
+        #       and which can throw, are patched in this block
+        if (e := error_override_config) is not None:
+            # new methods of this class
+            self.clone_sender = e.patch(self.clone_sender)
+            self.collect = e.patch(self.collect)
+            self.receive_at_least = e.patch(self.receive_at_least)
+
+            # overridden methods
+            self.clone = e.patch(self.clone)
+            self.__enter__ = e.patch(self.__enter__)
+
+            # parent methods
+            self.receive_nowait = e.patch(self.receive_nowait)
+            self.receive = e.patch(self.receive)
+            self.close = e.patch(self.close)
+            self.aclose = e.patch(self.aclose)
+            self.statistics = e.patch(self.statistics)
+            self.__exit__ = e.patch(self.__exit__)
+            self.__del__ = e.patch(self.__del__)
+
+        self.err_config = error_override_config
+
+    @override
     def clone(self) -> "Receiver[T]":
         if self._closed:
             raise ClosedResourceError
-        return Receiver(_state=self._state)
+        return Receiver(self._state, self.err_config)
 
     def clone_sender(self) -> Sender[T]:
         """Constructs a Sender using a Receivers shared state - similar to calling Sender.clone() without needing the sender"""
         if self._closed:
             raise ClosedResourceError
-        return Sender(_state=self._state)
+        return Sender(self._state, self.err_config)
 
     def collect(self) -> list[T]:
         """Collect all currently available items from this receiver"""
@@ -70,6 +177,7 @@ class Receiver[T](AnyioReceiver[T]):
             out.extend(self.collect())
         return out
 
+    @override
     def __enter__(self) -> Self:
         return self
 
@@ -285,11 +393,17 @@ class MpReceiver[T]:
 class channel[T]:  # noqa: N801
     """Create a pair of asynchronous channels for communicating within the same process"""
 
-    def __new__(cls, max_buffer_size: float = inf) -> tuple[Sender[T], Receiver[T]]:
+    def __new__(
+        cls,
+        max_buffer_size: float = inf,
+        error_override_config: ErrorOverride | None = None,
+    ) -> tuple[Sender[T], Receiver[T]]:
         if max_buffer_size != inf and not isinstance(max_buffer_size, int):
             raise ValueError("max_buffer_size must be either an integer or math.inf")
         state = AnyioState[T](max_buffer_size)
-        return Sender(_state=state), Receiver(_state=state)
+        return Sender(state, error_override_config), Receiver(
+            state, error_override_config
+        )
 
 
 class mp_channel[T]:  # noqa: N801
