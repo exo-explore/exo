@@ -3,7 +3,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 import anyio
-from anyio import fail_after, to_thread
+from anyio import BrokenResourceError, ClosedResourceError, fail_after, to_thread
+from anyio.lowlevel import checkpoint as anyio_checkpoint
 from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
@@ -72,8 +73,12 @@ class Worker:
         api_port: int,
     ):
         self.node_id: NodeId = node_id
+
+        # NOTE: wherever these two are used, catching (BrokenResourceError, ClosedResourceError)
+        #       means event router shut down - so worker must shut down
         self.event_receiver = event_receiver
         self.event_sender = event_sender
+
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.api_port = api_port
@@ -113,6 +118,8 @@ class Worker:
         finally:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")
+
+            # (don't you need a cancel shield here??)
             self.event_sender.close()
             self.command_sender.close()
             self.download_command_sender.close()
@@ -123,7 +130,7 @@ class Worker:
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
             async for info in info_stream:
-                await self.event_sender.send(
+                await self._send_event(
                     NodeGatheredInfo(
                         node_id=self.node_id,
                         when=str(datetime.now(tz=timezone.utc)),
@@ -132,44 +139,60 @@ class Worker:
                 )
 
     async def _event_applier(self):
-        with self.event_receiver as events:
-            async for event in events:
-                # 2. for each event, apply it to the state
-                self.state = apply(self.state, event=event)
-                event = event.event
+        try:
+            with self.event_receiver as events:
+                async for event in events:
+                    # 2. for each event, apply it to the state
+                    self.state = apply(self.state, event=event)
+                    event = event.event
 
-                if isinstance(event, InstanceDeleted):
-                    self._instance_backoff.reset(event.instance_id)
+                    if isinstance(event, InstanceDeleted):
+                        self._instance_backoff.reset(event.instance_id)
 
-                # Buffer input image chunks for image editing
-                if isinstance(event, InputChunkReceived):
-                    cmd_id = event.command_id
-                    if cmd_id not in self.input_chunk_buffer:
-                        self.input_chunk_buffer[cmd_id] = {}
-                        self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
+                    # Buffer input image chunks for image editing
+                    if isinstance(event, InputChunkReceived):
+                        cmd_id = event.command_id
+                        if cmd_id not in self.input_chunk_buffer:
+                            self.input_chunk_buffer[cmd_id] = {}
+                            self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
 
-                    self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
-                        event.chunk
-                    )
-                    if (
-                        len(self.input_chunk_buffer[cmd_id])
-                        == self.input_chunk_counts[cmd_id]
-                    ):
-                        per_image: defaultdict[int, list[InputImageChunk]] = (
-                            defaultdict(list)
+                        self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
+                            event.chunk
                         )
-                        for chunk in self.input_chunk_buffer[cmd_id].values():
-                            per_image[chunk.image_index].append(chunk)
-                        for chunks_for_image in per_image.values():
-                            sorted_chunks = sorted(
-                                chunks_for_image, key=lambda c: c.chunk_index
+                        if (
+                            len(self.input_chunk_buffer[cmd_id])
+                            == self.input_chunk_counts[cmd_id]
+                        ):
+                            per_image: defaultdict[int, list[InputImageChunk]] = (
+                                defaultdict(list)
                             )
-                            img = Base64Image("".join(c.data for c in sorted_chunks))
-                            self.image_cache[
-                                Base64ImageHash(
-                                    hashlib.sha256(img.encode("ascii")).hexdigest()
+                            for chunk in self.input_chunk_buffer[cmd_id].values():
+                                per_image[chunk.image_index].append(chunk)
+                            for chunks_for_image in per_image.values():
+                                sorted_chunks = sorted(
+                                    chunks_for_image, key=lambda c: c.chunk_index
                                 )
-                            ] = img
+                                img = Base64Image(
+                                    "".join(c.data for c in sorted_chunks)
+                                )
+                                self.image_cache[
+                                    Base64ImageHash(
+                                        hashlib.sha256(img.encode("ascii")).hexdigest()
+                                    )
+                                ] = img
+        except (BrokenResourceError, ClosedResourceError):
+            pass  # Event router has been closed => stop worker
+        finally:
+            self._tg.cancel_tasks()
+            await anyio_checkpoint()
+
+    async def _send_event(self, e: Event):
+        try:
+            await self.event_sender.send(e)
+        except (BrokenResourceError, ClosedResourceError):
+            # Event router has been closed - stop worker & yield
+            self._tg.cancel_tasks()
+            await anyio_checkpoint()
 
     async def _reconcile_custom_cards(self) -> None:
         while True:
@@ -218,14 +241,14 @@ class Worker:
 
             logger.info(f"Worker plan: {task.__class__.__name__}")
             assert task.task_status
-            await self.event_sender.send(TaskCreated(task_id=task.task_id, task=task))
+            await self._send_event(TaskCreated(task_id=task.task_id, task=task))
 
             # lets not kill the worker if a runner is unresponsive
             match task:
                 case CreateRunner():
                     await self._create_supervisor(task)
                     self._instance_backoff.record_attempt(task.instance_id)
-                    await self.event_sender.send(
+                    await self._send_event(
                         TaskStatusUpdated(
                             task_id=task.task_id, task_status=TaskStatus.Complete
                         )
@@ -239,7 +262,7 @@ class Worker:
                     )
                     if found_path is not None:
                         logger.info(f"Model {model_id} found at {found_path}")
-                        await self.event_sender.send(
+                        await self._send_event(
                             NodeDownloadProgress(
                                 download_progress=DownloadCompleted(
                                     node_id=self.node_id,
@@ -250,7 +273,7 @@ class Worker:
                                 )
                             )
                         )
-                        await self.event_sender.send(
+                        await self._send_event(
                             TaskStatusUpdated(
                                 task_id=task.task_id,
                                 task_status=TaskStatus.Complete,
@@ -266,7 +289,7 @@ class Worker:
                                 ),
                             )
                         )
-                        await self.event_sender.send(
+                        await self._send_event(
                             TaskStatusUpdated(
                                 task_id=task.task_id,
                                 task_status=TaskStatus.Running,
@@ -278,7 +301,7 @@ class Worker:
                         with fail_after(3):
                             await runner.start_task(task)
                     except TimeoutError:
-                        await self.event_sender.send(
+                        await self._send_event(
                             TaskStatusUpdated(
                                 task_id=task.task_id, task_status=TaskStatus.TimedOut
                             )
@@ -289,7 +312,7 @@ class Worker:
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):
                     await self.runners[runner_id].cancel_task(cancelled_task_id)
-                    await self.event_sender.send(
+                    await self._send_event(
                         TaskStatusUpdated(
                             task_id=task.task_id, task_status=TaskStatus.Complete
                         )
@@ -404,7 +427,7 @@ class Worker:
                 )
                 if edge not in edges:
                     logger.debug(f"ping discovered {edge=}")
-                    await self.event_sender.send(
+                    await self._send_event(
                         TopologyEdgeCreated(
                             conn=Connection(source=self.node_id, sink=nid, edge=edge)
                         )
@@ -421,6 +444,6 @@ class Worker:
                     or conn.edge.sink_multiaddr.ip_address not in conns[conn.sink]
                 ):
                     logger.debug(f"ping failed to discover {conn=}")
-                    await self.event_sender.send(TopologyEdgeDeleted(conn=conn))
+                    await self._send_event(TopologyEdgeDeleted(conn=conn))
 
             await anyio.sleep(10)
