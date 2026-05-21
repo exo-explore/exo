@@ -205,7 +205,7 @@ class Node:
                     and self.master is not None
                 ):
                     assert not result.is_new_master, (
-                        "there cannot be new master if we continue to be master"
+                        "cannot be new master if we remain master"
                     )
                     logger.info("Node elected Master - maintaining self")
                 elif (

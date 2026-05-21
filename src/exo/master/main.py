@@ -1,8 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
 import anyio
-from anyio import BrokenResourceError, ClosedResourceError
-from anyio.lowlevel import checkpoint as anyio_checkpoint
 from loguru import logger
 
 from exo.master.placement import (
@@ -13,6 +11,10 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.master.placement_utils import find_ip_prioritised
+from exo.routing.event_router import (
+    EventRouterBrokenResourceError,
+    EventRouterClosedResourceError,
+)
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
@@ -138,24 +140,12 @@ class Master:
         self.local_event_receiver = local_event_receiver
         self.global_event_sender = global_event_sender
         self.download_command_sender = download_command_sender
-
-        # NOTE: wherever event sender used, catching (BrokenResourceError, ClosedResourceError)
-        #       means event router shut down - so worker must shut down
         self.event_sender = event_sender
-
         self._system_id = SystemId()
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
-
-    async def _send_event(self, e: Event):
-        try:
-            await self.event_sender.send(e)
-        except (BrokenResourceError, ClosedResourceError):
-            # Event router has been closed - stop master & yield
-            self._tg.cancel_tasks()
-            await anyio_checkpoint()
 
     async def run(self):
         logger.info("Starting Master")
@@ -165,6 +155,9 @@ class Master:
                 tg.start_soon(self._event_processor)
                 tg.start_soon(self._command_processor)
                 tg.start_soon(self._plan)
+        except* (EventRouterBrokenResourceError, EventRouterClosedResourceError):
+            # Event router has been closed (try-star syntax handles error groups)
+            pass
         finally:
             self._event_log.close()
             self.global_event_sender.close()
@@ -466,7 +459,7 @@ class Master:
                                     IndexedEvent(idx=i, event=event)
                                 )
                     for event in generated_events:
-                        await self._send_event(event)
+                        await self.event_sender.send(event)
                 except ValueError as e:
                     logger.opt(exception=e).warning("Error in command processor")
 
@@ -478,7 +471,9 @@ class Master:
             for instance_id, instance in self.state.instances.items():
                 for node_id in instance.shard_assignments.node_to_runner:
                     if node_id not in connected_node_ids:
-                        await self._send_event(InstanceDeleted(instance_id=instance_id))
+                        await self.event_sender.send(
+                            InstanceDeleted(instance_id=instance_id)
+                        )
                         break
 
             # time out dead nodes
@@ -486,7 +481,7 @@ class Master:
                 now = datetime.now(tz=timezone.utc)
                 if now - time > timedelta(seconds=30):
                     logger.info(f"Manually removing node {node_id} due to inactivity")
-                    await self._send_event(NodeTimedOut(node_id=node_id))
+                    await self.event_sender.send(NodeTimedOut(node_id=node_id))
 
             await anyio.sleep(10)
 
@@ -552,7 +547,9 @@ class Master:
         for trace_data in self._pending_traces[task_id].values():
             all_trace_data.extend(trace_data)
 
-        await self._send_event(TracesMerged(task_id=task_id, traces=all_trace_data))
+        await self.event_sender.send(
+            TracesMerged(task_id=task_id, traces=all_trace_data)
+        )
 
         del self._pending_traces[task_id]
         if task_id in self._expected_ranks:
