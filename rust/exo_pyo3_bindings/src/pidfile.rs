@@ -1,9 +1,10 @@
 use pidfile_rs::{Pidfile, PidfileError};
 use pyo3::exceptions::PyException;
 use pyo3::prelude::{PyModule, PyModuleMethods};
-use pyo3::{Bound, PyErr, PyResult, Python, pyclass, pymethods};
+use pyo3::{pyclass, pymethods, Bound, PyErr, PyResult, Python};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::fs::Permissions;
+use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::prelude::PermissionsExt;
 use std::path::PathBuf;
 
@@ -76,6 +77,35 @@ impl PyPidfile {
     /// The file is truncated before writing.
     fn write<'py>(&mut self, py: Python<'py>) -> PyResult<()> {
         self.0.write().map_err(|e| PyPidfileError(e).into_pyerr(py))
+    }
+
+    /// Extracts the raw file descriptor.
+    ///
+    /// This function is typically used to **borrow** an owned file descriptor.
+    /// When used in this way, this method does **not** pass ownership of the
+    /// raw file descriptor to the caller, and the file descriptor is only
+    /// guaranteed to be valid while the original object has not yet been
+    /// destroyed.
+    fn as_raw_fd(&self) -> RawFd {
+        self.0.as_raw_fd()
+    }
+
+    /// Checks if cleanup is currently enabled.
+    ///
+    /// Enabled cleanup means normal destructor cleanup logic will run,
+    /// and if disabled then it won't run. It should always be `True`
+    /// unless dangerously changed by [`Self::_dangerously_set_cleanup`].
+    #[getter]
+    fn cleanup(&self) -> bool {
+        self.0.will_cleanup()
+    }
+
+    /// Dangerously configures if destructor cleanup logic should run.
+    ///
+    /// Disabling cleanup can be used to prevent removal of the file,
+    /// for the purposes of e.g. double-fork demonization.
+    fn _dangerously_set_cleanup(&mut self, cleanup: bool) {
+        unsafe { self.0.config_cleanup(cleanup) }
     }
 }
 

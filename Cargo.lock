@@ -3087,8 +3087,7 @@ dependencies = [
 [[package]]
 name = "pidfile-rs"
 version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1a8aa9a30b1b65ef48b333931b80f2324a14e00208eb2b8f5788f1180791bcc"
+source = "git+https://github.com/AndreiCravtov/pidfile-rs#faf6b79e40e931c149f1f58dc4fb53ec1be3ff3c"
 dependencies = [
  "flopen",
  "libc",
@@ -4220,6 +4219,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df7f62577c25e07834649fc3b39fafdc597c0a3527dc1c60129201ccfcbaa50c"
 
 [[package]]
+name = "tempfile"
+version = "3.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d31c77bdf42a745371d260a26ca7163f1e0924b64afa0b688e61b5a9fa02f16"
+dependencies = [
+ "fastrand",
+ "getrandom 0.3.4",
+ "once_cell",
+ "rustix",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4662,6 +4674,14 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "util"
 version = "0.0.1"
+dependencies = [
+ "flopen",
+ "libc",
+ "log",
+ "nix 0.31.2",
+ "tempfile",
+ "thiserror 2.0.17",
+]
 
 [[package]]
 name = "uuid"
