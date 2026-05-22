@@ -281,11 +281,9 @@ def main():
     try:
         pidfile = Pidfile("/", 0o0600)
         pidfile.write()  # TODO: move this to somewhere later
-    except PidfileError as e:
+    except (PidfileError, OSError) as e:
         print(e, file=sys.stderr)
         raise SystemExit(1) from e
-    except OSError as e:
-        print("we literally didnt catch this WHOOPS")
 
     mode: Literal["normal", "fg", "bg"] = "fg"
     # TODO: here goes daemonization logic
