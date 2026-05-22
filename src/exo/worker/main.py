@@ -114,8 +114,8 @@ class Worker:
                 tg.start_soon(self._poll_connection_updates)
                 tg.start_soon(self._reconcile_custom_cards)
         except* (EventRouterBrokenResourceError, EventRouterClosedResourceError):
+            logger.error("caught this one => router sender died")
             # Event router has been closed (try-star syntax handles error groups)
-            pass
         finally:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")

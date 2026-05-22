@@ -100,6 +100,7 @@ class EventRouter:
         self._tg.cancel_tasks()
 
     async def _ingest(self, system_id: SystemId, recv: Receiver[Event]):
+        return
         idx = 0
         with recv as events:
             async for event in events:
