@@ -282,6 +282,7 @@ def main():
         pidfile = Pidfile("/run/fabeld/fooeio.pid", 0o0600)
         pidfile.write()  # TODO: move this to somewhere later
     except PidfileError as e:
+        print("wee woo its a pidfile error")
         print(e, file=sys.stderr)
         raise SystemExit(1) from e
 
