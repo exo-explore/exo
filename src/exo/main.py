@@ -289,7 +289,9 @@ def main():
     try:
         if args.legacy_daemon:
             with DaemonContext(
-                detach_process=True, files_preserve=[pidfile.as_raw_fd()]
+                detach_process=True,
+                files_preserve=[pidfile.as_raw_fd()],
+                stderr=sys.stderr,
             ):
                 try:
                     pidfile.write()
