@@ -615,6 +615,8 @@ class InfoGatherer:
                             metrics = MacmonMetrics.from_raw_json(text)
                         await self.info_sender.send(metrics)
                 finally:
+                    # we need to manually close to prevent process lookup error
+                    # from bubbling up to log when shutting down with ctrl+c
                     with contextlib.suppress(ProcessLookupError):
                         await p.aclose()
             except TimeoutError:
