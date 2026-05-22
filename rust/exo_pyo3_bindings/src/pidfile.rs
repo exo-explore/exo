@@ -16,12 +16,9 @@ pub struct PyPidfileError(PidfileError);
 impl PyPidfileError {
     // TODO: I actually like this pattern a LOT more but how to abstract??
     fn into_pyerr(self, py: Python) -> PyErr {
-        match self.0 {
-            PidfileError::Io(e) => e.into(), // Io errors are already mapped to python exceptions
-            PidfileError::AlreadyRunning { .. } => match Bound::new(py, self) {
-                Ok(err) => PyErr::from_value(err.into_any()),
-                Err(err) => err,
-            },
+        match Bound::new(py, self) {
+            Ok(err) => PyErr::from_value(err.into_any()),
+            Err(err) => err,
         }
     }
 }
