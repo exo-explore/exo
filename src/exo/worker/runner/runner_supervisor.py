@@ -1,5 +1,6 @@
 import contextlib
 import multiprocessing as mp
+import os
 import signal
 from dataclasses import dataclass, field
 from typing import Self
@@ -49,6 +50,35 @@ PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
 
 
+def _sigterm_handler(signum, frame):
+    """
+    SIGTERM handler: forcibly SIGKILL all direct child processes so that
+    orphaned python3 MLX-runner processes do not survive a kickstart.
+    Re-raises default SIGTERM so the supervisor itself still exits cleanly.
+    """
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["pgrep", "-P", str(os.getpid())],
+            capture_output=True, text=True, timeout=2
+        )
+        for pid_str in result.stdout.strip().splitlines():
+            try:
+                os.kill(int(pid_str), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+    except Exception:
+        pass
+    # Restore default and re-raise so the process exits with SIGTERM.
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+
+# Install at import time so the handler is active for the entire supervisor
+# lifetime, including the finally block inside run().
+signal.signal(signal.SIGTERM, _sigterm_handler)
+
+
 @dataclass(eq=False)
 class RunnerSupervisor:
     shard_metadata: ShardMetadata
@@ -75,6 +105,12 @@ class RunnerSupervisor:
             return self.runner_process.is_alive()
         except ValueError:
             return False
+
+    def _runner_exitcode(self) -> int | None:
+        try:
+            return self.runner_process.exitcode
+        except ValueError:
+            return -1
 
     @classmethod
     def create(
@@ -115,6 +151,29 @@ class RunnerSupervisor:
 
         return self
 
+    # ------------------------------------------------------------------
+    # Non-blocking helpers — each offloads a blocking call to a thread so
+    # the asyncio event loop (and therefore the API server) stays alive.
+    # ------------------------------------------------------------------
+
+    async def _join_runner(self, timeout: float) -> None:
+        """Join the runner process without blocking the event loop."""
+        await to_thread.run_sync(
+            lambda: self.runner_process.join(timeout), abandon_on_cancel=True
+        )
+
+    async def _terminate_runner(self) -> None:
+        """Send SIGTERM to the runner without blocking the event loop."""
+        await to_thread.run_sync(
+            self.runner_process.terminate, abandon_on_cancel=True
+        )
+
+    async def _kill_runner(self) -> None:
+        """Send SIGKILL to the runner without blocking the event loop."""
+        await to_thread.run_sync(
+            self.runner_process.kill, abandon_on_cancel=True
+        )
+
     async def run(self):
         self.runner_process.start()
         try:
@@ -131,19 +190,22 @@ class RunnerSupervisor:
                 self._task_sender.close()
             with contextlib.suppress(ClosedResourceError):
                 self._event_sender.close()
-            with contextlib.suppress(ClosedResourceError):
-                self._cancel_sender.send(CANCEL_ALL_TASKS)
+            # Offload the pipe write to a thread with a hard 2-second cap so a
+            # blocked cancel pipe cannot stall the event loop.
+            with contextlib.suppress(ClosedResourceError, TimeoutError, Exception):
+                with anyio.move_on_after(2.0):
+                    await self._cancel_sender.send_async(CANCEL_ALL_TASKS)
             with contextlib.suppress(ClosedResourceError):
                 self._cancel_sender.close()
 
-            await to_thread.run_sync(self.runner_process.join, 5)
+            await self._join_runner(5)
 
             if self._runner_is_alive():
                 logger.warning(
                     "Runner process didn't shutdown succesfully, terminating"
                 )
-                self.runner_process.terminate()
-                self.runner_process.join(timeout=10)
+                await self._terminate_runner()
+                await self._join_runner(10)
 
                 if not self._runner_is_alive():
                     logger.warning("Terminated nicely in the first attempt!")
@@ -151,8 +213,8 @@ class RunnerSupervisor:
                 else:
                     # Try really hard to terminate
                     for i in range(2, 11):
-                        self.runner_process.terminate()
-                        self.runner_process.join(timeout=2)
+                        await self._terminate_runner()
+                        await self._join_runner(2)
                         if not self._runner_is_alive():
                             logger.warning(f"That took {i} attempts :)")
                             break
@@ -164,8 +226,8 @@ class RunnerSupervisor:
                         j = 0
                         while self._runner_is_alive():
                             j += 1
-                            self.runner_process.kill()
-                            self.runner_process.join(timeout=5)
+                            await self._kill_runner()
+                            await self._join_runner(5)
                             logger.warning(f"That took {j} attempts :(")
             else:
                 logger.info("Runner process succesfully terminated")
@@ -262,8 +324,8 @@ class RunnerSupervisor:
         logger.info("Checking runner's status")
         if self._runner_is_alive():
             logger.info("Runner was found to be alive, attempting to join process")
-            await to_thread.run_sync(self.runner_process.join, 5)
-        rc = self.runner_process.exitcode
+            await self._join_runner(5)
+        rc = self._runner_exitcode()
         logger.info(f"Runner exited with exit code {rc}")
         if rc == 0:
             return
