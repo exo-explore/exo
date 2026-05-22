@@ -211,7 +211,6 @@ class RunnerSupervisor:
         task_sender, task_recv = mp_channel[Task]()
         cancel_sender, cancel_recv = mp_channel[TaskId]()
 
-        logger.error("ABOUT TO START THE ENTRYPOINT..???")
         runner_process = AsyncProcess(
             target=entrypoint,
             args=(

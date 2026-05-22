@@ -47,8 +47,6 @@ def entrypoint(
     global logger
     logger = _logger
 
-    logger.error("WE ARE IN BOYS")
-
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
