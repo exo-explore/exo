@@ -1,7 +1,7 @@
 use pidfile_rs::{Pidfile, PidfileError};
 use pyo3::exceptions::PyException;
 use pyo3::prelude::{PyModule, PyModuleMethods};
-use pyo3::{Bound, PyErr, PyResult, Python, pyclass, pymethods};
+use pyo3::{pyclass, pymethods, Bound, PyErr, PyResult, Python};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::fs;
 use std::fs::Permissions;
@@ -69,7 +69,8 @@ impl PyPidfile {
     fn py_new(py: Python, path: PathBuf, mode: u32) -> PyResult<Self> {
         // create all parent directories if don't exist
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent)
+                .map_err(|e| PyPidfileError(PidfileError::Io(e)).into_pyerr(py))?;
         }
 
         Ok(Self(

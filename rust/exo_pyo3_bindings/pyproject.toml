@@ -4,12 +4,12 @@ build-backend = "maturin"
 
 [project]
 name = "exo_pyo3_bindings"
-version = "0.2.5"
+version = "0.2.6"
 description = "Add your description here"
 readme = "README.md"
 authors = [
-  { name = "Andrei Cravtov", email = "the.andrei.cravtov@gmail.com" },
-  { name = "Evan Quiney", email = "evanev7@gmail.com" },
+    { name = "Andrei Cravtov", email = "the.andrei.cravtov@gmail.com" },
+    { name = "Evan Quiney", email = "evanev7@gmail.com" },
 ]
 requires-python = ">=3.13"
 dependencies = []
