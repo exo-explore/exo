@@ -5,10 +5,11 @@ import resource
 import signal
 import sys
 from dataclasses import dataclass, field
-from typing import Literal, Self
+from typing import Self
 
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
+from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
 from exo_pyo3_bindings import Pidfile, PidfileError
 from loguru import logger
 from pydantic import PositiveInt
@@ -274,21 +275,41 @@ class Node:
 
 
 def main():
-    # Parse args first => --help or bad args don;t require PID-locking
+    # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
 
-    # Exit early if no PID file (not compatible with double-for daemonization yet)
+    # Exit early if cannot acquire PID file
     try:
-        pidfile = Pidfile("/run/fabeld/fooeio.pid", 0o0600)
-        pidfile.write()  # TODO: move this to somewhere later
+        pidfile = Pidfile(EXO_PID_FILE, 0o0600)
     except PidfileError as e:
-        print("wee woo its a pidfile error")
         print(e, file=sys.stderr)
         raise SystemExit(1) from e
 
-    mode: Literal["normal", "fg", "bg"] = "fg"
-    # TODO: here goes daemonization logic
+    #  1) if daemonizing => fork then write PID
+    #  2) otherwise      => just write PID
+    try:
+        if args.legacy_daemon:
+            with DaemonContext(
+                detach_process=True, files_preserve=[pidfile.as_raw_fd()]
+            ):
+                try:
+                    pidfile.write()
+                except PidfileError as e:
+                    print(e, file=sys.stderr)
+                    raise SystemExit(1) from e
+                main_inner(args)
+        else:
+            try:
+                pidfile.write()
+            except PidfileError as e:
+                print(e, file=sys.stderr)
+                raise SystemExit(1) from e
+            main_inner(args)
+    finally:
+        del pidfile  # ensure this object is GC-d
 
+
+def main_inner(args: "Args"):
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
@@ -335,7 +356,6 @@ def main():
     finally:
         logger.info("EXO Shutdown complete")
         logger_cleanup()
-        del pidfile
 
 
 class Args(FrozenModel):
@@ -350,6 +370,7 @@ class Args(FrozenModel):
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
     no_stdio: bool = False
+    legacy_daemon: bool = False
     bootstrap_peers: list[str] = []
     libp2p_port: int
 
@@ -413,6 +434,11 @@ class Args(FrozenModel):
             "--no-stdio",
             action="store_true",
             help="Detach stdin/stdout/stderr to /dev/null after logging is configured",
+        )
+        parser.add_argument(
+            "--legacy-daemon",
+            action="store_true",
+            help="Run as a legacy SysV-style background daemon using double-fork daemonization",
         )
         parser.add_argument(
             "--bootstrap-peers",
