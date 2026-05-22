@@ -1,3 +1,4 @@
+import contextlib
 import os
 import shutil
 import sys
@@ -592,14 +593,15 @@ class InfoGatherer:
         read_timeout = max(macmon_interval * 10, 30)
         while True:
             try:
-                async with await open_process(
+                p = await open_process(
                     [
                         macmon_path,
                         "pipe",
                         "--interval",
                         str(macmon_interval * 1000),
                     ]
-                ) as p:
+                )
+                try:
                     if not p.stdout:
                         logger.critical("MacMon closed stdout")
                         return
@@ -612,6 +614,9 @@ class InfoGatherer:
                             text = data.decode("utf-8", errors="replace").strip()
                             metrics = MacmonMetrics.from_raw_json(text)
                         await self.info_sender.send(metrics)
+                finally:
+                    with contextlib.suppress(ProcessLookupError):
+                        await p.aclose()
             except TimeoutError:
                 logger.warning(
                     f"MacMon produced no output for {read_timeout}s, restarting"
