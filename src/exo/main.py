@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Self
 
 import anyio
+from anyio.lowlevel import checkpoint as anyio_checkpoint
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -190,7 +191,7 @@ class Node:
                 # - Shut down and re-create the API
 
                 if result.is_new_master:
-                    await anyio.sleep(0)
+                    await anyio_checkpoint()
                     self.event_router.shutdown()
                     self.event_router = EventRouter(
                         result.session_id,
@@ -203,7 +204,10 @@ class Node:
                     result.session_id.master_node_id == self.node_id
                     and self.master is not None
                 ):
-                    logger.info("Node elected Master")
+                    assert not result.is_new_master, (
+                        "cannot be new master if we remain master"
+                    )
+                    logger.info("Node elected Master - maintaining self")
                 elif (
                     result.session_id.master_node_id == self.node_id
                     and self.master is None
