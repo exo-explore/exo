@@ -279,7 +279,7 @@ def main():
 
     # Exit early if no PID file (not compatible with double-for daemonization yet)
     try:
-        pidfile = Pidfile(EXO_PID_FILE, 0o0600)
+        pidfile = Pidfile("/", 0o0600)
         pidfile.write()  # TODO: move this to somewhere later
     except PidfileError as e:
         print(e, file=sys.stderr)
