@@ -5,10 +5,11 @@ import resource
 import signal
 import sys
 from dataclasses import dataclass, field
-from typing import Self
+from typing import Literal, Self
 
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
+from exo_pyo3_bindings import Pidfile, PidfileError
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -19,13 +20,12 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_id_keypair
-from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG
+from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG, EXO_PID_FILE
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
 from exo.utils.daemon import detach_stdio_to_devnull
-from exo.utils.pidfile import PidfileLockError, acquire_exo_pidfile
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
@@ -274,14 +274,22 @@ class Node:
 
 
 def main():
+    # Parse args first => --help or bad args don;t require PID-locking
+    args = Args.parse()
+
     # Exit early if no PID file (not compatible with double-for daemonization yet)
     try:
-        pidfile = acquire_exo_pidfile()
-    except PidfileLockError as exception:
-        print(exception, file=sys.stderr)
-        raise SystemExit(1) from exception
+        pidfile = Pidfile(EXO_PID_FILE, 0o0600)
+        pidfile.write()  # TODO: move this to somewhere later
+    except PidfileError as e:
+        print(e, file=sys.stderr)
+        raise SystemExit(1) from e
+    except OSError as e:
+        print("we literally didnt catch this WHOOPS")
 
-    args = Args.parse()
+    mode: Literal["normal", "fg", "bg"] = "fg"
+    # TODO: here goes daemonization logic
+
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))

@@ -8,34 +8,26 @@ import textwrap
 from pathlib import Path
 from typing import Final
 
-import pytest
-
-import exo.utils.pidfile as pidfile
-from exo.utils.pidfile import acquire_exo_pidfile
+from exo_pyo3_bindings.exo_pyo3_bindings import Pidfile
 
 _CHILD_ACQUIRE_PIDFILE_SCRIPT: Final = textwrap.dedent(
     """
     import sys
     from pathlib import Path
-    from unittest.mock import patch
 
-    import exo.utils.pidfile as pidfile
-    from exo.utils.pidfile import PidfileLockError, acquire_exo_pidfile
+    from exo_pyo3_bindings.exo_pyo3_bindings import Pidfile, PidfileError
 
-    with patch.object(pidfile, "EXO_PID_FILE", Path(sys.argv[1])):
-        try:
-            handle = acquire_exo_pidfile()
-        except PidfileLockError as exception:
-            print(str(exception))
-            raise SystemExit(73) from exception
+    path = Path(sys.argv[1])
+    try:
+        handle = Pidfile(path, 0o0600)
+        handle.write()
+    except (OSError, PidfileError) as exception:
+        print(f"Failed to acquire EXO pidfile at {path}: {exception}")
+        raise SystemExit(73) from exception
 
-        del handle
+    del handle
     """
 )
-
-
-def _use_pidfile_path(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
-    monkeypatch.setattr(pidfile, "EXO_PID_FILE", path)
 
 
 def _run_child_acquire_pidfile(path: Path) -> subprocess.CompletedProcess[str]:
@@ -49,12 +41,11 @@ def _run_child_acquire_pidfile(path: Path) -> subprocess.CompletedProcess[str]:
 
 def test_acquire_exo_pidfile_writes_current_pid_and_removes_on_drop(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "exo.pid"
-    _use_pidfile_path(monkeypatch, path)
 
-    handle = acquire_exo_pidfile()
+    handle = Pidfile(path, 0o0600)
+    handle.write()
     assert path.read_text() == str(os.getpid())
 
     del handle
@@ -65,12 +56,11 @@ def test_acquire_exo_pidfile_writes_current_pid_and_removes_on_drop(
 
 def test_acquire_exo_pidfile_rejects_second_process(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "exo.pid"
-    _use_pidfile_path(monkeypatch, path)
 
-    handle = acquire_exo_pidfile()
+    handle = Pidfile(path, 0o0600)
+    handle.write()
     try:
         blocked_child = _run_child_acquire_pidfile(path)
         assert blocked_child.returncode == 73
