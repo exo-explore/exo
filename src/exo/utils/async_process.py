@@ -101,6 +101,7 @@ class AsyncProcess:
                     daemon=self._daemon,
                 )
                 process.start()
+                logger.error("IT SHOULDVE BEGUN BY NOW!!")
                 pid = process.pid
                 if pid is None:
                     raise RuntimeError("started process has no pid")
