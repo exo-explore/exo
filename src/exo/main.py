@@ -291,7 +291,7 @@ def main():
             with DaemonContext(
                 detach_process=True,
                 files_preserve=[pidfile.as_raw_fd()],
-                stderr=os.devnull,  # TODO: remove
+                stderr=open(os.devnull, "w"),  # TODO: remove
             ):
                 try:
                     pidfile.write()
