@@ -1,8 +1,9 @@
 use pidfile_rs::{Pidfile, PidfileError};
 use pyo3::exceptions::PyException;
 use pyo3::prelude::{PyModule, PyModuleMethods};
-use pyo3::{pyclass, pymethods, Bound, PyErr, PyResult, Python};
+use pyo3::{Bound, PyErr, PyResult, Python, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use std::fs;
 use std::fs::Permissions;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::prelude::PermissionsExt;
@@ -15,9 +16,12 @@ pub struct PyPidfileError(PidfileError);
 impl PyPidfileError {
     // TODO: I actually like this pattern a LOT more but how to abstract??
     fn into_pyerr(self, py: Python) -> PyErr {
-        match Bound::new(py, self) {
-            Ok(err) => PyErr::from_value(err.into_any()),
-            Err(err) => err,
+        match self.0 {
+            PidfileError::Io(e) => e.into(), // Io errors are already mapped to python exceptions
+            PidfileError::AlreadyRunning { .. } => match Bound::new(py, self) {
+                Ok(err) => PyErr::from_value(err.into_any()),
+                Err(err) => err,
+            },
         }
     }
 }
@@ -66,6 +70,11 @@ impl PyPidfile {
     /// the PID file yet.
     #[new]
     fn py_new(py: Python, path: PathBuf, mode: u32) -> PyResult<Self> {
+        // create all parent directories if don't exist
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
         Ok(Self(
             Pidfile::new(&path, Permissions::from_mode(mode))
                 .map_err(|e| PyPidfileError(e).into_pyerr(py))?,
