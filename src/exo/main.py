@@ -25,6 +25,7 @@ from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG, EXO_PID_FILE
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
+from exo.utils import STDIO_FDS
 from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
@@ -284,18 +285,16 @@ def main():
         print(e, file=sys.stderr)
         raise SystemExit(1) from e
 
-    #  1) if daemonizing => fork then write PID
-    #  2) otherwise      => just write PID
     try:
         if args.legacy_daemon:
-            # create STDIO devnull files => forces DaemonContext to NOT close them,
-            # as closing STDIO will break multiprocessing (and hence runner)
+            # keep stdio backed by explicit /dev/null streams. multiprocessing spawn expects
+            # valid stdio FDs; letting DaemonContext close/reopen them can break runner startup.
             for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
                 if stream is not None:
                     stream.flush()
-            stdin = open(os.devnull, "r")
-            stdout = open(os.devnull, "w")
-            stderr = open(os.devnull, "w")
+            stdin = open(os.devnull, "r")  # noqa: SIM115
+            stdout = open(os.devnull, "w")  # noqa: SIM115
+            stderr = open(os.devnull, "w")  # noqa: SIM115
 
             with DaemonContext(
                 detach_process=True,
@@ -304,6 +303,13 @@ def main():
                 stdout=stdout,
                 stderr=stderr,
             ):
+                # cleanup loose file descriptors (as long as they aren't stdio)
+                for f in (
+                    f for f in (stdin, stdout, stderr) if f.fileno() not in STDIO_FDS
+                ):
+                    f.close()
+
+                # 1) if daemonizing => fork then write PID
                 try:
                     pidfile.write()
                 except PidfileError as e:
@@ -311,6 +317,7 @@ def main():
                     raise SystemExit(1) from e
                 main_inner(args)
         else:
+            # 2) otherwise      => just write PID
             try:
                 pidfile.write()
             except PidfileError as e:
