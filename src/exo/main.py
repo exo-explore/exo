@@ -26,7 +26,6 @@ from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
-from exo.utils.daemon import detach_stdio_to_devnull
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
@@ -318,9 +317,6 @@ def main_inner(args: "Args"):
 
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
-    if args.no_stdio:
-        detach_stdio_to_devnull()
-        logger.info("Detached stdio to /dev/null")
 
     logger.info(f"{'=' * 40}")
     logger.info(f"Starting EXO | pid={os.getpid()}")
@@ -369,7 +365,6 @@ class Args(FrozenModel):
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
-    no_stdio: bool = False
     legacy_daemon: bool = False
     bootstrap_peers: list[str] = []
     libp2p_port: int
@@ -429,11 +424,6 @@ class Args(FrozenModel):
             "--no-batch",
             action="store_true",
             help="Disable continuous batching, use sequential generation",
-        )
-        parser.add_argument(
-            "--no-stdio",
-            action="store_true",
-            help="Detach stdin/stdout/stderr to /dev/null after logging is configured",
         )
         parser.add_argument(
             "--legacy-daemon",
