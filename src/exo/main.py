@@ -288,7 +288,8 @@ def main():
     #  2) otherwise      => just write PID
     try:
         if args.legacy_daemon:
-            # create stdio devnull files (the devnull file creation in DaemonContext is race-y I think??)
+            # create STDIO devnull files => forces DaemonContext to NOT close them,
+            # as closing STDIO will break multiprocessing (and hence runner)
             for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
                 if stream is not None:
                     stream.flush()
