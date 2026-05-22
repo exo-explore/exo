@@ -288,10 +288,20 @@ def main():
     #  2) otherwise      => just write PID
     try:
         if args.legacy_daemon:
+            # create stdio devnull files (the devnull file creation in DaemonContext is race-y I think??)
+            for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
+                if stream is not None:
+                    stream.flush()
+            stdin = open(os.devnull, "r")
+            stdout = open(os.devnull, "w")
+            stderr = open(os.devnull, "w")
+
             with DaemonContext(
                 detach_process=True,
                 files_preserve=[pidfile.as_raw_fd()],
-                stderr=open(os.devnull, "w"),  # TODO: remove
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
             ):
                 try:
                     pidfile.write()
