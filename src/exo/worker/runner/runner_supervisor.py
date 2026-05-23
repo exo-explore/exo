@@ -176,7 +176,7 @@ class RunnerSupervisor:
         )
 
     async def run(self):
-        MAX_RESTARTS = 10
+        MAX_RESTARTS = 5
         restart_count = 0
 
         while True:
@@ -249,7 +249,7 @@ class RunnerSupervisor:
                 )
                 break
 
-            delay = min(2.0 * (2 ** (restart_count - 1)), 60.0)
+            delay = min(2.0 * (2 ** (restart_count - 1)), 10.0)
             logger.warning(
                 f"Runner crashed (attempt {restart_count}/{MAX_RESTARTS}), "
                 f"restarting in {delay:.0f}s"
