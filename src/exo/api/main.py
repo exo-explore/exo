@@ -84,6 +84,7 @@ from exo.api.types import (
     InstanceLinkResponse,
     ModelList,
     ModelListModel,
+    NativeMTPModelInfo,
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
@@ -1771,6 +1772,14 @@ class API:
                     capabilities=card.capabilities,
                     reasoning_dialect=card.reasoning_dialect,
                     context_length=card.context_length,
+                    native_mtp=(
+                        NativeMTPModelInfo(
+                            default_k=card.native_mtp.default_k,
+                            max_k=card.native_mtp.max_k,
+                        )
+                        if card.native_mtp is not None
+                        else None
+                    ),
                 )
                 for card in cards
             ]

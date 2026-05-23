@@ -154,6 +154,47 @@ class SamplingDefaults(SamplingValues):
     non_thinking: SamplingValues | None = None
 
 
+class NativeMTPConfig(FrozenModel):
+    """Declares that a target checkpoint ships native Multi-Token Prediction
+    weights handled by exo's vendored MTP-aware loader.
+
+    Set this field on cards whose on-disk checkpoint exposes recoverable
+    MTP tensors -- typically MTPLX-format Qwen3.5/3.6 artefacts that ship a
+    separate ``mtp.safetensors`` sidecar (``mlx_lm_extra_tensors.mtp_file``
+    in ``config.json``), or the original HuggingFace layout where the MTP
+    tensors are embedded in the main shards under the ``mtp.*`` prefix.
+
+    The loader at :mod:`exo.worker.engines.mlx.vendor.qwen3_5_mtp_loader`
+    consumes this declaration through ``utils_mlx.load_mlx_items``: when
+    the card has ``native_mtp`` set, the placement is single-node, and
+    :func:`exo.worker.engines.mlx.mtp_probe.probe_mtp_weights` confirms
+    the tensors are present on disk, the loader dispatches via
+    :func:`load_mtp_model` instead of stock ``mlx_lm.utils.load_model``.
+
+    Native MTP is structurally single-node only: the verify forward through
+    a TP-sharded target would amortise K+1 tokens over K+1 compute units,
+    eating the MTP speedup. The guard
+    :func:`exo.worker.engines.mlx.utils_mlx.is_native_mtp_runnable`
+    enforces this -- the loader silently falls back to the stock load path
+    on multi-rank instances.
+    """
+
+    # Number of MTP transformer layers in this checkpoint. Matches
+    # ``text_config.mtp_num_hidden_layers`` in ``config.json``.
+    # Qwen3.6-27B MTPLX ships with 1.
+    num_layers: PositiveInt
+    # Default K for draft+verify when a request doesn't override.
+    default_k: PositiveInt = 3
+    # Maximum K the runner is allowed to use. Above this, verify cost
+    # dominates.
+    max_k: PositiveInt = 3
+    # Hugging Face filename of the separate MTP safetensors when shipped
+    # in MTPLX format. ``None`` when MTP tensors are embedded in main
+    # shards (original HuggingFace layout) -- the loader probes both
+    # paths regardless of this hint.
+    mtp_file: str | None = None
+
+
 class ModelCard(FrozenModel):
     model_id: ModelId
     storage_size: Memory
@@ -175,6 +216,13 @@ class ModelCard(FrozenModel):
     is_custom: bool = False
     vision: VisionCardConfig | None = None
     sampling_defaults: SamplingDefaults = Field(default_factory=SamplingDefaults)
+    # Optional declaration that the target checkpoint ships native
+    # Multi-Token Prediction (MTP) weights handled directly by exo's
+    # vendored Qwen3.5/3.6 MTP-aware loader. See :class:`NativeMTPConfig`
+    # for the field-by-field semantics and the loader / placement gates
+    # that consume it. Single-node only; ``None`` (the default) preserves
+    # legacy behaviour and is purely additive.
+    native_mtp: NativeMTPConfig | None = None
 
     @model_validator(mode="after")
     def _autodetect_vision(self) -> "ModelCard":
