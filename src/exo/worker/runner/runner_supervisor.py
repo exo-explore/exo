@@ -98,6 +98,7 @@ class RunnerSupervisor:
     _cancel_watch_runner: anyio.CancelScope = field(
         default_factory=anyio.CancelScope, init=False
     )
+    _shutdown_requested: bool = field(default=False, init=False)
 
 
     def _runner_is_alive(self) -> bool:
@@ -175,67 +176,114 @@ class RunnerSupervisor:
         )
 
     async def run(self):
-        self.runner_process.start()
-        try:
-            async with self._tg as tg:
-                tg.start_soon(self._watch_runner)
-                tg.start_soon(self._forward_events)
-        finally:
-            logger.info("Runner supervisor shutting down")
-            if not self._cancel_watch_runner.cancel_called:
-                self._cancel_watch_runner.cancel()
-            with contextlib.suppress(ClosedResourceError):
-                self._ev_recv.close()
-            with contextlib.suppress(ClosedResourceError):
-                self._task_sender.close()
-            with contextlib.suppress(ClosedResourceError):
-                self._event_sender.close()
-            # Offload the pipe write to a thread with a hard 2-second cap so a
-            # blocked cancel pipe cannot stall the event loop.
-            with contextlib.suppress(ClosedResourceError, TimeoutError, Exception):
-                with anyio.move_on_after(2.0):
-                    await self._cancel_sender.send_async(CANCEL_ALL_TASKS)
-            with contextlib.suppress(ClosedResourceError):
-                self._cancel_sender.close()
+        MAX_RESTARTS = 10
+        restart_count = 0
 
-            await self._join_runner(5)
+        while True:
+            self._shutdown_requested = False
+            self.runner_process.start()
+            try:
+                async with self._tg as tg:
+                    tg.start_soon(self._watch_runner)
+                    tg.start_soon(self._forward_events)
+            finally:
+                logger.info("Runner supervisor shutting down" if self._shutdown_requested else "Runner process exited unexpectedly, cleaning up")
+                if not self._cancel_watch_runner.cancel_called:
+                    self._cancel_watch_runner.cancel()
+                with contextlib.suppress(ClosedResourceError):
+                    self._ev_recv.close()
+                with contextlib.suppress(ClosedResourceError):
+                    self._task_sender.close()
+                # Only close the event sender on intentional shutdown — on crash-restart,
+                # keep it open so the rest of exo keeps receiving events after reload
+                if self._shutdown_requested:
+                    with contextlib.suppress(ClosedResourceError):
+                        self._event_sender.close()
+                with contextlib.suppress(ClosedResourceError, TimeoutError, Exception):
+                    with anyio.move_on_after(2.0):
+                        await self._cancel_sender.send_async(CANCEL_ALL_TASKS)
+                with contextlib.suppress(ClosedResourceError):
+                    self._cancel_sender.close()
 
-            if self._runner_is_alive():
-                logger.warning(
-                    "Runner process didn't shutdown succesfully, terminating"
-                )
-                await self._terminate_runner()
-                await self._join_runner(10)
+                await self._join_runner(5)
 
-                if not self._runner_is_alive():
-                    logger.warning("Terminated nicely in the first attempt!")
+                if self._runner_is_alive():
+                    logger.warning(
+                        "Runner process didn't shutdown succesfully, terminating"
+                    )
+                    await self._terminate_runner()
+                    await self._join_runner(10)
 
-                else:
-                    # Try really hard to terminate
-                    for i in range(2, 11):
-                        await self._terminate_runner()
-                        await self._join_runner(2)
-                        if not self._runner_is_alive():
-                            logger.warning(f"That took {i} attempts :)")
-                            break
-                    # Try even harder to kill
+                    if not self._runner_is_alive():
+                        logger.warning("Terminated nicely in the first attempt!")
                     else:
-                        logger.critical(
-                            "Runner process didn't respond to SIGTERM, killing"
-                        )
-                        j = 0
-                        while self._runner_is_alive():
-                            j += 1
-                            await self._kill_runner()
-                            await self._join_runner(5)
-                            logger.warning(f"That took {j} attempts :(")
-            else:
-                logger.info("Runner process succesfully terminated")
+                        for i in range(2, 11):
+                            await self._terminate_runner()
+                            await self._join_runner(2)
+                            if not self._runner_is_alive():
+                                logger.warning(f"That took {i} attempts :)")
+                                break
+                        else:
+                            logger.critical(
+                                "Runner process didn't respond to SIGTERM, killing"
+                            )
+                            j = 0
+                            while self._runner_is_alive():
+                                j += 1
+                                await self._kill_runner()
+                                await self._join_runner(5)
+                                logger.warning(f"That took {j} attempts :(")
+                else:
+                    logger.info("Runner process succesfully terminated")
 
-            self.runner_process.close()
+                self.runner_process.close()
+
+            if self._shutdown_requested:
+                logger.info("Runner supervisor: intentional shutdown, not restarting")
+                break
+
+            restart_count += 1
+            if restart_count > MAX_RESTARTS:
+                logger.critical(
+                    f"Runner crashed {MAX_RESTARTS} times without recovery, giving up"
+                )
+                break
+
+            delay = min(2.0 * (2 ** (restart_count - 1)), 60.0)
+            logger.warning(
+                f"Runner crashed (attempt {restart_count}/{MAX_RESTARTS}), "
+                f"restarting in {delay:.0f}s"
+            )
+            await anyio.sleep(delay)
+            self._reset_for_restart()
 
     def shutdown(self):
+        self._shutdown_requested = True
         self._tg.cancel_tasks()
+
+    def _reset_for_restart(self) -> None:
+        """Recreate channels and process for a runner restart after an unexpected crash."""
+        ev_send, ev_recv = mp_channel[Event]()
+        task_sender, task_recv = mp_channel[Task]()
+        cancel_sender, cancel_recv = mp_channel[TaskId]()
+
+        self.runner_process = mp.Process(
+            target=entrypoint,
+            args=(self.bound_instance, ev_send, task_recv, cancel_recv, logger),
+            daemon=True,
+        )
+        self._ev_recv = ev_recv
+        self._task_sender = task_sender
+        self._cancel_sender = cancel_sender
+        self._tg = TaskGroup()
+        self._cancel_watch_runner = anyio.CancelScope()
+        self.status = RunnerIdle()
+        self.pending = {}
+        self.in_progress = {}
+        self.completed = set()
+        self.cancelled = set()
+        # _event_sender is intentionally NOT reset — it connects to the rest of exo
+        # and must remain open across restarts
 
     async def start_task(self, task: Task):
         if task.task_id in self.pending:
