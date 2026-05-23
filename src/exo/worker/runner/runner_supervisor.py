@@ -103,7 +103,7 @@ class RunnerSupervisor:
 
     def _runner_is_alive(self) -> bool:
         try:
-            return self.runner_process.is_alive()
+            return self._runner_is_alive()
         except ValueError:
             return False
 
@@ -112,6 +112,13 @@ class RunnerSupervisor:
             return self.runner_process.exitcode
         except ValueError:
             return -1
+
+
+    def _runner_is_alive(self) -> bool:
+        try:
+            return self._runner_is_alive()
+        except ValueError:
+            return False
 
     @classmethod
     def create(
@@ -285,6 +292,13 @@ class RunnerSupervisor:
         # _event_sender is intentionally NOT reset — it connects to the rest of exo
         # and must remain open across restarts
 
+    def _cancel_tg(self) -> None:
+        """Cancel the running task group without marking this as an intentional shutdown.
+        Used by _check_runner to tear down the current run() iteration so the restart
+        loop can start a fresh runner subprocess.
+        """
+        self._tg.cancel_tasks()
+
     async def start_task(self, task: Task):
         if task.task_id in self.pending:
             logger.warning(
@@ -418,4 +432,4 @@ class RunnerSupervisor:
             logger.warning(
                 "Event sender already closed, unable to report runner failure"
             )
-        self.shutdown()
+        self._cancel_tg()
