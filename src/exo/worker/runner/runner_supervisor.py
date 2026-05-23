@@ -103,7 +103,7 @@ class RunnerSupervisor:
 
     def _runner_is_alive(self) -> bool:
         try:
-            return self._runner_is_alive()
+            return self.runner_process.is_alive()
         except ValueError:
             return False
 
@@ -113,12 +113,6 @@ class RunnerSupervisor:
         except ValueError:
             return -1
 
-
-    def _runner_is_alive(self) -> bool:
-        try:
-            return self._runner_is_alive()
-        except ValueError:
-            return False
 
     @classmethod
     def create(
