@@ -1,4 +1,3 @@
-import contextlib
 import os
 import shutil
 import sys
@@ -593,15 +592,14 @@ class InfoGatherer:
         read_timeout = max(macmon_interval * 10, 30)
         while True:
             try:
-                p = await open_process(
+                async with await open_process(
                     [
                         macmon_path,
                         "pipe",
                         "--interval",
                         str(macmon_interval * 1000),
                     ]
-                )
-                try:
+                ) as p:
                     if not p.stdout:
                         logger.critical("MacMon closed stdout")
                         return
@@ -614,11 +612,6 @@ class InfoGatherer:
                             text = data.decode("utf-8", errors="replace").strip()
                             metrics = MacmonMetrics.from_raw_json(text)
                         await self.info_sender.send(metrics)
-                finally:
-                    # we need to manually close to prevent process lookup error
-                    # from bubbling up to log when shutting down with ctrl+c
-                    with contextlib.suppress(ProcessLookupError):
-                        await p.aclose()
             except TimeoutError:
                 logger.warning(
                     f"MacMon produced no output for {read_timeout}s, restarting"
@@ -637,6 +630,14 @@ class InfoGatherer:
                     f"MacMon failed with return code {e.returncode}: {stderr_msg}"
                 )
                 self._tg.start_soon(self._monitor_memory_usage, 1)
+            except ProcessLookupError:
+                # usually throws by the process' context manager on exit
+                # when we ctrl+c, hence usually should be ignored;
+                # if anything else throws it, we explicitly don't care:
+                # process is dead anyways ;)
+                logger.warning(
+                    "Macmon process not found - shutting down macmon monitor"
+                )
             except Exception as e:
                 logger.opt(exception=e).warning("Error in macmon monitor")
                 self._tg.start_soon(self._monitor_memory_usage, 1)
