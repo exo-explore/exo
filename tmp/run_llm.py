@@ -5,43 +5,18 @@ import sys
 
 import requests
 
-MODEL_ID = "mlx-community/Llama-3.2-1B-Instruct-4bit"
-
-
-def wait_for_model_instance(host: str, model_id: str, timeout_s: int = 30) -> bool:
-    url = f"http://{host}:52415/instance/await"
-    with requests.get(
-        url,
-        params={"model_id": model_id, "timeout_seconds": timeout_s},
-        stream=True,
-        timeout=timeout_s + 5,
-    ) as resp:
-        resp.raise_for_status()
-        for line in resp.iter_lines(decode_unicode=True):
-            if not line or not line.startswith("data:"):
-                continue
-            try:
-                payload = json.loads(line[len("data:") :].strip())
-            except json.JSONDecodeError:
-                continue
-            return payload.get("type") == "ready"
-    return False
-
 
 def stream_chat(host: str, query: str) -> None:
     url = f"http://{host}:52415/v1/chat/completions"
     headers = {"Content-Type": "application/json"}
     payload = {
-        "model": MODEL_ID,
+        "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
         # "model": "mlx-community/Llama-3_3-Nemotron-Super-49B-v1_5-mlx-4Bit",
         "stream": True,
         "messages": [{"role": "user", "content": query}],
     }
 
     try:
-        # placing is asynchronous - cannot immediately request completions
-        if not wait_for_model_instance(host, MODEL_ID):
-            raise RuntimeError(f"No placed instance found for {MODEL_ID}")
         with requests.post(url, headers=headers, json=payload, stream=True) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines(decode_unicode=True):
@@ -67,7 +42,7 @@ def stream_chat(host: str, query: str) -> None:
                     if content:
                         print(content, end="", flush=True)
 
-    except (RuntimeError, requests.RequestException) as e:
+    except requests.RequestException as e:
         print(f"Request failed: {e}", file=sys.stderr)
         sys.exit(1)
 

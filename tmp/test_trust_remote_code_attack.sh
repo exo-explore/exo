@@ -89,25 +89,11 @@ if ! AWAIT_RESPONSE=$(curl -fsS --max-time 65 \
   exit 1
 fi
 
-INSTANCE_ID=$(printf '%s' "$AWAIT_RESPONSE" | python3 -c '
-import json
-import sys
-
-payload = json.load(sys.stdin)
-if payload.get("type") != "ready":
-    sys.exit(1)
-
-instance = payload.get("instance", {})
-if isinstance(instance, dict) and len(instance) == 1:
-    instance = next(iter(instance.values()))
-print(instance.get("instance_id") or instance.get("instanceId") or "")
-' 2>/dev/null || true)
-
-if [ -z "$INSTANCE_ID" ]; then
+if ! printf '%s' "$AWAIT_RESPONSE" | grep -q '"type":"ready"'; then
   echo "    Timed out waiting for an instance for $MODEL_ID"
   exit 1
 fi
-echo "    Instance: $INSTANCE_ID"
+echo "    Instance ready"
 
 # Step 3c: Send a chat completion to actually trigger tokenizer loading
 echo ""
