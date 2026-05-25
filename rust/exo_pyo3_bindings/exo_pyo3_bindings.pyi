@@ -117,6 +117,10 @@ class Pidfile:
         guaranteed to be valid while the original object has not yet been
         destroyed.
         """
+    def close(self) -> None:
+        r"""
+        Closes the PID file and releases associated resources.
+        """
 
 @typing.final
 class PidfileError(builtins.Exception):

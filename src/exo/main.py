@@ -325,7 +325,7 @@ def main():
                 raise SystemExit(1) from e
             main_inner(args)
     finally:
-        del pidfile  # ensure this object is GC-d
+        pidfile.close()
 
 
 def main_inner(args: "Args"):
