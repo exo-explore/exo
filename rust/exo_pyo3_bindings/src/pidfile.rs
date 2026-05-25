@@ -1,7 +1,7 @@
 use pidfile_rs::{Pidfile, PidfileError};
 use pyo3::exceptions::PyException;
 use pyo3::prelude::{PyModule, PyModuleMethods};
-use pyo3::{Bound, PyErr, PyRef, PyResult, Python, pyclass, pymethods};
+use pyo3::{Bound, PyErr, PyResult, Python, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::fs;
 use std::fs::Permissions;
