@@ -3087,8 +3087,7 @@ dependencies = [
 [[package]]
 name = "pidfile-rs"
 version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1a8aa9a30b1b65ef48b333931b80f2324a14e00208eb2b8f5788f1180791bcc"
+source = "git+https://github.com/AndreiCravtov/pidfile-rs#faf6b79e40e931c149f1f58dc4fb53ec1be3ff3c"
 dependencies = [
  "flopen",
  "libc",

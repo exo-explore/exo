@@ -26,6 +26,7 @@ dependencies = [
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
   "transformers>=5.6.2",
+  "python-daemon>=3.1.2",
 ]
 
 [project.scripts]
