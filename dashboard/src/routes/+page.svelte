@@ -2550,12 +2550,10 @@
   ];
 
   // ── Seamless chat: launch models from chat view ──
-  type ChatLaunchState =
-    | "idle"
-    | "launching"
-    | "downloading"
-    | "loading"
-    | "ready";
+  type InFlightChatLaunchState = "launching" | "downloading" | "loading";
+  type ReadyLikeChatLaunchState = "idle" | "ready";
+  type ChatLaunchState = InFlightChatLaunchState | ReadyLikeChatLaunchState;
+
   let chatLaunchState = $state<ChatLaunchState>("idle");
   let pendingChatModelId = $state<string | null>(null);
   let selectedChatCategory = $state<string | null>(null);
@@ -3132,11 +3130,12 @@
     if (model) {
       pendingAutoMessage = { content, files };
       userForcedIdle = false;
+      // The selected model is already being placed or loaded; keep the queued
+      // message and let the existing launch state effects send it once ready.
       if (
         pendingChatModelId === model &&
-        (chatLaunchState === "launching" ||
-          chatLaunchState === "downloading" ||
-          chatLaunchState === "loading")
+        chatLaunchState !== "idle" &&
+        chatLaunchState !== "ready"
       ) {
         return;
       }
