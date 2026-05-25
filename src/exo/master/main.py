@@ -11,6 +11,10 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.master.placement_utils import find_ip_prioritised
+from exo.routing.event_router import (
+    EventRouterBrokenResourceError,
+    EventRouterClosedResourceError,
+)
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
@@ -151,6 +155,9 @@ class Master:
                 tg.start_soon(self._event_processor)
                 tg.start_soon(self._command_processor)
                 tg.start_soon(self._plan)
+        except* (EventRouterBrokenResourceError, EventRouterClosedResourceError):
+            # Event router has been closed (try-star syntax handles error groups)
+            pass
         finally:
             self._event_log.close()
             self.global_event_sender.close()
@@ -452,7 +459,9 @@ class Master:
                                 self._event_log.read_range(command.since_idx, end),
                                 start=command.since_idx,
                             ):
-                                await self._send_event(IndexedEvent(idx=i, event=event))
+                                await self._send_indexed_event(
+                                    IndexedEvent(idx=i, event=event)
+                                )
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except ValueError as e:
@@ -510,10 +519,10 @@ class Master:
                     self.state = apply(self.state, indexed)
 
                     self._event_log.append(event)
-                    await self._send_event(indexed)
+                    await self._send_indexed_event(indexed)
 
     # This function is re-entrant, take care!
-    async def _send_event(self, event: IndexedEvent):
+    async def _send_indexed_event(self, event: IndexedEvent):
         # Convenience method since this line is ugly
         await self.global_event_sender.send(
             GlobalForwarderEvent(
