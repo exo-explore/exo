@@ -93,15 +93,6 @@ class Pidfile:
     [`pidfile`]: https://linux.die.net/man/3/pidfile
     [`daemon`(3)]: https://linux.die.net/man/3/daemon
     """
-    @property
-    def cleanup(self) -> builtins.bool:
-        r"""
-        Checks if cleanup is currently enabled.
-        
-        Enabled cleanup means normal destructor cleanup logic will run,
-        and if disabled then it won't run. It should always be `True`
-        unless dangerously changed by [`Self::_dangerously_set_cleanup`].
-        """
     def __new__(cls, path: builtins.str | os.PathLike | pathlib.Path, mode: builtins.int) -> Pidfile:
         r"""
         Creates a new PID file and locks it.
@@ -125,13 +116,6 @@ class Pidfile:
         raw file descriptor to the caller, and the file descriptor is only
         guaranteed to be valid while the original object has not yet been
         destroyed.
-        """
-    def _dangerously_set_cleanup(self, cleanup: builtins.bool) -> None:
-        r"""
-        Dangerously configures if destructor cleanup logic should run.
-        
-        Disabling cleanup can be used to prevent removal of the file,
-        for the purposes of e.g. double-fork demonization.
         """
 
 @typing.final

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "exo_pyo3_bindings"
-version = "0.2.7"
+version = "0.2.8"
 description = "Add your description here"
 readme = "README.md"
 authors = [

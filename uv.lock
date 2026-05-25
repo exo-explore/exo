@@ -623,7 +623,7 @@ requires-dist = [
 
 [[package]]
 name = "exo-pyo3-bindings"
-version = "0.2.7"
+version = "0.2.8"
 source = { editable = "rust/exo_pyo3_bindings" }
 
 [package.dev-dependencies]

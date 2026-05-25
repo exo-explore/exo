@@ -96,24 +96,6 @@ impl PyPidfile {
     fn as_raw_fd(&self) -> RawFd {
         self.0.as_raw_fd()
     }
-
-    /// Checks if cleanup is currently enabled.
-    ///
-    /// Enabled cleanup means normal destructor cleanup logic will run,
-    /// and if disabled then it won't run. It should always be `True`
-    /// unless dangerously changed by [`Self::_dangerously_set_cleanup`].
-    #[getter]
-    fn cleanup(&self) -> bool {
-        self.0.will_cleanup()
-    }
-
-    /// Dangerously configures if destructor cleanup logic should run.
-    ///
-    /// Disabling cleanup can be used to prevent removal of the file,
-    /// for the purposes of e.g. double-fork demonization.
-    fn _dangerously_set_cleanup(&mut self, cleanup: bool) {
-        unsafe { self.0.config_cleanup(cleanup) }
-    }
 }
 
 pub fn pidfile_submodule(m: &Bound<PyModule>) -> PyResult<()> {
