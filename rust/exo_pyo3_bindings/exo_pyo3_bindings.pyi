@@ -107,6 +107,20 @@ class Pidfile:
         
         The file is truncated before writing.
         """
+    def as_raw_fd(self) -> builtins.int:
+        r"""
+        Extracts the raw file descriptor.
+        
+        This function is typically used to **borrow** an owned file descriptor.
+        When used in this way, this method does **not** pass ownership of the
+        raw file descriptor to the caller, and the file descriptor is only
+        guaranteed to be valid while the original object has not yet been
+        destroyed.
+        """
+    def close(self) -> None:
+        r"""
+        Closes the PID file and releases associated resources.
+        """
 
 @typing.final
 class PidfileError(builtins.Exception):

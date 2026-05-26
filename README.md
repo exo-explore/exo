@@ -201,6 +201,12 @@ This starts the exo dashboard and API at http://localhost:52415/
   uv run exo --no-worker
   ```
 
+- `--legacy-daemon`: Run exo as a legacy SysV-style background daemon using double-fork daemonization. This is intended for legacy init scripts; systemd and launchd should run exo in the foreground without this flag.
+
+  ```bash
+  uv run exo --legacy-daemon
+  ```
+
 **File Locations (Linux):**
 
 exo follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html) on Linux:

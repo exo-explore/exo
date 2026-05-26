@@ -3,7 +3,9 @@ use pyo3::exceptions::PyException;
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use pyo3::{Bound, PyErr, PyResult, Python, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use std::fs;
 use std::fs::Permissions;
+use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::prelude::PermissionsExt;
 use std::path::PathBuf;
 
@@ -53,7 +55,23 @@ impl PyPidfileError {
 /// [`daemon`(3)]: https://linux.die.net/man/3/daemon
 #[gen_stub_pyclass]
 #[pyclass(name = "Pidfile")]
-pub struct PyPidfile(Pidfile);
+pub struct PyPidfile(Option<Pidfile>);
+
+impl PyPidfile {
+    #[inline(always)]
+    fn get(&self) -> &Pidfile {
+        self.0
+            .as_ref()
+            .expect("cannot use resource after exiting context")
+    }
+
+    #[inline(always)]
+    fn get_mut(&mut self) -> &mut Pidfile {
+        self.0
+            .as_mut()
+            .expect("cannot use resource after exiting context")
+    }
+}
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -65,17 +83,40 @@ impl PyPidfile {
     /// the PID file yet.
     #[new]
     fn py_new(py: Python, path: PathBuf, mode: u32) -> PyResult<Self> {
-        Ok(Self(
-            Pidfile::new(&path, Permissions::from_mode(mode))
-                .map_err(|e| PyPidfileError(e).into_pyerr(py))?,
-        ))
+        // create all parent directories if don't exist
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| PyPidfileError(PidfileError::Io(e)).into_pyerr(py))?;
+        }
+
+        let pidfile = Pidfile::new(&path, Permissions::from_mode(mode))
+            .map_err(|e| PyPidfileError(e).into_pyerr(py))?;
+        Ok(Self(Some(pidfile)))
     }
 
     /// Writes the current process ID to the PID file.
     ///
     /// The file is truncated before writing.
     fn write<'py>(&mut self, py: Python<'py>) -> PyResult<()> {
-        self.0.write().map_err(|e| PyPidfileError(e).into_pyerr(py))
+        self.get_mut()
+            .write()
+            .map_err(|e| PyPidfileError(e).into_pyerr(py))
+    }
+
+    /// Extracts the raw file descriptor.
+    ///
+    /// This function is typically used to **borrow** an owned file descriptor.
+    /// When used in this way, this method does **not** pass ownership of the
+    /// raw file descriptor to the caller, and the file descriptor is only
+    /// guaranteed to be valid while the original object has not yet been
+    /// destroyed.
+    fn as_raw_fd(&self) -> RawFd {
+        self.get().as_raw_fd()
+    }
+
+    /// Closes the PID file and releases associated resources.
+    fn close(&mut self) {
+        self.0 = None;
     }
 }
 

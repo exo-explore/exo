@@ -630,6 +630,14 @@ class InfoGatherer:
                     f"MacMon failed with return code {e.returncode}: {stderr_msg}"
                 )
                 self._tg.start_soon(self._monitor_memory_usage, 1)
+            except ProcessLookupError:
+                # usually throws by the process' context manager on exit
+                # when we ctrl+c, hence usually should be ignored;
+                # if anything else throws it, we explicitly don't care:
+                # process is dead anyways ;)
+                logger.warning(
+                    "Macmon process not found - shutting down macmon monitor"
+                )
             except Exception as e:
                 logger.opt(exception=e).warning("Error in macmon monitor")
                 self._tg.start_soon(self._monitor_memory_usage, 1)

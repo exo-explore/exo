@@ -25,10 +25,9 @@ from anyio import (
 from anyio.abc import TaskStatus
 from loguru import logger
 
+from exo.utils import STDERR_FD, STDIO_FDS, STDOUT_FD
 from exo.utils.channels import Receiver, Sender, channel
 
-_STDOUT_FD = 1
-_STDERR_FD = 2
 _READ_CHUNK_SIZE = 64 * 1024
 _JOIN_GRACE_SECONDS = 3.0
 _TERMINATE_GRACE_SECONDS = 5.0
@@ -256,11 +255,11 @@ def _run_with_captured_stdio(
     stderr_fd = stderr.detach()
 
     try:
-        os.dup2(stdout_fd, _STDOUT_FD)
-        os.dup2(stderr_fd, _STDERR_FD)
+        os.dup2(stdout_fd, STDOUT_FD)
+        os.dup2(stderr_fd, STDERR_FD)
     finally:
         for fd in (stdout_fd, stderr_fd):
-            if fd not in (_STDOUT_FD, _STDERR_FD):
+            if fd not in STDIO_FDS:
                 _close_fd(fd)
 
     faulthandler.enable(file=sys.stderr, all_threads=True)
