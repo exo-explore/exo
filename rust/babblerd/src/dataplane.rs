@@ -125,6 +125,8 @@ enum InterfaceIo {
         socket: MioUdpSocket,
         udp_state: UdpSocketState,
     },
+    #[cfg(any(not(target_os = "linux"), test))]
+    TcpInterface,
     TcpListener {
         listener: MioTcpListener,
     },
@@ -786,6 +788,8 @@ impl DataplaneWorker {
         };
         match &socket.io {
             InterfaceIo::Udp { .. } => self.drain_udp_ready(slab_key),
+            #[cfg(any(not(target_os = "linux"), test))]
+            InterfaceIo::TcpInterface => Ok(()),
             InterfaceIo::TcpListener { .. } => self.drain_tcp_accept_ready(slab_key),
         }
     }
@@ -1313,60 +1317,23 @@ impl DataplaneWorker {
         stream: &MioTcpStream,
         peer: SocketAddr,
     ) -> Option<usize> {
-        let SocketAddr::V6(peer_v6) = peer else {
-            return None;
-        };
-        let peer_addr = *peer_v6.ip();
-        if !peer_addr.is_unicast_link_local() {
-            return None;
-        }
-
-        if let Some(slot) = admitted_tcp_peer_slot_by_ifindex(
-            &self.sockets,
-            self.fib.as_ref(),
-            peer_addr,
-            peer_v6.scope_id(),
-        ) {
-            return Some(slot);
-        }
-
-        if let Ok(SocketAddr::V6(local_v6)) = stream.local_addr()
-            && let Some(slot) = admitted_tcp_peer_slot_by_ifindex(
-                &self.sockets,
-                self.fib.as_ref(),
-                peer_addr,
-                local_v6.scope_id(),
-            )
-        {
-            return Some(slot);
-        }
-        if let Ok(SocketAddr::V6(local_v6)) = stream.local_addr()
-            && let Some(slot) = admitted_tcp_peer_slot_by_local_addr(
-                &self.sockets,
-                self.fib.as_ref(),
-                peer_addr,
-                *local_v6.ip(),
-            )
-        {
-            return Some(slot);
-        }
+        let local = stream.local_addr().ok();
 
         #[cfg(target_os = "linux")]
-        {
-            self.sockets.get(listener_slot).and_then(|socket| {
-                admitted_tcp_peer_slot_by_ifindex(
-                    &self.sockets,
-                    self.fib.as_ref(),
-                    peer_addr,
-                    socket.ifindex,
-                )
-            })
-        }
+        let listener_ifindex = self.sockets.get(listener_slot).map(|socket| socket.ifindex);
         #[cfg(not(target_os = "linux"))]
-        {
+        let listener_ifindex = {
             let _ = listener_slot;
             None
-        }
+        };
+
+        admitted_tcp_peer_slot_for_accepted_addrs(
+            &self.sockets,
+            self.fib.as_ref(),
+            peer,
+            local,
+            listener_ifindex,
+        )
     }
 
     fn drain_tcp_stream_ready(
@@ -1719,6 +1686,7 @@ impl DataplaneWorker {
         retry_needed |=
             has_missing_admitted_sockets(&self.ifname_to_slab, &self.fib.admitted_interfaces);
         self.needs_reconcile_retry = retry_needed;
+        self.ensure_tcp_listener_for_admitted_interfaces()?;
         self.rebuild_fast_routes();
         Ok(())
     }
@@ -1762,14 +1730,30 @@ impl DataplaneWorker {
                     .wrap_err_with(|| format!("opening UDP socket for {}", ifname))?;
                 self.insert_registered_udp_socket(ifname.clone(), ifindex, socket)?
             }
-            TransportMode::Tcp => {
-                let listener = open_tcp_listener(self.udp_port, ifname.as_ref(), ifindex)
-                    .wrap_err_with(|| format!("opening TCP listener for {}", ifname))?;
-                self.insert_registered_tcp_listener(ifname.clone(), ifindex, listener)?
-            }
+            TransportMode::Tcp => self.add_tcp_socket(ifname.clone(), ifindex)?,
         };
         self.ifname_to_slab.insert(ifname, slab_key);
         Ok(())
+    }
+
+    fn add_tcp_socket(&mut self, ifname: Box<str>, ifindex: u32) -> Result<usize> {
+        #[cfg(target_os = "linux")]
+        {
+            let listener = open_tcp_listener(self.udp_port, ifname.as_ref(), ifindex)
+                .wrap_err_with(|| format!("opening TCP listener for {}", ifname))?;
+            self.insert_registered_tcp_listener(ifname, ifindex, listener)
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            if self.has_tcp_listener() {
+                Ok(self.insert_registered_tcp_interface(ifname, ifindex))
+            } else {
+                let listener = open_tcp_listener(self.udp_port, ifname.as_ref(), ifindex)
+                    .wrap_err_with(|| format!("opening TCP listener for {}", ifname))?;
+                self.insert_registered_tcp_listener(ifname, ifindex, listener)
+            }
+        }
     }
 
     fn refresh_socket(&mut self, ifname: &str, ifindex: u32) -> Result<()> {
@@ -1847,6 +1831,69 @@ impl DataplaneWorker {
         Ok(slab_key)
     }
 
+    #[cfg(not(target_os = "linux"))]
+    fn insert_registered_tcp_interface(&mut self, ifname: Box<str>, ifindex: u32) -> usize {
+        let entry = self.sockets.vacant_entry();
+        let slab_key = entry.key();
+        entry.insert(InterfaceSocket {
+            ifname,
+            ifindex,
+            io: InterfaceIo::TcpInterface,
+        });
+        slab_key
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn has_tcp_listener(&self) -> bool {
+        self.sockets
+            .iter()
+            .any(|(_, socket)| matches!(socket.io, InterfaceIo::TcpListener { .. }))
+    }
+
+    fn ensure_tcp_listener_for_admitted_interfaces(&mut self) -> Result<()> {
+        if self.transport_mode != TransportMode::Tcp {
+            return Ok(());
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            Ok(())
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            if self.fib.admitted_interfaces.is_empty() || self.has_tcp_listener() {
+                return Ok(());
+            }
+
+            let Some((ifname, slot)) = self
+                .ifname_to_slab
+                .iter()
+                .min_by(|(left, _), (right, _)| left.cmp(right))
+                .map(|(ifname, slot)| (ifname.clone(), *slot))
+            else {
+                return Ok(());
+            };
+            let Some(socket) = self.sockets.get_mut(slot) else {
+                return Ok(());
+            };
+            let listener = open_tcp_listener(self.udp_port, ifname.as_ref(), socket.ifindex)
+                .wrap_err_with(|| format!("opening TCP listener for {}", ifname))?;
+            let mut listener = listener;
+            self.poll
+                .registry()
+                .register(&mut listener, interface_token(slot), Interest::READABLE)
+                .wrap_err_with(|| format!("registering TCP listener for {}", ifname))?;
+            socket.io = InterfaceIo::TcpListener { listener };
+            tracing::info!(
+                interface = %ifname,
+                ifindex = socket.ifindex,
+                "promoted admitted TCP interface to wildcard listener"
+            );
+            Ok(())
+        }
+    }
+
     fn remove_socket(&mut self, ifname: &str) -> Result<()> {
         let Some(slab_key) = self.ifname_to_slab.remove(ifname) else {
             return Ok(());
@@ -1861,6 +1908,8 @@ impl DataplaneWorker {
                 .registry()
                 .deregister(socket)
                 .wrap_err_with(|| format!("deregistering UDP socket for {}", ifname))?,
+            #[cfg(any(not(target_os = "linux"), test))]
+            InterfaceIo::TcpInterface => {}
             InterfaceIo::TcpListener { listener } => self
                 .poll
                 .registry()
@@ -2103,6 +2152,44 @@ fn admitted_tcp_peer_slot_by_ifindex(
     })
 }
 
+fn admitted_tcp_peer_slot_for_accepted_addrs(
+    sockets: &Slab<InterfaceSocket>,
+    fib: &FibSnapshot,
+    peer: SocketAddr,
+    local: Option<SocketAddr>,
+    listener_ifindex: Option<u32>,
+) -> Option<usize> {
+    let SocketAddr::V6(peer_v6) = peer else {
+        return None;
+    };
+    let peer_addr = *peer_v6.ip();
+    if !peer_addr.is_unicast_link_local() {
+        return None;
+    }
+
+    if let Some(slot) =
+        admitted_tcp_peer_slot_by_ifindex(sockets, fib, peer_addr, peer_v6.scope_id())
+    {
+        return Some(slot);
+    }
+
+    if let Some(SocketAddr::V6(local_v6)) = local {
+        if let Some(slot) =
+            admitted_tcp_peer_slot_by_ifindex(sockets, fib, peer_addr, local_v6.scope_id())
+        {
+            return Some(slot);
+        }
+        if let Some(slot) =
+            admitted_tcp_peer_slot_by_local_addr(sockets, fib, peer_addr, *local_v6.ip())
+        {
+            return Some(slot);
+        }
+    }
+
+    listener_ifindex
+        .and_then(|ifindex| admitted_tcp_peer_slot_by_ifindex(sockets, fib, peer_addr, ifindex))
+}
+
 fn admitted_tcp_peer_slot_by_local_addr(
     sockets: &Slab<InterfaceSocket>,
     fib: &FibSnapshot,
@@ -2319,7 +2406,7 @@ fn has_forwardable_hop_limit(packet: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use std::io::ErrorKind;
-    use std::net::{Ipv6Addr, UdpSocket as StdUdpSocket};
+    use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6, UdpSocket as StdUdpSocket};
     use std::time::Duration;
 
     use ahash::RandomState;
@@ -2334,8 +2421,9 @@ mod tests {
         TcpFrameDecoder, TcpFrameError, TcpFrameOrigin, TcpQueueOutcome, TcpWriteBuffer,
         UdpRecvBatch, UdpRecvOutcome, UdpSockRef, UdpSocketState,
         admitted_tcp_peer_slot_by_ifindex, admitted_tcp_peer_slot_by_local_addr,
-        compile_fast_routes, decrement_hop_limit, has_missing_admitted_sockets, ipv6_destination,
-        plan_socket_actions, recv_udp_packets, udp_batch_packet_bytes, udp_meta_stride,
+        admitted_tcp_peer_slot_for_accepted_addrs, compile_fast_routes, decrement_hop_limit,
+        has_missing_admitted_sockets, ipv6_destination, plan_socket_actions, recv_udp_packets,
+        udp_batch_packet_bytes, udp_meta_stride,
     };
 
     fn sample_ipv6_packet(dst: Ipv6Addr, hop_limit: u8) -> Vec<u8> {
@@ -2656,15 +2744,10 @@ mod tests {
     #[test]
     fn tcp_peer_admission_requires_link_local_neighbour_on_matching_ifindex() {
         let mut sockets = Slab::new();
-        let udp_socket = MioUdpSocket::from_std(bind_loopback_udp());
-        let udp_state = UdpSocketState::new(UdpSockRef::from(&udp_socket)).unwrap();
         let socket = InterfaceSocket {
             ifname: "en2".into(),
             ifindex: 7,
-            io: InterfaceIo::Udp {
-                socket: udp_socket,
-                udp_state,
-            },
+            io: InterfaceIo::TcpInterface,
         };
         let slot = sockets.insert(socket);
 
@@ -2701,6 +2784,97 @@ mod tests {
         );
         assert_eq!(
             admitted_tcp_peer_slot_by_local_addr(&sockets, &fib, peer, "fe80::3".parse().unwrap()),
+            None
+        );
+    }
+
+    #[test]
+    fn accepted_tcp_peer_admission_uses_scope_and_local_addr_fallbacks() {
+        let mut sockets = Slab::new();
+        let en2_slot = sockets.insert(InterfaceSocket {
+            ifname: "en2".into(),
+            ifindex: 7,
+            io: InterfaceIo::TcpInterface,
+        });
+        let en3_slot = sockets.insert(InterfaceSocket {
+            ifname: "en3".into(),
+            ifindex: 8,
+            io: InterfaceIo::TcpInterface,
+        });
+
+        let en2_peer = "fe80::1".parse::<Ipv6Addr>().unwrap();
+        let en3_peer = "fe80::3".parse::<Ipv6Addr>().unwrap();
+        let en2_local = "fe80::2".parse::<Ipv6Addr>().unwrap();
+        let en3_local = "fe80::4".parse::<Ipv6Addr>().unwrap();
+        let fib = FibSnapshot {
+            locals: HashSet::with_hasher(RandomState::new()),
+            admitted_interfaces: ["en2".into(), "en3".into()].into_iter().collect(),
+            admitted_neighbours: [
+                AdmittedNeighbour {
+                    ifname: "en2".into(),
+                    link_local: en2_peer,
+                },
+                AdmittedNeighbour {
+                    ifname: "en3".into(),
+                    link_local: en3_peer,
+                },
+            ]
+            .into_iter()
+            .collect(),
+            interface_link_locals: [("en2".into(), en2_local), ("en3".into(), en3_local)]
+                .into_iter()
+                .collect(),
+            routes: HashMap::with_hasher(RandomState::new()),
+        };
+
+        let scoped_peer = SocketAddr::V6(SocketAddrV6::new(en2_peer, 5201, 0, 7));
+        assert_eq!(
+            admitted_tcp_peer_slot_for_accepted_addrs(&sockets, &fib, scoped_peer, None, None),
+            Some(en2_slot)
+        );
+
+        let unscoped_peer = SocketAddr::V6(SocketAddrV6::new(en2_peer, 5201, 0, 0));
+        let scoped_local = SocketAddr::V6(SocketAddrV6::new(en2_local, 5201, 0, 7));
+        assert_eq!(
+            admitted_tcp_peer_slot_for_accepted_addrs(
+                &sockets,
+                &fib,
+                unscoped_peer,
+                Some(scoped_local),
+                None,
+            ),
+            Some(en2_slot)
+        );
+
+        let unscoped_local = SocketAddr::V6(SocketAddrV6::new(en3_local, 5201, 0, 0));
+        assert_eq!(
+            admitted_tcp_peer_slot_for_accepted_addrs(
+                &sockets,
+                &fib,
+                SocketAddr::V6(SocketAddrV6::new(en3_peer, 5201, 0, 0)),
+                Some(unscoped_local),
+                None,
+            ),
+            Some(en3_slot)
+        );
+
+        assert_eq!(
+            admitted_tcp_peer_slot_for_accepted_addrs(&sockets, &fib, unscoped_peer, None, Some(7),),
+            Some(en2_slot)
+        );
+        assert_eq!(
+            admitted_tcp_peer_slot_for_accepted_addrs(
+                &sockets,
+                &fib,
+                SocketAddr::V6(SocketAddrV6::new(
+                    "2001:db8::1".parse().unwrap(),
+                    5201,
+                    0,
+                    7
+                )),
+                Some(scoped_local),
+                Some(7),
+            ),
             None
         );
     }

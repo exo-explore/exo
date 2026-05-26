@@ -230,13 +230,14 @@ of shortcuts that should be revisited later.
     `--force-tcp`. It frames inner IPv6 packets onto scoped link-local TCP
     streams and batches writes through bounded per-peer buffers. This is a
     deliberate experimental shortcut, not the default transport policy.
-  - On macOS, TCP listeners are wildcard IPv6 listeners instead of
-    per-interface-bound listeners; outbound streams still use the
-    Babel-selected interface. Accepted streams must be link-local Babel
-    neighbours on the accepted interface/scope. Bound listeners caused e4/e16
-    lab handshakes to stick in `SYN_RCVD`.
+  - On macOS, TCP mode uses one wildcard IPv6 listener per daemon instead of
+    one per-interface-bound listener per admitted interface; outbound streams
+    still use the Babel-selected interface. Accepted streams must be link-local
+    Babel neighbours on the accepted interface/scope. Bound listeners caused
+    e4/e16 lab handshakes to stick in `SYN_RCVD`.
   - TCP mode defaults the TUN MTU to `9000`; use `--tun-mtu <mtu>` or
-    `BABBLER_TUN_MTU=<mtu>` for jumbo sweeps. UDP keeps the old `1452` default.
+    `BABBLER_TUN_MTU=<mtu>` for jumbo sweeps. Use the same value on every
+    forced-TCP peer in a run. UDP keeps the old `1452` default.
   - TCP mode relies on a lab assumption: direct cabled Mac Thunderbolt links are
     low-loss enough that TCP-over-TCP pathologies should be limited during
     throughput tests. It should not be treated as a general unreliable-mesh

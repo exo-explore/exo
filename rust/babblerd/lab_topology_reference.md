@@ -85,7 +85,8 @@ the peer is link-local and matches a live Babel neighbour on the accepted
 scope/interface.
 
 Forced TCP defaults the TUN MTU to `9000` to reduce per-packet TUN syscalls.
-Override it during sweeps with either:
+Override it during sweeps with either command form, but keep the value identical
+on every forced-TCP peer in the run:
 
 ```sh
 BABBLER_TUN_MTU=16384 BABBLER_ROUTER_TRANSPORT=tcp RUST_LOG=info sudo -E nix run .#babblerd --impure

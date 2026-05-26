@@ -351,15 +351,17 @@ points at these near-term bottlenecks:
   and flushes partial batches at drain/poll boundaries. This is intended to
   test whether macOS Thunderbolt TCP can expose the higher native TCP path while
   avoiding one syscall per inner packet.
-- macOS TCP mode keeps listeners as wildcard IPv6 listeners, not
-  `IPV6_BOUND_IF` listeners. The lab showed per-interface-bound TCP listeners
-  can stall Thunderbolt handshakes in `SYN_RCVD`; outbound streams are still
-  scoped to the Babel-selected interface. Inbound streams are accepted only
-  from link-local peers that match a live Babel neighbour on the accepted
-  interface/scope.
+- macOS TCP mode keeps one wildcard IPv6 listener per daemon, not one
+  `IPV6_BOUND_IF` listener per admitted interface. The lab showed
+  per-interface-bound TCP listeners can stall Thunderbolt handshakes in
+  `SYN_RCVD`; outbound streams are still scoped to the Babel-selected
+  interface. Inbound streams are accepted only from link-local peers that match
+  a live Babel neighbour on the accepted interface/scope.
 - TCP mode now defaults the TUN MTU to `9000` to cut packet rate through
   macOS `utun`; `BABBLER_TUN_MTU=<mtu>` or `--tun-mtu <mtu>` can be used for
-  jumbo sweeps. UDP mode still defaults to the physical-MTU-derived `1452`.
+  jumbo sweeps. All forced-TCP peers in one test mesh must use the same value,
+  because receivers reject TCP frames larger than their local TUN MTU. UDP mode
+  still defaults to the physical-MTU-derived `1452`.
 - TCP mode changes overload behavior. Instead of UDP drops on send backpressure,
   it can accumulate bounded per-stream pending bytes and then drop once that
   bound is reached. Its counters must be watched separately:

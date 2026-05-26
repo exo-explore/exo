@@ -106,6 +106,12 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
         node_addr,
         tun.ifname(),
     );
+    if config.router_transport == TransportMode::Tcp {
+        tracing::warn!(
+            tun_mtu = config.tun_mtu,
+            "forced TCP transport requires matching TUN MTU on every peer; larger received frames are rejected"
+        );
+    }
 
     let public_socket = UnixListener::bind(&config.public_socket_path)?;
 

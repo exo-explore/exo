@@ -49,17 +49,19 @@ What is implemented:
   inner IPv6 packets with a `u16` big-endian length, batches framed packets into
   bounded per-peer write buffers, and flushes partial batches at drain/poll
   boundaries or when the batch reaches the target size.
-- On macOS, TCP listeners intentionally bind the wildcard IPv6 address without
-  `IPV6_BOUND_IF`. Lab testing found per-interface-bound TCP listeners could
-  leave e4/e16 Thunderbolt handshakes stuck in `SYN_RCVD`; outbound TCP streams
-  are still scoped to the Babel-selected interface. Accepted streams are now
-  admitted only when the peer is a link-local Babel neighbour on the accepted
-  scope/interface.
+- On macOS, TCP mode keeps one wildcard IPv6 listener per daemon and separate
+  no-fd slots for admitted interfaces. Lab testing found per-interface-bound
+  TCP listeners could leave e4/e16 Thunderbolt handshakes stuck in `SYN_RCVD`;
+  outbound TCP streams are still scoped to the Babel-selected interface.
+  Accepted streams are admitted only when the peer is a link-local Babel
+  neighbour on the accepted scope/interface.
 - TCP mode is intended as an experimental Mac Thunderbolt fast path to reduce
   one-syscall-per-packet overhead. It is not the default mesh transport.
 - TCP mode uses a jumbo `9000` byte TUN MTU by default to reduce userspace TUN
   packet rate. Override with `--tun-mtu <mtu>` or `BABBLER_TUN_MTU=<mtu>` when
-  sweeping Mac `utun` limits. UDP mode keeps the old `1452` byte default.
+  sweeping Mac `utun` limits. All forced-TCP peers in a test mesh must use the
+  same TUN MTU; a receiver rejects TCP frames larger than its local MTU. UDP
+  mode keeps the old `1452` byte default.
 
 What is not implemented:
 
@@ -425,12 +427,13 @@ Key facts:
 - Force the experimental TCP dataplane transport with either:
   - `BABBLER_ROUTER_TRANSPORT=tcp RUST_LOG=info sudo -E nix run .#babblerd --impure`
   - `RUST_LOG=info sudo -E nix run .#babblerd --impure -- --force-tcp`
-- In forced TCP mode on macOS, listener sockets are wildcard listeners shared
-  across admitted interfaces; per-peer outbound streams remain interface-scoped.
+- In forced TCP mode on macOS, each daemon has one wildcard listener shared by
+  all admitted interfaces; per-peer outbound streams remain interface-scoped.
   Accepted TCP streams are rejected unless the peer is link-local and matches a
   live Babel neighbour on the accepted scope/interface.
 - Forced TCP defaults the TUN MTU to `9000`. Use `--tun-mtu <mtu>` or
-  `BABBLER_TUN_MTU=<mtu>` to test `16384`, `32768`, or larger values.
+  `BABBLER_TUN_MTU=<mtu>` to test `16384`, `32768`, or larger values. Keep the
+  value identical on every forced-TCP peer in a run.
 - The current `iperf3` source is the fork at
   `/home/royalguard/Desktop/exo-all/networking-related/iperf3`.
   Commit `962e05b` adds `%scopeID` rendering for link-local IPv6 output.
