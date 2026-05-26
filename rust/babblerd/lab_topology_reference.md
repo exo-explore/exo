@@ -76,6 +76,12 @@ TCP mode still uses Babel for route selection and still sends Babel packets on
 the direct link-local `en*` interfaces. Only node-ULA overlay traffic uses the
 TCP streams.
 
+On macOS, forced-TCP listener sockets are wildcard listeners rather than
+per-interface-bound listeners. Per-interface `IPV6_BOUND_IF` on TCP listeners
+left e4/e16 handshakes stuck in `SYN_RCVD` during lab testing, while a plain
+link-local TCP listener on the same cable completed. Outbound TCP streams remain
+scoped to the Babel-selected interface.
+
 If broad interface discovery causes unrelated links to interfere with a
 specific debug run, `BABBLER_INTERFACE_ALLOWLIST` is still available as a
 temporary escape hatch. Do not use it as the default lab topology description.

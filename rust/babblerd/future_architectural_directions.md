@@ -349,6 +349,10 @@ points at these near-term bottlenecks:
   and flushes partial batches at drain/poll boundaries. This is intended to
   test whether macOS Thunderbolt TCP can expose the higher native TCP path while
   avoiding one syscall per inner packet.
+- macOS TCP mode keeps listeners as wildcard IPv6 listeners, not
+  `IPV6_BOUND_IF` listeners. The lab showed per-interface-bound TCP listeners
+  can stall Thunderbolt handshakes in `SYN_RCVD`; outbound streams are still
+  scoped to the Babel-selected interface.
 - TCP mode changes overload behavior. Instead of UDP drops on send backpressure,
   it can accumulate bounded per-stream pending bytes and then drop once that
   bound is reached. Its counters must be watched separately:

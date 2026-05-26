@@ -230,6 +230,10 @@ of shortcuts that should be revisited later.
     `--force-tcp`. It frames inner IPv6 packets onto scoped link-local TCP
     streams and batches writes through bounded per-peer buffers. This is a
     deliberate experimental shortcut, not the default transport policy.
+  - On macOS, TCP listeners are wildcard IPv6 listeners instead of
+    per-interface-bound listeners; outbound streams still use the
+    Babel-selected interface. Bound listeners caused e4/e16 lab handshakes to
+    stick in `SYN_RCVD`.
   - TCP mode relies on a lab assumption: direct cabled Mac Thunderbolt links are
     low-loss enough that TCP-over-TCP pathologies should be limited during
     throughput tests. It should not be treated as a general unreliable-mesh

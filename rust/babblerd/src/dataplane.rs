@@ -1354,11 +1354,7 @@ impl DataplaneWorker {
             bytes = packet_len,
             "dataplane resolved route for forwarded TCP packet"
         );
-        if self.send_overlay_via_route(
-            packet,
-            route,
-            "forwarding TCP packet",
-        )? {
+        if self.send_overlay_via_route(packet, route, "forwarding TCP packet")? {
             self.counters.udp_forwarded_packets += 1;
         }
         Ok(())
@@ -2016,16 +2012,20 @@ fn open_tcp_listener(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioTcp
     socket.set_recv_buffer_size(UDP_SOCKET_BUFFER_BYTES)?;
     socket.set_send_buffer_size(UDP_SOCKET_BUFFER_BYTES)?;
 
-    let Some(ifindex) = NonZeroU32::new(ifindex) else {
-        return Err(io::Error::new(
-            ErrorKind::InvalidInput,
-            format!("invalid ifindex for {ifname}"),
-        ));
-    };
+    #[cfg(not(target_os = "linux"))]
+    let _ = (ifname, ifindex);
 
     #[cfg(target_os = "linux")]
-    socket.bind_device(Some(ifname.as_bytes()))?;
-    socket.bind_device_by_index_v6(Some(ifindex))?;
+    {
+        let Some(ifindex) = NonZeroU32::new(ifindex) else {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("invalid ifindex for {ifname}"),
+            ));
+        };
+        socket.bind_device(Some(ifname.as_bytes()))?;
+        socket.bind_device_by_index_v6(Some(ifindex))?;
+    }
     socket.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0).into())?;
     socket.listen(1024)?;
 
