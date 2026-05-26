@@ -232,16 +232,19 @@ of shortcuts that should be revisited later.
     deliberate experimental shortcut, not the default transport policy.
   - On macOS, TCP listeners are wildcard IPv6 listeners instead of
     per-interface-bound listeners; outbound streams still use the
-    Babel-selected interface. Bound listeners caused e4/e16 lab handshakes to
-    stick in `SYN_RCVD`.
+    Babel-selected interface. Accepted streams must be link-local Babel
+    neighbours on the accepted interface/scope. Bound listeners caused e4/e16
+    lab handshakes to stick in `SYN_RCVD`.
+  - TCP mode defaults the TUN MTU to `9000`; use `--tun-mtu <mtu>` or
+    `BABBLER_TUN_MTU=<mtu>` for jumbo sweeps. UDP keeps the old `1452` default.
   - TCP mode relies on a lab assumption: direct cabled Mac Thunderbolt links are
     low-loss enough that TCP-over-TCP pathologies should be limited during
     throughput tests. It should not be treated as a general unreliable-mesh
     replacement for UDP without more overload and loss testing.
   - Benchmark output batching, aggregation, jumbo MTU support, and eventually
-    multi-core dataplane sharding. At `11 Gbit/s` with the current `1452` byte
-    TUN MTU, the budget is about `947 kpps`, or `1.06 us/packet`; the current
-    direct overlay result is roughly `126 kpps`, or `8 us/packet`.
+    multi-core dataplane sharding. At `11 Gbit/s` with `1452` byte packets, the
+    budget is about `947 kpps`, or `1.06 us/packet`; the current direct overlay
+    result is roughly `126 kpps`, or `8 us/packet`.
   - Do not describe Babel packets as going through the software router in the
     normal design. Babel should be direct-interface link-local traffic on the
     `en*` interfaces that `babblerd` gives to `babeld`; overlay load can still
@@ -276,7 +279,9 @@ of shortcuts that should be revisited later.
 
 - The current MTU model is still intentionally crude:
   - assume physical links must support 1500-byte packets,
-  - derive TUN MTU as `1500 - 40 (IPv6) - 8 (UDP) = 1452`,
+  - use `1452` as the UDP TUN MTU default,
+  - use `9000` as the forced-TCP TUN MTU default,
+  - allow `BABBLER_TUN_MTU` or `--tun-mtu` for explicit experiments,
   - reject candidate physical interfaces below 1500 MTU.
   Files:
   - `src/config.rs`
@@ -286,8 +291,8 @@ of shortcuts that should be revisited later.
   - It does not handle PMTUD, VLAN overhead, per-route MTU variation, or
     jumbo-frame opportunities.
   Follow-up:
-  - Replace the current fixed MTU model with route-aware MTU derivation once the
-    UDP dataplane exists.
+  - Replace the current coarse MTU model with route-aware MTU derivation once
+    the dataplane is better characterized.
 
 - The overlay route controller currently claims the whole overlay prefix
   aggressively.

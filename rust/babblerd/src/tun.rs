@@ -3,8 +3,6 @@ use std::net::Ipv6Addr;
 use std::sync::Arc;
 use tun_rs::{DeviceBuilder, SyncDevice};
 
-use crate::config::TUN_MTU;
-
 #[cfg(target_os = "linux")]
 const DESIRED_TUN_NAME: &str = "exonet";
 
@@ -17,8 +15,8 @@ pub struct TunDevice {
 }
 
 impl TunDevice {
-    pub fn create(node_addr: Ipv6Addr) -> crate::Result<Self> {
-        let builder = DeviceBuilder::new().ipv6(node_addr, 128u8).mtu(TUN_MTU);
+    pub fn create(node_addr: Ipv6Addr, mtu: u16) -> crate::Result<Self> {
+        let builder = DeviceBuilder::new().ipv6(node_addr, 128u8).mtu(mtu);
         #[cfg(target_os = "linux")]
         let builder = builder.name(DESIRED_TUN_NAME);
 

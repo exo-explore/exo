@@ -16,7 +16,7 @@
 //! - only destination-based forwarding is modeled,
 //! - routes with non-link-local next hops are ignored.
 
-use std::net::Ipv6Addr;
+use std::net::{IpAddr, Ipv6Addr};
 
 use ahash::RandomState;
 use hashbrown::{HashMap, HashSet, hash_map::Entry};
@@ -34,10 +34,18 @@ pub struct FibEntry {
     pub mtu: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AdmittedNeighbour {
+    pub ifname: Box<str>,
+    pub link_local: Ipv6Addr,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FibSnapshot {
     pub locals: HashSet<HostKey, RandomState>,
     pub admitted_interfaces: HashSet<Box<str>, RandomState>,
+    pub admitted_neighbours: HashSet<AdmittedNeighbour, RandomState>,
+    pub interface_link_locals: HashMap<Box<str>, Ipv6Addr, RandomState>,
     pub routes: HashMap<HostKey, FibEntry, RandomState>,
 }
 
@@ -72,11 +80,33 @@ impl FibBuilder {
             .map(|interface| interface.ifname.as_ref())
             .collect::<HashSet<_, _>>();
 
-        let mut admitted_interfaces = HashSet::with_hasher(RandomState::new());
-        for neighbour in state.neighbours.values() {
-            if up_interfaces.contains(neighbour.ifname.as_ref()) {
-                admitted_interfaces.insert(neighbour.ifname.clone());
+        let mut interface_link_locals = HashMap::with_hasher(RandomState::new());
+        for interface in state.interfaces.values().filter(|interface| interface.up) {
+            let Some(IpAddr::V6(link_local)) = interface.ipv6 else {
+                continue;
+            };
+            if link_local.is_unicast_link_local() {
+                interface_link_locals.insert(interface.ifname.clone(), link_local);
             }
+        }
+
+        let mut admitted_interfaces = HashSet::with_hasher(RandomState::new());
+        let mut admitted_neighbours = HashSet::with_hasher(RandomState::new());
+        for neighbour in state.neighbours.values() {
+            if !up_interfaces.contains(neighbour.ifname.as_ref()) {
+                continue;
+            }
+            let IpAddr::V6(link_local) = neighbour.address else {
+                continue;
+            };
+            if !link_local.is_unicast_link_local() {
+                continue;
+            }
+            admitted_interfaces.insert(neighbour.ifname.clone());
+            admitted_neighbours.insert(AdmittedNeighbour {
+                ifname: neighbour.ifname.clone(),
+                link_local,
+            });
         }
 
         let mut routes = HashMap::with_hasher(RandomState::new());
@@ -133,6 +163,8 @@ impl FibBuilder {
         FibSnapshot {
             locals,
             admitted_interfaces,
+            admitted_neighbours,
+            interface_link_locals,
             routes,
         }
     }
@@ -143,6 +175,8 @@ impl FibSnapshot {
         Self {
             locals: HashSet::with_hasher(RandomState::new()),
             admitted_interfaces: HashSet::with_hasher(RandomState::new()),
+            admitted_neighbours: HashSet::with_hasher(RandomState::new()),
+            interface_link_locals: HashMap::with_hasher(RandomState::new()),
             routes: HashMap::with_hasher(RandomState::new()),
         }
     }
@@ -201,7 +235,7 @@ mod tests {
     use crate::babel::line::{Event, EventKind, InterfaceEvent, NeighbourEvent, RouteEvent};
     use crate::babel::state::BabelState;
 
-    use super::FibBuilder;
+    use super::{AdmittedNeighbour, FibBuilder};
 
     fn route(
         handle: u64,
@@ -275,6 +309,10 @@ mod tests {
 
         assert!(fib.is_local("fde0::1".parse().unwrap()));
         assert!(fib.admitted_interfaces.contains("en2"));
+        assert!(fib.admitted_neighbours.contains(&AdmittedNeighbour {
+            ifname: "en2".into(),
+            link_local: "fe80::1".parse().unwrap(),
+        }));
         let entry = fib.lookup("fde0::1234".parse().unwrap()).unwrap();
         assert_eq!(entry.next_hop_ll, "fe80::1".parse::<Ipv6Addr>().unwrap());
         assert_eq!(entry.ifname.as_ref(), "en2");

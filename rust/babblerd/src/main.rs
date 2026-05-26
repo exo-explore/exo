@@ -4,11 +4,11 @@
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 compile_error!("babblerd is mac/linux-only");
 
-use std::{fs::Permissions, io, os::unix::fs::PermissionsExt, sync::Arc};
+use std::{env, fs::Permissions, io, os::unix::fs::PermissionsExt, sync::Arc};
 
 use babblerd::{
     babel::BabelState,
-    config::{Config, TransportMode},
+    config::{Config, TUN_MTU_ENV, TransportMode, default_tun_mtu},
     daemon, identity,
     tun::TunDevice,
 };
@@ -33,6 +33,8 @@ struct Cli {
     router_transport: Option<TransportMode>,
     #[arg(long, conflicts_with = "router_transport")]
     force_tcp: bool,
+    #[arg(long, value_parser = parse_tun_mtu)]
+    tun_mtu: Option<u16>,
 }
 
 #[tokio::main]
@@ -43,11 +45,19 @@ async fn main() -> eyre::Result<()> {
         .init();
     let cli = Cli::parse();
     let mut config = Config::from_env()?;
+    let tun_mtu_from_env = env::var_os(TUN_MTU_ENV).is_some();
+    let transport_overridden = cli.router_transport.is_some() || cli.force_tcp;
     if let Some(router_transport) = cli.router_transport {
         config.router_transport = router_transport;
     }
     if cli.force_tcp {
         config.router_transport = TransportMode::Tcp;
+    }
+    if transport_overridden && !tun_mtu_from_env && cli.tun_mtu.is_none() {
+        config.tun_mtu = default_tun_mtu(config.router_transport);
+    }
+    if let Some(tun_mtu) = cli.tun_mtu {
+        config.tun_mtu = tun_mtu;
     }
 
     // cleanup old  public socket path
@@ -81,13 +91,15 @@ async fn main() -> eyre::Result<()> {
 async fn inner_main(config: &Config) -> eyre::Result<()> {
     let node_id = identity::load_or_create_node_id(&config.node_id_file)?;
     let node_addr = identity::node_addr(config.exo_ula_prefix, node_id)?;
-    let tun = TunDevice::create(node_addr.addr()).wrap_err("creating tun for node address")?;
+    let tun = TunDevice::create(node_addr.addr(), config.tun_mtu)
+        .wrap_err("creating tun for node address")?;
 
     tracing::info!("creating socket at {}", config.public_socket_path.display());
     tracing::info!(
-        "router defaults: transport={} port={} node_id_file={} app_prefix={} node_id={:#018x} node_addr={} tun={}",
+        "router defaults: transport={} port={} tun_mtu={} node_id_file={} app_prefix={} node_id={:#018x} node_addr={} tun={}",
         config.router_transport,
         config.router_udp_port,
+        config.tun_mtu,
         config.node_id_file.display(),
         config.exo_ula_prefix,
         node_id,
@@ -106,6 +118,7 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
         config.exo_ula_prefix,
         config.router_udp_port,
         config.router_transport,
+        config.tun_mtu,
         node_addr,
         tun,
         babel_state_send,
@@ -159,6 +172,10 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
 
 fn parse_transport_mode(raw: &str) -> Result<TransportMode, String> {
     raw.parse()
+}
+
+fn parse_tun_mtu(raw: &str) -> Result<u16, String> {
+    babblerd::config::parse_tun_mtu(raw)
 }
 
 async fn internal_keepalive_client(socket_path: std::path::PathBuf) {

@@ -20,6 +20,7 @@ pub const PUBLIC_SOCKET_PATH_ENV: &str = "BABBLER_SOCKET_PATH";
 pub const NODE_ID_FILE_ENV: &str = "BABBLER_NODE_ID_FILE";
 pub const ROUTER_UDP_PORT_ENV: &str = "BABBLER_ROUTER_UDP_PORT";
 pub const ROUTER_TRANSPORT_ENV: &str = "BABBLER_ROUTER_TRANSPORT";
+pub const TUN_MTU_ENV: &str = "BABBLER_TUN_MTU";
 pub const INTERFACE_ALLOWLIST_ENV: &str = "BABBLER_INTERFACE_ALLOWLIST";
 
 pub const DEFAULT_PUBLIC_SOCKET_PATH: &str = {
@@ -51,7 +52,11 @@ pub const DEFAULT_ROUTER_UDP_PORT: u16 = 41897;
 pub const PHYSICAL_LINK_MTU: u16 = 1500;
 pub const OUTER_IPV6_HEADER_BYTES: u16 = 40;
 pub const OUTER_UDP_HEADER_BYTES: u16 = 8;
-pub const TUN_MTU: u16 = PHYSICAL_LINK_MTU - OUTER_IPV6_HEADER_BYTES - OUTER_UDP_HEADER_BYTES;
+pub const UDP_TUN_MTU: u16 = PHYSICAL_LINK_MTU - OUTER_IPV6_HEADER_BYTES - OUTER_UDP_HEADER_BYTES;
+pub const TCP_TUN_MTU: u16 = 9000;
+pub const MIN_TUN_MTU: u16 = 1280;
+pub const MAX_TUN_MTU: u16 = u16::MAX;
+pub const TUN_MTU: u16 = UDP_TUN_MTU;
 
 pub const EXO_ULA_PREFIX: Ipv6Net = Ipv6Net::new_assert(
     // TODO: break out into "fd" for ULA
@@ -99,6 +104,7 @@ pub struct Config {
     pub node_id_file: PathBuf,
     pub router_udp_port: u16,
     pub router_transport: TransportMode,
+    pub tun_mtu: u16,
     pub exo_ula_prefix: Ipv6Net,
 }
 
@@ -131,6 +137,11 @@ impl Config {
                 .map_err(|e| eyre!("invalid {ROUTER_TRANSPORT_ENV} value {raw:?}: {e}"))?,
             Err(_) => TransportMode::Udp,
         };
+        let tun_mtu = match env::var(TUN_MTU_ENV) {
+            Ok(raw) => parse_tun_mtu(&raw)
+                .map_err(|e| eyre!("invalid {TUN_MTU_ENV} value {raw:?}: {e}"))?,
+            Err(_) => default_tun_mtu(router_transport),
+        };
 
         Ok(Self {
             public_socket_path,
@@ -138,9 +149,30 @@ impl Config {
             node_id_file,
             router_udp_port,
             router_transport,
+            tun_mtu,
             exo_ula_prefix: EXO_ULA_PREFIX,
         })
     }
+}
+
+pub fn default_tun_mtu(transport: TransportMode) -> u16 {
+    match transport {
+        TransportMode::Udp => UDP_TUN_MTU,
+        TransportMode::Tcp => TCP_TUN_MTU,
+    }
+}
+
+pub fn parse_tun_mtu(raw: &str) -> Result<u16, String> {
+    let mtu = raw
+        .trim()
+        .parse::<u16>()
+        .map_err(|err| format!("expected integer MTU: {err}"))?;
+    if !(MIN_TUN_MTU..=MAX_TUN_MTU).contains(&mtu) {
+        return Err(format!(
+            "expected MTU in {MIN_TUN_MTU}..={MAX_TUN_MTU}, got {mtu}"
+        ));
+    }
+    Ok(mtu)
 }
 
 pub fn interface_allowlist_from_env() -> eyre::Result<Option<HashSet<Box<str>>>> {
@@ -166,7 +198,9 @@ pub fn interface_allowlist_from_env() -> eyre::Result<Option<HashSet<Box<str>>>>
 
 #[cfg(test)]
 mod tests {
-    use super::{EXO_ULA_PREFIX, TransportMode};
+    use super::{
+        EXO_ULA_PREFIX, TCP_TUN_MTU, TransportMode, UDP_TUN_MTU, default_tun_mtu, parse_tun_mtu,
+    };
     use std::net::Ipv6Addr;
 
     #[test]
@@ -184,5 +218,14 @@ mod tests {
         assert_eq!("tcp".parse::<TransportMode>().unwrap(), TransportMode::Tcp);
         assert_eq!("TCP".parse::<TransportMode>().unwrap(), TransportMode::Tcp);
         assert!("quic".parse::<TransportMode>().is_err());
+    }
+
+    #[test]
+    fn tun_mtu_defaults_follow_transport_and_validate_bounds() {
+        assert_eq!(default_tun_mtu(TransportMode::Udp), UDP_TUN_MTU);
+        assert_eq!(default_tun_mtu(TransportMode::Tcp), TCP_TUN_MTU);
+        assert_eq!(parse_tun_mtu("9000").unwrap(), 9000);
+        assert!(parse_tun_mtu("1279").is_err());
+        assert!(parse_tun_mtu("65536").is_err());
     }
 }

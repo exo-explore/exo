@@ -9,7 +9,7 @@ use tokio::{
 };
 
 use crate::babel::BabelState;
-use crate::config::{TUN_MTU, TransportMode};
+use crate::config::TransportMode;
 use crate::daemon::{RoutingStackEvent, StackTaskKind};
 use crate::dataplane::{Dataplane, DataplaneConfig, DataplanePublisher, PublishSnapshotError};
 use crate::fib::FibBuilder;
@@ -30,6 +30,7 @@ impl RoutingStack {
         tun: &TunDevice,
         udp_port: u16,
         transport_mode: TransportMode,
+        tun_mtu: u16,
         state_send: watch::Sender<Arc<BabelState>>,
         event_send: mpsc::Sender<RoutingStackEvent>,
     ) -> Result<Self> {
@@ -41,8 +42,9 @@ impl RoutingStack {
             tun_device: tun.shared_device(),
             udp_port,
             transport_mode,
+            tun_mtu,
             initial_fib: Arc::new(
-                FibBuilder::new([node_addr.addr()], TUN_MTU).derive(initial_state.as_ref()),
+                FibBuilder::new([node_addr.addr()], tun_mtu).derive(initial_state.as_ref()),
             ),
         })?;
         let dataplane_exit = dataplane
@@ -84,7 +86,8 @@ impl RoutingStack {
         let fib_events = event_send.clone();
         let dataplane_publisher = dataplane.publisher();
         let fib_publisher = tokio::spawn(async move {
-            let res = publish_fib_updates(node_addr, fib_state_recv, dataplane_publisher).await;
+            let res =
+                publish_fib_updates(node_addr, tun_mtu, fib_state_recv, dataplane_publisher).await;
             let _ = fib_events
                 .send(RoutingStackEvent::Exited {
                     kind: StackTaskKind::FibPublisher,
@@ -153,10 +156,11 @@ impl RoutingStack {
 
 async fn publish_fib_updates(
     node_addr: Ipv6Net,
+    tun_mtu: u16,
     mut state_recv: watch::Receiver<Arc<BabelState>>,
     publisher: DataplanePublisher,
 ) -> crate::Result<()> {
-    let builder = FibBuilder::new([node_addr.addr()], TUN_MTU);
+    let builder = FibBuilder::new([node_addr.addr()], tun_mtu);
     let mut pending = Some(Arc::new(builder.derive(state_recv.borrow().as_ref())));
     let mut published: Option<Arc<crate::fib::FibSnapshot>> = None;
     let mut retry_tick = tokio::time::interval(Duration::from_millis(10));

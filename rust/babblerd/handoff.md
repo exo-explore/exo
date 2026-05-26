@@ -52,9 +52,14 @@ What is implemented:
 - On macOS, TCP listeners intentionally bind the wildcard IPv6 address without
   `IPV6_BOUND_IF`. Lab testing found per-interface-bound TCP listeners could
   leave e4/e16 Thunderbolt handshakes stuck in `SYN_RCVD`; outbound TCP streams
-  are still scoped to the Babel-selected interface.
+  are still scoped to the Babel-selected interface. Accepted streams are now
+  admitted only when the peer is a link-local Babel neighbour on the accepted
+  scope/interface.
 - TCP mode is intended as an experimental Mac Thunderbolt fast path to reduce
   one-syscall-per-packet overhead. It is not the default mesh transport.
+- TCP mode uses a jumbo `9000` byte TUN MTU by default to reduce userspace TUN
+  packet rate. Override with `--tun-mtu <mtu>` or `BABBLER_TUN_MTU=<mtu>` when
+  sweeping Mac `utun` limits. UDP mode keeps the old `1452` byte default.
 
 What is not implemented:
 
@@ -422,6 +427,10 @@ Key facts:
   - `RUST_LOG=info sudo -E nix run .#babblerd --impure -- --force-tcp`
 - In forced TCP mode on macOS, listener sockets are wildcard listeners shared
   across admitted interfaces; per-peer outbound streams remain interface-scoped.
+  Accepted TCP streams are rejected unless the peer is link-local and matches a
+  live Babel neighbour on the accepted scope/interface.
+- Forced TCP defaults the TUN MTU to `9000`. Use `--tun-mtu <mtu>` or
+  `BABBLER_TUN_MTU=<mtu>` to test `16384`, `32768`, or larger values.
 - The current `iperf3` source is the fork at
   `/home/royalguard/Desktop/exo-all/networking-related/iperf3`.
   Commit `962e05b` adds `%scopeID` rendering for link-local IPv6 output.
@@ -499,8 +508,9 @@ Capture each run with:
 3. CPU usage on sender, transit node, and receiver
 4. route/FIB snapshots before and after the run
 5. whether bidirectional `ping6` still works after the run
-6. for TCP mode, `tcp_tx_batches`, `tcp_tx_packets`, `tcp_rx_frames`,
-   `tcp_queue_drops`, `tcp_frame_errors`, and `tcp_stream_errors` counter deltas
+6. for TCP mode, `tcp_tx_batches`, `tcp_queued_packets`,
+   `tcp_written_frames`, `tcp_rx_frames`, `tcp_rejected_peers`,
+   `tcp_queue_drops`, `tcp_frame_errors`, and `tcp_stream_errors` deltas
 
 Goal:
 

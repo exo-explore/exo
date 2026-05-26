@@ -16,10 +16,12 @@
 //! - and snapshot application reconciles the registry rather than trusting
 //!   snapshot-local slot numbers.
 
+use std::collections::VecDeque;
 use std::hash::BuildHasher;
 use std::io::{self, ErrorKind, IoSliceMut, Read, Write};
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, TcpStream, UdpSocket};
 use std::num::NonZeroU32;
+use std::ops::Range;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -42,7 +44,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::oneshot;
 use tun_rs::SyncDevice;
 
-use crate::config::{PHYSICAL_LINK_MTU, TransportMode};
+use crate::config::{TransportMode, UDP_TUN_MTU};
 use crate::fib::{FibSnapshot, HostKey, host_key};
 
 const TOKEN_TUN: Token = Token(0);
@@ -55,9 +57,7 @@ const COUNTER_LOG_INTERVAL: Duration = Duration::from_secs(5);
 const UDP_SOCKET_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 const TUN_DRAIN_BUDGET: usize = 64;
 const UDP_DRAIN_BUDGET: usize = 64;
-const PACKET_BUFFER_BYTES: usize = PHYSICAL_LINK_MTU as usize;
 const MAX_GRO_SEGMENTS: usize = 64;
-const UDP_RECV_BUFFER_BYTES: usize = PACKET_BUFFER_BYTES * MAX_GRO_SEGMENTS;
 const TCP_READ_BUFFER_BYTES: usize = 64 * 1024;
 const TCP_BATCH_TARGET_BYTES: usize = 64 * 1024;
 const TCP_PENDING_LIMIT_BYTES: usize = 4 * 1024 * 1024;
@@ -68,6 +68,7 @@ pub struct DataplaneConfig {
     pub tun_device: Arc<SyncDevice>,
     pub udp_port: u16,
     pub transport_mode: TransportMode,
+    pub tun_mtu: u16,
     pub initial_fib: Arc<FibSnapshot>,
 }
 
@@ -98,6 +99,7 @@ struct DataplaneWorker {
     stop_recv: Receiver<()>,
     poll: Poll,
     events: Events,
+    tun_mtu: usize,
     sockets: Slab<InterfaceSocket>,
     ifname_to_slab: HashMap<Box<str>, usize>,
     tcp_streams: Slab<TcpPeerStream>,
@@ -107,7 +109,7 @@ struct DataplaneWorker {
     counters: DataplaneCounters,
     last_counter_log: Instant,
     last_logged_counters: DataplaneCounters,
-    tun_buf: Box<[u8; PACKET_BUFFER_BYTES]>,
+    tun_buf: Vec<u8>,
     udp_batch: UdpRecvBatch,
     tcp_read_buf: Box<[u8; TCP_READ_BUFFER_BYTES]>,
 }
@@ -154,7 +156,26 @@ struct TcpFrameDecoder {
 struct TcpWriteBuffer {
     bytes: Vec<u8>,
     offset: usize,
-    queued_packets: usize,
+    frame_ends: VecDeque<TcpQueuedFrame>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TcpFrameOrigin {
+    TunIngress,
+    Forwarded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TcpQueuedFrame {
+    end_offset: usize,
+    origin: TcpFrameOrigin,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct TcpCompletedFrames {
+    total: usize,
+    tun_ingress: usize,
+    forwarded: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,9 +251,11 @@ struct DataplaneCounters {
     udp_send_errors: u64,
     tcp_connects: u64,
     tcp_accepts: u64,
+    tcp_rejected_peers: u64,
     tcp_reconnects: u64,
+    tcp_queued_packets: u64,
     tcp_tx_batches: u64,
-    tcp_tx_packets: u64,
+    tcp_written_frames: u64,
     tcp_tx_bytes: u64,
     tcp_rx_frames: u64,
     tcp_rx_bytes: u64,
@@ -303,9 +326,17 @@ impl DataplaneCounters {
                 .saturating_sub(previous.udp_send_errors),
             tcp_connects: self.tcp_connects.saturating_sub(previous.tcp_connects),
             tcp_accepts: self.tcp_accepts.saturating_sub(previous.tcp_accepts),
+            tcp_rejected_peers: self
+                .tcp_rejected_peers
+                .saturating_sub(previous.tcp_rejected_peers),
             tcp_reconnects: self.tcp_reconnects.saturating_sub(previous.tcp_reconnects),
+            tcp_queued_packets: self
+                .tcp_queued_packets
+                .saturating_sub(previous.tcp_queued_packets),
             tcp_tx_batches: self.tcp_tx_batches.saturating_sub(previous.tcp_tx_batches),
-            tcp_tx_packets: self.tcp_tx_packets.saturating_sub(previous.tcp_tx_packets),
+            tcp_written_frames: self
+                .tcp_written_frames
+                .saturating_sub(previous.tcp_written_frames),
             tcp_tx_bytes: self.tcp_tx_bytes.saturating_sub(previous.tcp_tx_bytes),
             tcp_rx_frames: self.tcp_rx_frames.saturating_sub(previous.tcp_rx_frames),
             tcp_rx_bytes: self.tcp_rx_bytes.saturating_sub(previous.tcp_rx_bytes),
@@ -341,9 +372,11 @@ impl DataplaneCounters {
             || self.udp_send_errors != 0
             || self.tcp_connects != 0
             || self.tcp_accepts != 0
+            || self.tcp_rejected_peers != 0
             || self.tcp_reconnects != 0
+            || self.tcp_queued_packets != 0
             || self.tcp_tx_batches != 0
-            || self.tcp_tx_packets != 0
+            || self.tcp_written_frames != 0
             || self.tcp_rx_frames != 0
             || self.tcp_blocked_writes != 0
             || self.tcp_queue_drops != 0
@@ -353,9 +386,10 @@ impl DataplaneCounters {
 }
 
 impl UdpRecvBatch {
-    fn new() -> Self {
+    fn new(packet_buffer_bytes: usize) -> Self {
+        let recv_buffer_bytes = packet_buffer_bytes.saturating_mul(MAX_GRO_SEGMENTS).max(1);
         let buffers = (0..BATCH_SIZE)
-            .map(|_| vec![0u8; UDP_RECV_BUFFER_BYTES].into_boxed_slice())
+            .map(|_| vec![0u8; recv_buffer_bytes].into_boxed_slice())
             .collect();
         let metas = vec![RecvMeta::default(); BATCH_SIZE];
         Self { buffers, metas }
@@ -401,10 +435,10 @@ impl TcpFrameDecoder {
         self.bytes.extend_from_slice(bytes);
     }
 
-    fn next_frame(
+    fn next_frame_range(
         &mut self,
         max_packet_len: usize,
-    ) -> std::result::Result<Option<Vec<u8>>, TcpFrameError> {
+    ) -> std::result::Result<Option<Range<usize>>, TcpFrameError> {
         if self.bytes.len().saturating_sub(self.offset) < 2 {
             self.compact_if_empty();
             return Ok(None);
@@ -425,10 +459,12 @@ impl TcpFrameDecoder {
         if self.bytes.len() < frame_end {
             return Ok(None);
         }
-        let frame = self.bytes[frame_start..frame_end].to_vec();
         self.offset = frame_end;
+        Ok(Some(frame_start..frame_end))
+    }
+
+    fn finish_frame(&mut self) {
         self.compact_if_needed();
-        Ok(Some(frame))
     }
 
     fn compact_if_empty(&mut self) {
@@ -449,16 +485,22 @@ impl TcpFrameDecoder {
     }
 }
 
+impl Default for TcpFrameDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TcpWriteBuffer {
     fn new() -> Self {
         Self {
             bytes: Vec::with_capacity(TCP_BATCH_TARGET_BYTES),
             offset: 0,
-            queued_packets: 0,
+            frame_ends: VecDeque::new(),
         }
     }
 
-    fn queue_frame(&mut self, packet: &[u8]) -> TcpQueueOutcome {
+    fn queue_frame(&mut self, packet: &[u8], origin: TcpFrameOrigin) -> TcpQueueOutcome {
         let Ok(packet_len) = u16::try_from(packet.len()) else {
             return TcpQueueOutcome::Oversized;
         };
@@ -467,7 +509,10 @@ impl TcpWriteBuffer {
         }
         self.bytes.extend_from_slice(&packet_len.to_be_bytes());
         self.bytes.extend_from_slice(packet);
-        self.queued_packets += 1;
+        self.frame_ends.push_back(TcpQueuedFrame {
+            end_offset: self.bytes.len(),
+            origin,
+        });
         TcpQueueOutcome::Queued
     }
 
@@ -483,20 +528,38 @@ impl TcpWriteBuffer {
         self.pending_len() != 0
     }
 
-    fn consume(&mut self, bytes: usize) {
+    fn consume(&mut self, bytes: usize) -> TcpCompletedFrames {
         self.offset = self.offset.saturating_add(bytes).min(self.bytes.len());
+        let mut completed = TcpCompletedFrames::default();
+        while self
+            .frame_ends
+            .front()
+            .is_some_and(|frame| frame.end_offset <= self.offset)
+        {
+            let frame = self.frame_ends.pop_front().expect("front checked");
+            completed.total += 1;
+            match frame.origin {
+                TcpFrameOrigin::TunIngress => completed.tun_ingress += 1,
+                TcpFrameOrigin::Forwarded => completed.forwarded += 1,
+            }
+        }
         if self.offset == self.bytes.len() {
             self.clear();
         } else if self.offset >= TCP_BATCH_TARGET_BYTES {
+            let drained = self.offset;
             self.bytes.drain(..self.offset);
+            for frame in &mut self.frame_ends {
+                frame.end_offset = frame.end_offset.saturating_sub(drained);
+            }
             self.offset = 0;
         }
+        completed
     }
 
     fn clear(&mut self) {
         self.bytes.clear();
         self.offset = 0;
-        self.queued_packets = 0;
+        self.frame_ends.clear();
     }
 }
 
@@ -530,6 +593,13 @@ fn token_to_tcp_stream(token: Token) -> Option<usize> {
         .0
         .checked_sub(TOKEN_TCP_STREAM_BASE)
         .filter(|_| token.0 >= TOKEN_TCP_STREAM_BASE)
+}
+
+fn udp_batch_packet_bytes(transport_mode: TransportMode, tun_mtu: u16) -> usize {
+    match transport_mode {
+        TransportMode::Udp => usize::from(tun_mtu),
+        TransportMode::Tcp => usize::from(UDP_TUN_MTU),
+    }
 }
 
 impl Dataplane {
@@ -626,6 +696,7 @@ impl DataplaneWorker {
             stop_recv,
             poll,
             events,
+            tun_mtu: usize::from(config.tun_mtu),
             sockets: Slab::new(),
             ifname_to_slab: HashMap::new(),
             tcp_streams: Slab::new(),
@@ -635,8 +706,11 @@ impl DataplaneWorker {
             counters: DataplaneCounters::default(),
             last_counter_log: Instant::now(),
             last_logged_counters: DataplaneCounters::default(),
-            tun_buf: Box::new([0u8; PACKET_BUFFER_BYTES]),
-            udp_batch: UdpRecvBatch::new(),
+            tun_buf: vec![0u8; usize::from(config.tun_mtu)],
+            udp_batch: UdpRecvBatch::new(udp_batch_packet_bytes(
+                config.transport_mode,
+                config.tun_mtu,
+            )),
             tcp_read_buf: Box::new([0u8; TCP_READ_BUFFER_BYTES]),
         };
         worker.reconcile_sockets()?;
@@ -789,13 +863,11 @@ impl DataplaneWorker {
                 }
             }
             TransportMode::Tcp => {
-                if self.queue_tcp_tun_buffer_via_route(
+                let _queued = self.queue_tcp_tun_buffer_via_route(
                     packet_len,
                     route,
                     "sending packet from TUN",
-                )? {
-                    self.counters.tun_to_udp_packets += 1;
-                }
+                )?;
             }
         }
         Ok(true)
@@ -998,7 +1070,9 @@ impl DataplaneWorker {
                 let send_result = send_via_route(&self.sockets, self.udp_port, packet, route);
                 self.handle_udp_send_result(send_result, route, context)
             }
-            TransportMode::Tcp => self.queue_tcp_via_route(packet, route, context),
+            TransportMode::Tcp => {
+                self.queue_tcp_via_route(packet, route, TcpFrameOrigin::Forwarded, context)
+            }
         }
     }
 
@@ -1006,6 +1080,7 @@ impl DataplaneWorker {
         &mut self,
         packet: &[u8],
         route: FastFibEntry,
+        origin: TcpFrameOrigin,
         context: &str,
     ) -> Result<bool> {
         let stream_key = match self.ensure_tcp_stream(route, context) {
@@ -1028,7 +1103,7 @@ impl DataplaneWorker {
             let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
                 return Ok(false);
             };
-            stream.write_buf.queue_frame(packet)
+            stream.write_buf.queue_frame(packet, origin)
         };
         self.finish_tcp_queue_outcome(stream_key, outcome, route, packet.len())
     }
@@ -1060,7 +1135,9 @@ impl DataplaneWorker {
             let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
                 return Ok(false);
             };
-            stream.write_buf.queue_frame(packet)
+            stream
+                .write_buf
+                .queue_frame(packet, TcpFrameOrigin::TunIngress)
         };
         self.finish_tcp_queue_outcome(stream_key, outcome, route, packet_len)
     }
@@ -1074,7 +1151,7 @@ impl DataplaneWorker {
     ) -> Result<bool> {
         match outcome {
             TcpQueueOutcome::Queued => {
-                self.counters.tcp_tx_packets += 1;
+                self.counters.tcp_queued_packets += 1;
                 let pending_len = self
                     .tcp_streams
                     .get(stream_key)
@@ -1207,11 +1284,89 @@ impl DataplaneWorker {
                 Err(err) => return Err(err).wrap_err("accepting TCP dataplane stream"),
             };
 
-            self.insert_registered_tcp_stream(interface_slot, None, peer, stream, true)?;
+            let Some(validated_slot) =
+                self.validated_accepted_tcp_peer_slot(interface_slot, &stream, peer)
+            else {
+                self.counters.tcp_rejected_peers += 1;
+                tracing::warn!(
+                    listener_slot = interface_slot,
+                    peer = %peer,
+                    "rejecting TCP dataplane stream from non-admitted peer"
+                );
+                continue;
+            };
+
+            self.insert_registered_tcp_stream(validated_slot, None, peer, stream, true)?;
             self.counters.tcp_accepts += 1;
-            tracing::debug!(peer = %peer, "dataplane accepted TCP stream");
+            tracing::debug!(
+                peer = %peer,
+                interface_slot = validated_slot,
+                "dataplane accepted TCP stream"
+            );
         }
         Ok(())
+    }
+
+    fn validated_accepted_tcp_peer_slot(
+        &self,
+        listener_slot: usize,
+        stream: &MioTcpStream,
+        peer: SocketAddr,
+    ) -> Option<usize> {
+        let SocketAddr::V6(peer_v6) = peer else {
+            return None;
+        };
+        let peer_addr = *peer_v6.ip();
+        if !peer_addr.is_unicast_link_local() {
+            return None;
+        }
+
+        if let Some(slot) = admitted_tcp_peer_slot_by_ifindex(
+            &self.sockets,
+            self.fib.as_ref(),
+            peer_addr,
+            peer_v6.scope_id(),
+        ) {
+            return Some(slot);
+        }
+
+        if let Ok(SocketAddr::V6(local_v6)) = stream.local_addr()
+            && let Some(slot) = admitted_tcp_peer_slot_by_ifindex(
+                &self.sockets,
+                self.fib.as_ref(),
+                peer_addr,
+                local_v6.scope_id(),
+            )
+        {
+            return Some(slot);
+        }
+        if let Ok(SocketAddr::V6(local_v6)) = stream.local_addr()
+            && let Some(slot) = admitted_tcp_peer_slot_by_local_addr(
+                &self.sockets,
+                self.fib.as_ref(),
+                peer_addr,
+                *local_v6.ip(),
+            )
+        {
+            return Some(slot);
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            self.sockets.get(listener_slot).and_then(|socket| {
+                admitted_tcp_peer_slot_by_ifindex(
+                    &self.sockets,
+                    self.fib.as_ref(),
+                    peer_addr,
+                    socket.ifindex,
+                )
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = listener_slot;
+            None
+        }
     }
 
     fn drain_tcp_stream_ready(
@@ -1225,10 +1380,7 @@ impl DataplaneWorker {
             self.flush_tcp_stream(stream_key, "TCP stream writable")?;
         }
         if readable {
-            let frames = self.read_tcp_stream_frames(stream_key)?;
-            for mut frame in frames {
-                self.handle_tcp_frame(&mut frame)?;
-            }
+            self.drain_tcp_stream_read(stream_key)?;
             self.flush_tcp_writes("end of TCP stream drain slice");
         }
         Ok(())
@@ -1257,17 +1409,16 @@ impl DataplaneWorker {
         Ok(())
     }
 
-    fn read_tcp_stream_frames(&mut self, stream_key: usize) -> Result<Vec<Vec<u8>>> {
-        let mut frames = Vec::new();
+    fn drain_tcp_stream_read(&mut self, stream_key: usize) -> Result<()> {
         for _ in 0..TCP_STREAM_READ_DRAIN_BUDGET {
             let read_len = {
                 let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
-                    return Ok(frames);
+                    return Ok(());
                 };
                 match stream.stream.read(self.tcp_read_buf.as_mut()) {
                     Ok(0) => {
                         self.close_tcp_stream(stream_key);
-                        return Ok(frames);
+                        return Ok(());
                     }
                     Ok(read_len) => read_len,
                     Err(err) if err.kind() == ErrorKind::WouldBlock => break,
@@ -1275,47 +1426,53 @@ impl DataplaneWorker {
                         self.counters.tcp_stream_errors += 1;
                         tracing::warn!(error = %err, "failed to read TCP dataplane stream");
                         self.close_tcp_stream(stream_key);
-                        return Ok(frames);
+                        return Ok(());
                     }
                 }
             };
 
-            let frame_result = {
+            let mut decoder = {
                 let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
-                    return Ok(frames);
+                    return Ok(());
                 };
-                stream.read_buf.push(&self.tcp_read_buf[..read_len]);
-                let mut decoded = Vec::new();
-                loop {
-                    match stream.read_buf.next_frame(PACKET_BUFFER_BYTES) {
-                        Ok(Some(frame)) => decoded.push(frame),
-                        Ok(None) => break Ok(decoded),
-                        Err(err) => break Err(err),
-                    }
-                }
+                std::mem::take(&mut stream.read_buf)
             };
+            decoder.push(&self.tcp_read_buf[..read_len]);
 
-            match frame_result {
-                Ok(decoded) => {
-                    for frame in decoded {
+            let mut close_for_bad_frame = false;
+            loop {
+                match decoder.next_frame_range(self.tun_mtu) {
+                    Ok(Some(frame_range)) => {
+                        let frame_len = frame_range.end.saturating_sub(frame_range.start);
                         self.counters.tcp_rx_frames += 1;
-                        self.counters.tcp_rx_bytes += frame.len() as u64;
-                        frames.push(frame);
+                        self.counters.tcp_rx_bytes += frame_len as u64;
+                        self.handle_tcp_frame(&mut decoder.bytes[frame_range])?;
+                        decoder.finish_frame();
                     }
-                }
-                Err(err) => {
-                    self.counters.tcp_frame_errors += 1;
-                    tracing::warn!(?err, "invalid TCP dataplane frame");
-                    self.close_tcp_stream(stream_key);
-                    return Ok(frames);
+                    Ok(None) => break,
+                    Err(err) => {
+                        self.counters.tcp_frame_errors += 1;
+                        tracing::warn!(?err, "invalid TCP dataplane frame");
+                        close_for_bad_frame = true;
+                        break;
+                    }
                 }
             }
+
+            if close_for_bad_frame {
+                self.close_tcp_stream(stream_key);
+                return Ok(());
+            }
+            let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
+                return Ok(());
+            };
+            stream.read_buf = decoder;
 
             if read_len < TCP_READ_BUFFER_BYTES {
                 break;
             }
         }
-        Ok(frames)
+        Ok(())
     }
 
     fn handle_tcp_frame(&mut self, packet: &mut [u8]) -> Result<()> {
@@ -1354,9 +1511,7 @@ impl DataplaneWorker {
             bytes = packet_len,
             "dataplane resolved route for forwarded TCP packet"
         );
-        if self.send_overlay_via_route(packet, route, "forwarding TCP packet")? {
-            self.counters.udp_forwarded_packets += 1;
-        }
+        let _queued = self.send_overlay_via_route(packet, route, "forwarding TCP packet")?;
         Ok(())
     }
 
@@ -1382,6 +1537,7 @@ impl DataplaneWorker {
 
     fn flush_tcp_stream(&mut self, stream_key: usize, context: &str) -> Result<()> {
         let mut wrote_bytes = 0u64;
+        let mut completed_frames = TcpCompletedFrames::default();
         let mut write_calls = 0u64;
         let mut partial_writes = 0u64;
         let mut blocked_writes = 0u64;
@@ -1407,7 +1563,10 @@ impl DataplaneWorker {
                         if written < pending_len {
                             partial_writes += 1;
                         }
-                        stream.write_buf.consume(written);
+                        let completed = stream.write_buf.consume(written);
+                        completed_frames.total += completed.total;
+                        completed_frames.tun_ingress += completed.tun_ingress;
+                        completed_frames.forwarded += completed.forwarded;
                     }
                     Err(err) if err.kind() == ErrorKind::WouldBlock => {
                         blocked_writes += 1;
@@ -1422,6 +1581,9 @@ impl DataplaneWorker {
         }
 
         self.counters.tcp_tx_bytes += wrote_bytes;
+        self.counters.tcp_written_frames += completed_frames.total as u64;
+        self.counters.tun_to_udp_packets += completed_frames.tun_ingress as u64;
+        self.counters.udp_forwarded_packets += completed_frames.forwarded as u64;
         self.counters.tcp_tx_batches += write_calls;
         self.counters.tcp_partial_writes += partial_writes;
         self.counters.tcp_blocked_writes += blocked_writes;
@@ -1753,9 +1915,11 @@ impl DataplaneWorker {
             udp_send_errors_delta = delta.udp_send_errors,
             tcp_connects_delta = delta.tcp_connects,
             tcp_accepts_delta = delta.tcp_accepts,
+            tcp_rejected_peers_delta = delta.tcp_rejected_peers,
             tcp_reconnects_delta = delta.tcp_reconnects,
+            tcp_queued_packets_delta = delta.tcp_queued_packets,
             tcp_tx_batches_delta = delta.tcp_tx_batches,
-            tcp_tx_packets_delta = delta.tcp_tx_packets,
+            tcp_written_frames_delta = delta.tcp_written_frames,
             tcp_tx_bytes_delta = delta.tcp_tx_bytes,
             tcp_rx_frames_delta = delta.tcp_rx_frames,
             tcp_rx_bytes_delta = delta.tcp_rx_bytes,
@@ -1772,7 +1936,9 @@ impl DataplaneWorker {
             udp_send_would_block_drops_total = self.counters.udp_send_would_block_drops,
             tun_send_would_block_drops_total = self.counters.tun_send_would_block_drops,
             udp_send_errors_total = self.counters.udp_send_errors,
-            tcp_tx_packets_total = self.counters.tcp_tx_packets,
+            tcp_rejected_peers_total = self.counters.tcp_rejected_peers,
+            tcp_queued_packets_total = self.counters.tcp_queued_packets,
+            tcp_written_frames_total = self.counters.tcp_written_frames,
             tcp_rx_frames_total = self.counters.tcp_rx_frames,
             tcp_queue_drops_total = self.counters.tcp_queue_drops,
             tcp_frame_errors_total = self.counters.tcp_frame_errors,
@@ -1914,6 +2080,49 @@ where
         );
     }
     routes
+}
+
+fn admitted_tcp_peer_slot_by_ifindex(
+    sockets: &Slab<InterfaceSocket>,
+    fib: &FibSnapshot,
+    peer_addr: Ipv6Addr,
+    ifindex: u32,
+) -> Option<usize> {
+    if ifindex == 0 || !peer_addr.is_unicast_link_local() {
+        return None;
+    }
+
+    sockets.iter().find_map(|(slot, socket)| {
+        (socket.ifindex == ifindex
+            && fib.admitted_interfaces.contains(socket.ifname.as_ref())
+            && fib.admitted_neighbours.iter().any(|neighbour| {
+                neighbour.ifname.as_ref() == socket.ifname.as_ref()
+                    && neighbour.link_local == peer_addr
+            }))
+        .then_some(slot)
+    })
+}
+
+fn admitted_tcp_peer_slot_by_local_addr(
+    sockets: &Slab<InterfaceSocket>,
+    fib: &FibSnapshot,
+    peer_addr: Ipv6Addr,
+    local_addr: Ipv6Addr,
+) -> Option<usize> {
+    if !peer_addr.is_unicast_link_local() || !local_addr.is_unicast_link_local() {
+        return None;
+    }
+
+    sockets.iter().find_map(|(slot, socket)| {
+        (fib.interface_link_locals
+            .get(socket.ifname.as_ref())
+            .is_some_and(|addr| *addr == local_addr)
+            && fib.admitted_neighbours.iter().any(|neighbour| {
+                neighbour.ifname.as_ref() == socket.ifname.as_ref()
+                    && neighbour.link_local == peer_addr
+            }))
+        .then_some(slot)
+    })
 }
 
 fn plan_socket_actions<F, S1, S2, E>(
@@ -2116,15 +2325,17 @@ mod tests {
     use ahash::RandomState;
     use hashbrown::{HashMap, HashSet};
     use mio::net::UdpSocket as MioUdpSocket;
+    use slab::Slab;
 
-    use crate::fib::{FibEntry, FibSnapshot, host_key};
+    use crate::fib::{AdmittedNeighbour, FibEntry, FibSnapshot, host_key};
 
     use super::{
         BATCH_SIZE, FastFibEntry, InterfaceIo, InterfaceSocket, RecvMeta, SocketAction,
-        TcpFrameDecoder, TcpFrameError, TcpQueueOutcome, TcpWriteBuffer, UdpRecvBatch,
-        UdpRecvOutcome, UdpSockRef, UdpSocketState, compile_fast_routes, decrement_hop_limit,
-        has_missing_admitted_sockets, ipv6_destination, plan_socket_actions, recv_udp_packets,
-        udp_meta_stride,
+        TcpFrameDecoder, TcpFrameError, TcpFrameOrigin, TcpQueueOutcome, TcpWriteBuffer,
+        UdpRecvBatch, UdpRecvOutcome, UdpSockRef, UdpSocketState,
+        admitted_tcp_peer_slot_by_ifindex, admitted_tcp_peer_slot_by_local_addr,
+        compile_fast_routes, decrement_hop_limit, has_missing_admitted_sockets, ipv6_destination,
+        plan_socket_actions, recv_udp_packets, udp_batch_packet_bytes, udp_meta_stride,
     };
 
     fn sample_ipv6_packet(dst: Ipv6Addr, hop_limit: u8) -> Vec<u8> {
@@ -2147,6 +2358,13 @@ mod tests {
             }
         }
         unreachable!("retry loop should return or panic")
+    }
+
+    fn next_decoded_frame(decoder: &mut TcpFrameDecoder, max_packet_len: usize) -> Option<Vec<u8>> {
+        let range = decoder.next_frame_range(max_packet_len).unwrap()?;
+        let frame = decoder.bytes[range].to_vec();
+        decoder.finish_frame();
+        Some(frame)
     }
 
     #[test]
@@ -2192,12 +2410,12 @@ mod tests {
 
         let mut decoder = TcpFrameDecoder::new();
         decoder.push(&bytes[..7]);
-        assert_eq!(decoder.next_frame(1500).unwrap(), None);
+        assert_eq!(decoder.next_frame_range(1500).unwrap(), None);
 
         decoder.push(&bytes[7..]);
-        assert_eq!(decoder.next_frame(1500).unwrap(), Some(packet_a));
-        assert_eq!(decoder.next_frame(1500).unwrap(), Some(packet_b));
-        assert_eq!(decoder.next_frame(1500).unwrap(), None);
+        assert_eq!(next_decoded_frame(&mut decoder, 1500), Some(packet_a));
+        assert_eq!(next_decoded_frame(&mut decoder, 1500), Some(packet_b));
+        assert_eq!(decoder.next_frame_range(1500).unwrap(), None);
     }
 
     #[test]
@@ -2205,14 +2423,14 @@ mod tests {
         let mut decoder = TcpFrameDecoder::new();
         decoder.push(&0u16.to_be_bytes());
         assert_eq!(
-            decoder.next_frame(1500).unwrap_err(),
+            decoder.next_frame_range(1500).unwrap_err(),
             TcpFrameError::ZeroLength
         );
 
         let mut decoder = TcpFrameDecoder::new();
         decoder.push(&2000u16.to_be_bytes());
         assert_eq!(
-            decoder.next_frame(1500).unwrap_err(),
+            decoder.next_frame_range(1500).unwrap_err(),
             TcpFrameError::Oversized {
                 len: 2000,
                 max: 1500,
@@ -2225,17 +2443,24 @@ mod tests {
         let packet = sample_ipv6_packet("fde0::1".parse().unwrap(), 32);
         let mut buffer = TcpWriteBuffer::new();
 
-        assert_eq!(buffer.queue_frame(&packet), TcpQueueOutcome::Queued);
-        assert_eq!(buffer.queued_packets, 1);
+        assert_eq!(
+            buffer.queue_frame(&packet, TcpFrameOrigin::TunIngress),
+            TcpQueueOutcome::Queued
+        );
+        assert_eq!(buffer.frame_ends.len(), 1);
         assert_eq!(buffer.pending_len(), packet.len() + 2);
         assert_eq!(&buffer.pending()[..2], &(packet.len() as u16).to_be_bytes());
         assert_eq!(&buffer.pending()[2..], packet.as_slice());
 
-        buffer.consume(2);
+        let completed = buffer.consume(2);
+        assert_eq!(completed.total, 0);
         assert_eq!(buffer.pending_len(), packet.len());
-        buffer.consume(packet.len());
+        let completed = buffer.consume(packet.len());
+        assert_eq!(completed.total, 1);
+        assert_eq!(completed.tun_ingress, 1);
+        assert_eq!(completed.forwarded, 0);
         assert!(!buffer.has_pending());
-        assert_eq!(buffer.queued_packets, 0);
+        assert_eq!(buffer.frame_ends.len(), 0);
     }
 
     #[test]
@@ -2257,7 +2482,7 @@ mod tests {
         let payload = sample_ipv6_packet("fde0::1234".parse().unwrap(), 32);
         sender.send_to(&payload, receiver_addr).unwrap();
 
-        let mut batch = UdpRecvBatch::new();
+        let mut batch = UdpRecvBatch::new(payload.len());
         let started = std::time::Instant::now();
         let outcome = recv_udp_packets(&socket, &mut batch, BATCH_SIZE).unwrap();
 
@@ -2268,6 +2493,18 @@ mod tests {
         assert_eq!(outcome, UdpRecvOutcome::Packets(1));
         assert_eq!(batch.metas[0].len, payload.len());
         assert_eq!(&batch.buffers[0][..payload.len()], payload.as_slice());
+    }
+
+    #[test]
+    fn tcp_mode_udp_batch_keeps_udp_sized_buffers() {
+        assert_eq!(
+            udp_batch_packet_bytes(crate::config::TransportMode::Udp, 9000),
+            9000
+        );
+        assert_eq!(
+            udp_batch_packet_bytes(crate::config::TransportMode::Tcp, 9000),
+            usize::from(crate::config::UDP_TUN_MTU)
+        );
     }
 
     #[test]
@@ -2395,6 +2632,8 @@ mod tests {
         let fib = FibSnapshot {
             locals: HashSet::with_hasher(RandomState::new()),
             admitted_interfaces: ["en2".into(), "en3".into()].into_iter().collect(),
+            admitted_neighbours: HashSet::with_hasher(RandomState::new()),
+            interface_link_locals: HashMap::with_hasher(RandomState::new()),
             routes: fib_routes,
         };
         let mut ifname_to_slab = HashMap::with_hasher(RandomState::new());
@@ -2412,5 +2651,57 @@ mod tests {
             })
         );
         assert!(!fast_routes.contains_key(&host_key(dst_without_socket)));
+    }
+
+    #[test]
+    fn tcp_peer_admission_requires_link_local_neighbour_on_matching_ifindex() {
+        let mut sockets = Slab::new();
+        let udp_socket = MioUdpSocket::from_std(bind_loopback_udp());
+        let udp_state = UdpSocketState::new(UdpSockRef::from(&udp_socket)).unwrap();
+        let socket = InterfaceSocket {
+            ifname: "en2".into(),
+            ifindex: 7,
+            io: InterfaceIo::Udp {
+                socket: udp_socket,
+                udp_state,
+            },
+        };
+        let slot = sockets.insert(socket);
+
+        let peer = "fe80::1".parse::<Ipv6Addr>().unwrap();
+        let local = "fe80::2".parse::<Ipv6Addr>().unwrap();
+        let fib = FibSnapshot {
+            locals: HashSet::with_hasher(RandomState::new()),
+            admitted_interfaces: ["en2".into()].into_iter().collect(),
+            admitted_neighbours: [AdmittedNeighbour {
+                ifname: "en2".into(),
+                link_local: peer,
+            }]
+            .into_iter()
+            .collect(),
+            interface_link_locals: [("en2".into(), local)].into_iter().collect(),
+            routes: HashMap::with_hasher(RandomState::new()),
+        };
+
+        assert_eq!(
+            admitted_tcp_peer_slot_by_ifindex(&sockets, &fib, peer, 7),
+            Some(slot)
+        );
+        assert_eq!(
+            admitted_tcp_peer_slot_by_ifindex(&sockets, &fib, peer, 8),
+            None
+        );
+        assert_eq!(
+            admitted_tcp_peer_slot_by_ifindex(&sockets, &fib, "2001:db8::1".parse().unwrap(), 7),
+            None
+        );
+        assert_eq!(
+            admitted_tcp_peer_slot_by_local_addr(&sockets, &fib, peer, local),
+            Some(slot)
+        );
+        assert_eq!(
+            admitted_tcp_peer_slot_by_local_addr(&sockets, &fib, peer, "fe80::3".parse().unwrap()),
+            None
+        );
     }
 }

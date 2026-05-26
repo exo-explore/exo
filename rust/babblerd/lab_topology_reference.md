@@ -80,7 +80,20 @@ On macOS, forced-TCP listener sockets are wildcard listeners rather than
 per-interface-bound listeners. Per-interface `IPV6_BOUND_IF` on TCP listeners
 left e4/e16 handshakes stuck in `SYN_RCVD` during lab testing, while a plain
 link-local TCP listener on the same cable completed. Outbound TCP streams remain
-scoped to the Babel-selected interface.
+scoped to the Babel-selected interface. Accepted TCP streams are rejected unless
+the peer is link-local and matches a live Babel neighbour on the accepted
+scope/interface.
+
+Forced TCP defaults the TUN MTU to `9000` to reduce per-packet TUN syscalls.
+Override it during sweeps with either:
+
+```sh
+BABBLER_TUN_MTU=16384 BABBLER_ROUTER_TRANSPORT=tcp RUST_LOG=info sudo -E nix run .#babblerd --impure
+RUST_LOG=info sudo -E nix run .#babblerd --impure -- --force-tcp --tun-mtu 32768
+```
+
+UDP mode still defaults to `1452`, derived from a `1500` byte physical MTU
+minus outer IPv6 and UDP headers.
 
 If broad interface discovery causes unrelated links to interfere with a
 specific debug run, `BABBLER_INTERFACE_ALLOWLIST` is still available as a
@@ -142,13 +155,11 @@ Latest findings:
 - Single-hop overlay `e2 -> e16`, TCP `-b 0`: about `1.07-1.08 Gbit/s`
   received, with route/path recovery sometimes lagging briefly after the run.
 
-For MTU-sized traffic, `11 Gbit/s` is roughly a one-microsecond packet budget:
-with the current `1452` byte TUN MTU it is about `947 kpps`, or
-`1.06 us/packet`. The current direct overlay result is roughly `126 kpps`, or
-`8 us/packet`. That means the next performance work should focus on dataplane
-packet cost, syscalls/copies, batching or aggregation, jumbo MTU opportunities,
-and overload recovery rather than assuming the remaining gap is Babel route
-selection.
+For `1452` byte packets, `11 Gbit/s` is roughly a one-microsecond packet
+budget: about `947 kpps`, or `1.06 us/packet`. The current direct overlay
+result is roughly `126 kpps`, or `8 us/packet`. Forced TCP now defaults the TUN
+MTU to `9000`, so compare packet counters before attributing any result to the
+outer TCP socket alone.
 
 Babel protocol packets should not traverse the software router. `babblerd`
 starts `babeld` without startup interfaces and later adds only eligible

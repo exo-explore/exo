@@ -261,8 +261,8 @@ the derived `BabelState`, the dataplane FIB/socket map, dataplane counters, and
 host route state before concluding whether the failure is route churn, overlay
 queue exhaustion, or application-control failure.
 
-At the current fixed MTU, approaching `11 Gbit/s` is a packet-rate problem.
-Ignoring Ethernet/IP/UDP overhead, the per-packet budget is:
+At small inner MTUs, approaching `11 Gbit/s` is a packet-rate problem. Ignoring
+Ethernet/IP/UDP overhead, the per-packet budget is:
 
 ```text
 packet_budget_seconds = dataplane_packet_bytes * 8 / target_bits_per_second
@@ -270,8 +270,10 @@ packet_budget_seconds = dataplane_packet_bytes * 8 / target_bits_per_second
 
 For `11 Gbit/s`:
 
-- `1452` byte packets, the current derived TUN MTU: about `947 kpps`, or
+- `1452` byte packets, the UDP default TUN MTU: about `947 kpps`, or
   `1.06 us/packet`.
+- `9000` byte packets, the forced-TCP default TUN MTU: about `153 kpps`, or
+  `6.55 us/packet`.
 - `1500` byte packets: about `917 kpps`, or `1.09 us/packet`.
 - `1200` byte packets: about `1.15 Mpps`, or `873 ns/packet`.
 - `9000` byte jumbo packets: about `153 kpps`, or `6.55 us/packet`.
@@ -352,12 +354,18 @@ points at these near-term bottlenecks:
 - macOS TCP mode keeps listeners as wildcard IPv6 listeners, not
   `IPV6_BOUND_IF` listeners. The lab showed per-interface-bound TCP listeners
   can stall Thunderbolt handshakes in `SYN_RCVD`; outbound streams are still
-  scoped to the Babel-selected interface.
+  scoped to the Babel-selected interface. Inbound streams are accepted only
+  from link-local peers that match a live Babel neighbour on the accepted
+  interface/scope.
+- TCP mode now defaults the TUN MTU to `9000` to cut packet rate through
+  macOS `utun`; `BABBLER_TUN_MTU=<mtu>` or `--tun-mtu <mtu>` can be used for
+  jumbo sweeps. UDP mode still defaults to the physical-MTU-derived `1452`.
 - TCP mode changes overload behavior. Instead of UDP drops on send backpressure,
   it can accumulate bounded per-stream pending bytes and then drop once that
   bound is reached. Its counters must be watched separately:
-  `tcp_tx_batches`, `tcp_tx_packets`, `tcp_rx_frames`, `tcp_blocked_writes`,
-  `tcp_queue_drops`, `tcp_frame_errors`, and `tcp_stream_errors`.
+  `tcp_tx_batches`, `tcp_queued_packets`, `tcp_written_frames`,
+  `tcp_rx_frames`, `tcp_blocked_writes`, `tcp_queue_drops`,
+  `tcp_frame_errors`, and `tcp_stream_errors`.
 
 The first low-risk cleanup pass has now landed: UDP ingress no longer clones
 `ifname`, packet buffers are worker-owned instead of stack-created for every
@@ -402,7 +410,9 @@ The current tree now hardcodes:
 
 - physical link MTU assumption: `1500`
 - outer overhead assumption: `40 bytes IPv6 + 8 bytes UDP`
-- derived TUN MTU: `1452`
+- UDP TUN MTU default: `1452`
+- forced-TCP TUN MTU default: `9000`, with `BABBLER_TUN_MTU`/`--tun-mtu`
+  override
 
 That is acceptable for bring-up, but it is still only a temporary model.
 
