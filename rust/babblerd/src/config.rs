@@ -11,12 +11,15 @@ use color_eyre::eyre::{self, eyre};
 use ipnet::Ipv6Net;
 use std::collections::HashSet;
 use std::env;
+use std::fmt::{Display, Formatter};
 use std::net::Ipv6Addr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 pub const PUBLIC_SOCKET_PATH_ENV: &str = "BABBLER_SOCKET_PATH";
 pub const NODE_ID_FILE_ENV: &str = "BABBLER_NODE_ID_FILE";
 pub const ROUTER_UDP_PORT_ENV: &str = "BABBLER_ROUTER_UDP_PORT";
+pub const ROUTER_TRANSPORT_ENV: &str = "BABBLER_ROUTER_TRANSPORT";
 pub const INTERFACE_ALLOWLIST_ENV: &str = "BABBLER_INTERFACE_ALLOWLIST";
 
 pub const DEFAULT_PUBLIC_SOCKET_PATH: &str = {
@@ -62,12 +65,40 @@ pub const EXO_ULA_PREFIX: Ipv6Net = Ipv6Net::new_assert(
     64,
 );
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportMode {
+    Udp,
+    Tcp,
+}
+
+impl Display for TransportMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Udp => write!(f, "udp"),
+            Self::Tcp => write!(f, "tcp"),
+        }
+    }
+}
+
+impl FromStr for TransportMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "udp" => Ok(Self::Udp),
+            "tcp" => Ok(Self::Tcp),
+            other => Err(format!("expected udp or tcp, got {other:?}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub public_socket_path: PathBuf,
     pub public_dir: PathBuf,
     pub node_id_file: PathBuf,
     pub router_udp_port: u16,
+    pub router_transport: TransportMode,
     pub exo_ula_prefix: Ipv6Net,
 }
 
@@ -94,11 +125,19 @@ impl Config {
             Err(_) => DEFAULT_ROUTER_UDP_PORT,
         };
 
+        let router_transport = match env::var(ROUTER_TRANSPORT_ENV) {
+            Ok(raw) => raw
+                .parse::<TransportMode>()
+                .map_err(|e| eyre!("invalid {ROUTER_TRANSPORT_ENV} value {raw:?}: {e}"))?,
+            Err(_) => TransportMode::Udp,
+        };
+
         Ok(Self {
             public_socket_path,
             public_dir,
             node_id_file,
             router_udp_port,
+            router_transport,
             exo_ula_prefix: EXO_ULA_PREFIX,
         })
     }
@@ -127,7 +166,7 @@ pub fn interface_allowlist_from_env() -> eyre::Result<Option<HashSet<Box<str>>>>
 
 #[cfg(test)]
 mod tests {
-    use super::EXO_ULA_PREFIX;
+    use super::{EXO_ULA_PREFIX, TransportMode};
     use std::net::Ipv6Addr;
 
     #[test]
@@ -137,5 +176,13 @@ mod tests {
             Ipv6Addr::new(0xfde0, 0x20c6, 0x1fa7, 0xffff, 0, 0, 0, 0)
         );
         assert_eq!(EXO_ULA_PREFIX.prefix_len(), 64);
+    }
+
+    #[test]
+    fn transport_mode_parses_udp_and_tcp() {
+        assert_eq!("udp".parse::<TransportMode>().unwrap(), TransportMode::Udp);
+        assert_eq!("tcp".parse::<TransportMode>().unwrap(), TransportMode::Tcp);
+        assert_eq!("TCP".parse::<TransportMode>().unwrap(), TransportMode::Tcp);
+        assert!("quic".parse::<TransportMode>().is_err());
     }
 }

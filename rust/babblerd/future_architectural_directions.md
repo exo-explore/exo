@@ -341,6 +341,19 @@ points at these near-term bottlenecks:
   packet must still be sent immediately; batching should flush at the end of a
   poll/drain slice or when the next packet targets a different peer/size, never
   wait for a full batch.
+- The tree now also has an opt-in TCP neighbour transport for Mac Thunderbolt
+  experiments: `BABBLER_ROUTER_TRANSPORT=tcp`, `--router-transport tcp`, or
+  `--force-tcp`. UDP remains the default. TCP mode opens scoped link-local TCP
+  streams to next-hop neighbours, frames inner IPv6 packets with a `u16`
+  big-endian length, batches framed packets in bounded per-peer write buffers,
+  and flushes partial batches at drain/poll boundaries. This is intended to
+  test whether macOS Thunderbolt TCP can expose the higher native TCP path while
+  avoiding one syscall per inner packet.
+- TCP mode changes overload behavior. Instead of UDP drops on send backpressure,
+  it can accumulate bounded per-stream pending bytes and then drop once that
+  bound is reached. Its counters must be watched separately:
+  `tcp_tx_batches`, `tcp_tx_packets`, `tcp_rx_frames`, `tcp_blocked_writes`,
+  `tcp_queue_drops`, `tcp_frame_errors`, and `tcp_stream_errors`.
 
 The first low-risk cleanup pass has now landed: UDP ingress no longer clones
 `ifname`, packet buffers are worker-owned instead of stack-created for every

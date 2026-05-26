@@ -225,6 +225,15 @@ of shortcuts that should be revisited later.
     Apple `recvmsg_x`/`sendmsg_x` or Linux `recvmmsg` internally where
     available. True output batching is still future work, and it must flush
     partial batches rather than wait for a full batch.
+  - An opt-in TCP transport now exists for Mac Thunderbolt experiments. It is
+    selected with `BABBLER_ROUTER_TRANSPORT=tcp`, `--router-transport tcp`, or
+    `--force-tcp`. It frames inner IPv6 packets onto scoped link-local TCP
+    streams and batches writes through bounded per-peer buffers. This is a
+    deliberate experimental shortcut, not the default transport policy.
+  - TCP mode relies on a lab assumption: direct cabled Mac Thunderbolt links are
+    low-loss enough that TCP-over-TCP pathologies should be limited during
+    throughput tests. It should not be treated as a general unreliable-mesh
+    replacement for UDP without more overload and loss testing.
   - Benchmark output batching, aggregation, jumbo MTU support, and eventually
     multi-core dataplane sharding. At `11 Gbit/s` with the current `1452` byte
     TUN MTU, the budget is about `947 kpps`, or `1.06 us/packet`; the current

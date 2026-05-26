@@ -63,6 +63,19 @@ git pull
 RUST_LOG=info sudo -E nix run .#babblerd --impure
 ```
 
+The default dataplane transport is UDP. To force the experimental TCP
+neighbour transport for Mac Thunderbolt throughput tests, start every node with
+one of:
+
+```sh
+BABBLER_ROUTER_TRANSPORT=tcp RUST_LOG=info sudo -E nix run .#babblerd --impure
+RUST_LOG=info sudo -E nix run .#babblerd --impure -- --force-tcp
+```
+
+TCP mode still uses Babel for route selection and still sends Babel packets on
+the direct link-local `en*` interfaces. Only node-ULA overlay traffic uses the
+TCP streams.
+
 If broad interface discovery causes unrelated links to interfere with a
 specific debug run, `BABBLER_INTERFACE_ALLOWLIST` is still available as a
 temporary escape hatch. Do not use it as the default lab topology description.
@@ -88,10 +101,23 @@ Latest useful test commands:
 
 ```sh
 nix run .#iperf3 -- -s -1
+nix run .#iperf3 -- -6 -b 100M -t 5 -c <node-ula>
 nix run .#iperf3 -- -6 -u -b 100M -t 5 -c <node-ula>
 nix run .#iperf3 -- -6 -u -b 0 -t 10 -c <node-ula>
 nix run .#iperf3 -- -6 -b 0 -t 10 -c <node-ula>
 ```
+
+For the forced-TCP dataplane experiment, capture both correctness and
+performance:
+
+1. Start all four nodes with TCP mode enabled.
+2. Wait for convergence and record route/FIB state.
+3. Run a directed `ping6` matrix over node ULAs.
+4. Run adjacent TCP and UDP iperf smoke tests at `100M`.
+5. Run direct overlay TCP/UDP `-b 0` on an adjacent pair such as `e4 -> e16`.
+6. Run single-hop overlay TCP/UDP `-b 0` such as `e2 -> e16`.
+7. Capture dataplane counter deltas, especially TCP batches/frames/errors, and
+   verify bidirectional `ping6` still works after each full-rate run.
 
 Latest findings:
 

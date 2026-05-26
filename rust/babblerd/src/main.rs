@@ -6,7 +6,13 @@ compile_error!("babblerd is mac/linux-only");
 
 use std::{fs::Permissions, io, os::unix::fs::PermissionsExt, sync::Arc};
 
-use babblerd::{babel::BabelState, config::Config, daemon, identity, tun::TunDevice};
+use babblerd::{
+    babel::BabelState,
+    config::{Config, TransportMode},
+    daemon, identity,
+    tun::TunDevice,
+};
+use clap::Parser;
 use color_eyre::eyre::{self, WrapErr, eyre};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -21,13 +27,28 @@ use tokio::{
 const INTERNAL_KEEPALIVE_TTL_MS: u64 = 30_000;
 const INTERNAL_KEEPALIVE_INTERVAL_MS: u64 = 10_000;
 
+#[derive(Debug, Parser)]
+struct Cli {
+    #[arg(long, value_parser = parse_transport_mode)]
+    router_transport: Option<TransportMode>,
+    #[arg(long, conflicts_with = "router_transport")]
+    force_tcp: bool,
+}
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    let config = Config::from_env()?;
+    let cli = Cli::parse();
+    let mut config = Config::from_env()?;
+    if let Some(router_transport) = cli.router_transport {
+        config.router_transport = router_transport;
+    }
+    if cli.force_tcp {
+        config.router_transport = TransportMode::Tcp;
+    }
 
     // cleanup old  public socket path
     match std::fs::remove_file(&config.public_socket_path) {
@@ -64,7 +85,8 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
 
     tracing::info!("creating socket at {}", config.public_socket_path.display());
     tracing::info!(
-        "router defaults: udp_port={} node_id_file={} app_prefix={} node_id={:#018x} node_addr={} tun={}",
+        "router defaults: transport={} port={} node_id_file={} app_prefix={} node_id={:#018x} node_addr={} tun={}",
+        config.router_transport,
         config.router_udp_port,
         config.node_id_file.display(),
         config.exo_ula_prefix,
@@ -83,6 +105,7 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
         node_id,
         config.exo_ula_prefix,
         config.router_udp_port,
+        config.router_transport,
         node_addr,
         tun,
         babel_state_send,
@@ -132,6 +155,10 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_transport_mode(raw: &str) -> Result<TransportMode, String> {
+    raw.parse()
 }
 
 async fn internal_keepalive_client(socket_path: std::path::PathBuf) {

@@ -10,6 +10,7 @@ use tokio::{
     time::{Duration, Instant},
 };
 
+use crate::config::TransportMode;
 use crate::route_ctl;
 use crate::routing_stack::RoutingStack;
 use crate::{babel::BabelState, tun::TunDevice};
@@ -137,6 +138,7 @@ pub struct DaemonCore {
     status: DaemonStatus,
     overlay_prefix: Ipv6Net,
     router_udp_port: u16,
+    router_transport: TransportMode,
     _tun: TunDevice,
     routing_stack: Option<RoutingStack>,
     babel_state_send: watch::Sender<Arc<BabelState>>,
@@ -150,6 +152,7 @@ impl DaemonCore {
         node_id: u64,
         overlay_prefix: Ipv6Net,
         router_udp_port: u16,
+        router_transport: TransportMode,
         node_addr: Ipv6Net,
         tun: TunDevice,
         babel_state_send: watch::Sender<Arc<BabelState>>,
@@ -162,6 +165,7 @@ impl DaemonCore {
             status,
             overlay_prefix,
             router_udp_port,
+            router_transport,
             _tun: tun,
             routing_stack: None,
             babel_state_send,
@@ -262,6 +266,7 @@ impl DaemonCore {
             self.status.node_addr,
             &self._tun,
             self.router_udp_port,
+            self.router_transport,
             self.babel_state_send.clone(),
             self.event_send.clone(),
         ) {

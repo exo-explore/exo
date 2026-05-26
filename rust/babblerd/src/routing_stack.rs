@@ -9,7 +9,7 @@ use tokio::{
 };
 
 use crate::babel::BabelState;
-use crate::config::TUN_MTU;
+use crate::config::{TUN_MTU, TransportMode};
 use crate::daemon::{RoutingStackEvent, StackTaskKind};
 use crate::dataplane::{Dataplane, DataplaneConfig, DataplanePublisher, PublishSnapshotError};
 use crate::fib::FibBuilder;
@@ -29,6 +29,7 @@ impl RoutingStack {
         node_addr: Ipv6Net,
         tun: &TunDevice,
         udp_port: u16,
+        transport_mode: TransportMode,
         state_send: watch::Sender<Arc<BabelState>>,
         event_send: mpsc::Sender<RoutingStackEvent>,
     ) -> Result<Self> {
@@ -39,6 +40,7 @@ impl RoutingStack {
         let mut dataplane = Dataplane::spawn(DataplaneConfig {
             tun_device: tun.shared_device(),
             udp_port,
+            transport_mode,
             initial_fib: Arc::new(
                 FibBuilder::new([node_addr.addr()], TUN_MTU).derive(initial_state.as_ref()),
             ),

@@ -17,8 +17,8 @@
 //!   snapshot-local slot numbers.
 
 use std::hash::BuildHasher;
-use std::io::{self, ErrorKind, IoSliceMut};
-use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6, UdpSocket};
+use std::io::{self, ErrorKind, IoSliceMut, Read, Write};
+use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, TcpStream, UdpSocket};
 use std::num::NonZeroU32;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
@@ -31,7 +31,9 @@ use color_eyre::eyre::{Result, WrapErr, eyre};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use hashbrown::{HashMap, HashSet};
 use iroh_quinn_udp::{BATCH_SIZE, RecvMeta, Transmit, UdpSockRef, UdpSocketState};
-use mio::net::UdpSocket as MioUdpSocket;
+use mio::net::{
+    TcpListener as MioTcpListener, TcpStream as MioTcpStream, UdpSocket as MioUdpSocket,
+};
 use mio::unix::SourceFd;
 use mio::{Events, Interest, Poll, Token};
 use nix::net::if_::if_nametoindex;
@@ -40,10 +42,12 @@ use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::oneshot;
 use tun_rs::SyncDevice;
 
-use crate::config::PHYSICAL_LINK_MTU;
+use crate::config::{PHYSICAL_LINK_MTU, TransportMode};
 use crate::fib::{FibSnapshot, HostKey, host_key};
 
 const TOKEN_TUN: Token = Token(0);
+const TOKEN_INTERFACE_BASE: usize = 1;
+const TOKEN_TCP_STREAM_BASE: usize = 1_000_000;
 const MAX_POLL_EVENTS: usize = 128;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const RECONCILE_RETRY_INTERVAL: Duration = Duration::from_secs(1);
@@ -54,10 +58,16 @@ const UDP_DRAIN_BUDGET: usize = 64;
 const PACKET_BUFFER_BYTES: usize = PHYSICAL_LINK_MTU as usize;
 const MAX_GRO_SEGMENTS: usize = 64;
 const UDP_RECV_BUFFER_BYTES: usize = PACKET_BUFFER_BYTES * MAX_GRO_SEGMENTS;
+const TCP_READ_BUFFER_BYTES: usize = 64 * 1024;
+const TCP_BATCH_TARGET_BYTES: usize = 64 * 1024;
+const TCP_PENDING_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+const TCP_ACCEPT_DRAIN_BUDGET: usize = 64;
+const TCP_STREAM_READ_DRAIN_BUDGET: usize = 64;
 
 pub struct DataplaneConfig {
     pub tun_device: Arc<SyncDevice>,
     pub udp_port: u16,
+    pub transport_mode: TransportMode,
     pub initial_fib: Arc<FibSnapshot>,
 }
 
@@ -81,6 +91,7 @@ pub enum PublishSnapshotError {
 struct DataplaneWorker {
     tun_device: Arc<SyncDevice>,
     udp_port: u16,
+    transport_mode: TransportMode,
     fib: Arc<FibSnapshot>,
     fast_routes: HashMap<HostKey, FastFibEntry, RandomState>,
     fib_updates: Receiver<Arc<FibSnapshot>>,
@@ -89,6 +100,8 @@ struct DataplaneWorker {
     events: Events,
     sockets: Slab<InterfaceSocket>,
     ifname_to_slab: HashMap<Box<str>, usize>,
+    tcp_streams: Slab<TcpPeerStream>,
+    tcp_peer_to_stream: HashMap<TcpPeerKey, usize>,
     needs_reconcile_retry: bool,
     last_reconcile_attempt: Instant,
     counters: DataplaneCounters,
@@ -96,13 +109,78 @@ struct DataplaneWorker {
     last_logged_counters: DataplaneCounters,
     tun_buf: Box<[u8; PACKET_BUFFER_BYTES]>,
     udp_batch: UdpRecvBatch,
+    tcp_read_buf: Box<[u8; TCP_READ_BUFFER_BYTES]>,
 }
 
 struct InterfaceSocket {
     ifname: Box<str>,
     ifindex: u32,
-    socket: MioUdpSocket,
-    udp_state: UdpSocketState,
+    io: InterfaceIo,
+}
+
+enum InterfaceIo {
+    Udp {
+        socket: MioUdpSocket,
+        udp_state: UdpSocketState,
+    },
+    TcpListener {
+        listener: MioTcpListener,
+    },
+}
+
+struct TcpPeerStream {
+    interface_slot: usize,
+    peer_key: Option<TcpPeerKey>,
+    peer: SocketAddr,
+    stream: MioTcpStream,
+    connected: bool,
+    read_buf: TcpFrameDecoder,
+    write_buf: TcpWriteBuffer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TcpPeerKey {
+    socket_slot: usize,
+    next_hop_ll: Ipv6Addr,
+}
+
+#[derive(Debug)]
+struct TcpFrameDecoder {
+    bytes: Vec<u8>,
+    offset: usize,
+}
+
+#[derive(Debug)]
+struct TcpWriteBuffer {
+    bytes: Vec<u8>,
+    offset: usize,
+    queued_packets: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TcpFrameError {
+    ZeroLength,
+    Oversized { len: usize, max: usize },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ReadyEvent {
+    token: Token,
+    readable: bool,
+    writable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TcpQueueOutcome {
+    Queued,
+    Full,
+    Oversized,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TcpConnectOutcome {
+    Connected,
+    InProgress,
 }
 
 struct UdpRecvBatch {
@@ -150,6 +228,19 @@ struct DataplaneCounters {
     udp_send_would_block_drops: u64,
     tun_send_would_block_drops: u64,
     udp_send_errors: u64,
+    tcp_connects: u64,
+    tcp_accepts: u64,
+    tcp_reconnects: u64,
+    tcp_tx_batches: u64,
+    tcp_tx_packets: u64,
+    tcp_tx_bytes: u64,
+    tcp_rx_frames: u64,
+    tcp_rx_bytes: u64,
+    tcp_partial_writes: u64,
+    tcp_blocked_writes: u64,
+    tcp_queue_drops: u64,
+    tcp_frame_errors: u64,
+    tcp_stream_errors: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,6 +301,29 @@ impl DataplaneCounters {
             udp_send_errors: self
                 .udp_send_errors
                 .saturating_sub(previous.udp_send_errors),
+            tcp_connects: self.tcp_connects.saturating_sub(previous.tcp_connects),
+            tcp_accepts: self.tcp_accepts.saturating_sub(previous.tcp_accepts),
+            tcp_reconnects: self.tcp_reconnects.saturating_sub(previous.tcp_reconnects),
+            tcp_tx_batches: self.tcp_tx_batches.saturating_sub(previous.tcp_tx_batches),
+            tcp_tx_packets: self.tcp_tx_packets.saturating_sub(previous.tcp_tx_packets),
+            tcp_tx_bytes: self.tcp_tx_bytes.saturating_sub(previous.tcp_tx_bytes),
+            tcp_rx_frames: self.tcp_rx_frames.saturating_sub(previous.tcp_rx_frames),
+            tcp_rx_bytes: self.tcp_rx_bytes.saturating_sub(previous.tcp_rx_bytes),
+            tcp_partial_writes: self
+                .tcp_partial_writes
+                .saturating_sub(previous.tcp_partial_writes),
+            tcp_blocked_writes: self
+                .tcp_blocked_writes
+                .saturating_sub(previous.tcp_blocked_writes),
+            tcp_queue_drops: self
+                .tcp_queue_drops
+                .saturating_sub(previous.tcp_queue_drops),
+            tcp_frame_errors: self
+                .tcp_frame_errors
+                .saturating_sub(previous.tcp_frame_errors),
+            tcp_stream_errors: self
+                .tcp_stream_errors
+                .saturating_sub(previous.tcp_stream_errors),
         }
     }
 
@@ -225,6 +339,16 @@ impl DataplaneCounters {
             || self.udp_send_would_block_drops != 0
             || self.tun_send_would_block_drops != 0
             || self.udp_send_errors != 0
+            || self.tcp_connects != 0
+            || self.tcp_accepts != 0
+            || self.tcp_reconnects != 0
+            || self.tcp_tx_batches != 0
+            || self.tcp_tx_packets != 0
+            || self.tcp_rx_frames != 0
+            || self.tcp_blocked_writes != 0
+            || self.tcp_queue_drops != 0
+            || self.tcp_frame_errors != 0
+            || self.tcp_stream_errors != 0
     }
 }
 
@@ -237,7 +361,12 @@ impl UdpRecvBatch {
         Self { buffers, metas }
     }
 
-    fn recv_from(&mut self, socket: &InterfaceSocket, max_packets: usize) -> io::Result<usize> {
+    fn recv_from(
+        &mut self,
+        socket: &MioUdpSocket,
+        udp_state: &UdpSocketState,
+        max_packets: usize,
+    ) -> io::Result<usize> {
         let batch_len = max_packets.min(BATCH_SIZE).min(self.buffers.len());
         if batch_len == 0 {
             return Ok(0);
@@ -250,13 +379,124 @@ impl UdpRecvBatch {
             slices.push(IoSliceMut::new(buffer.as_mut()));
         }
 
-        socket.socket.try_io(|| {
-            socket.udp_state.recv(
-                UdpSockRef::from(&socket.socket),
+        socket.try_io(|| {
+            udp_state.recv(
+                UdpSockRef::from(socket),
                 slices.as_mut_slice(),
                 &mut self.metas[..batch_len],
             )
         })
+    }
+}
+
+impl TcpFrameDecoder {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::with_capacity(TCP_READ_BUFFER_BYTES),
+            offset: 0,
+        }
+    }
+
+    fn push(&mut self, bytes: &[u8]) {
+        self.bytes.extend_from_slice(bytes);
+    }
+
+    fn next_frame(
+        &mut self,
+        max_packet_len: usize,
+    ) -> std::result::Result<Option<Vec<u8>>, TcpFrameError> {
+        if self.bytes.len().saturating_sub(self.offset) < 2 {
+            self.compact_if_empty();
+            return Ok(None);
+        }
+        let len =
+            u16::from_be_bytes([self.bytes[self.offset], self.bytes[self.offset + 1]]) as usize;
+        if len == 0 {
+            return Err(TcpFrameError::ZeroLength);
+        }
+        if len > max_packet_len {
+            return Err(TcpFrameError::Oversized {
+                len,
+                max: max_packet_len,
+            });
+        }
+        let frame_start = self.offset + 2;
+        let frame_end = frame_start + len;
+        if self.bytes.len() < frame_end {
+            return Ok(None);
+        }
+        let frame = self.bytes[frame_start..frame_end].to_vec();
+        self.offset = frame_end;
+        self.compact_if_needed();
+        Ok(Some(frame))
+    }
+
+    fn compact_if_empty(&mut self) {
+        if self.offset == self.bytes.len() {
+            self.bytes.clear();
+            self.offset = 0;
+        }
+    }
+
+    fn compact_if_needed(&mut self) {
+        if self.offset == self.bytes.len() {
+            self.bytes.clear();
+            self.offset = 0;
+        } else if self.offset >= TCP_READ_BUFFER_BYTES {
+            self.bytes.drain(..self.offset);
+            self.offset = 0;
+        }
+    }
+}
+
+impl TcpWriteBuffer {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::with_capacity(TCP_BATCH_TARGET_BYTES),
+            offset: 0,
+            queued_packets: 0,
+        }
+    }
+
+    fn queue_frame(&mut self, packet: &[u8]) -> TcpQueueOutcome {
+        let Ok(packet_len) = u16::try_from(packet.len()) else {
+            return TcpQueueOutcome::Oversized;
+        };
+        if self.pending_len() + 2 + packet.len() > TCP_PENDING_LIMIT_BYTES {
+            return TcpQueueOutcome::Full;
+        }
+        self.bytes.extend_from_slice(&packet_len.to_be_bytes());
+        self.bytes.extend_from_slice(packet);
+        self.queued_packets += 1;
+        TcpQueueOutcome::Queued
+    }
+
+    fn pending(&self) -> &[u8] {
+        &self.bytes[self.offset..]
+    }
+
+    fn pending_len(&self) -> usize {
+        self.bytes.len().saturating_sub(self.offset)
+    }
+
+    fn has_pending(&self) -> bool {
+        self.pending_len() != 0
+    }
+
+    fn consume(&mut self, bytes: usize) {
+        self.offset = self.offset.saturating_add(bytes).min(self.bytes.len());
+        if self.offset == self.bytes.len() {
+            self.clear();
+        } else if self.offset >= TCP_BATCH_TARGET_BYTES {
+            self.bytes.drain(..self.offset);
+            self.offset = 0;
+        }
+    }
+
+    fn clear(&mut self) {
+        self.bytes.clear();
+        self.offset = 0;
+        self.queued_packets = 0;
     }
 }
 
@@ -266,6 +506,30 @@ fn udp_meta_stride(meta: RecvMeta) -> usize {
     } else {
         meta.stride
     }
+}
+
+fn interface_token(slab_key: usize) -> Token {
+    Token(TOKEN_INTERFACE_BASE + slab_key)
+}
+
+fn tcp_stream_token(stream_key: usize) -> Token {
+    Token(TOKEN_TCP_STREAM_BASE + stream_key)
+}
+
+fn token_to_interface(token: Token) -> Option<usize> {
+    let raw = token.0;
+    if (TOKEN_INTERFACE_BASE..TOKEN_TCP_STREAM_BASE).contains(&raw) {
+        Some(raw - TOKEN_INTERFACE_BASE)
+    } else {
+        None
+    }
+}
+
+fn token_to_tcp_stream(token: Token) -> Option<usize> {
+    token
+        .0
+        .checked_sub(TOKEN_TCP_STREAM_BASE)
+        .filter(|_| token.0 >= TOKEN_TCP_STREAM_BASE)
 }
 
 impl Dataplane {
@@ -355,6 +619,7 @@ impl DataplaneWorker {
         let mut worker = Self {
             tun_device: config.tun_device,
             udp_port: config.udp_port,
+            transport_mode: config.transport_mode,
             fib: config.initial_fib,
             fast_routes: HashMap::with_hasher(RandomState::new()),
             fib_updates,
@@ -363,6 +628,8 @@ impl DataplaneWorker {
             events,
             sockets: Slab::new(),
             ifname_to_slab: HashMap::new(),
+            tcp_streams: Slab::new(),
+            tcp_peer_to_stream: HashMap::new(),
             needs_reconcile_retry: false,
             last_reconcile_attempt: Instant::now(),
             counters: DataplaneCounters::default(),
@@ -370,6 +637,7 @@ impl DataplaneWorker {
             last_logged_counters: DataplaneCounters::default(),
             tun_buf: Box::new([0u8; PACKET_BUFFER_BYTES]),
             udp_batch: UdpRecvBatch::new(),
+            tcp_read_buf: Box::new([0u8; TCP_READ_BUFFER_BYTES]),
         };
         worker.reconcile_sockets()?;
         Ok(worker)
@@ -378,6 +646,7 @@ impl DataplaneWorker {
     fn run(&mut self) -> Result<()> {
         loop {
             if self.stop_requested()? {
+                self.flush_tcp_writes("stopping dataplane");
                 return Ok(());
             }
 
@@ -388,26 +657,35 @@ impl DataplaneWorker {
                 .poll(&mut self.events, Some(POLL_INTERVAL))
                 .wrap_err("polling dataplane fds")?;
 
-            let mut ready = ArrayVec::<Token, MAX_POLL_EVENTS>::new();
+            let mut ready = ArrayVec::<ReadyEvent, MAX_POLL_EVENTS>::new();
             for event in self.events.iter() {
-                if ready.try_push(event.token()).is_err() {
+                let ready_event = ReadyEvent {
+                    token: event.token(),
+                    readable: event.is_readable(),
+                    writable: event.is_writable(),
+                };
+                if ready.try_push(ready_event).is_err() {
                     break;
                 }
             }
-            for token in ready {
-                match token {
+            for event in ready {
+                match event.token {
                     TOKEN_TUN => {
                         tracing::trace!("dataplane poll signaled TUN readable");
                         self.drain_tun_ready()?
                     }
-                    Token(n) => {
-                        let slab_key = n
-                            .checked_sub(1)
-                            .ok_or_else(|| eyre!("invalid UDP socket token"))?;
-                        self.drain_udp_ready(slab_key)?;
+                    token if token_to_tcp_stream(token).is_some() => {
+                        let stream_key = token_to_tcp_stream(token).expect("checked stream token");
+                        self.drain_tcp_stream_ready(stream_key, event.readable, event.writable)?;
                     }
+                    token if token_to_interface(token).is_some() => {
+                        let slab_key = token_to_interface(token).expect("checked interface token");
+                        self.drain_interface_ready(slab_key)?;
+                    }
+                    token => return Err(eyre!("invalid dataplane token {:?}", token)),
                 }
             }
+            self.flush_tcp_writes("dataplane poll loop boundary");
 
             self.maybe_log_counters();
         }
@@ -428,12 +706,23 @@ impl DataplaneWorker {
         Ok(())
     }
 
+    fn drain_interface_ready(&mut self, slab_key: usize) -> Result<()> {
+        let Some(socket) = self.sockets.get(slab_key) else {
+            return Err(eyre!("unknown interface socket token"));
+        };
+        match &socket.io {
+            InterfaceIo::Udp { .. } => self.drain_udp_ready(slab_key),
+            InterfaceIo::TcpListener { .. } => self.drain_tcp_accept_ready(slab_key),
+        }
+    }
+
     fn drain_tun_ready(&mut self) -> Result<()> {
         for _ in 0..TUN_DRAIN_BUDGET {
             if !self.handle_one_tun_packet()? {
                 break;
             }
         }
+        self.flush_tcp_writes("end of TUN drain slice");
         Ok(())
     }
 
@@ -492,9 +781,22 @@ impl DataplaneWorker {
             mtu = route.mtu,
             "dataplane resolved route for TUN packet"
         );
-        let send_result = send_via_route(&self.sockets, self.udp_port, packet, route);
-        if self.handle_udp_send_result(send_result, route, "sending packet from TUN")? {
-            self.counters.tun_to_udp_packets += 1;
+        match self.transport_mode {
+            TransportMode::Udp => {
+                let send_result = send_via_route(&self.sockets, self.udp_port, packet, route);
+                if self.handle_udp_send_result(send_result, route, "sending packet from TUN")? {
+                    self.counters.tun_to_udp_packets += 1;
+                }
+            }
+            TransportMode::Tcp => {
+                if self.queue_tcp_tun_buffer_via_route(
+                    packet_len,
+                    route,
+                    "sending packet from TUN",
+                )? {
+                    self.counters.tun_to_udp_packets += 1;
+                }
+            }
         }
         Ok(true)
     }
@@ -685,7 +987,511 @@ impl DataplaneWorker {
         }
     }
 
+    fn send_overlay_via_route(
+        &mut self,
+        packet: &[u8],
+        route: FastFibEntry,
+        context: &str,
+    ) -> Result<bool> {
+        match self.transport_mode {
+            TransportMode::Udp => {
+                let send_result = send_via_route(&self.sockets, self.udp_port, packet, route);
+                self.handle_udp_send_result(send_result, route, context)
+            }
+            TransportMode::Tcp => self.queue_tcp_via_route(packet, route, context),
+        }
+    }
+
+    fn queue_tcp_via_route(
+        &mut self,
+        packet: &[u8],
+        route: FastFibEntry,
+        context: &str,
+    ) -> Result<bool> {
+        let stream_key = match self.ensure_tcp_stream(route, context) {
+            Ok(stream_key) => stream_key,
+            Err(err) => {
+                self.counters.tcp_stream_errors += 1;
+                tracing::warn!(
+                    socket_slot = route.socket_slot,
+                    next_hop = %route.next_hop_ll,
+                    context,
+                    error = %err,
+                    "failed to prepare TCP stream for dataplane packet"
+                );
+                self.best_effort_reconcile();
+                return Ok(false);
+            }
+        };
+
+        let outcome = {
+            let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
+                return Ok(false);
+            };
+            stream.write_buf.queue_frame(packet)
+        };
+        self.finish_tcp_queue_outcome(stream_key, outcome, route, packet.len())
+    }
+
+    fn queue_tcp_tun_buffer_via_route(
+        &mut self,
+        packet_len: usize,
+        route: FastFibEntry,
+        context: &str,
+    ) -> Result<bool> {
+        let stream_key = match self.ensure_tcp_stream(route, context) {
+            Ok(stream_key) => stream_key,
+            Err(err) => {
+                self.counters.tcp_stream_errors += 1;
+                tracing::warn!(
+                    socket_slot = route.socket_slot,
+                    next_hop = %route.next_hop_ll,
+                    context,
+                    error = %err,
+                    "failed to prepare TCP stream for dataplane packet"
+                );
+                self.best_effort_reconcile();
+                return Ok(false);
+            }
+        };
+
+        let outcome = {
+            let packet = &self.tun_buf[..packet_len];
+            let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
+                return Ok(false);
+            };
+            stream.write_buf.queue_frame(packet)
+        };
+        self.finish_tcp_queue_outcome(stream_key, outcome, route, packet_len)
+    }
+
+    fn finish_tcp_queue_outcome(
+        &mut self,
+        stream_key: usize,
+        outcome: TcpQueueOutcome,
+        route: FastFibEntry,
+        packet_len: usize,
+    ) -> Result<bool> {
+        match outcome {
+            TcpQueueOutcome::Queued => {
+                self.counters.tcp_tx_packets += 1;
+                let pending_len = self
+                    .tcp_streams
+                    .get(stream_key)
+                    .map(|stream| stream.write_buf.pending_len())
+                    .unwrap_or_default();
+                if pending_len >= TCP_BATCH_TARGET_BYTES {
+                    self.flush_tcp_stream(stream_key, "TCP batch reached target size")?;
+                } else {
+                    self.reregister_tcp_stream_interest(stream_key)?;
+                }
+                Ok(true)
+            }
+            TcpQueueOutcome::Full => {
+                self.counters.tcp_queue_drops += 1;
+                tracing::debug!(
+                    socket_slot = route.socket_slot,
+                    next_hop = %route.next_hop_ll,
+                    bytes = packet_len,
+                    "dropping dataplane packet because TCP stream queue is full"
+                );
+                Ok(false)
+            }
+            TcpQueueOutcome::Oversized => {
+                self.counters.invalid_packet_drops += 1;
+                tracing::warn!(
+                    socket_slot = route.socket_slot,
+                    next_hop = %route.next_hop_ll,
+                    bytes = packet_len,
+                    "dropping dataplane packet too large for TCP frame"
+                );
+                Ok(false)
+            }
+        }
+    }
+
+    fn ensure_tcp_stream(&mut self, route: FastFibEntry, context: &str) -> Result<usize> {
+        let peer_key = TcpPeerKey {
+            socket_slot: route.socket_slot,
+            next_hop_ll: route.next_hop_ll,
+        };
+        if let Some(stream_key) = self.tcp_peer_to_stream.get(&peer_key).copied()
+            && self.tcp_streams.contains(stream_key)
+        {
+            return Ok(stream_key);
+        }
+        self.tcp_peer_to_stream.remove(&peer_key);
+
+        let Some(interface) = self.sockets.get(route.socket_slot) else {
+            return Err(eyre!("stale TCP socket slot {}", route.socket_slot));
+        };
+        let peer = SocketAddr::V6(SocketAddrV6::new(
+            route.next_hop_ll,
+            self.udp_port,
+            0,
+            interface.ifindex,
+        ));
+        let ifname = interface.ifname.clone();
+        let ifindex = interface.ifindex;
+
+        let (stream, connect_outcome) = open_tcp_stream(peer, ifname.as_ref(), ifindex)
+            .wrap_err_with(|| format!("opening TCP stream via {ifname}"))?;
+        let connected = connect_outcome == TcpConnectOutcome::Connected;
+        let stream_key = self.insert_registered_tcp_stream(
+            route.socket_slot,
+            Some(peer_key),
+            peer,
+            stream,
+            connected,
+        )?;
+        self.tcp_peer_to_stream.insert(peer_key, stream_key);
+        self.counters.tcp_connects += 1;
+        tracing::debug!(
+            interface = %ifname,
+            ifindex,
+            peer = %peer,
+            connected,
+            context,
+            "dataplane opened TCP stream"
+        );
+        Ok(stream_key)
+    }
+
+    fn insert_registered_tcp_stream(
+        &mut self,
+        interface_slot: usize,
+        peer_key: Option<TcpPeerKey>,
+        peer: SocketAddr,
+        mut stream: MioTcpStream,
+        connected: bool,
+    ) -> Result<usize> {
+        stream.set_nodelay(true).wrap_err("setting TCP_NODELAY")?;
+        let entry = self.tcp_streams.vacant_entry();
+        let stream_key = entry.key();
+        let interest = if connected {
+            Interest::READABLE
+        } else {
+            Interest::READABLE | Interest::WRITABLE
+        };
+        self.poll
+            .registry()
+            .register(&mut stream, tcp_stream_token(stream_key), interest)
+            .wrap_err_with(|| format!("registering TCP stream for {peer}"))?;
+        entry.insert(TcpPeerStream {
+            interface_slot,
+            peer_key,
+            peer,
+            stream,
+            connected,
+            read_buf: TcpFrameDecoder::new(),
+            write_buf: TcpWriteBuffer::new(),
+        });
+        Ok(stream_key)
+    }
+
+    fn drain_tcp_accept_ready(&mut self, interface_slot: usize) -> Result<()> {
+        for _ in 0..TCP_ACCEPT_DRAIN_BUDGET {
+            let accept_result = {
+                let Some(interface) = self.sockets.get_mut(interface_slot) else {
+                    return Err(eyre!("unknown TCP listener token"));
+                };
+                let InterfaceIo::TcpListener { listener } = &mut interface.io else {
+                    return Err(eyre!("interface socket is not a TCP listener"));
+                };
+                listener.accept()
+            };
+
+            let (stream, peer) = match accept_result {
+                Ok(accepted) => accepted,
+                Err(err) if err.kind() == ErrorKind::WouldBlock => break,
+                Err(err) => return Err(err).wrap_err("accepting TCP dataplane stream"),
+            };
+
+            self.insert_registered_tcp_stream(interface_slot, None, peer, stream, true)?;
+            self.counters.tcp_accepts += 1;
+            tracing::debug!(peer = %peer, "dataplane accepted TCP stream");
+        }
+        Ok(())
+    }
+
+    fn drain_tcp_stream_ready(
+        &mut self,
+        stream_key: usize,
+        readable: bool,
+        writable: bool,
+    ) -> Result<()> {
+        if writable {
+            self.finish_tcp_connect(stream_key)?;
+            self.flush_tcp_stream(stream_key, "TCP stream writable")?;
+        }
+        if readable {
+            let frames = self.read_tcp_stream_frames(stream_key)?;
+            for mut frame in frames {
+                self.handle_tcp_frame(&mut frame)?;
+            }
+            self.flush_tcp_writes("end of TCP stream drain slice");
+        }
+        Ok(())
+    }
+
+    fn finish_tcp_connect(&mut self, stream_key: usize) -> Result<()> {
+        let mut close_error = None;
+        if let Some(stream) = self.tcp_streams.get_mut(stream_key)
+            && !stream.connected
+        {
+            match stream.stream.take_error() {
+                Ok(None) => {
+                    stream.connected = true;
+                    tracing::debug!(peer = %stream.peer, "TCP dataplane stream connected");
+                }
+                Ok(Some(err)) => close_error = Some(err),
+                Err(err) => close_error = Some(err),
+            }
+        }
+
+        if let Some(err) = close_error {
+            self.counters.tcp_stream_errors += 1;
+            tracing::warn!(error = %err, "TCP dataplane stream connect failed");
+            self.close_tcp_stream(stream_key);
+        }
+        Ok(())
+    }
+
+    fn read_tcp_stream_frames(&mut self, stream_key: usize) -> Result<Vec<Vec<u8>>> {
+        let mut frames = Vec::new();
+        for _ in 0..TCP_STREAM_READ_DRAIN_BUDGET {
+            let read_len = {
+                let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
+                    return Ok(frames);
+                };
+                match stream.stream.read(self.tcp_read_buf.as_mut()) {
+                    Ok(0) => {
+                        self.close_tcp_stream(stream_key);
+                        return Ok(frames);
+                    }
+                    Ok(read_len) => read_len,
+                    Err(err) if err.kind() == ErrorKind::WouldBlock => break,
+                    Err(err) => {
+                        self.counters.tcp_stream_errors += 1;
+                        tracing::warn!(error = %err, "failed to read TCP dataplane stream");
+                        self.close_tcp_stream(stream_key);
+                        return Ok(frames);
+                    }
+                }
+            };
+
+            let frame_result = {
+                let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
+                    return Ok(frames);
+                };
+                stream.read_buf.push(&self.tcp_read_buf[..read_len]);
+                let mut decoded = Vec::new();
+                loop {
+                    match stream.read_buf.next_frame(PACKET_BUFFER_BYTES) {
+                        Ok(Some(frame)) => decoded.push(frame),
+                        Ok(None) => break Ok(decoded),
+                        Err(err) => break Err(err),
+                    }
+                }
+            };
+
+            match frame_result {
+                Ok(decoded) => {
+                    for frame in decoded {
+                        self.counters.tcp_rx_frames += 1;
+                        self.counters.tcp_rx_bytes += frame.len() as u64;
+                        frames.push(frame);
+                    }
+                }
+                Err(err) => {
+                    self.counters.tcp_frame_errors += 1;
+                    tracing::warn!(?err, "invalid TCP dataplane frame");
+                    self.close_tcp_stream(stream_key);
+                    return Ok(frames);
+                }
+            }
+
+            if read_len < TCP_READ_BUFFER_BYTES {
+                break;
+            }
+        }
+        Ok(frames)
+    }
+
+    fn handle_tcp_frame(&mut self, packet: &mut [u8]) -> Result<()> {
+        let packet_len = packet.len();
+        let Some(dst) = ipv6_destination(packet) else {
+            self.counters.invalid_packet_drops += 1;
+            tracing::debug!("dropping invalid TCP payload");
+            return Ok(());
+        };
+
+        if self.is_local(dst) {
+            let write_result = write_tun_packet(&self.tun_device, packet);
+            if self.handle_tun_write_result(write_result)? {
+                self.counters.local_delivered_packets += 1;
+            }
+            return Ok(());
+        }
+
+        if !has_forwardable_hop_limit(packet) {
+            self.counters.hop_limit_drops += 1;
+            tracing::debug!(destination = %dst, "dropping TCP packet with exhausted hop limit");
+            return Ok(());
+        }
+
+        let Some(route) = self.lookup_fast_route(dst) else {
+            self.counters.no_route_drops += 1;
+            tracing::debug!(destination = %dst, "dataplane has no route for forwarded TCP packet");
+            return Ok(());
+        };
+
+        debug_assert!(decrement_hop_limit(packet));
+        tracing::debug!(
+            destination = %dst,
+            socket_slot = route.socket_slot,
+            next_hop = %route.next_hop_ll,
+            bytes = packet_len,
+            "dataplane resolved route for forwarded TCP packet"
+        );
+        if self.send_overlay_via_route(
+            packet,
+            route,
+            "forwarding TCP packet",
+        )? {
+            self.counters.udp_forwarded_packets += 1;
+        }
+        Ok(())
+    }
+
+    fn flush_tcp_writes(&mut self, context: &str) {
+        if self.transport_mode != TransportMode::Tcp {
+            return;
+        }
+        let keys: Vec<usize> = self
+            .tcp_streams
+            .iter()
+            .filter_map(|(key, stream)| {
+                (stream.connected && stream.write_buf.has_pending()).then_some(key)
+            })
+            .collect();
+        for key in keys {
+            if let Err(err) = self.flush_tcp_stream(key, context) {
+                self.counters.tcp_stream_errors += 1;
+                tracing::warn!(error = %err, context, "failed to flush TCP dataplane stream");
+                self.close_tcp_stream(key);
+            }
+        }
+    }
+
+    fn flush_tcp_stream(&mut self, stream_key: usize, context: &str) -> Result<()> {
+        let mut wrote_bytes = 0u64;
+        let mut write_calls = 0u64;
+        let mut partial_writes = 0u64;
+        let mut blocked_writes = 0u64;
+        let mut close_error = None;
+
+        {
+            let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
+                return Ok(());
+            };
+            if !stream.connected {
+                return Ok(());
+            }
+            while stream.write_buf.has_pending() {
+                let pending_len = stream.write_buf.pending_len();
+                match stream.stream.write(stream.write_buf.pending()) {
+                    Ok(0) => {
+                        blocked_writes += 1;
+                        break;
+                    }
+                    Ok(written) => {
+                        wrote_bytes += written as u64;
+                        write_calls += 1;
+                        if written < pending_len {
+                            partial_writes += 1;
+                        }
+                        stream.write_buf.consume(written);
+                    }
+                    Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                        blocked_writes += 1;
+                        break;
+                    }
+                    Err(err) => {
+                        close_error = Some(err);
+                        break;
+                    }
+                }
+            }
+        }
+
+        self.counters.tcp_tx_bytes += wrote_bytes;
+        self.counters.tcp_tx_batches += write_calls;
+        self.counters.tcp_partial_writes += partial_writes;
+        self.counters.tcp_blocked_writes += blocked_writes;
+
+        if let Some(err) = close_error {
+            return Err(err).wrap_err("writing TCP dataplane stream");
+        }
+
+        if wrote_bytes != 0 {
+            tracing::debug!(
+                bytes = wrote_bytes,
+                write_calls,
+                context,
+                "flushed TCP dataplane stream"
+            );
+        }
+        self.reregister_tcp_stream_interest(stream_key)?;
+        Ok(())
+    }
+
+    fn reregister_tcp_stream_interest(&mut self, stream_key: usize) -> Result<()> {
+        let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
+            return Ok(());
+        };
+        let needs_write = !stream.connected || stream.write_buf.has_pending();
+        let interest = if needs_write {
+            Interest::READABLE | Interest::WRITABLE
+        } else {
+            Interest::READABLE
+        };
+        self.poll
+            .registry()
+            .reregister(&mut stream.stream, tcp_stream_token(stream_key), interest)
+            .wrap_err_with(|| format!("reregistering TCP stream for {}", stream.peer))?;
+        Ok(())
+    }
+
+    fn close_tcp_stream(&mut self, stream_key: usize) {
+        let Some(mut stream) = self.tcp_streams.try_remove(stream_key) else {
+            return;
+        };
+        if let Some(peer_key) = stream.peer_key {
+            self.tcp_peer_to_stream.remove(&peer_key);
+        }
+        if let Err(err) = self.poll.registry().deregister(&mut stream.stream) {
+            tracing::warn!(
+                peer = %stream.peer,
+                error = %err,
+                "failed to deregister TCP dataplane stream"
+            );
+        }
+    }
+
+    fn remove_tcp_streams_for_interface(&mut self, interface_slot: usize) {
+        let keys: Vec<usize> = self
+            .tcp_streams
+            .iter()
+            .filter_map(|(key, stream)| (stream.interface_slot == interface_slot).then_some(key))
+            .collect();
+        for key in keys {
+            self.close_tcp_stream(key);
+        }
+    }
+
     fn apply_snapshot(&mut self, snapshot: Arc<FibSnapshot>) -> Result<()> {
+        self.flush_tcp_writes("dataplane snapshot update");
         self.fib = snapshot;
         tracing::info!(
             locals = self.fib.locals.len(),
@@ -792,14 +1598,28 @@ impl DataplaneWorker {
     }
 
     fn add_socket(&mut self, ifname: Box<str>, ifindex: u32) -> Result<()> {
-        let socket = open_udp_socket(self.udp_port, ifname.as_ref(), ifindex)
-            .wrap_err_with(|| format!("opening UDP socket for {}", ifname))?;
-        let slab_key = self.insert_registered_socket(ifname.clone(), ifindex, socket)?;
+        let slab_key = match self.transport_mode {
+            TransportMode::Udp => {
+                let socket = open_udp_socket(self.udp_port, ifname.as_ref(), ifindex)
+                    .wrap_err_with(|| format!("opening UDP socket for {}", ifname))?;
+                self.insert_registered_udp_socket(ifname.clone(), ifindex, socket)?
+            }
+            TransportMode::Tcp => {
+                let listener = open_tcp_listener(self.udp_port, ifname.as_ref(), ifindex)
+                    .wrap_err_with(|| format!("opening TCP listener for {}", ifname))?;
+                self.insert_registered_tcp_listener(ifname.clone(), ifindex, listener)?
+            }
+        };
         self.ifname_to_slab.insert(ifname, slab_key);
         Ok(())
     }
 
     fn refresh_socket(&mut self, ifname: &str, ifindex: u32) -> Result<()> {
+        if self.transport_mode == TransportMode::Tcp {
+            self.remove_socket(ifname)?;
+            return self.add_socket(ifname.into(), ifindex);
+        }
+
         let Some(old_slab_key) = self.ifname_to_slab.get(ifname).copied() else {
             return self.add_socket(ifname.into(), ifindex);
         };
@@ -808,14 +1628,16 @@ impl DataplaneWorker {
         let new_socket = open_udp_socket(self.udp_port, ifname, ifindex)
             .wrap_err_with(|| format!("opening replacement UDP socket for {}", ifname))?;
         let new_slab_key =
-            self.insert_registered_socket(new_ifname.clone(), ifindex, new_socket)?;
+            self.insert_registered_udp_socket(new_ifname.clone(), ifindex, new_socket)?;
         let previous = self.ifname_to_slab.insert(new_ifname.clone(), new_slab_key);
         debug_assert_eq!(previous, Some(old_slab_key));
 
         let Some(mut old_socket) = self.sockets.try_remove(old_slab_key) else {
             return Ok(());
         };
-        if let Err(err) = self.poll.registry().deregister(&mut old_socket.socket) {
+        if let InterfaceIo::Udp { socket, .. } = &mut old_socket.io
+            && let Err(err) = self.poll.registry().deregister(socket)
+        {
             tracing::warn!(
                 interface = %ifname,
                 error = %err,
@@ -825,7 +1647,7 @@ impl DataplaneWorker {
         Ok(())
     }
 
-    fn insert_registered_socket(
+    fn insert_registered_udp_socket(
         &mut self,
         ifname: Box<str>,
         ifindex: u32,
@@ -835,16 +1657,34 @@ impl DataplaneWorker {
             .wrap_err_with(|| format!("initializing UDP fast-path state for {}", ifname))?;
         let entry = self.sockets.vacant_entry();
         let slab_key = entry.key();
-        let token = Token(slab_key + 1);
         self.poll
             .registry()
-            .register(&mut socket, token, Interest::READABLE)
+            .register(&mut socket, interface_token(slab_key), Interest::READABLE)
             .wrap_err_with(|| format!("registering UDP socket for {}", ifname))?;
         entry.insert(InterfaceSocket {
             ifname,
             ifindex,
-            socket,
-            udp_state,
+            io: InterfaceIo::Udp { socket, udp_state },
+        });
+        Ok(slab_key)
+    }
+
+    fn insert_registered_tcp_listener(
+        &mut self,
+        ifname: Box<str>,
+        ifindex: u32,
+        mut listener: MioTcpListener,
+    ) -> Result<usize> {
+        let entry = self.sockets.vacant_entry();
+        let slab_key = entry.key();
+        self.poll
+            .registry()
+            .register(&mut listener, interface_token(slab_key), Interest::READABLE)
+            .wrap_err_with(|| format!("registering TCP listener for {}", ifname))?;
+        entry.insert(InterfaceSocket {
+            ifname,
+            ifindex,
+            io: InterfaceIo::TcpListener { listener },
         });
         Ok(slab_key)
     }
@@ -853,13 +1693,22 @@ impl DataplaneWorker {
         let Some(slab_key) = self.ifname_to_slab.remove(ifname) else {
             return Ok(());
         };
+        self.remove_tcp_streams_for_interface(slab_key);
         let Some(mut socket) = self.sockets.try_remove(slab_key) else {
             return Ok(());
         };
-        self.poll
-            .registry()
-            .deregister(&mut socket.socket)
-            .wrap_err_with(|| format!("deregistering UDP socket for {}", ifname))?;
+        match &mut socket.io {
+            InterfaceIo::Udp { socket, .. } => self
+                .poll
+                .registry()
+                .deregister(socket)
+                .wrap_err_with(|| format!("deregistering UDP socket for {}", ifname))?,
+            InterfaceIo::TcpListener { listener } => self
+                .poll
+                .registry()
+                .deregister(listener)
+                .wrap_err_with(|| format!("deregistering TCP listener for {}", ifname))?,
+        }
         Ok(())
     }
 
@@ -906,6 +1755,19 @@ impl DataplaneWorker {
             udp_send_would_block_drops_delta = delta.udp_send_would_block_drops,
             tun_send_would_block_drops_delta = delta.tun_send_would_block_drops,
             udp_send_errors_delta = delta.udp_send_errors,
+            tcp_connects_delta = delta.tcp_connects,
+            tcp_accepts_delta = delta.tcp_accepts,
+            tcp_reconnects_delta = delta.tcp_reconnects,
+            tcp_tx_batches_delta = delta.tcp_tx_batches,
+            tcp_tx_packets_delta = delta.tcp_tx_packets,
+            tcp_tx_bytes_delta = delta.tcp_tx_bytes,
+            tcp_rx_frames_delta = delta.tcp_rx_frames,
+            tcp_rx_bytes_delta = delta.tcp_rx_bytes,
+            tcp_partial_writes_delta = delta.tcp_partial_writes,
+            tcp_blocked_writes_delta = delta.tcp_blocked_writes,
+            tcp_queue_drops_delta = delta.tcp_queue_drops,
+            tcp_frame_errors_delta = delta.tcp_frame_errors,
+            tcp_stream_errors_delta = delta.tcp_stream_errors,
             tun_rx_packets_total = self.counters.tun_rx_packets,
             udp_rx_packets_total = self.counters.udp_rx_packets,
             udp_tx_packets_total = self.counters.udp_tx_packets,
@@ -914,6 +1776,11 @@ impl DataplaneWorker {
             udp_send_would_block_drops_total = self.counters.udp_send_would_block_drops,
             tun_send_would_block_drops_total = self.counters.tun_send_would_block_drops,
             udp_send_errors_total = self.counters.udp_send_errors,
+            tcp_tx_packets_total = self.counters.tcp_tx_packets,
+            tcp_rx_frames_total = self.counters.tcp_rx_frames,
+            tcp_queue_drops_total = self.counters.tcp_queue_drops,
+            tcp_frame_errors_total = self.counters.tcp_frame_errors,
+            tcp_stream_errors_total = self.counters.tcp_stream_errors,
             "dataplane counters"
         );
     }
@@ -924,7 +1791,14 @@ fn recv_udp_packets(
     batch: &mut UdpRecvBatch,
     max_packets: usize,
 ) -> Result<UdpRecvOutcome> {
-    match batch.recv_from(socket, max_packets) {
+    let InterfaceIo::Udp {
+        socket: udp_socket,
+        udp_state,
+    } = &socket.io
+    else {
+        return Err(eyre!("interface {} is not a UDP socket", socket.ifname));
+    };
+    match batch.recv_from(udp_socket, udp_state, max_packets) {
         Ok(received_buffers) if received_buffers > 0 => {
             tracing::debug!(
                 interface = %socket.ifname,
@@ -955,6 +1829,13 @@ fn send_via_route(
     let Some(socket) = sockets.get(route.socket_slot) else {
         return Err(eyre!("stale UDP socket slot {}", route.socket_slot));
     };
+    let InterfaceIo::Udp {
+        socket: udp_socket,
+        udp_state,
+    } = &socket.io
+    else {
+        return Err(eyre!("route socket slot {} is not UDP", route.socket_slot));
+    };
 
     let peer = SocketAddr::V6(SocketAddrV6::new(
         route.next_hop_ll,
@@ -976,11 +1857,7 @@ fn send_via_route(
         segment_size: None,
         src_ip: None,
     };
-    match socket.socket.try_io(|| {
-        socket
-            .udp_state
-            .try_send(UdpSockRef::from(&socket.socket), &transmit)
-    }) {
+    match udp_socket.try_io(|| udp_state.try_send(UdpSockRef::from(udp_socket), &transmit)) {
         Ok(()) => {
             tracing::debug!(
                 interface = %socket.ifname,
@@ -1130,6 +2007,76 @@ fn open_udp_socket(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioUdpSo
     Ok(MioUdpSocket::from_std(udp))
 }
 
+fn open_tcp_listener(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioTcpListener> {
+    let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_reuse_address(true)?;
+    socket.set_reuse_port(true)?;
+    socket.set_only_v6(true)?;
+    socket.set_nonblocking(true)?;
+    socket.set_recv_buffer_size(UDP_SOCKET_BUFFER_BYTES)?;
+    socket.set_send_buffer_size(UDP_SOCKET_BUFFER_BYTES)?;
+
+    let Some(ifindex) = NonZeroU32::new(ifindex) else {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("invalid ifindex for {ifname}"),
+        ));
+    };
+
+    #[cfg(target_os = "linux")]
+    socket.bind_device(Some(ifname.as_bytes()))?;
+    socket.bind_device_by_index_v6(Some(ifindex))?;
+    socket.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0).into())?;
+    socket.listen(1024)?;
+
+    let listener: TcpListener = socket.into();
+    Ok(MioTcpListener::from_std(listener))
+}
+
+fn open_tcp_stream(
+    peer: SocketAddr,
+    ifname: &str,
+    ifindex: u32,
+) -> io::Result<(MioTcpStream, TcpConnectOutcome)> {
+    let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_only_v6(true)?;
+    socket.set_nonblocking(true)?;
+    socket.set_tcp_nodelay(true)?;
+    socket.set_recv_buffer_size(UDP_SOCKET_BUFFER_BYTES)?;
+    socket.set_send_buffer_size(UDP_SOCKET_BUFFER_BYTES)?;
+
+    let Some(ifindex) = NonZeroU32::new(ifindex) else {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("invalid ifindex for {ifname}"),
+        ));
+    };
+
+    #[cfg(target_os = "linux")]
+    socket.bind_device(Some(ifname.as_bytes()))?;
+    socket.bind_device_by_index_v6(Some(ifindex))?;
+
+    let outcome = match socket.connect(&peer.into()) {
+        Ok(()) => TcpConnectOutcome::Connected,
+        Err(err) if is_tcp_connect_in_progress(&err) => TcpConnectOutcome::InProgress,
+        Err(err) => return Err(err),
+    };
+
+    let stream: TcpStream = socket.into();
+    Ok((MioTcpStream::from_std(stream), outcome))
+}
+
+fn is_tcp_connect_in_progress(err: &io::Error) -> bool {
+    matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted)
+        || matches!(
+            err.raw_os_error(),
+            Some(code)
+                if code == libc::EINPROGRESS
+                    || code == libc::EALREADY
+                    || code == libc::EWOULDBLOCK
+        )
+}
+
 fn ipv6_destination(packet: &[u8]) -> Option<Ipv6Addr> {
     if packet.len() < 40 {
         return None;
@@ -1162,6 +2109,7 @@ fn has_forwardable_hop_limit(packet: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::io::ErrorKind;
     use std::net::{Ipv6Addr, UdpSocket as StdUdpSocket};
     use std::time::Duration;
 
@@ -1172,7 +2120,8 @@ mod tests {
     use crate::fib::{FibEntry, FibSnapshot, host_key};
 
     use super::{
-        BATCH_SIZE, FastFibEntry, InterfaceSocket, RecvMeta, SocketAction, UdpRecvBatch,
+        BATCH_SIZE, FastFibEntry, InterfaceIo, InterfaceSocket, RecvMeta, SocketAction,
+        TcpFrameDecoder, TcpFrameError, TcpQueueOutcome, TcpWriteBuffer, UdpRecvBatch,
         UdpRecvOutcome, UdpSockRef, UdpSocketState, compile_fast_routes, decrement_hop_limit,
         has_missing_admitted_sockets, ipv6_destination, plan_socket_actions, recv_udp_packets,
         udp_meta_stride,
@@ -1185,6 +2134,19 @@ mod tests {
         packet[7] = hop_limit;
         packet[24..40].copy_from_slice(&dst.octets());
         packet
+    }
+
+    fn bind_loopback_udp() -> StdUdpSocket {
+        for attempt in 0..10 {
+            match StdUdpSocket::bind((Ipv6Addr::LOCALHOST, 0)) {
+                Ok(socket) => return socket,
+                Err(err) if err.kind() == ErrorKind::PermissionDenied && attempt < 9 => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => panic!("binding IPv6 loopback UDP socket failed: {err}"),
+            }
+        }
+        unreachable!("retry loop should return or panic")
     }
 
     #[test]
@@ -1219,19 +2181,79 @@ mod tests {
     }
 
     #[test]
+    fn tcp_frame_decoder_handles_fragmented_and_coalesced_frames() {
+        let packet_a = sample_ipv6_packet("fde0::1".parse().unwrap(), 32);
+        let packet_b = sample_ipv6_packet("fde0::2".parse().unwrap(), 32);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(packet_a.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(&packet_a);
+        bytes.extend_from_slice(&(packet_b.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(&packet_b);
+
+        let mut decoder = TcpFrameDecoder::new();
+        decoder.push(&bytes[..7]);
+        assert_eq!(decoder.next_frame(1500).unwrap(), None);
+
+        decoder.push(&bytes[7..]);
+        assert_eq!(decoder.next_frame(1500).unwrap(), Some(packet_a));
+        assert_eq!(decoder.next_frame(1500).unwrap(), Some(packet_b));
+        assert_eq!(decoder.next_frame(1500).unwrap(), None);
+    }
+
+    #[test]
+    fn tcp_frame_decoder_rejects_invalid_lengths() {
+        let mut decoder = TcpFrameDecoder::new();
+        decoder.push(&0u16.to_be_bytes());
+        assert_eq!(
+            decoder.next_frame(1500).unwrap_err(),
+            TcpFrameError::ZeroLength
+        );
+
+        let mut decoder = TcpFrameDecoder::new();
+        decoder.push(&2000u16.to_be_bytes());
+        assert_eq!(
+            decoder.next_frame(1500).unwrap_err(),
+            TcpFrameError::Oversized {
+                len: 2000,
+                max: 1500,
+            }
+        );
+    }
+
+    #[test]
+    fn tcp_write_buffer_frames_packets_and_tracks_pending_bytes() {
+        let packet = sample_ipv6_packet("fde0::1".parse().unwrap(), 32);
+        let mut buffer = TcpWriteBuffer::new();
+
+        assert_eq!(buffer.queue_frame(&packet), TcpQueueOutcome::Queued);
+        assert_eq!(buffer.queued_packets, 1);
+        assert_eq!(buffer.pending_len(), packet.len() + 2);
+        assert_eq!(&buffer.pending()[..2], &(packet.len() as u16).to_be_bytes());
+        assert_eq!(&buffer.pending()[2..], packet.as_slice());
+
+        buffer.consume(2);
+        assert_eq!(buffer.pending_len(), packet.len());
+        buffer.consume(packet.len());
+        assert!(!buffer.has_pending());
+        assert_eq!(buffer.queued_packets, 0);
+    }
+
+    #[test]
     fn udp_batch_recv_returns_single_datagram_without_full_batch() {
-        let receiver = StdUdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+        let receiver = bind_loopback_udp();
         let receiver_addr = receiver.local_addr().unwrap();
         let receiver = MioUdpSocket::from_std(receiver);
         let udp_state = UdpSocketState::new(UdpSockRef::from(&receiver)).unwrap();
         let socket = InterfaceSocket {
             ifname: "lo0".into(),
             ifindex: 0,
-            socket: receiver,
-            udp_state,
+            io: InterfaceIo::Udp {
+                socket: receiver,
+                udp_state,
+            },
         };
 
-        let sender = StdUdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+        let sender = bind_loopback_udp();
         let payload = sample_ipv6_packet("fde0::1234".parse().unwrap(), 32);
         sender.send_to(&payload, receiver_addr).unwrap();
 

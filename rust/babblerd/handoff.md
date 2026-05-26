@@ -6,8 +6,13 @@ This is the current handoff for a new session picking up `babblerd` work.
 
 - Repo: `/home/royalguard/Desktop/exo-all/networking-related/exo-babbler`
 - Branch: `babbler`
-- Current HEAD when this handoff was refreshed: `2f038588` (`en0 en1 infinite cost`)
+- Current HEAD when this handoff was refreshed: `0b7a3ad3` (`receiver side batching (different socket type)`)
 - Recent relevant commits:
+  - `0b7a3ad3` wires dataplane UDP receive/send through `iroh-quinn-udp`
+    while keeping `mio` readiness; receive-side batching is in, true transmit
+    batching is not
+  - `3cbb5758` removes several avoidable hot-path costs and adds dataplane
+    counter coverage
   - `2f038588` deprioritizes `en0` and `en1` with maximum finite neighbour cost
   - `b02cf2cb` adds temporary `enN -> N * 100` link scoring
   - `5a158a51` adds Babel neighbour-cost parsing/command support
@@ -18,6 +23,59 @@ This is the current handoff for a new session picking up `babblerd` work.
   - earlier dataplane bring-up commits remain relevant, but the local repo has
     since moved to `networking-related/exo-babbler`
 - Do not trust this file for working-tree cleanliness; run `git status --short`.
+
+## Handoff To Next Agent
+
+The committed baseline before the forced-TCP work was `0b7a3ad3`. Do not infer
+working-tree cleanliness from this file; run `git status --short`.
+
+What is implemented:
+
+- `src/dataplane.rs` keeps `mio::net::UdpSocket` for readiness polling.
+- Each dataplane interface socket also owns an `iroh_quinn_udp::UdpSocketState`.
+- UDP receive now uses `UdpSocketState::recv`, so Apple fast builds can use
+  `recvmsg_x` and Linux-like Unix can use `recvmmsg` through the crate.
+- UDP send now goes through `UdpSocketState::try_send`, but still one transmit
+  call per forwarded packet.
+- Receive batching handles `RecvMeta::stride`, so GRO-style buffers containing
+  multiple datagrams are split back into inner packets.
+- Regression test:
+  `dataplane::tests::udp_batch_recv_returns_single_datagram_without_full_batch`
+  proves a single datagram returns immediately as a one-packet batch.
+- The current working tree adds an opt-in TCP neighbour transport:
+  `--force-tcp`, `--router-transport tcp`, or `BABBLER_ROUTER_TRANSPORT=tcp`.
+  UDP remains the default transport.
+- TCP mode opens scoped link-local TCP streams to next-hop neighbours, frames
+  inner IPv6 packets with a `u16` big-endian length, batches framed packets into
+  bounded per-peer write buffers, and flushes partial batches at drain/poll
+  boundaries or when the batch reaches the target size.
+- TCP mode is intended as an experimental Mac Thunderbolt fast path to reduce
+  one-syscall-per-packet overhead. It is not the default mesh transport.
+
+What is not implemented:
+
+- No true UDP output batching yet.
+- No UDP output queue, aggregation, or waiting-to-fill behavior.
+- No connected per-neighbour output sockets yet.
+- Full-load remote tests have not yet been recorded for TCP mode in this
+  handoff.
+
+If implementing actual UDP transmit batching next:
+
+1. Add a worker-owned `TxBatch` scratch buffer.
+2. Append only packets with the same output socket, next-hop peer, and packet
+   length.
+3. Flush on peer change, packet-size change, full batch, end of TUN/UDP drain
+   slice, poll-loop boundary, snapshot/reconcile, stop, or send error.
+4. Flush via one `Transmit { contents: batch_bytes, segment_size: Some(packet_len), ... }`.
+5. Never wait for a full batch. Batching is syscall amortization inside an
+   already-ready drain turn, not a latency queue.
+6. Add tests for single-packet flush, peer-change flush, size-change flush, and
+   full-batch flush.
+
+Docs are part of the fix. Any future code change should update this handoff and
+the relevant architecture/lab notes in the same patch, especially when it
+changes what is implemented versus future work.
 
 ## Core Conclusion
 
@@ -355,6 +413,9 @@ Key facts:
 - `iperf3` is provided by the flake:
   - `nix run .#iperf3 -- -s`
   - `nix run .#iperf3 -- -c <addr>`
+- Force the experimental TCP dataplane transport with either:
+  - `BABBLER_ROUTER_TRANSPORT=tcp RUST_LOG=info sudo -E nix run .#babblerd --impure`
+  - `RUST_LOG=info sudo -E nix run .#babblerd --impure -- --force-tcp`
 - The current `iperf3` source is the fork at
   `/home/royalguard/Desktop/exo-all/networking-related/iperf3`.
   Commit `962e05b` adds `%scopeID` rendering for link-local IPv6 output.
@@ -419,6 +480,12 @@ These are settled enough for now:
 
 Use the current route heuristic and focus on dataplane cost.
 
+The most concrete current experiment is forced TCP transport on the Mac
+Thunderbolt lab. It should be compared against the UDP default with the same
+routes, same iperf pairs, same dataplane counter deltas, and same recovery
+checks. TCP mode batches framed inner packets before kernel writes; UDP mode
+still emits one send operation per forwarded packet.
+
 Capture each run with:
 
 1. `iperf3` sender/receiver summaries
@@ -426,14 +493,17 @@ Capture each run with:
 3. CPU usage on sender, transit node, and receiver
 4. route/FIB snapshots before and after the run
 5. whether bidirectional `ping6` still works after the run
+6. for TCP mode, `tcp_tx_batches`, `tcp_tx_packets`, `tcp_rx_frames`,
+   `tcp_queue_drops`, `tcp_frame_errors`, and `tcp_stream_errors` counter deltas
 
 Goal:
 
 - separate CPU/syscall ceiling from UDP/TUN backpressure,
 - explain the single-hop UDP wedge and distinguish overlay application-control
   failure from Babel route churn,
-- and decide whether the next implementation step should be batching,
-  aggregation, jumbo MTU support, or multi-core sharding.
+- and measure whether receive-side batching changed direct and single-hop
+  throughput before implementing true transmit batching, aggregation, jumbo MTU
+  support, or multi-core sharding.
 
 The temporary `neighbour-cost` policy now lives in `babel/link_policy.rs`.
 For each live neighbour on an `enN` interface, `babblerd` sets `coef-256 0`.
