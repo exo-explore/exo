@@ -7,6 +7,9 @@ set -uo pipefail
 
 HOST="${1:-localhost:52415}"
 MODEL_ID="KevTheHermit/security-testing"
+ENCODED_MODEL_ID=$(
+  python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$MODEL_ID"
+)
 CUSTOM_CARDS_DIR="$HOME/.exo/custom_model_cards"
 CARD_FILE="$CUSTOM_CARDS_DIR/KevTheHermit--security-testing.toml"
 
@@ -71,9 +74,30 @@ PLACE_BODY=$(echo "$PLACE_RESPONSE" | sed '$d')
 echo "    HTTP $PLACE_CODE"
 echo "    Response: $PLACE_BODY"
 
-# Step 3b: Send a chat completion to actually trigger tokenizer loading
+if [ "$PLACE_CODE" -ge 400 ]; then
+  echo "    Placement failed; cannot trigger tokenizer loading."
+  exit 1
+fi
+
+# Step 3b: Wait for placement to materialize before inference.
 echo ""
-echo "[3b] Sending chat completion to trigger tokenizer load ..."
+echo "[3b] Waiting for placed instance ..."
+if ! AWAIT_RESPONSE=$(curl -fsS --max-time 65 \
+  "http://$HOST/instance/await?model_id=$ENCODED_MODEL_ID&timeout_seconds=60" |
+  awk '/^data: / { sub(/^data: /, ""); print; exit }'); then
+  echo "    Timed out waiting for an instance for $MODEL_ID"
+  exit 1
+fi
+
+if ! printf '%s' "$AWAIT_RESPONSE" | grep -q '"type":"ready"'; then
+  echo "    Timed out waiting for an instance for $MODEL_ID"
+  exit 1
+fi
+echo "    Instance ready"
+
+# Step 3c: Send a chat completion to actually trigger tokenizer loading
+echo ""
+echo "[3c] Sending chat completion to trigger tokenizer load ..."
 CHAT_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 30 -X POST "http://$HOST/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d "{\"model\":\"$MODEL_ID\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}],\"max_tokens\":1}")
@@ -82,7 +106,7 @@ CHAT_BODY=$(echo "$CHAT_RESPONSE" | sed '$d')
 echo "    HTTP $CHAT_CODE"
 echo "    Response: $CHAT_BODY"
 echo ""
-echo "[3c] Checking for RCE proof ..."
+echo "[3d] Checking for RCE proof ..."
 sleep 5
 if [ -f /tmp/exo-rce-proof.txt ]; then
   echo "    VULNERABLE: Remote code executed!"
