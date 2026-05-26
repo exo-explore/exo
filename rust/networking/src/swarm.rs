@@ -1,4 +1,5 @@
 use std::pin::Pin;
+use std::time::Duration;
 
 use crate::swarm::transport::tcp_transport;
 use crate::{alias, discovery};
@@ -62,15 +63,21 @@ impl Swarm {
         let stream = async_stream::stream! {
             loop {
                 tokio::select! {
-                    msg = from_client.recv() => {
-                        let Some(msg) = msg else { break };
-                        on_message(&mut swarm, msg);
-                    }
+                    // Process swarm events first to prevent starvation during startup.
+                    // At startup, many components subscribe to topics simultaneously, which
+                    // continuously feeds from_client. Without biased ordering, the
+                    // swarm.next() arm is starved and ConnectionEstablished events are
+                    // never processed, causing two-node EXO clusters to fail to form.
+                    biased;
                     event = swarm.next() => {
                         let Some(event) = event else { break };
                         if let Some(item) = filter_swarm_event(event) {
                             yield item;
                         }
+                    }
+                    msg = from_client.recv() => {
+                        let Some(msg) = msg else { break };
+                        on_message(&mut swarm, msg);
                     }
                 }
             }
@@ -162,6 +169,7 @@ pub fn create_swarm(
         .with_tokio()
         .with_other_transport(tcp_transport)?
         .with_behaviour(|keypair| Behaviour::new(keypair, parsed_bootstrap_peers))?
+        .with_swarm_config(|config| config.with_idle_connection_timeout(Duration::from_secs(600)))
         .build();
 
     swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{listen_port}").parse()?)?;
