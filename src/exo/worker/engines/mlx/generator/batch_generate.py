@@ -41,6 +41,7 @@ from exo.worker.engines.mlx.generator.generate import (
     prefill,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
+from exo.worker.engines.mlx.generator.stop_sequences import scan_stop_sequences
 from exo.worker.engines.mlx.patches.opt_batch_gen import (
     set_needs_topk,
     take_ready_topk,
@@ -369,28 +370,29 @@ class ExoBatchGenerator:
                     f"[bench] uid={response.uid} tok#{state.completion_tokens} {text!r} t={delta:.4f}s"
                 )
             state.generated_text_parts.append(text)
-            state.potential_stop_sequence_text += text
 
-            finish_reason: FinishReason | None = cast(
-                FinishReason | None, response.finish_reason
-            )
+            # Hold back any trailing partial stop-sequence match so a multi-token
+            # stop sequence never leaks its leading bytes into output.
+            model_finish_reason = cast(FinishReason | None, response.finish_reason)
             task_params = state.task_params
             stop_sequences = _stop_sequences(task_params)
-            max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
-            if stop_sequences:
-                for stop_seq in stop_sequences:
-                    if stop_seq in state.potential_stop_sequence_text:
-                        stop_index = state.potential_stop_sequence_text.find(stop_seq)
-                        text_before_stop = state.potential_stop_sequence_text[
-                            :stop_index
-                        ]
-                        chunk_start = len(state.potential_stop_sequence_text) - len(
-                            text
-                        )
-                        text = text_before_stop[chunk_start:]
-                        finish_reason = "stop"
-                        break
+            state.potential_stop_sequence_text += text
+            text, matched_stop_sequence, state.potential_stop_sequence_text = (
+                scan_stop_sequences(state.potential_stop_sequence_text, stop_sequences)
+            )
+
+            finish_reason: FinishReason | None
+            if matched_stop_sequence is not None:
+                finish_reason = "stop"
+            elif model_finish_reason is not None:
+                # Natural EOS / length limit: flush any held-back text — it is
+                # real output that merely looked like a stop-sequence prefix.
+                text += state.potential_stop_sequence_text
+                state.potential_stop_sequence_text = ""
+                finish_reason = model_finish_reason
+            else:
+                finish_reason = None
 
             is_done = finish_reason is not None
 
@@ -457,19 +459,13 @@ class ExoBatchGenerator:
                         finish_reason=finish_reason,
                         stats=stats,
                         usage=usage,
+                        matched_stop_sequence=matched_stop_sequence,
                     ),
                 )
             )
 
             if is_done:
                 del self._active_tasks[response.uid]
-            elif (
-                max_stop_len > 0
-                and len(state.potential_stop_sequence_text) > max_stop_len
-            ):
-                state.potential_stop_sequence_text = state.potential_stop_sequence_text[
-                    -max_stop_len:
-                ]
 
         _step_elapsed = time.perf_counter() - _step_tic
         _overhead = _step_elapsed - _next_elapsed
