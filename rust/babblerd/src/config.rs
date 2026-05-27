@@ -53,7 +53,7 @@ pub const PHYSICAL_LINK_MTU: u16 = 1500;
 pub const OUTER_IPV6_HEADER_BYTES: u16 = 40;
 pub const OUTER_UDP_HEADER_BYTES: u16 = 8;
 pub const UDP_TUN_MTU: u16 = PHYSICAL_LINK_MTU - OUTER_IPV6_HEADER_BYTES - OUTER_UDP_HEADER_BYTES;
-pub const TCP_TUN_MTU: u16 = 9000;
+pub const TCP_TUN_MTU: u16 = u16::MAX;
 pub const MIN_TUN_MTU: u16 = 1280;
 pub const MAX_TUN_MTU: u16 = u16::MAX;
 pub const TUN_MTU: u16 = UDP_TUN_MTU;
@@ -225,6 +225,7 @@ mod tests {
         assert_eq!(default_tun_mtu(TransportMode::Udp), UDP_TUN_MTU);
         assert_eq!(default_tun_mtu(TransportMode::Tcp), TCP_TUN_MTU);
         assert_eq!(parse_tun_mtu("9000").unwrap(), 9000);
+        assert_eq!(parse_tun_mtu("65535").unwrap(), 65535);
         assert!(parse_tun_mtu("1279").is_err());
         assert!(parse_tun_mtu("65536").is_err());
     }

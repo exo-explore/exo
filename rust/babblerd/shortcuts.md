@@ -235,9 +235,12 @@ of shortcuts that should be revisited later.
     still use the Babel-selected interface. Accepted streams must be link-local
     Babel neighbours on the accepted interface/scope. Bound listeners caused
     e4/e16 lab handshakes to stick in `SYN_RCVD`.
-  - TCP mode defaults the TUN MTU to `9000`; use `--tun-mtu <mtu>` or
-    `BABBLER_TUN_MTU=<mtu>` for jumbo sweeps. Use the same value on every
-    forced-TCP peer in a run. UDP keeps the old `1452` default.
+  - TCP mode defaults the TUN MTU to `65535`; use `--tun-mtu <mtu>` or
+    `BABBLER_TUN_MTU=<mtu>` for smaller/larger lab sweeps. Use the same value on
+    every forced-TCP peer in a run. UDP keeps the old `1452` default.
+  - TCP mode uses `256 KiB` TCP read buffers and `256 KiB` opportunistic write
+    batch targets so max-size framed packets do not require multiple TCP reads,
+    and busy TUN drains can group several max-size frames into one TCP write.
   - TCP mode relies on a lab assumption: direct cabled Mac Thunderbolt links are
     low-loss enough that TCP-over-TCP pathologies should be limited during
     throughput tests. It should not be treated as a general unreliable-mesh
@@ -281,7 +284,7 @@ of shortcuts that should be revisited later.
 - The current MTU model is still intentionally crude:
   - assume physical links must support 1500-byte packets,
   - use `1452` as the UDP TUN MTU default,
-  - use `9000` as the forced-TCP TUN MTU default,
+  - use `65535` as the forced-TCP TUN MTU default,
   - allow `BABBLER_TUN_MTU` or `--tun-mtu` for explicit experiments,
   - reject candidate physical interfaces below 1500 MTU.
   Files:

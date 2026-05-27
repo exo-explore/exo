@@ -84,17 +84,20 @@ scoped to the Babel-selected interface. Accepted TCP streams are rejected unless
 the peer is link-local and matches a live Babel neighbour on the accepted
 scope/interface.
 
-Forced TCP defaults the TUN MTU to `9000` to reduce per-packet TUN syscalls.
-Override it during sweeps with either command form, but keep the value identical
-on every forced-TCP peer in the run:
+Forced TCP defaults the TUN MTU to `65535` to reduce per-packet TUN syscalls on
+the Mac Thunderbolt fast path. Override it during sweeps with either command
+form, but keep the value identical on every forced-TCP peer in the run:
 
 ```sh
 BABBLER_TUN_MTU=16384 BABBLER_ROUTER_TRANSPORT=tcp RUST_LOG=info sudo -E nix run .#babblerd --impure
 RUST_LOG=info sudo -E nix run .#babblerd --impure -- --force-tcp --tun-mtu 32768
 ```
 
-UDP mode still defaults to `1452`, derived from a `1500` byte physical MTU
-minus outer IPv6 and UDP headers.
+TCP mode uses `256 KiB` TCP read buffers and `256 KiB` opportunistic write batch
+targets. This keeps a max-size framed packet out of the two-read path and lets
+busy TUN drains group several max-size frames into one TCP write. UDP mode still
+defaults to `1452`, derived from a `1500` byte physical MTU minus outer IPv6 and
+UDP headers.
 
 If broad interface discovery causes unrelated links to interfere with a
 specific debug run, `BABBLER_INTERFACE_ALLOWLIST` is still available as a

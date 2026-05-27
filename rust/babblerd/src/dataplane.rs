@@ -58,8 +58,8 @@ const UDP_SOCKET_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 const TUN_DRAIN_BUDGET: usize = 64;
 const UDP_DRAIN_BUDGET: usize = 64;
 const MAX_GRO_SEGMENTS: usize = 64;
-const TCP_READ_BUFFER_BYTES: usize = 64 * 1024;
-const TCP_BATCH_TARGET_BYTES: usize = 64 * 1024;
+const TCP_READ_BUFFER_BYTES: usize = 256 * 1024;
+const TCP_BATCH_TARGET_BYTES: usize = 256 * 1024;
 const TCP_PENDING_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const TCP_ACCEPT_DRAIN_BUDGET: usize = 64;
 const TCP_STREAM_READ_DRAIN_BUDGET: usize = 64;
@@ -259,6 +259,7 @@ struct DataplaneCounters {
     tcp_tx_batches: u64,
     tcp_written_frames: u64,
     tcp_tx_bytes: u64,
+    tcp_rx_batches: u64,
     tcp_rx_frames: u64,
     tcp_rx_bytes: u64,
     tcp_partial_writes: u64,
@@ -340,6 +341,7 @@ impl DataplaneCounters {
                 .tcp_written_frames
                 .saturating_sub(previous.tcp_written_frames),
             tcp_tx_bytes: self.tcp_tx_bytes.saturating_sub(previous.tcp_tx_bytes),
+            tcp_rx_batches: self.tcp_rx_batches.saturating_sub(previous.tcp_rx_batches),
             tcp_rx_frames: self.tcp_rx_frames.saturating_sub(previous.tcp_rx_frames),
             tcp_rx_bytes: self.tcp_rx_bytes.saturating_sub(previous.tcp_rx_bytes),
             tcp_partial_writes: self
@@ -379,6 +381,7 @@ impl DataplaneCounters {
             || self.tcp_queued_packets != 0
             || self.tcp_tx_batches != 0
             || self.tcp_written_frames != 0
+            || self.tcp_rx_batches != 0
             || self.tcp_rx_frames != 0
             || self.tcp_blocked_writes != 0
             || self.tcp_queue_drops != 0
@@ -1397,6 +1400,7 @@ impl DataplaneWorker {
                     }
                 }
             };
+            self.counters.tcp_rx_batches += 1;
 
             let mut decoder = {
                 let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
@@ -1970,6 +1974,7 @@ impl DataplaneWorker {
             tcp_tx_batches_delta = delta.tcp_tx_batches,
             tcp_written_frames_delta = delta.tcp_written_frames,
             tcp_tx_bytes_delta = delta.tcp_tx_bytes,
+            tcp_rx_batches_delta = delta.tcp_rx_batches,
             tcp_rx_frames_delta = delta.tcp_rx_frames,
             tcp_rx_bytes_delta = delta.tcp_rx_bytes,
             tcp_partial_writes_delta = delta.tcp_partial_writes,
@@ -1988,6 +1993,7 @@ impl DataplaneWorker {
             tcp_rejected_peers_total = self.counters.tcp_rejected_peers,
             tcp_queued_packets_total = self.counters.tcp_queued_packets,
             tcp_written_frames_total = self.counters.tcp_written_frames,
+            tcp_rx_batches_total = self.counters.tcp_rx_batches,
             tcp_rx_frames_total = self.counters.tcp_rx_frames,
             tcp_queue_drops_total = self.counters.tcp_queue_drops,
             tcp_frame_errors_total = self.counters.tcp_frame_errors,
@@ -2204,6 +2210,7 @@ fn admitted_tcp_peer_slot_by_local_addr(
         (fib.interface_link_locals
             .get(socket.ifname.as_ref())
             .is_some_and(|addr| *addr == local_addr)
+            && fib.admitted_interfaces.contains(socket.ifname.as_ref())
             && fib.admitted_neighbours.iter().any(|neighbour| {
                 neighbour.ifname.as_ref() == socket.ifname.as_ref()
                     && neighbour.link_local == peer_addr
@@ -2874,6 +2881,21 @@ mod tests {
                 )),
                 Some(scoped_local),
                 Some(7),
+            ),
+            None
+        );
+
+        let fib_without_en3_admitted = FibSnapshot {
+            admitted_interfaces: ["en2".into()].into_iter().collect(),
+            ..fib.clone()
+        };
+        assert_eq!(
+            admitted_tcp_peer_slot_for_accepted_addrs(
+                &sockets,
+                &fib_without_en3_admitted,
+                SocketAddr::V6(SocketAddrV6::new(en3_peer, 5201, 0, 0)),
+                Some(unscoped_local),
+                None,
             ),
             None
         );

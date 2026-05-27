@@ -57,11 +57,16 @@ What is implemented:
   neighbour on the accepted scope/interface.
 - TCP mode is intended as an experimental Mac Thunderbolt fast path to reduce
   one-syscall-per-packet overhead. It is not the default mesh transport.
-- TCP mode uses a jumbo `9000` byte TUN MTU by default to reduce userspace TUN
-  packet rate. Override with `--tun-mtu <mtu>` or `BABBLER_TUN_MTU=<mtu>` when
-  sweeping Mac `utun` limits. All forced-TCP peers in a test mesh must use the
-  same TUN MTU; a receiver rejects TCP frames larger than its local MTU. UDP
-  mode keeps the old `1452` byte default.
+- TCP mode uses a jumbo `65535` byte TUN MTU by default to reduce userspace TUN
+  packet rate on the Mac Thunderbolt fast path. Override with `--tun-mtu <mtu>`
+  or `BABBLER_TUN_MTU=<mtu>` when sweeping Mac `utun` limits. All forced-TCP
+  peers in a test mesh must use the same TUN MTU; a receiver rejects TCP frames
+  larger than its local MTU. UDP mode keeps the old `1452` byte default.
+- TCP mode uses `256 KiB` TCP read buffers and `256 KiB` opportunistic write
+  batch targets. This avoids splitting max-size framed packets across multiple
+  TCP read calls and lets several max-size inner packets share one TCP write
+  when the TUN queue is busy. Partial batches still flush at drain/poll
+  boundaries.
 
 What is not implemented:
 
@@ -431,8 +436,8 @@ Key facts:
   all admitted interfaces; per-peer outbound streams remain interface-scoped.
   Accepted TCP streams are rejected unless the peer is link-local and matches a
   live Babel neighbour on the accepted scope/interface.
-- Forced TCP defaults the TUN MTU to `9000`. Use `--tun-mtu <mtu>` or
-  `BABBLER_TUN_MTU=<mtu>` to test `16384`, `32768`, or larger values. Keep the
+- Forced TCP defaults the TUN MTU to `65535`. Use `--tun-mtu <mtu>` or
+  `BABBLER_TUN_MTU=<mtu>` to test smaller values such as `16384` or `32768`. Keep the
   value identical on every forced-TCP peer in a run.
 - The current `iperf3` source is the fork at
   `/home/royalguard/Desktop/exo-all/networking-related/iperf3`.

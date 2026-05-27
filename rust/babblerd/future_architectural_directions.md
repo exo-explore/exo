@@ -272,8 +272,8 @@ For `11 Gbit/s`:
 
 - `1452` byte packets, the UDP default TUN MTU: about `947 kpps`, or
   `1.06 us/packet`.
-- `9000` byte packets, the forced-TCP default TUN MTU: about `153 kpps`, or
-  `6.55 us/packet`.
+- `65535` byte packets, the forced-TCP default TUN MTU: about `21.0 kpps`, or
+  `47.7 us/packet`.
 - `1500` byte packets: about `917 kpps`, or `1.09 us/packet`.
 - `1200` byte packets: about `1.15 Mpps`, or `873 ns/packet`.
 - `9000` byte jumbo packets: about `153 kpps`, or `6.55 us/packet`.
@@ -357,15 +357,23 @@ points at these near-term bottlenecks:
   `SYN_RCVD`; outbound streams are still scoped to the Babel-selected
   interface. Inbound streams are accepted only from link-local peers that match
   a live Babel neighbour on the accepted interface/scope.
-- TCP mode now defaults the TUN MTU to `9000` to cut packet rate through
-  macOS `utun`; `BABBLER_TUN_MTU=<mtu>` or `--tun-mtu <mtu>` can be used for
-  jumbo sweeps. All forced-TCP peers in one test mesh must use the same value,
-  because receivers reject TCP frames larger than their local TUN MTU. UDP mode
-  still defaults to the physical-MTU-derived `1452`.
+- TCP mode now defaults the TUN MTU to `65535` to cut packet rate through
+  macOS `utun` on the Thunderbolt fast path; `BABBLER_TUN_MTU=<mtu>` or
+  `--tun-mtu <mtu>` can be used for smaller/larger sweeps. All forced-TCP peers
+  in one test mesh must use the same value, because receivers reject TCP frames
+  larger than their local TUN MTU. UDP mode still defaults to the
+  physical-MTU-derived `1452`.
+- TCP mode uses `256 KiB` TCP read buffers and `256 KiB` opportunistic write
+  batch targets. A max-size `65535` byte inner packet plus its TCP frame header
+  is larger than `64 KiB`, so the old `64 KiB` read buffer forced at least two
+  TCP reads per full-size frame. The larger write target also lets a busy TUN
+  drain group several max-size frames into one TCP write without waiting for a
+  full batch.
 - TCP mode changes overload behavior. Instead of UDP drops on send backpressure,
   it can accumulate bounded per-stream pending bytes and then drop once that
   bound is reached. Its counters must be watched separately:
   `tcp_tx_batches`, `tcp_queued_packets`, `tcp_written_frames`,
+  `tcp_rx_batches`,
   `tcp_rx_frames`, `tcp_blocked_writes`, `tcp_queue_drops`,
   `tcp_frame_errors`, and `tcp_stream_errors`.
 
@@ -413,7 +421,7 @@ The current tree now hardcodes:
 - physical link MTU assumption: `1500`
 - outer overhead assumption: `40 bytes IPv6 + 8 bytes UDP`
 - UDP TUN MTU default: `1452`
-- forced-TCP TUN MTU default: `9000`, with `BABBLER_TUN_MTU`/`--tun-mtu`
+- forced-TCP TUN MTU default: `65535`, with `BABBLER_TUN_MTU`/`--tun-mtu`
   override
 
 That is acceptable for bring-up, but it is still only a temporary model.
