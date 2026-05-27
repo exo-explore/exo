@@ -6,7 +6,7 @@ This is the current handoff for a new session picking up `babblerd` work.
 
 - Repo: `/home/royalguard/Desktop/exo-all/networking-related/exo-babbler`
 - Branch: `babbler`
-- Current HEAD when this handoff was refreshed: `0b7a3ad3` (`receiver side batching (different socket type)`)
+- Current handoff tracks the forced-TCP tuning work on branch `babbler`.
 - Recent relevant commits:
   - `0b7a3ad3` wires dataplane UDP receive/send through `iroh-quinn-udp`
     while keeping `mio` readiness; receive-side batching is in, true transmit
@@ -63,10 +63,14 @@ What is implemented:
   peers in a test mesh must use the same TUN MTU; a receiver rejects TCP frames
   larger than its local MTU. UDP mode keeps the old `1452` byte default.
 - TCP mode uses `256 KiB` TCP read buffers and `256 KiB` opportunistic write
-  batch targets. This avoids splitting max-size framed packets across multiple
-  TCP read calls and lets several max-size inner packets share one TCP write
-  when the TUN queue is busy. Partial batches still flush at drain/poll
-  boundaries.
+  batch targets by default. Override the write target with
+  `BABBLER_TCP_BATCH_TARGET_BYTES=<bytes>` when sweeping `512 KiB`, `1 MiB`, or
+  `2 MiB` batches. Partial batches still flush at drain/poll boundaries.
+- TCP socket send/receive buffers default to `4 MiB`; override with
+  `BABBLER_TCP_SOCKET_BUFFER_BYTES=<bytes>` for matrix runs such as `8 MiB`,
+  `16 MiB`, or `32 MiB`.
+- TCP receive now reads directly into the frame decoder buffer, and stream
+  readiness is reregistered only on `READABLE` / `READABLE|WRITABLE` changes.
 
 What is not implemented:
 
@@ -269,8 +273,9 @@ Fast-path traits:
   direct socket slots, so packets no longer clone `FibEntry` or do an ifname
   lookup to find the output socket
 - dataplane counters are logged periodically when active: TUN RX/TX, UDP RX/TX,
-  TUN-to-UDP, forwarded, local-delivered, no-route, invalid, hop-limit, and
-  UDP/TUN `WouldBlock` drops
+  TUN-to-UDP, forwarded, local-delivered, no-route, invalid, hop-limit,
+  UDP/TUN `WouldBlock` drops, TCP batch/write/read counters, TCP reregisters,
+  and TUN packet-size buckets
 
 ## What Works
 
@@ -439,6 +444,9 @@ Key facts:
 - Forced TCP defaults the TUN MTU to `65535`. Use `--tun-mtu <mtu>` or
   `BABBLER_TUN_MTU=<mtu>` to test smaller values such as `16384` or `32768`. Keep the
   value identical on every forced-TCP peer in a run.
+- Tune forced-TCP write batching and TCP socket buffers with:
+  - `BABBLER_TCP_BATCH_TARGET_BYTES=<bytes>`; default `262144`
+  - `BABBLER_TCP_SOCKET_BUFFER_BYTES=<bytes>`; default `4194304`
 - The current `iperf3` source is the fork at
   `/home/royalguard/Desktop/exo-all/networking-related/iperf3`.
   Commit `962e05b` adds `%scopeID` rendering for link-local IPv6 output.
@@ -516,9 +524,10 @@ Capture each run with:
 3. CPU usage on sender, transit node, and receiver
 4. route/FIB snapshots before and after the run
 5. whether bidirectional `ping6` still works after the run
-6. for TCP mode, `tcp_tx_batches`, `tcp_queued_packets`,
-   `tcp_written_frames`, `tcp_rx_frames`, `tcp_rejected_peers`,
-   `tcp_queue_drops`, `tcp_frame_errors`, and `tcp_stream_errors` deltas
+6. for TCP mode, `tcp_tx_batches`, `tcp_tx_bytes`, `tcp_queued_packets`,
+   `tcp_written_frames`, `tcp_rx_batches`, `tcp_rx_bytes`, `tcp_rx_frames`,
+   `tcp_reregisters`, `tcp_rejected_peers`, `tcp_queue_drops`,
+   `tcp_frame_errors`, `tcp_stream_errors`, and TUN packet-size bucket deltas
 
 Goal:
 

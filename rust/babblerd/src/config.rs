@@ -21,6 +21,8 @@ pub const NODE_ID_FILE_ENV: &str = "BABBLER_NODE_ID_FILE";
 pub const ROUTER_UDP_PORT_ENV: &str = "BABBLER_ROUTER_UDP_PORT";
 pub const ROUTER_TRANSPORT_ENV: &str = "BABBLER_ROUTER_TRANSPORT";
 pub const TUN_MTU_ENV: &str = "BABBLER_TUN_MTU";
+pub const TCP_BATCH_TARGET_BYTES_ENV: &str = "BABBLER_TCP_BATCH_TARGET_BYTES";
+pub const TCP_SOCKET_BUFFER_BYTES_ENV: &str = "BABBLER_TCP_SOCKET_BUFFER_BYTES";
 pub const INTERFACE_ALLOWLIST_ENV: &str = "BABBLER_INTERFACE_ALLOWLIST";
 
 pub const DEFAULT_PUBLIC_SOCKET_PATH: &str = {
@@ -57,6 +59,10 @@ pub const TCP_TUN_MTU: u16 = u16::MAX;
 pub const MIN_TUN_MTU: u16 = 1280;
 pub const MAX_TUN_MTU: u16 = u16::MAX;
 pub const TUN_MTU: u16 = UDP_TUN_MTU;
+pub const DEFAULT_TCP_BATCH_TARGET_BYTES: usize = 256 * 1024;
+pub const TCP_PENDING_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+pub const DEFAULT_TCP_SOCKET_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_TCP_SOCKET_BUFFER_BYTES: usize = 512 * 1024 * 1024;
 
 pub const EXO_ULA_PREFIX: Ipv6Net = Ipv6Net::new_assert(
     // TODO: break out into "fd" for ULA
@@ -105,6 +111,8 @@ pub struct Config {
     pub router_udp_port: u16,
     pub router_transport: TransportMode,
     pub tun_mtu: u16,
+    pub tcp_batch_target_bytes: usize,
+    pub tcp_socket_buffer_bytes: usize,
     pub exo_ula_prefix: Ipv6Net,
 }
 
@@ -142,6 +150,16 @@ impl Config {
                 .map_err(|e| eyre!("invalid {TUN_MTU_ENV} value {raw:?}: {e}"))?,
             Err(_) => default_tun_mtu(router_transport),
         };
+        let tcp_batch_target_bytes = match env::var(TCP_BATCH_TARGET_BYTES_ENV) {
+            Ok(raw) => parse_tcp_batch_target_bytes(&raw)
+                .map_err(|e| eyre!("invalid {TCP_BATCH_TARGET_BYTES_ENV} value {raw:?}: {e}"))?,
+            Err(_) => DEFAULT_TCP_BATCH_TARGET_BYTES,
+        };
+        let tcp_socket_buffer_bytes = match env::var(TCP_SOCKET_BUFFER_BYTES_ENV) {
+            Ok(raw) => parse_tcp_socket_buffer_bytes(&raw)
+                .map_err(|e| eyre!("invalid {TCP_SOCKET_BUFFER_BYTES_ENV} value {raw:?}: {e}"))?,
+            Err(_) => DEFAULT_TCP_SOCKET_BUFFER_BYTES,
+        };
 
         Ok(Self {
             public_socket_path,
@@ -150,6 +168,8 @@ impl Config {
             router_udp_port,
             router_transport,
             tun_mtu,
+            tcp_batch_target_bytes,
+            tcp_socket_buffer_bytes,
             exo_ula_prefix: EXO_ULA_PREFIX,
         })
     }
@@ -173,6 +193,30 @@ pub fn parse_tun_mtu(raw: &str) -> Result<u16, String> {
         ));
     }
     Ok(mtu)
+}
+
+pub fn parse_tcp_batch_target_bytes(raw: &str) -> Result<usize, String> {
+    parse_usize_in_range(raw, 1024, TCP_PENDING_LIMIT_BYTES, "TCP batch target bytes")
+}
+
+pub fn parse_tcp_socket_buffer_bytes(raw: &str) -> Result<usize, String> {
+    parse_usize_in_range(
+        raw,
+        1024,
+        MAX_TCP_SOCKET_BUFFER_BYTES,
+        "TCP socket buffer bytes",
+    )
+}
+
+fn parse_usize_in_range(raw: &str, min: usize, max: usize, name: &str) -> Result<usize, String> {
+    let value = raw
+        .trim()
+        .parse::<usize>()
+        .map_err(|err| format!("expected integer {name}: {err}"))?;
+    if !(min..=max).contains(&value) {
+        return Err(format!("expected {name} in {min}..={max}, got {value}"));
+    }
+    Ok(value)
 }
 
 pub fn interface_allowlist_from_env() -> eyre::Result<Option<HashSet<Box<str>>>> {
@@ -199,7 +243,9 @@ pub fn interface_allowlist_from_env() -> eyre::Result<Option<HashSet<Box<str>>>>
 #[cfg(test)]
 mod tests {
     use super::{
-        EXO_ULA_PREFIX, TCP_TUN_MTU, TransportMode, UDP_TUN_MTU, default_tun_mtu, parse_tun_mtu,
+        DEFAULT_TCP_BATCH_TARGET_BYTES, DEFAULT_TCP_SOCKET_BUFFER_BYTES, EXO_ULA_PREFIX,
+        TCP_TUN_MTU, TransportMode, UDP_TUN_MTU, default_tun_mtu, parse_tcp_batch_target_bytes,
+        parse_tcp_socket_buffer_bytes, parse_tun_mtu,
     };
     use std::net::Ipv6Addr;
 
@@ -228,5 +274,28 @@ mod tests {
         assert_eq!(parse_tun_mtu("65535").unwrap(), 65535);
         assert!(parse_tun_mtu("1279").is_err());
         assert!(parse_tun_mtu("65536").is_err());
+    }
+
+    #[test]
+    fn tcp_tuning_knobs_validate_bounds() {
+        assert_eq!(
+            parse_tcp_batch_target_bytes(&DEFAULT_TCP_BATCH_TARGET_BYTES.to_string()).unwrap(),
+            DEFAULT_TCP_BATCH_TARGET_BYTES
+        );
+        assert_eq!(
+            parse_tcp_batch_target_bytes("2097152").unwrap(),
+            2 * 1024 * 1024
+        );
+        assert!(parse_tcp_batch_target_bytes("512").is_err());
+        assert!(parse_tcp_batch_target_bytes("4194305").is_err());
+        assert_eq!(
+            parse_tcp_socket_buffer_bytes(&DEFAULT_TCP_SOCKET_BUFFER_BYTES.to_string()).unwrap(),
+            DEFAULT_TCP_SOCKET_BUFFER_BYTES
+        );
+        assert_eq!(
+            parse_tcp_socket_buffer_bytes("33554432").unwrap(),
+            32 * 1024 * 1024
+        );
+        assert!(parse_tcp_socket_buffer_bytes("512").is_err());
     }
 }

@@ -18,7 +18,7 @@
 
 use std::collections::VecDeque;
 use std::hash::BuildHasher;
-use std::io::{self, ErrorKind, IoSliceMut, Read, Write};
+use std::io::{self, ErrorKind, IoSliceMut, Write};
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, TcpStream, UdpSocket};
 use std::num::NonZeroU32;
 use std::ops::Range;
@@ -44,7 +44,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::oneshot;
 use tun_rs::SyncDevice;
 
-use crate::config::{TransportMode, UDP_TUN_MTU};
+use crate::config::{TCP_PENDING_LIMIT_BYTES, TransportMode, UDP_TUN_MTU};
 use crate::fib::{FibSnapshot, HostKey, host_key};
 
 const TOKEN_TUN: Token = Token(0);
@@ -59,8 +59,6 @@ const TUN_DRAIN_BUDGET: usize = 64;
 const UDP_DRAIN_BUDGET: usize = 64;
 const MAX_GRO_SEGMENTS: usize = 64;
 const TCP_READ_BUFFER_BYTES: usize = 256 * 1024;
-const TCP_BATCH_TARGET_BYTES: usize = 256 * 1024;
-const TCP_PENDING_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const TCP_ACCEPT_DRAIN_BUDGET: usize = 64;
 const TCP_STREAM_READ_DRAIN_BUDGET: usize = 64;
 
@@ -69,6 +67,8 @@ pub struct DataplaneConfig {
     pub udp_port: u16,
     pub transport_mode: TransportMode,
     pub tun_mtu: u16,
+    pub tcp_batch_target_bytes: usize,
+    pub tcp_socket_buffer_bytes: usize,
     pub initial_fib: Arc<FibSnapshot>,
 }
 
@@ -100,6 +100,8 @@ struct DataplaneWorker {
     poll: Poll,
     events: Events,
     tun_mtu: usize,
+    tcp_batch_target_bytes: usize,
+    tcp_socket_buffer_bytes: usize,
     sockets: Slab<InterfaceSocket>,
     ifname_to_slab: HashMap<Box<str>, usize>,
     tcp_streams: Slab<TcpPeerStream>,
@@ -111,7 +113,6 @@ struct DataplaneWorker {
     last_logged_counters: DataplaneCounters,
     tun_buf: Vec<u8>,
     udp_batch: UdpRecvBatch,
-    tcp_read_buf: Box<[u8; TCP_READ_BUFFER_BYTES]>,
 }
 
 struct InterfaceSocket {
@@ -138,6 +139,7 @@ struct TcpPeerStream {
     peer: SocketAddr,
     stream: MioTcpStream,
     connected: bool,
+    write_interest: bool,
     read_buf: TcpFrameDecoder,
     write_buf: TcpWriteBuffer,
 }
@@ -159,6 +161,16 @@ struct TcpWriteBuffer {
     bytes: Vec<u8>,
     offset: usize,
     frame_ends: VecDeque<TcpQueuedFrame>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct PacketSizeHistogram {
+    le_16k: u64,
+    le_32k: u64,
+    le_48k: u64,
+    le_60k: u64,
+    le_65k: u64,
+    gt_65k: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,12 +247,14 @@ enum UdpRecvOutcome {
 struct DataplaneCounters {
     tun_rx_packets: u64,
     tun_rx_bytes: u64,
+    tun_rx_sizes: PacketSizeHistogram,
     udp_rx_packets: u64,
     udp_rx_bytes: u64,
     udp_tx_packets: u64,
     udp_tx_bytes: u64,
     tun_tx_packets: u64,
     tun_tx_bytes: u64,
+    tun_tx_sizes: PacketSizeHistogram,
     tun_to_udp_packets: u64,
     udp_forwarded_packets: u64,
     local_delivered_packets: u64,
@@ -259,6 +273,7 @@ struct DataplaneCounters {
     tcp_tx_batches: u64,
     tcp_written_frames: u64,
     tcp_tx_bytes: u64,
+    tcp_reregisters: u64,
     tcp_rx_batches: u64,
     tcp_rx_frames: u64,
     tcp_rx_bytes: u64,
@@ -288,17 +303,43 @@ struct SocketPlan {
     skipped: Vec<SkippedInterface>,
 }
 
+impl PacketSizeHistogram {
+    fn observe(&mut self, len: usize) {
+        match len {
+            0..=16_384 => self.le_16k += 1,
+            16_385..=32_768 => self.le_32k += 1,
+            32_769..=49_152 => self.le_48k += 1,
+            49_153..=61_440 => self.le_60k += 1,
+            61_441..=65_535 => self.le_65k += 1,
+            _ => self.gt_65k += 1,
+        }
+    }
+
+    fn saturating_delta(self, previous: Self) -> Self {
+        Self {
+            le_16k: self.le_16k.saturating_sub(previous.le_16k),
+            le_32k: self.le_32k.saturating_sub(previous.le_32k),
+            le_48k: self.le_48k.saturating_sub(previous.le_48k),
+            le_60k: self.le_60k.saturating_sub(previous.le_60k),
+            le_65k: self.le_65k.saturating_sub(previous.le_65k),
+            gt_65k: self.gt_65k.saturating_sub(previous.gt_65k),
+        }
+    }
+}
+
 impl DataplaneCounters {
     fn saturating_delta(self, previous: Self) -> Self {
         Self {
             tun_rx_packets: self.tun_rx_packets.saturating_sub(previous.tun_rx_packets),
             tun_rx_bytes: self.tun_rx_bytes.saturating_sub(previous.tun_rx_bytes),
+            tun_rx_sizes: self.tun_rx_sizes.saturating_delta(previous.tun_rx_sizes),
             udp_rx_packets: self.udp_rx_packets.saturating_sub(previous.udp_rx_packets),
             udp_rx_bytes: self.udp_rx_bytes.saturating_sub(previous.udp_rx_bytes),
             udp_tx_packets: self.udp_tx_packets.saturating_sub(previous.udp_tx_packets),
             udp_tx_bytes: self.udp_tx_bytes.saturating_sub(previous.udp_tx_bytes),
             tun_tx_packets: self.tun_tx_packets.saturating_sub(previous.tun_tx_packets),
             tun_tx_bytes: self.tun_tx_bytes.saturating_sub(previous.tun_tx_bytes),
+            tun_tx_sizes: self.tun_tx_sizes.saturating_delta(previous.tun_tx_sizes),
             tun_to_udp_packets: self
                 .tun_to_udp_packets
                 .saturating_sub(previous.tun_to_udp_packets),
@@ -341,6 +382,9 @@ impl DataplaneCounters {
                 .tcp_written_frames
                 .saturating_sub(previous.tcp_written_frames),
             tcp_tx_bytes: self.tcp_tx_bytes.saturating_sub(previous.tcp_tx_bytes),
+            tcp_reregisters: self
+                .tcp_reregisters
+                .saturating_sub(previous.tcp_reregisters),
             tcp_rx_batches: self.tcp_rx_batches.saturating_sub(previous.tcp_rx_batches),
             tcp_rx_frames: self.tcp_rx_frames.saturating_sub(previous.tcp_rx_frames),
             tcp_rx_bytes: self.tcp_rx_bytes.saturating_sub(previous.tcp_rx_bytes),
@@ -381,6 +425,7 @@ impl DataplaneCounters {
             || self.tcp_queued_packets != 0
             || self.tcp_tx_batches != 0
             || self.tcp_written_frames != 0
+            || self.tcp_reregisters != 0
             || self.tcp_rx_batches != 0
             || self.tcp_rx_frames != 0
             || self.tcp_blocked_writes != 0
@@ -429,13 +474,52 @@ impl UdpRecvBatch {
 }
 
 impl TcpFrameDecoder {
-    fn new() -> Self {
+    fn new(read_buffer_bytes: usize) -> Self {
         Self {
-            bytes: Vec::with_capacity(TCP_READ_BUFFER_BYTES),
+            bytes: Vec::with_capacity(read_buffer_bytes),
             offset: 0,
         }
     }
 
+    fn read_from(&mut self, stream: &MioTcpStream, read_buffer_bytes: usize) -> io::Result<usize> {
+        self.compact_if_needed(read_buffer_bytes);
+        self.bytes.reserve(read_buffer_bytes);
+        let start = self.bytes.len();
+        let spare = self.bytes.spare_capacity_mut();
+        let read_len = spare.len().min(read_buffer_bytes);
+        if read_len == 0 {
+            return Ok(0);
+        }
+
+        loop {
+            // SAFETY: `ptr` points at spare Vec capacity. `read(2)` writes at
+            // most `read_len` bytes, and the Vec length is extended only by the
+            // number of bytes the kernel reports as initialized.
+            let ret = unsafe {
+                libc::read(
+                    stream.as_raw_fd(),
+                    spare.as_ptr().cast::<libc::c_void>().cast_mut(),
+                    read_len,
+                )
+            };
+            if ret >= 0 {
+                let read_len = ret as usize;
+                // SAFETY: the kernel initialized exactly `read_len` bytes in
+                // the spare capacity on success.
+                unsafe {
+                    self.bytes.set_len(start + read_len);
+                }
+                return Ok(read_len);
+            }
+
+            let err = io::Error::last_os_error();
+            if err.kind() != ErrorKind::Interrupted {
+                return Err(err);
+            }
+        }
+    }
+
+    #[cfg(test)]
     fn push(&mut self, bytes: &[u8]) {
         self.bytes.extend_from_slice(bytes);
     }
@@ -468,8 +552,8 @@ impl TcpFrameDecoder {
         Ok(Some(frame_start..frame_end))
     }
 
-    fn finish_frame(&mut self) {
-        self.compact_if_needed();
+    fn finish_frame(&mut self, compact_threshold: usize) {
+        self.compact_if_needed(compact_threshold);
     }
 
     fn compact_if_empty(&mut self) {
@@ -479,11 +563,11 @@ impl TcpFrameDecoder {
         }
     }
 
-    fn compact_if_needed(&mut self) {
+    fn compact_if_needed(&mut self, compact_threshold: usize) {
         if self.offset == self.bytes.len() {
             self.bytes.clear();
             self.offset = 0;
-        } else if self.offset >= TCP_READ_BUFFER_BYTES {
+        } else if self.offset >= compact_threshold {
             self.bytes.drain(..self.offset);
             self.offset = 0;
         }
@@ -492,24 +576,29 @@ impl TcpFrameDecoder {
 
 impl Default for TcpFrameDecoder {
     fn default() -> Self {
-        Self::new()
+        Self::new(TCP_READ_BUFFER_BYTES)
     }
 }
 
 impl TcpWriteBuffer {
-    fn new() -> Self {
+    fn new(batch_target_bytes: usize) -> Self {
         Self {
-            bytes: Vec::with_capacity(TCP_BATCH_TARGET_BYTES),
+            bytes: Vec::with_capacity(batch_target_bytes),
             offset: 0,
             frame_ends: VecDeque::new(),
         }
     }
 
-    fn queue_frame(&mut self, packet: &[u8], origin: TcpFrameOrigin) -> TcpQueueOutcome {
+    fn queue_frame(
+        &mut self,
+        packet: &[u8],
+        origin: TcpFrameOrigin,
+        pending_limit_bytes: usize,
+    ) -> TcpQueueOutcome {
         let Ok(packet_len) = u16::try_from(packet.len()) else {
             return TcpQueueOutcome::Oversized;
         };
-        if self.pending_len() + 2 + packet.len() > TCP_PENDING_LIMIT_BYTES {
+        if self.pending_len() + 2 + packet.len() > pending_limit_bytes {
             return TcpQueueOutcome::Full;
         }
         self.bytes.extend_from_slice(&packet_len.to_be_bytes());
@@ -533,7 +622,7 @@ impl TcpWriteBuffer {
         self.pending_len() != 0
     }
 
-    fn consume(&mut self, bytes: usize) -> TcpCompletedFrames {
+    fn consume(&mut self, bytes: usize, compact_threshold: usize) -> TcpCompletedFrames {
         self.offset = self.offset.saturating_add(bytes).min(self.bytes.len());
         let mut completed = TcpCompletedFrames::default();
         while self
@@ -550,7 +639,7 @@ impl TcpWriteBuffer {
         }
         if self.offset == self.bytes.len() {
             self.clear();
-        } else if self.offset >= TCP_BATCH_TARGET_BYTES {
+        } else if self.offset >= compact_threshold {
             let drained = self.offset;
             self.bytes.drain(..self.offset);
             for frame in &mut self.frame_ends {
@@ -702,6 +791,8 @@ impl DataplaneWorker {
             poll,
             events,
             tun_mtu: usize::from(config.tun_mtu),
+            tcp_batch_target_bytes: config.tcp_batch_target_bytes,
+            tcp_socket_buffer_bytes: config.tcp_socket_buffer_bytes,
             sockets: Slab::new(),
             ifname_to_slab: HashMap::new(),
             tcp_streams: Slab::new(),
@@ -716,7 +807,6 @@ impl DataplaneWorker {
                 config.transport_mode,
                 config.tun_mtu,
             )),
-            tcp_read_buf: Box::new([0u8; TCP_READ_BUFFER_BYTES]),
         };
         worker.reconcile_sockets()?;
         Ok(worker)
@@ -834,6 +924,7 @@ impl DataplaneWorker {
         }
         self.counters.tun_rx_packets += 1;
         self.counters.tun_rx_bytes += packet_len as u64;
+        self.counters.tun_rx_sizes.observe(packet_len);
 
         tracing::debug!(bytes = packet_len, "dataplane read inner packet from TUN");
 
@@ -1056,6 +1147,7 @@ impl DataplaneWorker {
             Ok(PacketWriteOutcome::Sent(sent)) => {
                 self.counters.tun_tx_packets += 1;
                 self.counters.tun_tx_bytes += sent as u64;
+                self.counters.tun_tx_sizes.observe(sent);
                 Ok(true)
             }
             Ok(PacketWriteOutcome::WouldBlock) => {
@@ -1110,7 +1202,9 @@ impl DataplaneWorker {
             let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
                 return Ok(false);
             };
-            stream.write_buf.queue_frame(packet, origin)
+            stream
+                .write_buf
+                .queue_frame(packet, origin, TCP_PENDING_LIMIT_BYTES)
         };
         self.finish_tcp_queue_outcome(stream_key, outcome, route, packet.len())
     }
@@ -1142,9 +1236,11 @@ impl DataplaneWorker {
             let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
                 return Ok(false);
             };
-            stream
-                .write_buf
-                .queue_frame(packet, TcpFrameOrigin::TunIngress)
+            stream.write_buf.queue_frame(
+                packet,
+                TcpFrameOrigin::TunIngress,
+                TCP_PENDING_LIMIT_BYTES,
+            )
         };
         self.finish_tcp_queue_outcome(stream_key, outcome, route, packet_len)
     }
@@ -1164,7 +1260,7 @@ impl DataplaneWorker {
                     .get(stream_key)
                     .map(|stream| stream.write_buf.pending_len())
                     .unwrap_or_default();
-                if pending_len >= TCP_BATCH_TARGET_BYTES {
+                if pending_len >= self.tcp_batch_target_bytes {
                     self.flush_tcp_stream(stream_key, "TCP batch reached target size")?;
                 } else {
                     self.reregister_tcp_stream_interest(stream_key)?;
@@ -1218,8 +1314,9 @@ impl DataplaneWorker {
         let ifname = interface.ifname.clone();
         let ifindex = interface.ifindex;
 
-        let (stream, connect_outcome) = open_tcp_stream(peer, ifname.as_ref(), ifindex)
-            .wrap_err_with(|| format!("opening TCP stream via {ifname}"))?;
+        let (stream, connect_outcome) =
+            open_tcp_stream(peer, ifname.as_ref(), ifindex, self.tcp_socket_buffer_bytes)
+                .wrap_err_with(|| format!("opening TCP stream via {ifname}"))?;
         let connected = connect_outcome == TcpConnectOutcome::Connected;
         let stream_key = self.insert_registered_tcp_stream(
             route.socket_slot,
@@ -1257,6 +1354,7 @@ impl DataplaneWorker {
         } else {
             Interest::READABLE | Interest::WRITABLE
         };
+        let write_interest = !connected;
         self.poll
             .registry()
             .register(&mut stream, tcp_stream_token(stream_key), interest)
@@ -1267,8 +1365,9 @@ impl DataplaneWorker {
             peer,
             stream,
             connected,
-            read_buf: TcpFrameDecoder::new(),
-            write_buf: TcpWriteBuffer::new(),
+            write_interest,
+            read_buf: TcpFrameDecoder::new(TCP_READ_BUFFER_BYTES),
+            write_buf: TcpWriteBuffer::new(self.tcp_batch_target_bytes),
         });
         Ok(stream_key)
     }
@@ -1381,34 +1480,39 @@ impl DataplaneWorker {
 
     fn drain_tcp_stream_read(&mut self, stream_key: usize) -> Result<()> {
         for _ in 0..TCP_STREAM_READ_DRAIN_BUDGET {
-            let read_len = {
-                let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
-                    return Ok(());
-                };
-                match stream.stream.read(self.tcp_read_buf.as_mut()) {
-                    Ok(0) => {
-                        self.close_tcp_stream(stream_key);
-                        return Ok(());
-                    }
-                    Ok(read_len) => read_len,
-                    Err(err) if err.kind() == ErrorKind::WouldBlock => break,
-                    Err(err) => {
-                        self.counters.tcp_stream_errors += 1;
-                        tracing::warn!(error = %err, "failed to read TCP dataplane stream");
-                        self.close_tcp_stream(stream_key);
-                        return Ok(());
-                    }
-                }
-            };
-            self.counters.tcp_rx_batches += 1;
-
             let mut decoder = {
                 let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
                     return Ok(());
                 };
                 std::mem::take(&mut stream.read_buf)
             };
-            decoder.push(&self.tcp_read_buf[..read_len]);
+
+            let read_result = {
+                let Some(stream) = self.tcp_streams.get(stream_key) else {
+                    return Ok(());
+                };
+                decoder.read_from(&stream.stream, TCP_READ_BUFFER_BYTES)
+            };
+            let read_len = match read_result {
+                Ok(0) => {
+                    self.close_tcp_stream(stream_key);
+                    return Ok(());
+                }
+                Ok(read_len) => read_len,
+                Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                    if let Some(stream) = self.tcp_streams.get_mut(stream_key) {
+                        stream.read_buf = decoder;
+                    }
+                    break;
+                }
+                Err(err) => {
+                    self.counters.tcp_stream_errors += 1;
+                    tracing::warn!(error = %err, "failed to read TCP dataplane stream");
+                    self.close_tcp_stream(stream_key);
+                    return Ok(());
+                }
+            };
+            self.counters.tcp_rx_batches += 1;
 
             let mut close_for_bad_frame = false;
             loop {
@@ -1418,7 +1522,7 @@ impl DataplaneWorker {
                         self.counters.tcp_rx_frames += 1;
                         self.counters.tcp_rx_bytes += frame_len as u64;
                         self.handle_tcp_frame(&mut decoder.bytes[frame_range])?;
-                        decoder.finish_frame();
+                        decoder.finish_frame(TCP_READ_BUFFER_BYTES);
                     }
                     Ok(None) => break,
                     Err(err) => {
@@ -1534,7 +1638,9 @@ impl DataplaneWorker {
                         if written < pending_len {
                             partial_writes += 1;
                         }
-                        let completed = stream.write_buf.consume(written);
+                        let completed = stream
+                            .write_buf
+                            .consume(written, self.tcp_batch_target_bytes);
                         completed_frames.total += completed.total;
                         completed_frames.tun_ingress += completed.tun_ingress;
                         completed_frames.forwarded += completed.forwarded;
@@ -1576,19 +1682,26 @@ impl DataplaneWorker {
     }
 
     fn reregister_tcp_stream_interest(&mut self, stream_key: usize) -> Result<()> {
-        let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
-            return Ok(());
-        };
-        let needs_write = !stream.connected || stream.write_buf.has_pending();
-        let interest = if needs_write {
-            Interest::READABLE | Interest::WRITABLE
-        } else {
-            Interest::READABLE
-        };
-        self.poll
-            .registry()
-            .reregister(&mut stream.stream, tcp_stream_token(stream_key), interest)
-            .wrap_err_with(|| format!("reregistering TCP stream for {}", stream.peer))?;
+        {
+            let Some(stream) = self.tcp_streams.get_mut(stream_key) else {
+                return Ok(());
+            };
+            let needs_write = !stream.connected || stream.write_buf.has_pending();
+            if stream.write_interest == needs_write {
+                return Ok(());
+            }
+            let interest = if needs_write {
+                Interest::READABLE | Interest::WRITABLE
+            } else {
+                Interest::READABLE
+            };
+            self.poll
+                .registry()
+                .reregister(&mut stream.stream, tcp_stream_token(stream_key), interest)
+                .wrap_err_with(|| format!("reregistering TCP stream for {}", stream.peer))?;
+            stream.write_interest = needs_write;
+        }
+        self.counters.tcp_reregisters += 1;
         Ok(())
     }
 
@@ -1743,8 +1856,13 @@ impl DataplaneWorker {
     fn add_tcp_socket(&mut self, ifname: Box<str>, ifindex: u32) -> Result<usize> {
         #[cfg(target_os = "linux")]
         {
-            let listener = open_tcp_listener(self.udp_port, ifname.as_ref(), ifindex)
-                .wrap_err_with(|| format!("opening TCP listener for {}", ifname))?;
+            let listener = open_tcp_listener(
+                self.udp_port,
+                ifname.as_ref(),
+                ifindex,
+                self.tcp_socket_buffer_bytes,
+            )
+            .wrap_err_with(|| format!("opening TCP listener for {}", ifname))?;
             self.insert_registered_tcp_listener(ifname, ifindex, listener)
         }
 
@@ -1753,8 +1871,13 @@ impl DataplaneWorker {
             if self.has_tcp_listener() {
                 Ok(self.insert_registered_tcp_interface(ifname, ifindex))
             } else {
-                let listener = open_tcp_listener(self.udp_port, ifname.as_ref(), ifindex)
-                    .wrap_err_with(|| format!("opening TCP listener for {}", ifname))?;
+                let listener = open_tcp_listener(
+                    self.udp_port,
+                    ifname.as_ref(),
+                    ifindex,
+                    self.tcp_socket_buffer_bytes,
+                )
+                .wrap_err_with(|| format!("opening TCP listener for {}", ifname))?;
                 self.insert_registered_tcp_listener(ifname, ifindex, listener)
             }
         }
@@ -1881,8 +2004,13 @@ impl DataplaneWorker {
             let Some(socket) = self.sockets.get_mut(slot) else {
                 return Ok(());
             };
-            let listener = open_tcp_listener(self.udp_port, ifname.as_ref(), socket.ifindex)
-                .wrap_err_with(|| format!("opening TCP listener for {}", ifname))?;
+            let listener = open_tcp_listener(
+                self.udp_port,
+                ifname.as_ref(),
+                socket.ifindex,
+                self.tcp_socket_buffer_bytes,
+            )
+            .wrap_err_with(|| format!("opening TCP listener for {}", ifname))?;
             let mut listener = listener;
             self.poll
                 .registry()
@@ -1950,12 +2078,24 @@ impl DataplaneWorker {
         tracing::info!(
             tun_rx_packets_delta = delta.tun_rx_packets,
             tun_rx_bytes_delta = delta.tun_rx_bytes,
+            tun_rx_size_le_16k_delta = delta.tun_rx_sizes.le_16k,
+            tun_rx_size_le_32k_delta = delta.tun_rx_sizes.le_32k,
+            tun_rx_size_le_48k_delta = delta.tun_rx_sizes.le_48k,
+            tun_rx_size_le_60k_delta = delta.tun_rx_sizes.le_60k,
+            tun_rx_size_le_65k_delta = delta.tun_rx_sizes.le_65k,
+            tun_rx_size_gt_65k_delta = delta.tun_rx_sizes.gt_65k,
             udp_rx_packets_delta = delta.udp_rx_packets,
             udp_rx_bytes_delta = delta.udp_rx_bytes,
             udp_tx_packets_delta = delta.udp_tx_packets,
             udp_tx_bytes_delta = delta.udp_tx_bytes,
             tun_tx_packets_delta = delta.tun_tx_packets,
             tun_tx_bytes_delta = delta.tun_tx_bytes,
+            tun_tx_size_le_16k_delta = delta.tun_tx_sizes.le_16k,
+            tun_tx_size_le_32k_delta = delta.tun_tx_sizes.le_32k,
+            tun_tx_size_le_48k_delta = delta.tun_tx_sizes.le_48k,
+            tun_tx_size_le_60k_delta = delta.tun_tx_sizes.le_60k,
+            tun_tx_size_le_65k_delta = delta.tun_tx_sizes.le_65k,
+            tun_tx_size_gt_65k_delta = delta.tun_tx_sizes.gt_65k,
             tun_to_udp_packets_delta = delta.tun_to_udp_packets,
             udp_forwarded_packets_delta = delta.udp_forwarded_packets,
             local_delivered_packets_delta = delta.local_delivered_packets,
@@ -1974,6 +2114,7 @@ impl DataplaneWorker {
             tcp_tx_batches_delta = delta.tcp_tx_batches,
             tcp_written_frames_delta = delta.tcp_written_frames,
             tcp_tx_bytes_delta = delta.tcp_tx_bytes,
+            tcp_reregisters_delta = delta.tcp_reregisters,
             tcp_rx_batches_delta = delta.tcp_rx_batches,
             tcp_rx_frames_delta = delta.tcp_rx_frames,
             tcp_rx_bytes_delta = delta.tcp_rx_bytes,
@@ -1983,9 +2124,21 @@ impl DataplaneWorker {
             tcp_frame_errors_delta = delta.tcp_frame_errors,
             tcp_stream_errors_delta = delta.tcp_stream_errors,
             tun_rx_packets_total = self.counters.tun_rx_packets,
+            tun_rx_size_le_16k_total = self.counters.tun_rx_sizes.le_16k,
+            tun_rx_size_le_32k_total = self.counters.tun_rx_sizes.le_32k,
+            tun_rx_size_le_48k_total = self.counters.tun_rx_sizes.le_48k,
+            tun_rx_size_le_60k_total = self.counters.tun_rx_sizes.le_60k,
+            tun_rx_size_le_65k_total = self.counters.tun_rx_sizes.le_65k,
+            tun_rx_size_gt_65k_total = self.counters.tun_rx_sizes.gt_65k,
             udp_rx_packets_total = self.counters.udp_rx_packets,
             udp_tx_packets_total = self.counters.udp_tx_packets,
             tun_tx_packets_total = self.counters.tun_tx_packets,
+            tun_tx_size_le_16k_total = self.counters.tun_tx_sizes.le_16k,
+            tun_tx_size_le_32k_total = self.counters.tun_tx_sizes.le_32k,
+            tun_tx_size_le_48k_total = self.counters.tun_tx_sizes.le_48k,
+            tun_tx_size_le_60k_total = self.counters.tun_tx_sizes.le_60k,
+            tun_tx_size_le_65k_total = self.counters.tun_tx_sizes.le_65k,
+            tun_tx_size_gt_65k_total = self.counters.tun_tx_sizes.gt_65k,
             no_route_drops_total = self.counters.no_route_drops,
             udp_send_would_block_drops_total = self.counters.udp_send_would_block_drops,
             tun_send_would_block_drops_total = self.counters.tun_send_would_block_drops,
@@ -1993,6 +2146,7 @@ impl DataplaneWorker {
             tcp_rejected_peers_total = self.counters.tcp_rejected_peers,
             tcp_queued_packets_total = self.counters.tcp_queued_packets,
             tcp_written_frames_total = self.counters.tcp_written_frames,
+            tcp_reregisters_total = self.counters.tcp_reregisters,
             tcp_rx_batches_total = self.counters.tcp_rx_batches,
             tcp_rx_frames_total = self.counters.tcp_rx_frames,
             tcp_queue_drops_total = self.counters.tcp_queue_drops,
@@ -2306,14 +2460,19 @@ fn open_udp_socket(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioUdpSo
     Ok(MioUdpSocket::from_std(udp))
 }
 
-fn open_tcp_listener(port: u16, ifname: &str, ifindex: u32) -> io::Result<MioTcpListener> {
+fn open_tcp_listener(
+    port: u16,
+    ifname: &str,
+    ifindex: u32,
+    socket_buffer_bytes: usize,
+) -> io::Result<MioTcpListener> {
     let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
     socket.set_reuse_address(true)?;
     socket.set_reuse_port(true)?;
     socket.set_only_v6(true)?;
     socket.set_nonblocking(true)?;
-    socket.set_recv_buffer_size(UDP_SOCKET_BUFFER_BYTES)?;
-    socket.set_send_buffer_size(UDP_SOCKET_BUFFER_BYTES)?;
+    socket.set_recv_buffer_size(socket_buffer_bytes)?;
+    socket.set_send_buffer_size(socket_buffer_bytes)?;
 
     #[cfg(not(target_os = "linux"))]
     let _ = (ifname, ifindex);
@@ -2340,13 +2499,14 @@ fn open_tcp_stream(
     peer: SocketAddr,
     ifname: &str,
     ifindex: u32,
+    socket_buffer_bytes: usize,
 ) -> io::Result<(MioTcpStream, TcpConnectOutcome)> {
     let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
     socket.set_only_v6(true)?;
     socket.set_nonblocking(true)?;
     socket.set_tcp_nodelay(true)?;
-    socket.set_recv_buffer_size(UDP_SOCKET_BUFFER_BYTES)?;
-    socket.set_send_buffer_size(UDP_SOCKET_BUFFER_BYTES)?;
+    socket.set_recv_buffer_size(socket_buffer_bytes)?;
+    socket.set_send_buffer_size(socket_buffer_bytes)?;
 
     let Some(ifindex) = NonZeroU32::new(ifindex) else {
         return Err(io::Error::new(
@@ -2421,12 +2581,13 @@ mod tests {
     use mio::net::UdpSocket as MioUdpSocket;
     use slab::Slab;
 
+    use crate::config::TCP_PENDING_LIMIT_BYTES;
     use crate::fib::{AdmittedNeighbour, FibEntry, FibSnapshot, host_key};
 
     use super::{
         BATCH_SIZE, FastFibEntry, InterfaceIo, InterfaceSocket, RecvMeta, SocketAction,
-        TcpFrameDecoder, TcpFrameError, TcpFrameOrigin, TcpQueueOutcome, TcpWriteBuffer,
-        UdpRecvBatch, UdpRecvOutcome, UdpSockRef, UdpSocketState,
+        TCP_READ_BUFFER_BYTES, TcpFrameDecoder, TcpFrameError, TcpFrameOrigin, TcpQueueOutcome,
+        TcpWriteBuffer, UdpRecvBatch, UdpRecvOutcome, UdpSockRef, UdpSocketState,
         admitted_tcp_peer_slot_by_ifindex, admitted_tcp_peer_slot_by_local_addr,
         admitted_tcp_peer_slot_for_accepted_addrs, compile_fast_routes, decrement_hop_limit,
         has_missing_admitted_sockets, ipv6_destination, plan_socket_actions, recv_udp_packets,
@@ -2458,7 +2619,7 @@ mod tests {
     fn next_decoded_frame(decoder: &mut TcpFrameDecoder, max_packet_len: usize) -> Option<Vec<u8>> {
         let range = decoder.next_frame_range(max_packet_len).unwrap()?;
         let frame = decoder.bytes[range].to_vec();
-        decoder.finish_frame();
+        decoder.finish_frame(TCP_READ_BUFFER_BYTES);
         Some(frame)
     }
 
@@ -2503,7 +2664,7 @@ mod tests {
         bytes.extend_from_slice(&(packet_b.len() as u16).to_be_bytes());
         bytes.extend_from_slice(&packet_b);
 
-        let mut decoder = TcpFrameDecoder::new();
+        let mut decoder = TcpFrameDecoder::new(TCP_READ_BUFFER_BYTES);
         decoder.push(&bytes[..7]);
         assert_eq!(decoder.next_frame_range(1500).unwrap(), None);
 
@@ -2515,14 +2676,14 @@ mod tests {
 
     #[test]
     fn tcp_frame_decoder_rejects_invalid_lengths() {
-        let mut decoder = TcpFrameDecoder::new();
+        let mut decoder = TcpFrameDecoder::new(TCP_READ_BUFFER_BYTES);
         decoder.push(&0u16.to_be_bytes());
         assert_eq!(
             decoder.next_frame_range(1500).unwrap_err(),
             TcpFrameError::ZeroLength
         );
 
-        let mut decoder = TcpFrameDecoder::new();
+        let mut decoder = TcpFrameDecoder::new(TCP_READ_BUFFER_BYTES);
         decoder.push(&2000u16.to_be_bytes());
         assert_eq!(
             decoder.next_frame_range(1500).unwrap_err(),
@@ -2536,10 +2697,10 @@ mod tests {
     #[test]
     fn tcp_write_buffer_frames_packets_and_tracks_pending_bytes() {
         let packet = sample_ipv6_packet("fde0::1".parse().unwrap(), 32);
-        let mut buffer = TcpWriteBuffer::new();
+        let mut buffer = TcpWriteBuffer::new(256 * 1024);
 
         assert_eq!(
-            buffer.queue_frame(&packet, TcpFrameOrigin::TunIngress),
+            buffer.queue_frame(&packet, TcpFrameOrigin::TunIngress, TCP_PENDING_LIMIT_BYTES),
             TcpQueueOutcome::Queued
         );
         assert_eq!(buffer.frame_ends.len(), 1);
@@ -2547,10 +2708,10 @@ mod tests {
         assert_eq!(&buffer.pending()[..2], &(packet.len() as u16).to_be_bytes());
         assert_eq!(&buffer.pending()[2..], packet.as_slice());
 
-        let completed = buffer.consume(2);
+        let completed = buffer.consume(2, 256 * 1024);
         assert_eq!(completed.total, 0);
         assert_eq!(buffer.pending_len(), packet.len());
-        let completed = buffer.consume(packet.len());
+        let completed = buffer.consume(packet.len(), 256 * 1024);
         assert_eq!(completed.total, 1);
         assert_eq!(completed.tun_ingress, 1);
         assert_eq!(completed.forwarded, 0);

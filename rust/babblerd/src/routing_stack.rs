@@ -31,6 +31,8 @@ impl RoutingStack {
         udp_port: u16,
         transport_mode: TransportMode,
         tun_mtu: u16,
+        tcp_batch_target_bytes: usize,
+        tcp_socket_buffer_bytes: usize,
         state_send: watch::Sender<Arc<BabelState>>,
         event_send: mpsc::Sender<RoutingStackEvent>,
     ) -> Result<Self> {
@@ -43,6 +45,8 @@ impl RoutingStack {
             udp_port,
             transport_mode,
             tun_mtu,
+            tcp_batch_target_bytes,
+            tcp_socket_buffer_bytes,
             initial_fib: Arc::new(
                 FibBuilder::new([node_addr.addr()], tun_mtu).derive(initial_state.as_ref()),
             ),

@@ -239,8 +239,12 @@ of shortcuts that should be revisited later.
     `BABBLER_TUN_MTU=<mtu>` for smaller/larger lab sweeps. Use the same value on
     every forced-TCP peer in a run. UDP keeps the old `1452` default.
   - TCP mode uses `256 KiB` TCP read buffers and `256 KiB` opportunistic write
-    batch targets so max-size framed packets do not require multiple TCP reads,
-    and busy TUN drains can group several max-size frames into one TCP write.
+    batch targets by default. Sweep write batches with
+    `BABBLER_TCP_BATCH_TARGET_BYTES=<bytes>` and socket buffers with
+    `BABBLER_TCP_SOCKET_BUFFER_BYTES=<bytes>`; start with `512 KiB`, `1 MiB`,
+    `2 MiB` batches and `8 MiB`, `16 MiB`, `32 MiB` socket buffers.
+  - TCP receive reads directly into the frame decoder buffer, and stream
+    readiness is reregistered only when write interest changes.
   - TCP mode relies on a lab assumption: direct cabled Mac Thunderbolt links are
     low-loss enough that TCP-over-TCP pathologies should be limited during
     throughput tests. It should not be treated as a general unreliable-mesh

@@ -364,18 +364,22 @@ points at these near-term bottlenecks:
   larger than their local TUN MTU. UDP mode still defaults to the
   physical-MTU-derived `1452`.
 - TCP mode uses `256 KiB` TCP read buffers and `256 KiB` opportunistic write
-  batch targets. A max-size `65535` byte inner packet plus its TCP frame header
-  is larger than `64 KiB`, so the old `64 KiB` read buffer forced at least two
-  TCP reads per full-size frame. The larger write target also lets a busy TUN
-  drain group several max-size frames into one TCP write without waiting for a
-  full batch.
+  batch targets by default. Sweep write targets dynamically with
+  `BABBLER_TCP_BATCH_TARGET_BYTES=<bytes>`; useful first values are `512 KiB`,
+  `1 MiB`, and `2 MiB`.
+- TCP socket send/receive buffers default to `4 MiB`. Sweep them with
+  `BABBLER_TCP_SOCKET_BUFFER_BYTES=<bytes>`; useful first values are `8 MiB`,
+  `16 MiB`, and `32 MiB`.
+- TCP receive reads directly into the frame decoder buffer, avoiding the old
+  `tcp_read_buf` copy. Stream readiness is reregistered only when write interest
+  changes, so a busy stream should not do one `kevent` update per queued packet.
 - TCP mode changes overload behavior. Instead of UDP drops on send backpressure,
   it can accumulate bounded per-stream pending bytes and then drop once that
   bound is reached. Its counters must be watched separately:
-  `tcp_tx_batches`, `tcp_queued_packets`, `tcp_written_frames`,
-  `tcp_rx_batches`,
-  `tcp_rx_frames`, `tcp_blocked_writes`, `tcp_queue_drops`,
-  `tcp_frame_errors`, and `tcp_stream_errors`.
+  `tcp_tx_batches`, `tcp_tx_bytes`, `tcp_queued_packets`,
+  `tcp_written_frames`, `tcp_rx_batches`, `tcp_rx_bytes`, `tcp_rx_frames`,
+  `tcp_reregisters`, `tcp_blocked_writes`, `tcp_queue_drops`,
+  `tcp_frame_errors`, `tcp_stream_errors`, and TUN packet-size buckets.
 
 The first low-risk cleanup pass has now landed: UDP ingress no longer clones
 `ifname`, packet buffers are worker-owned instead of stack-created for every

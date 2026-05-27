@@ -94,10 +94,19 @@ RUST_LOG=info sudo -E nix run .#babblerd --impure -- --force-tcp --tun-mtu 32768
 ```
 
 TCP mode uses `256 KiB` TCP read buffers and `256 KiB` opportunistic write batch
-targets. This keeps a max-size framed packet out of the two-read path and lets
-busy TUN drains group several max-size frames into one TCP write. UDP mode still
-defaults to `1452`, derived from a `1500` byte physical MTU minus outer IPv6 and
-UDP headers.
+targets by default. Sweep write targets and TCP socket buffers dynamically with
+the same values on every node:
+
+```sh
+BABBLER_TCP_BATCH_TARGET_BYTES=1048576 BABBLER_TCP_SOCKET_BUFFER_BYTES=16777216 BABBLER_ROUTER_TRANSPORT=tcp RUST_LOG=info sudo -E nix run .#babblerd --impure
+```
+
+Good first matrix values are `262144`, `524288`, `1048576`, and `2097152` for
+`BABBLER_TCP_BATCH_TARGET_BYTES`, plus `4194304`, `8388608`, `16777216`, and
+`33554432` for `BABBLER_TCP_SOCKET_BUFFER_BYTES`. TCP receive reads directly
+into the frame decoder buffer, and stream readiness is reregistered only when
+write interest changes. UDP mode still defaults to `1452`, derived from a
+`1500` byte physical MTU minus outer IPv6 and UDP headers.
 
 If broad interface discovery causes unrelated links to interfere with a
 specific debug run, `BABBLER_INTERFACE_ALLOWLIST` is still available as a
@@ -162,7 +171,7 @@ Latest findings:
 For `1452` byte packets, `11 Gbit/s` is roughly a one-microsecond packet
 budget: about `947 kpps`, or `1.06 us/packet`. The current direct overlay
 result is roughly `126 kpps`, or `8 us/packet`. Forced TCP now defaults the TUN
-MTU to `9000`, so compare packet counters before attributing any result to the
+MTU to `65535`, so compare packet counters before attributing any result to the
 outer TCP socket alone.
 
 Babel protocol packets should not traverse the software router. `babblerd`

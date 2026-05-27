@@ -96,10 +96,12 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
 
     tracing::info!("creating socket at {}", config.public_socket_path.display());
     tracing::info!(
-        "router defaults: transport={} port={} tun_mtu={} node_id_file={} app_prefix={} node_id={:#018x} node_addr={} tun={}",
+        "router defaults: transport={} port={} tun_mtu={} tcp_batch_target_bytes={} tcp_socket_buffer_bytes={} node_id_file={} app_prefix={} node_id={:#018x} node_addr={} tun={}",
         config.router_transport,
         config.router_udp_port,
         config.tun_mtu,
+        config.tcp_batch_target_bytes,
+        config.tcp_socket_buffer_bytes,
         config.node_id_file.display(),
         config.exo_ula_prefix,
         node_id,
@@ -109,6 +111,8 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
     if config.router_transport == TransportMode::Tcp {
         tracing::warn!(
             tun_mtu = config.tun_mtu,
+            tcp_batch_target_bytes = config.tcp_batch_target_bytes,
+            tcp_socket_buffer_bytes = config.tcp_socket_buffer_bytes,
             "forced TCP transport requires matching TUN MTU on every peer; larger received frames are rejected"
         );
     }
@@ -125,6 +129,8 @@ async fn inner_main(config: &Config) -> eyre::Result<()> {
         config.router_udp_port,
         config.router_transport,
         config.tun_mtu,
+        config.tcp_batch_target_bytes,
+        config.tcp_socket_buffer_bytes,
         node_addr,
         tun,
         babel_state_send,
