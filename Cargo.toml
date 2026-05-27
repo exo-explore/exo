@@ -32,11 +32,9 @@ extend = "1.2"
 delegate = "0.13"
 
 # Utility dependencies
-keccak-const = "0.2"
 nix = "0.31"
 
 # Async dependencies
-async-stream = "0.3"
 tokio = "1.46"
 futures-lite = "2.6.1"
 async-stream = "0.3.6"
