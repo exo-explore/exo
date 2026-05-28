@@ -240,5 +240,32 @@ def make_json_parser() -> ToolParser:
 def infer_tool_parser(chat_template: str) -> ToolParser | None:
     """Attempt to auto-infer a tool parser from the chat template."""
     if "<tool_call>" in chat_template and "tool_call.name" in chat_template:
+        # Qwen3 uses <function=Name><parameter=k>v</parameter></function> XML format
+        # inside <tool_call> tags, not JSON
+        if "function=" in chat_template:
+            return make_qwen_xml_parser()
         return make_json_parser()
     return None
+
+
+def _parse_qwen_xml_calls(text: str) -> list[ToolCallItem] | None:
+    """Parse Qwen3's <function=Name><parameter=k>v</parameter></function> XML format."""
+    import re
+    text = text.removeprefix("<tool_call>").removesuffix("</tool_call>").strip()
+    fn_match = re.match(r"<function=(\w+)>(.*)</function>", text, re.DOTALL)
+    if not fn_match:
+        return None
+    name = fn_match.group(1)
+    params_text = fn_match.group(2)
+    arguments: dict[str, str] = {}
+    for m in re.finditer(r"<parameter=(\w+)>\n?(.*?)\n?</parameter>", params_text, re.DOTALL):
+        arguments[m.group(1)] = m.group(2).strip()
+    return [ToolCallItem(name=name, arguments=json.dumps(arguments))]
+
+
+def make_qwen_xml_parser() -> ToolParser:
+    return ToolParser(
+        start_parsing="<tool_call>",
+        end_parsing="</tool_call>",
+        _inner_parser=_parse_qwen_xml_calls,
+    )
