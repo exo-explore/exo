@@ -295,6 +295,7 @@ def run_one_completion(
         elapsed = time.perf_counter() - t0
 
         stats = out.get("generation_stats")
+        power_usage = out.get("power_usage")
         choices = out.get("choices") or [{}]
         message = choices[0].get("message", {}) if choices else {}
         content = message.get("content") or ""
@@ -330,6 +331,7 @@ def run_one_completion(
 
         elapsed = time.perf_counter() - t0
         preview = "".join(text_parts)[:200]
+        power_usage = None
 
         if not stats:
             ttft = (first_token_time - t0) if first_token_time else elapsed
@@ -348,6 +350,7 @@ def run_one_completion(
         "elapsed_s": elapsed,
         "output_text_preview": preview,
         "stats": stats,
+        "power_usage": power_usage,
     }, pp_tokens
 
 
@@ -764,6 +767,7 @@ def main() -> int:
                                 out = c.post_bench_chat_completions(_payload)
                                 elapsed = time.perf_counter() - t0
                                 stats = out.get("generation_stats")
+                                power_usage = out.get("power_usage")
                                 choices = out.get("choices") or [{}]
                                 message = (
                                     choices[0].get("message", {}) if choices else {}
@@ -773,6 +777,7 @@ def main() -> int:
                                     "elapsed_s": elapsed,
                                     "output_text_preview": text[:200],
                                     "stats": stats,
+                                    "power_usage": power_usage,
                                 }, _actual_pp
 
                             inf_t0 = time.monotonic()
@@ -868,6 +873,27 @@ def main() -> int:
                             inf_seconds = sum(t1 - t0 for t0, t1 in inference_windows)
                             avg_watts = joules / inf_seconds if inf_seconds > 0 else 0
                             summary += f"    energy={joules:.1f}J ({avg_watts:.1f}W avg over {inf_seconds:.1f}s inference)"
+
+                        # mean() not sum() across concurrent runs: each
+                        # request's PowerSampler observes the same shared
+                        # cluster state, so they all report the same figure.
+                        prefill_energies = [
+                            (x.get("power_usage") or {}).get("prefill_energy_joules")
+                            for x in runs
+                        ]
+                        gen_energies = [
+                            (x.get("power_usage") or {}).get("generation_energy_joules")
+                            for x in runs
+                        ]
+                        prefill_vals = [e for e in prefill_energies if e is not None]
+                        gen_vals = [e for e in gen_energies if e is not None]
+                        if prefill_vals and gen_vals:
+                            avg_pref = mean(prefill_vals)
+                            avg_gen = mean(gen_vals)
+                            summary += (
+                                f"    prefill_energy={avg_pref:.1f}J  "
+                                f"gen_energy={avg_gen:.1f}J"
+                            )
                         logger.info(f"{summary}\n")
                     time.sleep(2)
         finally:

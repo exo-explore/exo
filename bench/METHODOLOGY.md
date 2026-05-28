@@ -125,7 +125,7 @@ A background thread polls each node at 1 Hz, collecting:
 - System power draw (W)
 - CPU cluster usage (performance and efficiency cores)
 
-**Energy** is computed via trapezoidal integration of the power samples over each inference window (the wall-clock span of each benchmark request or concurrent batch). Average power is `total_joules / total_inference_seconds`.
+**Energy** is computed via trapezoidal integration of the power samples over each inference window (the wall-clock span of each benchmark request or concurrent batch). Average power is `total_joules / total_inference_seconds`. The server additionally returns a `power_usage` block in each non-stream `/bench/chat/completions` response that splits energy into prefill and generation phases, with the boundary anchored to the first non-`PrefillProgressChunk` from the runner.
 
 ---
 
@@ -136,6 +136,7 @@ Results are written as JSON with three top-level keys:
 - **`runs`**: Array of per-request result objects, each containing:
   - `elapsed_s`, `output_text_preview` (first 200 chars)
   - `stats`: `{ prompt_tps, generation_tps, prompt_tokens, generation_tokens, peak_memory_usage }`
+  - `power_usage`: server-side total + prefill/generation split, per-node breakdown (non-stream requests only)
   - Placement metadata: `model_id`, `placement_sharding`, `placement_instance_meta`, `placement_nodes`
   - Run metadata: `pp_tokens`, `tg`, `repeat_index`, `concurrency`, `concurrent_index`
   - `download_duration_s` (if model was freshly downloaded)
