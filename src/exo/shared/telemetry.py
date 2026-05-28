@@ -50,6 +50,9 @@ class TelemetrySink:
         except (BrokenResourceError, ClosedResourceError):
             logger.debug("Telemetry submission receivers are broken or closed. why??")
 
+    def clone(self) -> "TelemetrySink":
+        return TelemetrySink(_send=self._send.clone())
+
 
 @dataclass(eq=False)
 class TelemetryService:
