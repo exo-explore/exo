@@ -96,10 +96,7 @@ class RunnerStdioHandler:
             / f"{now}.stderr.log"
         )
         ensure_parent_directory_exists(stderr_log_path)
-        # TODO: rotate an existing stderr log before truncating it. The same
-        # instance/runner id can be reused if a supervisor is recreated for an
-        # existing assignment.
-        stderr_log = await anyio.open_file(stderr_log_path, "w+")
+        stderr_log = await anyio.open_file(stderr_log_path, "w")
 
         self = cls(
             _bound_instance=bound_instance,
