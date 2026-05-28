@@ -2,8 +2,8 @@ import codecs
 import contextlib
 import signal
 from dataclasses import dataclass, field
-from os import PathLike
-from typing import Callable, Self
+from pathlib import Path
+from typing import Self
 
 import anyio
 from anyio import (
@@ -12,9 +12,12 @@ from anyio import (
     CancelScope,
     ClosedResourceError,
 )
+from anyio.streams.text import TextReceiveStream
 from loguru import logger
 
-from exo.shared.constants import EXO_RUNNER_STDERR_LOG, EXO_RUNNER_STDOUT_LOG
+from exo.shared.constants import (
+    EXO_RUNNER_LOG_DIR,
+)
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -60,9 +63,9 @@ DECODE_TIMEOUT_SECONDS = 5
 
 @dataclass(eq=False)
 class RunnerStdioHandler:
+    _bound_instance: BoundInstance
     _stdout_rx: Receiver[bytes]
     _stderr_rx: Receiver[bytes]
-    _stdout_log: AsyncFile[str]
     _stderr_log: AsyncFile[str]
     diagnostics: RunnerDiagnosticCollector = field(
         default_factory=RunnerDiagnosticCollector
@@ -74,25 +77,24 @@ class RunnerStdioHandler:
     async def create(
         cls,
         *,
+        bound_instance: BoundInstance,
         stdout_rx: Receiver[bytes],
         stderr_rx: Receiver[bytes],
-        stdout_log_path: PathLike[str] = EXO_RUNNER_STDOUT_LOG,
-        stderr_log_path: PathLike[str] = EXO_RUNNER_STDERR_LOG,
+        runner_log_dir: Path = EXO_RUNNER_LOG_DIR,
     ) -> Self:
-        # these are append only logs used to gather data for log template mining
-        #
-        # TODO: in the future use [Drain3](https://github.com/logpai/Drain3)
-        #       to mine these logs
-        ensure_parent_directory_exists(stdout_log_path)
+        # create file in log_dir/<instanceID>/<runnerID>.stderr.log
+        stderr_log_path = (
+            runner_log_dir
+            / bound_instance.instance.instance_id
+            / f"{bound_instance.bound_runner_id}.stderr.log"
+        )
         ensure_parent_directory_exists(stderr_log_path)
-        stdout_log = await anyio.open_file(stdout_log_path, "a")
-        stderr_log = await anyio.open_file(stderr_log_path, "a")
+        stderr_log = await anyio.open_file(stderr_log_path, "w+")
 
-        # instantiate and return
         self = cls(
+            _bound_instance=bound_instance,
             _stdout_rx=stdout_rx,
             _stderr_rx=stderr_rx,
-            _stdout_log=stdout_log,
             _stderr_log=stderr_log,
         )
         return self
@@ -100,32 +102,25 @@ class RunnerStdioHandler:
     async def run(self):
         try:
             async with self._tg as tg:
-                tg.start_soon(  # pyright: ignore[reportUnknownArgumentType]
-                    self._handle_runner_output,
-                    self._stdout_rx,
-                    self._stdout_log,
-                    lambda line: logger.info(f"Runner stdout: {line}"),  # pyright: ignore[reportUnknownLambdaType]
-                    lambda _: None,  # pyright: ignore[reportUnknownLambdaType]
-                )
-                tg.start_soon(  # pyright: ignore[reportUnknownArgumentType]
-                    self._handle_runner_output,
-                    self._stderr_rx,
-                    self._stderr_log,
-                    lambda line: logger.warning(f"Runner stderr: {line}"),  # pyright: ignore[reportUnknownLambdaType]
-                    self.diagnostics.record_line,
-                )
+                tg.start_soon(self._handle_stdout)
+                tg.start_soon(self._handle_stderr)
         finally:
             with CancelScope(shield=True):
-                await self._stdout_log.aclose()
                 await self._stderr_log.aclose()
 
-    async def _handle_runner_output(
-        self,
-        rx: Receiver[bytes],
-        logfile: AsyncFile[str],
-        log_line: Callable[[str], None],
-        record_diagnostic_line: Callable[[str], None],
-    ):
+    async def _handle_stdout(self):
+        # We don't expect anything in stdout so even reading this at all is going
+        # to be quite weird; hence handle it by logging error and the received chunk
+
+        rx = TextReceiveStream(self._stdout_rx, encoding="utf-8", errors="replace")
+        try:
+            async with rx:
+                async for chunk in rx:
+                    logger.error(f"Unexpected runner stdout chunk: {chunk}")
+        except (ClosedResourceError, BrokenResourceError):
+            logger.warning("Runner stdio stream closed before clean EOF")
+
+    async def _handle_stderr(self):
         # The diagnostic collector is deliberately line-level for now. It records
         # bounded stderr context and known failure anchors; the supervisor
         # correlates those hints with the runner exit status before surfacing an
@@ -142,8 +137,8 @@ class RunnerStdioHandler:
                 return
 
             # Send to logger & error recovery task
-            log_line(line)
-            record_diagnostic_line(line)
+            logger.warning(f"Runner stderr: {line}")
+            self.diagnostics.record_line(line)
 
         async def handle_text(text: str):
             nonlocal pending_line
@@ -151,8 +146,8 @@ class RunnerStdioHandler:
             if not text:
                 return
 
-            await logfile.write(text)
-            await logfile.flush()
+            await self._stderr_log.write(text)
+            await self._stderr_log.flush()
 
             # newline buffering
             pending_line += text
@@ -163,15 +158,15 @@ class RunnerStdioHandler:
                 await handle_line(line)
 
         try:
-            with rx:
-                async for chunk in rx:
+            with self._stderr_rx:
+                async for chunk in self._stderr_rx:
                     await handle_text(decoder.decode(chunk, final=False))
         except (ClosedResourceError, BrokenResourceError):
             logger.warning("Runner stdio stream closed before clean EOF")
         finally:
             with CancelScope(shield=True):
                 await handle_text(decoder.decode(b"", final=True))
-                await logfile.flush()
+                await self._stderr_log.flush()
 
                 if pending_line:
                     await handle_line(pending_line)
@@ -223,7 +218,9 @@ class RunnerSupervisor:
             daemon=True,
         )
         runner_stdio_handler = await RunnerStdioHandler.create(
-            stdout_rx=runner_process.stdout, stderr_rx=runner_process.stderr
+            bound_instance=bound_instance,
+            stdout_rx=runner_process.stdout,
+            stderr_rx=runner_process.stderr,
         )
 
         shard_metadata = bound_instance.bound_shard
