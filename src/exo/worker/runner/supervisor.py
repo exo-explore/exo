@@ -2,6 +2,7 @@ import codecs
 import contextlib
 import signal
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Self
 
@@ -18,6 +19,7 @@ from loguru import logger
 from exo.shared.constants import (
     EXO_RUNNER_LOG_DIR,
 )
+from exo.shared.telemetry import RunnerStderrSubmission, TelemetrySink
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -66,7 +68,9 @@ class RunnerStdioHandler:
     _bound_instance: BoundInstance
     _stdout_rx: Receiver[bytes]
     _stderr_rx: Receiver[bytes]
+    _stderr_log_path: Path
     _stderr_log: AsyncFile[str]
+    _telemetry: TelemetrySink
     diagnostics: RunnerDiagnosticCollector = field(
         default_factory=RunnerDiagnosticCollector
     )
@@ -80,13 +84,16 @@ class RunnerStdioHandler:
         bound_instance: BoundInstance,
         stdout_rx: Receiver[bytes],
         stderr_rx: Receiver[bytes],
+        telemetry_sink: TelemetrySink,
         runner_log_dir: Path = EXO_RUNNER_LOG_DIR,
     ) -> Self:
-        # create file in log_dir/<instanceID>/<runnerID>.stderr.log
+        # create file in <log_dir>/<instanceID>/<runnerID>/<timestamp>.stderr.log
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S_%fZ")
         stderr_log_path = (
             runner_log_dir
             / bound_instance.instance.instance_id
-            / f"{bound_instance.bound_runner_id}.stderr.log"
+            / bound_instance.bound_runner_id
+            / f"{now}.stderr.log"
         )
         ensure_parent_directory_exists(stderr_log_path)
         # TODO: rotate an existing stderr log before truncating it. The same
@@ -98,7 +105,9 @@ class RunnerStdioHandler:
             _bound_instance=bound_instance,
             _stdout_rx=stdout_rx,
             _stderr_rx=stderr_rx,
+            _stderr_log_path=stderr_log_path,
             _stderr_log=stderr_log,
+            _telemetry=telemetry_sink,
         )
         return self
 
@@ -110,6 +119,18 @@ class RunnerStdioHandler:
         finally:
             with CancelScope(shield=True):
                 await self._stderr_log.aclose()
+
+                # send off telemetry submission when runner stdio dies;
+                # it may have been for entirely innocuous reasons or
+                # the log may have nothing in it, but its submitted regardless
+                self._telemetry.submit(
+                    RunnerStderrSubmission(
+                        path=self._stderr_log_path,
+                    )
+                )
+
+    def shutdown(self):
+        self._tg.cancel_tasks()
 
     async def _handle_stdout(self):
         # We don't expect anything in stdout so even reading this at all is going
@@ -203,6 +224,7 @@ class RunnerSupervisor:
         *,
         bound_instance: BoundInstance,
         event_sender: Sender[Event],
+        telemetry_sink: TelemetrySink,
         initialize_timeout: float = 400,
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event | RunnerTerminationError]()
@@ -224,6 +246,7 @@ class RunnerSupervisor:
             bound_instance=bound_instance,
             stdout_rx=runner_process.stdout,
             stderr_rx=runner_process.stderr,
+            telemetry_sink=telemetry_sink,
         )
 
         shard_metadata = bound_instance.bound_shard
