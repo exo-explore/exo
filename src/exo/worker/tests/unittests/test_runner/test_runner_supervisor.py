@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import cast
 
 import anyio
@@ -36,7 +37,9 @@ class _DeadProcess:
 
 
 @pytest.mark.anyio
-async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> None:
+async def test_check_runner_emits_error_chunk_for_inflight_text_generation(
+    tmp_path: Path,
+) -> None:
     event_sender, event_receiver = channel[Event]()
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
@@ -51,7 +54,10 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
 
     proc = cast(AsyncProcess, cast(object, _DeadProcess()))
     handler = await RunnerStdioHandler.create(
-        stdout_rx=proc.stdout, stderr_rx=proc.stderr
+        bound_instance=bound_instance,
+        stdout_rx=proc.stdout,
+        stderr_rx=proc.stderr,
+        runner_log_dir=tmp_path,
     )
     supervisor = RunnerSupervisor(
         shard_metadata=bound_instance.bound_shard,
