@@ -1,3 +1,4 @@
+import contextlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
@@ -52,6 +53,10 @@ class TelemetrySink:
 
     def clone(self) -> "TelemetrySink":
         return TelemetrySink(_send=self._send.clone())
+
+    def close(self):
+        with contextlib.suppress(BrokenResourceError, ClosedResourceError):
+            self._send.close()
 
 
 @dataclass(eq=False)

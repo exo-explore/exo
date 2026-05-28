@@ -125,6 +125,7 @@ class RunnerStdioHandler:
                         path=self._stderr_log_path,
                     )
                 )
+                self._telemetry.close()
 
     def shutdown(self):
         self._tg.cancel_tasks()

@@ -5,6 +5,7 @@ import anyio
 import pytest
 
 from exo.shared.models.model_cards import ModelId
+from exo.shared.telemetry import TelemetryService
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
@@ -53,10 +54,12 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation(
     )
 
     proc = cast(AsyncProcess, cast(object, _DeadProcess()))
+    telemetry = TelemetryService.dummy()
     handler = await RunnerStdioHandler.create(
         bound_instance=bound_instance,
         stdout_rx=proc.stdout,
         stderr_rx=proc.stderr,
+        telemetry_sink=telemetry.sink(),
         runner_log_dir=tmp_path,
     )
     supervisor = RunnerSupervisor(
