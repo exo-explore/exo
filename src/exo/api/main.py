@@ -806,6 +806,8 @@ class API:
                 if isinstance(chunk, PrefillProgressChunk):
                     continue
 
+                sampler.mark_prefill_done()
+
                 if chunk.finish_reason == "error":
                     raise HTTPException(
                         status_code=500,
