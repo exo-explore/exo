@@ -53,9 +53,13 @@ impl PyNetworkingHandle {
     #[staticmethod]
     fn new<'py>(
         identity: Bound<'py, PyBytes>,
-        bootstrap_peers: Vec<String>,
         listen_port: u16,
+        discovery_service_port: u16,
     ) -> PyResult<PyNetworkingHandle> {
+        // todo: zenoh self assigned peers
+        if listen_port == 0 {
+            todo!();
+        }
         // create communication channels
         let (to_swarm, from_client) = mpsc::channel(1024);
 
@@ -72,8 +76,8 @@ impl PyNetworkingHandle {
             .block_on(create_swarm(
                 identity,
                 from_client,
-                bootstrap_peers,
                 listen_port,
+                discovery_service_port,
             ))
             .pyerr()?;
 

@@ -42,7 +42,7 @@ pub enum FromSwarm {
 pub type Topics = HashMap<String, (Subscriber<()>, Publisher<'static>)>;
 pub struct Swarm {
     pub session: crate::Session,
-    from_client: mpsc::Receiver<ToSwarm>,
+    pub from_client: mpsc::Receiver<ToSwarm>,
 }
 
 impl Swarm {
@@ -195,15 +195,11 @@ async fn on_message(
 pub async fn create_swarm(
     identity: u128,
     from_client: mpsc::Receiver<ToSwarm>,
-    bootstrap_peers: Vec<String>,
     listen_port: u16,
+    discovery_service_port: u16,
 ) -> Result<Swarm> {
-    // todo: bootstrap
-    if !bootstrap_peers.is_empty() || listen_port != 0 {
-        todo!();
-    }
-    let cfg = crate::cfg(identity, 52414)?;
-    let session = crate::open(cfg, 52414).await?;
+    let cfg = crate::cfg(identity, listen_port)?;
+    let session = crate::open(cfg, listen_port, discovery_service_port).await?;
     Ok(Swarm {
         session,
         from_client,

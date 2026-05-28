@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tokio::task::JoinHandle;
 use zenoh::{Result, Session as ZSession, config::Locator};
 use zenoh_plugin_storage_manager::StoragesPlugin;
@@ -39,7 +41,11 @@ pub fn cfg(identity: u128, listen_port: u16) -> Result<zenoh::Config> {
     Ok(cfg)
 }
 
-pub async fn open(cfg: zenoh::Config, listen_port: u16) -> Result<Session> {
+pub async fn open(
+    cfg: zenoh::Config,
+    listen_port: u16,
+    discovery_service_port: u16,
+) -> Result<Session> {
     assert!(listen_port != 0, "must used defined listen port");
     let mut plugins = PluginsManager::static_plugins_only();
     plugins.declare_static_plugin::<StoragesPlugin, _>("storage_manager", true);
@@ -49,8 +55,8 @@ pub async fn open(cfg: zenoh::Config, listen_port: u16) -> Result<Session> {
         .await?;
     let z = zenoh::session::init(runtime.clone().into()).await?;
     runtime.start().await?;
-    let mut discovery = Discovery::new(z.zid(), listen_port).await?;
-    let _jh = tokio::task::spawn(async move {
+    let mut discovery = Discovery::new(z.zid(), listen_port, discovery_service_port).await?;
+    let _jh = Arc::new(tokio::task::spawn(async move {
         loop {
             let Ok(discovered) = discovery.next().await.inspect_err(|e| {
                 log::warn!("discovery error {e}");
@@ -75,13 +81,14 @@ pub async fn open(cfg: zenoh::Config, listen_port: u16) -> Result<Session> {
                 .connect_peer(&discovered.zid.into(), &[locator])
                 .await;
         }
-    });
+    }));
     Ok(Session { z, _jh })
 }
 
+#[derive(Clone)]
 pub struct Session {
     pub z: ZSession,
-    _jh: JoinHandle<()>,
+    _jh: Arc<JoinHandle<()>>,
 }
 impl Drop for Session {
     fn drop(&mut self) {

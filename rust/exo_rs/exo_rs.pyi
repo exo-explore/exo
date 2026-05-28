@@ -15,7 +15,7 @@ __all__ = [
 @typing.final
 class NetworkingHandle:
     @staticmethod
-    def new(identity: bytes, bootstrap_peers: typing.Sequence[builtins.str], listen_port: builtins.int) -> NetworkingHandle: ...
+    def new(identity: bytes, listen_port: builtins.int, discovery_service_port: builtins.int) -> NetworkingHandle: ...
     async def gossipsub_subscribe(self, topic: builtins.str) -> builtins.bool:
         r"""
         Subscribe to a `GossipSub` topic.

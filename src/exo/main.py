@@ -55,7 +55,6 @@ class Node:
         session_id = SessionId(master_node_id=node_id, election_clock=0)
         router = Router.create(
             keypair,
-            bootstrap_peers=args.bootstrap_peers,
             listen_port=args.zenoh_port,
         )
         await router.register_topic(topics.GLOBAL_EVENTS)
@@ -349,7 +348,7 @@ def main_inner(args: "Args"):
         logger.info("Running in OFFLINE mode — no internet checks, local models only")
 
     if args.bootstrap_peers:
-        logger.info(f"Bootstrap peers: {args.bootstrap_peers}")
+        raise ValueError("Bootstrap peers has been temporarily removed")
 
     if args.no_batch:
         os.environ["EXO_NO_BATCH"] = "1"

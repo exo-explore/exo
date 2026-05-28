@@ -39,7 +39,7 @@ pub struct Discovered {
 }
 
 impl Discovery {
-    pub async fn new(zid: ZenohId, listen_port: u16) -> io::Result<Self> {
+    pub async fn new(zid: ZenohId, listen_port: u16, discovery_port: u16) -> io::Result<Self> {
         let namespace = {
             let mut hasher = DefaultHasher::new();
             env::var("EXO_ZENOH_NAMESPACE")
@@ -47,7 +47,6 @@ impl Discovery {
                 .hash(&mut hasher);
             hasher.finish().to_le_bytes()
         };
-        let discovery_port = 52413;
         let sock = Arc::new(UdpSocket::bind(format!("[::]:{discovery_port}")).await?);
         //sock.set_multicast_loop_v6(false)?;
         let ifaces: Arc<Mutex<Vec<SocketAddrV6>>> = Default::default();
