@@ -53,18 +53,24 @@ class TelemetrySink:
 
 @dataclass(eq=False)
 class TelemetryService:
+    dry_run: bool
     _send: Sender[TelemetrySubmission]
     _recv: Receiver[TelemetrySubmission]
     _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
 
     @classmethod
-    def create(cls) -> Self:
+    def create(cls, dry_run: bool) -> Self:
         send, recv = channel[TelemetrySubmission](CHANNEL_BOUND_SIZE)
 
         return cls(
+            dry_run=dry_run,
             _send=send,
             _recv=recv,
         )
+
+    @classmethod
+    def dummy(cls) -> Self:
+        return cls.create(True)
 
     async def run(self):
         try:
@@ -77,12 +83,13 @@ class TelemetryService:
     async def _process(self):
         with self._recv as submissions:
             async for submission in submissions:
-                try:
-                    await self._process_submission(submission)
-                except Exception as e:
-                    logger.opt(exception=e).warning(
-                        "Exception when processing telemetry submission"
-                    )
+                if not self.dry_run:
+                    try:
+                        await self._process_submission(submission)
+                    except Exception as e:
+                        logger.opt(exception=e).warning(
+                            "Exception when processing telemetry submission"
+                        )
 
     async def _process_submission(self, submission: TelemetrySubmission):
         match submission:
