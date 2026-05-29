@@ -141,7 +141,6 @@ class TelemetryService:
             timeout=TELEMETRY_HTTP_TIMEOUT_SECONDS,
             transport=self._http_transport,
         ) as client:
-            logger.warning("doing {self.api_url}")
             presign_response = await client.post(
                 f"{self.api_url}/telemetry/runner-log/presign",
                 json={
@@ -159,7 +158,6 @@ class TelemetryService:
                 content=data,
             )
             upload_response.raise_for_status()
-            logger.warning(f"done telemetry {upload_response}")
 
     def sink(self) -> TelemetrySink:
         sink, recv = TelemetrySink.pair()
