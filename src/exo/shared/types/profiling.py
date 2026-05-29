@@ -17,6 +17,10 @@ class MemoryUsage(FrozenModel):
     swap_available: Memory
 
     @classmethod
+    def tag(cls) -> str:
+        return cls.__name__
+
+    @classmethod
     def from_bytes(
         cls, *, ram_total: int, ram_available: int, swap_total: int, swap_available: int
     ) -> Self:

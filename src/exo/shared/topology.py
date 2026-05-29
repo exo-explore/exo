@@ -1,10 +1,8 @@
-import contextlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Iterable
 
 import rustworkx as rx
-from pydantic import BaseModel, ConfigDict
 
 from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import (
@@ -20,43 +18,12 @@ from exo.shared.types.topology import (
 )
 
 
-class TopologySnapshot(BaseModel):
-    nodes: Sequence[NodeId]
-    connections: Mapping[
-        NodeId, Mapping[NodeId, Sequence[SocketConnection | RDMAConnection]]
-    ]
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
 @dataclass
 class Topology:
     _graph: rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection] = field(
         init=False, default_factory=rx.PyDiGraph
     )
     _vertex_indices: dict[NodeId, int] = field(init=False, default_factory=dict)
-
-    def to_snapshot(self) -> TopologySnapshot:
-        return TopologySnapshot(
-            nodes=list(self.list_nodes()), connections=self.map_connections()
-        )
-
-    @classmethod
-    def from_snapshot(cls, snapshot: TopologySnapshot) -> "Topology":
-        topology = cls()
-
-        for node_id in snapshot.nodes:
-            with contextlib.suppress(ValueError):
-                topology.add_node(node_id)
-
-        for source in snapshot.connections:
-            for sink in snapshot.connections[source]:
-                for edge in snapshot.connections[source][sink]:
-                    topology.add_connection(
-                        Connection(source=source, sink=sink, edge=edge)
-                    )
-
-        return topology
 
     def add_node(self, node_id: NodeId) -> None:
         if node_id in self._vertex_indices:

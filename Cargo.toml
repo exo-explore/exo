@@ -49,6 +49,7 @@ env_logger = "0.11.10"
 
 # networking
 zenoh = "=1.9.0"
+zenoh-ext = "=1.9.0"
 zenoh-plugin-storage-manager = { version = "=1.9.0", default-features = false }
 zenoh-plugin-trait = "=1.9.0"
 netwatcher = "0.6.0"
@@ -61,6 +62,7 @@ pidfile-rs = { git = "https://github.com/AndreiCravtov/pidfile-rs" }
 
 [patch.crates-io]
 zenoh = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-ext = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
 zenoh-buffers = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
 zenoh-codec = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
 zenoh-collections = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
