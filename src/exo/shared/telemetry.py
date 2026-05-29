@@ -73,7 +73,7 @@ class TelemetrySink:
 
 @dataclass(eq=False)
 class TelemetryService:
-    dry_run: bool
+    telemetry_disabled: bool
     api_url: str
     _send: Sender[TelemetrySubmission]
     _recv: Receiver[TelemetrySubmission]
@@ -83,7 +83,7 @@ class TelemetryService:
     @classmethod
     def create(
         cls,
-        dry_run: bool,
+        telemetry_disabled: bool,
         api_url: str = EXO_TELEMETRY_API_URL,
         http_transport: httpx.AsyncBaseTransport | None = None,
     ) -> Self:
@@ -92,7 +92,7 @@ class TelemetryService:
         send, recv = channel[TelemetrySubmission](CHANNEL_BOUND_SIZE)
 
         return cls(
-            dry_run=dry_run,
+            telemetry_disabled=telemetry_disabled,
             api_url=api_url,
             _send=send,
             _recv=recv,
@@ -114,7 +114,7 @@ class TelemetryService:
     async def _process(self):
         with self._recv as submissions:
             async for submission in submissions:
-                if not self.dry_run:
+                if not self.telemetry_disabled:
                     try:
                         await self._process_submission(submission)
                     except Exception as e:

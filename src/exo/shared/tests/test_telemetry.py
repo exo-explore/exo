@@ -54,7 +54,7 @@ async def test_runner_stderr_upload_hashes_and_uploads_file_bytes(tmp_path: Path
         return httpx.Response(404)
 
     service = TelemetryService.create(
-        dry_run=False,
+        telemetry_disabled=False,
         api_url="https://telemetry.example/",
         http_transport=httpx.MockTransport(handler),
     )
@@ -84,7 +84,7 @@ async def test_runner_stderr_upload_failure_is_swallowed(tmp_path: Path):
         return httpx.Response(500)
 
     service = TelemetryService.create(
-        dry_run=False,
+        telemetry_disabled=False,
         api_url="https://telemetry.example",
         http_transport=httpx.MockTransport(handler),
     )
