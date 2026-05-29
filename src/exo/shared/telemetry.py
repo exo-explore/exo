@@ -131,6 +131,10 @@ class TelemetryService:
 
     async def _submit_runner_stderr(self, path: Path):
         data = await to_thread.run_sync(path.read_bytes)
+        if not data:
+            logger.debug(f"Skipping empty runner stderr telemetry file: {path}")
+            return
+
         sha256 = hashlib.sha256(data).hexdigest()
 
         async with httpx.AsyncClient(
