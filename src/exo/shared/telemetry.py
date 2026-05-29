@@ -6,6 +6,7 @@ from typing import Self
 from anyio import BrokenResourceError, ClosedResourceError, WouldBlock
 from loguru import logger
 
+from exo.shared.constants import EXO_TELEMETRY_API_URL
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import TaggedModel
 from exo.utils.task_group import TaskGroup
@@ -62,16 +63,18 @@ class TelemetrySink:
 @dataclass(eq=False)
 class TelemetryService:
     dry_run: bool
+    api_url: str
     _send: Sender[TelemetrySubmission]
     _recv: Receiver[TelemetrySubmission]
     _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
 
     @classmethod
-    def create(cls, dry_run: bool) -> Self:
+    def create(cls, dry_run: bool, api_url: str = EXO_TELEMETRY_API_URL) -> Self:
         send, recv = channel[TelemetrySubmission](CHANNEL_BOUND_SIZE)
 
         return cls(
             dry_run=dry_run,
+            api_url=api_url,
             _send=send,
             _recv=recv,
         )
