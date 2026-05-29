@@ -37,7 +37,7 @@ package: build-dashboard
     rm -rf build
 
 build-app: rust-rebuild sync-clean package
-    xcodebuild build -project app/EXO/EXO.xcodeproj -scheme EXO -configuration Debug -derivedDataPath app/EXO/build
+    env -u LD xcodebuild build -project app/EXO/EXO.xcodeproj -scheme EXO -configuration Debug -derivedDataPath app/EXO/build
     @echo "\nBuild complete. Run with:\n  open {{justfile_directory()}}/app/EXO/build/Build/Products/Debug/EXO.app"
 
 clean:
