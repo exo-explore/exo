@@ -22,6 +22,7 @@ from exo_pyo3_bindings import (
 )
 from filelock import FileLock
 from loguru import logger
+from pydantic import ValidationError
 
 from exo.shared.constants import EXO_NODE_ID_KEYPAIR
 from exo.utils.channels import Receiver, Sender, channel
@@ -201,7 +202,17 @@ class Router:
                             )
                             continue
                         router = self.topic_routers[topic]
-                        await router.publish_bytes(data)
+                        try:
+                            await router.publish_bytes(data)
+                        except ValidationError as exception:
+                            # A peer on an incompatible version (or a corrupt
+                            # packet) can produce undeserializable payloads.
+                            # Drop the message rather than killing the node.
+                            logger.warning(
+                                f"Dropping undeserializable message on {topic} "
+                                f"from {origin}: {exception.error_count()} validation errors"
+                            )
+                            continue
                     case PyFromSwarm.Connection():
                         message = ConnectionMessage.from_update(from_swarm)
                         logger.trace(
