@@ -34,7 +34,10 @@ TelemetrySubmission = TestSubmission | RunnerStderrSubmission
 
 
 class TelemetryPresignResponse(FrozenModel):
+    key: str
     upload_url: str
+    expires_in: int
+    max_size: int
 
 
 @dataclass(eq=False)
