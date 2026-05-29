@@ -7,9 +7,13 @@ use zenoh_plugin_trait::PluginsManager;
 
 pub use zenoh::{Config, config::ZenohId};
 
-use crate::discovery::Discovery;
+use crate::{
+    discovery::Discovery,
+    liveliness_aggregator::{LivelinessAggregator, spawn_liveliness_aggregator},
+};
 
 pub mod discovery;
+pub mod liveliness_aggregator;
 pub mod swarm;
 
 pub fn cfg(identity: &str, listen_port: u16) -> Result<zenoh::Config> {
@@ -88,7 +92,12 @@ pub async fn open(
                 .await;
         }
     })));
-    Ok(Session { z, _jh })
+    let liveliness_aggregator = spawn_liveliness_aggregator(&z)?;
+    Ok(Session {
+        z,
+        liveliness_aggregator,
+        _jh,
+    })
 }
 
 struct AbortOnDrop(JoinHandle<()>);
@@ -101,5 +110,6 @@ impl Drop for AbortOnDrop {
 #[derive(Clone)]
 pub struct Session {
     pub z: ZSession,
+    pub liveliness_aggregator: LivelinessAggregator,
     _jh: Arc<AbortOnDrop>,
 }

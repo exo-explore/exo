@@ -10,7 +10,7 @@ from typing import Self
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
 from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
-from exo_rs import Pidfile, PidfileError
+from exo_rs import Pidfile, PidfileError, SessionHandle
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -46,6 +46,7 @@ class Node:
     node_id: NodeId
     offline: bool
     _api_port: int
+    _sh: SessionHandle
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
@@ -53,9 +54,9 @@ class Node:
         identity = os.urandom(16).hex().lstrip("0")
         node_id = NodeId(identity)
         session_id = SessionId(master_node_id=node_id, election_clock=0)
-        router = Router.create(
-            identity, listen_port=args.zenoh_port, discovery_service_port=52413
-        )
+        session_handle, _nh = SessionHandle.new(identity, args.zenoh_port, 52413)
+        router = Router(_nh)
+
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
         await router.register_topic(topics.COMMANDS)
@@ -94,6 +95,7 @@ class Node:
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 election_receiver=router.receiver(topics.ELECTION_MESSAGES),
+                session_handle=session_handle,
             )
         else:
             api = None
@@ -105,6 +107,7 @@ class Node:
                 event_sender=event_router.sender(),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
+                session_handle=session_handle,
                 api_port=args.api_port,
             )
         else:
@@ -119,6 +122,7 @@ class Node:
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
             download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
+            aggregator=session_handle.last_value_aggregator("metrics"),
         )
 
         er_send, er_recv = channel[ElectionResult]()
@@ -147,6 +151,7 @@ class Node:
             node_id,
             args.offline,
             args.api_port,
+            session_handle,
         )
 
     async def run(self):
@@ -222,6 +227,7 @@ class Node:
                         download_command_sender=self.router.sender(
                             topics.DOWNLOAD_COMMANDS
                         ),
+                        aggregator=self._sh.last_value_aggregator("metrics"),
                     )
                     self._tg.start_soon(self.master.run)
                 elif (
@@ -261,6 +267,7 @@ class Node:
                             download_command_sender=self.router.sender(
                                 topics.DOWNLOAD_COMMANDS
                             ),
+                            session_handle=self._sh,
                             api_port=self._api_port,
                         )
                         self._tg.start_soon(self.worker.run)
@@ -375,17 +382,16 @@ def main_inner(args: "Args"):
 
 
 class Args(FrozenModel):
-    verbosity: int = 0
-    force_master: bool = False
-    spawn_api: bool = False
-    api_port: PositiveInt = 52415
-    tb_only: bool = False
+    verbosity: int
+    force_master: bool
+    spawn_api: bool
+    api_port: PositiveInt
     no_worker: bool = False
     no_downloads: bool = False
-    offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
-    no_batch: bool = False
+    offline: bool
+    no_batch: bool
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
-    legacy_daemon: bool = False
+    legacy_daemon: bool
     bootstrap_peers: list[str] = []
     zenoh_port: int
 
@@ -464,7 +470,7 @@ class Args(FrozenModel):
             type=int,
             default=52414,
             dest="zenoh_port",
-            help="Fixed TCP port for zenoh to listen.",
+            help="Fixed port for zenoh to listen on.",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
         fast_synch_group.add_argument(

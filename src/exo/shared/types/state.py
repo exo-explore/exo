@@ -1,12 +1,14 @@
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
-from pydantic import ConfigDict, Field, field_serializer, field_validator
+from exo_rs import LVAggregator
+from pydantic import ConfigDict, Field, model_serializer
 from pydantic.alias_generators import to_camel
+from pydantic_core.core_schema import SerializerFunctionWrapHandler
 
 from exo.shared.models.model_cards import ModelCard
-from exo.shared.topology import Topology, TopologySnapshot
+from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
@@ -21,9 +23,15 @@ from exo.shared.types.profiling import (
     ThunderboltBridgeStatus,
 )
 from exo.shared.types.tasks import Task, TaskId
+from exo.shared.types.topology import (
+    Connection,
+    RDMAConnection,
+    SocketConnection,
+)
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
+from exo.utils.info_gatherer.info_gatherer import MacThunderboltConnections
 from exo.utils.pydantic_ext import FrozenModel
 
 
@@ -48,7 +56,6 @@ class State(FrozenModel):
     downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
     tasks: Mapping[TaskId, Task] = {}
     last_seen: Mapping[NodeId, datetime] = {}
-    topology: Topology = Field(default_factory=Topology)
     last_event_applied_idx: int = Field(default=-1, ge=-1)
 
     # Granular node state mappings (update independently at different frequencies)
@@ -61,6 +68,10 @@ class State(FrozenModel):
     node_thunderbolt_bridge: Mapping[NodeId, ThunderboltBridgeStatus] = {}
     node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] = {}
     node_backends: Mapping[NodeId, list[Backend]] = {}
+    node_socket_connections: Mapping[
+        NodeId, Mapping[NodeId, Sequence[SocketConnection]]
+    ] = {}
+    node_thunderbolt_connections: Mapping[NodeId, MacThunderboltConnections] = {}
 
     # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
     thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []
@@ -71,24 +82,84 @@ class State(FrozenModel):
     # User-added model cards. Workers can reconcile their on-disk custom card cache
     custom_model_cards: Mapping[ModelId, ModelCard] = {}
 
-    @field_serializer("topology", mode="plain")
-    def _encode_topology(self, value: Topology) -> TopologySnapshot:
-        return value.to_snapshot()
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = handler(self)  # pyright: ignore[reportAny]
+        data["topology"] = {
+            "nodes": list(self.node_identities.keys()),
+            "connections": self.topology.map_connections(),
+        }
+        return data  # pyright: ignore[reportAny]
 
-    @field_validator("topology", mode="before")
-    @classmethod
-    def _deserialize_topology(cls, value: object) -> Topology:  # noqa: D401 – Pydantic validator signature
-        """Convert an incoming *value* into a :class:`Topology` instance.
+    @property
+    def topology(self) -> Topology:
+        topology = Topology()
+        thunderbolt_by_uuid = {
+            ident.domain_uuid: (node_id, ident.rdma_interface)
+            for node_id, info in self.node_thunderbolt.items()
+            for ident in info.interfaces
+        }
+        for node_id in self.node_identities:
+            topology.add_node(node_id)
 
-        Accepts either an already constructed :class:`Topology` or a mapping
-        representing :class:`~shared.topology.TopologySnapshot`.
-        """
+        for source, data in self.node_socket_connections.items():
+            for sink, conns in data.items():
+                for conn in conns:
+                    topology.add_connection(
+                        Connection(source=source, sink=sink, edge=conn)
+                    )
 
-        if isinstance(value, Topology):
-            return value
+        for source, connections in self.node_thunderbolt_connections.items():
+            if not self.node_rdma_ctl.get(
+                source, NodeRdmaCtlStatus(enabled=False)
+            ).enabled:
+                continue
+            for connection in connections.conns:
+                if (
+                    source_iface := thunderbolt_by_uuid.get(connection.source_uuid)
+                ) is None or (
+                    sink_iface := thunderbolt_by_uuid.get(connection.sink_uuid)
+                ) is None:
+                    continue
+                if not self.node_rdma_ctl.get(
+                    sink_iface[0], NodeRdmaCtlStatus(enabled=False)
+                ).enabled:
+                    continue
+                assert source_iface[0] == source, "registered invalid source uuid"
+                topology.add_connection(
+                    Connection(
+                        source=source_iface[0],
+                        sink=sink_iface[0],
+                        edge=RDMAConnection(
+                            source_rdma_iface=source_iface[1],
+                            sink_rdma_iface=sink_iface[1],
+                        ),
+                    )
+                )
 
-        if isinstance(value, Mapping):  # likely a snapshot-dict coming from JSON
-            snapshot = TopologySnapshot(**cast(dict[str, Any], value))  # type: ignore[arg-type]
-            return Topology.from_snapshot(snapshot)
+        return topology
 
-        raise TypeError("Invalid representation for Topology field in State")
+    def with_aggregator(self, aggregator: LVAggregator) -> "State":
+        from datetime import datetime, timezone
+
+        from pydantic import TypeAdapter
+
+        from exo.shared.apply import event_apply
+        from exo.shared.types.events import NodeGatheredInfo
+        from exo.utils.info_gatherer.info_gatherer import GatheredInfo
+
+        state = self.model_copy()
+        for key, value in aggregator.dump().items():
+            try:
+                data = TypeAdapter[GatheredInfo](GatheredInfo).validate_json(value)
+                node_id = NodeId(key.split("/")[0])
+                event = NodeGatheredInfo(
+                    node_id=node_id, when=str(datetime.now(tz=timezone.utc)), info=data
+                )
+                state = event_apply(event, state)
+            except Exception as e:
+                print(
+                    f"\n{'=' * 10}key: {key} with exception {str(e)}\nvalue: {value}{'=' * 10}\n"
+                )
+
+        return state

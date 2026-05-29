@@ -19,18 +19,22 @@ class FrozenModel(BaseModel):
 
 
 class TaggedModel(FrozenModel):
+    @classmethod
+    def tag(cls) -> str:
+        return cls.__name__
+
     @model_serializer(mode="wrap")
     def _serialize(self, handler: SerializerFunctionWrapHandler):
         inner = handler(self)  # pyright: ignore[reportAny]
-        return {self.__class__.__name__: inner}
+        return {self.tag(): inner}
 
     @model_validator(mode="wrap")
     @classmethod
     def _validate(cls, v: Any, handler: ValidatorFunctionWrapHandler) -> Self:  # pyright: ignore[reportAny]
-        if isinstance(v, dict) and len(v) == 1 and cls.__name__ in v:  # pyright: ignore[reportUnknownArgumentType]
-            return handler(v[cls.__name__])  # pyright: ignore[reportAny]
+        if isinstance(v, dict) and len(v) == 1 and cls.tag() in v:  # pyright: ignore[reportUnknownArgumentType]
+            return handler(v[cls.tag()])  # pyright: ignore[reportAny]
 
         return handler(v)  # pyright: ignore[reportAny]
 
     def __str__(self) -> str:
-        return f"{self.__class__.__name__}({super().__str__()})"
+        return f"{self.tag()}({super().__str__()})"

@@ -22,8 +22,8 @@ opt-level = 3
 networking = { path = "rust/networking" }
 
 # pyo3
-pyo3 = "0.27.2"
-pyo3-async-runtimes = "0.27.0"
+pyo3 = "0.28.3"
+pyo3-async-runtimes = "0.28.0"
 pyo3-log = "0.13.2"
 pyo3-stub-gen = "0.22.2"
 
@@ -50,6 +50,7 @@ env_logger = "0.11.10"
 
 # networking
 zenoh = "=1.9.0"
+zenoh-ext = "=1.9.0"
 zenoh-plugin-storage-manager = { version = "=1.9.0", default-features = false }
 zenoh-plugin-trait = "=1.9.0"
 netwatcher = "0.6.0"
@@ -57,6 +58,7 @@ bytemuck = "1.25.0"
 
 [patch.crates-io]
 zenoh = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-ext = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
 zenoh-buffers = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
 zenoh-codec = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
 zenoh-collections = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
