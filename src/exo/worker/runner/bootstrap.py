@@ -1,6 +1,5 @@
 import os
 import resource
-import sys
 import traceback
 from dataclasses import dataclass
 from typing import Self, cast
@@ -47,8 +46,6 @@ def entrypoint(
 ) -> None:
     global logger
     logger = _logger
-
-    print("this is a test log in runner stderr", file=sys.stderr)
 
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
