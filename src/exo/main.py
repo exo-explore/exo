@@ -72,7 +72,7 @@ class Node:
             external_outbound=router.sender(topics.LOCAL_EVENTS),
             external_inbound=router.receiver(topics.GLOBAL_EVENTS),
         )
-        telemetry = TelemetryService.create(dry_run=not args.telemetry)
+        telemetry = TelemetryService.create(telemetry_disabled=not args.telemetry)
 
         logger.info(f"Starting node {node_id}")
 

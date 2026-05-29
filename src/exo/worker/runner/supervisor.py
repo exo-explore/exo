@@ -138,7 +138,7 @@ class RunnerStdioHandler:
         try:
             async with rx:
                 async for chunk in rx:
-                    logger.error(f"Unexpected runner stdout chunk: {chunk}")
+                    logger.warning(f"Unexpected runner stdout chunk: {chunk}")
         except (ClosedResourceError, BrokenResourceError):
             logger.warning("Runner stdio stream closed before clean EOF")
 
