@@ -1,7 +1,6 @@
 import os
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 from exo.utils.dashboard_path import find_dashboard, find_resources
 
@@ -28,10 +27,9 @@ EXO_DATA_HOME = _get_xdg_dir("XDG_DATA_HOME", ".local/share")
 EXO_CACHE_HOME = _get_xdg_dir("XDG_CACHE_HOME", ".cache")
 
 # Exo website API endpoints
-_EXO_TELEMETRY_API_URL_ENV = os.environ.get(
+EXO_TELEMETRY_API_URL = os.environ.get(
     "EXO_TELEMETRY_API_URL", "https://telemetry.exolabs.net/"
 )
-EXO_TELEMETRY_API_URL = urlparse(_EXO_TELEMETRY_API_URL_ENV).geturl().rstrip("/")
 
 # Default models directory (always included as first entry in writable dirs)
 _EXO_DEFAULT_MODELS_DIR_ENV = os.environ.get("EXO_DEFAULT_MODELS_DIR", None)

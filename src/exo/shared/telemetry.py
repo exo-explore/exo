@@ -1,17 +1,21 @@
 import contextlib
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
+from urllib.parse import urlparse
 
-from anyio import BrokenResourceError, ClosedResourceError, WouldBlock
+import httpx
+from anyio import BrokenResourceError, ClosedResourceError, WouldBlock, to_thread
 from loguru import logger
 
 from exo.shared.constants import EXO_TELEMETRY_API_URL
 from exo.utils.channels import Receiver, Sender, channel
-from exo.utils.pydantic_ext import TaggedModel
+from exo.utils.pydantic_ext import FrozenModel, TaggedModel
 from exo.utils.task_group import TaskGroup
 
 CHANNEL_BOUND_SIZE = 64
+TELEMETRY_HTTP_TIMEOUT_SECONDS = 10.0
 
 
 class BaseTelemetrySubmission(TaggedModel):
@@ -27,6 +31,10 @@ class RunnerStderrSubmission(BaseTelemetrySubmission):
 
 
 TelemetrySubmission = TestSubmission | RunnerStderrSubmission
+
+
+class TelemetryPresignResponse(FrozenModel):
+    upload_url: str
 
 
 @dataclass(eq=False)
@@ -66,10 +74,18 @@ class TelemetryService:
     api_url: str
     _send: Sender[TelemetrySubmission]
     _recv: Receiver[TelemetrySubmission]
+    _http_transport: httpx.AsyncBaseTransport | None
     _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
 
     @classmethod
-    def create(cls, dry_run: bool, api_url: str = EXO_TELEMETRY_API_URL) -> Self:
+    def create(
+        cls,
+        dry_run: bool,
+        api_url: str = EXO_TELEMETRY_API_URL,
+        http_transport: httpx.AsyncBaseTransport | None = None,
+    ) -> Self:
+        api_url = urlparse(api_url).geturl().rstrip("/")
+
         send, recv = channel[TelemetrySubmission](CHANNEL_BOUND_SIZE)
 
         return cls(
@@ -77,6 +93,7 @@ class TelemetryService:
             api_url=api_url,
             _send=send,
             _recv=recv,
+            _http_transport=http_transport,
         )
 
     @classmethod
@@ -106,8 +123,34 @@ class TelemetryService:
         match submission:
             case TestSubmission():
                 pass
-            case RunnerStderrSubmission():
-                pass
+            case RunnerStderrSubmission(path=path):
+                await self._submit_runner_stderr(path)
+
+    async def _submit_runner_stderr(self, path: Path):
+        data = await to_thread.run_sync(path.read_bytes)
+        sha256 = hashlib.sha256(data).hexdigest()
+
+        async with httpx.AsyncClient(
+            timeout=TELEMETRY_HTTP_TIMEOUT_SECONDS,
+            transport=self._http_transport,
+        ) as client:
+            presign_response = await client.post(
+                f"{self.api_url}/telemetry/runner-log/presign",
+                json={
+                    "sha256": sha256,
+                    "size": len(data),
+                },
+            )
+            presign_response.raise_for_status()
+            presign = TelemetryPresignResponse.model_validate_json(
+                presign_response.text,
+            )
+
+            upload_response = await client.put(
+                presign.upload_url,
+                content=data,
+            )
+            upload_response.raise_for_status()
 
     def sink(self) -> TelemetrySink:
         sink, recv = TelemetrySink.pair()
