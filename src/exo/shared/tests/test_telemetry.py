@@ -42,7 +42,12 @@ async def test_runner_stderr_upload_hashes_and_uploads_file_bytes(tmp_path: Path
         if request.method == "POST":
             return httpx.Response(
                 200,
-                json={"uploadUrl": "https://uploads.example/runner.stderr.log"},
+                json={
+                    "key": "runner_log/test.stderr.log",
+                    "uploadUrl": "https://uploads.example/runner.stderr.log",
+                    "expiresIn": 300,
+                    "maxSize": 52428800,
+                },
             )
         if request.method == "PUT":
             return httpx.Response(200)
