@@ -2,12 +2,12 @@ import asyncio
 
 import pytest
 from _pytest.capture import CaptureFixture
-from exo_pyo3_bindings import (
+from exo_rs import (
     Keypair,
     NetworkingHandle,
     NoPeersSubscribedToTopicError,
     Pidfile,
-    PyFromSwarm,
+    FromSwarm,
 )
 
 
@@ -39,9 +39,9 @@ async def _await_recv(h: NetworkingHandle):
     while True:
         event = await h.recv()
         match event:
-            case PyFromSwarm.Connection() as c:
+            case FromSwarm.Connection() as c:
                 print(f"PYTHON: connection update: {c}")
-            case PyFromSwarm.Message() as m:
+            case FromSwarm.Message() as m:
                 print(f"PYTHON: message: {m}")
 
 

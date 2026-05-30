@@ -138,7 +138,7 @@ struct PyNetworkingHandle {
 }
 
 #[gen_stub_pyclass_complex_enum]
-#[pyclass]
+#[pyclass(name = "FromSwarm")]
 enum PyFromSwarm {
     Connection {
         peer_id: String,
@@ -204,18 +204,14 @@ impl PyNetworkingHandle {
         })
     }
 
-    #[gen_stub(skip)]
-    fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let swarm = Arc::clone(&self.swarm);
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            swarm
-                .try_lock()
-                .map_err(|_| PyRuntimeError::new_err("called recv twice concurrently"))?
-                .next()
-                .await
-                .ok_or(PyErr::receiver_channel_closed())
-                .map(PyFromSwarm::from)
-        })
+    async fn recv(&self) -> PyResult<PyFromSwarm> {
+        self.swarm
+            .try_lock()
+            .map_err(|_| PyRuntimeError::new_err("called recv twice concurrently"))?
+            .next()
+            .await
+            .ok_or(PyErr::receiver_channel_closed())
+            .map(PyFromSwarm::from)
     }
 
     // ---- Gossipsub management methods ----
@@ -294,15 +290,6 @@ impl PyNetworkingHandle {
                 e => PyRuntimeError::new_err(e.to_string()),
             })?;
         Ok(())
-    }
-}
-
-pyo3_stub_gen::inventory::submit! {
-    gen_methods_from_python! {
-        r#"
-            class PyNetworkingHandle:
-                async def recv() -> PyFromSwarm: ...
-        "#
     }
 }
 
