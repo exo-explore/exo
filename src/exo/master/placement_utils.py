@@ -355,13 +355,11 @@ def find_ip_prioritised(
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
 
-    # Ring should prioritise fastest connection. As a best-effort, we prioritise TB.
-    # TODO: Profile and get actual connection speeds.
     if ring:
         priority = {
-            "thunderbolt": 0,
+            "ethernet": 0,
             "maybe_ethernet": 1,
-            "ethernet": 2,
+            "thunderbolt": 2,
             "wifi": 3,
             "unknown": 4,
         }

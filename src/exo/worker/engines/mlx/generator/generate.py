@@ -372,6 +372,11 @@ def prefill(
     set_pipeline_queue_sends(model, queue_sends=False)
     set_pipeline_prefill(model, is_prefill=False)
 
+    # Barrier after prefill to prevent ranks from entering generation (all_gather)
+    # while other ranks are still in prefill (skip all_gather).
+    if is_pipeline:
+        mx_barrier(group)
+
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
     pre_gen = snapshots[-2] if has_ssm else None

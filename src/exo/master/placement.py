@@ -103,6 +103,13 @@ def _cycle_download_score(
     )
 
 
+def _rotate_metal_to_middle(
+    cycle: Cycle,
+    node_backends: Mapping[NodeId, list[Backend]],
+) -> Cycle:
+    return cycle
+
+
 def place_instance(
     command: PlaceInstance,
     topology: Topology,
@@ -241,6 +248,13 @@ def place_instance(
             ),
         ),
     )
+
+    # For heterogeneous Metal+CUDA pipeline, rotate the cycle so the Metal node
+    # sits in the middle rank. This ensures all pipeline send/recv operations
+    # go through Metal↔CUDA links (which work) instead of CUDA↔CUDA links
+    # (which hang in MLX 0.32.0 aarch64 ring backend).
+    if command.sharding == Sharding.Pipeline and len(selected_cycle) == 3:
+        selected_cycle = _rotate_metal_to_middle(selected_cycle, node_backends)
 
     # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
     if len(selected_cycle) == 1:

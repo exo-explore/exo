@@ -114,10 +114,24 @@ def mlx_distributed_init(
                 )
 
                 os.environ["MLX_HOSTFILE"] = coordination_file
+                os.environ["MLX_HOSTS_JSON"] = hosts_json
                 os.environ["MLX_RANK"] = str(rank)
                 # os.environ["MLX_RING_VERBOSE"] = "1"  # NOTE: we don't use it enough to care (turn on again if need to)
 
                 group = mx.distributed.init(backend="ring", strict=True)
+
+                # Eagerly start TcpRelay server on CUDA nodes so peers can probe
+                import platform
+                is_linux_gpu = platform.system() == "Linux" and mx.default_device().type == mx.DeviceType.gpu
+                logger.info(f"CUDA check: os={platform.system()}, device={mx.default_device()}, is_linux_gpu={is_linux_gpu}")
+                if is_linux_gpu:
+                    try:
+                        from exo.worker.engines.mlx.auto_parallel import _get_tcp_relay
+                        relay = _get_tcp_relay()
+                        relay._ensure_server()
+                        logger.info(f"CUDA TcpRelay server started on port {relay._tcp_port}")
+                    except Exception as e:
+                        logger.error(f"Failed to start TcpRelay: {e}")
 
             case MlxJacclInstance(
                 jaccl_devices=jaccl_devices, jaccl_coordinators=jaccl_coordinators
