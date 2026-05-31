@@ -154,7 +154,6 @@ class TcpRelay:
                     s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
                     s.settimeout(3.0)
                     s.connect((ip, peer_port))
-                    # Send RST on close instead of FIN — server won't accept this
                     s.setsockopt(_socket.SOL_SOCKET, _socket.SO_LINGER,
                                  _struct.pack("ii", 1, 0))
                     s.close()
@@ -245,6 +244,19 @@ class TcpRelay:
                     self._server_socket.settimeout(5.0)
                     sock, _ = self._server_socket.accept()
                     self._server_socket.settimeout(120.0)
+                    # Probe for valid data — if the peer sent nothing, it's a
+                    # stale connection from the CUDA-detection probe (RST).
+                    # Discard it and accept again.
+                    sock.settimeout(2.0)
+                    try:
+                        peek = sock.recv(1, _socket.MSG_PEEK)
+                        if not peek:
+                            sock.close()
+                            continue
+                    except Exception:
+                        sock.close()
+                        continue
+                    sock.settimeout(120.0)
                     self._connections[src] = sock
                     break
                 except _socket.timeout:

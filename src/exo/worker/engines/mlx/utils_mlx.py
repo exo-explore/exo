@@ -120,7 +120,7 @@ def mlx_distributed_init(
 
                 group = mx.distributed.init(backend="ring", strict=True)
 
-                # Eagerly start TcpRelay server on CUDA nodes so peers can probe
+                # Eagerly start TcpRelay server on CUDA nodes
                 import platform
                 is_linux_gpu = platform.system() == "Linux" and mx.default_device().type == mx.DeviceType.gpu
                 logger.info(f"CUDA check: os={platform.system()}, device={mx.default_device()}, is_linux_gpu={is_linux_gpu}")
