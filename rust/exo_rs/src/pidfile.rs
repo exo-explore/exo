@@ -38,7 +38,7 @@ impl PyPidfileError {
 /// A PID file protected with a lock.
 ///
 /// An instance of `Pidfile` can be used to manage a PID file: create it,
-/// lock it, detect already running daemons. It is backed by [`pidfile`][]
+/// lock it, detect already running daemons. It is backed by [`pidfile`]
 /// functions of `libbsd`/`libutil` which use `flopen` to lock the PID
 /// file.
 ///
