@@ -203,7 +203,7 @@ impl PyNetworkingHandle {
     }
 
     #[gen_stub(override_return_type(
-        type_repr="typing.Awaitable[[], FromSwarm]", imports=("typing")
+        type_repr="typing.Awaitable[FromSwarm]", imports=("typing")
     ))]
     fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let swarm = self.swarm.clone();
