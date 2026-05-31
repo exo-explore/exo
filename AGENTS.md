@@ -4,8 +4,7 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## Project Overview
 
-exo is a distributed AI inference system that connects multiple devices into a cluster. It enables running large
-language models across multiple machines using MLX as the inference backend and libp2p for peer-to-peer networking.
+exo is a distributed AI inference system that connects multiple devices into a cluster. It enables running large language models across multiple machines using MLX as the inference backend and libp2p for peer-to-peer networking.
 
 ## Build & Run Commands
 
@@ -60,30 +59,24 @@ uv run pytest
 ```
 
 Run all checks in sequence:
-
 ```bash
 uv run basedpyright && uv run ruff check && nix fmt && uv run pytest
 ```
 
-If `nix fmt` changes any files, stage them before committing. The CI runs `nix flake check` which verifies formatting,
-linting, and runs Rust tests.
+If `nix fmt` changes any files, stage them before committing. The CI runs `nix flake check` which verifies formatting, linting, and runs Rust tests.
 
 ## Architecture
 
 ### Node Composition
-
 A single exo `Node` (src/exo/main.py) runs multiple components:
-
-- **Router**: libp2p-based pub/sub messaging via Rust bindings (exo_rs)
+- **Router**: libp2p-based pub/sub messaging via Rust bindings (exo_pyo3_bindings)
 - **Worker**: Handles inference tasks, downloads models, manages runner processes
 - **Master**: Coordinates cluster state, places model instances across nodes
 - **Election**: Bully algorithm for master election
 - **API**: FastAPI server for OpenAI-compatible chat completions
 
 ### Message Flow
-
 Components communicate via typed pub/sub topics (src/exo/routing/topics.py):
-
 - `GLOBAL_EVENTS`: Master broadcasts indexed events to all workers
 - `LOCAL_EVENTS`: Workers send events to master for indexing
 - `COMMANDS`: Workers/API send commands to master
@@ -91,37 +84,30 @@ Components communicate via typed pub/sub topics (src/exo/routing/topics.py):
 - `CONNECTION_MESSAGES`: libp2p connection updates
 
 ### Event Sourcing
-
 The system uses event sourcing for state management:
-
 - `State` (src/exo/shared/types/state.py): Immutable state object
 - `apply()` (src/exo/shared/apply.py): Pure function that applies events to state
 - Master indexes events and broadcasts; workers apply indexed events
 
 ### Key Type Hierarchy
-
 - `src/exo/shared/types/`: Pydantic models for all shared types
-    - `events.py`: Event types (discriminated union)
-    - `commands.py`: Command types
-    - `tasks.py`: Task types for worker execution
-    - `state.py`: Cluster state model
+  - `events.py`: Event types (discriminated union)
+  - `commands.py`: Command types
+  - `tasks.py`: Task types for worker execution
+  - `state.py`: Cluster state model
 
 ### Rust Components
-
 Rust code in `rust/` provides:
-
 - `networking`: libp2p networking (gossipsub, peer discovery)
-- `exo_rs`: PyO3 bindings exposing Rust to Python
+- `exo_pyo3_bindings`: PyO3 bindings exposing Rust to Python
 - `system_custodian`: System-level operations
 
 ### Dashboard
-
 Svelte 5 + TypeScript frontend in `dashboard/`. Build output goes to `dashboard/build/` and is served by the API.
 
 ## Code Style Requirements
 
 From .cursorrules:
-
 - Strict, exhaustive typing - never bypass the type-checker
 - Use `Literal[...]` for enum-like sets, `typing.NewType` for primitives
 - Pydantic models with `frozen=True` and `strict=True`
@@ -132,13 +118,11 @@ From .cursorrules:
 
 ## Testing
 
-Tests use pytest-asyncio with `asyncio_mode = "auto"`. Tests are in `tests/` subdirectories alongside the code they
-test. The `EXO_TESTS=1` env var is set during tests.
+Tests use pytest-asyncio with `asyncio_mode = "auto"`. Tests are in `tests/` subdirectories alongside the code they test. The `EXO_TESTS=1` env var is set during tests.
 
 ## Dashboard UI Testing & Screenshots
 
 ### Building and Running the Dashboard
-
 ```bash
 # Build the dashboard (must be done before running exo)
 cd dashboard && npm install && npm run build && cd ..
@@ -149,48 +133,44 @@ sleep 8  # Wait for server to start
 ```
 
 ### Taking Headless Screenshots with Playwright
-
 Use Playwright with headless Chromium for programmatic screenshots — no manual browser interaction needed.
 
 **Setup (one-time):**
-
 ```bash
 npx --yes playwright install chromium
 cd /tmp && npm init -y && npm install playwright
 ```
 
 **Taking screenshots:**
-
 ```javascript
 // Run from /tmp where playwright is installed: cd /tmp && node -e "..."
-const {chromium} = require('playwright');
+const { chromium } = require('playwright');
 (async () => {
-    const browser = await chromium.launch({headless: true});
-    const page = await browser.newPage({viewport: {width: 1280, height: 800}});
-    await page.goto('http://localhost:52415', {waitUntil: 'networkidle'});
-    await page.waitForTimeout(2000);
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await page.goto('http://localhost:52415', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(2000);
 
-    // Inject test data into localStorage if needed (e.g., recent models)
-    await page.evaluate(() => {
-        localStorage.setItem('exo-recent-models', JSON.stringify([
-            {modelId: 'mlx-community/Qwen3-30B-A3B-4bit', launchedAt: Date.now()},
-        ]));
-    });
-    await page.reload({waitUntil: 'networkidle'});
-    await page.waitForTimeout(2000);
+  // Inject test data into localStorage if needed (e.g., recent models)
+  await page.evaluate(() => {
+    localStorage.setItem('exo-recent-models', JSON.stringify([
+      { modelId: 'mlx-community/Qwen3-30B-A3B-4bit', launchedAt: Date.now() },
+    ]));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(2000);
 
-    // Interact with UI elements
-    await page.locator('text=SELECT MODEL').click();
-    await page.waitForTimeout(1000);
+  // Interact with UI elements
+  await page.locator('text=SELECT MODEL').click();
+  await page.waitForTimeout(1000);
 
-    // Take screenshot
-    await page.screenshot({path: '/tmp/screenshot.png', fullPage: false});
-    await browser.close();
+  // Take screenshot
+  await page.screenshot({ path: '/tmp/screenshot.png', fullPage: false });
+  await browser.close();
 })();
 ```
 
 ### Uploading Images to GitHub PRs
-
 GitHub's API doesn't support direct image upload for PR comments. Workaround:
 
 1. **Commit images to the branch** (temporarily):
