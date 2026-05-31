@@ -141,25 +141,15 @@ class TcpRelay:
 
         # CUDA rank detection: self status from device check.
         self._is_cuda = _is_cuda_device()
-        # Probe peers to find CUDA nodes. Use RST-after-connect to avoid
-        # creating a connection that the server's accept() would pick up.
-        self._cuda_peers: set[int] = set()
-        if self._is_cuda:
-            self._cuda_peers.add(self.rank)  # self
-            for i, ip in enumerate(self.peer_ips):
-                if i == self.rank or ip == "0.0.0.0":
-                    continue
-                peer_port = self._port_base + i
-                try:
-                    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-                    s.settimeout(3.0)
-                    s.connect((ip, peer_port))
-                    s.setsockopt(_socket.SOL_SOCKET, _socket.SO_LINGER,
-                                 _struct.pack("ii", 1, 0))
-                    s.close()
-                    self._cuda_peers.add(i)
-                except Exception:
-                    pass
+        # Determine CUDA peers using env var set by utils_mlx.py,
+        # or fallback to self-only (conservative).
+        cuda_ranks_str = os.environ.get("MLX_CUDA_RANKS", "")
+        if cuda_ranks_str:
+            self._cuda_peers: set[int] = set(int(r) for r in cuda_ranks_str.split(",") if r.strip())
+        elif self._is_cuda:
+            self._cuda_peers = {self.rank}
+        else:
+            self._cuda_peers = set()
 
         self._server_socket: _socket.socket | None = None
         self._connections: dict[int, _socket.socket] = {}

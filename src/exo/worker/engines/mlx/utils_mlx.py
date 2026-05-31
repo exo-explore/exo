@@ -274,6 +274,36 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
+    # Probe peers' TcpRelay ports to determine CUDA ranks (non-invasive).
+    # TcpRelay servers are started eagerly during distributed init.
+    import platform as _plat
+    import socket as _sock
+    import struct as _struct
+    _is_cuda = _plat.system() == "Linux" and mx.default_device().type == mx.DeviceType.gpu
+    _cuda_ranks = []
+    if _is_cuda:
+        hosts_json = os.environ.get("MLX_HOSTS_JSON", "[]")
+        import json as _json
+        _hosts = _json.loads(hosts_json)
+        _my_rank = int(os.environ.get("MLX_RANK", "0"))
+        for i, h in enumerate(_hosts):
+            ip = str(h).split(":")[0] if not isinstance(h, dict) else h.get("ip", "")
+            if ip == "0.0.0.0":
+                _cuda_ranks.append(str(i))
+                continue
+            peer_port = 40000 + i
+            try:
+                s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                s.settimeout(2.0)
+                s.connect((ip, peer_port))
+                s.setsockopt(_sock.SOL_SOCKET, _sock.SO_LINGER, _struct.pack("ii", 1, 0))
+                s.close()
+                _cuda_ranks.append(str(i))
+            except Exception:
+                pass
+    os.environ["MLX_CUDA_RANKS"] = ",".join(_cuda_ranks)
+    logger.info(f"CUDA ranks probed: {_cuda_ranks}")
+
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
