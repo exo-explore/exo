@@ -329,7 +329,6 @@ class InstanceLinkBody(BaseModel):
 
 class InstanceLinkResponse(BaseModel):
     message: str
-    command_id: CommandId
 
 
 ImageSize = Literal[

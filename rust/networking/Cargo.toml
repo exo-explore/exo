@@ -15,10 +15,13 @@ zenoh-plugin-trait.workspace = true
 rand.workspace = true
 log.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
+socket2 = "0.6.4"
+blake3 = "1.8.5"
 
 [lints]
 workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
+smol = "2.0.2"
 tracing = "0.1.44"

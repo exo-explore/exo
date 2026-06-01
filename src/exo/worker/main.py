@@ -15,7 +15,8 @@ from exo.routing.event_router import (
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
-from exo.shared.models.model_cards import ModelId, card_cache
+from exo.shared.models.model_cards import ModelCard, ModelId
+from exo.shared.models import model_cards
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     DeleteInstance,
@@ -180,17 +181,26 @@ class Worker:
                             ] = img
 
     async def _reconcile_custom_cards(self) -> None:
+        storage = self._sh.storage_interface()
         while True:
-            await anyio.sleep(1)
-            target = dict(self.state.custom_model_cards)
-            for model_id, card in target.items():
-                if card_cache.get(model_id) == card:
-                    continue
-                await card_cache.save(card)
+            await anyio.sleep(10)
+            getter = await storage.dump()
+            target: list[ModelId] = []
+            for key, value in getter.items():
+                if key.startswith("custom_model_cards/"):
+                    try:
+                        logger.info(f"DUMPING CUSTOM MODEL {value}")
+                        card = ModelCard.model_validate_json(value)
+                    except:
+                        continue
+                    target.append(card.model_id)
+                    if model_cards.card_cache.get(card.model_id) == card:
+                        continue
+                    await model_cards.card_cache.save(card)
 
-            for card in await card_cache.list_all():
+            for card in await model_cards.card_cache.list_all():
                 if card.model_id not in target:
-                    await card_cache.pop(card.model_id)
+                    await model_cards.card_cache.delete(card.model_id)
 
     async def plan_step(self):
         while True:

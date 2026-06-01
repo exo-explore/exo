@@ -84,6 +84,7 @@ zenoh-sync = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
 zenoh-task = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
 zenoh-transport = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
 zenoh-util = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-plugin-storage-manager = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
 zenoh_backend_traits = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
 
 [workspace.lints.rust]

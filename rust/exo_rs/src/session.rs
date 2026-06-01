@@ -13,6 +13,7 @@ use zenoh_ext::{
 use crate::{
     last_value::{LVAggregator, LVPublisher, LVSubscriber, spawn_lv_aggregator_onto},
     networking::PyNetworkingHandle,
+    storage::Storage,
 };
 
 #[gen_stub_pyclass]
@@ -95,6 +96,12 @@ impl SessionHandle {
             .wait()
             .map_err(|e| PyConnectionError::new_err(format!("failed to declare publisher: {e}")))
             .map(LVPublisher::new)
+    }
+
+    pub fn storage_interface(&self) -> Storage {
+        Storage {
+            session: self.session.z.clone(),
+        }
     }
 }
 

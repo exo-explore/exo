@@ -55,7 +55,7 @@ class _CardCache:
         except OSError as e:
             logger.warning(f"failed to save custom model card ({e.strerror})")
 
-    async def pop(self, model_id: ModelId) -> "ModelCard | None":
+    async def delete(self, model_id: ModelId) -> "ModelCard | None":
         """Delete a user-added custom model card. Returns True if deleted."""
         card_path = _custom_cards_dir / (ModelId(model_id).normalize() + ".toml")
         try:

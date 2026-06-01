@@ -154,11 +154,9 @@ from exo.shared.types.chunks import (
     ToolCallChunk,
 )
 from exo.shared.types.commands import (
-    AddCustomModelCard,
     CancelDownload,
     Command,
     CreateInstance,
-    DeleteCustomModelCard,
     DeleteDownload,
     DeleteInstance,
     DeleteInstanceLink,
@@ -261,6 +259,7 @@ class API:
         self.port = port
         self._sent_image_hashes: set[str] = set()
         self.aggregator = session_handle.last_value_aggregator("metrics")
+        self.storage = session_handle.storage_interface()
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -1840,11 +1839,8 @@ class API:
                 status_code=400, detail=f"Failed to fetch model: {exc}"
             ) from exc
 
-        await self.command_sender.send(
-            ForwarderCommand(
-                origin=self._system_id,
-                command=AddCustomModelCard(model_card=card),
-            )
+        await self.storage.put(
+            f"custom_model_cards/{card.model_id.normalize()}", card.model_dump_json()
         )
 
         # Immediately update the local cache so the subsequent GET /models
@@ -1869,12 +1865,7 @@ class API:
         if card is None or not card.is_custom:
             raise HTTPException(status_code=404, detail="Custom model card not found")
 
-        await self.command_sender.send(
-            ForwarderCommand(
-                origin=self._system_id,
-                command=DeleteCustomModelCard(model_id=model_id),
-            )
-        )
+        await self.storage.delete(f"custom_model_cards/{card.model_id.normalize()}")
 
         return JSONResponse(
             {"message": "Model card deleted", "model_id": str(model_id)}

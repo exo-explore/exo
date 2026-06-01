@@ -82,14 +82,6 @@ class CancelDownload(BaseCommand):
     model_id: ModelId
 
 
-class AddCustomModelCard(BaseCommand):
-    model_card: ModelCard
-
-
-class DeleteCustomModelCard(BaseCommand):
-    model_id: ModelId
-
-
 class SetInstanceLink(BaseCommand):
     link_id: InstanceLinkId
     prefill_instances: list[InstanceId]
@@ -115,8 +107,6 @@ Command = (
     | TaskCancelled
     | TaskFinished
     | SendInputChunk
-    | AddCustomModelCard
-    | DeleteCustomModelCard
     | SetInstanceLink
     | DeleteInstanceLink
 )

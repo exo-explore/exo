@@ -7,10 +7,9 @@ from pydantic import ConfigDict, Field, model_serializer
 from pydantic.alias_generators import to_camel
 from pydantic_core.core_schema import SerializerFunctionWrapHandler
 
-from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
-from exo.shared.types.common import ModelId, NodeId
+from exo.shared.types.common import NodeId
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
     DiskUsage,
@@ -78,9 +77,6 @@ class State(FrozenModel):
 
     instance_links: Mapping[InstanceLinkId, InstanceLink] = {}
     prefill_server_ports: Mapping[RunnerId, int] = {}
-
-    # User-added model cards. Workers can reconcile their on-disk custom card cache
-    custom_model_cards: Mapping[ModelId, ModelCard] = {}
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
