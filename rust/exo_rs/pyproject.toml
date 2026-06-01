@@ -20,7 +20,7 @@ dev = ["exo_rs", "pytest>=8.4.0", "pytest-asyncio>=1.0.0"]
 [tool.maturin]
 #purelib = true
 python-source = "python"
-module-name = "exo_rs"
+module-name = "exo_rs._core"
 features = ["pyo3/extension-module", "pyo3/experimental-async"]
 
 [tool.pyo3-stub-gen]

@@ -1,0 +1,4 @@
+*.so
+*.pyd
+*.dll
+*.dylib

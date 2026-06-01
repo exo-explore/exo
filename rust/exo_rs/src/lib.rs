@@ -1,8 +1,6 @@
-//! TODO: crate documentation
-//!
-//! this is here as a placeholder documentation
-//!
-//!
+//! Python package for EXO Rust bindings.
+
+module_doc!("exo_rs", "Python package for EXO Rust bindings.");
 
 mod allow_threading;
 pub mod ident;
@@ -10,7 +8,7 @@ pub mod networking;
 pub mod pidfile;
 
 use pyo3::{pyclass, pymodule};
-use pyo3_stub_gen::define_stub_info_gatherer;
+use pyo3_stub_gen::{define_stub_info_gatherer, module_doc, reexport_module_members};
 
 /// Namespace for all the constants used by this crate.
 pub(crate) mod r#const {
@@ -145,14 +143,17 @@ pub(crate) mod ext {
     }
 }
 
-#[pymodule(name = "exo_rs", gil_used = true)]
+#[pymodule(name = "_core", gil_used = true)]
 mod py_exo_rs {
     #[pymodule_export]
-    use super::ident::py_ident;
+    use super::ident::PyKeypair;
     #[pymodule_export]
-    use super::networking::py_networking;
+    use super::networking::{
+        PyAllQueuesFullError, PyFromSwarm, PyMessageTooLargeError, PyNetworkingHandle,
+        PyNoPeersSubscribedToTopicError,
+    };
     #[pymodule_export]
-    use super::pidfile::py_pidfile;
+    use super::pidfile::{PyPidfile, PyPidfileError};
     use pyo3::{
         PyResult,
         prelude::{Bound, PyModule},
@@ -171,5 +172,14 @@ mod py_exo_rs {
         Ok(())
     }
 }
+
+// make sure these re-exports match the #[pymodule_export] from above
+reexport_module_members!("exo_rs.ident" from "exo_rs._core";
+    "Keypair");
+reexport_module_members!("exo_rs.networking" from "exo_rs._core";
+    "AllQueuesFullError", "FromSwarm", "MessageTooLargeError", "NetworkingHandle",
+    "NoPeersSubscribedToTopicError");
+reexport_module_members!("exo_rs.pidfile" from "exo_rs._core";
+    "Pidfile", "PidfileError");
 
 define_stub_info_gatherer!(stub_info);
