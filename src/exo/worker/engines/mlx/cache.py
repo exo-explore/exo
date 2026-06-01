@@ -286,6 +286,24 @@ class KVPrefixCache:
         if snapshots:
             merged.extend(snapshots)
 
+        # Deduplicate by token position (keep the most-recently-appended per
+        # position). Without this, every in-place grow re-adds a snapshot at a
+        # position the kept old snapshots already cover, so `_snapshots` — and
+        # the detached GPU copies each holds — grows unbounded, leaking Metal
+        # memory on hybrid (SSM) models.
+        # TODO: keying on token_count alone is safe only while a position
+        # uniquely identifies the prefix within an entry (grows are strict
+        # prefix-extensions). If edit-and-regenerate, sliding-window/prefix
+        # trimming, cross-entry snapshot sharing, per-request adapter/LoRA swap,
+        # or branchy decoding (beam/parallel/speculative) is added, enrich the
+        # key to (token_count, prefix_hash[, media/adapter id]) — else a stale
+        # snapshot could be restored for a different prefix (silent wrong output).
+        if merged:
+            by_position: dict[int, CacheSnapshot] = {}
+            for snapshot in merged:
+                by_position[snapshot.token_count] = snapshot
+            merged = [by_position[pos] for pos in sorted(by_position)]
+
         self.prompts[index] = prompt_tokens
         self.caches[index] = deepcopy(cache)
         self._snapshots[index] = merged or None

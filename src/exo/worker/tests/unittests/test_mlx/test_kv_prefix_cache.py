@@ -11,6 +11,7 @@ from mlx_lm.sample_utils import make_sampler
 from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.worker.engines.mlx.cache import (
+    CacheSnapshot,
     KVPrefixCache,
     cache_length,
     encode_prompt,
@@ -75,6 +76,44 @@ class TestGetPrefixLength:
         a = mx.array([]).astype(mx.int32)
         b = mx.array([]).astype(mx.int32)
         assert get_prefix_length(a, b) == 0
+
+
+class TestSnapshotAccumulation:
+    """Locks in the fix for the actual per-grow Metal leak on hybrid (SSM)
+    models: `update_kv_cache` must not let `_snapshots` grow without bound when
+    the same entry is grown in place many times."""
+
+    def test_repeated_update_does_not_accumulate_snapshots(self):
+        with patch(
+            "exo.worker.engines.mlx.cache.get_memory_used_percentage",
+            return_value=0.0,
+        ):
+            kv_prefix_cache = KVPrefixCache(None)
+            initial = [
+                CacheSnapshot(states=[None], token_count=4096),
+                CacheSnapshot(states=[None], token_count=8192),
+            ]
+            kv_prefix_cache.add_kv_cache(
+                mx.arange(10000), [KVCache()], ssm_snapshots=initial
+            )
+
+            # Each in-place grow re-prefills from restore_pos and produces a
+            # fresh snapshot at a position the retained old snapshots already
+            # cover. Pre-fix this appended one snapshot per grow forever.
+            for _ in range(50):
+                fresh = [CacheSnapshot(states=[None], token_count=8192)]
+                kv_prefix_cache.update_kv_cache(
+                    0, mx.arange(10000), [KVCache()], fresh, restore_pos=8192
+                )
+
+            stored = kv_prefix_cache._snapshots[0]
+            assert stored is not None
+            # Bounded by the number of distinct snapshot positions (here 2),
+            # not by the 50 grows.
+            assert len(stored) == 2
+            assert sorted(s.token_count for s in stored) == [4096, 8192]
+            # The kept 8192 snapshot must be the most recently supplied one.
+            assert stored[1] is fresh[0]
 
 
 class TestKVPrefix:
