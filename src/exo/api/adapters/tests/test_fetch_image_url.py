@@ -12,10 +12,10 @@ import pytest
 
 from exo.api.adapters.chat_completions import fetch_image_url
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _mock_session(response_data: bytes = b"img") -> MagicMock:
     """Return a mock aiohttp session whose .get() never actually sends a request."""
@@ -36,6 +36,7 @@ def _mock_session(response_data: bytes = b"img") -> MagicMock:
 # Rejection cases — scheme
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_file_scheme_rejected() -> None:
     with patch("exo.api.adapters.chat_completions.create_http_session") as mock_cs:
@@ -55,6 +56,7 @@ async def test_ftp_scheme_rejected() -> None:
 # ---------------------------------------------------------------------------
 # Rejection cases — metadata host blocklist
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_aws_metadata_rejected() -> None:
@@ -83,6 +85,7 @@ async def test_azure_metadata_rejected() -> None:
 # ---------------------------------------------------------------------------
 # Rejection cases — literal private/loopback/link-local IPs
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_private_ip_rfc1918_rejected() -> None:
@@ -121,11 +124,14 @@ async def test_link_local_non_metadata_rejected() -> None:
 # Allowed cases
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_valid_https_url_succeeds() -> None:
     image_data = b"\x89PNG\r\n"
     session = _mock_session(image_data)
-    with patch("exo.api.adapters.chat_completions.create_http_session", return_value=session):
+    with patch(
+        "exo.api.adapters.chat_completions.create_http_session", return_value=session
+    ):
         result = await fetch_image_url("https://example.com/image.png")
     assert result == base64.b64encode(image_data).decode("ascii")
     session.get.assert_called_once()
@@ -136,7 +142,9 @@ async def test_public_ip_literal_allowed() -> None:
     """8.8.8.8 is a genuine public IP (Google DNS); should pass the IP check."""
     image_data = b"data"
     session = _mock_session(image_data)
-    with patch("exo.api.adapters.chat_completions.create_http_session", return_value=session):
+    with patch(
+        "exo.api.adapters.chat_completions.create_http_session", return_value=session
+    ):
         result = await fetch_image_url("https://8.8.8.8/image.jpg")
     assert result == base64.b64encode(image_data).decode("ascii")
     session.get.assert_called_once()
@@ -147,7 +155,9 @@ async def test_hostname_not_literal_ip_allowed_through() -> None:
     """A plain hostname is not a literal IP; ip_address() raises ValueError and check is skipped."""
     image_data = b"pixels"
     session = _mock_session(image_data)
-    with patch("exo.api.adapters.chat_completions.create_http_session", return_value=session):
+    with patch(
+        "exo.api.adapters.chat_completions.create_http_session", return_value=session
+    ):
         result = await fetch_image_url("https://cdn.example.com/photo.jpg")
     assert result == base64.b64encode(image_data).decode("ascii")
     session.get.assert_called_once()

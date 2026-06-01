@@ -40,11 +40,13 @@ from exo.shared.types.text_generation import (
     resolve_reasoning_params,
 )
 
-_BLOCKED_METADATA_HOSTS: frozenset[str] = frozenset({
-    "169.254.169.254",           # AWS IMDSv1
-    "metadata.google.internal",  # GCP
-    "169.254.170.2",             # Azure IMDS
-})
+_BLOCKED_METADATA_HOSTS: frozenset[str] = frozenset(
+    {
+        "169.254.169.254",  # AWS IMDSv1
+        "metadata.google.internal",  # GCP
+        "169.254.170.2",  # Azure IMDS
+    }
+)
 
 
 def extract_base64_from_data_url(data_url: str) -> Base64Image:
@@ -58,10 +60,14 @@ async def fetch_image_url(url: str) -> Base64Image:
     parsed = urlparse(url)
 
     if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"URL scheme '{parsed.scheme}' not allowed; only http and https are permitted")
+        raise ValueError(
+            f"URL scheme '{parsed.scheme}' not allowed; only http and https are permitted"
+        )
 
     if parsed.hostname in _BLOCKED_METADATA_HOSTS:
-        raise ValueError(f"Access to '{parsed.hostname}' is denied (cloud metadata endpoint)")
+        raise ValueError(
+            f"Access to '{parsed.hostname}' is denied (cloud metadata endpoint)"
+        )
 
     if parsed.hostname:
         try:
