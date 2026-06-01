@@ -6,6 +6,7 @@ import anyio
 from anyio import fail_after, to_thread
 from exo_rs import LVAggregator, SessionHandle
 from loguru import logger
+from pydantic import ValidationError
 
 from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
@@ -15,8 +16,8 @@ from exo.routing.event_router import (
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
-from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.models import model_cards
+from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     DeleteInstance,
@@ -184,19 +185,17 @@ class Worker:
         storage = self._sh.storage_interface()
         while True:
             await anyio.sleep(10)
-            getter = await storage.dump()
             target: list[ModelId] = []
-            for key, value in getter.items():
-                if key.startswith("custom_model_cards/"):
-                    try:
-                        logger.info(f"DUMPING CUSTOM MODEL {value}")
-                        card = ModelCard.model_validate_json(value)
-                    except:
-                        continue
-                    target.append(card.model_id)
-                    if model_cards.card_cache.get(card.model_id) == card:
-                        continue
-                    await model_cards.card_cache.save(card)
+            for _, value in (await storage.dump("custom_model_cards/")).items():
+                try:
+                    card = ModelCard.model_validate_json(value)
+                except ValidationError:
+                    continue
+                target.append(card.model_id)
+                if model_cards.card_cache.get(card.model_id) == card:
+                    continue
+                logger.info(f"Registered new custom model card for {card.model_id}")
+                await model_cards.card_cache.save(card)
 
             for card in await model_cards.card_cache.list_all():
                 if card.model_id not in target:

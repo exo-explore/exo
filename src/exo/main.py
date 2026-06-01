@@ -123,6 +123,7 @@ class Node:
             command_receiver=router.receiver(topics.COMMANDS),
             download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
             aggregator=session_handle.last_value_aggregator("metrics"),
+            storage=session_handle.storage_interface(),
         )
 
         er_send, er_recv = channel[ElectionResult]()
@@ -228,6 +229,7 @@ class Node:
                             topics.DOWNLOAD_COMMANDS
                         ),
                         aggregator=self._sh.last_value_aggregator("metrics"),
+                        storage=self._sh.storage_interface(),
                     )
                     self._tg.start_soon(self.master.run)
                 elif (

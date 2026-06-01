@@ -112,21 +112,20 @@ impl Storage {
         type_repr="collections.abc.Awaitable[dict[str, str]]",
         imports=("collections.abc")
     ))]
-    pub fn dump<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    pub fn dump<'py>(&'py self, py: Python<'py>, prefix: String) -> PyResult<Bound<'py, PyAny>> {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             Ok(networking::read_raw_memory_storage()
                 .await
                 .into_iter()
-                .filter_map(|entry| entry.0.map(|kexpr| (kexpr, entry.1)))
-                .map(|(key, value)| {
-                    (
-                        key.to_string(),
+                .filter_map(|(key, value)| {
+                    Some((
+                        key?.as_str().strip_prefix(prefix.as_str())?.to_string(),
                         value
                             .payload
                             .try_to_string()
                             .expect("we only use utf8 encoded strings. someone messed up")
                             .to_string(),
-                    )
+                    ))
                 })
                 .collect::<HashMap<String, String>>())
         })
@@ -177,7 +176,7 @@ impl StorageGetter {
             let key = sample
                 .key_expr()
                 .to_string()
-                .strip_prefix(&*format!("{STORAGE_PREFIX}/"))
+                .strip_prefix(format!("{STORAGE_PREFIX}/").as_str())
                 .expect("invalid storage format encountered")
                 .to_string();
 

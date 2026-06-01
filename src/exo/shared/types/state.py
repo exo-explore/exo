@@ -10,7 +10,6 @@ from pydantic_core.core_schema import SerializerFunctionWrapHandler
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.common import NodeId
-from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
@@ -46,7 +45,6 @@ class State(FrozenModel):
         alias_generator=to_camel,
         validate_by_name=True,
         extra="forbid",
-        # I want to reenable this ASAP, but it's causing an issue with TaskStatus
         strict=True,
         arbitrary_types_allowed=True,
     )
@@ -75,7 +73,6 @@ class State(FrozenModel):
     # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
     thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []
 
-    instance_links: Mapping[InstanceLinkId, InstanceLink] = {}
     prefill_server_ports: Mapping[RunnerId, int] = {}
 
     @model_serializer(mode="wrap")

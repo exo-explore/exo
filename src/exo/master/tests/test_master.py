@@ -52,6 +52,20 @@ class MockAggregator:
         return {}
 
 
+class MockStorage:
+    async def get(self, _: str) -> None:
+        return None
+
+    async def put(self, _1: str, _2: str) -> None:
+        return None
+
+    async def delete(self, _: str) -> None:
+        return None
+
+    async def dump(self, _: str) -> dict[str, str]:
+        return {}
+
+
 @pytest.mark.asyncio
 async def test_master():
     node_id = get_node_zid()
@@ -100,6 +114,7 @@ async def test_master():
         command_receiver=co_receiver,
         download_command_sender=fcds,
         aggregator=MockAggregator(),  # pyright: ignore[reportArgumentType]
+        storage=MockStorage(),  # pyright: ignore[reportArgumentType]
     )
     logger.info("run the master")
     async with anyio.create_task_group() as tg:

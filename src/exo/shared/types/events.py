@@ -6,7 +6,6 @@ from pydantic import Field
 from exo.shared.topology import Connection
 from exo.shared.types.chunks import Chunk, InputImageChunk
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
-from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -129,14 +128,6 @@ class TracesMerged(BaseEvent):
     traces: list[TraceEventData]
 
 
-class InstanceLinkCreated(BaseEvent):
-    link: InstanceLink
-
-
-class InstanceLinkDeleted(BaseEvent):
-    link_id: InstanceLinkId
-
-
 Event = (
     TestEvent
     | TaskCreated
@@ -156,8 +147,6 @@ Event = (
     | TopologyEdgeDeleted
     | TracesCollected
     | TracesMerged
-    | InstanceLinkCreated
-    | InstanceLinkDeleted
 )
 
 

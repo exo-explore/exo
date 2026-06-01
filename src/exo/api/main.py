@@ -23,6 +23,7 @@ from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from hypercorn.utils import LifespanTimeoutError, ShutdownError
 from loguru import logger
+from pydantic import ValidationError
 
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
@@ -159,7 +160,6 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteDownload,
     DeleteInstance,
-    DeleteInstanceLink,
     DownloadCommand,
     ForwarderCommand,
     ForwarderDownloadCommand,
@@ -167,7 +167,6 @@ from exo.shared.types.commands import (
     ImageGeneration,
     PlaceInstance,
     SendInputChunk,
-    SetInstanceLink,
     StartDownload,
     TaskCancelled,
     TaskFinished,
@@ -700,9 +699,16 @@ class API:
         return {"disaggregation": ENABLE_DISAGGREGATION}
 
     async def list_instance_links(self) -> list[InstanceLink]:
+        links: list[InstanceLink] = []
         if not ENABLE_DISAGGREGATION:
-            return []
-        return list(self.state.instance_links.values())
+            return links
+        for _, value in (await self.storage.dump("custom_model_cards/")).items():
+            try:
+                link = InstanceLink.model_validate_json(value)
+            except ValidationError:
+                continue
+            links.append(link)
+        return links
 
     async def create_instance_link(
         self, body: InstanceLinkBody
@@ -719,25 +725,22 @@ class API:
     async def _set_instance_link(
         self, link_id: InstanceLinkId, body: InstanceLinkBody
     ) -> InstanceLinkResponse:
-        command = SetInstanceLink(
-            link_id=link_id,
-            prefill_instances=list(body.prefill_instances),
-            decode_instances=list(body.decode_instances),
+        await self.storage.put(
+            f"instance_links/{link_id}",
+            InstanceLink(
+                link_id=link_id,
+                prefill_instances=body.prefill_instances,
+                decode_instances=body.decode_instances,
+            ).model_dump_json(),
         )
-        await self._send(command)
-        return InstanceLinkResponse(
-            message="Command received.", command_id=command.command_id
-        )
+        return InstanceLinkResponse(message="Command received.")
 
     async def delete_instance_link(
         self, link_id: InstanceLinkId
     ) -> InstanceLinkResponse:
         _require_disaggregation_enabled()
-        command = DeleteInstanceLink(link_id=link_id)
-        await self._send(command)
-        return InstanceLinkResponse(
-            message="Command received.", command_id=command.command_id
-        )
+        await self.storage.delete(f"instance_links/{link_id}")
+        return InstanceLinkResponse(message="Command received.")
 
     async def cancel_command(self, command_id: CommandId) -> CancelCommandResponse:
         """Cancel an active command by closing its stream and notifying workers."""
