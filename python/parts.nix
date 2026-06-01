@@ -46,7 +46,6 @@ let
       exoOverlay = final: prev: {
         # Replace workspace exo_rs with Nix-built wheel.
         # Preserve passthru so mkVirtualEnv can resolve dependency groups.
-        # Copy .pyi stub + py.typed marker so basedpyright can find the types.
         exo-rs = pkgs.stdenv.mkDerivation {
           pname = "exo-rs";
           version = "0.1.0";
@@ -55,12 +54,6 @@ let
           nativeBuildInputs = [ final.pyprojectWheelHook ];
           dontStrip = true;
           passthru = prev.exo-rs.passthru or { };
-
-          postInstall = ''
-            local siteDir=$out/${final.python.sitePackages}/exo_rs
-            cp ${inputs.self}/rust/exo_rs/exo_rs.pyi $siteDir/
-            touch $siteDir/py.typed
-          '';
         };
       };
       buildSystemsOverlay = final: prev:
