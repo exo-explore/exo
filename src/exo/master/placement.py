@@ -107,29 +107,65 @@ def _rotate_metal_to_middle(
     cycle: Cycle,
     node_backends: Mapping[NodeId, list[Backend]],
 ) -> Cycle:
-    """Rotate a 3-node Pipeline cycle so the Metal node sits at rank 1 (middle).
+    """Rotate a Pipeline cycle so Metal nodes are evenly spaced between CUDA nodes.
 
-    Ensures all pipeline send/recv go through Metal↔CUDA links (which work)
-    instead of CUDA↔CUDA links (which hang in MLX 0.32.0 ring backend).
+    For 3 nodes: Metal in the middle rank (index 1).
+    For 5+ nodes: Metal nodes distributed to minimize consecutive CUDA↔CUDA links.
+    This avoids CUDA↔CUDA send/recv which hang in MLX 0.32.0 ring backend.
     """
-    if len(cycle) != 3:
+    n = len(cycle)
+    if n < 3:
         return cycle
 
-    for i, node_id in enumerate(cycle):
-        if Backend.MlxMetal in set(node_backends.get(node_id, [])):
-            metal_idx = i
-            break
-    else:
+    metal_indices = [
+        i for i, nid in enumerate(cycle)
+        if Backend.MlxMetal in set(node_backends.get(nid, []))
+    ]
+    if not metal_indices:
         return cycle
 
-    if metal_idx == 1:
-        return cycle
-
+    # Check if Metal nodes are already well-distributed
+    # (no two consecutive CUDA-only spans longer than 1)
     nids = list(cycle.node_ids)
-    if metal_idx == 0:
-        rotated = [nids[2], nids[0], nids[1]]
-    else:
-        rotated = [nids[1], nids[2], nids[0]]
+
+    if n == 3:
+        target = 1  # middle
+        metal_idx = metal_indices[0]
+        if metal_idx == target:
+            return cycle
+        if metal_idx == 0:
+            rotated = [nids[2], nids[0], nids[1]]
+        else:
+            rotated = [nids[1], nids[2], nids[0]]
+        return Cycle(node_ids=rotated)
+
+    # General case: interleave Metal nodes evenly among CUDA nodes
+    metal_nodes = [nids[i] for i in metal_indices]
+    cuda_nodes = [nids[i] for i in range(n) if i not in metal_indices]
+
+    if not cuda_nodes:
+        return cycle  # all Metal, nothing to optimize
+
+    rotated = []
+    cuda_idx = 0
+    metal_idx = 0
+    # Place CUDA nodes, inserting a Metal node between every pair
+    cuda_gap = len(cuda_nodes) / (len(metal_nodes) + 1)
+    next_metal_at = cuda_gap
+    while cuda_idx < len(cuda_nodes) or metal_idx < len(metal_nodes):
+        if metal_idx < len(metal_nodes) and cuda_idx >= round(next_metal_at):
+            rotated.append(metal_nodes[metal_idx])
+            metal_idx += 1
+            next_metal_at += cuda_gap
+        elif cuda_idx < len(cuda_nodes):
+            rotated.append(cuda_nodes[cuda_idx])
+            cuda_idx += 1
+        else:
+            rotated.append(metal_nodes[metal_idx])
+            metal_idx += 1
+
+    if len(rotated) != n:
+        return cycle  # safety fallback
 
     return Cycle(node_ids=rotated)
 
@@ -277,7 +313,7 @@ def place_instance(
     # sits in the middle rank. This ensures all pipeline send/recv operations
     # go through Metal↔CUDA links (which work) instead of CUDA↔CUDA links
     # (which hang in MLX 0.32.0 aarch64 ring backend).
-    if command.sharding == Sharding.Pipeline and len(selected_cycle) == 3:
+    if command.sharding == Sharding.Pipeline and len(selected_cycle) >= 3:
         selected_cycle = _rotate_metal_to_middle(selected_cycle, node_backends)
 
     # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)

@@ -126,8 +126,8 @@ class TcpRelay:
         self.rank = int(os.environ.get("MLX_RANK", "0"))
         self.world_size = len(hosts)
 
-        # For direct TCP, use a dedicated port per rank to avoid conflicts
-        self._port_base = 40000
+        # Port configurable via env var, default 40000
+        self._port_base = int(os.environ.get("MLX_TCPRELAY_PORT", "40000"))
         self._tcp_port = self._port_base + self.rank
 
         # Build peer IP map: peer_ips[rank] = actual IP from hostfile
@@ -151,6 +151,14 @@ class TcpRelay:
             self._cuda_peers = {self.rank}
         else:
             self._cuda_peers = set()
+
+        # Dtype serialization maps (built once)
+        import numpy as _np
+        self._DTYPE_TO_CODE = {
+            _np.float32: 0, _np.float16: 1, _np.int32: 2, _np.int64: 3,
+            _np.bool_: 4, _np.uint8: 5, _np.bfloat16: 6,
+        }
+        self._CODE_TO_DTYPE = {v: k for k, v in self._DTYPE_TO_CODE.items()}
 
         self._server_socket: _socket.socket | None = None
         self._connections: dict[int, _socket.socket] = {}
@@ -193,10 +201,10 @@ class TcpRelay:
 
         import time
         last_err = None
-        for attempt in range(120):
+        for attempt in range(60):
             try:
                 sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-                sock.settimeout(120.0)
+                sock.settimeout(60.0)
                 sock.connect((peer_ip, peer_port))
                 self._connections[dst_rank] = sock
                 return sock
@@ -205,7 +213,7 @@ class TcpRelay:
                 sock.close()
                 if attempt == 0 or attempt % 10 == 9:
                     from exo.worker.runner.bootstrap import logger
-                    logger.warning(f"TcpRelay connect({peer_ip}:{peer_port}) attempt {attempt+1}/120: {e}")
+                    logger.warning(f"TcpRelay connect({peer_ip}:{peer_port}) attempt {attempt+1}/60: {e}")
                 time.sleep(1)
         raise ConnectionError(f"Could not connect to rank {dst_rank} at {peer_ip}:{peer_port}") from last_err
 
@@ -218,11 +226,7 @@ class TcpRelay:
         x_np = np.array(x)
         mx.eval(x)
 
-        dtype_map = {
-            np.float32: 0, np.float16: 1, np.int32: 2, np.int64: 3,
-            np.bool_: 4, np.uint8: 5, np.bfloat16: 6,
-        }
-        dtype_code = dtype_map.get(x_np.dtype.type, 0)
+        dtype_code = self._DTYPE_TO_CODE.get(x_np.dtype.type, 0)
 
         data = x_np.tobytes()
         header = struct.pack("!IIIQ", len(x_np.shape), dtype_code, x_np.dtype.itemsize, len(data))
@@ -268,10 +272,10 @@ class TcpRelay:
                 except _socket.timeout:
                     if attempt % 10 == 0:
                         from exo.worker.runner.bootstrap import logger
-                        logger.warning(f"TcpRelay accept from rank {src} attempt {attempt+1}/120 timeout")
+                        logger.warning(f"TcpRelay accept from rank {src} attempt {attempt+1}/20 timeout")
                     time.sleep(1)
             else:
-                raise ConnectionError(f"TcpRelay accept from rank {src} timed out after 120 attempts")
+                raise ConnectionError(f"TcpRelay accept from rank {src} timed out after 20 attempts")
 
         header = self._recv_exact(sock, 20)
         ndim, dtype_code, itemsize, total = struct.unpack("!IIIQ", header)
@@ -279,11 +283,7 @@ class TcpRelay:
         shape = struct.unpack(f"!{ndim}I", shape_data)
 
         data = self._recv_exact(sock, total)
-        dtype_rmap = {
-            0: np.float32, 1: np.float16, 2: np.int32, 3: np.int64,
-            4: np.bool_, 5: np.uint8, 6: np.bfloat16,
-        }
-        np_dtype = dtype_rmap.get(dtype_code, np.float32)
+        np_dtype = self._CODE_TO_DTYPE.get(dtype_code, np.float32)
         arr = np.frombuffer(data, dtype=np_dtype).reshape(shape)
         return mx.array(arr)
 
