@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["rust/networking", "rust/exo_pyo3_bindings", "rust/util"]
+members = ["rust/networking", "rust/exo_rs", "rust/util"]
 
 [workspace.package]
 version = "0.0.1"
@@ -28,6 +28,7 @@ delegate = "0.13"
 
 # Utility dependencies
 keccak-const = "0.2"
+nix = "0.31"
 
 # Async dependencies
 async-stream = "0.3"

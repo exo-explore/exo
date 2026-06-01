@@ -9,7 +9,6 @@ from mlx_lm.models.cache import KVCache
 from mlx_lm.sample_utils import make_sampler
 
 from exo.shared.types.common import ModelId
-from exo.shared.types.mlx import Model
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.worker.engines.mlx.cache import (
     KVPrefixCache,
@@ -19,6 +18,7 @@ from exo.worker.engines.mlx.cache import (
     make_kv_cache,
 )
 from exo.worker.engines.mlx.generator.generate import mlx_generate, prefill
+from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import apply_chat_template
 from exo.worker.tests.unittests.test_mlx.conftest import (
     DEFAULT_GPT_OSS_CONFIG,

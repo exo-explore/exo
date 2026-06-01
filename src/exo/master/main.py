@@ -10,6 +10,11 @@ from exo.master.placement import (
     get_transition_events,
     place_instance,
 )
+from exo.master.placement_utils import find_ip_prioritised
+from exo.routing.event_router import (
+    EventRouterBrokenResourceError,
+    EventRouterClosedResourceError,
+)
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
@@ -17,6 +22,7 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteCustomModelCard,
     DeleteInstance,
+    DeleteInstanceLink,
     ForwarderCommand,
     ForwarderDownloadCommand,
     ImageEdits,
@@ -24,6 +30,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     RequestEventLog,
     SendInputChunk,
+    SetInstanceLink,
     TaskCancelled,
     TaskFinished,
     TestCommand,
@@ -38,6 +45,8 @@ from exo.shared.types.events import (
     IndexedEvent,
     InputChunkReceived,
     InstanceDeleted,
+    InstanceLinkCreated,
+    InstanceLinkDeleted,
     LocalForwarderEvent,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -48,6 +57,7 @@ from exo.shared.types.events import (
     TracesCollected,
     TracesMerged,
 )
+from exo.shared.types.instance_link import InstanceLink
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -67,6 +77,46 @@ from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
+
+
+def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
+    decode = state.instances.get(decode_instance_id)
+    if decode is None:
+        return None
+    decode_node = next(iter(decode.shard_assignments.node_to_runner.keys()), None)
+    if decode_node is None:
+        return None
+
+    sources: set[InstanceId] = set()
+    for link in state.instance_links.values():
+        if decode_instance_id in link.decode_instances:
+            sources.update(link.prefill_instances)
+    sources.discard(decode_instance_id)
+
+    in_flight = {TaskStatus.Pending, TaskStatus.Running}
+    task_counts: dict[InstanceId, int] = {
+        src_id: sum(
+            1
+            for task in state.tasks.values()
+            if task.instance_id == src_id and task.task_status in in_flight
+        )
+        for src_id in sources
+    }
+    for src_id in sorted(sources, key=lambda sid: task_counts[sid]):
+        instance = state.instances.get(src_id)
+        if instance is None:
+            continue
+        for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
+            port = state.prefill_server_ports.get(runner_id)
+            if port is None:
+                continue
+            ip = find_ip_prioritised(
+                decode_node, node_id, state.topology, state.node_network, ring=True
+            )
+            if ip is None:
+                continue
+            return f"{ip}:{port}"
+    return None
 
 
 class Master:
@@ -105,6 +155,9 @@ class Master:
                 tg.start_soon(self._event_processor)
                 tg.start_soon(self._command_processor)
                 tg.start_soon(self._plan)
+        except* (EventRouterBrokenResourceError, EventRouterClosedResourceError):
+            # Event router has been closed (try-star syntax handles error groups)
+            pass
         finally:
             self._event_log.close()
             self.global_event_sender.close()
@@ -128,20 +181,33 @@ class Master:
                         case TestCommand():
                             pass
                         case TextGeneration():
+                            # set-difference => prefill-only nodes
+                            prefill_only: set[InstanceId] = set()
+                            for link in self.state.instance_links.values():
+                                prefill_only.update(link.prefill_instances)
+                            for link in self.state.instance_links.values():
+                                prefill_only.difference_update(link.decode_instances)
+
                             for instance in self.state.instances.values():
+                                # NON-prefill-only instances matching the model ID
                                 if (
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
+                                    and instance.instance_id not in prefill_only
                                 ):
+                                    # count in-flight tasks of that instance
+                                    in_flight = {TaskStatus.Pending, TaskStatus.Running}
                                     task_count = sum(
                                         1
                                         for task in self.state.tasks.values()
                                         if task.instance_id == instance.instance_id
+                                        and task.task_status in in_flight
                                     )
                                     instance_task_counts[instance.instance_id] = (
                                         task_count
                                     )
 
+                            # there are no NON-prefill-only instances matching this model ID
                             if not instance_task_counts:
                                 raise ValueError(
                                     f"No instance found for model {command.task_params.model}"
@@ -154,20 +220,27 @@ class Master:
                                 ],
                             )
 
+                            decode_instance_id = available_instance_ids[0]
                             task_id = TaskId()
+                            params = command.task_params.model_copy(
+                                update={
+                                    "prefill_endpoint": _prefill_endpoint_for(
+                                        self.state, decode_instance_id
+                                    ),
+                                }
+                            )
                             generated_events.append(
                                 TaskCreated(
                                     task_id=task_id,
                                     task=TextGenerationTask(
                                         task_id=task_id,
                                         command_id=command.command_id,
-                                        instance_id=available_instance_ids[0],
+                                        instance_id=decode_instance_id,
                                         task_status=TaskStatus.Pending,
-                                        task_params=command.task_params,
+                                        task_params=params,
                                     ),
                                 )
                             )
-
                             self.command_task_mapping[command.command_id] = task_id
                         case ImageGeneration():
                             for instance in self.state.instances.values():
@@ -175,10 +248,12 @@ class Master:
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                 ):
+                                    in_flight = {TaskStatus.Pending, TaskStatus.Running}
                                     task_count = sum(
                                         1
                                         for task in self.state.tasks.values()
                                         if task.instance_id == instance.instance_id
+                                        and task.task_status in in_flight
                                     )
                                     instance_task_counts[instance.instance_id] = (
                                         task_count
@@ -229,10 +304,12 @@ class Master:
                                     instance.shard_assignments.model_id
                                     == command.task_params.model
                                 ):
+                                    in_flight = {TaskStatus.Pending, TaskStatus.Running}
                                     task_count = sum(
                                         1
                                         for task in self.state.tasks.values()
                                         if task.instance_id == instance.instance_id
+                                        and task.task_status in in_flight
                                     )
                                     instance_task_counts[instance.instance_id] = (
                                         task_count
@@ -298,7 +375,9 @@ class Master:
                                 self.state.instances,
                                 self.state.node_memory,
                                 self.state.node_network,
+                                self.state.node_backends,
                                 download_status=self.state.downloads,
+                                node_rdma_ctl=self.state.node_rdma_ctl,
                             )
                             transition_events = get_transition_events(
                                 self.state.instances, placement, self.state.tasks
@@ -357,6 +436,21 @@ class Master:
                             generated_events.append(
                                 CustomModelCardDeleted(model_id=command.model_id)
                             )
+                        case SetInstanceLink():
+                            link = InstanceLink(
+                                link_id=command.link_id,
+                                prefill_instances=list(
+                                    dict.fromkeys(command.prefill_instances)
+                                ),
+                                decode_instances=list(
+                                    dict.fromkeys(command.decode_instances)
+                                ),
+                            )
+                            generated_events.append(InstanceLinkCreated(link=link))
+                        case DeleteInstanceLink():
+                            generated_events.append(
+                                InstanceLinkDeleted(link_id=command.link_id)
+                            )
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             # rate limit to 1000 at a time
@@ -365,7 +459,9 @@ class Master:
                                 self._event_log.read_range(command.since_idx, end),
                                 start=command.since_idx,
                             ):
-                                await self._send_event(IndexedEvent(idx=i, event=event))
+                                await self._send_indexed_event(
+                                    IndexedEvent(idx=i, event=event)
+                                )
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except ValueError as e:
@@ -423,10 +519,10 @@ class Master:
                     self.state = apply(self.state, indexed)
 
                     self._event_log.append(event)
-                    await self._send_event(indexed)
+                    await self._send_indexed_event(indexed)
 
     # This function is re-entrant, take care!
-    async def _send_event(self, event: IndexedEvent):
+    async def _send_indexed_event(self, event: IndexedEvent):
         # Convenience method since this line is ugly
         await self.global_event_sender.send(
             GlobalForwarderEvent(

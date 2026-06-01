@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.text_generation import ReasoningEffort
+from exo.shared.types.text_generation import ReasoningDialect, ReasoningEffort
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, ShardMetadata
 from exo.utils.pydantic_ext import FrozenModel
@@ -48,6 +48,7 @@ class ModelListModel(BaseModel):
     quantization: str = Field(default="")
     base_model: str = Field(default="")
     capabilities: list[str] = Field(default_factory=list)
+    reasoning_dialect: ReasoningDialect = "none"
 
 
 class ModelList(BaseModel):
@@ -185,6 +186,12 @@ class NodePowerStats(BaseModel, frozen=True):
     node_id: NodeId
     samples: int
     avg_sys_power: float
+    # Per-phase breakdown. Populated only when the caller marks a phase
+    # boundary (e.g. prefill -> generation); None otherwise.
+    prefill_avg_sys_power: float | None = None
+    generation_avg_sys_power: float | None = None
+    prefill_energy_joules: float | None = None
+    generation_energy_joules: float | None = None
 
 
 class PowerUsage(BaseModel, frozen=True):
@@ -192,6 +199,16 @@ class PowerUsage(BaseModel, frozen=True):
     nodes: list[NodePowerStats]
     total_avg_sys_power_watts: float
     total_energy_joules: float
+    # Split between the prefill (prompt-processing) phase and the
+    # generation/decode phase. Populated only when the caller marks a phase
+    # boundary; None otherwise. The two phase energies should sum to
+    # approximately `total_energy_joules` (modulo interpolation rounding).
+    prefill_seconds: float | None = None
+    generation_seconds: float | None = None
+    prefill_energy_joules: float | None = None
+    generation_energy_joules: float | None = None
+    prefill_avg_sys_power_watts: float | None = None
+    generation_avg_sys_power_watts: float | None = None
 
 
 class BenchChatCompletionResponse(ChatCompletionResponse):
@@ -290,7 +307,27 @@ class DeleteInstanceResponse(BaseModel):
     instance_id: InstanceId
 
 
+class AwaitInstanceReadyMessage(BaseModel):
+    type: Literal["ready"] = "ready"
+    instance: Instance
+
+
+class AwaitInstanceTimeoutMessage(BaseModel):
+    type: Literal["timeout"] = "timeout"
+    message: str
+
+
 class CancelCommandResponse(BaseModel):
+    message: str
+    command_id: CommandId
+
+
+class InstanceLinkBody(BaseModel):
+    prefill_instances: list[InstanceId]
+    decode_instances: list[InstanceId]
+
+
+class InstanceLinkResponse(BaseModel):
     message: str
     command_id: CommandId
 

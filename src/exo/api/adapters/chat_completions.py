@@ -131,9 +131,13 @@ async def chat_request_to_text_generation(
                         multimodal_content.append({"type": "text", "text": part.text})
                     else:
                         multimodal_content.append({"type": "image"})
-                chat_template_messages.append(
-                    {"role": msg.role, "content": multimodal_content}
-                )
+                multimodal_msg: dict[str, Any] = {
+                    "role": msg.role,
+                    "content": multimodal_content,
+                }
+                if msg.reasoning_content is not None:
+                    multimodal_msg["reasoning_content"] = msg.reasoning_content
+                chat_template_messages.append(multimodal_msg)
                 continue
             msg_copy = msg.model_copy(update={"content": content})
 
@@ -168,6 +172,8 @@ async def chat_request_to_text_generation(
         min_p=request.min_p,
         repetition_penalty=request.repetition_penalty,
         repetition_context_size=request.repetition_context_size,
+        presence_penalty=request.presence_penalty,
+        frequency_penalty=request.frequency_penalty,
         images=images,
     )
 
@@ -232,7 +238,7 @@ async def generate_chat_stream(
                         code=500,
                     )
                 )
-                yield f"data: {error_response.model_dump_json()}\n\n"
+                yield f"data: {error_response.model_dump_json(exclude_none=True)}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
@@ -263,7 +269,7 @@ async def generate_chat_stream(
                     ],
                     usage=last_usage,
                 )
-                yield f"data: {tool_response.model_dump_json()}\n\n"
+                yield f"data: {tool_response.model_dump_json(exclude_none=True)}\n\n"
                 if chunk.stats is not None:
                     yield f": generation_stats {chunk.stats.model_dump_json()}\n\n"
                 yield "data: [DONE]\n\n"
@@ -277,7 +283,7 @@ async def generate_chat_stream(
                     chunk_response = chunk_response.model_copy(
                         update={"usage": last_usage}
                     )
-                yield f"data: {chunk_response.model_dump_json()}\n\n"
+                yield f"data: {chunk_response.model_dump_json(exclude_none=True)}\n\n"
 
                 if chunk.finish_reason is not None:
                     if chunk.stats is not None:
@@ -373,5 +379,5 @@ async def collect_chat_response(
             )
         ],
         usage=last_usage,
-    ).model_dump_json()
+    ).model_dump_json(exclude_none=True)
     return

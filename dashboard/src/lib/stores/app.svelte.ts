@@ -74,6 +74,12 @@ export interface Instance {
   };
 }
 
+export interface RawInstanceLink {
+  linkId: string;
+  prefillInstances: string[];
+  decodeInstances: string[];
+}
+
 // Granular node state types from the new state structure
 interface RawNodeIdentity {
   modelId?: string;
@@ -223,6 +229,7 @@ interface RawStateResponse {
     }
   >;
   runners?: Record<string, unknown>;
+  instanceLinks?: Record<string, RawInstanceLink>;
   downloads?: Record<string, unknown[]>;
   // New granular node state fields
   nodeIdentities?: Record<string, RawNodeIdentity>;
@@ -541,6 +548,8 @@ class AppStore {
   topologyData = $state<TopologyData | null>(null);
   instances = $state<Record<string, unknown>>({});
   runners = $state<Record<string, unknown>>({});
+  instanceLinks = $state<Record<string, RawInstanceLink>>({});
+  featureFlags = $state<Record<string, boolean>>({});
   downloads = $state<Record<string, unknown[]>>({});
   nodeDisk = $state<
     Record<
@@ -1274,6 +1283,7 @@ class AppStore {
 
   startPolling() {
     this.fetchState();
+    this.fetchFeatureFlags();
     this.fetchInterval = setInterval(() => this.fetchState(), 1000);
   }
 
@@ -1283,6 +1293,16 @@ class AppStore {
       this.fetchInterval = null;
     }
     this.stopPreviewsPolling();
+  }
+
+  async fetchFeatureFlags() {
+    try {
+      const response = await fetch("/v1/feature-flags");
+      if (!response.ok) return;
+      this.featureFlags = await response.json();
+    } catch {
+      // Silently ignore — defaults to all-disabled.
+    }
   }
 
   async fetchState() {
@@ -1309,6 +1329,11 @@ class AppStore {
       }
       if (data.runners) {
         this.runners = data.runners;
+      }
+      if (data.instanceLinks) {
+        this.instanceLinks = data.instanceLinks;
+      } else {
+        this.instanceLinks = {};
       }
       if (data.downloads) {
         this.downloads = data.downloads;
@@ -1670,7 +1695,15 @@ class AppStore {
               }
             }
           }
-          return { role: m.role, content: msgContent };
+          const out: {
+            role: string;
+            content: string;
+            reasoning_content?: string;
+          } = { role: m.role, content: msgContent };
+          if (m.role === "assistant" && m.thinking) {
+            out.reasoning_content = m.thinking;
+          }
+          return out;
         }),
       ];
 
@@ -1877,7 +1910,15 @@ class AppStore {
       const apiMessages = [
         systemPrompt,
         ...targetConversation.messages.slice(0, -1).map((m) => {
-          return { role: m.role, content: m.content };
+          const out: {
+            role: string;
+            content: string;
+            reasoning_content?: string;
+          } = { role: m.role, content: m.content };
+          if (m.role === "assistant" && m.thinking) {
+            out.reasoning_content = m.thinking;
+          }
+          return out;
         }),
       ];
 
@@ -2212,10 +2253,9 @@ class AppStore {
    * @returns The model ID to use, or null if none available
    */
   private getModelForRequest(modelId?: string): string | null {
-    if (modelId) return modelId;
-    if (this.selectedChatModel) return this.selectedChatModel;
+    const requestedModelId = modelId || this.selectedChatModel;
 
-    // Try to get model from first running instance
+    // Only models with a placed instance can receive requests; disk downloads alone are not enough.
     for (const [, instanceWrapper] of Object.entries(this.instances)) {
       if (instanceWrapper && typeof instanceWrapper === "object") {
         const keys = Object.keys(instanceWrapper as Record<string, unknown>);
@@ -2223,8 +2263,15 @@ class AppStore {
           const instance = (instanceWrapper as Record<string, unknown>)[
             keys[0]
           ] as { shardAssignments?: { modelId?: string } };
-          if (instance?.shardAssignments?.modelId) {
-            return instance.shardAssignments.modelId;
+          const instanceModelId = instance?.shardAssignments?.modelId;
+
+          // ensure to only return requestedModelId that matches an instance
+          // or fall back to first instance
+          if (
+            instanceModelId &&
+            (!requestedModelId || requestedModelId === instanceModelId)
+          ) {
+            return instanceModelId;
           }
         }
       }
@@ -2408,10 +2455,15 @@ class AppStore {
               contentParts.push({ type: "text", text: textContent });
             }
 
-            return {
-              role: m.role,
-              content: contentParts,
-            };
+            const out: {
+              role: string;
+              content: typeof contentParts;
+              reasoning_content?: string;
+            } = { role: m.role, content: contentParts };
+            if (m.role === "assistant" && m.thinking) {
+              out.reasoning_content = m.thinking;
+            }
+            return out;
           }
 
           // Text-only message (original path)
@@ -2429,10 +2481,15 @@ class AppStore {
             }
           }
 
-          return {
-            role: m.role,
-            content: msgContent,
-          };
+          const out: {
+            role: string;
+            content: string;
+            reasoning_content?: string;
+          } = { role: m.role, content: msgContent };
+          if (m.role === "assistant" && m.thinking) {
+            out.reasoning_content = m.thinking;
+          }
+          return out;
         }),
       ];
 
@@ -3281,6 +3338,60 @@ class AppStore {
     }
   }
 
+  async createInstanceLink(
+    prefillInstances: string[],
+    decodeInstances: string[],
+  ): Promise<void> {
+    const response = await fetch("/v1/instance-links", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prefill_instances: prefillInstances,
+        decode_instances: decodeInstances,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Failed to create instance link: ${response.status} ${await response.text()}`,
+      );
+    }
+  }
+
+  async updateInstanceLink(
+    linkId: string,
+    prefillInstances: string[],
+    decodeInstances: string[],
+  ): Promise<void> {
+    const response = await fetch(
+      `/v1/instance-links/${encodeURIComponent(linkId)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prefill_instances: prefillInstances,
+          decode_instances: decodeInstances,
+        }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to update instance link: ${response.status} ${await response.text()}`,
+      );
+    }
+  }
+
+  async deleteInstanceLink(linkId: string): Promise<void> {
+    const response = await fetch(
+      `/v1/instance-links/${encodeURIComponent(linkId)}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to delete instance link: ${response.status} ${await response.text()}`,
+      );
+    }
+  }
+
   /**
    * Delete a downloaded model from a specific node
    */
@@ -3379,6 +3490,19 @@ export const prefillProgress = () => appStore.prefillProgress;
 export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const runners = () => appStore.runners;
+export const instanceLinks = () => appStore.instanceLinks;
+export const featureFlags = () => appStore.featureFlags;
+export const createInstanceLink = (
+  prefillInstances: string[],
+  decodeInstances: string[],
+) => appStore.createInstanceLink(prefillInstances, decodeInstances);
+export const updateInstanceLink = (
+  linkId: string,
+  prefillInstances: string[],
+  decodeInstances: string[],
+) => appStore.updateInstanceLink(linkId, prefillInstances, decodeInstances);
+export const deleteInstanceLink = (linkId: string) =>
+  appStore.deleteInstanceLink(linkId);
 export const downloads = () => appStore.downloads;
 export const nodeDisk = () => appStore.nodeDisk;
 export const placementPreviews = () => appStore.placementPreviews;

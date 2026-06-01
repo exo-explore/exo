@@ -12,13 +12,13 @@ from anyio import (
     move_on_after,
     sleep_forever,
 )
-from exo_pyo3_bindings import (
+from exo_rs import (
     AllQueuesFullError,
+    FromSwarm,
     Keypair,
     MessageTooLargeError,
     NetworkingHandle,
     NoPeersSubscribedToTopicError,
-    PyFromSwarm,
 )
 from filelock import FileLock
 from loguru import logger
@@ -191,7 +191,7 @@ class Router:
                 from_swarm = await self._net.recv()
                 logger.debug(from_swarm)
                 match from_swarm:
-                    case PyFromSwarm.Message(origin, topic, data):
+                    case FromSwarm.Message(origin, topic, data):
                         logger.trace(
                             f"Received message on {topic} from {origin} with payload {data}"
                         )
@@ -202,7 +202,7 @@ class Router:
                             continue
                         router = self.topic_routers[topic]
                         await router.publish_bytes(data)
-                    case PyFromSwarm.Connection():
+                    case FromSwarm.Connection():
                         message = ConnectionMessage.from_update(from_swarm)
                         logger.trace(
                             f"Received message on connection_messages with payload {message}"

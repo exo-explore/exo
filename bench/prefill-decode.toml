@@ -1,0 +1,36 @@
+# Prefill/Decode disaggregation benchmark config.
+#
+# Top-level keys are bench-wide. [prefill] and [decode] sections set per-side
+# placement filters and (optionally) per-side model.
+#
+# Example:
+#   uv run python bench/prefill_decode_bench.py --config bench/prefill-decode.toml
+
+host = "james"
+port = 52415
+timeout = 7200.0
+settle_timeout = 60.0
+
+# Workload
+pp = [4096]
+tg = [512]
+repeat = 1
+warmup = 0
+
+json_out = "bench/prefill_decode_results.json"
+
+[prefill]
+model = "mlx-community/gpt-oss-20b-MXFP4-Q8"
+node = "mike"
+instance_meta = "ring"
+sharding = "pipeline"
+min_nodes = 1
+max_nodes = 1
+
+[decode]
+model = "mlx-community/gpt-oss-20b-MXFP4-Q8"
+node = "james"
+instance_meta = "ring"
+sharding = "pipeline"
+min_nodes = 1
+max_nodes = 1

@@ -8,9 +8,9 @@ family = "gpt-oss"
 quantization = "MXFP4-Q8"
 base_model = "GPT-OSS 120B"
 capabilities = ["text", "thinking"]
-
+reasoning_dialect = "channel"
 context_length = 131072
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 70652212224
 

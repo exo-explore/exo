@@ -8,7 +8,7 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ToolCallResponse,
 )
-from exo.worker.engines.mlx.dsml_encoding import (
+from exo.worker.engines.mlx.vendor.dsml_encoding import (
     DSML_TOKEN,
     THINKING_END,
     THINKING_START,

@@ -1,6 +1,6 @@
 from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import mlx.core as mx
 from mflux.models.common.config.config import Config
@@ -9,8 +9,11 @@ from PIL import Image
 from exo.api.types import AdvancedImageParams
 from exo.download.download_utils import build_model_path
 from exo.shared.types.common import ModelId
-from exo.shared.types.worker.instances import BoundInstance
-from exo.shared.types.worker.shards import CfgShardMetadata, PipelineShardMetadata
+from exo.shared.types.worker.shards import (
+    CfgShardMetadata,
+    PipelineShardMetadata,
+    ShardMetadata,
+)
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models import (
     create_adapter_for_model,
@@ -18,7 +21,7 @@ from exo.worker.engines.image.models import (
 )
 from exo.worker.engines.image.models.base import ModelAdapter
 from exo.worker.engines.image.pipeline import DiffusionRunner
-from exo.worker.engines.mlx.utils_mlx import mlx_distributed_init, mx_barrier
+from exo.worker.engines.mlx.utils_mlx import mx_barrier
 from exo.worker.runner.bootstrap import logger
 
 
@@ -33,7 +36,7 @@ class DistributedImageModel:
         model_id: ModelId,
         local_path: Path,
         shard_metadata: PipelineShardMetadata | CfgShardMetadata,
-        group: Optional[mx.distributed.Group] = None,
+        group: mx.distributed.Group | None,
         quantize: int | None = None,
     ):
         config = get_config_for_model(model_id)
@@ -76,32 +79,21 @@ class DistributedImageModel:
         self._runner = runner
 
     @classmethod
-    def from_bound_instance(
-        cls, bound_instance: BoundInstance
+    def from_shard_metadata(
+        cls, shard: ShardMetadata, group: mx.distributed.Group | None
     ) -> "DistributedImageModel":
-        model_id = bound_instance.bound_shard.model_card.model_id
+        model_id = shard.model_card.model_id
         model_path = build_model_path(model_id)
 
-        shard_metadata = bound_instance.bound_shard
-        if not isinstance(shard_metadata, (PipelineShardMetadata, CfgShardMetadata)):
+        if not isinstance(shard, (PipelineShardMetadata, CfgShardMetadata)):
             raise ValueError(
                 "Expected PipelineShardMetadata or CfgShardMetadata for image generation"
             )
 
-        is_distributed = (
-            len(bound_instance.instance.shard_assignments.node_to_runner) > 1
-        )
-
-        if is_distributed:
-            logger.info("Starting distributed init for image model")
-            group = mlx_distributed_init(bound_instance)
-        else:
-            group = None
-
         return cls(
             model_id=model_id,
             local_path=model_path,
-            shard_metadata=shard_metadata,
+            shard_metadata=shard,
             group=group,
         )
 
@@ -176,7 +168,3 @@ class DistributedImageModel:
             else:
                 logger.info("generated image")
                 yield result
-
-
-def initialize_image_model(bound_instance: BoundInstance) -> DistributedImageModel:
-    return DistributedImageModel.from_bound_instance(bound_instance)

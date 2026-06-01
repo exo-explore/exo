@@ -1,5 +1,7 @@
 from .api import AddCustomModelParams as AddCustomModelParams
 from .api import AdvancedImageParams as AdvancedImageParams
+from .api import AwaitInstanceReadyMessage as AwaitInstanceReadyMessage
+from .api import AwaitInstanceTimeoutMessage as AwaitInstanceTimeoutMessage
 from .api import BenchChatCompletionRequest as BenchChatCompletionRequest
 from .api import BenchChatCompletionResponse as BenchChatCompletionResponse
 from .api import BenchImageGenerationResponse as BenchImageGenerationResponse
@@ -34,6 +36,8 @@ from .api import ImageGenerationTaskParams as ImageGenerationTaskParams
 from .api import ImageListItem as ImageListItem
 from .api import ImageListResponse as ImageListResponse
 from .api import ImageSize as ImageSize
+from .api import InstanceLinkBody as InstanceLinkBody
+from .api import InstanceLinkResponse as InstanceLinkResponse
 from .api import Logprobs as Logprobs
 from .api import LogprobsContentItem as LogprobsContentItem
 from .api import ModelList as ModelList

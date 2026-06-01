@@ -17,7 +17,6 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.download.download_utils import resolve_existing_model
 from exo.shared.constants import EXO_MODELS_DIRS, EXO_MODELS_READ_ONLY_DIRS
 from exo.shared.types.common import ModelId
-from exo.shared.types.mlx import Model
 from exo.shared.types.text_generation import (
     InputMessage,
     InputMessageContent,
@@ -25,6 +24,7 @@ from exo.shared.types.text_generation import (
 )
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import mlx_generate
+from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     load_tokenizer_for_model_id,
@@ -70,6 +70,13 @@ def _reduce_config(cfg: dict[str, Any]) -> dict[str, Any]:
         tc: dict[str, Any] = result["text_config"]
         if "num_nextn_predict_layers" in tc:
             tc["num_nextn_predict_layers"] = 0
+        tc_n_layers = cast(int, tc.get("num_hidden_layers", n_layers))
+        if "layer_types" in tc and isinstance(tc["layer_types"], list):
+            tc["layer_types"] = cast(list[Any], tc["layer_types"])[:tc_n_layers]
+        if "mlp_only_layers" in tc and isinstance(tc["mlp_only_layers"], list):
+            tc["mlp_only_layers"] = [
+                i for i in cast(list[int], tc["mlp_only_layers"]) if i < tc_n_layers
+            ]
 
     if "layer_types" in result and isinstance(result["layer_types"], list):
         result["layer_types"] = result["layer_types"][:n_layers]

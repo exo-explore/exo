@@ -2,7 +2,7 @@ import contextlib
 import functools
 import math
 import time
-from copy import deepcopy
+import uuid
 from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
@@ -10,7 +10,6 @@ from mlx_lm.generate import (
     maybe_quantize_kv_cache,
     stream_generate,
 )
-from mlx_lm.models.cache import ArraysCache, RotatingKVCache
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
@@ -24,7 +23,6 @@ from exo.api.types import (
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
-from exo.shared.types.mlx import KVCacheType, Model
 from exo.shared.types.text_generation import (
     InputMessage,
     InputMessageContent,
@@ -44,8 +42,10 @@ from exo.worker.engines.mlx.auto_parallel import (
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
+    copy_snapshot_entry,
     encode_prompt,
     has_non_kv_caches,
+    is_non_trimmable_cache_entry,
     make_kv_cache,
     snapshot_ssm_states,
 )
@@ -55,6 +55,8 @@ from exo.worker.engines.mlx.constants import (
     KV_GROUP_SIZE,
     MAX_TOKENS,
 )
+from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
+from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
@@ -69,6 +71,8 @@ from exo.worker.engines.mlx.vision import (
     prepare_vision,
 )
 from exo.worker.runner.bootstrap import logger
+
+REMOTE_PREFILL_MIN_TOKENS = 1000
 
 generation_stream = mx.new_stream(mx.default_device())
 
@@ -370,14 +374,16 @@ def prefill(
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
-    pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
+    pre_gen = snapshots[-2] if has_ssm else None
     for i, c in enumerate(cache):
-        if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
+        non_trimmable = is_non_trimmable_cache_entry(c)
+        if has_ssm and non_trimmable:
             assert pre_gen is not None
-            if pre_gen.states[i] is not None:
-                cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
+            restored = copy_snapshot_entry(pre_gen.states[i])
+            if restored is not None:
+                cache[i] = restored  # type: ignore
         else:
-            assert not isinstance(c, (ArraysCache, RotatingKVCache))
+            assert not non_trimmable
             c.trim(2)
 
     elapsed = time.perf_counter() - start_time
@@ -631,17 +637,42 @@ def mlx_generate(
         if vision is not None
         else contextlib.nullcontext()
     )
+    use_remote = (
+        len(prompt_tokens) > REMOTE_PREFILL_MIN_TOKENS
+        and task.prefill_endpoint is not None
+    )
+    remote_prefilled = False
+    prefill_tps = 0.0
+    prefill_tokens = 0
+    ssm_snapshots_list: list[CacheSnapshot] = []
     with maybe_vision_ctx:
-        prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
-            model,
-            tokenizer,
-            sampler,
-            prompt_tokens[:-1],
-            caches,
-            group,
-            on_prefill_progress,
-            distributed_prompt_progress_callback,
-        )
+        if use_remote and task.prefill_endpoint is not None:
+            try:
+                prefill_tps, prefill_tokens, ssm_snapshots_list = remote_prefill(
+                    prompt_tokens[:-1],
+                    caches,
+                    on_prefill_progress,
+                    endpoint=task.prefill_endpoint,
+                    request_id=str(uuid.uuid4()),
+                    model_id=str(task.model),
+                    start_pos=prefix_hit_length,
+                )
+                remote_prefilled = True
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Remote prefill failed, falling back to local prefill"
+                )
+        if not remote_prefilled:
+            prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
+                model,
+                tokenizer,
+                sampler,
+                prompt_tokens[:-1],
+                caches,
+                group,
+                on_prefill_progress,
+                distributed_prompt_progress_callback,
+            )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
     if kv_prefix_cache is not None and matched_index is not None and is_exact_hit:

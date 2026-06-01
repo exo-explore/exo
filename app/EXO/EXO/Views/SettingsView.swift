@@ -21,8 +21,6 @@ struct SettingsView: View {
     @State private var pendingReadOnlyModelsDirs: String = ""
     @State private var pendingCustomEnvironmentVariables: [CustomEnvironmentVariable] = []
     @State private var needsRestart = false
-    @State private var bugReportInFlight = false
-    @State private var bugReportMessage: String?
     @State private var uninstallInProgress = false
 
     var body: some View {
@@ -202,8 +200,6 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     rdmaStatusView
                 }
-
-                sendBugReportButton
             }
 
             Section("Danger Zone") {
@@ -504,63 +500,30 @@ struct SettingsView: View {
         }
     }
 
-    private var sendBugReportButton: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                Task {
-                    await sendBugReport()
-                }
-            } label: {
-                HStack {
-                    if bugReportInFlight {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                    }
-                    Text("Send Bug Report")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                    Spacer()
-                }
-            }
-            .disabled(bugReportInFlight)
-
-            if let message = bugReportMessage {
-                Text(message)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
     // MARK: - Actions
-
-    private func sendBugReport() async {
-        bugReportInFlight = true
-        bugReportMessage = "Collecting logs..."
-        let service = BugReportService()
-        do {
-            let outcome = try await service.sendReport(isManual: true)
-            bugReportMessage = outcome.message
-        } catch {
-            bugReportMessage = error.localizedDescription
-        }
-        bugReportInFlight = false
-    }
 
     private func showUninstallConfirmationAlert() {
         let alert = NSAlert()
         alert.messageText = "Uninstall EXO"
         alert.informativeText = """
-            This will remove EXO and all its system components:
+            This will remove EXO and all its components:
 
             • Network configuration daemon
             • Launch at login registration
             • EXO network location
+            • EXO data directory (~/.exo)
 
             The app will be moved to Trash.
             """
         alert.alertStyle = .warning
+
+        let checkbox = NSButton(
+            checkboxWithTitle: "Keep downloaded models (~/.exo/models)",
+            target: nil, action: nil)
+        checkbox.state = .off
+        checkbox.sizeToFit()
+        alert.accessoryView = checkbox
+
         alert.addButton(withTitle: "Uninstall")
         alert.addButton(withTitle: "Cancel")
 
@@ -570,11 +533,11 @@ struct SettingsView: View {
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            performUninstall()
+            performUninstall(keepModels: checkbox.state == .on)
         }
     }
 
-    private func performUninstall() {
+    private func performUninstall(keepModels: Bool) {
         uninstallInProgress = true
 
         controller.cancelPendingLaunch()
@@ -584,6 +547,7 @@ struct SettingsView: View {
         DispatchQueue.global(qos: .utility).async {
             do {
                 try NetworkSetupHelper.uninstall()
+                try Self.removeExoDirectory(keepModels: keepModels)
 
                 DispatchQueue.main.async {
                     LaunchAtLoginHelper.disable()
@@ -604,6 +568,23 @@ struct SettingsView: View {
                     self.uninstallInProgress = false
                 }
             }
+        }
+    }
+
+    private static func removeExoDirectory(keepModels: Bool) throws {
+        let fm = FileManager.default
+        let exoDir = ExoProcessController.exoDirectoryURL
+        guard fm.fileExists(atPath: exoDir.path) else { return }
+
+        if !keepModels {
+            try fm.removeItem(at: exoDir)
+            return
+        }
+
+        let contents = try fm.contentsOfDirectory(
+            at: exoDir, includingPropertiesForKeys: nil, options: [])
+        for entry in contents where entry.lastPathComponent != "models" {
+            try? fm.removeItem(at: entry)
         }
     }
 

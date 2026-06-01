@@ -3,10 +3,14 @@ import multiprocessing as mp
 import os
 import resource
 import signal
+import sys
 from dataclasses import dataclass, field
 from typing import Self
 
 import anyio
+from anyio.lowlevel import checkpoint as anyio_checkpoint
+from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
+from exo_rs import Pidfile, PidfileError
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -17,10 +21,11 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_id_keypair
-from exo.shared.constants import EXO_LOG
+from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG, EXO_PID_FILE
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
+from exo.utils import STDIO_FDS
 from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
@@ -67,6 +72,9 @@ class Node:
         )
 
         logger.info(f"Starting node {node_id}")
+
+        # Errors the very first time exo is run as dir doesn't exist
+        EXO_DEFAULT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
         # Create DownloadCoordinator (unless --no-downloads)
         if not args.no_downloads:
@@ -184,7 +192,7 @@ class Node:
                 # - Shut down and re-create the API
 
                 if result.is_new_master:
-                    await anyio.sleep(0)
+                    await anyio_checkpoint()
                     self.event_router.shutdown()
                     self.event_router = EventRouter(
                         result.session_id,
@@ -197,7 +205,10 @@ class Node:
                     result.session_id.master_node_id == self.node_id
                     and self.master is not None
                 ):
-                    logger.info("Node elected Master")
+                    assert not result.is_new_master, (
+                        "cannot be new master if we remain master"
+                    )
+                    logger.info("Node elected Master - maintaining self")
                 elif (
                     result.session_id.master_node_id == self.node_id
                     and self.master is None
@@ -264,14 +275,69 @@ class Node:
 
 
 def main():
+    # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
+
+    # Exit early if cannot acquire PID file
+    try:
+        pidfile = Pidfile(EXO_PID_FILE, 0o0600)
+    except PidfileError as e:
+        print(e, file=sys.stderr)
+        raise SystemExit(1) from e
+
+    try:
+        if args.legacy_daemon:
+            # keep stdio backed by explicit /dev/null streams. multiprocessing spawn expects
+            # valid stdio FDs; letting DaemonContext close/reopen them can break runner startup.
+            for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
+                if stream is not None:
+                    stream.flush()
+            stdin = open(os.devnull, "r")  # noqa: SIM115
+            stdout = open(os.devnull, "w")  # noqa: SIM115
+            stderr = open(os.devnull, "w")  # noqa: SIM115
+
+            with DaemonContext(
+                detach_process=True,
+                files_preserve=[pidfile.as_raw_fd()],
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+            ):
+                # cleanup loose file descriptors (as long as they aren't stdio)
+                for f in (
+                    f for f in (stdin, stdout, stderr) if f.fileno() not in STDIO_FDS
+                ):
+                    f.close()
+
+                # 1) if daemonizing => fork then write PID
+                try:
+                    pidfile.write()
+                except PidfileError as e:
+                    print(e, file=sys.stderr)
+                    raise SystemExit(1) from e
+                main_inner(args)
+        else:
+            # 2) otherwise      => just write PID
+            try:
+                pidfile.write()
+            except PidfileError as e:
+                print(e, file=sys.stderr)
+                raise SystemExit(1) from e
+            main_inner(args)
+    finally:
+        pidfile.close()
+
+
+def main_inner(args: "Args"):
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
     mp.set_start_method("spawn", force=True)
+
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
+
     logger.info(f"{'=' * 40}")
     logger.info(f"Starting EXO | pid={os.getpid()}")
     logger.info(f"{'=' * 40}")
@@ -319,6 +385,7 @@ class Args(FrozenModel):
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
+    legacy_daemon: bool = False
     bootstrap_peers: list[str] = []
     libp2p_port: int
 
@@ -377,6 +444,11 @@ class Args(FrozenModel):
             "--no-batch",
             action="store_true",
             help="Disable continuous batching, use sequential generation",
+        )
+        parser.add_argument(
+            "--legacy-daemon",
+            action="store_true",
+            help="Run as a legacy SysV-style background daemon using double-fork daemonization",
         )
         parser.add_argument(
             "--bootstrap-peers",
