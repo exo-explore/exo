@@ -287,10 +287,11 @@ def shard_and_load(
         _hosts = _json.loads(hosts_json)
         _my_rank = int(os.environ.get("MLX_RANK", "0"))
         for i, h in enumerate(_hosts):
-            ip = str(h).split(":")[0] if not isinstance(h, dict) else h.get("ip", "")
-            if ip == "0.0.0.0":
-                _cuda_ranks.append(str(i))
+            if i == _my_rank:
+                if _is_cuda:
+                    _cuda_ranks.append(str(i))
                 continue
+            ip = str(h).split(":")[0] if not isinstance(h, dict) else h.get("ip", "")
             peer_port = 40000 + i
             try:
                 s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)

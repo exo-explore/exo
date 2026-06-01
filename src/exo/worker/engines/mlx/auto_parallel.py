@@ -1,3 +1,4 @@
+import atexit as _atexit
 import socket as _socket
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator
@@ -166,6 +167,21 @@ class TcpRelay:
         self._server_socket.bind(("0.0.0.0", self._tcp_port))
         self._server_socket.listen(self.world_size)
         self._server_socket.settimeout(120.0)
+        _atexit.register(self.close)
+
+    def close(self) -> None:
+        for sock in self._connections.values():
+            try:
+                sock.close()
+            except Exception:
+                pass
+        self._connections.clear()
+        if self._server_socket is not None:
+            try:
+                self._server_socket.close()
+            except Exception:
+                pass
+            self._server_socket = None
 
     def _connect_to(self, dst_rank: int) -> _socket.socket:
         if dst_rank in self._connections:
@@ -273,13 +289,15 @@ class TcpRelay:
 
     @staticmethod
     def _recv_exact(sock: _socket.socket, n: int) -> bytes:
-        data = b""
-        while len(data) < n:
-            chunk = sock.recv(min(n - len(data), 65536))
+        buf = bytearray(n)
+        view = memoryview(buf)
+        while view:
+            chunk = sock.recv(min(view.nbytes, 65536))
             if not chunk:
                 raise ConnectionError("Connection closed")
-            data += chunk
-        return data
+            view[:len(chunk)] = chunk
+            view = view[len(chunk):]
+        return bytes(buf)
 
 
 def flush_prefill_sends() -> None:
