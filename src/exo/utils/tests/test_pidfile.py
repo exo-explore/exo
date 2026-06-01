@@ -8,14 +8,14 @@ import textwrap
 from pathlib import Path
 from typing import Final
 
-from exo_rs import Pidfile
+from exo_rs.pidfile import Pidfile
 
 _CHILD_ACQUIRE_PIDFILE_SCRIPT: Final = textwrap.dedent(
     """
     import sys
     from pathlib import Path
 
-    from exo_rs import Pidfile, PidfileError
+    from exo_rs.pidfile import Pidfile, PidfileError
 
     path = Path(sys.argv[1])
     try:

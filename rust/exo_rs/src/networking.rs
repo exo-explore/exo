@@ -5,19 +5,19 @@ use crate::r#const::MPSC_CHANNEL_SIZE;
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
 use crate::ext::{ResultExt as _, TokioMpscSenderExt as _};
 use crate::ident::PyKeypair;
-use crate::networking::exception::{
-    PyAllQueuesFullError, PyMessageTooLargeError, PyNoPeersSubscribedToTopicError,
-};
 use crate::pyclass;
 use futures_lite::{Stream, StreamExt as _};
 use libp2p::gossipsub::PublishError;
 use networking::swarm::{FromSwarm, ToSwarm, create_swarm};
 use pyo3::exceptions::PyRuntimeError;
-use pyo3::prelude::{PyModule, PyModuleMethods as _};
 use pyo3::types::PyBytes;
 use pyo3::{Bound, Py, PyAny, PyErr, PyResult, Python, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
 use tokio::sync::{Mutex, mpsc, oneshot};
+
+pub use exception::{
+    PyAllQueuesFullError, PyMessageTooLargeError, PyNoPeersSubscribedToTopicError,
+};
 
 mod exception {
     use pyo3::types::PyTuple;
@@ -129,7 +129,7 @@ mod exception {
 
 #[gen_stub_pyclass]
 #[pyclass(name = "NetworkingHandle")]
-struct PyNetworkingHandle {
+pub struct PyNetworkingHandle {
     // channels
     pub to_swarm: mpsc::Sender<ToSwarm>,
     pub swarm: Arc<Mutex<Pin<Box<dyn Stream<Item = FromSwarm> + Send>>>>,
@@ -137,7 +137,7 @@ struct PyNetworkingHandle {
 
 #[gen_stub_pyclass_complex_enum]
 #[pyclass(name = "FromSwarm")]
-enum PyFromSwarm {
+pub enum PyFromSwarm {
     Connection {
         peer_id: String,
         connected: bool,
@@ -148,6 +148,7 @@ enum PyFromSwarm {
         data: Py<PyBytes>,
     },
 }
+
 impl From<FromSwarm> for PyFromSwarm {
     fn from(value: FromSwarm) -> Self {
         match value {
@@ -295,15 +296,4 @@ impl PyNetworkingHandle {
             })?;
         Ok(())
     }
-}
-
-pub fn networking_submodule(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<exception::PyNoPeersSubscribedToTopicError>()?;
-    m.add_class::<exception::PyAllQueuesFullError>()?;
-    m.add_class::<exception::PyMessageTooLargeError>()?;
-
-    m.add_class::<PyNetworkingHandle>()?;
-    m.add_class::<PyFromSwarm>()?;
-
-    Ok(())
 }

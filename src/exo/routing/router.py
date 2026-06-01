@@ -12,10 +12,10 @@ from anyio import (
     move_on_after,
     sleep_forever,
 )
-from exo_rs import (
+from exo_rs.ident import Keypair
+from exo_rs.networking import (
     AllQueuesFullError,
     FromSwarm,
-    Keypair,
     MessageTooLargeError,
     NetworkingHandle,
     NoPeersSubscribedToTopicError,

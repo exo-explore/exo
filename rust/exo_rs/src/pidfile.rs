@@ -1,6 +1,5 @@
 use pidfile_rs::{Pidfile, PidfileError};
 use pyo3::exceptions::PyException;
-use pyo3::prelude::{PyModule, PyModuleMethods};
 use pyo3::{Bound, PyErr, PyResult, Python, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::fs;
@@ -118,11 +117,4 @@ impl PyPidfile {
     fn close(&mut self) {
         self.0 = None;
     }
-}
-
-pub fn pidfile_submodule(m: &Bound<PyModule>) -> PyResult<()> {
-    m.add_class::<PyPidfileError>()?;
-    m.add_class::<PyPidfile>()?;
-
-    Ok(())
 }

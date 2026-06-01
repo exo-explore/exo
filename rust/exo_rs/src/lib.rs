@@ -1,21 +1,14 @@
-//! TODO: crate documentation
-//!
-//! this is here as a placeholder documentation
-//!
-//!
+//! Python package for EXO Rust bindings.
+
+module_doc!("exo_rs", "Python package for EXO Rust bindings.");
 
 mod allow_threading;
-mod ident;
-mod networking;
-mod pidfile;
+pub mod ident;
+pub mod networking;
+pub mod pidfile;
 
-use crate::ident::PyKeypair;
-use crate::networking::networking_submodule;
-use crate::pidfile::pidfile_submodule;
-use pyo3::prelude::PyModule;
-use pyo3::types::PyModuleMethods;
-use pyo3::{Bound, PyResult, pyclass, pymodule};
-use pyo3_stub_gen::define_stub_info_gatherer;
+use pyo3::{pyclass, pymodule};
+use pyo3_stub_gen::{define_stub_info_gatherer, module_doc, reexport_module_members};
 
 /// Namespace for all the constants used by this crate.
 pub(crate) mod r#const {
@@ -150,28 +143,43 @@ pub(crate) mod ext {
     }
 }
 
-/// A Python module implemented in Rust. The name of this function must match
-/// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
-/// import the module.
-#[pymodule(name = "exo_rs", gil_used = true)]
-fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // install logger
-    pyo3_log::init();
-    let mut builder = tokio::runtime::Builder::new_multi_thread();
-    builder.enable_all();
-    pyo3_async_runtimes::tokio::init(builder);
+#[pymodule(name = "_core", gil_used = true)]
+mod py_exo_rs {
+    #[pymodule_export]
+    use super::ident::PyKeypair;
+    #[pymodule_export]
+    use super::networking::{
+        PyAllQueuesFullError, PyFromSwarm, PyMessageTooLargeError, PyNetworkingHandle,
+        PyNoPeersSubscribedToTopicError,
+    };
+    #[pymodule_export]
+    use super::pidfile::{PyPidfile, PyPidfileError};
+    use pyo3::{
+        PyResult,
+        prelude::{Bound, PyModule},
+    };
 
-    // TODO: for now this is all NOT a submodule, but figure out how to make the submodule system
-    //       work with maturin, where the types generate correctly, in the right folder, without
-    //       too many importing issues...
-    m.add_class::<PyKeypair>()?;
-    networking_submodule(m)?;
-    pidfile_submodule(m)?;
+    #[pymodule_init]
+    fn init(_m: &Bound<'_, PyModule>) -> PyResult<()> {
+        // install logger (TODO: change to tracing)
+        pyo3_log::init();
 
-    // top-level constructs
-    // TODO: ...
+        // create pyo3_async_runtimes
+        let mut builder = tokio::runtime::Builder::new_multi_thread();
+        builder.enable_all();
+        pyo3_async_runtimes::tokio::init(builder);
 
-    Ok(())
+        Ok(())
+    }
 }
+
+// make sure these re-exports match the #[pymodule_export] from above
+reexport_module_members!("exo_rs.ident" from "exo_rs._core";
+    "Keypair");
+reexport_module_members!("exo_rs.networking" from "exo_rs._core";
+    "AllQueuesFullError", "FromSwarm", "MessageTooLargeError", "NetworkingHandle",
+    "NoPeersSubscribedToTopicError");
+reexport_module_members!("exo_rs.pidfile" from "exo_rs._core";
+    "Pidfile", "PidfileError");
 
 define_stub_info_gatherer!(stub_info);

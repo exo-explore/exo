@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "exo_rs"
-version = "0.2.16"
+version = "0.2.18"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -19,8 +19,8 @@ dev = ["exo_rs", "pytest>=8.4.0", "pytest-asyncio>=1.0.0"]
 
 [tool.maturin]
 #purelib = true
-#python-source = "python"
-module-name = "exo_rs"
+python-source = "python"
+module-name = "exo_rs._core"
 features = ["pyo3/extension-module", "pyo3/experimental-async"]
 
 [tool.pyo3-stub-gen]
@@ -30,3 +30,6 @@ generate-init-py = true
 log_cli = true
 log_cli_level = "INFO"
 asyncio_mode = "auto"
+
+[tool.uv]
+cache-keys = [{ file = "src/**/*.rs" }]

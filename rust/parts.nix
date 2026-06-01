@@ -32,8 +32,17 @@
             isRootCargoFile =
               (baseName == "Cargo.toml" || baseName == "Cargo.lock")
               && (builtins.dirOf path == toString inputs.self);
+            isExoRsPythonSource =
+              (lib.hasInfix "/rust/exo_rs/python/" path || lib.hasSuffix "/rust/exo_rs/python" path)
+              && (
+                type == "directory"
+                || lib.hasSuffix ".py" path
+                || lib.hasSuffix ".pyi" path
+                || baseName == "py.typed"
+              );
           in
           isRootCargoFile
+          || isExoRsPythonSource
           || (inRustDir && (craneLib.filterCargoSources path type || lib.hasSuffix ".toml" path || lib.hasSuffix ".md" path));
       };
 
