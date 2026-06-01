@@ -345,6 +345,17 @@ async def fetch_config_data(model_id: ModelId) -> ConfigData:
         download_file_with_retry,
         resolve_model_dir,
     )
+    from exo.shared.constants import EXO_MODELS_READ_ONLY_DIRS, EXO_MODELS_DIRS
+    # Check local directories first before attempting any HF download
+    logger.info(f"LOCAL CHECK: {model_id} dirs={[str(d) for d in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS)]}")
+    _normalized = model_id.normalize()
+    for _search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
+        _local_config = _search_dir / _normalized / "config.json"
+        if _local_config.exists():
+            async with aiofiles.open(_local_config, "r") as f:
+                return ConfigData.model_validate_json(
+                    await f.read(), context={"model_id": str(model_id)}
+                )
 
     target_dir = await resolve_model_dir(model_id)
     config_path = await download_file_with_retry(
@@ -369,6 +380,18 @@ async def fetch_safetensors_size(model_id: ModelId) -> Memory:
         resolve_model_dir,
     )
     from exo.shared.types.worker.downloads import ModelSafetensorsIndex
+    from exo.shared.constants import EXO_MODELS_READ_ONLY_DIRS, EXO_MODELS_DIRS
+    # Check local directories first before attempting any HF download
+    logger.info(f"LOCAL CHECK: {model_id} dirs={[str(d) for d in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS)]}")
+    _normalized = model_id.normalize()
+    for _search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
+        _local_index = _search_dir / _normalized / "model.safetensors.index.json"
+        if _local_index.exists():
+            async with aiofiles.open(_local_index, "r") as f:
+                index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
+            metadata = index_data.metadata
+            if metadata is not None and metadata.total_size is not None:
+                return Memory.from_bytes(metadata.total_size)
 
     target_dir = await resolve_model_dir(model_id)
     index_path = await download_file_with_retry(
