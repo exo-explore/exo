@@ -204,11 +204,11 @@ class TcpRelay:
 
         dtype_map = {
             np.float32: 0, np.float16: 1, np.int32: 2, np.int64: 3,
-            np.bool_: 4, np.uint8: 5,
+            np.bool_: 4, np.uint8: 5, np.bfloat16: 6,
         }
         dtype_code = dtype_map.get(x_np.dtype.type, 0)
 
-        data = x_np.astype(np.float32).tobytes()
+        data = x_np.tobytes()
         header = struct.pack("!IIIQ", len(x_np.shape), dtype_code, x_np.dtype.itemsize, len(data))
         shape_data = struct.pack(f"!{len(x_np.shape)}I", *x_np.shape)
 
@@ -258,12 +258,17 @@ class TcpRelay:
                 raise ConnectionError(f"TcpRelay accept from rank {src} timed out after 120 attempts")
 
         header = self._recv_exact(sock, 20)
-        ndim, _dtype_code, _itemsize, total = struct.unpack("!IIIQ", header)
+        ndim, dtype_code, itemsize, total = struct.unpack("!IIIQ", header)
         shape_data = self._recv_exact(sock, ndim * 4)
         shape = struct.unpack(f"!{ndim}I", shape_data)
 
         data = self._recv_exact(sock, total)
-        arr = np.frombuffer(data, dtype=np.float32).reshape(shape)
+        dtype_rmap = {
+            0: np.float32, 1: np.float16, 2: np.int32, 3: np.int64,
+            4: np.bool_, 5: np.uint8, 6: np.bfloat16,
+        }
+        np_dtype = dtype_rmap.get(dtype_code, np.float32)
+        arr = np.frombuffer(data, dtype=np_dtype).reshape(shape)
         return mx.array(arr)
 
     @staticmethod

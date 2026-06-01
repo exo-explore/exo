@@ -107,7 +107,31 @@ def _rotate_metal_to_middle(
     cycle: Cycle,
     node_backends: Mapping[NodeId, list[Backend]],
 ) -> Cycle:
-    return cycle
+    """Rotate a 3-node Pipeline cycle so the Metal node sits at rank 1 (middle).
+
+    Ensures all pipeline send/recv go through Metal↔CUDA links (which work)
+    instead of CUDA↔CUDA links (which hang in MLX 0.32.0 ring backend).
+    """
+    if len(cycle) != 3:
+        return cycle
+
+    for i, node_id in enumerate(cycle):
+        if Backend.MlxMetal in set(node_backends.get(node_id, [])):
+            metal_idx = i
+            break
+    else:
+        return cycle
+
+    if metal_idx == 1:
+        return cycle
+
+    nids = list(cycle.node_ids)
+    if metal_idx == 0:
+        rotated = [nids[2], nids[0], nids[1]]
+    else:
+        rotated = [nids[1], nids[2], nids[0]]
+
+    return Cycle(node_ids=rotated)
 
 
 def place_instance(
