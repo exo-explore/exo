@@ -222,7 +222,9 @@ class Node:
                     and self.master is None
                     and self._no_master
                 ):
-                    logger.warning("Node won election but --no-master is set. Refusing promotion.")
+                    logger.warning(
+                        "Node won election but --no-master is set. Refusing promotion."
+                    )
                 elif (
                     result.session_id.master_node_id == self.node_id
                     and self.master is None

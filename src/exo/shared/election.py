@@ -257,7 +257,10 @@ class Election:
         # Non-candidate nodes must never propose themselves as master.
         # Re-propose the last known master instead. During a solo partition
         # this prevents the node from winning by default.
-        if not self.is_candidate and self.current_session.master_node_id != self.node_id:
+        if (
+            not self.is_candidate
+            and self.current_session.master_node_id != self.node_id
+        ):
             return ElectionMessage(
                 proposed_session=self.current_session,
                 clock=c,

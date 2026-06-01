@@ -19,7 +19,9 @@ if "exo_rs" not in sys.modules:
     _stub.FromSwarm = _FromSwarm  # type: ignore[attr-defined]
     _stub.AllQueuesFullError = type("AllQueuesFullError", (Exception,), {})  # type: ignore[attr-defined]
     _stub.MessageTooLargeError = type("MessageTooLargeError", (Exception,), {})  # type: ignore[attr-defined]
-    _stub.NoPeersSubscribedToTopicError = type("NoPeersSubscribedToTopicError", (Exception,), {})  # type: ignore[attr-defined]
+    _stub.NoPeersSubscribedToTopicError = type(
+        "NoPeersSubscribedToTopicError", (Exception,), {}
+    )  # type: ignore[attr-defined]
     _stub.Keypair = MagicMock  # type: ignore[attr-defined]
     _stub.NetworkingHandle = MagicMock  # type: ignore[attr-defined]
     _stub.Pidfile = MagicMock  # type: ignore[attr-defined]
