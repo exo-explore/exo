@@ -28,7 +28,6 @@ from exo.shared.types.commands import (
     ImageGeneration,
     PlaceInstance,
     RequestEventLog,
-    SendInputChunk,
     TaskCancelled,
     TaskFinished,
     TestCommand,
@@ -39,7 +38,6 @@ from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
     IndexedEvent,
-    InputChunkReceived,
     InstanceDeleted,
     LocalForwarderEvent,
     NodeGatheredInfo,
@@ -403,13 +401,6 @@ class Master:
                                 self.state.instances, placement, self.state.tasks
                             )
                             generated_events.extend(transition_events)
-                        case SendInputChunk(chunk=chunk):
-                            generated_events.append(
-                                InputChunkReceived(
-                                    command_id=chunk.command_id,
-                                    chunk=chunk,
-                                )
-                            )
                         case TaskCancelled():
                             if (
                                 task_id := self.command_task_mapping.get(
