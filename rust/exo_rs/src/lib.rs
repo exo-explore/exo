@@ -8,6 +8,7 @@ mod allow_threading;
 mod ident;
 mod networking;
 mod pidfile;
+mod settings;
 
 use crate::ident::PyKeypair;
 use crate::networking::networking_submodule;

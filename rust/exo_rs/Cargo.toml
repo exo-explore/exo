@@ -48,6 +48,11 @@ pyo3-log = "0.13.3"
 
 pidfile-rs = { git = "https://github.com/AndreiCravtov/pidfile-rs" }
 
+# settings
+clap = { version = "4.6.1", features = ["derive"] }
+figment = { version = "0.10", features = ["env", "toml"] }
+serde = { version = "1.0", features = ["derive"] }
+
 # macro dependencies
 extend = { workspace = true }
 delegate = { workspace = true }
