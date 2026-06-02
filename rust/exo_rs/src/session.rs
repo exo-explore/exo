@@ -14,6 +14,7 @@ use crate::{
     last_value::{LVAggregator, LVPublisher, LVSubscriber, spawn_lv_aggregator_onto},
     networking::PyNetworkingHandle,
     storage::Storage,
+    task::{TaskRequester, TaskResponder},
 };
 
 #[gen_stub_pyclass]
@@ -102,6 +103,29 @@ impl SessionHandle {
         Storage {
             session: self.session.z.clone(),
         }
+    }
+
+    pub fn task_requester(&self) -> TaskRequester {
+        TaskRequester {
+            session: self.session.z.clone(),
+        }
+    }
+
+    pub fn task_responder(&self, instance_id: String) -> PyResult<TaskResponder> {
+        let queryable = self
+            .session
+            .z
+            .declare_queryable(format!("task/instances/{instance_id}/tasks/*"))
+            .complete(true)
+            .wait()
+            .map_err(|e| {
+                PyConnectionError::new_err(format!("failed to declare task responder: {e}"))
+            })?;
+        Ok(TaskResponder {
+            instance_id,
+            queryable,
+            session: self.session.z.clone(),
+        })
     }
 }
 

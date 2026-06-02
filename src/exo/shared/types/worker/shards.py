@@ -50,6 +50,9 @@ class BaseShardMetadata(TaggedModel):
     def is_primary_output(self) -> bool:
         return self.device_rank == self.world_size - 1
 
+    def is_primary_output_node(self) -> bool:
+        return self.is_primary_output()
+
 
 @final
 class PipelineShardMetadata(BaseShardMetadata):

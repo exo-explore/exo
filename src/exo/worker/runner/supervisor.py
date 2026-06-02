@@ -12,15 +12,33 @@ from anyio import (
     CancelScope,
     ClosedResourceError,
 )
+from exo_rs import TaskChunkSender, TaskRequest, TaskResponder
 from loguru import logger
+from pydantic import TypeAdapter
 
 from exo.shared.constants import EXO_RUNNER_STDERR_LOG, EXO_RUNNER_STDOUT_LOG
 from exo.shared.types.chunks import ErrorChunk
+from exo.shared.types.commands import (
+    Command,
+    TaskCancelled,
+    TaskFinished,
+)
+from exo.shared.types.commands import (
+    ImageEdits as ImageEditsCommand,
+)
+from exo.shared.types.commands import (
+    ImageGeneration as ImageGenerationCommand,
+)
+from exo.shared.types.commands import (
+    TextGeneration as TextGenerationCommand,
+)
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
     RunnerStatusUpdated,
     TaskAcknowledged,
+    TaskCreated,
+    TaskDeleted,
     TaskStatusUpdated,
 )
 from exo.shared.types.tasks import (
@@ -56,6 +74,7 @@ from exo.worker.runner.diagnostics import (
 
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
+_BRIDGE_COMMAND_ADAPTER: TypeAdapter[Command] = TypeAdapter(Command)
 
 
 @dataclass(eq=False)
@@ -189,12 +208,18 @@ class RunnerSupervisor:
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
     _cancel_sender: MpSender[TaskId]
+    _task_responder: TaskResponder | None = None
     _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
     in_progress: dict[TaskId, Task] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
     cancelled: set[TaskId] = field(default_factory=set, init=False)
+    bridge_tasks: dict[TaskId, Task] = field(default_factory=dict, init=False)
+    bridge_command_tasks: dict[str, TaskId] = field(default_factory=dict, init=False)
+    bridge_chunk_senders: dict[str, TaskChunkSender] = field(
+        default_factory=dict, init=False
+    )
     _cancel_watch_runner: anyio.CancelScope = field(
         default_factory=anyio.CancelScope, init=False
     )
@@ -205,6 +230,7 @@ class RunnerSupervisor:
         *,
         bound_instance: BoundInstance,
         event_sender: Sender[Event],
+        task_responder: TaskResponder | None = None,
         initialize_timeout: float = 400,
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event | RunnerTerminationError]()
@@ -238,6 +264,7 @@ class RunnerSupervisor:
             _task_sender=task_sender,
             _cancel_sender=cancel_sender,
             _event_sender=event_sender,
+            _task_responder=task_responder,
         )
 
         return self
@@ -251,6 +278,8 @@ class RunnerSupervisor:
 
                 tg.start_soon(self._watch_runner)
                 tg.start_soon(self._forward_events)
+                if self._task_responder is not None:
+                    tg.start_soon(self._run_task_responder, self._task_responder)
         finally:
             logger.info("Runner supervisor shutting down")
             if not self._cancel_watch_runner.cancel_called:
@@ -346,6 +375,10 @@ class RunnerSupervisor:
                         )
                         self.in_progress.pop(event.task_id, None)
                         self.completed.add(event.task_id)
+                    if isinstance(
+                        event, ChunkGenerated
+                    ) and await self._send_bridge_chunk(event):
+                        continue
                     await self._event_sender.send(event)
         except (ClosedResourceError, BrokenResourceError):
             # this is the happy path shutdown - we don't need to spam log with it
@@ -353,6 +386,107 @@ class RunnerSupervisor:
         finally:
             for tid in self.pending:
                 self.pending[tid].set()
+
+    async def _run_task_responder(self, responder: TaskResponder) -> None:
+        while True:
+            received = await responder.recv()
+            if received is None:
+                return
+            request, chunk_sender, payload = received
+            if payload is None:
+                request.reply_err("Task command query did not include a payload")
+                continue
+
+            try:
+                command = _BRIDGE_COMMAND_ADAPTER.validate_json(payload)
+                match command:
+                    case TextGenerationCommand():
+                        await self._submit_bridge_task(request, chunk_sender, command)
+                    case ImageGenerationCommand():
+                        await self._submit_bridge_task(request, chunk_sender, command)
+                    case ImageEditsCommand():
+                        await self._submit_bridge_task(request, chunk_sender, command)
+                    case TaskCancelled(cancelled_command_id=command_id):
+                        await self._cancel_bridge_task(command_id)
+                        request.reply(command_id)
+                    case TaskFinished(finished_command_id=command_id):
+                        await self._finish_bridge_task(command_id)
+                        request.reply(command_id)
+                    case _:
+                        request.reply_err(f"Unsupported bridge command: {command}")
+            except Exception as exception:
+                logger.opt(exception=exception).warning(
+                    "Failed to admit bridge command"
+                )
+                request.reply_err(str(exception))
+
+    async def _submit_bridge_task(
+        self,
+        request: TaskRequest,
+        chunk_sender: TaskChunkSender,
+        command: TextGenerationCommand | ImageGenerationCommand | ImageEditsCommand,
+    ) -> None:
+        task_id = TaskId()
+        match command:
+            case TextGenerationCommand():
+                task = TextGeneration(
+                    task_id=task_id,
+                    command_id=command.command_id,
+                    instance_id=self.bound_instance.instance.instance_id,
+                    task_status=TaskStatus.Pending,
+                    task_params=command.task_params,
+                )
+            case ImageGenerationCommand():
+                task = ImageGeneration(
+                    task_id=task_id,
+                    command_id=command.command_id,
+                    instance_id=self.bound_instance.instance.instance_id,
+                    task_status=TaskStatus.Pending,
+                    task_params=command.task_params,
+                )
+            case ImageEditsCommand():
+                task = ImageEdits(
+                    task_id=task_id,
+                    command_id=command.command_id,
+                    instance_id=self.bound_instance.instance.instance_id,
+                    task_status=TaskStatus.Pending,
+                    task_params=command.task_params,
+                )
+
+        self.bridge_tasks[task.task_id] = task
+        self.bridge_command_tasks[command.command_id] = task.task_id
+        self.bridge_chunk_senders[command.command_id] = chunk_sender
+        await self._event_sender.send(TaskCreated(task_id=task.task_id, task=task))
+        request.reply(command.command_id)
+
+    async def _cancel_bridge_task(self, command_id: str) -> None:
+        task_id = self.bridge_command_tasks.get(command_id)
+        if task_id is None:
+            logger.warning(f"Unable to cancel unknown bridge command {command_id}")
+            return
+        await self.cancel_task(task_id)
+        await self._event_sender.send(
+            TaskStatusUpdated(task_id=task_id, task_status=TaskStatus.Cancelled)
+        )
+
+    async def _finish_bridge_task(self, command_id: str) -> None:
+        task_id = self.bridge_command_tasks.pop(command_id, None)
+        if task_id is None:
+            logger.warning(f"Unable to finish unknown bridge command {command_id}")
+            return
+        self.bridge_tasks.pop(task_id, None)
+        self.bridge_chunk_senders.pop(command_id, None)
+        await self._event_sender.send(TaskDeleted(task_id=task_id))
+
+    async def _send_bridge_chunk(self, event: ChunkGenerated) -> bool:
+        task_id = self.bridge_command_tasks.get(event.command_id)
+        if task_id is None:
+            return False
+        chunk_sender = self.bridge_chunk_senders.get(event.command_id)
+        if chunk_sender is None:
+            return False
+        await chunk_sender.send(event.chunk.model_dump_json())
+        return True
 
     async def _watch_runner(self) -> None:
         with self._cancel_watch_runner:

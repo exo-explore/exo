@@ -144,6 +144,8 @@ class Master:
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._world_sizes: dict[TaskId, int] = {}
+        self.aggregator = aggregator
+        self.storage = storage
 
     async def run(self):
         logger.info("Starting Master")
