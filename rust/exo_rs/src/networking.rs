@@ -1,23 +1,23 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::r#const::MPSC_CHANNEL_SIZE;
-use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
+use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _, TokioRuntimeExt};
 use crate::ext::{ResultExt as _, TokioMpscSenderExt as _};
 use crate::ident::PyKeypair;
 use crate::networking::exception::{
     PyAllQueuesFullError, PyMessageTooLargeError, PyNoPeersSubscribedToTopicError,
 };
 use crate::pyclass;
+use crate::r#const::MPSC_CHANNEL_SIZE;
 use futures_lite::{Stream, StreamExt as _};
 use libp2p::gossipsub::PublishError;
-use networking::swarm::{FromSwarm, ToSwarm, create_swarm};
+use networking::swarm::{create_swarm, FromSwarm, ToSwarm};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::{PyModule, PyModuleMethods as _};
 use pyo3::types::PyBytes;
-use pyo3::{Bound, Py, PyAny, PyErr, PyResult, Python, pymethods};
+use pyo3::{pymethods, Bound, Py, PyErr, PyResult, Python};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 mod exception {
     use pyo3::types::PyTuple;
@@ -202,20 +202,35 @@ impl PyNetworkingHandle {
         })
     }
 
-    #[gen_stub(override_return_type(
-        type_repr="typing.Awaitable[FromSwarm]", imports=("typing")
-    ))]
-    fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    // #[gen_stub(override_return_type(
+    //     type_repr="typing.Awaitable[FromSwarm]", imports=("typing")
+    // ))]
+    // fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    //     let swarm = self.swarm.clone();
+    //     pyo3_async_runtimes::tokio::future_into_py(py, async move {
+    //         swarm
+    //             .try_lock()
+    //             .map_err(|_| PyRuntimeError::new_err("called recv twice concurrently"))?
+    //             .next()
+    //             .await
+    //             .ok_or(PyErr::receiver_channel_closed())
+    //             .map(PyFromSwarm::from)
+    //     })
+    // }
+
+    async fn recv(&self) -> PyResult<PyFromSwarm> {
         let swarm = self.swarm.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            swarm
-                .try_lock()
-                .map_err(|_| PyRuntimeError::new_err("called recv twice concurrently"))?
-                .next()
-                .await
-                .ok_or(PyErr::receiver_channel_closed())
-                .map(PyFromSwarm::from)
-        })
+        pyo3_async_runtimes::tokio::get_runtime()
+            .run_with_scope(async move {
+                swarm
+                    .try_lock()
+                    .map_err(|_| PyRuntimeError::new_err("called recv twice concurrently"))?
+                    .next()
+                    .await
+                    .ok_or(PyErr::receiver_channel_closed())
+                    .map(PyFromSwarm::from)
+            })
+            .await?
     }
 
     // ---- Gossipsub management methods ----
