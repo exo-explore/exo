@@ -1,5 +1,5 @@
 [package]
-name = "exo_pyo3_bindings"
+name = "exo_rs"
 version = { workspace = true }
 edition = { workspace = true }
 publish = false
@@ -7,7 +7,7 @@ publish = false
 [lib]
 doctest = false
 path = "src/lib.rs"
-name = "exo_pyo3_bindings"
+name = "exo_rs"
 
 # "cdylib" needed to produce shared library for Python to import
 # "rlib" needed for stub-gen to run
@@ -25,7 +25,7 @@ workspace = true
 networking = { workspace = true }
 
 # interop
-pyo3 = { version = "0.27.2", features = [
+pyo3 = { version = "0.28.3", features = [
   # "abi3-py313", # tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.13
   # "nightly", # enables better-supported GIL integration
   "experimental-async", # async support in #[pyfunction] & #[pymethods]
@@ -38,13 +38,13 @@ pyo3 = { version = "0.27.2", features = [
   # "ordered-float", "rust_decimal", "smallvec",
   # "anyhow", "chrono", "chrono-local", "chrono-tz", "eyre", "jiff-02", "lock_api", "parking-lot", "time",  "serde",
 ] }
-pyo3-stub-gen = { version = "0.17.2" }
-pyo3-async-runtimes = { version = "0.27.0", features = [
+pyo3-stub-gen = { version = "0.22.3" }
+pyo3-async-runtimes = { version = "0.28.0", features = [
   "attributes",
   "tokio-runtime",
   "testing",
 ] }
-pyo3-log = "0.13.2"
+pyo3-log = "0.13.3"
 
 pidfile-rs = { git = "https://github.com/AndreiCravtov/pidfile-rs" }
 

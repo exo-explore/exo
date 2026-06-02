@@ -10,7 +10,7 @@ from typing import Self
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
 from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
-from exo_pyo3_bindings import Pidfile, PidfileError
+from exo_rs import Pidfile, PidfileError
 from loguru import logger
 from pydantic import PositiveInt
 

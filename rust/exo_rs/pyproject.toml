@@ -3,8 +3,8 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "exo_pyo3_bindings"
-version = "0.2.10"
+name = "exo_rs"
+version = "0.2.16"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -15,13 +15,16 @@ requires-python = ">=3.13"
 dependencies = []
 
 [dependency-groups]
-dev = ["exo_pyo3_bindings", "pytest>=8.4.0", "pytest-asyncio>=1.0.0"]
+dev = ["exo_rs", "pytest>=8.4.0", "pytest-asyncio>=1.0.0"]
 
 [tool.maturin]
 #purelib = true
 #python-source = "python"
-module-name = "exo_pyo3_bindings"
+module-name = "exo_rs"
 features = ["pyo3/extension-module", "pyo3/experimental-async"]
+
+[tool.pyo3-stub-gen]
+generate-init-py = true
 
 [tool.pytest.ini_options]
 log_cli = true
