@@ -229,6 +229,12 @@ The macOS app requires macOS Tahoe 26.2 or later.
 
 Download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-latest.dmg).
 
+You can also install the latest build with Homebrew:
+
+```bash
+brew install --cask exo
+```
+
 The app will ask for permission to modify system settings and install a new Network profile. Improvements to this are being worked on.
 
 **Custom Namespace for Cluster Isolation:**
