@@ -70,14 +70,14 @@ impl Swarm {
                     token = discovery.recv_async() => {
                         if let Ok(token) = token {
                             let key_expr = token.key_expr().as_str().to_owned();
-                            let nid = key_expr.strip_prefix("live/");
+                            let zid = key_expr.strip_prefix("live/");
                             yield match token.kind() {
                                 SampleKind::Put => {
-                                    log::info!("discovered: {nid:?}");
+                                    log::info!("discovered: {zid:?}");
                                     FromSwarm::Discovered {}
                                 }
                                 SampleKind::Delete => {
-                                    log::info!("expired: {nid:?}");
+                                    log::info!("expired: {zid:?}");
                                     FromSwarm::Expired {}
                                 }
                             }

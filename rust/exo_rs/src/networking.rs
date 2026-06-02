@@ -24,7 +24,7 @@ pub struct PyNetworkingHandle {
 }
 
 #[gen_stub_pyclass_complex_enum]
-#[pyclass]
+#[pyclass(name = "FromSwarm")]
 pub enum PyFromSwarm {
     Connection { connected: bool },
     Message { topic: String, data: Py<PyBytes> },
@@ -66,14 +66,14 @@ impl PyNetworkingHandle {
     // ---- Lifecycle management methods ----
 
     #[staticmethod]
-    pub fn new<'py>(
+    pub fn new(
         identity: &str,
         listen_port: u16,
         discovery_service_port: u16,
     ) -> PyResult<PyNetworkingHandle> {
         // todo: zenoh self assigned peers
         if listen_port == 0 {
-            todo!();
+            todo!("cannot listen on port 0 yet");
         }
         // create communication channels
         let (to_swarm, from_client) = mpsc::channel(1024);
@@ -105,9 +105,11 @@ impl PyNetworkingHandle {
         })
     }
 
-    #[gen_stub(skip)]
+    #[gen_stub(override_return_type(
+        type_repr="typing.Awaitable[FromSwarm]", imports=("typing")
+    ))]
     pub fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let swarm = Arc::clone(&self.swarm);
+        let swarm = self.swarm.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             swarm
                 .try_lock()
@@ -188,15 +190,6 @@ impl PyNetworkingHandle {
             .map_err(|_| PyErr::receiver_channel_closed())?
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(())
-    }
-}
-
-pyo3_stub_gen::inventory::submit! {
-    gen_methods_from_python! {
-        r#"
-            class PyNetworkingHandle:
-                async def recv() -> PyFromSwarm: ...
-        "#
     }
 }
 

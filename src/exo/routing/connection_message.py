@@ -1,4 +1,4 @@
-from exo_rs import PyFromSwarm
+from exo_rs import FromSwarm
 
 from exo.utils.pydantic_ext import FrozenModel
 
@@ -9,5 +9,5 @@ class ConnectionMessage(FrozenModel):
     connected: bool
 
     @classmethod
-    def from_update(cls, update: PyFromSwarm.Connection) -> "ConnectionMessage":
+    def from_update(cls, update: FromSwarm.Connection) -> "ConnectionMessage":
         return cls(connected=update.connected)

@@ -77,7 +77,6 @@ impl PyPidfile {
 #[pymethods]
 impl PyPidfile {
     /// Creates a new PID file and locks it.
-    /// Writes the current process ID to the PID file.
     ///
     /// If the PID file cannot be locked, returns `PidfileError::AlreadyRunning` with
     /// a PID of the already running process, or `None` if no PID has been written to

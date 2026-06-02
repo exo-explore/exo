@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "exo_rs"
-version = "0.3.0"
+version = "0.3.1"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -28,3 +28,6 @@ generate-init-py = true
 log_cli = true
 log_cli_level = "INFO"
 asyncio_mode = "auto"
+
+[tool.uv]
+cache-keys = [{ file = "src/**/*.rs" }]

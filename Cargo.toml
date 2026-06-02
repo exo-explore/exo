@@ -21,12 +21,6 @@ opt-level = 3
 ## Crate members as common dependencies
 networking = { path = "rust/networking" }
 
-# pyo3
-pyo3 = "0.27.2"
-pyo3-async-runtimes = "0.27.0"
-pyo3-log = "0.13.2"
-pyo3-stub-gen = "0.22.2"
-
 # util
 extend = "1.2"
 delegate = "0.13"

@@ -6,14 +6,14 @@ from _pytest.capture import CaptureFixture
 from exo_rs import (
     NetworkingHandle,
     Pidfile,
-    PyFromSwarm,
+    FromSwarm,
 )
 
 
 @pytest.mark.asyncio
 async def test_sleep_on_multiple_items() -> None:
     print("PYTHON: starting handle")
-    h = NetworkingHandle.new(os.urandom(16), [], 0)
+    h = NetworkingHandle.new(os.urandom(16).hex().lstrip("0"), 52414, 52413)
     print("PYTHON: handle started")
 
     rt = asyncio.create_task(_await_recv(h))
@@ -36,9 +36,9 @@ async def _await_recv(h: NetworkingHandle):
     while True:
         event = await h.recv()
         match event:
-            case PyFromSwarm.Connection() as c:
+            case FromSwarm.Connection() as c:
                 print(f"PYTHON: connection update: {c}")
-            case PyFromSwarm.Message() as m:
+            case FromSwarm.Message() as m:
                 print(f"PYTHON: message: {m}")
 
 
