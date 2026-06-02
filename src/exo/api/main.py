@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import anyio
 from anyio import BrokenResourceError, ClosedResourceError
-from exo_rs import SessionHandle
+from exo_rs import SessionHandle, TaskStream
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -23,7 +23,7 @@ from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from hypercorn.utils import LifespanTimeoutError, ShutdownError
 from loguru import logger
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
@@ -49,6 +49,10 @@ from exo.api.adapters.responses import (
     responses_request_to_text_generation,
 )
 from exo.api.keepalive import with_sse_keepalive
+from exo.api.load_balancing import (
+    instance_id_for_command,
+    load_instance_links,
+)
 from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
@@ -206,6 +210,9 @@ from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
+_TEXT_CHUNK_ADAPTER: TypeAdapter[
+    TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk
+] = TypeAdapter(TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk)
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
 
 
@@ -259,6 +266,7 @@ class API:
         self._sent_image_hashes: set[str] = set()
         self.aggregator = session_handle.last_value_aggregator("node_metrics")
         self.storage = session_handle.storage_interface()
+        self.task_requester = session_handle.task_requester()
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -293,6 +301,7 @@ class API:
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
         ] = {}
+        self._bridge_command_instances: dict[CommandId, InstanceId] = {}
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
 
@@ -304,6 +313,7 @@ class API:
         self._system_id = SystemId()
         self._text_generation_queues = {}
         self._image_generation_queues = {}
+        self._bridge_command_instances = {}
         self.unpause(result_clock)
         self.event_receiver.close()
         self.event_receiver = event_receiver
@@ -795,6 +805,65 @@ class API:
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
 
+    async def _bridge_token_chunk_stream(
+        self, command_id: CommandId, stream: TaskStream
+    ) -> AsyncGenerator[
+        TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk, None
+    ]:
+        try:
+            while (payload := await stream.recv()) is not None:
+                parsed = _TEXT_CHUNK_ADAPTER.validate_json(payload)
+                yield parsed
+                if isinstance(parsed, PrefillProgressChunk):
+                    continue
+                if parsed.finish_reason is not None:
+                    break
+        except anyio.get_cancelled_exc_class():
+            await self.task_requester.interrupt(
+                self._instance_id_for_command_id(command_id),
+                command_id,
+                TaskCancelled(cancelled_command_id=command_id).model_dump_json(),
+            )
+            raise
+        finally:
+            try:
+                await self.task_requester.interrupt(
+                    self._instance_id_for_command_id(command_id),
+                    command_id,
+                    TaskFinished(finished_command_id=command_id).model_dump_json(),
+                )
+            finally:
+                self._bridge_command_instances.pop(command_id, None)
+
+    async def _submit_task_command(
+        self, command: TextGeneration | ImageGeneration | ImageEdits
+    ) -> TaskStream:
+        instance_links = load_instance_links(
+            list((await self.storage.dump("instance_links/")).values())
+        )
+        instance_id = instance_id_for_command(
+            self.state.with_aggregator(self.aggregator), command, instance_links
+        )
+        self._bridge_command_instances[command.command_id] = instance_id
+        return await self.task_requester.submit(
+            instance_id,
+            command.command_id,
+            command.model_dump_json(),
+        )
+
+    def _instance_id_for_command_id(self, command_id: CommandId) -> InstanceId:
+        if instance_id := self._bridge_command_instances.get(command_id):
+            return instance_id
+        for task in self.state.tasks.values():
+            if (
+                isinstance(
+                    task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
+                )
+                and task.command_id == command_id
+            ):
+                return task.instance_id
+        raise RuntimeError(f"No task found for command {command_id}")
+
     async def _collect_text_generation_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
@@ -876,13 +945,14 @@ class API:
         )
 
     async def _send_text_generation_with_images(
-        self, task_params: TextGenerationTaskParams
+        self, task_params: TextGenerationTaskParams, *, submit: bool = True
     ) -> TextGeneration:
         task_params = task_params.with_card_sampling_defaults()
         images = task_params.images
         if not images:
             command = TextGeneration(task_params=task_params)
-            await self._send(command)
+            if submit:
+                await self._send(command)
             return command
 
         hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
@@ -899,7 +969,8 @@ class API:
                 new_images.append((idx, img))
 
         if not new_images:
-            await self._send(command)
+            if submit:
+                await self._send(command)
             return command
 
         all_chunks: list[tuple[int, str]] = []
@@ -908,20 +979,22 @@ class API:
                 all_chunks.append((img_idx, img_data[i : i + EXO_MAX_CHUNK_SIZE]))
 
         for global_idx, (img_idx, chunk_data) in enumerate(all_chunks):
-            await self._send(
-                SendInputChunk(
-                    chunk=InputImageChunk(
-                        model=task_params.model,
-                        command_id=command.command_id,
-                        data=chunk_data,
-                        chunk_index=global_idx,
-                        total_chunks=len(all_chunks),
-                        image_index=img_idx,
+            if submit:
+                await self._send(
+                    SendInputChunk(
+                        chunk=InputImageChunk(
+                            model=task_params.model,
+                            command_id=command.command_id,
+                            data=chunk_data,
+                            chunk_index=global_idx,
+                            total_chunks=len(all_chunks),
+                            image_index=img_idx,
+                        )
                     )
                 )
-            )
 
-        await self._send(command)
+        if submit:
+            await self._send(command)
         return command
 
     async def chat_completions(
@@ -932,14 +1005,24 @@ class API:
         validated_model = await self._validate_model_has_instance(task_params.model)
         task_params = task_params.model_copy(update={"model": validated_model})
 
-        command = await self._send_text_generation_with_images(task_params)
+        use_task_bridge = not task_params.images
+        command = await self._send_text_generation_with_images(
+            task_params, submit=not use_task_bridge
+        )
+        if use_task_bridge:
+            bridge_stream = await self._submit_task_command(command)
+            chunk_stream = self._bridge_token_chunk_stream(
+                command.command_id, bridge_stream
+            )
+        else:
+            chunk_stream = self._token_chunk_stream(command.command_id)
 
         if payload.stream:
             return StreamingResponse(
                 with_sse_keepalive(
                     generate_chat_stream(
                         command.command_id,
-                        self._token_chunk_stream(command.command_id),
+                        chunk_stream,
                     ),
                 ),
                 media_type="text/event-stream",
@@ -953,7 +1036,7 @@ class API:
             return StreamingResponse(
                 collect_chat_response(
                     command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    chunk_stream,
                 ),
                 media_type="application/json",
             )

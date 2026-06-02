@@ -390,9 +390,15 @@ class Worker:
 
     async def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""
+        task_responder = (
+            self._sh.task_responder(task.instance_id)
+            if task.bound_instance.is_primary_output_node()
+            else None
+        )
         runner = await RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
+            task_responder=task_responder,
         )
         self.runners[task.bound_instance.bound_runner_id] = runner
         self._tg.start_soon(runner.run)

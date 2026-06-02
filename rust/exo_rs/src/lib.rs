@@ -10,12 +10,14 @@ pub mod networking;
 pub mod pidfile;
 pub mod session;
 mod storage;
+mod task;
 
 use crate::last_value::lv_submodule;
 use crate::networking::networking_submodule;
 use crate::pidfile::pidfile_submodule;
 use crate::session::session_submodule;
 use crate::storage::storage_submodule;
+use crate::task::task_submodule;
 use pyo3::prelude::PyModule;
 use pyo3::{Bound, PyResult, pymodule};
 use pyo3_stub_gen::define_stub_info_gatherer;
@@ -165,6 +167,7 @@ fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     lv_submodule(m)?;
     session_submodule(m)?;
     storage_submodule(m)?;
+    task_submodule(m)?;
 
     Ok(())
 }
