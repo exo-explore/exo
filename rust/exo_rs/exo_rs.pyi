@@ -17,6 +17,11 @@ __all__ = [
     "SessionHandle",
     "Storage",
     "StorageGetter",
+    "TaskChunkSender",
+    "TaskRequest",
+    "TaskRequester",
+    "TaskResponder",
+    "TaskStream",
 ]
 
 class FromSwarm:
@@ -138,6 +143,8 @@ class SessionHandle:
     def last_value_subscriber(self, kexpr: builtins.str) -> LVSubscriber: ...
     def last_value_publisher(self, kexpr: builtins.str) -> LVPublisher: ...
     def storage_interface(self) -> Storage: ...
+    def task_requester(self) -> TaskRequester: ...
+    def task_responder(self, instance_id: builtins.str) -> TaskResponder: ...
 
 @typing.final
 class Storage:
@@ -150,4 +157,26 @@ class Storage:
 @typing.final
 class StorageGetter:
     def recv(self) -> collections.abc.Awaitable[tuple[str, str] | None]: ...
+
+@typing.final
+class TaskChunkSender:
+    def send(self, chunk: builtins.str) -> collections.abc.Awaitable[None]: ...
+
+@typing.final
+class TaskRequest:
+    def reply(self, payload: builtins.str) -> None: ...
+    def reply_err(self, payload: builtins.str) -> None: ...
+
+@typing.final
+class TaskRequester:
+    def submit(self, instance_id: builtins.str, command_id: builtins.str, command: builtins.str) -> collections.abc.Awaitable[TaskStream]: ...
+    def interrupt(self, instance_id: builtins.str, command_id: builtins.str, command: builtins.str) -> collections.abc.Awaitable[None]: ...
+
+@typing.final
+class TaskResponder:
+    def recv(self) -> collections.abc.Awaitable[tuple[TaskRequest, TaskChunkSender, str | None] | None]: ...
+
+@typing.final
+class TaskStream:
+    def recv(self) -> collections.abc.Awaitable[str | None]: ...
 
