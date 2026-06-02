@@ -803,12 +803,31 @@ class API:
         instance_id = instance_id_for_command(
             self.state.with_aggregator(self.aggregator), command, instance_links
         )
+        if instance_id is None:
+            await self._notify_if_model_needs_download(command)
+            raise HTTPException(
+                status_code=404,
+                detail=f"No instance found for model {command.task_params.model}",
+            )
         self._bridge_command_instances[command.command_id] = instance_id
         return await self.task_requester.submit(
             instance_id,
             command.command_id,
             command.model_dump_json(),
         )
+
+    async def _notify_if_model_needs_download(
+        self, command: TextGeneration | ImageGeneration | ImageEdits
+    ) -> None:
+        model_id = ModelId(command.task_params.model)
+        model_is_downloaded = any(
+            isinstance(download, DownloadCompleted)
+            and download.shard_metadata.model_card.model_id == model_id
+            for node_downloads in self.state.downloads.values()
+            for download in node_downloads
+        )
+        if not model_is_downloaded:
+            await self._trigger_notify_user_to_download_model(model_id)
 
     def _instance_id_for_command_id(self, command_id: CommandId) -> InstanceId:
         if instance_id := self._bridge_command_instances.get(command_id):
@@ -918,9 +937,6 @@ class API:
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
         task_params = await chat_request_to_text_generation(payload)
-        validated_model = await self._validate_model_has_instance(task_params.model)
-        task_params = task_params.model_copy(update={"model": validated_model})
-
         command = await self._text_generation_command(task_params)
         bridge_stream = await self._submit_task_command(command)
         chunk_stream = self._bridge_token_chunk_stream(command.command_id, bridge_stream)
@@ -953,11 +969,6 @@ class API:
         self, payload: BenchChatCompletionRequest
     ) -> BenchChatCompletionResponse | StreamingResponse:
         task_params = await chat_request_to_text_generation(payload)
-        validated_model = await self._validate_model_has_instance(
-            ModelId(task_params.model)
-        )
-        task_params = task_params.model_copy(update={"model": validated_model})
-
         task_params = task_params.model_copy(
             update={
                 "stream": False,
@@ -989,32 +1000,6 @@ class API:
         return await self._collect_text_generation_with_stats(
             command.command_id, chunk_stream
         )
-
-    async def _validate_model_has_instance(self, model_id: ModelId) -> ModelId:
-        """Validate a model has an active instance.
-        If the model isn't even downloaded, triggers notification to user to download model.
-
-
-        Raises HTTPException 404 if no instance is found for the model.
-        """
-        if not any(
-            instance.shard_assignments.model_id == model_id
-            for instance in self.state.instances.values()
-        ):
-            # Check if model is actually downloaded
-            model_is_downloaded = any(
-                isinstance(download, DownloadCompleted)
-                and download.shard_metadata.model_card.model_id == model_id
-                for node_downloads in self.state.downloads.values()
-                for download in node_downloads
-            )
-            if not model_is_downloaded:
-                await self._trigger_notify_user_to_download_model(model_id)
-
-            raise HTTPException(
-                status_code=404, detail=f"No instance found for model {model_id}"
-            )
-        return model_id
 
     def stream_events(self) -> StreamingResponse:
         def _generate_json_array(events: Iterable[Event]) -> Iterable[str]:
@@ -1068,9 +1053,6 @@ class API:
         """
         payload = payload.model_copy(
             update={
-                "model": await self._validate_model_has_instance(
-                    ModelId(payload.model)
-                ),
                 "advanced_params": _ensure_seed(payload.advanced_params),
             }
         )
@@ -1300,9 +1282,6 @@ class API:
     ) -> BenchImageGenerationResponse:
         payload = payload.model_copy(
             update={
-                "model": await self._validate_model_has_instance(
-                    ModelId(payload.model)
-                ),
                 "stream": False,
                 "partial_images": 0,
                 "advanced_params": _ensure_seed(payload.advanced_params),
@@ -1340,7 +1319,6 @@ class API:
         advanced_params: AdvancedImageParams | None,
     ) -> ImageEdits:
         """Prepare an image edits command with inline image data."""
-        validated_model = await self._validate_model_has_instance(model)
         advanced_params = _ensure_seed(advanced_params)
 
         image_content = await image.read()
@@ -1352,7 +1330,7 @@ class API:
             task_params=ImageEditsTaskParams(
                 image_data=image_data,
                 prompt=prompt,
-                model=validated_model,
+                model=model,
                 n=n,
                 size=size,
                 response_format=response_format,
@@ -1489,11 +1467,6 @@ class API:
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
         task_params = await claude_request_to_text_generation(payload)
-        validated_model = await self._validate_model_has_instance(
-            ModelId(task_params.model)
-        )
-        task_params = task_params.model_copy(update={"model": validated_model})
-
         command = await self._text_generation_command(task_params)
         bridge_stream = await self._submit_task_command(command)
         chunk_stream = self._bridge_token_chunk_stream(command.command_id, bridge_stream)
@@ -1529,9 +1502,6 @@ class API:
     ) -> ResponsesResponse | StreamingResponse:
         """OpenAI Responses API."""
         task_params = await responses_request_to_text_generation(payload)
-        validated_model = await self._validate_model_has_instance(task_params.model)
-        task_params = task_params.model_copy(update={"model": validated_model})
-
         command = await self._text_generation_command(task_params)
         bridge_stream = await self._submit_task_command(command)
         chunk_stream = self._bridge_token_chunk_stream(command.command_id, bridge_stream)
@@ -1572,11 +1542,6 @@ class API:
     ) -> OllamaChatResponse | StreamingResponse:
         """Ollama Chat API — accepts JSON regardless of Content-Type."""
         task_params = ollama_request_to_text_generation(request)
-        resolved_model = await self._validate_model_has_instance(
-            ModelId(task_params.model)
-        )
-        task_params = task_params.model_copy(update={"model": resolved_model})
-
         command = await self._text_generation_command(task_params)
         bridge_stream = await self._submit_task_command(command)
         chunk_stream = self._bridge_token_chunk_stream(command.command_id, bridge_stream)
@@ -1608,11 +1573,6 @@ class API:
     ) -> OllamaGenerateResponse | StreamingResponse:
         """Ollama Generate API — accepts JSON regardless of Content-Type."""
         task_params = ollama_generate_request_to_text_generation(request)
-        resolved_model = await self._validate_model_has_instance(
-            ModelId(task_params.model)
-        )
-        task_params = task_params.model_copy(update={"model": resolved_model})
-
         command = await self._text_generation_command(task_params)
         bridge_stream = await self._submit_task_command(command)
         chunk_stream = self._bridge_token_chunk_stream(command.command_id, bridge_stream)

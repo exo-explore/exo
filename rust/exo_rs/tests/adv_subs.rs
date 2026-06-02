@@ -69,7 +69,7 @@ async fn expect_two_values(
 async fn lv_subscriber_receives_last_value_from_multiple_publishers() {
     let cfg =
         networking::cfg(&format!("{:x}", rand::random::<u128>()), 52414).expect("create config");
-    let n_session = networking::open(cfg, 52414, 52413)
+    let n_session = networking::open(cfg, "exo", 52414, 52413)
         .await
         .expect("open session");
 
@@ -111,7 +111,7 @@ async fn lv_subscriber_receives_last_value_from_multiple_publishers() {
 async fn wildcard_advanced_subscriber_receives_history_from_both_publishers() {
     let cfg =
         networking::cfg(&format!("{:x}", rand::random::<u128>()), 52412).expect("create config");
-    let n_session = networking::open(cfg, 52412, 52411)
+    let n_session = networking::open(cfg, "exo", 52412, 52411)
         .await
         .expect("open session");
     let session = n_session.z.clone();
