@@ -77,8 +77,6 @@ def test_plan_forwards_pending_chat_completion_when_runner_ready():
         instances=instances,
         all_runners=all_runners,
         tasks={TASK_1_ID: task},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -131,8 +129,6 @@ def test_plan_does_not_forward_chat_completion_if_any_runner_not_ready():
         instances=instances,
         all_runners=all_runners,
         tasks={TASK_1_ID: task},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -182,8 +178,6 @@ def test_plan_does_not_forward_tasks_for_other_instances():
         instances=instances,
         all_runners=all_runners,
         tasks={foreign_task.task_id: foreign_task},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -251,8 +245,6 @@ def test_plan_ignores_non_pending_or_non_chat_tasks():
         instances=instances,
         all_runners=all_runners,
         tasks={TASK_1_ID: completed_task, other_task_id: other_task},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -294,8 +286,6 @@ def test_plan_returns_none_when_nothing_to_do():
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )

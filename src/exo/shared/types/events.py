@@ -4,7 +4,7 @@ from typing import final
 from pydantic import Field
 
 from exo.shared.topology import Connection
-from exo.shared.types.chunks import Chunk, InputImageChunk
+from exo.shared.types.chunks import Chunk
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
@@ -93,11 +93,6 @@ class ChunkGenerated(BaseEvent):
     chunk: Chunk
 
 
-class InputChunkReceived(BaseEvent):
-    command_id: CommandId
-    chunk: InputImageChunk
-
-
 class TopologyEdgeCreated(BaseEvent):
     conn: Connection
 
@@ -142,7 +137,6 @@ Event = (
     | NodeGatheredInfo
     | NodeDownloadProgress
     | ChunkGenerated
-    | InputChunkReceived
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
     | TracesCollected
