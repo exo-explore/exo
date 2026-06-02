@@ -44,20 +44,21 @@ let
         paths = builtins.concatMap (p: [ (lib.getBin p) (lib.getLib p) (lib.getDev p) ]) (cudaLibs ++ [ cudaPackages.cuda_nvcc cuda_cccl_compat ]);
       };
       exoOverlay = final: prev: {
-        # Replace workspace exo_pyo3_bindings with Nix-built wheel.
+        # Replace workspace exo_rs with Nix-built wheel.
         # Preserve passthru so mkVirtualEnv can resolve dependency groups.
         # Copy .pyi stub + py.typed marker so basedpyright can find the types.
-        exo-pyo3-bindings = pkgs.stdenv.mkDerivation {
-          pname = "exo-pyo3-bindings";
+        exo-rs = pkgs.stdenv.mkDerivation {
+          pname = "exo-rs";
           version = "0.1.0";
-          src = self'.packages.exo_pyo3_bindings;
+          src = self'.packages.exo-rs;
           # Install from pre-built wheel
           nativeBuildInputs = [ final.pyprojectWheelHook ];
           dontStrip = true;
-          passthru = prev.exo-pyo3-bindings.passthru or { };
+          passthru = prev.exo-rs.passthru or { };
+
           postInstall = ''
-            local siteDir=$out/${final.python.sitePackages}/exo_pyo3_bindings
-            cp ${inputs.self}/rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi $siteDir/
+            local siteDir=$out/${final.python.sitePackages}/exo_rs
+            cp ${inputs.self}/rust/exo_rs/exo_rs.pyi $siteDir/
             touch $siteDir/py.typed
           '';
         };
@@ -223,7 +224,7 @@ let
           ++ lib.optionals isDarwin [ pkgs.macmon ];
           passthru = {
             venv = venv name;
-            evenv = ((pythonSet.overrideScope editableOverlay).mkVirtualEnv "${name}-evenv" (members // { exo = (members.exo or [ ]) ++ [ "dev" ]; })).overrideAttrs (_: {
+            evenv = ((pythonSet.overrideScope editableOverlay).mkVirtualEnv "${name}-evenv" (members // { exo = (members.exo or [ ]) ++ [ "dev" ]; exo-rs = [ ]; })).overrideAttrs (_: {
               venvSkip = [ "lib/python${python.pythonVersion}/site-packages/mlx/share/cmake/*" "lib/python${python.pythonVersion}/site-packages/build_backend.py" ];
             });
           } // lib.optionalAttrs cudaSupport {

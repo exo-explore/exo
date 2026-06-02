@@ -16,9 +16,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::{PyModule, PyModuleMethods as _};
 use pyo3::types::PyBytes;
 use pyo3::{Bound, Py, PyAny, PyErr, PyResult, Python, pymethods};
-use pyo3_stub_gen::derive::{
-    gen_methods_from_python, gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods,
-};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 mod exception {
@@ -138,7 +136,7 @@ struct PyNetworkingHandle {
 }
 
 #[gen_stub_pyclass_complex_enum]
-#[pyclass]
+#[pyclass(name = "FromSwarm")]
 enum PyFromSwarm {
     Connection {
         peer_id: String,
@@ -204,9 +202,11 @@ impl PyNetworkingHandle {
         })
     }
 
-    #[gen_stub(skip)]
+    #[gen_stub(override_return_type(
+        type_repr="typing.Awaitable[FromSwarm]", imports=("typing")
+    ))]
     fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let swarm = Arc::clone(&self.swarm);
+        let swarm = self.swarm.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             swarm
                 .try_lock()
@@ -294,15 +294,6 @@ impl PyNetworkingHandle {
                 e => PyRuntimeError::new_err(e.to_string()),
             })?;
         Ok(())
-    }
-}
-
-pyo3_stub_gen::inventory::submit! {
-    gen_methods_from_python! {
-        r#"
-            class PyNetworkingHandle:
-                async def recv() -> PyFromSwarm: ...
-        "#
     }
 }
 

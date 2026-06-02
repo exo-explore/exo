@@ -55,6 +55,7 @@
         ];
 
         OPENSSL_NO_VENDOR = "1";
+        MATURIN_NO_INSTALL_RUST = "1";
 
         # Required for pyo3 tests to find libpython
         LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.python313 ];
@@ -81,11 +82,11 @@
       config = {
         packages = {
           # Python bindings wheel via maturin
-          exo_pyo3_bindings = craneLib.buildPackage (
+          exo-rs = craneLib.buildPackage (
             commonArgs
             // {
               inherit cargoArtifacts;
-              pname = "exo_pyo3_bindings";
+              pname = "exo-rs";
 
               nativeBuildInputs = commonArgs.nativeBuildInputs ++ [
                 pkgs.maturin
@@ -95,7 +96,7 @@
                 maturin build \
                   --release \
                   --manylinux off \
-                  --manifest-path rust/exo_pyo3_bindings/Cargo.toml \
+                  --manifest-path rust/exo_rs/Cargo.toml \
                   --features "pyo3/extension-module,pyo3/experimental-async" \
                   --interpreter ${pkgs.python313}/bin/python \
                   --out dist
