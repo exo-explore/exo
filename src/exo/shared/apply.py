@@ -9,7 +9,6 @@ from exo.shared.types.events import (
     ChunkGenerated,
     Event,
     IndexedEvent,
-    InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
     NodeDownloadProgress,
@@ -67,7 +66,6 @@ def event_apply(event: Event, state: State) -> State:
             TestEvent()
             | ChunkGenerated()
             | TaskAcknowledged()
-            | InputChunkReceived()
             | TracesCollected()
             | TracesMerged()
         ):  # Pass-through events that don't modify state

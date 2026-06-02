@@ -17,7 +17,7 @@ from loguru import logger
 from pydantic import TypeAdapter
 
 from exo.shared.constants import EXO_RUNNER_STDERR_LOG, EXO_RUNNER_STDOUT_LOG
-from exo.shared.types.chunks import ErrorChunk
+from exo.shared.types.chunks import ErrorChunk, PrefillProgressChunk
 from exo.shared.types.commands import (
     Command,
     TaskCancelled,
@@ -32,6 +32,7 @@ from exo.shared.types.commands import (
 from exo.shared.types.commands import (
     TextGeneration as TextGenerationCommand,
 )
+from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -74,6 +75,7 @@ from exo.worker.runner.diagnostics import (
 
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
+type BridgeTask = TextGeneration | ImageGeneration | ImageEdits
 _BRIDGE_COMMAND_ADAPTER: TypeAdapter[Command] = TypeAdapter(Command)
 
 
@@ -215,9 +217,11 @@ class RunnerSupervisor:
     in_progress: dict[TaskId, Task] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
     cancelled: set[TaskId] = field(default_factory=set, init=False)
-    bridge_tasks: dict[TaskId, Task] = field(default_factory=dict, init=False)
-    bridge_command_tasks: dict[str, TaskId] = field(default_factory=dict, init=False)
-    bridge_chunk_senders: dict[str, TaskChunkSender] = field(
+    bridge_tasks: dict[TaskId, BridgeTask] = field(default_factory=dict, init=False)
+    bridge_command_tasks: dict[CommandId, TaskId] = field(
+        default_factory=dict, init=False
+    )
+    bridge_chunk_senders: dict[CommandId, TaskChunkSender] = field(
         default_factory=dict, init=False
     )
     _cancel_watch_runner: anyio.CancelScope = field(
@@ -349,37 +353,56 @@ class RunnerSupervisor:
         try:
             with self._ev_recv as events:
                 async for event in events:
-                    if isinstance(event, RunnerTerminationError):
-                        # try to get exception if possible
-                        await self._check_runner(event)
-                        break
-                    if isinstance(event, RunnerStatusUpdated):
-                        self.status = event.runner_status
-                    if isinstance(event, TaskAcknowledged):
-                        self.pending.pop(event.task_id).set()
-                        continue
-                    if (
-                        isinstance(event, TaskStatusUpdated)
-                        and event.task_status == TaskStatus.Complete
-                    ):
-                        # If a task has just been completed, we should be working on it.
-                        assert isinstance(
-                            self.status,
-                            (
-                                RunnerRunning,
-                                RunnerWarmingUp,
-                                RunnerLoading,
-                                RunnerConnecting,
-                                RunnerShuttingDown,
-                            ),
-                        )
-                        self.in_progress.pop(event.task_id, None)
-                        self.completed.add(event.task_id)
-                    if isinstance(
-                        event, ChunkGenerated
-                    ) and await self._send_bridge_chunk(event):
-                        continue
-                    await self._event_sender.send(event)
+                    match event:
+                        case RunnerTerminationError():
+                            await self._check_runner(event)
+                            break
+
+                        case RunnerStatusUpdated(runner_status=runner_status):
+                            self.status = runner_status
+                            await self._event_sender.send(event)
+
+                        case TaskAcknowledged(task_id=task_id):
+                            self.pending.pop(task_id).set()
+
+                        case TaskStatusUpdated(
+                            task_id=task_id, task_status=TaskStatus.Complete
+                        ):
+                            # If a task has just been completed, we should be working on it.
+                            assert isinstance(
+                                self.status,
+                                (
+                                    RunnerRunning,
+                                    RunnerWarmingUp,
+                                    RunnerLoading,
+                                    RunnerConnecting,
+                                    RunnerShuttingDown,
+                                ),
+                            )
+                            self.in_progress.pop(task_id, None)
+                            self.completed.add(task_id)
+                            await self._event_sender.send(event)
+                            if task_id in self.bridge_tasks:
+                                await self._finish_bridge_task_id(task_id)
+
+                        case ChunkGenerated(command_id=command_id, chunk=chunk):
+                            task_id = self.bridge_command_tasks.get(command_id)
+                            chunk_sender = self.bridge_chunk_senders.get(command_id)
+                            if task_id is None or chunk_sender is None:
+                                logger.debug(
+                                    f"Dropping bridge chunk for inactive command {command_id}"
+                                )
+                                continue
+
+                            await chunk_sender.send(chunk.model_dump_json())
+                            if (
+                                not isinstance(chunk, PrefillProgressChunk)
+                                and chunk.finish_reason is not None
+                            ):
+                                self.bridge_chunk_senders.pop(command_id, None)
+
+                        case _:
+                            await self._event_sender.send(event)
         except (ClosedResourceError, BrokenResourceError):
             # this is the happy path shutdown - we don't need to spam log with it
             await self._check_runner()
@@ -459,7 +482,7 @@ class RunnerSupervisor:
         await self._event_sender.send(TaskCreated(task_id=task.task_id, task=task))
         request.reply(command.command_id)
 
-    async def _cancel_bridge_task(self, command_id: str) -> None:
+    async def _cancel_bridge_task(self, command_id: CommandId) -> None:
         task_id = self.bridge_command_tasks.get(command_id)
         if task_id is None:
             logger.warning(f"Unable to cancel unknown bridge command {command_id}")
@@ -468,25 +491,23 @@ class RunnerSupervisor:
         await self._event_sender.send(
             TaskStatusUpdated(task_id=task_id, task_status=TaskStatus.Cancelled)
         )
+        await self._finish_bridge_task_id(task_id)
 
-    async def _finish_bridge_task(self, command_id: str) -> None:
-        task_id = self.bridge_command_tasks.pop(command_id, None)
+    async def _finish_bridge_task(self, command_id: CommandId) -> None:
+        task_id = self.bridge_command_tasks.get(command_id)
         if task_id is None:
             logger.warning(f"Unable to finish unknown bridge command {command_id}")
             return
-        self.bridge_tasks.pop(task_id, None)
-        self.bridge_chunk_senders.pop(command_id, None)
-        await self._event_sender.send(TaskDeleted(task_id=task_id))
+        await self._finish_bridge_task_id(task_id)
 
-    async def _send_bridge_chunk(self, event: ChunkGenerated) -> bool:
-        task_id = self.bridge_command_tasks.get(event.command_id)
-        if task_id is None:
-            return False
-        chunk_sender = self.bridge_chunk_senders.get(event.command_id)
-        if chunk_sender is None:
-            return False
-        await chunk_sender.send(event.chunk.model_dump_json())
-        return True
+    async def _finish_bridge_task_id(self, task_id: TaskId) -> None:
+        task = self.bridge_tasks.pop(task_id, None)
+        if task is None:
+            logger.warning(f"Unable to finish unknown bridge task {task_id}")
+            return
+        self.bridge_command_tasks.pop(task.command_id, None)
+        self.bridge_chunk_senders.pop(task.command_id, None)
+        await self._event_sender.send(TaskDeleted(task_id=task_id))
 
     async def _watch_runner(self) -> None:
         with self._cancel_watch_runner:
