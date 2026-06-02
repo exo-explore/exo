@@ -12,8 +12,8 @@ from anyio import (
     sleep_forever,
 )
 from exo_rs import (
+    FromSwarm,
     NetworkingHandle,
-    PyFromSwarm,
 )
 from loguru import logger
 
@@ -186,7 +186,7 @@ class Router:
                 from_swarm = await self._net.recv()
                 logger.debug(from_swarm)
                 match from_swarm:
-                    case PyFromSwarm.Message(topic, data):
+                    case FromSwarm.Message(topic, data):
                         logger.trace(f"Received message on {topic} with payload {data}")
                         if topic not in self.topic_routers:
                             logger.warning(
@@ -195,7 +195,7 @@ class Router:
                             continue
                         router = self.topic_routers[topic]
                         await router.publish_bytes(data)
-                    case PyFromSwarm.Connection():
+                    case FromSwarm.Connection():
                         message = ConnectionMessage.from_update(from_swarm)
                         logger.trace(
                             f"Received message on connection_messages with payload {message}"

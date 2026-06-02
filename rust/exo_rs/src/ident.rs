@@ -1,3 +1,6 @@
+//! This module is not used - the docs don't need to be correct
+//!
+
 use crate::ext::ResultExt as _;
 use pyo3::types::{PyBytes, PyBytesMethods as _};
 use pyo3::{Bound, PyResult, Python, pyclass, pymethods};

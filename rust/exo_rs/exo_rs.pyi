@@ -6,16 +6,36 @@ import os
 import pathlib
 import typing
 __all__ = [
+    "FromSwarm",
     "NetworkingHandle",
     "Pidfile",
     "PidfileError",
-    "PyFromSwarm",
 ]
+
+class FromSwarm:
+    @typing.final
+    class Connection(FromSwarm):
+        __match_args__ = ("connected",)
+        @property
+        def connected(self) -> builtins.bool: ...
+        def __new__(cls, connected: builtins.bool) -> FromSwarm.Connection: ...
+    
+    @typing.final
+    class Message(FromSwarm):
+        __match_args__ = ("topic", "data",)
+        @property
+        def topic(self) -> builtins.str: ...
+        @property
+        def data(self) -> bytes: ...
+        def __new__(cls, topic: builtins.str, data: bytes) -> FromSwarm.Message: ...
+    
+    ...
 
 @typing.final
 class NetworkingHandle:
     @staticmethod
     def new(identity: builtins.str, listen_port: builtins.int, discovery_service_port: builtins.int) -> NetworkingHandle: ...
+    def recv(self) -> typing.Awaitable[FromSwarm]: ...
     async def gossipsub_subscribe(self, topic: builtins.str) -> builtins.bool:
         r"""
         Subscribe to a `GossipSub` topic.
@@ -34,7 +54,6 @@ class NetworkingHandle:
         
         If no peers are found that subscribe to this topic, throws `NoPeersSubscribedToTopicError` exception.
         """
-    async def recv(self) -> PyFromSwarm: ...
 
 @typing.final
 class Pidfile:
@@ -61,7 +80,6 @@ class Pidfile:
     def __new__(cls, path: builtins.str | os.PathLike | pathlib.Path, mode: builtins.int) -> Pidfile:
         r"""
         Creates a new PID file and locks it.
-        Writes the current process ID to the PID file.
         
         If the PID file cannot be locked, returns `PidfileError::AlreadyRunning` with
         a PID of the already running process, or `None` if no PID has been written to
@@ -92,23 +110,4 @@ class Pidfile:
 class PidfileError(builtins.Exception):
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
-
-class PyFromSwarm:
-    @typing.final
-    class Connection(PyFromSwarm):
-        __match_args__ = ("connected",)
-        @property
-        def connected(self) -> builtins.bool: ...
-        def __new__(cls, connected: builtins.bool) -> PyFromSwarm.Connection: ...
-    
-    @typing.final
-    class Message(PyFromSwarm):
-        __match_args__ = ("topic", "data",)
-        @property
-        def topic(self) -> builtins.str: ...
-        @property
-        def data(self) -> bytes: ...
-        def __new__(cls, topic: builtins.str, data: bytes) -> PyFromSwarm.Message: ...
-    
-    ...
 
