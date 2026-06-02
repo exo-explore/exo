@@ -137,19 +137,19 @@ async fn request_task_admission(
             }
         }
         Err(error) => {
-            if let Ok(payload) = error.payload().try_to_string() {
-                if payload == "Timeout" {
+            error.payload().try_to_string().map_or_else(
+                |err| Err(PyRuntimeError::new_err(format!(
+                    "task admission failed: {err}"
+                ))),
+
+                |ok| if ok == "Timeout" {
                     Err(PyTimeoutError::new_err("task admission timed out"))
                 } else {
                     Err(PyRuntimeError::new_err(format!(
-                        "task admission rejected: {payload}"
+                        "task admission rejected: {ok}"
                     )))
                 }
-            } else {
-                Err(PyRuntimeError::new_err(format!(
-                    "task admission failed: {error}"
-                )))
-            }
+            )
         }
     }
 }
@@ -178,7 +178,7 @@ impl TaskResponder {
                         if !query_key.starts_with(&key_prefix) {
                             continue;
                         }
-                        let key = query_key.to_string();
+                        let key = query_key.to_owned();
                         let command_id = query_key[key_prefix.len()..].to_string();
                         let payload = query.payload().map(|payload| {
                             payload
@@ -219,33 +219,11 @@ impl TaskChunkSender {
     pub fn send<'py>(&'py self, py: Python<'py>, chunk: String) -> PyResult<Bound<'py, PyAny>> {
         let publisher = Arc::clone(&self.publisher);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            wait_for_matching_subscriber(&publisher).await?;
             publisher
                 .put(chunk)
                 .await
                 .map_err(|e| PyConnectionError::new_err(format!("failed to send task chunk: {e}")))
         })
-    }
-}
-
-async fn wait_for_matching_subscriber(publisher: &Publisher<'static>) -> PyResult<()> {
-    let status = publisher.matching_status().await.map_err(|e| {
-        PyConnectionError::new_err(format!("failed to check task chunk subscribers: {e}"))
-    })?;
-    if status.matching() {
-        return Ok(());
-    }
-
-    let listener = publisher.matching_listener().await.map_err(|e| {
-        PyConnectionError::new_err(format!("failed to listen for task chunk subscribers: {e}"))
-    })?;
-    loop {
-        let status = listener.recv_async().await.map_err(|e| {
-            PyConnectionError::new_err(format!("task chunk subscriber listener closed: {e}"))
-        })?;
-        if status.matching() {
-            return Ok(());
-        }
     }
 }
 

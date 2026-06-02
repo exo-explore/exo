@@ -24,7 +24,7 @@ from exo.shared.types.worker.instances import InstanceId
 
 def decode_instance_for_text_generation(
     state: State, model_id: ModelId, instance_links: list[InstanceLink]
-) -> InstanceId:
+) -> InstanceId | None:
     prefill_only: set[InstanceId] = set()
     for link in instance_links:
         prefill_only.update(link.prefill_instances)
@@ -36,17 +36,17 @@ def decode_instance_for_text_generation(
         instance_task_counts.pop(instance_id, None)
 
     if not instance_task_counts:
-        raise ValueError(f"No instance found for model {model_id}")
+        return None
 
     return min(
         instance_task_counts, key=lambda instance_id: instance_task_counts[instance_id]
     )
 
 
-def instance_for_generation(state: State, model_id: ModelId) -> InstanceId:
+def instance_for_generation(state: State, model_id: ModelId) -> InstanceId | None:
     instance_task_counts = _instance_task_counts_for_model(state, model_id)
     if not instance_task_counts:
-        raise ValueError(f"No instance found for model {model_id}")
+        return None
 
     return min(
         instance_task_counts, key=lambda instance_id: instance_task_counts[instance_id]
@@ -59,6 +59,7 @@ def text_generation_task(
     instance_id = decode_instance_for_text_generation(
         state, command.task_params.model, instance_links
     )
+    assert instance_id is not None
     task_params = command.task_params.model_copy(
         update={
             "prefill_endpoint": prefill_endpoint_for(
@@ -80,20 +81,24 @@ def text_generation_task(
 def image_generation_task(
     state: State, command: ImageGeneration
 ) -> ImageGenerationTask:
+    instance_id = instance_for_generation(state, ModelId(command.task_params.model))
+    assert instance_id is not None
     return ImageGenerationTask(
         task_id=TaskId(),
         command_id=command.command_id,
-        instance_id=instance_for_generation(state, ModelId(command.task_params.model)),
+        instance_id=instance_id,
         task_status=TaskStatus.Pending,
         task_params=command.task_params,
     )
 
 
 def image_edits_task(state: State, command: ImageEdits) -> ImageEditsTask:
+    instance_id = instance_for_generation(state, ModelId(command.task_params.model))
+    assert instance_id is not None
     return ImageEditsTask(
         task_id=TaskId(),
         command_id=command.command_id,
-        instance_id=instance_for_generation(state, ModelId(command.task_params.model)),
+        instance_id=instance_id,
         task_status=TaskStatus.Pending,
         task_params=command.task_params,
     )
@@ -117,7 +122,7 @@ def instance_id_for_command(
     state: State,
     command: TextGeneration | ImageGeneration | ImageEdits,
     instance_links: list[InstanceLink],
-) -> InstanceId:
+) -> InstanceId | None:
     match command:
         case TextGeneration():
             return decode_instance_for_text_generation(
