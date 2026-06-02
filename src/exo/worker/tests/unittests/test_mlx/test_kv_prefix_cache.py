@@ -115,6 +115,36 @@ class TestSnapshotAccumulation:
             # The kept 8192 snapshot must be the most recently supplied one.
             assert stored[1] is fresh[0]
 
+    def test_extension_caps_snapshots_to_sliding_window(self):
+        """Extending a single entry to a long context (one snapshot per ~4096
+        tokens) must cap retained snapshots to a sliding window of the most-recent
+        N, not keep all of them — that linear-in-context retention was the
+        residual OOM cause."""
+        from exo.worker.engines.mlx.cache import _MAX_RETAINED_SNAPSHOTS
+
+        with patch(
+            "exo.worker.engines.mlx.cache.get_memory_used_percentage",
+            return_value=0.0,
+        ):
+            kv_prefix_cache = KVPrefixCache(None)
+            # 64 distinct positions = a 262144-token context at 4096/chunk.
+            num_positions = 64
+            snaps = [
+                CacheSnapshot(states=[None], token_count=4096 * (i + 1))
+                for i in range(num_positions)
+            ]
+            kv_prefix_cache.add_kv_cache(
+                mx.arange(10), [KVCache()], ssm_snapshots=snaps
+            )
+
+            stored = kv_prefix_cache._snapshots[0]
+            assert stored is not None
+            # Capped at the window; the most-recent N positions are retained
+            # (in-place grows extend from the tip, so these are what get used).
+            assert len(stored) == _MAX_RETAINED_SNAPSHOTS
+            assert stored == snaps[-_MAX_RETAINED_SNAPSHOTS:]
+            assert stored[-1] is snaps[-1]  # tip always kept
+
 
 class TestKVPrefix:
     @pytest.fixture
