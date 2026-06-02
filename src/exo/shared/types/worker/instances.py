@@ -52,6 +52,12 @@ class BoundInstance(FrozenModel):
     bound_runner_id: RunnerId
     bound_node_id: NodeId
 
+    def is_primary_output_node(self) -> bool:
+        return (
+            self.instance.shard_assignments.primary_output_node
+            == self.bound_shard.device_rank
+        )
+
     @property
     def bound_shard(self) -> ShardMetadata:
         shard = self.instance.shard(self.bound_runner_id)

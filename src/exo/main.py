@@ -127,7 +127,7 @@ class Node:
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
             download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
-            aggregator=session_handle.last_value_aggregator("metrics"),
+            aggregator=session_handle.last_value_aggregator("node_metrics"),
             storage=session_handle.storage_interface(),
         )
 
@@ -233,7 +233,7 @@ class Node:
                         download_command_sender=self.router.sender(
                             topics.DOWNLOAD_COMMANDS
                         ),
-                        aggregator=self._sh.last_value_aggregator("metrics"),
+                        aggregator=self._sh.last_value_aggregator("node_metrics"),
                         storage=self._sh.storage_interface(),
                     )
                     self._tg.start_soon(self.master.run)

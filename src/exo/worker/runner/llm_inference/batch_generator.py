@@ -94,7 +94,7 @@ class SequentialGenerator(Engine):
     kv_prefix_cache: KVPrefixCache | None
     tool_parser: ToolParser | None
     model_id: ModelId
-    device_rank: int
+    is_primary_output_node: bool
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
     vision_processor: VisionProcessor | None = None
@@ -201,7 +201,8 @@ class SequentialGenerator(Engine):
 
         return filter(
             lambda chunk: (
-                not isinstance(chunk[1], GenerationChunk) or self.device_rank == 0
+                self.is_primary_output_node
+                or isinstance(chunk[1], (CancelledResponse, FinishedResponse))
             ),
             itertools.chain(
                 output,
@@ -235,7 +236,7 @@ class SequentialGenerator(Engine):
         self._active = (task, gen, queue, output_generator)
 
     def _send_error(self, task: TextGeneration, e: Exception) -> None:
-        if self.device_rank == 0:
+        if self.is_primary_output_node:
             self.event_sender.send(
                 ChunkGenerated(
                     command_id=task.command_id,
@@ -252,7 +253,7 @@ class SequentialGenerator(Engine):
         prompt = apply_chat_template(self.tokenizer, task.task_params)
 
         def on_prefill_progress(processed: int, total: int) -> None:
-            if self.device_rank == 0:
+            if self.is_primary_output_node:
                 self.event_sender.send(
                     ChunkGenerated(
                         command_id=task.command_id,
@@ -325,7 +326,7 @@ class BatchGenerator(Engine):
     kv_prefix_cache: KVPrefixCache | None
     tool_parser: ToolParser | None
     model_id: ModelId
-    device_rank: int
+    is_primary_output_node: bool
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
     check_for_cancel_every: int = 50
@@ -460,7 +461,8 @@ class BatchGenerator(Engine):
 
         return filter(
             lambda chunk: (
-                not isinstance(chunk[1], GenerationChunk) or self.device_rank == 0
+                self.is_primary_output_node
+                or isinstance(chunk[1], (CancelledResponse, FinishedResponse))
             ),
             itertools.chain(output, self._apply_cancellations()),
         )
@@ -494,7 +496,7 @@ class BatchGenerator(Engine):
         return iter(results)
 
     def _send_error(self, task: TextGeneration, e: Exception) -> None:
-        if self.device_rank == 0:
+        if self.is_primary_output_node:
             self.event_sender.send(
                 ChunkGenerated(
                     command_id=task.command_id,
@@ -511,7 +513,7 @@ class BatchGenerator(Engine):
         prompt = apply_chat_template(self.tokenizer, task.task_params)
 
         def on_prefill_progress(processed: int, total: int) -> None:
-            if self.device_rank == 0:
+            if self.is_primary_output_node:
                 self.event_sender.send(
                     ChunkGenerated(
                         command_id=task.command_id,
