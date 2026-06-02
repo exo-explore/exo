@@ -5,17 +5,17 @@
 //!
 
 mod allow_threading;
+pub mod config;
 mod ident;
 mod networking;
 mod pidfile;
-mod settings;
 
 use crate::ident::PyKeypair;
 use crate::networking::networking_submodule;
 use crate::pidfile::pidfile_submodule;
 use pyo3::prelude::PyModule;
 use pyo3::types::PyModuleMethods;
-use pyo3::{Bound, PyResult, pyclass, pymodule};
+use pyo3::{pyclass, pymodule, Bound, PyResult};
 use pyo3_stub_gen::define_stub_info_gatherer;
 
 /// Namespace for all the constants used by this crate.
@@ -53,7 +53,7 @@ pub(crate) mod ext {
     }
 
     pub trait FutureExt: Future + Sized {
-        /// SEE: https://pyo3.rs/v0.26.0/async-await.html#detaching-from-the-interpreter-across-await
+        /// SEE: https://pyo3.rs/v0.28.3/async-await#detaching-from-the-interpreter-across-await
         fn allow_threads_py(self) -> AllowThreads<Self>
         where
             AllowThreads<Self>: Future,
@@ -91,13 +91,27 @@ pub(crate) mod ext {
 
     #[ext(pub, name = TokioRuntimeExt)]
     impl Runtime {
+        #[inline(always)]
         fn spawn_with_scope<F>(&self, py: Python<'_>, future: F) -> PyResult<JoinHandle<F::Output>>
         where
             F: Future + Send + 'static,
             F::Output: Send + 'static,
         {
-            let locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
-            Ok(self.spawn(pyo3_async_runtimes::tokio::scope(locals, future)))
+            use pyo3_async_runtimes::tokio::{get_current_locals, scope};
+            let locals = get_current_locals(py)?;
+            Ok(self.spawn(scope(locals, future)))
+        }
+
+        #[inline(always)]
+        async fn run_with_scope<F>(&self, future: F) -> PyResult<F::Output>
+        where
+            F: Future + Send + 'static,
+            F::Output: Send + 'static,
+        {
+            Python::attach(|py| self.spawn_with_scope(py, future))?
+                .allow_threads_py()
+                .await
+                .pyerr()
         }
     }
 
