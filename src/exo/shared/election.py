@@ -194,7 +194,7 @@ class Election:
             logger.info("Cancelling other campaign")
             self._campaign_cancel_scope.cancel()
         if self._campaign_done:
-            logger.info("Waiting for other campaign to finish")
+            logger.debug("Waiting for other campaign to finish")
             await self._campaign_done.wait()
 
         done = Event()
