@@ -109,7 +109,7 @@ impl PyNetworkingHandle {
         type_repr="typing.Awaitable[FromSwarm]", imports=("typing")
     ))]
     pub fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let swarm = self.swarm.clone();
+        let swarm = Arc::clone(&self.swarm);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             swarm
                 .try_lock()

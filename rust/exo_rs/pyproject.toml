@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "exo_rs"
-version = "0.3.1"
+version = "0.3.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
