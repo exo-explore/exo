@@ -103,7 +103,9 @@ class Worker:
         )
         self._stopped: anyio.Event = anyio.Event()
         self._sh: SessionHandle = session_handle
-        self.aggregator: LVAggregator = session_handle.last_value_aggregator("metrics")
+        self.aggregator: LVAggregator = session_handle.last_value_aggregator(
+            "node_metrics"
+        )
 
     async def run(self):
         logger.info("Starting Worker")

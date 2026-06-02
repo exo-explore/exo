@@ -257,7 +257,7 @@ class API:
         self.last_completed_election: int = 0
         self.port = port
         self._sent_image_hashes: set[str] = set()
-        self.aggregator = session_handle.last_value_aggregator("metrics")
+        self.aggregator = session_handle.last_value_aggregator("node_metrics")
         self.storage = session_handle.storage_interface()
 
         self.paused: bool = False
