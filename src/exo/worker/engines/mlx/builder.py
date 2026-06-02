@@ -38,11 +38,13 @@ class MlxBuilder(Builder):
     tokenizer: TokenizerWrapper | None = None
     group: mx.distributed.Group | None = None
     vision_processor: VisionProcessor | None = None
+    is_primary_output_node: bool = False
 
     def connect(self, bound_instance: BoundInstance) -> None:
         self.group = initialize_mlx(bound_instance)
 
     def load(self, bound_instance: BoundInstance) -> Generator[ModelLoadingResponse]:
+        self.is_primary_output_node = bound_instance.is_primary_output_node()
         (
             self.inference_model,
             self.tokenizer,
@@ -82,7 +84,6 @@ class MlxBuilder(Builder):
 
         kv_prefix_cache = KVPrefixCache(self.group)
 
-        device_rank = 0 if self.group is None else self.group.rank()
         if os.environ.get("EXO_NO_BATCH"):
             logger.info("using SequentialGenerator (batching disabled)")
             return SequentialGenerator(
@@ -92,7 +93,7 @@ class MlxBuilder(Builder):
                 tool_parser=tool_parser,
                 kv_prefix_cache=kv_prefix_cache,
                 model_id=self.model_id,
-                device_rank=device_rank,
+                is_primary_output_node=self.is_primary_output_node,
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
                 vision_processor=vision_processor,
@@ -106,7 +107,7 @@ class MlxBuilder(Builder):
                 tool_parser=tool_parser,
                 kv_prefix_cache=kv_prefix_cache,
                 model_id=self.model_id,
-                device_rank=device_rank,
+                is_primary_output_node=self.is_primary_output_node,
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
                 vision_processor=vision_processor,

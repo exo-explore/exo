@@ -411,7 +411,7 @@ class InfoGatherer:
     async def send(self, info: GatheredInfo):
         if (tag := info.tag()) not in self.info_senders:
             self.info_senders[tag] = self.session_handle.last_value_publisher(
-                f"metrics/{self.node_id}/{tag}"
+                f"node_metrics/{self.node_id}/{tag}"
             )
         await self.info_senders[tag].put(info.model_dump_json())
 
