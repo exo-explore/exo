@@ -1,3 +1,4 @@
+# pyright: reportAny=false
 """Regression tests for #1918: download status must not revert from completed to pending.
 
 The periodic rescan in _emit_existing_download_progress compares local file
@@ -12,7 +13,7 @@ from collections.abc import AsyncIterator, Awaitable
 from datetime import timedelta
 from pathlib import Path
 from typing import Callable, Literal
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.download_utils import RepoDownloadProgress
@@ -20,7 +21,6 @@ from exo.download.impl_shard_downloader import SingletonShardDownloader
 from exo.download.shard_downloader import ShardDownloader
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.backends import Backend
-from exo.shared.types.commands import ForwarderDownloadCommand
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import Event
 from exo.shared.types.memory import Memory
@@ -29,7 +29,7 @@ from exo.shared.types.worker.downloads import (
     DownloadPending,
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
-from exo.utils.channels import Sender, channel
+from exo.utils.channels import channel
 
 NODE_ID = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 MODEL_ID = ModelId("test-org/test-model")
@@ -121,22 +121,25 @@ class FakeShardDownloader(ShardDownloader):
         )
 
 
-def _setup_coordinator(
-    downloader: ShardDownloader,
-) -> tuple[
-    DownloadCoordinator,
-    Sender[ForwarderDownloadCommand],
-]:
-    cmd_send, cmd_recv = channel[ForwarderDownloadCommand]()
+def _setup_coordinator(downloader: ShardDownloader) -> DownloadCoordinator:
+    messages: asyncio.Queue[str] = asyncio.Queue()
+    mailbox = MagicMock()
+    mailbox.recv = AsyncMock(side_effect=messages.get)
+    session_handle = MagicMock()
+    session_handle.mailbox.return_value = mailbox
+    publisher = MagicMock()
+    publisher.put = AsyncMock()
+    publisher.delete = AsyncMock()
+    session_handle.last_value_publisher.return_value = publisher
     event_send, _event_recv = channel[Event]()
     wrapped = SingletonShardDownloader(downloader)
-    coordinator = DownloadCoordinator(
+    return DownloadCoordinator(
         node_id=NODE_ID,
         shard_downloader=wrapped,
-        download_command_receiver=cmd_recv,
         event_sender=event_send,
+        session_handle=session_handle,
+        mailbox=mailbox,
     )
-    return coordinator, cmd_send
 
 
 async def _wait_for_status(
@@ -162,7 +165,7 @@ async def test_completed_status_not_downgraded_by_rescan() -> None:
     DownloadPending when the periodic rescan reports a non-complete
     file-size status (regression test for #1918)."""
     downloader = FakeShardDownloader(status="not_started")
-    coordinator, _cmd_send = _setup_coordinator(downloader)
+    coordinator = _setup_coordinator(downloader)
 
     # Pre-seed the coordinator with a completed status for the model
     completed = DownloadCompleted(
@@ -196,7 +199,7 @@ async def test_incomplete_model_with_files_present_detected_as_complete() -> Non
     confirms the model directory is complete, the model should be marked
     DownloadCompleted (regression test for #1918 — initial scan case)."""
     downloader = FakeShardDownloader(status="not_started")
-    coordinator, _cmd_send = _setup_coordinator(downloader)
+    coordinator = _setup_coordinator(downloader)
 
     # Mock resolve_existing_model to return a valid path (model is on disk)
     with patch(
@@ -226,7 +229,7 @@ async def test_genuinely_incomplete_model_stays_pending() -> None:
     returns None (model truly not complete), the model should correctly be
     DownloadPending."""
     downloader = FakeShardDownloader(status="not_started")
-    coordinator, _cmd_send = _setup_coordinator(downloader)
+    coordinator = _setup_coordinator(downloader)
 
     # Mock resolve_existing_model to return None (model not on disk)
     with patch(

@@ -6,12 +6,7 @@ from os import PathLike
 from typing import Callable, Self
 
 import anyio
-from anyio import (
-    AsyncFile,
-    BrokenResourceError,
-    CancelScope,
-    ClosedResourceError,
-)
+from anyio import AsyncFile, BrokenResourceError, CancelScope, ClosedResourceError
 from exo_rs import (
     LVPublisher,
     LVSubscriber,
@@ -44,7 +39,6 @@ from exo.shared.types.events import (
     Event,
     RunnerStatusUpdated,
     TaskAcknowledged,
-    TaskCreated,
     TaskStatusUpdated,
 )
 from exo.shared.types.tasks import (
@@ -69,7 +63,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.async_process import AsyncProcess
-from exo.utils.channels import MpReceiver, MpSender, Receiver, Sender, mp_channel
+from exo.utils.channels import MpReceiver, MpSender, Receiver, mp_channel
 from exo.utils.fs import ensure_parent_directory_exists
 from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import RunnerTerminationError, entrypoint
@@ -226,7 +220,6 @@ class RunnerSupervisor:
     initialize_timeout: float
     _ev_recv: MpReceiver[Event | RunnerTerminationError]
     _task_sender: MpSender[Task]
-    _event_sender: Sender[Event]
     _cancel_sender: MpSender[TaskId]
     _task_responder: TaskResponder | None
     _task_assignment_subscriber: LVSubscriber
@@ -254,7 +247,6 @@ class RunnerSupervisor:
         cls,
         *,
         bound_instance: BoundInstance,
-        event_sender: Sender[Event],
         task_assignment_subscriber: LVSubscriber,
         runner_status_publisher: LVPublisher,
         task_responder: TaskResponder | None,
@@ -287,7 +279,6 @@ class RunnerSupervisor:
             _ev_recv=ev_recv,
             _task_sender=task_sender,
             _cancel_sender=cancel_sender,
-            _event_sender=event_sender,
             _task_responder=task_responder,
             _task_assignment_subscriber=task_assignment_subscriber,
             runner_status_publisher=runner_status_publisher,
@@ -319,8 +310,6 @@ class RunnerSupervisor:
             with contextlib.suppress(ClosedResourceError):
                 self._task_sender.close()
             with contextlib.suppress(ClosedResourceError):
-                self._event_sender.close()
-            with contextlib.suppress(ClosedResourceError):
                 self._cancel_sender.send(CANCEL_ALL_TASKS)
             with contextlib.suppress(ClosedResourceError):
                 self._cancel_sender.close()
@@ -339,15 +328,13 @@ class RunnerSupervisor:
         instance_id = self.bound_instance.instance.instance_id
         while (received := await subscriber.recv()) is not None:
             key, payload = received
-            if payload is None:
-                continue
             if (ids := _task_assignment_ids(key)) is None:
                 continue
             assigned_instance_id, assigned_task_id = ids
             if assigned_instance_id != instance_id:
                 continue
 
-            if payload is None or payload == "":
+            if payload is None:
                 self._assigned_tasks.pop(assigned_task_id, None)
                 continue
 
@@ -428,7 +415,6 @@ class RunnerSupervisor:
                             await self.runner_status_publisher.put(
                                 self.status.model_dump_json()
                             )
-                            await self._event_sender.send(event)
                             await self._reconcile_assigned_tasks()
 
                         case TaskAcknowledged(task_id=task_id):
@@ -451,7 +437,6 @@ class RunnerSupervisor:
                             self.in_progress.pop(task_id, None)
                             self.completed.add(task_id)
                             self._assigned_tasks.pop(task_id, None)
-                            await self._event_sender.send(event)
                             if task_id in self.bridge_tasks:
                                 await self._finish_bridge_task_id(task_id)
 
@@ -472,8 +457,8 @@ class RunnerSupervisor:
                                 self.bridge_chunk_senders.pop(command_id, None)
 
                         case _:
-                            await self._event_sender.send(event)
-        except (ClosedResourceError, BrokenResourceError):
+                            pass
+        except ClosedResourceError:
             # this is the happy path shutdown - we don't need to spam log with it
             await self._check_runner()
         finally:
@@ -549,7 +534,6 @@ class RunnerSupervisor:
         self.bridge_tasks[task.task_id] = task
         self.bridge_command_tasks[command.command_id] = task.task_id
         self.bridge_chunk_senders[command.command_id] = chunk_sender
-        await self._event_sender.send(TaskCreated(task_id=task.task_id, task=task))
         assert self._task_responder is not None
         await self._task_responder.assign_task(task.task_id, task.model_dump_json())
         request.reply(command.command_id)
@@ -560,9 +544,6 @@ class RunnerSupervisor:
             logger.warning(f"Unable to cancel unknown bridge command {command_id}")
             return
         await self.cancel_task(task_id)
-        await self._event_sender.send(
-            TaskStatusUpdated(task_id=task_id, task_status=TaskStatus.Cancelled)
-        )
         await self._finish_bridge_task_id(task_id)
 
     async def _finish_bridge_task(self, command_id: CommandId) -> None:
@@ -635,34 +616,24 @@ class RunnerSupervisor:
         ]
         for task in self.in_progress.values():
             if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
+                chunk_sender = self.bridge_chunk_senders.get(task.command_id)
+                if chunk_sender is None:
+                    continue
                 with anyio.CancelScope(shield=True):
-                    await self._event_sender.send(
-                        ChunkGenerated(
-                            command_id=task.command_id,
-                            chunk=ErrorChunk(
-                                model=self.bound_instance.bound_shard.model_card.model_id,
-                                diagnostics=diagnostics,
-                                error_message=(
-                                    "Runner shutdown before completing command "
-                                    f"({cause})"
-                                ),
+                    await chunk_sender.send(
+                        ErrorChunk(
+                            model=self.bound_instance.bound_shard.model_card.model_id,
+                            diagnostics=diagnostics,
+                            error_message=(
+                                "Runner shutdown before completing command "
+                                f"({cause})"
                             ),
-                        )
+                        ).model_dump_json()
                     )
 
-        try:
-            self.status = RunnerFailed(
-                error_message=f"Terminated ({cause})", diagnostics=diagnostics
-            )
-            with anyio.CancelScope(shield=True):
-                await self._event_sender.send(
-                    RunnerStatusUpdated(
-                        runner_id=self.bound_instance.bound_runner_id,
-                        runner_status=self.status,
-                    )
-                )
-        except (ClosedResourceError, BrokenResourceError):
-            logger.warning(
-                "Event sender already closed, unable to report runner failure"
-            )
+        self.status = RunnerFailed(
+            error_message=f"Terminated ({cause})", diagnostics=diagnostics
+        )
+        with anyio.CancelScope(shield=True):
+            await self.runner_status_publisher.put(self.status.model_dump_json())
         self.shutdown()

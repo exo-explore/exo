@@ -68,8 +68,10 @@ _DOWNLOAD_PROGRESS_ADAPTER = TypeAdapter[DownloadProgress](DownloadProgress)
 _GATHERED_INFO_ADAPTER = TypeAdapter[GatheredInfo](GatheredInfo)
 _RUNNER_STATUS_ADAPTER = TypeAdapter[RunnerStatus](RunnerStatus)
 _SOCKET_CONNECTIONS_ADAPTER = TypeAdapter[SocketConnections](SocketConnections)
+_TASK_ADAPTER = TypeAdapter[Task](Task)
 _NODE_METRICS_PREFIX = "node_metrics"
 _RUNNERS_TAG = "runners"
+_TASKS_TAG = "tasks"
 _SOCKET_CONNECTIONS_TAG = "socket_connections"
 _TOPOLOGY_RELEVANT_TAGS = frozenset(
     (
@@ -259,6 +261,20 @@ def dashboard_event_from_lv_update(
             ),
         )
 
+    if tag == _TASKS_TAG:
+        if subject_id is None:
+            logger.warning(f"Ignoring malformed dashboard task metric key: {key}")
+            return None
+        task = None if payload is None else _TASK_ADAPTER.validate_json(payload)
+        return (
+            "task_update",
+            DashboardTaskUpdate(
+                task_id=TaskId(subject_id),
+                task=task,
+                task_status=None if task is None else task.task_status,
+            ),
+        )
+
     if tag == _SOCKET_CONNECTIONS_TAG:
         return None
 
@@ -372,6 +388,8 @@ def _parse_node_metrics_key(key: str) -> tuple[NodeId, str, str | None] | None:
         return (node_id, tag, "/".join(parts[2:]))
     if tag == _RUNNERS_TAG and len(parts) == 4 and parts[3] == "status":
         return (node_id, tag, parts[2])
+    if tag == _TASKS_TAG and len(parts) == 3:
+        return (node_id, tag, parts[2])
     return (node_id, tag, None)
 
 
@@ -472,7 +490,7 @@ def _topology_inputs_from_last_values(
         if parsed is None:
             continue
         node_id, tag, _ = parsed
-        if tag in ("downloads", _RUNNERS_TAG):
+        if tag in ("downloads", _RUNNERS_TAG, _TASKS_TAG):
             continue
         node_ids.add(node_id)
         if tag == _SOCKET_CONNECTIONS_TAG:

@@ -216,12 +216,7 @@ impl TaskResponder {
         let instance_id = self.instance_id.clone();
         let assignments = Arc::clone(&self.assignments);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let publisher = assignments.lock().remove(&task_id);
-            if let Some(publisher) = publisher {
-                publisher.put("").await.map_err(|e| {
-                    PyConnectionError::new_err(format!("failed to unassign task: {e}"))
-                })?;
-            }
+            assignments.lock().remove(&task_id);
             session
                 .delete(task_assignment_key(&instance_id, &task_id))
                 .await

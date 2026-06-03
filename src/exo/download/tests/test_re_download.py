@@ -1,3 +1,4 @@
+# pyright: reportAny=false
 """Tests that re-downloading a previously deleted model completes successfully."""
 
 import asyncio
@@ -6,7 +7,7 @@ from collections.abc import AsyncIterator, Awaitable
 from datetime import timedelta
 from pathlib import Path
 from typing import Callable
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.download_utils import RepoDownloadProgress
@@ -16,15 +17,14 @@ from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
     DeleteDownload,
-    ForwarderDownloadCommand,
     StartDownload,
 )
-from exo.shared.types.common import NodeId, SystemId
+from exo.shared.types.common import NodeId
 from exo.shared.types.events import Event
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
-from exo.utils.channels import Sender, channel
+from exo.utils.channels import channel
 
 NODE_ID = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 MODEL_ID = ModelId("test-org/test-model")
@@ -131,8 +131,15 @@ async def test_re_download_after_delete_completes() -> None:
     """A model that was downloaded, deleted, and then re-downloaded should
     reach DownloadCompleted status. This is an end-to-end test through
     the DownloadCoordinator."""
-    cmd_send: Sender[ForwarderDownloadCommand]
-    cmd_send, cmd_recv = channel[ForwarderDownloadCommand]()
+    messages: asyncio.Queue[str] = asyncio.Queue()
+    mailbox = MagicMock()
+    mailbox.recv = AsyncMock(side_effect=messages.get)
+    session_handle = MagicMock()
+    session_handle.mailbox.return_value = mailbox
+    publisher = MagicMock()
+    publisher.put = AsyncMock()
+    publisher.delete = AsyncMock()
+    session_handle.last_value_publisher.return_value = publisher
     event_send, _event_recv = channel[Event]()
 
     fake_downloader = FakeShardDownloader()
@@ -140,12 +147,12 @@ async def test_re_download_after_delete_completes() -> None:
     coordinator = DownloadCoordinator(
         node_id=NODE_ID,
         shard_downloader=wrapped_downloader,
-        download_command_receiver=cmd_recv,
         event_sender=event_send,
+        session_handle=session_handle,
+        mailbox=mailbox,
     )
 
     shard = _make_shard()
-    origin = SystemId("test")
 
     with patch("exo.download.coordinator.delete_model", new_callable=AsyncMock):
         # Run the coordinator in the background
@@ -153,32 +160,27 @@ async def test_re_download_after_delete_completes() -> None:
 
         try:
             # 1. Start first download
-            await cmd_send.send(
-                ForwarderDownloadCommand(
-                    origin=origin,
-                    command=StartDownload(target_node_id=NODE_ID, shard_metadata=shard),
-                )
+            await messages.put(
+                StartDownload(
+                    target_node_id=NODE_ID, shard_metadata=shard
+                ).model_dump_json()
             )
 
             first_completed = await _wait_for_download_completed(coordinator, MODEL_ID)
             assert first_completed is not None, "First download should complete"
 
             # 2. Delete the model
-            await cmd_send.send(
-                ForwarderDownloadCommand(
-                    origin=origin,
-                    command=DeleteDownload(target_node_id=NODE_ID, model_id=MODEL_ID),
-                )
+            await messages.put(
+                DeleteDownload(target_node_id=NODE_ID, model_id=MODEL_ID).model_dump_json()
             )
             # Give the coordinator time to process the delete
             await asyncio.sleep(0.05)
 
             # 3. Re-download the same model
-            await cmd_send.send(
-                ForwarderDownloadCommand(
-                    origin=origin,
-                    command=StartDownload(target_node_id=NODE_ID, shard_metadata=shard),
-                )
+            await messages.put(
+                StartDownload(
+                    target_node_id=NODE_ID, shard_metadata=shard
+                ).model_dump_json()
             )
 
             second_completed = await _wait_for_download_completed(coordinator, MODEL_ID)

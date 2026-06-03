@@ -110,4 +110,4 @@ class LeaveInstance(TaggedModel):
     instance_id: InstanceId
 
 
-Mail = JoinInstance | LeaveInstance
+Mail = JoinInstance | LeaveInstance | DownloadCommand

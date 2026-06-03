@@ -175,7 +175,6 @@ from exo.shared.types.commands import (
     DeleteDownload,
     DownloadCommand,
     ForwarderCommand,
-    ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
     JoinInstance,
@@ -257,7 +256,6 @@ class API:
         port: int,
         event_receiver: Receiver[IndexedEvent],
         command_sender: Sender[ForwarderCommand],
-        download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
         session_handle: SessionHandle,
@@ -266,7 +264,6 @@ class API:
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self._system_id = SystemId()
         self.command_sender = command_sender
-        self.download_command_sender = download_command_sender
         self.event_receiver = event_receiver
         self.election_receiver = election_receiver
         self.node_id: NodeId = node_id
@@ -457,12 +454,13 @@ class API:
         )
 
     async def _dashboard_bootstrap(self) -> DashboardBootstrap:
+        state = self.state.with_aggregator(self.aggregator)
         return dashboard_bootstrap(
             feature_flags=await self.get_feature_flags(),
             instance_link_values=await self.storage.dump("instance_links/"),
-            instances=self.state.instances,
-            runners=self.state.runners,
-            tasks=self.state.tasks,
+            instances=state.instances,
+            runners=state.runners,
+            tasks=state.tasks,
         )
 
     async def _stream_dashboard_node_metrics(self, sender: Sender[str]) -> None:
@@ -2020,9 +2018,7 @@ class API:
                 logger.debug(f"Cleaned up {removed} expired images")
 
     async def _send_download(self, command: DownloadCommand):
-        await self.download_command_sender.send(
-            ForwarderDownloadCommand(origin=self._system_id, command=command)
-        )
+        await self._sh.send_mail([command.target_node_id], command.model_dump_json())
 
     async def start_download(
         self, payload: StartDownloadParams

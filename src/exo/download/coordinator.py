@@ -5,8 +5,9 @@ from pathlib import Path
 
 import anyio
 from anyio import BrokenResourceError, ClosedResourceError, current_time, to_thread
-from exo_rs import LVPublisher, SessionHandle
+from exo_rs import LVPublisher, Mailbox, SessionHandle
 from loguru import logger
+from pydantic import TypeAdapter, ValidationError
 
 from exo.download.download_utils import (
     RepoDownloadProgress,
@@ -26,7 +27,7 @@ from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
     CancelDownload,
     DeleteDownload,
-    ForwarderDownloadCommand,
+    DownloadCommand,
     StartDownload,
 )
 from exo.shared.types.common import NodeId
@@ -42,18 +43,20 @@ from exo.shared.types.worker.downloads import (
     DownloadProgress,
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
-from exo.utils.channels import Receiver, Sender
+from exo.utils.channels import Sender
 from exo.utils.task_group import TaskGroup
+
+_DOWNLOAD_COMMAND_ADAPTER = TypeAdapter[DownloadCommand](DownloadCommand)
 
 
 @dataclass
 class DownloadCoordinator:
     node_id: NodeId
     shard_downloader: ShardDownloader
-    download_command_receiver: Receiver[ForwarderDownloadCommand]
     event_sender: Sender[Event]
     session_handle: SessionHandle
     offline: bool = False
+    mailbox: Mailbox | None = None
 
     # Local state
     download_status: dict[ModelId, DownloadProgress] = field(default_factory=dict)
@@ -61,6 +64,7 @@ class DownloadCoordinator:
 
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
     _stopped: anyio.Event = field(init=False, default_factory=anyio.Event)
+    _mailbox: Mailbox = field(init=False)
 
     # Per-model throttle for download progress events
     _last_progress_time: dict[ModelId, float] = field(default_factory=dict)
@@ -68,6 +72,7 @@ class DownloadCoordinator:
 
     def __post_init__(self) -> None:
         self.shard_downloader.on_progress(self._download_progress_callback)
+        self._mailbox = self.mailbox or self.session_handle.mailbox(self.node_id)
 
     @staticmethod
     def _default_model_dir(model_id: ModelId) -> str:
@@ -164,7 +169,6 @@ class DownloadCoordinator:
             pass
         finally:
             # don't forget to clean up resources
-            self.download_command_receiver.close()
             self.event_sender.close()
 
             self._stopped.set()
@@ -174,19 +178,22 @@ class DownloadCoordinator:
         await self._stopped.wait()
 
     async def _command_processor(self) -> None:
-        with self.download_command_receiver as commands:
-            async for cmd in commands:
-                # Only process commands targeting this node
-                if cmd.command.target_node_id != self.node_id:
-                    continue
+        while (payload := await self._mailbox.recv()) is not None:
+            try:
+                command = _DOWNLOAD_COMMAND_ADAPTER.validate_json(payload)
+            except ValidationError:
+                continue
 
-                match cmd.command:
-                    case StartDownload(shard_metadata=shard):
-                        await self._start_download(shard)
-                    case DeleteDownload(model_id=model_id):
-                        await self._delete_download(model_id)
-                    case CancelDownload(model_id=model_id):
-                        await self._cancel_download(model_id)
+            if command.target_node_id != self.node_id:
+                continue
+
+            match command:
+                case StartDownload(shard_metadata=shard):
+                    await self._start_download(shard)
+                case DeleteDownload(model_id=model_id):
+                    await self._delete_download(model_id)
+                case CancelDownload(model_id=model_id):
+                    await self._cancel_download(model_id)
 
     async def _cancel_download(self, model_id: ModelId) -> None:
         if model_id in self.active_downloads and model_id in self.download_status:

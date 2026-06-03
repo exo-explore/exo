@@ -48,6 +48,7 @@ _DOWNLOAD_PROGRESS_ADAPTER = TypeAdapter[DownloadProgress](DownloadProgress)
 _INSTANCE_ADAPTER = TypeAdapter[Instance](Instance)
 _RUNNER_STATUS_ADAPTER = TypeAdapter[RunnerStatus](RunnerStatus)
 _SOCKET_CONNECTIONS_ADAPTER = TypeAdapter[SocketConnections](SocketConnections)
+_TASK_ADAPTER = TypeAdapter[Task](Task)
 _GATHERED_INFO_ADAPTER = TypeAdapter[GatheredInfo](GatheredInfo)
 
 
@@ -195,6 +196,12 @@ class State(FrozenModel):
                     event = RunnerStatusUpdated(
                         runner_status=runner_status, runner_id=RunnerId(parts[2])
                     )
+                elif len(parts) == 3 and parts[1] == "tasks":
+                    task = _TASK_ADAPTER.validate_json(value)
+                    state = state.model_copy(
+                        update={"tasks": {**state.tasks, task.task_id: task}}
+                    )
+                    continue
                 elif len(parts) == 2 and parts[1] == "socket_connections":
                     socket_connections = _SOCKET_CONNECTIONS_ADAPTER.validate_json(
                         value

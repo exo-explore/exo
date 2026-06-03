@@ -1,3 +1,4 @@
+# pyright: reportAny=false
 """Tests for cancelling (pausing) an active download via CancelDownload command."""
 
 import asyncio
@@ -6,6 +7,7 @@ from collections.abc import AsyncIterator, Awaitable
 from datetime import timedelta
 from pathlib import Path
 from typing import Callable
+from unittest.mock import AsyncMock, MagicMock
 
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.download_utils import RepoDownloadProgress
@@ -15,15 +17,14 @@ from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
     CancelDownload,
-    ForwarderDownloadCommand,
     StartDownload,
 )
-from exo.shared.types.common import NodeId, SystemId
+from exo.shared.types.common import NodeId
 from exo.shared.types.events import Event
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import DownloadPending
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
-from exo.utils.channels import Sender, channel
+from exo.utils.channels import channel
 
 NODE_ID = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 MODEL_ID = ModelId("test-org/test-model")
@@ -132,22 +133,31 @@ class SlowShardDownloader(ShardDownloader):
         )
 
 
-def _setup_coordinator(
-    downloader: ShardDownloader,
-) -> tuple[
-    DownloadCoordinator,
-    Sender[ForwarderDownloadCommand],
-]:
-    cmd_send, cmd_recv = channel[ForwarderDownloadCommand]()
+def _setup_coordinator(downloader: ShardDownloader) -> tuple[DownloadCoordinator, MagicMock]:
+    messages: asyncio.Queue[str] = asyncio.Queue()
+    mailbox = MagicMock()
+    mailbox.recv = AsyncMock(side_effect=messages.get)
+    mailbox.messages = messages
+    session_handle = MagicMock()
+    session_handle.mailbox.return_value = mailbox
+    publisher = MagicMock()
+    publisher.put = AsyncMock()
+    publisher.delete = AsyncMock()
+    session_handle.last_value_publisher.return_value = publisher
     event_send, _event_recv = channel[Event]()
     wrapped = SingletonShardDownloader(downloader)
     coordinator = DownloadCoordinator(
         node_id=NODE_ID,
         shard_downloader=wrapped,
-        download_command_receiver=cmd_recv,
         event_sender=event_send,
+        session_handle=session_handle,
+        mailbox=mailbox,
     )
-    return coordinator, cmd_send
+    return coordinator, mailbox
+
+
+async def _send_mail(mailbox: MagicMock, command: StartDownload | CancelDownload) -> None:
+    await mailbox.messages.put(command.model_dump_json())
 
 
 async def _wait_for_pending(
@@ -169,29 +179,24 @@ async def test_cancel_active_download_transitions_to_pending() -> None:
     """Cancelling an in-progress download should emit a DownloadPending event
     and remove the model from active_downloads."""
     slow_downloader = SlowShardDownloader()
-    coordinator, cmd_send = _setup_coordinator(slow_downloader)
+    coordinator, mailbox = _setup_coordinator(slow_downloader)
     shard = _make_shard()
-    origin = SystemId("test")
 
     coordinator_task = asyncio.create_task(coordinator.run())
     try:
         # Start a download
-        await cmd_send.send(
-            ForwarderDownloadCommand(
-                origin=origin,
-                command=StartDownload(target_node_id=NODE_ID, shard_metadata=shard),
-            )
+        await _send_mail(
+            mailbox,
+            StartDownload(target_node_id=NODE_ID, shard_metadata=shard),
         )
 
         # Wait for the download to actually start (blocking in ensure_shard)
         await asyncio.wait_for(slow_downloader.download_started.wait(), timeout=2.0)
 
         # Cancel the download
-        await cmd_send.send(
-            ForwarderDownloadCommand(
-                origin=origin,
-                command=CancelDownload(target_node_id=NODE_ID, model_id=MODEL_ID),
-            )
+        await _send_mail(
+            mailbox,
+            CancelDownload(target_node_id=NODE_ID, model_id=MODEL_ID),
         )
 
         pending = await _wait_for_pending(coordinator, MODEL_ID)
@@ -217,17 +222,14 @@ async def test_cancel_active_download_transitions_to_pending() -> None:
 async def test_cancel_nonexistent_download_is_noop() -> None:
     """Cancelling a model that isn't being downloaded should be a no-op."""
     slow_downloader = SlowShardDownloader()
-    coordinator, cmd_send = _setup_coordinator(slow_downloader)
-    origin = SystemId("test")
+    coordinator, mailbox = _setup_coordinator(slow_downloader)
 
     coordinator_task = asyncio.create_task(coordinator.run())
     try:
         # Cancel a model that was never started
-        await cmd_send.send(
-            ForwarderDownloadCommand(
-                origin=origin,
-                command=CancelDownload(target_node_id=NODE_ID, model_id=MODEL_ID),
-            )
+        await _send_mail(
+            mailbox,
+            CancelDownload(target_node_id=NODE_ID, model_id=MODEL_ID),
         )
 
         pending = await _wait_for_pending(coordinator, MODEL_ID, timeout=0.5)
@@ -248,27 +250,22 @@ async def test_cancel_nonexistent_download_is_noop() -> None:
 async def test_cancel_then_resume_download() -> None:
     """After cancelling, re-issuing StartDownload should restart the download."""
     slow_downloader = SlowShardDownloader()
-    coordinator, cmd_send = _setup_coordinator(slow_downloader)
+    coordinator, mailbox = _setup_coordinator(slow_downloader)
     shard = _make_shard()
-    origin = SystemId("test")
 
     coordinator_task = asyncio.create_task(coordinator.run())
     try:
         # Start download
-        await cmd_send.send(
-            ForwarderDownloadCommand(
-                origin=origin,
-                command=StartDownload(target_node_id=NODE_ID, shard_metadata=shard),
-            )
+        await _send_mail(
+            mailbox,
+            StartDownload(target_node_id=NODE_ID, shard_metadata=shard),
         )
         await asyncio.wait_for(slow_downloader.download_started.wait(), timeout=2.0)
 
         # Cancel
-        await cmd_send.send(
-            ForwarderDownloadCommand(
-                origin=origin,
-                command=CancelDownload(target_node_id=NODE_ID, model_id=MODEL_ID),
-            )
+        await _send_mail(
+            mailbox,
+            CancelDownload(target_node_id=NODE_ID, model_id=MODEL_ID),
         )
         pending = await _wait_for_pending(coordinator, MODEL_ID)
         assert pending is not None, "Cancel should update state to DownloadPending"
@@ -279,11 +276,9 @@ async def test_cancel_then_resume_download() -> None:
         slow_downloader.download_started.clear()
 
         # Resume by sending StartDownload again
-        await cmd_send.send(
-            ForwarderDownloadCommand(
-                origin=origin,
-                command=StartDownload(target_node_id=NODE_ID, shard_metadata=shard),
-            )
+        await _send_mail(
+            mailbox,
+            StartDownload(target_node_id=NODE_ID, shard_metadata=shard),
         )
 
         # The download should restart

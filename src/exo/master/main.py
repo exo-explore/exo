@@ -19,7 +19,6 @@ from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
     CreateInstance,
     ForwarderCommand,
-    ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
     RequestEventLog,
@@ -116,7 +115,6 @@ class Master:
         event_sender: Sender[Event],
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
-        download_command_sender: Sender[ForwarderDownloadCommand],
         aggregator: LVAggregator,
         storage: Storage,
     ):
@@ -128,7 +126,6 @@ class Master:
         self.command_receiver = command_receiver
         self.local_event_receiver = local_event_receiver
         self.global_event_sender = global_event_sender
-        self.download_command_sender = download_command_sender
         self.event_sender = event_sender
         self._system_id = SystemId()
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()

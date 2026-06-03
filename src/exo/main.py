@@ -67,7 +67,6 @@ class Node:
         await router.register_topic(topics.COMMANDS)
         await router.register_topic(topics.ELECTION_MESSAGES)
         await router.register_topic(topics.CONNECTION_MESSAGES)
-        await router.register_topic(topics.DOWNLOAD_COMMANDS)
         event_router = EventRouter(
             session_id,
             command_sender=router.sender(topics.COMMANDS),
@@ -86,7 +85,6 @@ class Node:
                 node_id,
                 exo_shard_downloader(offline=args.offline),
                 event_sender=event_router.sender(),
-                download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
                 session_handle=session_handle,
                 offline=args.offline,
             )
@@ -99,7 +97,6 @@ class Node:
                 port=args.api_port,
                 event_receiver=event_router.receiver(),
                 command_sender=router.sender(topics.COMMANDS),
-                download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 election_receiver=router.receiver(topics.ELECTION_MESSAGES),
                 session_handle=session_handle,
             )
@@ -112,7 +109,6 @@ class Node:
                 event_receiver=event_router.receiver(),
                 event_sender=event_router.sender(),
                 command_sender=router.sender(topics.COMMANDS),
-                download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 session_handle=session_handle,
                 api_port=args.api_port,
             )
@@ -127,7 +123,6 @@ class Node:
             global_event_sender=router.sender(topics.GLOBAL_EVENTS),
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
-            download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
             aggregator=session_handle.last_value_aggregator("node_metrics"),
             storage=session_handle.storage_interface(),
         )
@@ -231,9 +226,6 @@ class Node:
                         global_event_sender=self.router.sender(topics.GLOBAL_EVENTS),
                         local_event_receiver=self.router.receiver(topics.LOCAL_EVENTS),
                         command_receiver=self.router.receiver(topics.COMMANDS),
-                        download_command_sender=self.router.sender(
-                            topics.DOWNLOAD_COMMANDS
-                        ),
                         aggregator=self._sh.last_value_aggregator("node_metrics"),
                         storage=self._sh.storage_interface(),
                     )
@@ -258,9 +250,6 @@ class Node:
                             self.node_id,
                             exo_shard_downloader(offline=self.offline),
                             event_sender=self.event_router.sender(),
-                            download_command_receiver=self.router.receiver(
-                                topics.DOWNLOAD_COMMANDS
-                            ),
                             session_handle=self._sh,
                             offline=self.offline,
                         )
@@ -273,9 +262,6 @@ class Node:
                             event_receiver=self.event_router.receiver(),
                             event_sender=self.event_router.sender(),
                             command_sender=self.router.sender(topics.COMMANDS),
-                            download_command_sender=self.router.sender(
-                                topics.DOWNLOAD_COMMANDS
-                            ),
                             session_handle=self._sh,
                             api_port=self._api_port,
                         )

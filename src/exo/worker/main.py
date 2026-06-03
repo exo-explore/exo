@@ -1,5 +1,4 @@
 from collections import defaultdict
-from datetime import datetime, timezone
 
 import anyio
 from anyio import fail_after, to_thread
@@ -17,9 +16,10 @@ from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models import model_cards
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.commands import (
+    CancelDownload,
+    DeleteDownload,
     DeleteInstance,
     ForwarderCommand,
-    ForwarderDownloadCommand,
     JoinInstance,
     LeaveInstance,
     Mail,
@@ -30,10 +30,6 @@ from exo.shared.types.events import (
     Event,
     IndexedEvent,
     InstanceDeleted,
-    NodeDownloadProgress,
-    NodeGatheredInfo,
-    TaskCreated,
-    TaskStatusUpdated,
 )
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
@@ -52,7 +48,7 @@ from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender
-from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
+from exo.utils.info_gatherer.info_gatherer import InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
 from exo.utils.task_group import TaskGroup
@@ -72,7 +68,6 @@ class Worker:
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
-        download_command_sender: Sender[ForwarderDownloadCommand],
         session_handle: SessionHandle,
         api_port: int,
     ):
@@ -80,7 +75,6 @@ class Worker:
         self.event_receiver = event_receiver
         self.event_sender = event_sender
         self.command_sender = command_sender
-        self.download_command_sender = download_command_sender
         self.api_port = api_port
 
         self.state: State = State()
@@ -129,7 +123,6 @@ class Worker:
             logger.info("Stopping Worker")
             self.event_sender.close()
             self.command_sender.close()
-            self.download_command_sender.close()
             for runner in self.runners.values():
                 runner.shutdown()
             with anyio.CancelScope(shield=True):
@@ -155,6 +148,8 @@ class Worker:
                 case LeaveInstance(instance_id=instance_id):
                     self.desired_instances.pop(instance_id, None)
                     await self._delete_primary_desired_instance(instance_id)
+                case StartDownload() | DeleteDownload() | CancelDownload():
+                    pass
 
     async def _publish_primary_desired_instance(self, instance: Instance) -> None:
         publisher = self._primary_desired_instance_publishers.get(instance.instance_id)
@@ -188,17 +183,6 @@ class Worker:
                 continue
 
             self._primary_runner_missing_since.setdefault(instance_id, now)
-
-    async def _forward_info(self, recv: Receiver[GatheredInfo]):
-        with recv as info_stream:
-            async for info in info_stream:
-                await self.event_sender.send(
-                    NodeGatheredInfo(
-                        node_id=self.node_id,
-                        when=str(datetime.now(tz=timezone.utc)),
-                        info=info,
-                    )
-                )
 
     async def _event_applier(self):
         with self.event_receiver as events:
@@ -278,18 +262,14 @@ class Worker:
 
             logger.info(f"Worker plan: {task.__class__.__name__}")
             assert task.task_status
-            await self.event_sender.send(TaskCreated(task_id=task.task_id, task=task))
+            await self._publish_task_status(task)
 
             # lets not kill the worker if a runner is unresponsive
             match task:
                 case CreateRunner():
                     await self._create_supervisor(task)
                     self._instance_backoff.record_attempt(task.instance_id)
-                    await self.event_sender.send(
-                        TaskStatusUpdated(
-                            task_id=task.task_id, task_status=TaskStatus.Complete
-                        )
-                    )
+                    await self._publish_task_status(task, TaskStatus.Complete)
                 case DownloadModel(shard_metadata=shard):
                     model_id = shard.model_card.model_id
                     self._download_backoff.record_attempt(model_id)
@@ -299,61 +279,39 @@ class Worker:
                     )
                     if found_path is not None:
                         logger.info(f"Model {model_id} found at {found_path}")
-                        await self.event_sender.send(
-                            NodeDownloadProgress(
-                                download_progress=DownloadCompleted(
-                                    node_id=self.node_id,
-                                    shard_metadata=shard,
-                                    model_directory=str(found_path),
-                                    total=shard.model_card.storage_size,
-                                    read_only=is_read_only_model_dir(found_path),
-                                )
+                        await self._publish_download_status(
+                            DownloadCompleted(
+                                node_id=self.node_id,
+                                shard_metadata=shard,
+                                model_directory=str(found_path),
+                                total=shard.model_card.storage_size,
+                                read_only=is_read_only_model_dir(found_path),
                             )
                         )
-                        await self.event_sender.send(
-                            TaskStatusUpdated(
-                                task_id=task.task_id,
-                                task_status=TaskStatus.Complete,
-                            )
-                        )
+                        await self._publish_task_status(task, TaskStatus.Complete)
                     else:
-                        await self.download_command_sender.send(
-                            ForwarderDownloadCommand(
-                                origin=self._system_id,
-                                command=StartDownload(
-                                    target_node_id=self.node_id,
-                                    shard_metadata=shard,
-                                ),
-                            )
+                        await self._sh.send_mail(
+                            [self.node_id],
+                            StartDownload(
+                                target_node_id=self.node_id,
+                                shard_metadata=shard,
+                            ).model_dump_json(),
                         )
-                        await self.event_sender.send(
-                            TaskStatusUpdated(
-                                task_id=task.task_id,
-                                task_status=TaskStatus.Running,
-                            )
-                        )
+                        await self._publish_task_status(task, TaskStatus.Running)
                 case Shutdown(runner_id=runner_id):
                     runner = self.runners.pop(runner_id)
                     try:
                         with fail_after(3):
                             await runner.start_task(task)
                     except TimeoutError:
-                        await self.event_sender.send(
-                            TaskStatusUpdated(
-                                task_id=task.task_id, task_status=TaskStatus.TimedOut
-                            )
-                        )
+                        await self._publish_task_status(task, TaskStatus.TimedOut)
                     finally:
                         runner.shutdown()
                 case CancelTask(
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):
                     await self.runners[runner_id].cancel_task(cancelled_task_id)
-                    await self.event_sender.send(
-                        TaskStatusUpdated(
-                            task_id=task.task_id, task_status=TaskStatus.Complete
-                        )
-                    )
+                    await self._publish_task_status(task, TaskStatus.Complete)
                 case LoadModel(instance_id=instance_id):
                     if (instance := self.state.instances.get(instance_id)) is not None:
                         model_id = instance.shard_assignments.model_id
@@ -381,7 +339,6 @@ class Worker:
         )
         runner = await RunnerSupervisor.create(
             bound_instance=task.bound_instance,
-            event_sender=self.event_sender.clone(),
             task_assignment_subscriber=self._sh.last_value_subscriber(
                 f"task_assignments/{task.instance_id}/*"
             ),
@@ -393,6 +350,24 @@ class Worker:
         self.runners[task.bound_instance.bound_runner_id] = runner
         self._tg.start_soon(runner.run)
         return runner
+
+    async def _publish_task_status(
+        self, task: Task, task_status: TaskStatus | None = None
+    ) -> None:
+        if task_status is not None:
+            task = task.model_copy(update={"task_status": task_status})
+        if isinstance(task, (CreateRunner, DownloadModel, Shutdown, CancelTask)):
+            publisher = self._sh.last_value_publisher(
+                f"node_metrics/{self.node_id}/tasks/{task.task_id}"
+            )
+            await publisher.put(task.model_dump_json())
+
+    async def _publish_download_status(self, status: DownloadCompleted) -> None:
+        model_id = status.shard_metadata.model_card.model_id
+        publisher = self._sh.last_value_publisher(
+            f"node_metrics/{self.node_id}/downloads/{model_id}"
+        )
+        await publisher.put(status.model_dump_json())
 
     async def _poll_connection_updates(self):
         while True:

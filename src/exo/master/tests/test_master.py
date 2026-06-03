@@ -11,7 +11,6 @@ from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
     CommandId,
     ForwarderCommand,
-    ForwarderDownloadCommand,
     PlaceInstance,
     TextGeneration,
 )
@@ -74,7 +73,6 @@ async def test_master():
     ge_sender, global_event_receiver = channel[GlobalForwarderEvent]()
     command_sender, co_receiver = channel[ForwarderCommand]()
     local_event_sender, le_receiver = channel[LocalForwarderEvent]()
-    fcds, _fcdr = channel[ForwarderDownloadCommand]()
     ev_send, ev_recv = channel[Event]()
 
     async def mock_event_router():
@@ -112,7 +110,6 @@ async def test_master():
         global_event_sender=ge_sender,
         local_event_receiver=le_receiver,
         command_receiver=co_receiver,
-        download_command_sender=fcds,
         aggregator=MockAggregator(),  # pyright: ignore[reportArgumentType]
         storage=MockStorage(),  # pyright: ignore[reportArgumentType]
     )
