@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use pyo3::{
     exceptions::{PyConnectionError, PyRuntimeError, PyTimeoutError, PyValueError},
@@ -13,6 +13,9 @@ use zenoh::{
     query::{ConsolidationMode, Query, Queryable},
     sample::{Sample, SampleKind},
 };
+use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
+
+use parking_lot::Mutex;
 
 #[gen_stub_pyclass]
 #[pyclass]
@@ -26,6 +29,7 @@ pub struct TaskResponder {
     pub instance_id: String,
     pub queryable: Queryable<FifoChannelHandler<Query>>,
     pub session: ZSession,
+    pub assignments: Arc<Mutex<HashMap<String, Arc<AdvancedPublisher<'static>>>>>,
 }
 
 #[gen_stub_pyclass]
@@ -96,6 +100,10 @@ fn task_chunks_key(command_id: &str) -> String {
     format!("task/commands/{command_id}/chunks")
 }
 
+fn task_assignment_key(instance_id: &str, task_id: &str) -> String {
+    format!("task_assignments/{instance_id}/{task_id}")
+}
+
 fn declare_task_stream(
     session: &ZSession,
     command_id: &str,
@@ -136,27 +144,98 @@ async fn request_task_admission(
                 Ok(())
             }
         }
-        Err(error) => {
-            error.payload().try_to_string().map_or_else(
-                |err| Err(PyRuntimeError::new_err(format!(
+        Err(error) => error.payload().try_to_string().map_or_else(
+            |err| {
+                Err(PyRuntimeError::new_err(format!(
                     "task admission failed: {err}"
-                ))),
-
-                |ok| if ok == "Timeout" {
+                )))
+            },
+            |ok| {
+                if ok == "Timeout" {
                     Err(PyTimeoutError::new_err("task admission timed out"))
                 } else {
                     Err(PyRuntimeError::new_err(format!(
                         "task admission rejected: {ok}"
                     )))
                 }
-            )
-        }
+            },
+        ),
     }
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl TaskResponder {
+    #[gen_stub(override_return_type(
+        type_repr="collections.abc.Awaitable[None]",
+        imports=("collections.abc")
+    ))]
+    pub fn assign_task<'py>(
+        &'py self,
+        py: Python<'py>,
+        task_id: String,
+        task: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let session = self.session.clone();
+        let instance_id = self.instance_id.clone();
+        let assignments = Arc::clone(&self.assignments);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let publisher = {
+                let mut assignments = assignments.lock();
+                if let Some(publisher) = assignments.get(&task_id) {
+                    publisher.clone()
+                } else {
+                    let publisher = Arc::new(
+                        session
+                            .declare_publisher(task_assignment_key(&instance_id, &task_id))
+                            .advanced()
+                            .publisher_detection()
+                            .sample_miss_detection(MissDetectionConfig::default())
+                            .cache(CacheConfig::default().max_samples(1))
+                            .wait()
+                            .map_err(|e| {
+                                PyConnectionError::new_err(format!(
+                                    "failed to declare task assignment publisher: {e}"
+                                ))
+                            })?,
+                    );
+                    assignments.insert(task_id.clone(), publisher.clone());
+                    publisher
+                }
+            };
+            publisher
+                .put(task)
+                .await
+                .map_err(|e| PyConnectionError::new_err(format!("failed to assign task: {e}")))
+        })
+    }
+
+    #[gen_stub(override_return_type(
+        type_repr="collections.abc.Awaitable[None]",
+        imports=("collections.abc")
+    ))]
+    pub fn unassign_task<'py>(
+        &'py self,
+        py: Python<'py>,
+        task_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let session = self.session.clone();
+        let instance_id = self.instance_id.clone();
+        let assignments = Arc::clone(&self.assignments);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let publisher = assignments.lock().remove(&task_id);
+            if let Some(publisher) = publisher {
+                publisher.put("").await.map_err(|e| {
+                    PyConnectionError::new_err(format!("failed to unassign task: {e}"))
+                })?;
+            }
+            session
+                .delete(task_assignment_key(&instance_id, &task_id))
+                .await
+                .map_err(|e| PyConnectionError::new_err(format!("failed to unassign task: {e}")))
+        })
+    }
+
     #[gen_stub(override_return_type(
         type_repr="collections.abc.Awaitable[tuple[TaskRequest, TaskChunkSender, str | None] | None]",
         imports=("collections.abc")
