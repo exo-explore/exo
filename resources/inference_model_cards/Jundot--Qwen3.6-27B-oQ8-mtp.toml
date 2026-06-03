@@ -1,0 +1,39 @@
+model_id = "Jundot/Qwen3.6-27B-oQ8-mtp"
+n_layers = 64
+hidden_size = 5120
+num_key_value_heads = 4
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "oQ8 MTP"
+base_model = "Qwen3.6 27B"
+capabilities = ["text"]
+reasoning_dialect = "none"
+context_length = 262144
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+[storage_size]
+in_bytes = 30001641398
+
+# Native Qwen3.6 MTP weights are embedded in the checkpoint shards.
+# Measured-best fixed K on local M5 Max: K=2, capped at K=3.
+[native_mtp]
+num_layers = 1
+default_k = 2
+max_k = 3
+
+# Source: https://huggingface.co/Qwen/Qwen3.6-27B (best-practices)
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0
+presence_penalty = 1.5
+
+[sampling_defaults.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0
+presence_penalty = 1.5
