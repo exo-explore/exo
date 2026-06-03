@@ -12,9 +12,9 @@ from anyio import (
     CancelScope,
     ClosedResourceError,
 )
-from exo_rs import TaskChunkSender, TaskRequest, TaskResponder
+from exo_rs import LVSubscriber, TaskChunkSender, TaskRequest, TaskResponder
 from loguru import logger
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from exo.shared.constants import EXO_RUNNER_STDERR_LOG, EXO_RUNNER_STDOUT_LOG
 from exo.shared.types.chunks import ErrorChunk, PrefillProgressChunk
@@ -57,6 +57,7 @@ from exo.shared.types.worker.runners import (
     RunnerFailed,
     RunnerIdle,
     RunnerLoading,
+    RunnerReady,
     RunnerRunning,
     RunnerShuttingDown,
     RunnerStatus,
@@ -77,6 +78,20 @@ PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
 type BridgeTask = TextGeneration | ImageGeneration | ImageEdits
 _BRIDGE_COMMAND_ADAPTER: TypeAdapter[Command] = TypeAdapter(Command)
+_BRIDGE_TASK_ADAPTER: TypeAdapter[BridgeTask] = TypeAdapter(BridgeTask)
+
+
+def _task_assignment_ids(key: str) -> tuple[str, TaskId] | None:
+    prefix = "task_assignments/"
+    if not key.startswith(prefix):
+        return None
+
+    suffix = key.removeprefix(prefix)
+    parts = suffix.split("/", maxsplit=1)
+    if len(parts) != 2 or not parts[0] or not parts[1] or "/" in parts[1]:
+        return None
+
+    return parts[0], TaskId(parts[1])
 
 
 @dataclass(eq=False)
@@ -211,6 +226,8 @@ class RunnerSupervisor:
     _event_sender: Sender[Event]
     _cancel_sender: MpSender[TaskId]
     _task_responder: TaskResponder | None = None
+    _task_assignment_subscriber: LVSubscriber | None = None
+    _assigned_tasks: dict[TaskId, BridgeTask] = field(default_factory=dict, init=False)
     _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
@@ -234,6 +251,7 @@ class RunnerSupervisor:
         *,
         bound_instance: BoundInstance,
         event_sender: Sender[Event],
+        task_assignment_subscriber: LVSubscriber | None = None,
         task_responder: TaskResponder | None = None,
         initialize_timeout: float = 400,
     ) -> Self:
@@ -269,6 +287,7 @@ class RunnerSupervisor:
             _cancel_sender=cancel_sender,
             _event_sender=event_sender,
             _task_responder=task_responder,
+            _task_assignment_subscriber=task_assignment_subscriber,
         )
 
         return self
@@ -284,6 +303,11 @@ class RunnerSupervisor:
                 tg.start_soon(self._forward_events)
                 if self._task_responder is not None:
                     tg.start_soon(self._run_task_responder, self._task_responder)
+                if self._task_assignment_subscriber is not None:
+                    tg.start_soon(
+                        self._run_task_assignment_subscriber,
+                        self._task_assignment_subscriber,
+                    )
         finally:
             logger.info("Runner supervisor shutting down")
             if not self._cancel_watch_runner.cancel_called:
@@ -307,6 +331,42 @@ class RunnerSupervisor:
 
     def shutdown(self):
         self._tg.cancel_tasks()
+
+    async def _run_task_assignment_subscriber(self, subscriber: LVSubscriber) -> None:
+        instance_id = self.bound_instance.instance.instance_id
+        while (received := await subscriber.recv()) is not None:
+            key, payload = received
+            if (ids := _task_assignment_ids(key)) is None:
+                continue
+            assigned_instance_id, assigned_task_id = ids
+            if assigned_instance_id != instance_id:
+                continue
+
+            if payload == "":
+                self._assigned_tasks.pop(assigned_task_id, None)
+                continue
+
+            try:
+                task = _BRIDGE_TASK_ADAPTER.validate_json(payload)
+            except ValidationError:
+                logger.warning(f"Ignoring invalid task assignment from {key}")
+                continue
+
+            if task.instance_id != instance_id or task.task_id != assigned_task_id:
+                logger.warning(f"Ignoring mismatched task assignment from {key}")
+                continue
+
+            self._assigned_tasks[task.task_id] = task
+            await self._reconcile_assigned_tasks()
+
+    async def _reconcile_assigned_tasks(self) -> None:
+        if not isinstance(self.status, (RunnerReady, RunnerRunning)):
+            return
+
+        for task in list(self._assigned_tasks.values()):
+            if task.task_id in self.in_progress or task.task_id in self.completed:
+                continue
+            await self.start_task(task)
 
     async def start_task(self, task: Task):
         if task.task_id in self.pending:
@@ -361,6 +421,7 @@ class RunnerSupervisor:
                         case RunnerStatusUpdated(runner_status=runner_status):
                             self.status = runner_status
                             await self._event_sender.send(event)
+                            await self._reconcile_assigned_tasks()
 
                         case TaskAcknowledged(task_id=task_id):
                             self.pending.pop(task_id).set()
@@ -381,6 +442,7 @@ class RunnerSupervisor:
                             )
                             self.in_progress.pop(task_id, None)
                             self.completed.add(task_id)
+                            self._assigned_tasks.pop(task_id, None)
                             await self._event_sender.send(event)
                             if task_id in self.bridge_tasks:
                                 await self._finish_bridge_task_id(task_id)
@@ -480,6 +542,8 @@ class RunnerSupervisor:
         self.bridge_command_tasks[command.command_id] = task.task_id
         self.bridge_chunk_senders[command.command_id] = chunk_sender
         await self._event_sender.send(TaskCreated(task_id=task.task_id, task=task))
+        assert self._task_responder is not None
+        await self._task_responder.assign_task(task.task_id, task.model_dump_json())
         request.reply(command.command_id)
 
     async def _cancel_bridge_task(self, command_id: CommandId) -> None:
@@ -508,6 +572,8 @@ class RunnerSupervisor:
         self.bridge_command_tasks.pop(task.command_id, None)
         self.bridge_chunk_senders.pop(task.command_id, None)
         await self._event_sender.send(TaskDeleted(task_id=task_id))
+        if self._task_responder is not None:
+            await self._task_responder.unassign_task(task_id)
 
     async def _watch_runner(self) -> None:
         with self._cancel_watch_runner:

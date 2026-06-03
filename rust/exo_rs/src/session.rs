@@ -1,9 +1,11 @@
 use networking::Session;
+use parking_lot::Mutex;
 use pyo3::{
     exceptions::{PyConnectionError, PyRuntimeError, PyValueError},
     prelude::*,
 };
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use std::{collections::HashMap, sync::Arc};
 use zenoh::Wait;
 use zenoh_ext::{
     AdvancedPublisherBuilderExt, AdvancedSubscriberBuilderExt, CacheConfig, HistoryConfig,
@@ -125,6 +127,7 @@ impl SessionHandle {
             instance_id,
             queryable,
             session: self.session.z.clone(),
+            assignments: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 }

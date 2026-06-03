@@ -85,7 +85,6 @@ class Worker:
 
         self._system_id = SystemId()
 
-
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
         self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
             base=0.5, cap=10.0
@@ -141,7 +140,6 @@ class Worker:
 
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
-
 
     async def _reconcile_custom_cards(self) -> None:
         storage = self._sh.storage_interface()
@@ -299,6 +297,9 @@ class Worker:
         runner = await RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
+            task_assignment_subscriber=self._sh.last_value_subscriber(
+                f"task_assignments/{task.instance_id}/*"
+            ),
             task_responder=task_responder,
         )
         self.runners[task.bound_instance.bound_runner_id] = runner
