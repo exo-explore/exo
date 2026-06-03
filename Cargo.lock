@@ -5114,7 +5114,7 @@ dependencies = [
 [[package]]
 name = "zenoh"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -5164,7 +5164,7 @@ dependencies = [
 [[package]]
 name = "zenoh-buffers"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "zenoh-collections",
 ]
@@ -5172,7 +5172,7 @@ dependencies = [
 [[package]]
 name = "zenoh-codec"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "tracing",
  "uhlc",
@@ -5183,7 +5183,7 @@ dependencies = [
 [[package]]
 name = "zenoh-collections"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "ahash",
 ]
@@ -5191,7 +5191,7 @@ dependencies = [
 [[package]]
 name = "zenoh-config"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "json5",
  "nonempty-collections",
@@ -5216,7 +5216,7 @@ dependencies = [
 [[package]]
 name = "zenoh-core"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "lazy_static",
  "tokio",
@@ -5227,7 +5227,7 @@ dependencies = [
 [[package]]
 name = "zenoh-crypto"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "aes",
  "hmac",
@@ -5240,7 +5240,7 @@ dependencies = [
 [[package]]
 name = "zenoh-ext"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "bincode",
@@ -5259,7 +5259,7 @@ dependencies = [
 [[package]]
 name = "zenoh-keyexpr"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "getrandom 0.2.17",
  "hashbrown 0.16.1",
@@ -5274,7 +5274,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "zenoh-config",
  "zenoh-link-commons",
@@ -5292,7 +5292,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-commons"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "base64",
@@ -5328,7 +5328,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-quic"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "rustls-webpki",
@@ -5344,7 +5344,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-quic_datagram"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "rustls-webpki",
@@ -5360,7 +5360,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-tcp"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "socket2 0.5.10",
@@ -5377,7 +5377,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-tls"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "base64",
@@ -5406,7 +5406,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-udp"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "libc",
@@ -5428,7 +5428,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-unixsock_stream"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "nix 0.29.0",
@@ -5446,7 +5446,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-ws"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -5466,7 +5466,7 @@ dependencies = [
 [[package]]
 name = "zenoh-macros"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5477,8 +5477,7 @@ dependencies = [
 [[package]]
 name = "zenoh-plugin-storage-manager"
 version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1d9fd55c490af4dc4abb6d51b620ecf6f824a9285a1f9446b59eeec6d66ccf7"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "bincode",
@@ -5505,7 +5504,7 @@ dependencies = [
 [[package]]
 name = "zenoh-plugin-trait"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "git-version",
  "libloading",
@@ -5522,7 +5521,7 @@ dependencies = [
 [[package]]
 name = "zenoh-protocol"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "const_format",
  "rand 0.8.6",
@@ -5537,7 +5536,7 @@ dependencies = [
 [[package]]
 name = "zenoh-result"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "anyhow",
 ]
@@ -5545,7 +5544,7 @@ dependencies = [
 [[package]]
 name = "zenoh-runtime"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "lazy_static",
  "ron",
@@ -5559,7 +5558,7 @@ dependencies = [
 [[package]]
 name = "zenoh-sync"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "arc-swap",
  "event-listener",
@@ -5573,7 +5572,7 @@ dependencies = [
 [[package]]
 name = "zenoh-task"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "futures",
  "tokio",
@@ -5586,7 +5585,7 @@ dependencies = [
 [[package]]
 name = "zenoh-transport"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "crossbeam-utils",
@@ -5620,7 +5619,7 @@ dependencies = [
 [[package]]
 name = "zenoh-util"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "const_format",
@@ -5646,7 +5645,7 @@ dependencies = [
 [[package]]
 name = "zenoh_backend_traits"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "const_format",

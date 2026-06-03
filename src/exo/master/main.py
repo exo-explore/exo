@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta, timezone
 
 import anyio
-from exo_rs import LVAggregator
+from exo_rs import LVAggregator, Storage
 from loguru import logger
+from pydantic import ValidationError
 
 from exo.master.placement import (
     add_instance_to_placements,
@@ -19,11 +20,8 @@ from exo.routing.event_router import (
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
-    AddCustomModelCard,
     CreateInstance,
-    DeleteCustomModelCard,
     DeleteInstance,
-    DeleteInstanceLink,
     ForwarderCommand,
     ForwarderDownloadCommand,
     ImageEdits,
@@ -31,7 +29,6 @@ from exo.shared.types.commands import (
     PlaceInstance,
     RequestEventLog,
     SendInputChunk,
-    SetInstanceLink,
     TaskCancelled,
     TaskFinished,
     TestCommand,
@@ -39,15 +36,11 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
-    CustomModelCardAdded,
-    CustomModelCardDeleted,
     Event,
     GlobalForwarderEvent,
     IndexedEvent,
     InputChunkReceived,
     InstanceDeleted,
-    InstanceLinkCreated,
-    InstanceLinkDeleted,
     LocalForwarderEvent,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -80,7 +73,9 @@ from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
 
 
-def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
+def _prefill_endpoint_for(
+    state: State, instance_links: list[InstanceLink], decode_instance_id: InstanceId
+) -> str | None:
     decode = state.instances.get(decode_instance_id)
     if decode is None:
         return None
@@ -89,7 +84,7 @@ def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str |
         return None
 
     sources: set[InstanceId] = set()
-    for link in state.instance_links.values():
+    for link in instance_links:
         if decode_instance_id in link.decode_instances:
             sources.update(link.prefill_instances)
     sources.discard(decode_instance_id)
@@ -132,6 +127,7 @@ class Master:
         global_event_sender: Sender[GlobalForwarderEvent],
         download_command_sender: Sender[ForwarderDownloadCommand],
         aggregator: LVAggregator,
+        storage: Storage,
     ):
         self.node_id = node_id
         self.session_id = session_id
@@ -149,6 +145,7 @@ class Master:
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
         self.aggregator: LVAggregator = aggregator
+        self.storage: Storage = storage
 
     async def run(self):
         logger.info("Starting Master")
@@ -185,10 +182,21 @@ class Master:
                             pass
                         case TextGeneration():
                             # set-difference => prefill-only nodes
+                            instance_links: list[InstanceLink] = []
                             prefill_only: set[InstanceId] = set()
-                            for link in self.state.instance_links.values():
+                            for _, link in (
+                                await self.storage.dump("instance_links/")
+                            ).items():
+                                try:
+                                    instance_links.append(
+                                        InstanceLink.model_validate_json(link)
+                                    )
+                                except ValidationError:
+                                    continue
+
+                            for link in instance_links:
                                 prefill_only.update(link.prefill_instances)
-                            for link in self.state.instance_links.values():
+                            for link in instance_links:
                                 prefill_only.difference_update(link.decode_instances)
 
                             for instance in self.state.instances.values():
@@ -229,6 +237,7 @@ class Master:
                                 update={
                                     "prefill_endpoint": _prefill_endpoint_for(
                                         self.state.with_aggregator(self.aggregator),
+                                        instance_links,
                                         decode_instance_id,
                                     ),
                                 }
@@ -433,29 +442,6 @@ class Master:
                                     f"Finished command {command.finished_command_id} finished"
                                 )
 
-                        case AddCustomModelCard():
-                            generated_events.append(
-                                CustomModelCardAdded(model_card=command.model_card)
-                            )
-                        case DeleteCustomModelCard():
-                            generated_events.append(
-                                CustomModelCardDeleted(model_id=command.model_id)
-                            )
-                        case SetInstanceLink():
-                            link = InstanceLink(
-                                link_id=command.link_id,
-                                prefill_instances=list(
-                                    dict.fromkeys(command.prefill_instances)
-                                ),
-                                decode_instances=list(
-                                    dict.fromkeys(command.decode_instances)
-                                ),
-                            )
-                            generated_events.append(InstanceLinkCreated(link=link))
-                        case DeleteInstanceLink():
-                            generated_events.append(
-                                InstanceLinkDeleted(link_id=command.link_id)
-                            )
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             # rate limit to 1000 at a time
