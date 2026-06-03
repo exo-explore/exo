@@ -53,8 +53,6 @@ def test_plan_requests_download_when_waiting_and_shard_not_downloaded():
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -109,8 +107,6 @@ def test_plan_loads_model_when_all_shards_downloaded_and_waiting():
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -155,8 +151,6 @@ def test_plan_does_not_request_download_when_shard_already_downloaded():
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -206,8 +200,6 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -230,8 +222,6 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )

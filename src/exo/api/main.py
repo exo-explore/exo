@@ -1,6 +1,5 @@
 import base64
 import contextlib
-import hashlib
 import json
 import random
 import time
@@ -12,8 +11,7 @@ from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import anyio
-from anyio import BrokenResourceError, ClosedResourceError
-from exo_rs import SessionHandle
+from exo_rs import SessionHandle, TaskStream
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -23,7 +21,7 @@ from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from hypercorn.utils import LifespanTimeoutError, ShutdownError
 from loguru import logger
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
@@ -49,6 +47,10 @@ from exo.api.adapters.responses import (
     responses_request_to_text_generation,
 )
 from exo.api.keepalive import with_sse_keepalive
+from exo.api.load_balancing import (
+    instance_id_for_command,
+    load_instance_links,
+)
 from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
@@ -134,7 +136,6 @@ from exo.shared.constants import (
     EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
-    EXO_MAX_CHUNK_SIZE,
     EXO_TRACING_CACHE_DIR,
 )
 from exo.shared.election import ElectionMessage
@@ -149,7 +150,6 @@ from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_tra
 from exo.shared.types.chunks import (
     ErrorChunk,
     ImageChunk,
-    InputImageChunk,
     PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
@@ -166,18 +166,14 @@ from exo.shared.types.commands import (
     ImageEdits,
     ImageGeneration,
     PlaceInstance,
-    SendInputChunk,
     StartDownload,
     TaskCancelled,
-    TaskFinished,
     TextGeneration,
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SystemId
 from exo.shared.types.events import (
-    ChunkGenerated,
     Event,
     IndexedEvent,
-    InstanceDeleted,
     TracesMerged,
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
@@ -193,19 +189,24 @@ from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.text_generation import (
-    Base64ImageHash,
     TextGenerationTaskParams,
 )
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
-from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.channels import Receiver, Sender
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
+_TEXT_CHUNK_ADAPTER: TypeAdapter[
+    TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk
+] = TypeAdapter(TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk)
+_IMAGE_CHUNK_ADAPTER: TypeAdapter[ImageChunk | ErrorChunk] = TypeAdapter(
+    ImageChunk | ErrorChunk
+)
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
 
 
@@ -256,9 +257,9 @@ class API:
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
-        self._sent_image_hashes: set[str] = set()
-        self.aggregator = session_handle.last_value_aggregator("metrics")
+        self.aggregator = session_handle.last_value_aggregator("node_metrics")
         self.storage = session_handle.storage_interface()
+        self.task_requester = session_handle.task_requester()
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -286,13 +287,7 @@ class API:
             name="dashboard",
         )
 
-        self._text_generation_queues: dict[
-            CommandId,
-            Sender[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk],
-        ] = {}
-        self._image_generation_queues: dict[
-            CommandId, Sender[ImageChunk | ErrorChunk]
-        ] = {}
+        self._bridge_command_instances: dict[CommandId, InstanceId] = {}
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
 
@@ -302,13 +297,11 @@ class API:
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self.state = State()
         self._system_id = SystemId()
-        self._text_generation_queues = {}
-        self._image_generation_queues = {}
+        self._bridge_command_instances = {}
         self.unpause(result_clock)
         self.event_receiver.close()
         self.event_receiver = event_receiver
         self._tg.start_soon(self._apply_state)
-        self._sent_image_hashes = set()
 
     def unpause(self, result_clock: int):
         logger.info("Unpausing API")
@@ -744,59 +737,117 @@ class API:
 
     async def cancel_command(self, command_id: CommandId) -> CancelCommandResponse:
         """Cancel an active command by closing its stream and notifying workers."""
-        sender = self._text_generation_queues.get(
-            command_id
-        ) or self._image_generation_queues.get(command_id)
-        if sender is None:
+        if (instance_id := self._bridge_command_instances.get(command_id)) is None:
             raise HTTPException(
                 status_code=404,
                 detail="Command not found or already completed",
             )
-
-        await self._send(TaskCancelled(cancelled_command_id=command_id))
-        sender.close()
-
+        await self.task_requester.interrupt(
+            instance_id,
+            command_id,
+            TaskCancelled(cancelled_command_id=command_id).model_dump_json(),
+        )
         return CancelCommandResponse(
             message="Command cancelled.",
             command_id=command_id,
         )
 
-    async def _token_chunk_stream(
-        self, command_id: CommandId
+    async def _bridge_token_chunk_stream(
+        self, command_id: CommandId, stream: TaskStream
     ) -> AsyncGenerator[
         TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk, None
     ]:
-        """Yield chunks for a given command until completion.
-
-        This is the internal low-level stream used by all API adapters.
-        """
         try:
-            self._text_generation_queues[command_id], recv = channel[
-                TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk
-            ]()
-
-            with recv as token_chunks:
-                async for chunk in token_chunks:
-                    yield chunk
-                    if isinstance(chunk, PrefillProgressChunk):
-                        continue
-                    if chunk.finish_reason is not None:
-                        break
-
+            while (payload := await stream.recv()) is not None:
+                parsed = _TEXT_CHUNK_ADAPTER.validate_json(payload)
+                yield parsed
+                if isinstance(parsed, PrefillProgressChunk):
+                    continue
+                if parsed.finish_reason is not None:
+                    break
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
-                )
+            await self.task_requester.interrupt(
+                self._instance_id_for_command_id(command_id),
+                command_id,
+                TaskCancelled(cancelled_command_id=command_id).model_dump_json(),
+            )
             raise
         finally:
-            await self._send(TaskFinished(finished_command_id=command_id))
-            if command_id in self._text_generation_queues:
-                del self._text_generation_queues[command_id]
+            self._bridge_command_instances.pop(command_id, None)
+
+    async def _bridge_image_chunk_stream(
+        self, command_id: CommandId, stream: TaskStream
+    ) -> AsyncGenerator[ImageChunk | ErrorChunk, None]:
+        try:
+            while (payload := await stream.recv()) is not None:
+                parsed = _IMAGE_CHUNK_ADAPTER.validate_json(payload)
+                yield parsed
+                if parsed.finish_reason is not None:
+                    break
+        except anyio.get_cancelled_exc_class():
+            await self.task_requester.interrupt(
+                self._instance_id_for_command_id(command_id),
+                command_id,
+                TaskCancelled(cancelled_command_id=command_id).model_dump_json(),
+            )
+            raise
+        finally:
+            self._bridge_command_instances.pop(command_id, None)
+
+    async def _submit_task_command(
+        self, command: TextGeneration | ImageGeneration | ImageEdits
+    ) -> TaskStream:
+        instance_links = load_instance_links(
+            list((await self.storage.dump("instance_links/")).values())
+        )
+        instance_id = instance_id_for_command(
+            self.state.with_aggregator(self.aggregator), command, instance_links
+        )
+        if instance_id is None:
+            await self._notify_if_model_needs_download(command)
+            raise HTTPException(
+                status_code=404,
+                detail=f"No instance found for model {command.task_params.model}",
+            )
+        self._bridge_command_instances[command.command_id] = instance_id
+        return await self.task_requester.submit(
+            instance_id,
+            command.command_id,
+            command.model_dump_json(),
+        )
+
+    async def _notify_if_model_needs_download(
+        self, command: TextGeneration | ImageGeneration | ImageEdits
+    ) -> None:
+        model_id = ModelId(command.task_params.model)
+        model_is_downloaded = any(
+            isinstance(download, DownloadCompleted)
+            and download.shard_metadata.model_card.model_id == model_id
+            for node_downloads in self.state.downloads.values()
+            for download in node_downloads
+        )
+        if not model_is_downloaded:
+            await self._trigger_notify_user_to_download_model(model_id)
+
+    def _instance_id_for_command_id(self, command_id: CommandId) -> InstanceId:
+        if instance_id := self._bridge_command_instances.get(command_id):
+            return instance_id
+        for task in self.state.tasks.values():
+            if (
+                isinstance(
+                    task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
+                )
+                and task.command_id == command_id
+            ):
+                return task.instance_id
+        raise RuntimeError(f"No task found for command {command_id}")
 
     async def _collect_text_generation_with_stats(
-        self, command_id: CommandId
+        self,
+        command_id: CommandId,
+        chunk_stream: AsyncGenerator[
+            TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk, None
+        ],
     ) -> BenchChatCompletionResponse:
         sampler = PowerSampler(
             get_node_system=lambda: self.state.with_aggregator(
@@ -813,7 +864,7 @@ class API:
         async with anyio.create_task_group() as tg:
             tg.start_soon(sampler.run)
 
-            async for chunk in self._token_chunk_stream(command_id):
+            async for chunk in chunk_stream:
                 if isinstance(chunk, PrefillProgressChunk):
                     continue
 
@@ -875,71 +926,29 @@ class API:
             "TODO: we should send a notification to the user to download the model"
         )
 
-    async def _send_text_generation_with_images(
+    async def _text_generation_command(
         self, task_params: TextGenerationTaskParams
     ) -> TextGeneration:
         task_params = task_params.with_card_sampling_defaults()
-        images = task_params.images
-        if not images:
-            command = TextGeneration(task_params=task_params)
-            await self._send(command)
-            return command
-
-        hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
-        all_hashes = {idx: Base64ImageHash(h) for idx, h in enumerate(hashes)}
-        task_params = task_params.model_copy(
-            update={"images": [], "image_hashes": all_hashes}
-        )
-        command = TextGeneration(task_params=task_params)
-
-        new_images: list[tuple[int, str]] = []
-        for idx, (img, h) in enumerate(zip(images, hashes, strict=True)):
-            if h not in self._sent_image_hashes:
-                self._sent_image_hashes.add(h)
-                new_images.append((idx, img))
-
-        if not new_images:
-            await self._send(command)
-            return command
-
-        all_chunks: list[tuple[int, str]] = []
-        for img_idx, img_data in new_images:
-            for i in range(0, len(img_data), EXO_MAX_CHUNK_SIZE):
-                all_chunks.append((img_idx, img_data[i : i + EXO_MAX_CHUNK_SIZE]))
-
-        for global_idx, (img_idx, chunk_data) in enumerate(all_chunks):
-            await self._send(
-                SendInputChunk(
-                    chunk=InputImageChunk(
-                        model=task_params.model,
-                        command_id=command.command_id,
-                        data=chunk_data,
-                        chunk_index=global_idx,
-                        total_chunks=len(all_chunks),
-                        image_index=img_idx,
-                    )
-                )
-            )
-
-        await self._send(command)
-        return command
+        return TextGeneration(task_params=task_params)
 
     async def chat_completions(
         self, payload: ChatCompletionRequest
     ) -> ChatCompletionResponse | StreamingResponse:
         """OpenAI Chat Completions API - adapter."""
         task_params = await chat_request_to_text_generation(payload)
-        validated_model = await self._validate_model_has_instance(task_params.model)
-        task_params = task_params.model_copy(update={"model": validated_model})
-
-        command = await self._send_text_generation_with_images(task_params)
+        command = await self._text_generation_command(task_params)
+        bridge_stream = await self._submit_task_command(command)
+        chunk_stream = self._bridge_token_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         if payload.stream:
             return StreamingResponse(
                 with_sse_keepalive(
                     generate_chat_stream(
                         command.command_id,
-                        self._token_chunk_stream(command.command_id),
+                        chunk_stream,
                     ),
                 ),
                 media_type="text/event-stream",
@@ -953,7 +962,7 @@ class API:
             return StreamingResponse(
                 collect_chat_response(
                     command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    chunk_stream,
                 ),
                 media_type="application/json",
             )
@@ -962,11 +971,6 @@ class API:
         self, payload: BenchChatCompletionRequest
     ) -> BenchChatCompletionResponse | StreamingResponse:
         task_params = await chat_request_to_text_generation(payload)
-        validated_model = await self._validate_model_has_instance(
-            ModelId(task_params.model)
-        )
-        task_params = task_params.model_copy(update={"model": validated_model})
-
         task_params = task_params.model_copy(
             update={
                 "stream": False,
@@ -975,14 +979,18 @@ class API:
             }
         )
 
-        command = await self._send_text_generation_with_images(task_params)
+        command = await self._text_generation_command(task_params)
+        bridge_stream = await self._submit_task_command(command)
+        chunk_stream = self._bridge_token_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         if payload.stream:
             return StreamingResponse(
                 with_sse_keepalive(
                     generate_chat_stream(
                         command.command_id,
-                        self._token_chunk_stream(command.command_id),
+                        chunk_stream,
                     ),
                 ),
                 media_type="text/event-stream",
@@ -993,33 +1001,9 @@ class API:
                 },
             )
 
-        return await self._collect_text_generation_with_stats(command.command_id)
-
-    async def _validate_model_has_instance(self, model_id: ModelId) -> ModelId:
-        """Validate a model has an active instance.
-        If the model isn't even downloaded, triggers notification to user to download model.
-
-
-        Raises HTTPException 404 if no instance is found for the model.
-        """
-        if not any(
-            instance.shard_assignments.model_id == model_id
-            for instance in self.state.instances.values()
-        ):
-            # Check if model is actually downloaded
-            model_is_downloaded = any(
-                isinstance(download, DownloadCompleted)
-                and download.shard_metadata.model_card.model_id == model_id
-                for node_downloads in self.state.downloads.values()
-                for download in node_downloads
-            )
-            if not model_is_downloaded:
-                await self._trigger_notify_user_to_download_model(model_id)
-
-            raise HTTPException(
-                status_code=404, detail=f"No instance found for model {model_id}"
-            )
-        return model_id
+        return await self._collect_text_generation_with_stats(
+            command.command_id, chunk_stream
+        )
 
     def stream_events(self) -> StreamingResponse:
         def _generate_json_array(events: Iterable[Event]) -> Iterable[str]:
@@ -1073,9 +1057,6 @@ class API:
         """
         payload = payload.model_copy(
             update={
-                "model": await self._validate_model_has_instance(
-                    ModelId(payload.model)
-                ),
                 "advanced_params": _ensure_seed(payload.advanced_params),
             }
         )
@@ -1083,7 +1064,10 @@ class API:
         command = ImageGeneration(
             task_params=payload,
         )
-        await self._send(command)
+        bridge_stream = await self._submit_task_command(command)
+        chunk_stream = self._bridge_image_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         # Check if streaming is requested
         if payload.stream and payload.partial_images and payload.partial_images > 0:
@@ -1093,6 +1077,7 @@ class API:
                     command_id=command.command_id,
                     num_images=payload.n or 1,
                     response_format=payload.response_format or "b64_json",
+                    chunk_stream=chunk_stream,
                 ),
                 media_type="text/event-stream",
             )
@@ -1103,6 +1088,7 @@ class API:
             command_id=command.command_id,
             num_images=payload.n or 1,
             response_format=payload.response_format or "b64_json",
+            chunk_stream=chunk_stream,
         )
 
     async def _generate_image_stream(
@@ -1111,113 +1097,84 @@ class API:
         command_id: CommandId,
         num_images: int,
         response_format: str,
+        chunk_stream: AsyncGenerator[ImageChunk | ErrorChunk, None],
     ) -> AsyncGenerator[str, None]:
-        """Generate SSE stream of partial and final images."""
-        # Track chunks: {(image_index, is_partial): {chunk_index: data}}
         image_chunks: dict[tuple[int, bool], dict[int, str]] = {}
         image_total_chunks: dict[tuple[int, bool], int] = {}
         image_metadata: dict[tuple[int, bool], tuple[int | None, int | None]] = {}
         images_complete = 0
 
-        try:
-            self._image_generation_queues[command_id], recv = channel[
-                ImageChunk | ErrorChunk
-            ]()
-
-            with recv as chunks:
-                async for chunk in chunks:
-                    if chunk.finish_reason == "error":
-                        error_response = ErrorResponse(
-                            error=ErrorInfo(
-                                message=chunk.error_message or "Internal server error",
-                                type="InternalServerError",
-                                code=500,
-                            )
-                        )
-                        yield f"data: {error_response.model_dump_json()}\n\n"
-                        yield "data: [DONE]\n\n"
-                        return
-
-                    key = (chunk.image_index, chunk.is_partial)
-
-                    if key not in image_chunks:
-                        image_chunks[key] = {}
-                        image_total_chunks[key] = chunk.total_chunks
-                        image_metadata[key] = (
-                            chunk.partial_index,
-                            chunk.total_partials,
-                        )
-
-                    image_chunks[key][chunk.chunk_index] = chunk.data
-
-                    # Check if this image is complete
-                    if len(image_chunks[key]) == image_total_chunks[key]:
-                        full_data = "".join(
-                            image_chunks[key][i] for i in range(len(image_chunks[key]))
-                        )
-
-                        partial_idx, total_partials = image_metadata[key]
-
-                        if chunk.is_partial:
-                            # Yield partial image event (always use b64_json for partials)
-                            event_data = {
-                                "type": "partial",
-                                "image_index": chunk.image_index,
-                                "partial_index": partial_idx,
-                                "total_partials": total_partials,
-                                "format": str(chunk.format),
-                                "data": {
-                                    "b64_json": full_data
-                                    if response_format == "b64_json"
-                                    else None,
-                                },
-                            }
-                            yield f"data: {json.dumps(event_data)}\n\n"
-                        else:
-                            # Final image
-                            if response_format == "url":
-                                image_bytes = base64.b64decode(full_data)
-                                content_type = _format_to_content_type(chunk.format)
-                                stored = self._image_store.store(
-                                    image_bytes, content_type
-                                )
-                                url = self._build_image_url(request, stored.image_id)
-                                event_data = {
-                                    "type": "final",
-                                    "image_index": chunk.image_index,
-                                    "format": str(chunk.format),
-                                    "data": {"url": url},
-                                }
-                            else:
-                                event_data = {
-                                    "type": "final",
-                                    "image_index": chunk.image_index,
-                                    "format": str(chunk.format),
-                                    "data": {"b64_json": full_data},
-                                }
-                            yield f"data: {json.dumps(event_data)}\n\n"
-                            images_complete += 1
-
-                            if images_complete >= num_images:
-                                yield "data: [DONE]\n\n"
-                                break
-
-                        # Clean up completed image chunks
-                        del image_chunks[key]
-                        del image_total_chunks[key]
-                        del image_metadata[key]
-
-        except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
+        async for chunk in chunk_stream:
+            if chunk.finish_reason == "error":
+                error_response = ErrorResponse(
+                    error=ErrorInfo(
+                        message=chunk.error_message or "Internal server error",
+                        type="InternalServerError",
+                        code=500,
+                    )
                 )
-            raise
-        finally:
-            await self._send(TaskFinished(finished_command_id=command_id))
-            if command_id in self._image_generation_queues:
-                del self._image_generation_queues[command_id]
+                yield f"data: {error_response.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            key = (chunk.image_index, chunk.is_partial)
+            if key not in image_chunks:
+                image_chunks[key] = {}
+                image_total_chunks[key] = chunk.total_chunks
+                image_metadata[key] = (chunk.partial_index, chunk.total_partials)
+
+            image_chunks[key][chunk.chunk_index] = chunk.data
+            if len(image_chunks[key]) != image_total_chunks[key]:
+                continue
+
+            full_data = "".join(
+                image_chunks[key][i] for i in range(len(image_chunks[key]))
+            )
+            partial_idx, total_partials = image_metadata[key]
+
+            if chunk.is_partial:
+                event_data = {
+                    "type": "partial",
+                    "image_index": chunk.image_index,
+                    "partial_index": partial_idx,
+                    "total_partials": total_partials,
+                    "format": str(chunk.format),
+                    "data": {
+                        "b64_json": full_data
+                        if response_format == "b64_json"
+                        else None,
+                    },
+                }
+                yield f"data: {json.dumps(event_data)}\n\n"
+            else:
+                if response_format == "url":
+                    image_bytes = base64.b64decode(full_data)
+                    content_type = _format_to_content_type(chunk.format)
+                    stored = self._image_store.store(image_bytes, content_type)
+                    url = self._build_image_url(request, stored.image_id)
+                    event_data = {
+                        "type": "final",
+                        "image_index": chunk.image_index,
+                        "format": str(chunk.format),
+                        "data": {"url": url},
+                    }
+                else:
+                    event_data = {
+                        "type": "final",
+                        "image_index": chunk.image_index,
+                        "format": str(chunk.format),
+                        "data": {"b64_json": full_data},
+                    }
+                yield f"data: {json.dumps(event_data)}\n\n"
+                images_complete += 1
+
+            del image_chunks[key]
+            del image_total_chunks[key]
+            del image_metadata[key]
+
+            if images_complete >= num_images:
+                yield "data: [DONE]\n\n"
+                break
 
     async def _collect_image_chunks(
         self,
@@ -1225,85 +1182,64 @@ class API:
         command_id: CommandId,
         num_images: int,
         response_format: str,
+        chunk_stream: AsyncGenerator[ImageChunk | ErrorChunk, None],
+        *,
         capture_stats: bool = False,
     ) -> tuple[list[ImageData], ImageGenerationStats | None]:
-        """Collect image chunks and optionally capture stats."""
-        # Track chunks per image: {image_index: {chunk_index: data}}
-        # Only track non-partial (final) images
         image_chunks: dict[int, dict[int, str]] = {}
         image_total_chunks: dict[int, int] = {}
         image_formats: dict[int, Literal["png", "jpeg", "webp"] | None] = {}
         images_complete = 0
         stats: ImageGenerationStats | None = None
 
-        try:
-            self._image_generation_queues[command_id], recv = channel[
-                ImageChunk | ErrorChunk
-            ]()
-
-            while images_complete < num_images:
-                with recv as chunks:
-                    async for chunk in chunks:
-                        if chunk.finish_reason == "error":
-                            raise HTTPException(
-                                status_code=500,
-                                detail=chunk.error_message or "Internal server error",
-                            )
-
-                        if chunk.is_partial:
-                            continue
-
-                        if chunk.image_index not in image_chunks:
-                            image_chunks[chunk.image_index] = {}
-                            image_total_chunks[chunk.image_index] = chunk.total_chunks
-                            image_formats[chunk.image_index] = chunk.format
-
-                        image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
-
-                        if capture_stats and chunk.stats is not None:
-                            stats = chunk.stats
-
-                        if (
-                            len(image_chunks[chunk.image_index])
-                            == image_total_chunks[chunk.image_index]
-                        ):
-                            images_complete += 1
-
-                        if images_complete >= num_images:
-                            break
-
-            images: list[ImageData] = []
-            for image_idx in range(num_images):
-                chunks_dict = image_chunks[image_idx]
-                full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
-                if response_format == "url" and request is not None:
-                    image_bytes = base64.b64decode(full_data)
-                    content_type = _format_to_content_type(image_formats.get(image_idx))
-                    stored = self._image_store.store(image_bytes, content_type)
-                    url = self._build_image_url(request, stored.image_id)
-                    images.append(ImageData(b64_json=None, url=url))
-                else:
-                    images.append(
-                        ImageData(
-                            b64_json=full_data
-                            if response_format == "b64_json"
-                            else None,
-                            url=None,
-                        )
-                    )
-
-            return (images, stats if capture_stats else None)
-        except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
+        async for chunk in chunk_stream:
+            if chunk.finish_reason == "error":
+                raise HTTPException(
+                    status_code=500,
+                    detail=chunk.error_message or "Internal server error",
                 )
-            raise
-        finally:
-            await self._send(TaskFinished(finished_command_id=command_id))
-            if command_id in self._image_generation_queues:
-                del self._image_generation_queues[command_id]
+
+            if chunk.is_partial:
+                continue
+
+            if chunk.image_index not in image_chunks:
+                image_chunks[chunk.image_index] = {}
+                image_total_chunks[chunk.image_index] = chunk.total_chunks
+                image_formats[chunk.image_index] = chunk.format
+
+            image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
+
+            if capture_stats and chunk.stats is not None:
+                stats = chunk.stats
+
+            if (
+                len(image_chunks[chunk.image_index])
+                == image_total_chunks[chunk.image_index]
+            ):
+                images_complete += 1
+
+            if images_complete >= num_images:
+                break
+
+        images: list[ImageData] = []
+        for image_idx in range(num_images):
+            chunks_dict = image_chunks[image_idx]
+            full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
+            if response_format == "url" and request is not None:
+                image_bytes = base64.b64decode(full_data)
+                content_type = _format_to_content_type(image_formats.get(image_idx))
+                stored = self._image_store.store(image_bytes, content_type)
+                url = self._build_image_url(request, stored.image_id)
+                images.append(ImageData(b64_json=None, url=url))
+            else:
+                images.append(
+                    ImageData(
+                        b64_json=full_data if response_format == "b64_json" else None,
+                        url=None,
+                    )
+                )
+
+        return (images, stats if capture_stats else None)
 
     async def _collect_image_generation(
         self,
@@ -1311,10 +1247,16 @@ class API:
         command_id: CommandId,
         num_images: int,
         response_format: str,
+        chunk_stream: AsyncGenerator[ImageChunk | ErrorChunk, None],
     ) -> ImageGenerationResponse:
         """Collect all image chunks (non-streaming) and return a single response."""
         images, _ = await self._collect_image_chunks(
-            request, command_id, num_images, response_format, capture_stats=False
+            request,
+            command_id,
+            num_images,
+            response_format,
+            chunk_stream,
+            capture_stats=False,
         )
         return ImageGenerationResponse(data=images)
 
@@ -1324,6 +1266,7 @@ class API:
         command_id: CommandId,
         num_images: int,
         response_format: str,
+        chunk_stream: AsyncGenerator[ImageChunk | ErrorChunk, None],
     ) -> BenchImageGenerationResponse:
         sampler = PowerSampler(
             get_node_system=lambda: self.state.with_aggregator(
@@ -1335,7 +1278,12 @@ class API:
         async with anyio.create_task_group() as tg:
             tg.start_soon(sampler.run)
             images, stats = await self._collect_image_chunks(
-                request, command_id, num_images, response_format, capture_stats=True
+                request,
+                command_id,
+                num_images,
+                response_format,
+                chunk_stream,
+                capture_stats=True,
             )
             tg.cancel_scope.cancel()
         return BenchImageGenerationResponse(
@@ -1347,9 +1295,6 @@ class API:
     ) -> BenchImageGenerationResponse:
         payload = payload.model_copy(
             update={
-                "model": await self._validate_model_has_instance(
-                    ModelId(payload.model)
-                ),
                 "stream": False,
                 "partial_images": 0,
                 "advanced_params": _ensure_seed(payload.advanced_params),
@@ -1359,13 +1304,17 @@ class API:
         command = ImageGeneration(
             task_params=payload,
         )
-        await self._send(command)
+        bridge_stream = await self._submit_task_command(command)
+        chunk_stream = self._bridge_image_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         return await self._collect_image_generation_with_stats(
             request=request,
             command_id=command.command_id,
             num_images=payload.n or 1,
             response_format=payload.response_format or "b64_json",
+            chunk_stream=chunk_stream,
         )
 
     async def _send_image_edits_command(
@@ -1384,8 +1333,7 @@ class API:
         output_format: Literal["png", "jpeg", "webp"],
         advanced_params: AdvancedImageParams | None,
     ) -> ImageEdits:
-        """Prepare and send an image edits command with chunked image upload."""
-        validated_model = await self._validate_model_has_instance(model)
+        """Prepare an image edits command with inline image data."""
         advanced_params = _ensure_seed(advanced_params)
 
         image_content = await image.read()
@@ -1393,18 +1341,11 @@ class API:
 
         image_strength = 0.7 if input_fidelity == "high" else 0.3
 
-        data_chunks = [
-            image_data[i : i + EXO_MAX_CHUNK_SIZE]
-            for i in range(0, len(image_data), EXO_MAX_CHUNK_SIZE)
-        ]
-        total_chunks = len(data_chunks)
-
         command = ImageEdits(
             task_params=ImageEditsTaskParams(
-                image_data="",
-                total_input_chunks=total_chunks,
+                image_data=image_data,
                 prompt=prompt,
-                model=validated_model,
+                model=model,
                 n=n,
                 size=size,
                 response_format=response_format,
@@ -1418,23 +1359,6 @@ class API:
             ),
         )
 
-        logger.info(
-            f"Sending input image: {len(image_data)} bytes in {total_chunks} chunks"
-        )
-        for chunk_index, chunk_data in enumerate(data_chunks):
-            await self._send(
-                SendInputChunk(
-                    chunk=InputImageChunk(
-                        model=validated_model,
-                        command_id=command.command_id,
-                        data=chunk_data,
-                        chunk_index=chunk_index,
-                        total_chunks=total_chunks,
-                    )
-                )
-            )
-
-        await self._send(command)
         return command
 
     async def image_edits(
@@ -1481,6 +1405,11 @@ class API:
             advanced_params=parsed_advanced_params,
         )
 
+        bridge_stream = await self._submit_task_command(command)
+        chunk_stream = self._bridge_image_chunk_stream(
+            command.command_id, bridge_stream
+        )
+
         if stream_bool and partial_images_int > 0:
             return StreamingResponse(
                 self._generate_image_stream(
@@ -1488,6 +1417,7 @@ class API:
                     command_id=command.command_id,
                     num_images=n,
                     response_format=response_format,
+                    chunk_stream=chunk_stream,
                 ),
                 media_type="text/event-stream",
             )
@@ -1497,6 +1427,7 @@ class API:
             command_id=command.command_id,
             num_images=n,
             response_format=response_format,
+            chunk_stream=chunk_stream,
         )
 
     async def bench_image_edits(
@@ -1537,11 +1468,17 @@ class API:
             advanced_params=parsed_advanced_params,
         )
 
+        bridge_stream = await self._submit_task_command(command)
+        chunk_stream = self._bridge_image_chunk_stream(
+            command.command_id, bridge_stream
+        )
+
         return await self._collect_image_generation_with_stats(
             request=request,
             command_id=command.command_id,
             num_images=n,
             response_format=response_format,
+            chunk_stream=chunk_stream,
         )
 
     async def claude_messages(
@@ -1549,12 +1486,11 @@ class API:
     ) -> ClaudeMessagesResponse | StreamingResponse:
         """Claude Messages API - adapter."""
         task_params = await claude_request_to_text_generation(payload)
-        validated_model = await self._validate_model_has_instance(
-            ModelId(task_params.model)
+        command = await self._text_generation_command(task_params)
+        bridge_stream = await self._submit_task_command(command)
+        chunk_stream = self._bridge_token_chunk_stream(
+            command.command_id, bridge_stream
         )
-        task_params = task_params.model_copy(update={"model": validated_model})
-
-        command = await self._send_text_generation_with_images(task_params)
 
         if payload.stream:
             return StreamingResponse(
@@ -1562,7 +1498,7 @@ class API:
                     generate_claude_stream(
                         command.command_id,
                         payload.model,
-                        self._token_chunk_stream(command.command_id),
+                        chunk_stream,
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1577,7 +1513,7 @@ class API:
                 collect_claude_response(
                     command.command_id,
                     payload.model,
-                    self._token_chunk_stream(command.command_id),
+                    chunk_stream,
                 ),
                 media_type="application/json",
             )
@@ -1587,10 +1523,11 @@ class API:
     ) -> ResponsesResponse | StreamingResponse:
         """OpenAI Responses API."""
         task_params = await responses_request_to_text_generation(payload)
-        validated_model = await self._validate_model_has_instance(task_params.model)
-        task_params = task_params.model_copy(update={"model": validated_model})
-
-        command = await self._send_text_generation_with_images(task_params)
+        command = await self._text_generation_command(task_params)
+        bridge_stream = await self._submit_task_command(command)
+        chunk_stream = self._bridge_token_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         if payload.stream:
             return StreamingResponse(
@@ -1598,7 +1535,7 @@ class API:
                     generate_responses_stream(
                         command.command_id,
                         payload.model,
-                        self._token_chunk_stream(command.command_id),
+                        chunk_stream,
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1614,7 +1551,7 @@ class API:
                 collect_responses_response(
                     command.command_id,
                     payload.model,
-                    self._token_chunk_stream(command.command_id),
+                    chunk_stream,
                 ),
                 media_type="application/json",
             )
@@ -1628,18 +1565,17 @@ class API:
     ) -> OllamaChatResponse | StreamingResponse:
         """Ollama Chat API — accepts JSON regardless of Content-Type."""
         task_params = ollama_request_to_text_generation(request)
-        resolved_model = await self._validate_model_has_instance(
-            ModelId(task_params.model)
+        command = await self._text_generation_command(task_params)
+        bridge_stream = await self._submit_task_command(command)
+        chunk_stream = self._bridge_token_chunk_stream(
+            command.command_id, bridge_stream
         )
-        task_params = task_params.model_copy(update={"model": resolved_model})
-
-        command = await self._send_text_generation_with_images(task_params)
 
         if request.stream:
             return StreamingResponse(
                 generate_ollama_chat_stream(
                     command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    chunk_stream,
                 ),
                 media_type="application/x-ndjson",
                 headers={
@@ -1652,7 +1588,7 @@ class API:
             return StreamingResponse(
                 collect_ollama_chat_response(
                     command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    chunk_stream,
                 ),
                 media_type="application/json",
             )
@@ -1662,18 +1598,17 @@ class API:
     ) -> OllamaGenerateResponse | StreamingResponse:
         """Ollama Generate API — accepts JSON regardless of Content-Type."""
         task_params = ollama_generate_request_to_text_generation(request)
-        resolved_model = await self._validate_model_has_instance(
-            ModelId(task_params.model)
+        command = await self._text_generation_command(task_params)
+        bridge_stream = await self._submit_task_command(command)
+        chunk_stream = self._bridge_token_chunk_stream(
+            command.command_id, bridge_stream
         )
-        task_params = task_params.model_copy(update={"model": resolved_model})
-
-        command = await self._send_text_generation_with_images(task_params)
 
         if request.stream:
             return StreamingResponse(
                 generate_ollama_generate_stream(
                     command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    chunk_stream,
                 ),
                 media_type="application/x-ndjson",
                 headers={
@@ -1686,7 +1621,7 @@ class API:
             return StreamingResponse(
                 collect_ollama_generate_response(
                     command.command_id,
-                    self._token_chunk_stream(command.command_id),
+                    chunk_stream,
                 ),
                 media_type="application/json",
             )
@@ -1923,20 +1858,11 @@ class API:
                     await anyio.sleep_forever()
                 finally:
                     with anyio.CancelScope(shield=True):
-                        # IMPORTANT: when new queues are added, update this (for proper shutdown semantics)
-                        self._shutdown_queues(self._text_generation_queues)
-                        self._shutdown_queues(self._image_generation_queues)
-
                         shutdown_ev.set()
         finally:
             self._event_log.close()
             self.command_sender.close()
             self.event_receiver.close()
-
-    @staticmethod
-    def _shutdown_queues[K, V](queues: dict[K, Sender[V]]):
-        for v in queues.values():
-            v.close()
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
@@ -1973,42 +1899,8 @@ class API:
                 self._event_log.append(i_event.event)
                 self.state = apply(self.state, i_event)
                 event = i_event.event
-
-                if isinstance(event, ChunkGenerated):
-                    if queue := self._image_generation_queues.get(
-                        event.command_id, None
-                    ):
-                        assert isinstance(event.chunk, ImageChunk)
-                        try:
-                            await queue.send(event.chunk)
-                        except (BrokenResourceError, ClosedResourceError):
-                            self._image_generation_queues.pop(event.command_id, None)
-                    if queue := self._text_generation_queues.get(
-                        event.command_id, None
-                    ):
-                        assert not isinstance(event.chunk, ImageChunk)
-                        try:
-                            await queue.send(event.chunk)
-                        except (BrokenResourceError, ClosedResourceError):
-                            self._text_generation_queues.pop(event.command_id, None)
-                if isinstance(event, InstanceDeleted):
-                    self._close_streams_for_instance(event.instance_id)
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
-
-    def _close_streams_for_instance(self, instance_id: InstanceId) -> None:
-        """Close any active generation streams for commands running on the given instance."""
-        for task in self.state.tasks.values():
-            if task.instance_id != instance_id:
-                continue
-            if not isinstance(
-                task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
-            ):
-                continue
-            if sender := self._text_generation_queues.pop(task.command_id, None):
-                sender.close()
-            if sender := self._image_generation_queues.pop(task.command_id, None):
-                sender.close()
 
     def _save_merged_trace(self, event: TracesMerged) -> None:
         traces = [

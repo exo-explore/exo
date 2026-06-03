@@ -1,4 +1,3 @@
-import hashlib
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -8,7 +7,6 @@ from exo_rs import LVAggregator, SessionHandle
 from loguru import logger
 from pydantic import ValidationError
 
-from exo.api.types import ImageEditsTaskParams
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
 from exo.routing.event_router import (
     EventRouterBrokenResourceError,
@@ -18,18 +16,16 @@ from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models import model_cards
 from exo.shared.models.model_cards import ModelCard, ModelId
-from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
     StartDownload,
 )
-from exo.shared.types.common import CommandId, NodeId, SystemId
+from exo.shared.types.common import NodeId, SystemId
 from exo.shared.types.events import (
     Event,
     IndexedEvent,
-    InputChunkReceived,
     InstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
@@ -44,14 +40,11 @@ from exo.shared.types.tasks import (
     CancelTask,
     CreateRunner,
     DownloadModel,
-    ImageEdits,
     LoadModel,
     Shutdown,
     Task,
     TaskStatus,
-    TextGeneration,
 )
-from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import InstanceId
@@ -92,18 +85,15 @@ class Worker:
 
         self._system_id = SystemId()
 
-        # Buffer for input image chunks (for image editing)
-        self.input_chunk_buffer: dict[CommandId, dict[int, InputImageChunk]] = {}
-        self.input_chunk_counts: dict[CommandId, int] = {}
-        self.image_cache: dict[Base64ImageHash, Base64Image] = {}
-
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
         self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
             base=0.5, cap=10.0
         )
         self._stopped: anyio.Event = anyio.Event()
         self._sh: SessionHandle = session_handle
-        self.aggregator: LVAggregator = session_handle.last_value_aggregator("metrics")
+        self.aggregator: LVAggregator = session_handle.last_value_aggregator(
+            "node_metrics"
+        )
 
     async def run(self):
         logger.info("Starting Worker")
@@ -151,36 +141,6 @@ class Worker:
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
 
-                # Buffer input image chunks for image editing
-                if isinstance(event, InputChunkReceived):
-                    cmd_id = event.command_id
-                    if cmd_id not in self.input_chunk_buffer:
-                        self.input_chunk_buffer[cmd_id] = {}
-                        self.input_chunk_counts[cmd_id] = event.chunk.total_chunks
-
-                    self.input_chunk_buffer[cmd_id][event.chunk.chunk_index] = (
-                        event.chunk
-                    )
-                    if (
-                        len(self.input_chunk_buffer[cmd_id])
-                        == self.input_chunk_counts[cmd_id]
-                    ):
-                        per_image: defaultdict[int, list[InputImageChunk]] = (
-                            defaultdict(list)
-                        )
-                        for chunk in self.input_chunk_buffer[cmd_id].values():
-                            per_image[chunk.image_index].append(chunk)
-                        for chunks_for_image in per_image.values():
-                            sorted_chunks = sorted(
-                                chunks_for_image, key=lambda c: c.chunk_index
-                            )
-                            img = Base64Image("".join(c.data for c in sorted_chunks))
-                            self.image_cache[
-                                Base64ImageHash(
-                                    hashlib.sha256(img.encode("ascii")).hexdigest()
-                                )
-                            ] = img
-
     async def _reconcile_custom_cards(self) -> None:
         storage = self._sh.storage_interface()
         while True:
@@ -211,8 +171,6 @@ class Worker:
                 self.state.instances,
                 self.state.runners,
                 self.state.tasks,
-                self.input_chunk_buffer,
-                self.image_cache,
                 self._instance_backoff,
                 self._download_backoff,
             )
@@ -311,63 +269,6 @@ class Worker:
                             task_id=task.task_id, task_status=TaskStatus.Complete
                         )
                     )
-                case ImageEdits() if task.task_params.total_input_chunks > 0:
-                    # Assemble image from chunks and inject into task
-                    cmd_id = task.command_id
-                    chunks = self.input_chunk_buffer.get(cmd_id, {})
-                    assembled = "".join(chunks[i].data for i in range(len(chunks)))
-                    logger.info(
-                        f"Assembled input image from {len(chunks)} chunks, "
-                        f"total size: {len(assembled)} bytes"
-                    )
-                    # Create modified task with assembled image data
-                    modified_task = ImageEdits(
-                        task_id=task.task_id,
-                        command_id=task.command_id,
-                        instance_id=task.instance_id,
-                        task_status=task.task_status,
-                        task_params=ImageEditsTaskParams(
-                            image_data=assembled,
-                            total_input_chunks=task.task_params.total_input_chunks,
-                            prompt=task.task_params.prompt,
-                            model=task.task_params.model,
-                            n=task.task_params.n,
-                            quality=task.task_params.quality,
-                            output_format=task.task_params.output_format,
-                            response_format=task.task_params.response_format,
-                            size=task.task_params.size,
-                            image_strength=task.task_params.image_strength,
-                            bench=task.task_params.bench,
-                            stream=task.task_params.stream,
-                            partial_images=task.task_params.partial_images,
-                            advanced_params=task.task_params.advanced_params,
-                        ),
-                    )
-                    # Cleanup buffers
-                    if cmd_id in self.input_chunk_buffer:
-                        del self.input_chunk_buffer[cmd_id]
-                    if cmd_id in self.input_chunk_counts:
-                        del self.input_chunk_counts[cmd_id]
-                    await self._start_runner_task(modified_task)
-
-                case TextGeneration() if task.task_params.image_hashes:
-                    cmd_id = task.command_id
-                    resolved_images = [
-                        self.image_cache[h]
-                        for _, h in sorted(task.task_params.image_hashes.items())
-                    ]
-                    modified_task = task.model_copy(
-                        update={
-                            "task_params": task.task_params.model_copy(
-                                update={"images": resolved_images}
-                            )
-                        }
-                    )
-                    if cmd_id in self.input_chunk_buffer:
-                        del self.input_chunk_buffer[cmd_id]
-                    if cmd_id in self.input_chunk_counts:
-                        del self.input_chunk_counts[cmd_id]
-                    await self._start_runner_task(modified_task)
                 case LoadModel(instance_id=instance_id):
                     if (instance := self.state.instances.get(instance_id)) is not None:
                         model_id = instance.shard_assignments.model_id
@@ -388,9 +289,18 @@ class Worker:
 
     async def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""
+        task_responder = (
+            self._sh.task_responder(task.instance_id)
+            if task.bound_instance.is_primary_output_node()
+            else None
+        )
         runner = await RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
+            task_assignment_subscriber=self._sh.last_value_subscriber(
+                f"task_assignments/{task.instance_id}/*"
+            ),
+            task_responder=task_responder,
         )
         self.runners[task.bound_instance.bound_runner_id] = runner
         self._tg.start_soon(runner.run)
