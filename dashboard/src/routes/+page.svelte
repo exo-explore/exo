@@ -1346,7 +1346,7 @@
   });
 
   // Deferred Firefox AI sidebar auto-send: wait for cluster state and model
-  // list before submitting. Both data (from /state polling) and models (from
+  // list before submitting. Both data (from dashboard state) and models (from
   // the async /models fetch in onMount) must be loaded for handleAutoSend to
   // correctly auto-select a model.
   $effect(() => {

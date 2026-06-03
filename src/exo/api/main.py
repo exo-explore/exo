@@ -46,6 +46,16 @@ from exo.api.adapters.responses import (
     generate_responses_stream,
     responses_request_to_text_generation,
 )
+from exo.api.dashboard import (
+    DashboardBootstrap,
+    dashboard_bootstrap,
+    dashboard_event_from_lv_update,
+    dashboard_event_from_state_event,
+    dashboard_topology_update,
+    format_dashboard_sse,
+    lv_update_affects_topology,
+    state_event_affects_topology,
+)
 from exo.api.keepalive import with_sse_keepalive
 from exo.api.load_balancing import (
     instance_id_for_command,
@@ -200,7 +210,7 @@ from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
-from exo.utils.channels import Receiver, Sender
+from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
@@ -262,6 +272,7 @@ class API:
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
+        self._sh = session_handle
         self.aggregator = session_handle.last_value_aggregator("node_metrics")
         self.storage = session_handle.storage_interface()
         self.task_requester = session_handle.task_requester()
@@ -297,6 +308,7 @@ class API:
         self._bridge_command_instances: dict[CommandId, InstanceId] = {}
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
+        self._dashboard_event_senders: set[Sender[str]] = set()
 
     def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):
         logger.info("Resetting API State")
@@ -398,6 +410,8 @@ class API:
         self.app.get("/state")(self.get_state)
         self.app.get("/state/{path:path}")(self.get_state)
         self.app.get("/events")(self.stream_events)
+        self.app.get("/v1/dashboard/bootstrap")(self.get_dashboard_bootstrap)
+        self.app.get("/v1/dashboard/events")(self.stream_dashboard_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.post("/download/cancel")(self.cancel_download)
@@ -408,6 +422,93 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
+
+    async def get_dashboard_bootstrap(self) -> DashboardBootstrap:
+        return await self._dashboard_bootstrap()
+
+    async def stream_dashboard_events(self) -> StreamingResponse:
+        async def _stream() -> AsyncGenerator[str, None]:
+            send, recv = channel[str](100)
+            dashboard_event_sender = send.clone()
+            self._dashboard_event_senders.add(dashboard_event_sender)
+            try:
+                yield format_dashboard_sse(
+                    "bootstrap", await self._dashboard_bootstrap()
+                )
+                async with send, recv, anyio.create_task_group() as tg:
+                    tg.start_soon(
+                        self._stream_dashboard_node_metrics,
+                        send.clone(),
+                    )
+                    async for item in recv:
+                        yield item
+            finally:
+                self._dashboard_event_senders.discard(dashboard_event_sender)
+                dashboard_event_sender.close()
+
+        return StreamingResponse(
+            with_sse_keepalive(_stream()),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    async def _dashboard_bootstrap(self) -> DashboardBootstrap:
+        return dashboard_bootstrap(
+            feature_flags=await self.get_feature_flags(),
+            instance_link_values=await self.storage.dump("instance_links/"),
+            instances=self.state.instances,
+            runners=self.state.runners,
+            tasks=self.state.tasks,
+        )
+
+    async def _stream_dashboard_node_metrics(self, sender: Sender[str]) -> None:
+        subscriber = self._sh.last_value_subscriber("node_metrics/**")
+        async with sender:
+            while (received := await subscriber.recv()) is not None:
+                key, payload = received
+                try:
+                    event = dashboard_event_from_lv_update(key, payload)
+                    if event is not None:
+                        event_name, event_payload = event
+                        await sender.send(
+                            format_dashboard_sse(event_name, event_payload)
+                        )
+                    if lv_update_affects_topology(key):
+                        await sender.send(self._dashboard_topology_sse())
+                except ValidationError:
+                    logger.warning(f"Ignoring invalid dashboard metric from {key}")
+
+    def _dashboard_topology_sse(self) -> str:
+        return format_dashboard_sse(
+            "topology_update",
+            dashboard_topology_update(node_metric_values=self.aggregator.dump()),
+        )
+
+    def _broadcast_dashboard_sse(self, message: str) -> None:
+        stale_senders: list[Sender[str]] = []
+        for sender in self._dashboard_event_senders:
+            try:
+                sender.send_nowait(message)
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                stale_senders.append(sender)
+            except anyio.WouldBlock:
+                logger.debug("Dropping dashboard event for a slow client")
+        for sender in stale_senders:
+            self._dashboard_event_senders.discard(sender)
+
+    def _broadcast_dashboard_state_event(self, event: Event) -> None:
+        dashboard_event = dashboard_event_from_state_event(event)
+        if dashboard_event is not None:
+            event_name, event_payload = dashboard_event
+            self._broadcast_dashboard_sse(
+                format_dashboard_sse(event_name, event_payload)
+            )
+        if state_event_affects_topology(event):
+            self._broadcast_dashboard_sse(self._dashboard_topology_sse())
 
     def get_state(self, path: str = ""):
         state = self.state.with_aggregator(self.aggregator)
@@ -1884,6 +1985,7 @@ class API:
                 self._event_log.append(i_event.event)
                 self.state = apply(self.state, i_event)
                 event = i_event.event
+                self._broadcast_dashboard_state_event(event)
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
 

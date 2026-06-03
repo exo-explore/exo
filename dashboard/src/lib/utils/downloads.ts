@@ -1,7 +1,7 @@
 /**
  * Shared utilities for parsing and querying download state.
  *
- * The download state from `/state` is shaped as:
+ * Dashboard download state is shaped as:
  *   Record<NodeId, Array<TaggedDownloadEntry>>
  *
  * Each entry is a tagged union object like:

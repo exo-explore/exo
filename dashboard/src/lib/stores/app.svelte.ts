@@ -8,6 +8,10 @@
  */
 
 import { browser } from "$app/environment";
+import {
+  extractModelIdFromDownload,
+  getDownloadTag,
+} from "$lib/utils/downloads";
 
 // UUID generation fallback for browsers without crypto.randomUUID
 function generateUUID(): string {
@@ -110,11 +114,11 @@ export interface RawInstanceLink {
 
 // Granular node state types from the new state structure
 interface RawNodeIdentity {
-  modelId?: string;
-  chipId?: string;
-  friendlyName?: string;
-  osVersion?: string;
-  osBuildVersion?: string;
+  modelId?: string | null;
+  chipId?: string | null;
+  friendlyName?: string | null;
+  osVersion?: string | null;
+  osBuildVersion?: string | null;
 }
 
 interface RawMemoryUsage {
@@ -146,6 +150,29 @@ interface RawNodeNetworkInfo {
   interfaces?: RawNetworkInterfaceInfo[];
 }
 
+interface RawNodeThunderboltInfo {
+  interfaces: Array<{
+    rdmaInterface: string;
+    domainUuid: string;
+    linkSpeed: string;
+  }>;
+}
+
+interface RawRdmaCtlStatus {
+  enabled: boolean;
+}
+
+interface RawThunderboltBridgeStatus {
+  enabled: boolean;
+  exists: boolean;
+  serviceName?: string | null;
+}
+
+interface RawNodeDiskUsage {
+  total: { inBytes: number };
+  available: { inBytes: number };
+}
+
 interface RawSocketConnection {
   sinkMultiaddr?: {
     address?: string;
@@ -169,6 +196,11 @@ interface RawTopology {
   nodes: string[];
   connections?: RawConnectionsMap;
 }
+
+type RawInstanceEntry = {
+  MlxRingInstance?: Instance;
+  MlxJacclInstance?: Instance;
+};
 
 export interface DownloadProgress {
   totalBytes: number;
@@ -247,48 +279,54 @@ export interface TraceListResponse {
   traces: TraceListItem[];
 }
 
-interface RawStateResponse {
-  topology?: RawTopology;
-  instances?: Record<
-    string,
-    {
-      MlxRingInstance?: Instance;
-      MlxJacclInstance?: Instance;
-    }
-  >;
+interface DashboardBootstrapResponse {
+  featureFlags?: Record<string, boolean>;
+  instances?: Record<string, RawInstanceEntry>;
   runners?: Record<string, unknown>;
+  tasks?: Record<string, unknown>;
   instanceLinks?: Record<string, RawInstanceLink>;
-  downloads?: Record<string, unknown[]>;
-  // New granular node state fields
-  nodeIdentities?: Record<string, RawNodeIdentity>;
-  nodeMemory?: Record<string, RawMemoryUsage>;
-  nodeSystem?: Record<string, RawSystemPerformanceProfile>;
-  nodeNetwork?: Record<string, RawNodeNetworkInfo>;
-  // Thunderbolt identifiers per node
-  nodeThunderbolt?: Record<
-    string,
-    {
-      interfaces: Array<{
-        rdmaInterface: string;
-        domainUuid: string;
-        linkSpeed: string;
-      }>;
-    }
-  >;
-  // RDMA ctl status per node
-  nodeRdmaCtl?: Record<string, { enabled: boolean }>;
-  // Thunderbolt bridge status per node
-  nodeThunderboltBridge?: Record<
-    string,
-    { enabled: boolean; exists: boolean; serviceName?: string | null }
-  >;
-  // Thunderbolt bridge cycles (nodes with bridge enabled forming loops)
+}
+
+interface DashboardNodeUpdate {
+  nodeId: string;
+  identity?: RawNodeIdentity | null;
+  memory?: RawMemoryUsage | null;
+  disk?: RawNodeDiskUsage | null;
+  system?: RawSystemPerformanceProfile | null;
+  network?: RawNodeNetworkInfo | null;
+  thunderbolt?: RawNodeThunderboltInfo | null;
+  thunderboltBridge?: RawThunderboltBridgeStatus | null;
+  rdmaCtl?: RawRdmaCtlStatus | null;
+  backends?: unknown[] | null;
+}
+
+interface DashboardDownloadUpdate {
+  nodeId: string;
+  modelId: string;
+  download: unknown | null;
+}
+
+interface DashboardTopologyUpdate {
+  topology: RawTopology;
   thunderboltBridgeCycles?: string[][];
-  // Disk usage per node
-  nodeDisk?: Record<
-    string,
-    { total: { inBytes: number }; available: { inBytes: number } }
-  >;
+}
+
+interface DashboardInstanceUpdate {
+  instanceId: string;
+  instance: RawInstanceEntry | null;
+}
+
+interface DashboardRunnerUpdate {
+  runnerId: string;
+  runner: unknown | null;
+}
+
+interface DashboardTaskUpdate {
+  taskId: string;
+  task?: unknown | null;
+  taskStatus?: string | null;
+  errorType?: string | null;
+  errorMessage?: string | null;
 }
 
 export interface MessageAttachment {
@@ -472,7 +510,7 @@ function transformTopology(
     nodes[nodeId] = {
       system_info: {
         model_id: identity?.modelId ?? "Unknown",
-        chip: identity?.chipId,
+        chip: identity?.chipId ?? undefined,
         memory: ramTotal,
       },
       network_interfaces: networkInterfaces,
@@ -491,8 +529,8 @@ function transformTopology(
         sys_power: system?.sysPower,
       },
       last_macmon_update: Date.now() / 1000,
-      friendly_name: identity?.friendlyName,
-      os_version: identity?.osVersion,
+      friendly_name: identity?.friendlyName ?? undefined,
+      os_version: identity?.osVersion ?? undefined,
     };
   }
 
@@ -574,43 +612,29 @@ class AppStore {
 
   // Topology state
   topologyData = $state<TopologyData | null>(null);
+  private rawTopology: RawTopology | null = null;
   instances = $state<Record<string, unknown>>({});
   runners = $state<Record<string, unknown>>({});
+  tasks = $state<Record<string, unknown>>({});
   instanceLinks = $state<Record<string, RawInstanceLink>>({});
   featureFlags = $state<Record<string, boolean>>({});
   downloads = $state<Record<string, unknown[]>>({});
-  nodeDisk = $state<
-    Record<
-      string,
-      { total: { inBytes: number }; available: { inBytes: number } }
-    >
-  >({});
+  nodeDisk = $state<Record<string, RawNodeDiskUsage>>({});
   placementPreviews = $state<PlacementPreview[]>([]);
   selectedPreviewModelId = $state<string | null>(null);
   isLoadingPreviews = $state(false);
   previewNodeFilter = $state<Set<string>>(new Set());
   lastUpdate = $state<number | null>(null);
   nodeIdentities = $state<Record<string, RawNodeIdentity>>({});
+  nodeMemory = $state<Record<string, RawMemoryUsage>>({});
+  nodeSystem = $state<Record<string, RawSystemPerformanceProfile>>({});
+  nodeNetwork = $state<Record<string, RawNodeNetworkInfo>>({});
   thunderboltBridgeCycles = $state<string[][]>([]);
-  nodeThunderbolt = $state<
-    Record<
-      string,
-      {
-        interfaces: Array<{
-          rdmaInterface: string;
-          domainUuid: string;
-          linkSpeed: string;
-        }>;
-      }
-    >
-  >({});
-  nodeRdmaCtl = $state<Record<string, { enabled: boolean }>>({});
-  nodeThunderboltBridge = $state<
-    Record<
-      string,
-      { enabled: boolean; exists: boolean; serviceName?: string | null }
-    >
-  >({});
+  nodeThunderbolt = $state<Record<string, RawNodeThunderboltInfo>>({});
+  nodeRdmaCtl = $state<Record<string, RawRdmaCtlStatus>>({});
+  nodeThunderboltBridge = $state<Record<string, RawThunderboltBridgeStatus>>(
+    {},
+  );
 
   // UI state
   isTopologyMinimized = $state(false);
@@ -635,10 +659,12 @@ class AppStore {
   private consecutiveFailures = 0;
   private static readonly CONNECTION_LOST_THRESHOLD = 3;
 
-  private fetchInterval: ReturnType<typeof setInterval> | null = null;
+  private stateEventSource: EventSource | null = null;
   private previewsInterval: ReturnType<typeof setInterval> | null = null;
   private lastConversationPersistTs = 0;
   private previousNodeIds: Set<string> = new Set();
+  private static readonly DASHBOARD_BOOTSTRAP_URL = "/v1/dashboard/bootstrap";
+  private static readonly DASHBOARD_EVENTS_URL = "/v1/dashboard/events";
 
   constructor() {
     if (browser) {
@@ -1307,17 +1333,89 @@ class AppStore {
   }
 
   startPolling() {
-    this.fetchState();
-    this.fetchFeatureFlags();
-    this.fetchInterval = setInterval(() => this.fetchState(), 1000);
+    if (typeof EventSource === "undefined") {
+      this.fetchState();
+      return;
+    }
+    this.startStateStream();
   }
 
   stopPolling() {
-    if (this.fetchInterval) {
-      clearInterval(this.fetchInterval);
-      this.fetchInterval = null;
-    }
+    this.stateEventSource?.close();
+    this.stateEventSource = null;
     this.stopPreviewsPolling();
+  }
+
+  private startStateStream() {
+    this.stateEventSource?.close();
+    this.fetchState();
+
+    const source = new EventSource(AppStore.DASHBOARD_EVENTS_URL);
+    this.stateEventSource = source;
+
+    source.onopen = () => {
+      this.markConnected();
+    };
+
+    this.addDashboardEventListener<DashboardBootstrapResponse>(
+      source,
+      "bootstrap",
+      (data) => this.applyDashboardBootstrap(data),
+    );
+    this.addDashboardEventListener<DashboardNodeUpdate>(
+      source,
+      "node_update",
+      (data) => this.applyDashboardNodeUpdate(data),
+    );
+    this.addDashboardEventListener<DashboardDownloadUpdate>(
+      source,
+      "download_update",
+      (data) => this.applyDashboardDownloadUpdate(data),
+    );
+    this.addDashboardEventListener<DashboardTopologyUpdate>(
+      source,
+      "topology_update",
+      (data) => this.applyDashboardTopologyUpdate(data),
+    );
+    this.addDashboardEventListener<DashboardInstanceUpdate>(
+      source,
+      "instance_update",
+      (data) => this.applyDashboardInstanceUpdate(data),
+    );
+    this.addDashboardEventListener<DashboardRunnerUpdate>(
+      source,
+      "runner_update",
+      (data) => this.applyDashboardRunnerUpdate(data),
+    );
+    this.addDashboardEventListener<DashboardTaskUpdate>(
+      source,
+      "task_update",
+      (data) => this.applyDashboardTaskUpdate(data),
+    );
+
+    source.onerror = (error) => {
+      this.markConnectionFailure("Error streaming dashboard state:", error);
+    };
+  }
+
+  private addDashboardEventListener<T>(
+    source: EventSource,
+    eventName: string,
+    handler: (data: T) => void,
+  ) {
+    source.addEventListener(eventName, (event) => {
+      try {
+        handler(this.parseDashboardEvent<T>(event));
+        this.lastUpdate = Date.now();
+        this.markConnected();
+      } catch (error) {
+        console.error(`Error parsing dashboard ${eventName} event:`, error);
+      }
+    });
+  }
+
+  private parseDashboardEvent<T>(event: Event): T {
+    return JSON.parse((event as MessageEvent<string>).data) as T;
   }
 
   async fetchFeatureFlags() {
@@ -1332,66 +1430,227 @@ class AppStore {
 
   async fetchState() {
     try {
-      const response = await fetch("/state");
+      const response = await fetch(AppStore.DASHBOARD_BOOTSTRAP_URL);
       if (!response.ok) {
-        throw new Error(`Failed to fetch state: ${response.status}`);
+        throw new Error(
+          `Failed to fetch dashboard bootstrap: ${response.status}`,
+        );
       }
-      const data: RawStateResponse = await response.json();
-
-      if (data.topology) {
-        this.topologyData = transformTopology(data.topology, {
-          nodeIdentities: data.nodeIdentities,
-          nodeMemory: data.nodeMemory,
-          nodeSystem: data.nodeSystem,
-          nodeNetwork: data.nodeNetwork,
-        });
-        // Handle topology changes for preview filter
-        this.handleTopologyChange();
-      }
-      if (data.instances) {
-        this.instances = data.instances;
-        this.refreshConversationModelFromInstances();
-      }
-      if (data.runners) {
-        this.runners = data.runners;
-      }
-      if (data.instanceLinks) {
-        this.instanceLinks = data.instanceLinks;
-      } else {
-        this.instanceLinks = {};
-      }
-      if (data.downloads) {
-        this.downloads = data.downloads;
-      }
-      if (data.nodeDisk) {
-        this.nodeDisk = data.nodeDisk;
-      }
-      // Node identities (for OS version mismatch detection)
-      this.nodeIdentities = data.nodeIdentities ?? {};
-      // Thunderbolt identifiers per node
-      this.nodeThunderbolt = data.nodeThunderbolt ?? {};
-      // RDMA ctl status per node
-      this.nodeRdmaCtl = data.nodeRdmaCtl ?? {};
-      // Thunderbolt bridge cycles
-      this.thunderboltBridgeCycles = data.thunderboltBridgeCycles ?? [];
-      // Thunderbolt bridge status per node
-      this.nodeThunderboltBridge = data.nodeThunderboltBridge ?? {};
-      this.lastUpdate = Date.now();
-      // Connection recovered
-      if (!this.isConnected) {
-        this.isConnected = true;
-      }
-      this.consecutiveFailures = 0;
+      const data: DashboardBootstrapResponse = await response.json();
+      this.applyDashboardBootstrap(data);
     } catch (error) {
-      this.consecutiveFailures++;
-      if (
-        this.consecutiveFailures >= AppStore.CONNECTION_LOST_THRESHOLD &&
-        this.isConnected
-      ) {
-        this.isConnected = false;
-      }
-      console.error("Error fetching state:", error);
+      this.markConnectionFailure("Error fetching dashboard bootstrap:", error);
     }
+  }
+
+  private applyDashboardBootstrap(data: DashboardBootstrapResponse) {
+    if (data.featureFlags !== undefined) {
+      this.featureFlags = data.featureFlags;
+    }
+    if (data.instances !== undefined) {
+      this.instances = data.instances;
+      this.refreshConversationModelFromInstances();
+    }
+    if (data.runners !== undefined) {
+      this.runners = data.runners;
+    }
+    if (data.tasks !== undefined) {
+      this.tasks = data.tasks;
+    }
+    if (data.instanceLinks !== undefined) {
+      this.instanceLinks = data.instanceLinks;
+    }
+    this.lastUpdate = Date.now();
+    this.markConnected();
+  }
+
+  private applyDashboardNodeUpdate(update: DashboardNodeUpdate) {
+    const nodeId = update.nodeId;
+    if (!nodeId) return;
+
+    if ("identity" in update) {
+      if (update.identity === null) {
+        this.nodeIdentities = AppStore.setRecordValue(
+          this.nodeIdentities,
+          nodeId,
+          null,
+        );
+      } else if (update.identity !== undefined) {
+        this.nodeIdentities = {
+          ...this.nodeIdentities,
+          [nodeId]: {
+            ...(this.nodeIdentities[nodeId] ?? {}),
+            ...update.identity,
+          },
+        };
+      }
+    }
+    if ("memory" in update) {
+      this.nodeMemory = AppStore.setRecordValue(
+        this.nodeMemory,
+        nodeId,
+        update.memory ?? null,
+      );
+    }
+    if ("disk" in update) {
+      this.nodeDisk = AppStore.setRecordValue(
+        this.nodeDisk,
+        nodeId,
+        update.disk ?? null,
+      );
+    }
+    if ("system" in update) {
+      this.nodeSystem = AppStore.setRecordValue(
+        this.nodeSystem,
+        nodeId,
+        update.system ?? null,
+      );
+    }
+    if ("network" in update) {
+      this.nodeNetwork = AppStore.setRecordValue(
+        this.nodeNetwork,
+        nodeId,
+        update.network ?? null,
+      );
+    }
+    if ("thunderbolt" in update) {
+      this.nodeThunderbolt = AppStore.setRecordValue(
+        this.nodeThunderbolt,
+        nodeId,
+        update.thunderbolt ?? null,
+      );
+    }
+    if ("thunderboltBridge" in update) {
+      this.nodeThunderboltBridge = AppStore.setRecordValue(
+        this.nodeThunderboltBridge,
+        nodeId,
+        update.thunderboltBridge ?? null,
+      );
+    }
+    if ("rdmaCtl" in update) {
+      this.nodeRdmaCtl = AppStore.setRecordValue(
+        this.nodeRdmaCtl,
+        nodeId,
+        update.rdmaCtl ?? null,
+      );
+    }
+
+    this.recomputeTopologyData();
+  }
+
+  private applyDashboardDownloadUpdate(update: DashboardDownloadUpdate) {
+    if (!update.nodeId || !update.modelId) return;
+
+    const nodeDownloads = this.downloads[update.nodeId] ?? [];
+    const remaining = nodeDownloads.filter(
+      (entry) => this.downloadModelId(entry) !== update.modelId,
+    );
+    const nextDownloads = { ...this.downloads };
+
+    if (update.download === null) {
+      if (remaining.length > 0) {
+        nextDownloads[update.nodeId] = remaining;
+      } else {
+        delete nextDownloads[update.nodeId];
+      }
+    } else {
+      nextDownloads[update.nodeId] = [...remaining, update.download];
+    }
+
+    this.downloads = nextDownloads;
+  }
+
+  private applyDashboardTopologyUpdate(update: DashboardTopologyUpdate) {
+    this.rawTopology = update.topology;
+    this.thunderboltBridgeCycles = update.thunderboltBridgeCycles ?? [];
+    this.recomputeTopologyData();
+  }
+
+  private applyDashboardInstanceUpdate(update: DashboardInstanceUpdate) {
+    this.instances = AppStore.setRecordValue(
+      this.instances,
+      update.instanceId,
+      update.instance,
+    );
+    this.refreshConversationModelFromInstances();
+  }
+
+  private applyDashboardRunnerUpdate(update: DashboardRunnerUpdate) {
+    this.runners = AppStore.setRecordValue(
+      this.runners,
+      update.runnerId,
+      update.runner,
+    );
+  }
+
+  private applyDashboardTaskUpdate(update: DashboardTaskUpdate) {
+    if ("task" in update) {
+      this.tasks = AppStore.setRecordValue(
+        this.tasks,
+        update.taskId,
+        update.task ?? null,
+      );
+      return;
+    }
+    if (!this.tasks[update.taskId]) return;
+    this.tasks = {
+      ...this.tasks,
+      [update.taskId]: {
+        ...(this.tasks[update.taskId] as Record<string, unknown>),
+        taskStatus: update.taskStatus,
+        errorType: update.errorType,
+        errorMessage: update.errorMessage,
+      },
+    };
+  }
+
+  private recomputeTopologyData() {
+    if (!this.rawTopology) return;
+    this.topologyData = transformTopology(this.rawTopology, {
+      nodeIdentities: this.nodeIdentities,
+      nodeMemory: this.nodeMemory,
+      nodeSystem: this.nodeSystem,
+      nodeNetwork: this.nodeNetwork,
+    });
+    this.handleTopologyChange();
+  }
+
+  private downloadModelId(entry: unknown): string | null {
+    const tagged = getDownloadTag(entry);
+    if (!tagged) return null;
+    return extractModelIdFromDownload(tagged[1]);
+  }
+
+  private static setRecordValue<T>(
+    record: Record<string, T>,
+    key: string,
+    value: T | null | undefined,
+  ): Record<string, T> {
+    const next = { ...record };
+    if (value === null || value === undefined) {
+      delete next[key];
+    } else {
+      next[key] = value;
+    }
+    return next;
+  }
+
+  private markConnected() {
+    if (!this.isConnected) {
+      this.isConnected = true;
+    }
+    this.consecutiveFailures = 0;
+  }
+
+  private markConnectionFailure(message: string, error: unknown) {
+    this.consecutiveFailures++;
+    if (
+      this.consecutiveFailures >= AppStore.CONNECTION_LOST_THRESHOLD &&
+      this.isConnected
+    ) {
+      this.isConnected = false;
+    }
+    console.error(message, error);
   }
 
   async fetchPlacementPreviews(modelId: string, showLoading = true) {

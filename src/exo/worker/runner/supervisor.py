@@ -347,7 +347,7 @@ class RunnerSupervisor:
             if assigned_instance_id != instance_id:
                 continue
 
-            if payload == "":
+            if payload is None or payload == "":
                 self._assigned_tasks.pop(assigned_task_id, None)
                 continue
 
