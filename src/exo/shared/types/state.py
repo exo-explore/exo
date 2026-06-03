@@ -12,6 +12,7 @@ from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
+    InstanceCreated,
     NodeDownloadProgress,
     NodeGatheredInfo,
     RunnerStatusUpdated,
@@ -43,6 +44,7 @@ from exo.utils.info_gatherer.info_gatherer import (
 from exo.utils.pydantic_ext import FrozenModel
 
 _DOWNLOAD_PROGRESS_ADAPTER = TypeAdapter[DownloadProgress](DownloadProgress)
+_INSTANCE_ADAPTER = TypeAdapter[Instance](Instance)
 _RUNNER_STATUS_ADAPTER = TypeAdapter[RunnerStatus](RunnerStatus)
 _GATHERED_INFO_ADAPTER = TypeAdapter[GatheredInfo](GatheredInfo)
 
@@ -183,10 +185,13 @@ class State(FrozenModel):
                 if len(parts) >= 3 and parts[1] == "downloads":
                     progress = _DOWNLOAD_PROGRESS_ADAPTER.validate_json(value)
                     event = NodeDownloadProgress(download_progress=progress)
-                elif len(parts) == 5 and parts[1] == "runners":
+                elif len(parts) == 3 and parts[1] == "desired_instances":
+                    instance = _INSTANCE_ADAPTER.validate_json(value)
+                    event = InstanceCreated(instance=instance)
+                elif len(parts) == 4 and parts[1] == "runners":
                     runner_status = _RUNNER_STATUS_ADAPTER.validate_json(value)
                     event = RunnerStatusUpdated(
-                        runner_status=runner_status, runner_id=RunnerId(parts[3])
+                        runner_status=runner_status, runner_id=RunnerId(parts[2])
                     )
                 else:
                     data = _GATHERED_INFO_ADAPTER.validate_json(value)

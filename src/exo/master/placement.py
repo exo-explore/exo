@@ -1,5 +1,4 @@
 from collections.abc import Mapping
-from copy import deepcopy
 from typing import Sequence
 
 from exo.master.placement_utils import (
@@ -17,7 +16,6 @@ from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
     CancelDownload,
     CreateInstance,
-    DeleteInstance,
     DownloadCommand,
     PlaceInstance,
 )
@@ -292,17 +290,6 @@ def place_instance(
                 hosts_by_node=hosts_by_node,
                 ephemeral_port=ephemeral_port,
             )
-
-
-def delete_instance(
-    command: DeleteInstance,
-    current_instances: Mapping[InstanceId, Instance],
-) -> dict[InstanceId, Instance]:
-    target_instances = dict(deepcopy(current_instances))
-    if command.instance_id in target_instances:
-        del target_instances[command.instance_id]
-        return target_instances
-    raise ValueError(f"Instance {command.instance_id} not found")
 
 
 def get_transition_events(

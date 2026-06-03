@@ -448,7 +448,7 @@ class API:
         )
         nodes = instance.shard_assignments.node_ids()
         mail = JoinInstance(instance=instance)
-        self._sh.send_mail(nodes, mail.model_dump_json())
+        await self._sh.send_mail(nodes, mail.model_dump_json())
         # TODO: wait until we see all nodes have appeared
 
         return CreateInstanceResponse(
@@ -474,7 +474,7 @@ class API:
             instance=instance,
         )
         nodes = instance.shard_assignments.node_ids()
-        self._sh.send_mail(nodes, mail.model_dump_json())
+        await self._sh.send_mail(nodes, mail.model_dump_json())
 
         return CreateInstanceResponse(
             message="Command received.",
