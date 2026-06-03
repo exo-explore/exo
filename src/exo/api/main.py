@@ -23,6 +23,13 @@ from hypercorn.utils import LifespanTimeoutError, ShutdownError
 from loguru import logger
 from pydantic import TypeAdapter, ValidationError
 
+from exo.master.placement import (
+    add_instance_to_placements,
+    cancel_unnecessary_downloads,
+    delete_instance,
+    get_transition_events,
+    place_instance,
+)
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
@@ -128,7 +135,6 @@ from exo.api.types.openai_responses import (
     ResponsesResponse,
 )
 from exo.master.image_store import ImageStore
-from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
@@ -423,13 +429,24 @@ class API:
             ) from e
 
     async def place_instance(self, payload: PlaceInstanceParams):
+        state = self.state.with_aggregator(self.aggregator)
         command = PlaceInstance(
             model_card=await ModelCard.load(payload.model_id),
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
         )
-        await self._send(command)
+        new_instance = place_instance(
+            command,
+            state.topology,
+            state.node_memory,
+            state.node_network,
+            state.node_backends,
+            download_status=state.downloads,
+            node_rdma_ctl=state.node_rdma_ctl,
+        )
+        dialing = new_instance.primary_output_node()
+        
 
         return CreateInstanceResponse(
             message="Command received.",

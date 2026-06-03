@@ -32,6 +32,9 @@ class BaseInstance(TaggedModel):
             if nid == node_id:
                 yield rid
 
+    def primary_output_node(self) -> NodeId:
+        return self.shard_assignments.shards[self.shard_assignments.primary_output_node].node_id
+
 
 class MlxRingInstance(BaseInstance):
     hosts_by_node: dict[NodeId, list[Host]]

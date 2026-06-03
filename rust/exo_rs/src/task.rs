@@ -67,7 +67,12 @@ impl TaskRequester {
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let receiver = declare_task_stream(&session, &command_id)?;
+            let receiver = session
+                .declare_subscriber(task_chunks_key(command_id.as_str()))
+                .wait()
+                .map_err(|e| {
+                    PyConnectionError::new_err(format!("failed to declare task stream: {e}"))
+                })?;
 
             request_task_admission(&session, instance_id, command_id, command).await?;
             Ok(TaskStream { receiver })
@@ -92,26 +97,12 @@ impl TaskRequester {
     }
 }
 
-fn task_key(instance_id: &str, command_id: &str) -> String {
-    format!("task/instances/{instance_id}/tasks/{command_id}")
-}
-
 fn task_chunks_key(command_id: &str) -> String {
     format!("task/commands/{command_id}/chunks")
 }
 
 fn task_assignment_key(instance_id: &str, task_id: &str) -> String {
     format!("task_assignments/{instance_id}/{task_id}")
-}
-
-fn declare_task_stream(
-    session: &ZSession,
-    command_id: &str,
-) -> PyResult<Subscriber<FifoChannelHandler<Sample>>> {
-    session
-        .declare_subscriber(task_chunks_key(command_id))
-        .wait()
-        .map_err(|e| PyConnectionError::new_err(format!("failed to declare task stream: {e}")))
 }
 
 async fn request_task_admission(
@@ -121,7 +112,7 @@ async fn request_task_admission(
     command: String,
 ) -> PyResult<()> {
     let replies = session
-        .get(task_key(&instance_id, &command_id))
+        .get(format!("task/instances/{instance_id}/tasks/{command_id}"))
         .payload(command)
         .congestion_control(CongestionControl::Block)
         .consolidation(ConsolidationMode::None)

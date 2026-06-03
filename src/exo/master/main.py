@@ -362,9 +362,10 @@ class Master:
                                         selected_instance.shard_assignments.shards
                                     )
                         case DeleteInstance():
-                            placement = delete_instance(command, self.state.instances)
+                            state = self.state.with_aggregator(self.aggregator)
+                            placement = delete_instance(command, state.instances)
                             transition_events = get_transition_events(
-                                self.state.instances, placement, self.state.tasks
+                                state.instances, placement, state.tasks
                             )
                             for cmd in cancel_unnecessary_downloads(
                                 placement, self.state.downloads
@@ -392,13 +393,14 @@ class Master:
                             )
                             generated_events.extend(transition_events)
                         case CreateInstance():
+                            state = self.state.with_aggregator(self.aggregator)
                             placement = add_instance_to_placements(
                                 command,
-                                self.state.topology,
-                                self.state.instances,
+                                state.topology,
+                                state.instances,
                             )
                             transition_events = get_transition_events(
-                                self.state.instances, placement, self.state.tasks
+                                state.instances, placement, state.tasks
                             )
                             generated_events.extend(transition_events)
                         case TaskCancelled():
