@@ -393,93 +393,93 @@ class Args(FrozenModel):
     def parse(cls) -> Self:
         parser = argparse.ArgumentParser(prog="EXO")
         default_verbosity = 0
-        parser.add_argument(
-            "-q",
-            "--quiet",
-            action="store_const",
-            const=-1,
-            dest="verbosity",
-            default=default_verbosity,
-        )
-        parser.add_argument(
-            "-v",
-            "--verbose",
-            action="count",
-            dest="verbosity",
-            default=default_verbosity,
-        )
-        parser.add_argument(
-            "-m",
-            "--force-master",
-            action="store_true",
-            dest="force_master",
-        )
-        parser.add_argument(
-            "--no-api",
-            action="store_false",
-            dest="spawn_api",
-        )
-        parser.add_argument(
-            "--api-port",
-            type=int,
-            dest="api_port",
-            default=52415,
-        )
-        parser.add_argument(
-            "--no-worker",
-            action="store_true",
-        )
-        parser.add_argument(
-            "--no-downloads",
-            action="store_true",
-            help="Disable the download coordinator (node won't download models)",
-        )
-        parser.add_argument(
-            "--offline",
-            action="store_true",
-            default=os.getenv("EXO_OFFLINE", "false").lower() == "true",
-            help="Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models",
-        )
-        parser.add_argument(
-            "--no-batch",
-            action="store_true",
-            help="Disable continuous batching, use sequential generation",
-        )
-        parser.add_argument(
-            "--legacy-daemon",
-            action="store_true",
-            help="Run as a legacy SysV-style background daemon using double-fork daemonization",
-        )
-        parser.add_argument(
-            "--bootstrap-peers",
-            type=lambda s: [p for p in s.split(",") if p],
-            default=os.getenv("EXO_BOOTSTRAP_PEERS", "").split(",")
-            if os.getenv("EXO_BOOTSTRAP_PEERS")
-            else [],
-            dest="bootstrap_peers",
-            help="Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)",
-        )
-        parser.add_argument(
-            "--libp2p-port",
-            type=int,
-            default=0,
-            dest="libp2p_port",
-            help="Fixed TCP port for libp2p to listen on (0 = OS-assigned).",
-        )
-        fast_synch_group = parser.add_mutually_exclusive_group()
-        fast_synch_group.add_argument(
-            "--fast-synch",
-            action="store_true",
-            dest="fast_synch",
-            default=None,
-            help="Force MLX FAST_SYNCH on (for JACCL backend)",
-        )
-        fast_synch_group.add_argument(
-            "--no-fast-synch",
-            action="store_false",
-            dest="fast_synch",
-            help="Force MLX FAST_SYNCH off",
-        )
+        # parser.add_argument(
+        #     "-q",
+        #     "--quiet",
+        #     action="store_const",
+        #     const=-1,
+        #     dest="verbosity",
+        #     default=default_verbosity,
+        # )
+        # parser.add_argument(
+        #     "-v",
+        #     "--verbose",
+        #     action="count",
+        #     dest="verbosity",
+        #     default=default_verbosity,
+        # )
+        # parser.add_argument(
+        #     "-m",
+        #     "--force-master",
+        #     action="store_true",
+        #     dest="force_master",
+        # )
+        # parser.add_argument(
+        #     "--no-api",
+        #     action="store_false",
+        #     dest="spawn_api",
+        # )
+        # parser.add_argument(
+        #     "--api-port",
+        #     type=int,
+        #     dest="api_port",
+        #     default=52415,
+        # )
+        # parser.add_argument(
+        #     "--no-worker",
+        #     action="store_true",
+        # )
+        # parser.add_argument(
+        #     "--no-downloads",
+        #     action="store_true",
+        #     help="Disable the download coordinator (node won't download models)",
+        # )
+        # parser.add_argument(
+        #     "--offline",
+        #     action="store_true",
+        #     default=os.getenv("EXO_OFFLINE", "false").lower() == "true",
+        #     help="Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models",
+        # )
+        # parser.add_argument(
+        #     "--no-batch",
+        #     action="store_true",
+        #     help="Disable continuous batching, use sequential generation",
+        # )
+        # parser.add_argument(
+        #     "--legacy-daemon",
+        #     action="store_true",
+        #     help="Run as a legacy SysV-style background daemon using double-fork daemonization",
+        # )
+        # parser.add_argument(
+        #     "--bootstrap-peers",
+        #     type=lambda s: [p for p in s.split(",") if p],
+        #     default=os.getenv("EXO_BOOTSTRAP_PEERS", "").split(",")
+        #     if os.getenv("EXO_BOOTSTRAP_PEERS")
+        #     else [],
+        #     dest="bootstrap_peers",
+        #     help="Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)",
+        # )
+        # parser.add_argument(
+        #     "--libp2p-port",
+        #     type=int,
+        #     default=0,
+        #     dest="libp2p_port",
+        #     help="Fixed TCP port for libp2p to listen on (0 = OS-assigned).",
+        # )
+        # fast_synch_group = parser.add_mutually_exclusive_group()
+        # fast_synch_group.add_argument(
+        #     "--fast-synch",
+        #     action="store_true",
+        #     dest="fast_synch",
+        #     default=None,
+        #     help="Force MLX FAST_SYNCH on (for JACCL backend)",
+        # )
+        # fast_synch_group.add_argument(
+        #     "--no-fast-synch",
+        #     action="store_false",
+        #     dest="fast_synch",
+        #     help="Force MLX FAST_SYNCH off",
+        # )
 
         args = parser.parse_args()
         return cls(**vars(args))  # pyright: ignore[reportAny] - We are intentionally validating here, we can't do it statically

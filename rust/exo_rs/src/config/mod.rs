@@ -1,55 +1,72 @@
-use clap::{ArgAction, Parser};
+use clap::{ArgAction, Parser, ValueEnum};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Args {
-    pub verbosity: i32,
-    pub force_master: bool,
-    pub spawn_api: bool,
-    pub api_port: u16,
-    pub tb_only: bool,
-    pub no_worker: bool,
-    pub no_downloads: bool,
-    pub offline: bool,
-    pub no_batch: bool,
-    pub fast_synch: Option<bool>,
-    pub legacy_daemon: bool,
-    pub bootstrap_peers: Vec<String>,
-    pub libp2p_port: u16,
-}
+// TODO: need to figure out incremental compilation and somehow include the right version
+//       for CLAP so that we display the right version either with shaddow-rs or include!()
 
-impl Args {
-    pub fn parse() -> Self {
-        CliArgs::parse().into()
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Verbosity {
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
 }
 
 #[derive(Parser, Debug, Clone, PartialEq, Eq)]
 #[command(name = "EXO", version, about, long_about = None)]
-struct CliArgs {
-    #[arg(short = 'q', long = "quiet", action = ArgAction::SetTrue)]
-    quiet: bool,
+pub struct CliArgs {
+    #[arg(
+          short = 'v',
+          long = "verbosity",
+          value_enum,
+          default_value_t = Verbosity::Info,
+          value_name = "LEVEL",
+          help = "Set the verbosity level"
+    )]
+    pub verbosity: Verbosity,
 
-    #[arg(short = 'v', long = "verbose", action = ArgAction::Count)]
-    verbose: u8,
-
-    #[arg(short = 'm', long = "force-master", action = ArgAction::SetTrue)]
+    #[arg(
+        short = 'm',
+        long = "force-master",
+        action = ArgAction::SetTrue,
+        help = "Force node to be master"
+    )]
     force_master: bool,
 
-    #[arg(long = "no-api", action = ArgAction::SetFalse, default_value_t = true)]
-    spawn_api: bool,
+    #[arg(
+        long = "no-api",
+        action = ArgAction::SetFalse,
+        default_value_t = true,
+        help = "Disable the API"
+    )]
+    api_enabled: bool,
 
-    #[arg(long = "api-port", default_value_t = 52415, value_parser = parse_positive_port)]
+    #[arg(
+        long = "api-port",
+        default_value_t = 52415,
+        value_name = "PORT",
+        help = "Port on which the API runs"
+    )]
     api_port: u16,
 
-    #[arg(long = "no-worker", action = ArgAction::SetTrue)]
-    no_worker: bool,
+    #[arg(
+        long = "no-worker",
+        action = ArgAction::SetFalse,
+        default_value_t = true,
+        help = "Disable the worker"
+    )]
+    worker_enabled: bool,
 
     #[arg(
         long = "no-downloads",
-        action = ArgAction::SetTrue,
+        action = ArgAction::SetFalse,
+        default_value_t = true,
         help = "Disable the download coordinator (node won't download models)"
     )]
-    no_downloads: bool,
+    downloads_enabled: bool,
 
     #[arg(
         long = "offline",
@@ -60,10 +77,11 @@ struct CliArgs {
 
     #[arg(
         long = "no-batch",
-        action = ArgAction::SetTrue,
+        action = ArgAction::SetFalse,
+        default_value_t = true,
         help = "Disable continuous batching, use sequential generation"
     )]
-    no_batch: bool,
+    continuous_batching_enabled: bool,
 
     #[arg(
         long = "legacy-daemon",
@@ -74,14 +92,16 @@ struct CliArgs {
 
     #[arg(
         long = "bootstrap-peers",
-        value_name = "PEERS",
+        value_delimiter = ',',
+        value_name = "MULTIADDRS",
         help = "Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)"
     )]
-    bootstrap_peers: Option<String>,
+    bootstrap_peers: Option<Vec<String>>,
 
     #[arg(
         long = "libp2p-port",
         default_value_t = 0,
+        value_name = "PORT",
         help = "Fixed TCP port for libp2p to listen on (0 = OS-assigned)"
     )]
     libp2p_port: u16,
@@ -94,59 +114,6 @@ struct CliArgs {
     fast_synch: Option<bool>,
 }
 
-impl From<CliArgs> for Args {
-    fn from(cli_args: CliArgs) -> Self {
-        Self {
-            verbosity: verbosity(cli_args.quiet, cli_args.verbose),
-            force_master: cli_args.force_master,
-            spawn_api: cli_args.spawn_api,
-            api_port: cli_args.api_port,
-            tb_only: false,
-            no_worker: cli_args.no_worker,
-            no_downloads: cli_args.no_downloads,
-            offline: cli_args.offline || env_flag("EXO_OFFLINE"),
-            no_batch: cli_args.no_batch,
-            fast_synch: cli_args.fast_synch,
-            legacy_daemon: cli_args.legacy_daemon,
-            bootstrap_peers: bootstrap_peers(cli_args.bootstrap_peers),
-            libp2p_port: cli_args.libp2p_port,
-        }
-    }
-}
-
-fn verbosity(quiet: bool, verbose: u8) -> i32 {
-    if quiet { -1 } else { i32::from(verbose) }
-}
-
-fn bootstrap_peers(argument: Option<String>) -> Vec<String> {
-    match argument {
-        Some(peers) => split_comma_separated(&peers),
-        None => std::env::var("EXO_BOOTSTRAP_PEERS")
-            .map(|peers| split_comma_separated(&peers))
-            .unwrap_or_default(),
-    }
-}
-
-fn split_comma_separated(value: &str) -> Vec<String> {
-    value
-        .split(',')
-        .filter(|peer| !peer.is_empty())
-        .map(ToOwned::to_owned)
-        .collect()
-}
-
 fn env_flag(name: &str) -> bool {
     std::env::var(name).is_ok_and(|value| value.eq_ignore_ascii_case("true"))
-}
-
-fn parse_positive_port(value: &str) -> Result<u16, String> {
-    let port = value
-        .parse::<u16>()
-        .map_err(|error| format!("expected a positive port number: {error}"))?;
-
-    if port == 0 {
-        Err("expected a positive port number".to_owned())
-    } else {
-        Ok(port)
-    }
 }
