@@ -190,6 +190,16 @@ let
         root = "$REPO_ROOT";
         members = [ "exo" "exo-bench" ];
       };
+      localRustOverlay = _final: prev: {
+        # The local Rust dev loop supplies exo_rs via PYTHONPATH after
+        # maturin develop. Keep it out of the Nix venv dependency graph
+        # so Rust edits do not trigger the Crane-built wheel.
+        exo = prev.exo.overrideAttrs (old: {
+          passthru = (old.passthru or { }) // {
+            dependencies = builtins.removeAttrs (old.passthru.dependencies or { }) [ "exo-rs" ];
+          };
+        });
+      };
       pythonSet = (pkgs.callPackage inputs.pyproject-nix.build.packages {
         inherit python;
       }).overrideScope (
@@ -201,16 +211,28 @@ let
         ]
       );
       # mlx and mlx-cuda ship clashing cmake files - we dont need them at runtime anyway
-      venv = name: (pythonSet.mkVirtualEnv "${name}-venv" members).overrideAttrs (_: { venvSkip = [ "lib/python${python.pythonVersion}/site-packages/mlx/share/cmake/*" "lib/python${python.pythonVersion}/site-packages/build_backend.py" ]; });
+      venvSkip = [
+        "lib/python${python.pythonVersion}/site-packages/mlx/share/cmake/*"
+        "lib/python${python.pythonVersion}/site-packages/build_backend.py"
+      ];
+      venv = name: (pythonSet.mkVirtualEnv "${name}-venv" members).overrideAttrs (_: { inherit venvSkip; });
+      evenv = name: ((pythonSet.overrideScope editableOverlay).mkVirtualEnv "${name}-evenv" (members // { exo = (members.exo or [ ]) ++ [ "dev" ]; exo-rs = [ ]; })).overrideAttrs (_: { inherit venvSkip; });
+      localRustEvenv = name: ((pythonSet.overrideScope (lib.composeExtensions editableOverlay localRustOverlay)).mkVirtualEnv "${name}-local-rust-evenv" (members // { exo = (members.exo or [ ]) ++ [ "dev" ]; })).overrideAttrs (_: { inherit venvSkip; });
       mkApp =
         let
           libPath = lib.makeLibraryPath (
             [ pkgs.stdenv.cc.cc.lib ] ++ lib.optionals cudaSupport [ cudaRoot ]
           );
         in
-        text: name: pkgs.writeShellApplication {
+        { name
+        , text
+        , runtimeVenvFor ? venv
+        , setup ? ""
+        }:
+        pkgs.writeShellApplication {
           inherit name;
           text = ''
+            ${setup}
             LD_LIBRARY_PATH="${libPath}''${LD_LIBRARY_PATH:+:}''${LD_LIBRARY_PATH:-}" exec \
               ${lib.optionalString cudaSupport "nixglhost "} ${text}
           '';
@@ -219,14 +241,13 @@ let
             EXO_RESOURCES_DIR = inputs.self + /resources;
           };
           runtimeInputs = [
-            (venv name)
+            (runtimeVenvFor name)
           ] ++ lib.optionals cudaSupport [ pkgs.nix-gl-host ]
           ++ lib.optionals isDarwin [ pkgs.macmon ];
           passthru = {
             venv = venv name;
-            evenv = ((pythonSet.overrideScope editableOverlay).mkVirtualEnv "${name}-evenv" (members // { exo = (members.exo or [ ]) ++ [ "dev" ]; exo-rs = [ ]; })).overrideAttrs (_: {
-              venvSkip = [ "lib/python${python.pythonVersion}/site-packages/mlx/share/cmake/*" "lib/python${python.pythonVersion}/site-packages/build_backend.py" ];
-            });
+            evenv = evenv name;
+            localRustEvenv = localRustEvenv name;
           } // lib.optionalAttrs cudaSupport {
             inherit cudaRoot;
           };
@@ -235,8 +256,17 @@ let
     in
     {
       inherit venv;
-      mkPythonScript = path: mkApp ''python ${path} "$@"'';
-      exo = mkApp ''exo "$@"'' "exo";
+      mkPythonScript = { name, path }: mkApp { inherit name; text = ''python ${path} "$@"''; };
+      exo = mkApp { name = "exo"; text = ''exo "$@"''; };
+      exo-devel = mkApp {
+        name = "exo-devel";
+        runtimeVenvFor = localRustEvenv;
+        setup = ''
+          export REPO_ROOT="''${REPO_ROOT:-$PWD}"
+          export PYTHONPATH="$REPO_ROOT/.nix-devel/site-packages''${PYTHONPATH:+:$PYTHONPATH}"
+        '';
+        text = ''exo "$@"'';
+      };
     };
 in
 {
@@ -244,7 +274,7 @@ in
     { self', pkgs, unfreePkgs, lib, ... }:
     let
       inherit (pkgs.stdenv.hostPlatform) isLinux;
-      inherit (mkPythonSet { inherit self' pkgs lib; members = { exo = [ "mlx-cpu" ]; }; }) exo;
+      inherit (mkPythonSet { inherit self' pkgs lib; members = { exo = [ "mlx-cpu" ]; }; }) exo exo-devel;
 
       # Virtual environment with dev dependencies for testing
       testVenv = (mkPythonSet {
@@ -272,12 +302,12 @@ in
     in
     {
       packages = {
-        inherit exo;
+        inherit exo exo-devel;
         # for running tests in ci
         exo-test-env = testVenv;
-        exo-bench = mkBenchScript "exo-bench" (inputs.self + /bench/exo_bench.py);
-        exo-eval = mkBenchScript "exo-eval" (inputs.self + /bench/exo_eval.py);
-        exo-eval-tool-calls = mkBenchScript "exo-eval-tool-calls" (inputs.self + /bench/eval_tool_calls.py);
+        exo-bench = mkBenchScript { name = "exo-bench"; path = inputs.self + /bench/exo_bench.py; };
+        exo-eval = mkBenchScript { name = "exo-eval"; path = inputs.self + /bench/exo_eval.py; };
+        exo-eval-tool-calls = mkBenchScript { name = "exo-eval-tool-calls"; path = inputs.self + /bench/eval_tool_calls.py; };
         # used by ./tests/run_exo_on.sh
         exo-get-all-models-on-cluster = mkSimplePythonScript "exo-get-all-models-on-cluster" (inputs.self + /tests/get_all_models_on_cluster.py);
       } // lib.optionalAttrs isLinux {

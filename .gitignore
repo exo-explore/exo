@@ -6,6 +6,7 @@ digest.txt
 
 # nix
 .direnv/
+.nix-devel/
 
 # IDEA (PyCharm)
 .idea

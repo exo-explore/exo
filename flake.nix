@@ -146,7 +146,7 @@
                 config.treefmt.build.wrapper
 
                 # PYTHON
-                self'.packages.exo.passthru.evenv
+                self'.packages.exo-devel.passthru.localRustEvenv
                 uv
 
                 # RUST
