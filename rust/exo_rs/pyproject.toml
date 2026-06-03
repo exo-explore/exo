@@ -4,12 +4,12 @@ build-backend = "maturin"
 
 [project]
 name = "exo_rs"
-version = "0.2.16"
+version = "0.3.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
-  { name = "Andrei Cravtov", email = "the.andrei.cravtov@gmail.com" },
   { name = "Evan Quiney", email = "evanev7@gmail.com" },
+  { name = "Andrei Cravtov", email = "the.andrei.cravtov@gmail.com" },
 ]
 requires-python = ">=3.13"
 dependencies = []
@@ -18,8 +18,6 @@ dependencies = []
 dev = ["exo_rs", "pytest>=8.4.0", "pytest-asyncio>=1.0.0"]
 
 [tool.maturin]
-#purelib = true
-#python-source = "python"
 module-name = "exo_rs"
 features = ["pyo3/extension-module", "pyo3/experimental-async"]
 
@@ -30,3 +28,6 @@ generate-init-py = true
 log_cli = true
 log_cli_level = "INFO"
 asyncio_mode = "auto"
+
+[tool.uv]
+cache-keys = [{ file = "src/**/*.rs" }]

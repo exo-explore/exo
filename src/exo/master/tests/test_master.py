@@ -6,7 +6,7 @@ import pytest
 from loguru import logger
 
 from exo.master.main import Master
-from exo.routing.router import get_node_id_keypair
+from exo.routing.router import get_node_zid
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
@@ -16,7 +16,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     TextGeneration,
 )
-from exo.shared.types.common import ModelId, NodeId, SessionId, SystemId
+from exo.shared.types.common import ModelId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
@@ -49,8 +49,7 @@ from exo.utils.info_gatherer.info_gatherer import NodeBackends
 
 @pytest.mark.asyncio
 async def test_master():
-    keypair = get_node_id_keypair()
-    node_id = NodeId(keypair.to_node_id())
+    node_id = get_node_zid()
     session_id = SessionId(master_node_id=node_id, election_clock=0)
 
     ge_sender, global_event_receiver = channel[GlobalForwarderEvent]()

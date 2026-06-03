@@ -1,8 +1,7 @@
-from collections.abc import Sequence
+import os
 from copy import copy
 from itertools import count
 from math import inf
-from os import PathLike
 from pathlib import Path
 from typing import cast
 
@@ -13,17 +12,13 @@ from anyio import (
     sleep_forever,
 )
 from exo_rs import (
-    AllQueuesFullError,
     FromSwarm,
-    Keypair,
-    MessageTooLargeError,
     NetworkingHandle,
-    NoPeersSubscribedToTopicError,
 )
-from filelock import FileLock
 from loguru import logger
 
-from exo.shared.constants import EXO_NODE_ID_KEYPAIR
+from exo.shared.constants import EXO_NODE_ZID
+from exo.shared.types.common import NodeId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
@@ -105,12 +100,15 @@ class Router:
     @classmethod
     def create(
         cls,
-        identity: Keypair,
-        bootstrap_peers: Sequence[str] = (),
-        listen_port: int = 0,
+        identity: str,
+        namespace: str,
+        listen_port: int,
+        discovery_service_port: int,
     ) -> "Router":
         return cls(
-            handle=NetworkingHandle(identity, list(bootstrap_peers), listen_port)
+            handle=NetworkingHandle.new(
+                identity, namespace, listen_port, discovery_service_port
+            )
         )
 
     def __init__(self, handle: NetworkingHandle):
@@ -191,10 +189,8 @@ class Router:
                 from_swarm = await self._net.recv()
                 logger.debug(from_swarm)
                 match from_swarm:
-                    case FromSwarm.Message(origin, topic, data):
-                        logger.trace(
-                            f"Received message on {topic} from {origin} with payload {data}"
-                        )
+                    case FromSwarm.Message(topic, data):
+                        logger.trace(f"Received message on {topic} with payload {data}")
                         if topic not in self.topic_routers:
                             logger.warning(
                                 f"Received message on unknown or inactive topic {topic}"
@@ -225,33 +221,25 @@ class Router:
     async def _networking_publish(self):
         with self.networking_receiver as networked_items:
             async for topic, data in networked_items:
-                try:
-                    logger.trace(f"Sending message on {topic} with payload {data}")
-                    if len(data) > 1024 * 1024:
-                        logger.warning(
-                            "Sending overlarge payload, network performance may be temporarily degraded"
-                        )
-                    await self._net.gossipsub_publish(topic, data)
-                except NoPeersSubscribedToTopicError:
-                    pass
-                except AllQueuesFullError:
-                    logger.warning(f"All peer queues full, dropping message on {topic}")
-                except MessageTooLargeError:
+                logger.trace(f"Sending message on {topic} with payload {data}")
+                if len(data) > 1024 * 1024:
                     logger.warning(
-                        f"Message too large for gossipsub on {topic} ({len(data)} bytes), dropping"
+                        "Sending overlarge payload, network performance may be temporarily degraded"
                     )
+                await self._net.gossipsub_publish(topic, data)
 
 
-def get_node_id_keypair(
-    path: str | bytes | PathLike[str] | PathLike[bytes] = EXO_NODE_ID_KEYPAIR,
-) -> Keypair:
+def get_node_zid(
+    path: Path = EXO_NODE_ZID,
+) -> NodeId:
     """
     Obtains the :class:`Keypair` associated with this node-ID.
     Obtain the :class:`PeerId` by from it.
     """
     # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
-    return Keypair.generate()
+    return NodeId(os.urandom(16).hex().lstrip("0"))
 
+    """
     def lock_path(path: str | bytes | PathLike[str] | PathLike[bytes]) -> Path:
         return Path(str(path) + ".lock")
 
@@ -273,3 +261,4 @@ def get_node_id_keypair(
             keypair = Keypair.generate()
             f.write(keypair.to_bytes())
             return keypair
+    """
