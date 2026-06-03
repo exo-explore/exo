@@ -302,7 +302,6 @@ class CreateInstanceResponse(BaseModel):
 
 class DeleteInstanceResponse(BaseModel):
     message: str
-    command_id: CommandId
     instance_id: InstanceId
 
 

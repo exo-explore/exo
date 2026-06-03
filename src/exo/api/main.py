@@ -163,13 +163,13 @@ from exo.shared.types.chunks import (
 from exo.shared.types.commands import (
     CancelDownload,
     DeleteDownload,
-    DeleteInstance,
     DownloadCommand,
     ForwarderCommand,
     ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
     JoinInstance,
+    LeaveInstance,
     PlaceInstance,
     StartDownload,
     TaskCancelled,
@@ -262,7 +262,7 @@ class API:
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
-        self.aggregator = session_handle.last_value_aggregator("nodes")
+        self.aggregator = session_handle.last_value_aggregator("node_metrics")
         self.storage = session_handle.storage_interface()
         self.task_requester = session_handle.task_requester()
         # TODO: Mail sender?
@@ -658,19 +658,18 @@ class API:
         )
 
     async def delete_instance(self, instance_id: InstanceId) -> DeleteInstanceResponse:
-        if instance_id not in self._bridge_command_instances.values():
+        state = self.state.with_aggregator(self.aggregator)
+        instance = state.instances.get(instance_id)
+        if instance is None:
             raise HTTPException(status_code=404, detail="Instance not found")
 
-        command = DeleteInstance()
-        await self.task_requester.interrupt(
-            instance_id,
-            command.command_id,
-            command.model_dump_json(),
+        await self._sh.send_mail(
+            instance.shard_assignments.node_ids(),
+            LeaveInstance(instance_id=instance_id).model_dump_json(),
         )
 
         return DeleteInstanceResponse(
             message="Command received.",
-            command_id=command.command_id,
             instance_id=instance_id,
         )
 

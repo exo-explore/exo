@@ -21,6 +21,7 @@ from exo.shared.types.commands import (
     ForwarderCommand,
     ForwarderDownloadCommand,
     JoinInstance,
+    LeaveInstance,
     Mail,
     StartDownload,
 )
@@ -33,8 +34,6 @@ from exo.shared.types.events import (
     NodeGatheredInfo,
     TaskCreated,
     TaskStatusUpdated,
-    TopologyEdgeCreated,
-    TopologyEdgeDeleted,
 )
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
@@ -42,12 +41,13 @@ from exo.shared.types.tasks import (
     CancelTask,
     CreateRunner,
     DownloadModel,
+    ForgetInstance,
     LoadModel,
     Shutdown,
     Task,
     TaskStatus,
 )
-from exo.shared.types.topology import Connection, SocketConnection
+from exo.shared.types.topology import SocketConnection, SocketConnections
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId
@@ -58,6 +58,8 @@ from exo.utils.keyed_backoff import KeyedBackoff
 from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
 from exo.worker.runner.supervisor import RunnerSupervisor
+
+PRIMARY_RUNNER_MISSING_TIMEOUT_SECONDS = 10.0
 
 
 class Worker:
@@ -94,11 +96,17 @@ class Worker:
         self._stopped: anyio.Event = anyio.Event()
         self._sh: SessionHandle = session_handle
         self.aggregator: LVAggregator = session_handle.last_value_aggregator(
-            "nodes"
+            "node_metrics"
         )
         self.mailbox: Mailbox = session_handle.mailbox(node_id)
         self.desired_instances: dict[InstanceId, Instance] = {}
+        self._primary_runner_missing_since: dict[InstanceId, float] = {}
         self._primary_desired_instance_publishers: dict[InstanceId, LVPublisher] = {}
+        self._socket_connections_publisher: LVPublisher = (
+            session_handle.last_value_publisher(
+                f"node_metrics/{self.node_id}/socket_connections"
+            )
+        )
 
     async def run(self):
         logger.info("Starting Worker")
@@ -127,6 +135,7 @@ class Worker:
             with anyio.CancelScope(shield=True):
                 for publisher in self._primary_desired_instance_publishers.values():
                     await publisher.delete()
+                await self._socket_connections_publisher.delete()
             self._stopped.set()
 
     async def _listen_to_mailbox(self):
@@ -143,12 +152,15 @@ class Worker:
                     self.desired_instances[instance.instance_id] = instance
                     if instance.primary_output_node() == self.node_id:
                         await self._publish_primary_desired_instance(instance)
+                case LeaveInstance(instance_id=instance_id):
+                    self.desired_instances.pop(instance_id, None)
+                    await self._delete_primary_desired_instance(instance_id)
 
     async def _publish_primary_desired_instance(self, instance: Instance) -> None:
         publisher = self._primary_desired_instance_publishers.get(instance.instance_id)
         if publisher is None:
             publisher = self._sh.last_value_publisher(
-                f"nodes/{self.node_id}/desired_instances/{instance.instance_id}"
+                f"node_metrics/{self.node_id}/desired_instances/{instance.instance_id}"
             )
             self._primary_desired_instance_publishers[instance.instance_id] = publisher
         await publisher.put(instance.model_dump_json())
@@ -157,6 +169,25 @@ class Worker:
         publisher = self._primary_desired_instance_publishers.pop(instance_id, None)
         if publisher is not None:
             await publisher.delete()
+
+    async def _forget_desired_instance_locally(self, instance_id: InstanceId) -> None:
+        self.desired_instances.pop(instance_id, None)
+        self._primary_runner_missing_since.pop(instance_id, None)
+        await self._delete_primary_desired_instance(instance_id)
+
+    def _update_primary_runner_missing_since(
+        self, live_runner_ids: set[RunnerId]
+    ) -> None:
+        now = anyio.current_time()
+        for instance_id, instance in list(self.desired_instances.items()):
+            primary_runner_id = instance.shard_assignments.shards[
+                instance.shard_assignments.primary_output_node
+            ].runner_id
+            if primary_runner_id in live_runner_ids:
+                self._primary_runner_missing_since.pop(instance_id, None)
+                continue
+
+            self._primary_runner_missing_since.setdefault(instance_id, now)
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -203,6 +234,9 @@ class Worker:
         while True:
             await anyio.sleep(0.1)
             state = self.state.with_aggregator(self.aggregator)
+            live_runner_ids = set(state.runners) | set(self.runners)
+            now = anyio.current_time()
+            self._update_primary_runner_missing_since(live_runner_ids)
             task: Task | None = plan(
                 self.node_id,
                 self.runners,
@@ -211,8 +245,20 @@ class Worker:
                 state.runners,  # comes from with_agg
                 self._instance_backoff,
                 self._download_backoff,
+                live_runner_ids=live_runner_ids,
+                primary_runner_missing_since=self._primary_runner_missing_since,
+                now=now,
+                primary_runner_missing_timeout_seconds=PRIMARY_RUNNER_MISSING_TIMEOUT_SECONDS,
             )
             if task is None:
+                continue
+
+            if isinstance(task, ForgetInstance):
+                logger.warning(
+                    f"Instance {task.instance_id} primary runner missing for "
+                    f"{PRIMARY_RUNNER_MISSING_TIMEOUT_SECONDS:g}s; forgetting locally"
+                )
+                await self._forget_desired_instance_locally(task.instance_id)
                 continue
 
             if isinstance(task, CreateRunner):
@@ -221,8 +267,7 @@ class Worker:
                     logger.warning(
                         f"Instance {iid} exceeded {EXO_MAX_INSTANCE_RETRIES} retries, requesting deletion"
                     )
-                    self.desired_instances.pop(iid, None)
-                    await self._delete_primary_desired_instance(iid)
+                    await self._forget_desired_instance_locally(iid)
                     await self.command_sender.send(
                         ForwarderCommand(
                             origin=self._system_id,
@@ -341,7 +386,7 @@ class Worker:
                 f"task_assignments/{task.instance_id}/*"
             ),
             runner_status_publisher=self._sh.last_value_publisher(
-                f"nodes/{self.node_id}/runners/{task.bound_instance.bound_runner_id}/status"
+                f"node_metrics/{self.node_id}/runners/{task.bound_instance.bound_runner_id}/status"
             ),
             task_responder=task_responder,
         )
@@ -352,7 +397,6 @@ class Worker:
     async def _poll_connection_updates(self):
         while True:
             state = self.state.with_aggregator(self.aggregator)
-            edges = set(conn.edge for conn in state.topology.out_edges(self.node_id))
             conns: defaultdict[NodeId, set[str]] = defaultdict(set)
             async for ip, nid in check_reachable(
                 state.topology,
@@ -363,32 +407,26 @@ class Worker:
                 if ip in conns[nid]:
                     continue
                 conns[nid].add(ip)
-                edge = SocketConnection(
-                    # nonsense multiaddr
-                    sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/{self.api_port}")
-                    if "." in ip
-                    # nonsense multiaddr
-                    else Multiaddr(address=f"/ip6/{ip}/tcp/{self.api_port}"),
-                )
-                if edge not in edges:
-                    logger.debug(f"ping discovered {edge=}")
-                    await self.event_sender.send(
-                        TopologyEdgeCreated(
-                            conn=Connection(source=self.node_id, sink=nid, edge=edge)
-                        )
-                    )
 
-            for conn in state.topology.out_edges(self.node_id):
-                if not isinstance(conn.edge, SocketConnection):
-                    continue
-                # ignore mDNS discovered connections
-                if conn.edge.sink_multiaddr.port != self.api_port:
-                    continue
-                if (
-                    conn.sink not in conns
-                    or conn.edge.sink_multiaddr.ip_address not in conns[conn.sink]
-                ):
-                    logger.debug(f"ping failed to discover {conn=}")
-                    await self.event_sender.send(TopologyEdgeDeleted(conn=conn))
+            socket_connections = SocketConnections(
+                connections={
+                    nid: [
+                        SocketConnection(
+                            # nonsense multiaddr
+                            sink_multiaddr=Multiaddr(
+                                address=f"/ip4/{ip}/tcp/{self.api_port}"
+                            )
+                            if "." in ip
+                            # nonsense multiaddr
+                            else Multiaddr(address=f"/ip6/{ip}/tcp/{self.api_port}"),
+                        )
+                        for ip in sorted(ips)
+                    ]
+                    for nid, ips in conns.items()
+                }
+            )
+            await self._socket_connections_publisher.put(
+                socket_connections.model_dump_json()
+            )
 
             await anyio.sleep(10)

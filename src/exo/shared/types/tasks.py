@@ -89,6 +89,10 @@ class Shutdown(BaseTask):  # emitted by Worker
     runner_id: RunnerId
 
 
+class ForgetInstance(BaseTask):  # emitted by Worker
+    pass
+
+
 Task = (
     CreateRunner
     | DownloadModel
@@ -100,6 +104,7 @@ Task = (
     | ImageGeneration
     | ImageEdits
     | Shutdown
+    | ForgetInstance
 )
 TextTask = TextGeneration
 ImageTask = ImageGeneration | ImageEdits
