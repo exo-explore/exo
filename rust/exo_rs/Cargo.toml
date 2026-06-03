@@ -35,7 +35,7 @@ pyo3-async-runtimes = { workspace = true, features = [
 ] }
 pyo3-log.workspace = true
 
-pidfile-rs = { git = "https://github.com/AndreiCravtov/pidfile-rs" }
+pidfile-rs = { workspace = true }
 
 # async runtime
 tokio = { workspace = true, features = ["full"] }

@@ -4,15 +4,13 @@ use std::sync::Arc;
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
 use crate::ext::{ResultExt as _, TokioMpscSenderExt as _};
 use futures_lite::{Stream, StreamExt as _};
-use networking::Session;
 use networking::swarm::{FromSwarm, Swarm, ToSwarm, create_swarm};
+use networking::{Session, is_valid_zid};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::{Bound, Py, PyAny, PyErr, PyResult, Python, pymethods};
-use pyo3_stub_gen::derive::{
-    gen_methods_from_python, gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods,
-};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 #[gen_stub_pyclass]
@@ -68,6 +66,7 @@ impl PyNetworkingHandle {
     #[staticmethod]
     pub fn new(
         identity: &str,
+        namespace: &str,
         listen_port: u16,
         discovery_service_port: u16,
     ) -> PyResult<PyNetworkingHandle> {
@@ -79,11 +78,7 @@ impl PyNetworkingHandle {
         let (to_swarm, from_client) = mpsc::channel(1024);
 
         // get identity
-        if !identity
-            .chars()
-            .all(|c| ('0'..='9').contains(&c) || ('a'..='f').contains(&c))
-            || identity.len() > 32
-        {
+        if !is_valid_zid(identity) {
             return Err(PyValueError::new_err(format!(
                 "{identity} is not a valid zenoh identity"
             )));
@@ -93,6 +88,7 @@ impl PyNetworkingHandle {
         let swarm = pyo3_async_runtimes::tokio::get_runtime()
             .block_on(create_swarm(
                 identity,
+                namespace,
                 from_client,
                 listen_port,
                 discovery_service_port,

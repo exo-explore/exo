@@ -12,12 +12,16 @@ use crate::discovery::Discovery;
 pub mod discovery;
 pub mod swarm;
 
+pub fn is_valid_zid(identity: &str) -> bool {
+    let mut iter = identity.chars();
+    iter.next()
+        .is_some_and(|c| ('1'..='9').contains(&c) || ('a'..='f').contains(&c))
+        && iter.all(|c| ('0'..='9').contains(&c) || ('a'..='f').contains(&c))
+        && identity.len() <= 32
+}
+
 pub fn cfg(identity: &str, listen_port: u16) -> Result<zenoh::Config> {
-    assert!(
-        identity
-            .chars()
-            .all(|c| ('0'..='9').contains(&c) || ('a'..='f').contains(&c))
-    );
+    assert!(is_valid_zid(identity));
     assert!(identity.len() <= 32);
     assert!(listen_port != 0, "must used defined listen port");
     let mut cfg = zenoh::Config::default();
@@ -49,10 +53,16 @@ pub fn cfg(identity: &str, listen_port: u16) -> Result<zenoh::Config> {
 
 pub async fn open(
     cfg: zenoh::Config,
+    namespace: &str,
     listen_port: u16,
     discovery_service_port: u16,
 ) -> Result<Session> {
     assert!(listen_port != 0, "must used defined listen port");
+    let namespace: [u8; 8] = {
+        blake3::hash(namespace.as_bytes()).as_bytes()[..8]
+            .try_into()
+            .expect("8 is equal to 8")
+    };
     let mut plugins = PluginsManager::static_plugins_only();
     plugins.declare_static_plugin::<StoragesPlugin, _>("storage_manager", true);
     let mut runtime = zenoh::internal::runtime::RuntimeBuilder::new(cfg)
@@ -61,7 +71,8 @@ pub async fn open(
         .await?;
     let z = zenoh::session::init(runtime.clone().into()).await?;
     runtime.start().await?;
-    let mut discovery = Discovery::new(z.zid(), listen_port, discovery_service_port).await?;
+    let mut discovery =
+        Discovery::new(z.zid(), namespace, listen_port, discovery_service_port).await?;
     let _jh = Arc::new(AbortOnDrop(tokio::task::spawn(async move {
         loop {
             let Ok(discovered) = discovery.next().await.inspect_err(|e| {

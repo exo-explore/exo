@@ -623,7 +623,7 @@ requires-dist = [
 
 [[package]]
 name = "exo-rs"
-version = "0.3.1"
+version = "0.3.0"
 source = { editable = "rust/exo_rs" }
 
 [package.dev-dependencies]

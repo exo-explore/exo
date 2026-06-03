@@ -15,12 +15,13 @@ from loguru import logger
 from pydantic import PositiveInt
 
 import exo.routing.topics as topics
+from exo import __version__
 from exo.api.main import API
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
-from exo.routing.router import Router
+from exo.routing.router import Router, get_node_zid
 from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG, EXO_PID_FILE
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
@@ -50,11 +51,13 @@ class Node:
 
     @classmethod
     async def create(cls, args: "Args") -> Self:
-        identity = os.urandom(16).hex().lstrip("0")
-        node_id = NodeId(identity)
+        node_id = get_node_zid()
         session_id = SessionId(master_node_id=node_id, election_clock=0)
         router = Router.create(
-            identity, listen_port=args.zenoh_port, discovery_service_port=52413
+            node_id,
+            namespace=args.namespace,
+            listen_port=args.zenoh_port,
+            discovery_service_port=args.discovery_port,
         )
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
@@ -387,7 +390,9 @@ class Args(FrozenModel):
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
     legacy_daemon: bool = False
     bootstrap_peers: list[str] = []
+    namespace: str
     zenoh_port: int
+    discovery_port: int
 
     @classmethod
     def parse(cls) -> Self:
@@ -460,11 +465,25 @@ class Args(FrozenModel):
             help="Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)",
         )
         parser.add_argument(
+            "--namespace",
+            type=str,
+            default=__version__,
+            dest="namespace",
+            help="Discovery namespace, nodes with different namespaces will not connect.",
+        )
+        parser.add_argument(
             "--zenoh-port",
             type=int,
             default=52414,
             dest="zenoh_port",
             help="Fixed TCP port for zenoh to listen.",
+        )
+        parser.add_argument(
+            "--discovery-port",
+            type=int,
+            default=52413,
+            dest="discovery_port",
+            help="Fixed UDP port for the discovery service.",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
         fast_synch_group.add_argument(

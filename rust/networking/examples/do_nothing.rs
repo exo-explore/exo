@@ -7,7 +7,7 @@ async fn main() -> Result<()> {
     zenoh::init_log_from_env_or("info");
     info!("Opening session...");
     let cfg = networking::cfg(&format!("{:x}", rand::random::<u128>()), 52414)?;
-    let session = networking::open(cfg, 52414, 52413).await?;
+    let session = networking::open(cfg, "exo", 52414, 52413).await?;
     let _tok = session
         .z
         .liveliness()

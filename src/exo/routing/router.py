@@ -101,11 +101,14 @@ class Router:
     def create(
         cls,
         identity: str,
+        namespace: str,
         listen_port: int,
         discovery_service_port: int,
     ) -> "Router":
         return cls(
-            handle=NetworkingHandle.new(identity, listen_port, discovery_service_port)
+            handle=NetworkingHandle.new(
+                identity, namespace, listen_port, discovery_service_port
+            )
         )
 
     def __init__(self, handle: NetworkingHandle):
@@ -234,7 +237,7 @@ def get_node_zid(
     Obtain the :class:`PeerId` by from it.
     """
     # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
-    return NodeId(os.urandom(16).hex())
+    return NodeId(os.urandom(16).hex().lstrip("0"))
 
     """
     def lock_path(path: str | bytes | PathLike[str] | PathLike[bytes]) -> Path:

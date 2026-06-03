@@ -1,6 +1,4 @@
 use std::{
-    env,
-    hash::{DefaultHasher, Hash, Hasher},
     io,
     net::{Ipv6Addr, SocketAddr, SocketAddrV6},
     sync::Arc,
@@ -39,16 +37,24 @@ pub struct Discovered {
 }
 
 impl Discovery {
-    pub async fn new(zid: ZenohId, listen_port: u16, discovery_port: u16) -> io::Result<Self> {
-        let namespace = {
-            let mut hasher = DefaultHasher::new();
-            env::var("EXO_ZENOH_NAMESPACE")
-                .unwrap_or_else(|_| "exo".to_string())
-                .hash(&mut hasher);
-            hasher.finish().to_le_bytes()
-        };
-        let sock = Arc::new(UdpSocket::bind(format!("[::]:{discovery_port}")).await?);
-        //sock.set_multicast_loop_v6(false)?;
+    pub async fn new(
+        zid: ZenohId,
+        namespace: [u8; 8],
+        listen_port: u16,
+        discovery_port: u16,
+    ) -> io::Result<Self> {
+        let sock = socket2::Socket::new(
+            socket2::Domain::IPV6,
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )?;
+        sock.set_reuse_address(true)?;
+        #[cfg(unix)]
+        sock.set_reuse_port(true)?;
+        sock.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, discovery_port, 0, 0).into())?;
+        sock.set_nonblocking(true)?;
+        sock.set_multicast_loop_v6(true)?;
+        let sock = Arc::new(UdpSocket::from_std(sock.into())?);
         let ifaces: Arc<Mutex<Vec<SocketAddrV6>>> = Default::default();
         let _sync = Mutex::new(
             netwatcher::watch_interfaces_with_callback({
@@ -64,9 +70,12 @@ impl Discovery {
                         }
 
                         match sock.join_multicast_v6(&GROUP, *iface_idx) {
-                            Ok(()) => ifaces
-                                .lock()
-                                .push(SocketAddrV6::new(GROUP, 52413, 0, *iface_idx)),
+                            Ok(()) => ifaces.lock().push(SocketAddrV6::new(
+                                GROUP,
+                                discovery_port,
+                                0,
+                                *iface_idx,
+                            )),
                             Err(e) if e.kind() != io::ErrorKind::AddrInUse => {
                                 // skip AddrInUse - just means we've already joined the mv6
                                 if let Some(iface) = update.interfaces.get(&iface_idx) {

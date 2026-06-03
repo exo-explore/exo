@@ -42,7 +42,6 @@ pin-project = "1.1.10"
 serde_json = "1.0.149"
 rand = "0.10.1"
 parking_lot = "0.12.5"
-pidfile-rs = "0.3.1"
 
 # Tracing/logging
 log = "0.4"
@@ -54,6 +53,11 @@ zenoh-plugin-storage-manager = { version = "=1.9.0", default-features = false }
 zenoh-plugin-trait = "=1.9.0"
 netwatcher = "0.6.0"
 bytemuck = "1.25.0"
+blake3 = "1.8.5"
+smol = "2.0.2"
+socket2 = "0.6.4"
+tracing = "0.1.44"
+pidfile-rs = { git = "https://github.com/AndreiCravtov/pidfile-rs" }
 
 [patch.crates-io]
 zenoh = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
