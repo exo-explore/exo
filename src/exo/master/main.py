@@ -10,7 +10,6 @@ from exo.master.placement import (
     cancel_unnecessary_downloads,
     delete_instance,
     get_transition_events,
-    place_instance,
 )
 from exo.master.placement_utils import find_ip_prioritised
 from exo.routing.event_router import (
@@ -26,10 +25,8 @@ from exo.shared.types.commands import (
     ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
-    PlaceInstance,
     RequestEventLog,
     TaskCancelled,
-    TaskFinished,
     TestCommand,
     TextGeneration,
 )
@@ -43,7 +40,6 @@ from exo.shared.types.events import (
     NodeGatheredInfo,
     NodeTimedOut,
     TaskCreated,
-    TaskDeleted,
     TaskStatusUpdated,
     TraceEventData,
     TracesCollected,
@@ -376,22 +372,6 @@ class Master:
                                     )
                                 )
                             generated_events.extend(transition_events)
-                        case PlaceInstance():
-                            state = self.state.with_aggregator(self.aggregator)
-                            placement = place_instance(
-                                command,
-                                state.topology,
-                                state.instances,
-                                state.node_memory,
-                                state.node_network,
-                                state.node_backends,
-                                download_status=state.downloads,
-                                node_rdma_ctl=state.node_rdma_ctl,
-                            )
-                            transition_events = get_transition_events(
-                                self.state.instances, placement, self.state.tasks
-                            )
-                            generated_events.extend(transition_events)
                         case CreateInstance():
                             state = self.state.with_aggregator(self.aggregator)
                             placement = add_instance_to_placements(
@@ -419,18 +399,6 @@ class Master:
                                 logger.warning(
                                     f"Nonexistent command {command.cancelled_command_id} cancelled"
                                 )
-                        case TaskFinished():
-                            if (
-                                task_id := self.command_task_mapping.pop(
-                                    command.finished_command_id, None
-                                )
-                            ) is not None:
-                                generated_events.append(TaskDeleted(task_id=task_id))
-                            else:
-                                logger.warning(
-                                    f"Finished command {command.finished_command_id} finished"
-                                )
-
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             # rate limit to 1000 at a time
@@ -442,6 +410,8 @@ class Master:
                                 await self._send_indexed_event(
                                     IndexedEvent(idx=i, event=event)
                                 )
+                        case other:
+                            logger.warning(f"ONE SLIPPED THROUGH {other}")
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except Exception as e:

@@ -107,6 +107,4 @@ class TensorShardMetadata(BaseShardMetadata):
     pass
 
 
-ShardMetadata = (
-    PipelineShardMetadata | CfgShardMetadata | TensorShardMetadata
-)
+ShardMetadata = PipelineShardMetadata | CfgShardMetadata | TensorShardMetadata

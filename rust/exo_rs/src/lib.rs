@@ -14,6 +14,7 @@ pub mod storage;
 pub mod task;
 
 use crate::last_value::lv_submodule;
+use crate::mailbox::mailbox_module;
 use crate::networking::networking_submodule;
 use crate::pidfile::pidfile_submodule;
 use crate::session::session_submodule;
@@ -178,6 +179,7 @@ fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     session_submodule(m)?;
     storage_submodule(m)?;
     task_submodule(m)?;
+    mailbox_module(m)?;
 
     Ok(())
 }

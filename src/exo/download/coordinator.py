@@ -90,7 +90,7 @@ class DownloadCoordinator:
     def _publisher_for_model(self, model_id: ModelId) -> LVPublisher:
         if (publisher := self._download_publishers.get(model_id)) is None:
             publisher = self.session_handle.last_value_publisher(
-                f"node_metrics/{self.node_id}/downloads/{model_id}"
+                f"nodes/{self.node_id}/downloads/{model_id}"
             )
             self._download_publishers[model_id] = publisher
 

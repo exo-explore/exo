@@ -17,7 +17,6 @@ from exo.shared.types.events import (
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskCreated,
-    TaskDeleted,
     TaskFailed,
     TaskStatusUpdated,
     TestEvent,
@@ -84,8 +83,6 @@ def event_apply(event: Event, state: State) -> State:
             return apply_runner_status_updated(event, state)
         case TaskCreated():
             return apply_task_created(event, state)
-        case TaskDeleted():
-            return apply_task_deleted(event, state)
         case TaskFailed():
             return apply_task_failed(event, state)
         case TaskStatusUpdated():
@@ -141,13 +138,6 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
 
 def apply_task_created(event: TaskCreated, state: State) -> State:
     new_tasks: Mapping[TaskId, Task] = {**state.tasks, event.task_id: event.task}
-    return state.model_copy(update={"tasks": new_tasks})
-
-
-def apply_task_deleted(event: TaskDeleted, state: State) -> State:
-    new_tasks: Mapping[TaskId, Task] = {
-        tid: task for tid, task in state.tasks.items() if tid != event.task_id
-    }
     return state.model_copy(update={"tasks": new_tasks})
 
 

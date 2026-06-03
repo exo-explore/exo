@@ -294,7 +294,6 @@ def place_instance(
             )
 
 
-
 def delete_instance(
     command: DeleteInstance,
     current_instances: Mapping[InstanceId, Instance],
