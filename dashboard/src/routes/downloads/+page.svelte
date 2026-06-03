@@ -422,7 +422,7 @@
           type="button"
           class="text-xs font-mono text-exo-light-gray hover:text-exo-yellow transition-colors uppercase border border-exo-medium-gray/40 px-2 py-1 rounded"
           onclick={() => refreshState()}
-          title="Force refresh from /state"
+          title="Refresh dashboard bootstrap data"
         >
           Refresh
         </button>
