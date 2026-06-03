@@ -48,6 +48,11 @@ class _CardCache:
     def get(self, model_id: ModelId) -> "ModelCard | None":
         return self.cc.get(model_id)
 
+    def list_cached(self) -> list["ModelCard"]:
+        if EXO_ENABLE_IMAGE_MODELS:
+            return list(self.cc.values())
+        return [c for c in self.cc.values() if not _is_image_card(c)]
+
     async def save(self, card: "ModelCard"):
         self.cc[card.model_id] = card
         try:
@@ -68,9 +73,7 @@ class _CardCache:
     async def list_all(self) -> list["ModelCard"]:
         if len(self.cc) == 0:
             await self.refresh()
-        if EXO_ENABLE_IMAGE_MODELS:
-            return list(self.cc.values())
-        return [c for c in self.cc.values() if not _is_image_card(c)]
+        return self.list_cached()
 
     async def _load_cards_from_dir(self, directory: Path, *, is_custom: bool) -> None:
         """Load all TOML model cards from a directory into the cache."""

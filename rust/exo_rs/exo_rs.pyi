@@ -50,6 +50,7 @@ class LVAggregator:
 @typing.final
 class LVPublisher:
     def put(self, data: builtins.str) -> collections.abc.Awaitable[None]: ...
+    def delete(self) -> collections.abc.Awaitable[None]: ...
 
 @typing.final
 class LVSubscriber:

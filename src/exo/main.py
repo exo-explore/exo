@@ -87,6 +87,7 @@ class Node:
                 exo_shard_downloader(offline=args.offline),
                 event_sender=event_router.sender(),
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
+                session_handle=session_handle,
                 offline=args.offline,
             )
         else:
@@ -260,6 +261,7 @@ class Node:
                             download_command_receiver=self.router.receiver(
                                 topics.DOWNLOAD_COMMANDS
                             ),
+                            session_handle=self._sh,
                             offline=self.offline,
                         )
                         self._tg.start_soon(self.download_coordinator.run)
