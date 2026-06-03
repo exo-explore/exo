@@ -217,7 +217,7 @@ def test_topology_remove_all_rdma_connections_touching_keeps_socket_edges():
         )
     )
     socket_edge = SocketConnection(
-        sink_multiaddr=Multiaddr(address="/ip4/10.0.0.1/tcp/8000")
+        sink_multiaddr=Multiaddr(address="/ip4/10.0.0.1/tcp/8000"),
     )
     topology.add_connection(Connection(source=node_a, sink=node_b, edge=socket_edge))
 
