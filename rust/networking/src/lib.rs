@@ -12,6 +12,9 @@ use crate::{
     liveliness_aggregator::{LivelinessAggregator, spawn_liveliness_aggregator},
 };
 
+pub use zenoh_plugin_storage_manager::read_raw_memory_storage;
+pub const STORAGE_PREFIX: &str = "storage/mem1";
+
 pub mod discovery;
 pub mod liveliness_aggregator;
 pub mod swarm;
@@ -37,20 +40,22 @@ pub fn cfg(identity: &str, listen_port: u16) -> Result<zenoh::Config> {
     cfg.insert_json5("scouting/multicast/autoconnect", "[]")?;
     cfg.insert_json5("scouting/gossip/multihop", "true")?;
     cfg.insert_json5("adminspace/enabled", "true")?;
-    //cfg.insert_json5("transport/link/tx/batch_size", "9216")?;
+    cfg.insert_json5("transport/link/tx/batch_size", "9216")?;
     cfg.insert_json5("transport/link/rx/buffer_size", "16777216")?;
-    //cfg.insert_json5("timestamping/enabled", "true")?;
+    cfg.insert_json5("timestamping/enabled", "true")?;
     cfg.insert_json5("plugins/storage_manager/__required__", "true")?;
     cfg.insert_json5(
-        "plugins/storage_manager/storages/mem1",
-        r#"{
-            key_expr: "storage/mem1/**",
-            strip_prefix: "storage/mem1",
-            volume: "memory",
-            replication: {
-                interval: 2,
-            }
-        }"#,
+        "plugins/storage_manager/storages/mem1/key_expr",
+        &format!("\"{STORAGE_PREFIX}/**\""),
+    )?;
+    cfg.insert_json5(
+        "plugins/storage_manager/storages/mem1/strip_prefix",
+        &format!("\"{STORAGE_PREFIX}\""),
+    )?;
+    cfg.insert_json5("plugins/storage_manager/storages/mem1/volume", "\"memory\"")?;
+    cfg.insert_json5(
+        "plugins/storage_manager/storages/mem1/replication/interval",
+        "2",
     )?;
     Ok(cfg)
 }
@@ -111,7 +116,7 @@ pub async fn open(
     })
 }
 
-struct AbortOnDrop(JoinHandle<()>);
+pub struct AbortOnDrop(pub JoinHandle<()>);
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
         self.0.abort();
