@@ -106,14 +106,13 @@ def _cycle_download_score(
 def place_instance(
     command: PlaceInstance,
     topology: Topology,
-    current_instances: Mapping[InstanceId, Instance],
     node_memory: Mapping[NodeId, MemoryUsage],
     node_network: Mapping[NodeId, NodeNetworkInfo],
     node_backends: Mapping[NodeId, list[Backend]],
     required_nodes: set[NodeId] | None = None,
     download_status: Mapping[NodeId, Sequence[DownloadProgress]] | None = None,
     node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] | None = None,
-) -> dict[InstanceId, Instance]:
+) -> Instance:
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
 
@@ -258,7 +257,6 @@ def place_instance(
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)
 
     instance_id = InstanceId()
-    target_instances = dict(deepcopy(current_instances))
 
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
@@ -274,7 +272,7 @@ def place_instance(
                 cycle_digraph=cycle_digraph,
                 node_network=node_network,
             )
-            target_instances[instance_id] = MlxJacclInstance(
+            return MlxJacclInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
                 jaccl_devices=mlx_jaccl_devices,
@@ -288,14 +286,13 @@ def place_instance(
                 ephemeral_port=ephemeral_port,
                 node_network=node_network,
             )
-            target_instances[instance_id] = MlxRingInstance(
+            return MlxRingInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
                 hosts_by_node=hosts_by_node,
                 ephemeral_port=ephemeral_port,
             )
 
-    return target_instances
 
 
 def delete_instance(
