@@ -299,6 +299,9 @@ class Worker:
         runner = await RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
+            task_assignment_subscriber=self._sh.last_value_subscriber(
+                f"task_assignments/{task.instance_id}/*"
+            ),
             task_responder=task_responder,
         )
         self.runners[task.bound_instance.bound_runner_id] = runner
