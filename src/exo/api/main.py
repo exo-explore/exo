@@ -596,7 +596,7 @@ class API:
 
             instance = new_instances[0]
             shard_assignments = instance.shard_assignments
-            placement_node_ids = list(shard_assignments.node_to_runner.keys())
+            placement_node_ids = list(s.node_id for s in shard_assignments.shards)
 
             memory_delta_by_node: dict[str, int] = {}
             if placement_node_ids:
@@ -1624,20 +1624,18 @@ class API:
         return JSONResponse(content="Ollama is running")
 
     async def ollama_chat(
-        self, request: Request
+        self, request: OllamaChatRequest
     ) -> OllamaChatResponse | StreamingResponse:
         """Ollama Chat API — accepts JSON regardless of Content-Type."""
-        body = await request.body()
-        payload = OllamaChatRequest.model_validate_json(body)
-        task_params = ollama_request_to_text_generation(payload)
-        validated_model = await self._validate_model_has_instance(
+        task_params = ollama_request_to_text_generation(request)
+        resolved_model = await self._validate_model_has_instance(
             ModelId(task_params.model)
         )
-        task_params = task_params.model_copy(update={"model": validated_model})
+        task_params = task_params.model_copy(update={"model": resolved_model})
 
         command = await self._send_text_generation_with_images(task_params)
 
-        if payload.stream:
+        if request.stream:
             return StreamingResponse(
                 generate_ollama_chat_stream(
                     command.command_id,
@@ -1660,20 +1658,18 @@ class API:
             )
 
     async def ollama_generate(
-        self, request: Request
+        self, request: OllamaGenerateRequest
     ) -> OllamaGenerateResponse | StreamingResponse:
         """Ollama Generate API — accepts JSON regardless of Content-Type."""
-        body = await request.body()
-        payload = OllamaGenerateRequest.model_validate_json(body)
-        task_params = ollama_generate_request_to_text_generation(payload)
-        validated_model = await self._validate_model_has_instance(
+        task_params = ollama_generate_request_to_text_generation(request)
+        resolved_model = await self._validate_model_has_instance(
             ModelId(task_params.model)
         )
-        task_params = task_params.model_copy(update={"model": validated_model})
+        task_params = task_params.model_copy(update={"model": resolved_model})
 
         command = await self._send_text_generation_with_images(task_params)
 
-        if payload.stream:
+        if request.stream:
             return StreamingResponse(
                 generate_ollama_generate_stream(
                     command.command_id,
@@ -1728,11 +1724,9 @@ class API:
             ]
         )
 
-    async def ollama_show(self, request: Request) -> OllamaShowResponse:
+    async def ollama_show(self, request: OllamaShowRequest) -> OllamaShowResponse:
         """Returns model information in Ollama show format."""
-        body = await request.body()
-        payload = OllamaShowRequest.model_validate_json(body)
-        model_name = payload.name or payload.model
+        model_name = request.name or request.model
         if not model_name:
             raise HTTPException(status_code=400, detail="name or model is required")
         try:

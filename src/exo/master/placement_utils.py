@@ -8,12 +8,11 @@ from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
-from exo.shared.types.worker.runners import RunnerId, ShardAssignments
+from exo.shared.types.worker.runners import RunnerId, ShardAssignments, ShardWithId
 from exo.shared.types.worker.shards import (
     CfgShardMetadata,
     PipelineShardMetadata,
     Sharding,
-    ShardMetadata,
     TensorShardMetadata,
 )
 
@@ -152,27 +151,27 @@ def _get_shard_assignments_for_cfg_parallel(
     _validate_cycle(cycle)
 
     world_size = len(cycle)
-    cfg_world_size = 2
-    pipeline_world_size = world_size // cfg_world_size
+    pipeline_world_size = world_size // 2
 
     # Allocate layers for one pipeline group (both groups run the same layers)
     pipeline_node_ids = cycle.node_ids[:pipeline_world_size]
     pipeline_memory = _compute_total_memory(pipeline_node_ids, node_memory)
+
+    # nb: only validates the forward path...
     layer_allocations = _allocate_and_validate_layers(
         pipeline_node_ids, node_memory, pipeline_memory, model_card
     )
 
     # Ring topology: group 0 ascending [0,1,2,...], group 1 descending [...,2,1,0]
     # This places both last stages as neighbors for CFG exchange.
-    position_to_cfg_pipeline = [(0, r) for r in range(pipeline_world_size)] + [
-        (1, r) for r in reversed(range(pipeline_world_size))
-    ]
+    position_to_cfg_pipeline = list(range(pipeline_world_size)) + list(
+        reversed(range(pipeline_world_size))
+    )
 
-    runner_to_shard: dict[RunnerId, ShardMetadata] = {}
-    node_to_runner: dict[NodeId, RunnerId] = {}
+    shards: list[ShardWithId] = []
 
     for device_rank, node_id in enumerate(cycle.node_ids):
-        cfg_rank, pipeline_rank = position_to_cfg_pipeline[device_rank]
+        pipeline_rank = position_to_cfg_pipeline[device_rank]
         layers_before = sum(layer_allocations[:pipeline_rank])
         node_layers = layer_allocations[pipeline_rank]
 
@@ -183,20 +182,15 @@ def _get_shard_assignments_for_cfg_parallel(
             start_layer=layers_before,
             end_layer=layers_before + node_layers,
             n_layers=model_card.n_layers,
-            cfg_rank=cfg_rank,
-            cfg_world_size=cfg_world_size,
-            pipeline_rank=pipeline_rank,
-            pipeline_world_size=pipeline_world_size,
         )
 
         runner_id = RunnerId()
-        runner_to_shard[runner_id] = shard
-        node_to_runner[node_id] = runner_id
+        shards.append(ShardWithId(node_id, runner_id, shard))
 
     return ShardAssignments(
         model_id=model_card.model_id,
-        runner_to_shard=runner_to_shard,
-        node_to_runner=node_to_runner,
+        shards=shards,
+        primary_output_node=pipeline_world_size - 1,
     )
 
 
@@ -208,13 +202,13 @@ def _get_shard_assignments_for_pure_pipeline(
     """Create shard assignments for pure pipeline execution."""
     _validate_cycle(cycle)
     total_memory = _compute_total_memory(cycle.node_ids, node_memory)
+    world_size = len(cycle)
 
     layer_allocations = _allocate_and_validate_layers(
         cycle.node_ids, node_memory, total_memory, model_card
     )
 
-    runner_to_shard: dict[RunnerId, ShardMetadata] = {}
-    node_to_runner: dict[NodeId, RunnerId] = {}
+    shards: list[ShardWithId] = []
 
     for pipeline_rank, node_id in enumerate(cycle.node_ids):
         layers_before = sum(layer_allocations[:pipeline_rank])
@@ -223,20 +217,17 @@ def _get_shard_assignments_for_pure_pipeline(
         shard = PipelineShardMetadata(
             model_card=model_card,
             device_rank=pipeline_rank,
-            world_size=len(cycle),
+            world_size=world_size,
             start_layer=layers_before,
             end_layer=layers_before + node_layers,
             n_layers=model_card.n_layers,
         )
 
         runner_id = RunnerId()
-        runner_to_shard[runner_id] = shard
-        node_to_runner[node_id] = runner_id
+        shards.append(ShardWithId(node_id, runner_id, shard))
 
     return ShardAssignments(
-        model_id=model_card.model_id,
-        runner_to_shard=runner_to_shard,
-        node_to_runner=node_to_runner,
+        model_id=model_card.model_id, shards=shards, primary_output_node=world_size - 1
     )
 
 
@@ -246,8 +237,7 @@ def get_shard_assignments_for_tensor_parallel(
 ):
     total_layers = model_card.n_layers
     world_size = len(cycle)
-    runner_to_shard: dict[RunnerId, ShardMetadata] = {}
-    node_to_runner: dict[NodeId, RunnerId] = {}
+    shards: list[ShardWithId] = []
 
     for i, node_id in enumerate(cycle):
         shard = TensorShardMetadata(
@@ -260,14 +250,10 @@ def get_shard_assignments_for_tensor_parallel(
         )
 
         runner_id = RunnerId()
-
-        runner_to_shard[runner_id] = shard
-        node_to_runner[node_id] = runner_id
+        shards.append(ShardWithId(node_id, runner_id, shard))
 
     shard_assignments = ShardAssignments(
-        model_id=model_card.model_id,
-        runner_to_shard=runner_to_shard,
-        node_to_runner=node_to_runner,
+        model_id=model_card.model_id, shards=shards, primary_output_node=world_size - 1
     )
 
     return shard_assignments

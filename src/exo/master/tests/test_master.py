@@ -6,7 +6,6 @@ import pytest
 from loguru import logger
 
 from exo.master.main import Master
-from exo.routing.router import get_node_zid
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
@@ -16,7 +15,7 @@ from exo.shared.types.commands import (
     PlaceInstance,
     TextGeneration,
 )
-from exo.shared.types.common import ModelId, SessionId, SystemId
+from exo.shared.types.common import ModelId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
@@ -42,6 +41,7 @@ from exo.shared.types.worker.instances import (
     MlxRingInstance,
     ShardAssignments,
 )
+from exo.shared.types.worker.runners import ShardWithId
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 from exo.utils.channels import channel
 from exo.utils.info_gatherer.info_gatherer import NodeBackends
@@ -68,7 +68,7 @@ class MockStorage:
 
 @pytest.mark.asyncio
 async def test_master():
-    node_id = get_node_zid()
+    node_id = NodeId("yoooo")
     session_id = SessionId(master_node_id=node_id, election_clock=0)
 
     ge_sender, global_event_receiver = channel[GlobalForwarderEvent]()
@@ -226,29 +226,33 @@ async def test_master():
         assert isinstance(events[2].event, InstanceCreated)
         created_instance = events[2].event.instance
         assert isinstance(created_instance, MlxRingInstance)
-        runner_id = list(created_instance.shard_assignments.runner_to_shard.keys())[0]
+        runner_id = created_instance.shard_assignments.shards[0].runner_id
         # Validate the shard assignments
         expected_shard_assignments = ShardAssignments(
             model_id=ModelId("llama-3.2-1b"),
-            runner_to_shard={
-                (runner_id): PipelineShardMetadata(
-                    start_layer=0,
-                    end_layer=16,
-                    n_layers=16,
-                    model_card=ModelCard(
-                        model_id=ModelId("llama-3.2-1b"),
+            shards=[
+                ShardWithId(
+                    node_id,
+                    runner_id,
+                    PipelineShardMetadata(
+                        start_layer=0,
+                        end_layer=16,
                         n_layers=16,
-                        storage_size=Memory.from_bytes(678948),
-                        hidden_size=7168,
-                        supports_tensor=True,
-                        tasks=[ModelTask.TextGeneration],
-                        backends=[Backend.MlxMetal],
+                        model_card=ModelCard(
+                            model_id=ModelId("llama-3.2-1b"),
+                            n_layers=16,
+                            storage_size=Memory.from_bytes(678948),
+                            hidden_size=7168,
+                            supports_tensor=True,
+                            tasks=[ModelTask.TextGeneration],
+                            backends=[Backend.MlxMetal],
+                        ),
+                        device_rank=0,
+                        world_size=1,
                     ),
-                    device_rank=0,
-                    world_size=1,
                 )
-            },
-            node_to_runner={node_id: runner_id},
+            ],
+            primary_output_node=0,
         )
         assert created_instance.shard_assignments == expected_shard_assignments
         # For single-node, hosts_by_node should have one entry with self-binding
