@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import TypeAlias, final
+from typing import final
 
 from pydantic import Field
 
@@ -107,6 +107,6 @@ class TensorShardMetadata(BaseShardMetadata):
     pass
 
 
-ShardMetadata: TypeAlias = (
+ShardMetadata = (
     PipelineShardMetadata | CfgShardMetadata | TensorShardMetadata
 )

@@ -19,8 +19,7 @@ class RunnerError(Exception):
 
 
 class BaseRunnerStatus(TaggedModel):
-    def is_running(self):
-        return isinstance(self, RunnerRunning)
+    pass
 
 
 class RunnerIdle(BaseRunnerStatus):
@@ -107,3 +106,9 @@ class ShardAssignments(FrozenModel):
             raise ValueError("primary output node does not correspond to primary shard")
 
         return self
+
+    def runner_ids(self) -> list[RunnerId]:
+        return [shard.runner_id for shard in self.shards]
+
+    def node_ids(self) -> list[NodeId]:
+        return [shard.node_id for shard in self.shards]

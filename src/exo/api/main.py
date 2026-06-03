@@ -23,13 +23,6 @@ from hypercorn.utils import LifespanTimeoutError, ShutdownError
 from loguru import logger
 from pydantic import TypeAdapter, ValidationError
 
-from exo.master.placement import (
-    add_instance_to_placements,
-    cancel_unnecessary_downloads,
-    delete_instance,
-    get_transition_events,
-    place_instance,
-)
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
@@ -135,6 +128,13 @@ from exo.api.types.openai_responses import (
     ResponsesResponse,
 )
 from exo.master.image_store import ImageStore
+from exo.master.placement import (
+    #add_instance_to_placements,
+    #cancel_unnecessary_downloads,
+    #delete_instance,
+    #get_transition_events,
+    place_instance,
+)
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
@@ -163,7 +163,6 @@ from exo.shared.types.chunks import (
 from exo.shared.types.commands import (
     CancelDownload,
     Command,
-    CreateInstance,
     DeleteDownload,
     DeleteInstance,
     DownloadCommand,
@@ -171,6 +170,7 @@ from exo.shared.types.commands import (
     ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
+    JoinInstance,
     PlaceInstance,
     StartDownload,
     TaskCancelled,
@@ -266,6 +266,8 @@ class API:
         self.aggregator = session_handle.last_value_aggregator("node_metrics")
         self.storage = session_handle.storage_interface()
         self.task_requester = session_handle.task_requester()
+        # TODO: Mail sender?
+        self._sh = session_handle
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -436,7 +438,7 @@ class API:
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
         )
-        new_instance = place_instance(
+        instance = place_instance(
             command,
             state.topology,
             state.node_memory,
@@ -445,12 +447,14 @@ class API:
             download_status=state.downloads,
             node_rdma_ctl=state.node_rdma_ctl,
         )
-        dialing = new_instance.primary_output_node()
+        nodes = instance.shard_assignments.node_ids()
+        mail = JoinInstance(instance=instance)
+        self._sh.send_mail(nodes, mail.model_dump_json())
+        # TODO: wait until we see all nodes have appeared
         
 
         return CreateInstanceResponse(
             message="Command received.",
-            command_id=command.command_id,
             model_card=command.model_card,
         )
 
@@ -468,14 +472,14 @@ class API:
                 detail=f"Insufficient memory to create instance. Required: {required_memory.in_gb:.1f}GB, Available: {available_memory.in_gb:.1f}GB",
             )
 
-        command = CreateInstance(
+        mail = JoinInstance(
             instance=instance,
         )
-        await self._send(command)
+        nodes = instance.shard_assignments.node_ids()
+        self._sh.send_mail(nodes, mail.model_dump_json())
 
         return CreateInstanceResponse(
             message="Command received.",
-            command_id=command.command_id,
             model_card=model_card,
         )
 
@@ -490,7 +494,7 @@ class API:
 
         try:
             state = self.state.with_aggregator(self.aggregator)
-            placements = get_instance_placements(
+            placement = place_instance(
                 PlaceInstance(
                     model_card=model_card,
                     sharding=sharding,
@@ -501,24 +505,13 @@ class API:
                 node_network=state.node_network,
                 node_backends=state.node_backends,
                 topology=state.topology,
-                current_instances=state.instances,
                 download_status=state.downloads,
                 node_rdma_ctl=state.node_rdma_ctl,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        current_ids = set(self.state.instances.keys())
-        new_ids = [
-            instance_id for instance_id in placements if instance_id not in current_ids
-        ]
-        if len(new_ids) != 1:
-            raise HTTPException(
-                status_code=500,
-                detail="Expected exactly one new instance from placement",
-            )
-
-        return placements[new_ids[0]]
+        return placement
 
     async def get_placement_previews(
         self,
@@ -548,12 +541,10 @@ class API:
                         for i in range(1, len(list(state.topology.list_nodes())) + 1)
                     ]
                 )
-        # TODO: PDD
-        # instance_combinations.append((Sharding.PrefillDecodeDisaggregation, InstanceMeta.MlxRing, 1))
 
         for sharding, instance_meta, min_nodes in instance_combinations:
             try:
-                placements = get_instance_placements(
+                placement = place_instance(
                     PlaceInstance(
                         model_card=model_card,
                         sharding=sharding,
@@ -564,7 +555,6 @@ class API:
                     node_network=state.node_network,
                     node_backends=state.node_backends,
                     topology=state.topology,
-                    current_instances=state.instances,
                     required_nodes=required_nodes,
                     download_status=state.downloads,
                     node_rdma_ctl=state.node_rdma_ctl,
@@ -583,29 +573,7 @@ class API:
                 seen.add((model_card.model_id, sharding, instance_meta, 0))
                 continue
 
-            current_ids = set(self.state.instances.keys())
-            new_instances = [
-                instance
-                for instance_id, instance in placements.items()
-                if instance_id not in current_ids
-            ]
-
-            if len(new_instances) != 1:
-                if (model_card.model_id, sharding, instance_meta, 0) not in seen:
-                    previews.append(
-                        PlacementPreview(
-                            model_id=model_card.model_id,
-                            sharding=sharding,
-                            instance_meta=instance_meta,
-                            instance=None,
-                            error="Expected exactly one new instance from placement",
-                        )
-                    )
-                seen.add((model_card.model_id, sharding, instance_meta, 0))
-                continue
-
-            instance = new_instances[0]
-            shard_assignments = instance.shard_assignments
+            shard_assignments = placement.shard_assignments
             placement_node_ids = list(s.node_id for s in shard_assignments.shards)
 
             memory_delta_by_node: dict[str, int] = {}
@@ -628,7 +596,7 @@ class API:
                         model_id=model_card.model_id,
                         sharding=sharding,
                         instance_meta=instance_meta,
-                        instance=instance,
+                        instance=placement,
                         memory_delta_by_node=memory_delta_by_node or None,
                         error=None,
                     )
@@ -692,13 +660,16 @@ class API:
         )
 
     async def delete_instance(self, instance_id: InstanceId) -> DeleteInstanceResponse:
-        if instance_id not in self.state.instances:
+        if instance_id not in self._bridge_command_instances.values():
             raise HTTPException(status_code=404, detail="Instance not found")
 
-        command = DeleteInstance(
-            instance_id=instance_id,
+        command = DeleteInstance()
+        await self.task_requester.interrupt(
+            instance_id,
+            command.command_id,
+            command.model_dump_json(),
         )
-        await self._send(command)
+
         return DeleteInstanceResponse(
             message="Command received.",
             command_id=command.command_id,

@@ -6,11 +6,12 @@
 
 pub mod allow_threading;
 pub mod last_value;
+pub mod mailbox;
 pub mod networking;
 pub mod pidfile;
 pub mod session;
-mod storage;
-mod task;
+pub mod storage;
+pub mod task;
 
 use crate::last_value::lv_submodule;
 use crate::networking::networking_submodule;
@@ -21,6 +22,15 @@ use crate::task::task_submodule;
 use pyo3::prelude::PyModule;
 use pyo3::{Bound, PyResult, pymodule};
 use pyo3_stub_gen::define_stub_info_gatherer;
+use zenoh::sample::Sample;
+
+pub(crate) fn sample_to_string(sample: Sample) -> String {
+    sample
+        .payload()
+        .try_to_string()
+        .expect("we only use utf8 encoded strings. someone messed up")
+        .to_string()
+}
 
 /// Namespace for crate-wide extension traits/methods
 pub(crate) mod ext {

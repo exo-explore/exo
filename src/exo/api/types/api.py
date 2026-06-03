@@ -297,7 +297,6 @@ class DeleteInstanceTaskParams(BaseModel):
 
 class CreateInstanceResponse(BaseModel):
     message: str
-    command_id: CommandId
     model_card: ModelCard
 
 

@@ -219,7 +219,7 @@ class AsyncProcess:
                 await self.wait()
 
             if self.exitcode is not None or not process.is_alive():
-                logger.warning("Terminated nicely in the first attempt!")
+                logger.info("Terminated nicely in the first attempt!")
                 return
 
             for attempt in range(2, _TERMINATE_ATTEMPTS + 1):

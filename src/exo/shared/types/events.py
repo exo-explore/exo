@@ -39,10 +39,6 @@ class TaskAcknowledged(BaseEvent):
     task_id: TaskId
 
 
-class TaskDeleted(BaseEvent):
-    task_id: TaskId
-
-
 class TaskStatusUpdated(BaseEvent):
     task_id: TaskId
     task_status: TaskStatus
@@ -128,7 +124,6 @@ Event = (
     | TaskCreated
     | TaskStatusUpdated
     | TaskFailed
-    | TaskDeleted
     | TaskAcknowledged
     | InstanceCreated
     | InstanceDeleted
