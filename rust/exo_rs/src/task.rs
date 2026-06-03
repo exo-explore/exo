@@ -17,6 +17,8 @@ use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, Mis
 
 use parking_lot::Mutex;
 
+use crate::sample_to_string;
+
 #[gen_stub_pyclass]
 #[pyclass]
 pub struct TaskRequester {
@@ -338,14 +340,6 @@ impl TaskStream {
             Ok(receiver.recv_async().await.ok().map(sample_to_string))
         })
     }
-}
-
-fn sample_to_string(sample: Sample) -> String {
-    sample
-        .payload()
-        .try_to_string()
-        .expect("we only use utf8 encoded strings. someone messed up")
-        .to_string()
 }
 
 pub fn task_submodule(m: &Bound<'_, PyModule>) -> PyResult<()> {

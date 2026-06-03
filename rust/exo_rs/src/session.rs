@@ -1,20 +1,28 @@
-use networking::Session;
+use networking::{AbortOnDrop, Session};
 use parking_lot::Mutex;
 use pyo3::{
     exceptions::{PyConnectionError, PyRuntimeError, PyValueError},
     prelude::*,
 };
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
-use std::{collections::HashMap, sync::Arc};
-use zenoh::Wait;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use tokio::sync::mpsc;
+use zenoh::{Wait, qos::CongestionControl, sample::SampleKind};
 use zenoh_ext::{
     AdvancedPublisherBuilderExt, AdvancedSubscriberBuilderExt, CacheConfig, HistoryConfig,
     MissDetectionConfig,
 };
 
 use crate::{
-    last_value::{LVAggregator, LVPublisher, LVSubscriber, spawn_lv_aggregator_onto},
+    last_value::{
+        ClearingLVSubscriber, LVAggregator, LVPublisher, LVSubscriber, spawn_lv_aggregator_onto,
+    },
+    mailbox::Mailbox,
     networking::PyNetworkingHandle,
+    sample_to_string,
     storage::Storage,
     task::{TaskRequester, TaskResponder},
 };
@@ -101,6 +109,90 @@ impl SessionHandle {
             .map(LVPublisher::new)
     }
 
+    /// An LV subscriber which synthesizes delete events for offline nodes
+    pub fn clearing_last_value_subscriber(&self, kexpr: &str) -> PyResult<ClearingLVSubscriber> {
+        // nota bene: config must be kept in track with the LVAggregator
+        let (send, recv) = mpsc::unbounded_channel();
+        let subscriber = self
+            .session
+            .z
+            .declare_subscriber(kexpr)
+            .advanced()
+            .history(
+                HistoryConfig::default()
+                    .max_samples(1)
+                    .detect_late_publishers(),
+            )
+            .wait()
+            .map_err(|e| {
+                PyConnectionError::new_err(format!("failed to declare subscriber: {e}"))
+            })?;
+        let liveliness_subscriber = self
+            .session
+            .z
+            .liveliness()
+            .declare_subscriber("live/*")
+            .history(true)
+            .wait()
+            .map_err(|e| {
+                PyConnectionError::new_err(format!("failed to declare liveliness subscriber: {e}"))
+            })?;
+        let handle = AbortOnDrop(tokio::task::spawn(async move {
+            let mut seen_keys = HashSet::<String>::new();
+
+            loop {
+                tokio::select! {
+                    sample = subscriber.recv_async() => {
+                        let Ok(sample) = sample else {
+                            break;
+                        };
+
+                        let key = sample.key_expr().to_string();
+
+                        match sample.kind() {
+                            SampleKind::Put => {
+                                let value = sample_to_string(sample);
+                                seen_keys.insert(key.clone());
+                                let _ = send.send((key, Some(value)));
+                            }
+                            SampleKind::Delete => {
+                                seen_keys.remove(&key);
+                                let _ = send.send((key, None));
+                            }
+                        }
+                    }
+
+                    sample = liveliness_subscriber.recv_async() => {
+                        let Ok(sample) = sample else {
+                            break;
+                        };
+                        if sample.kind() == SampleKind::Put {
+                            continue;
+                        }
+                        let kexpr = sample.key_expr().to_string();
+                        let Some(node_id) = kexpr.strip_prefix("live/") else {
+                            continue;
+                        };
+
+                        let deleted: Vec<String> = seen_keys
+                            .iter()
+                            .filter(|key| key.contains(node_id))
+                            .cloned()
+                            .collect();
+
+                        for key in deleted {
+                            seen_keys.remove(&key);
+                            let _ = send.send((key, None));
+                        }
+                    }
+                }
+            }
+        }));
+        Ok(ClearingLVSubscriber {
+            receiver: Arc::new(tokio::sync::Mutex::new(recv)),
+            handle,
+        })
+    }
     pub fn storage_interface(&self) -> Storage {
         Storage {
             session: self.session.z.clone(),
@@ -129,6 +221,51 @@ impl SessionHandle {
             session: self.session.z.clone(),
             assignments: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    #[gen_stub(override_return_type(
+        type_repr="collections.abc.Awaitable[None]",
+        imports=("collections.abc")
+    ))]
+    pub fn send_mail<'py>(
+        &'py self,
+        py: Python<'py>,
+        node_ids: Vec<String>,
+        payload: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let session = self.session.z.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            tokio::task::spawn_blocking(move || {
+                for node_id in node_ids {
+                    // TIL: session.z.put() just. is blocking with CongestionControl::Block. Even through its async apis.
+                    // TODO: migrate more(?) zenoh calls to a dedicated thread **if necessary**. I do it here as we spin up N puts simultaneously.
+                    session
+                        .put(format!("mail/{node_id}"), payload.as_bytes())
+                        .congestion_control(CongestionControl::Block)
+                        .wait()
+                        .map_err(|e| {
+                            PyConnectionError::new_err(format!(
+                                "failed to declare task responder: {e}"
+                            ))
+                        })?;
+                }
+                Ok(())
+            })
+            .await
+            .expect("panic in worker thread")
+        })
+    }
+
+    pub fn mailbox(&self, node_id: String) -> PyResult<Mailbox> {
+        let subscriber = self
+            .session
+            .z
+            .declare_subscriber(format!("mail/{node_id}"))
+            .wait()
+            .map_err(|e| {
+                PyConnectionError::new_err(format!("failed to declare task responder: {e}"))
+            })?;
+        Ok(Mailbox { subscriber })
     }
 }
 

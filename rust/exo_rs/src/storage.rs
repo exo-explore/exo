@@ -10,6 +10,8 @@ use zenoh::{
     Session as ZSession, Wait, handlers::FifoChannelHandler, query::Reply, sample::SampleKind,
 };
 
+use crate::sample_to_string;
+
 #[gen_stub_pyclass]
 #[pyclass]
 pub struct Storage {
@@ -43,15 +45,8 @@ impl Storage {
                 reply = subscriber.recv_async() => {
                     Ok(reply.ok()
                         .and_then(|reply| reply.into_result().ok())
-                        .and_then(|sample| {
-                            if sample.kind() == SampleKind::Put {
-                                Some(sample
-                                    .payload()
-                                    .try_to_string()
-                                    .expect("we only use utf8 encoded strings. someone messed up").to_string()
-                                )
-                            } else { None }
-                        })
+                        .filter(|sample| sample.kind() == SampleKind::Put)
+                        .map(sample_to_string)
                     )
                 }
             }
@@ -180,14 +175,7 @@ impl StorageGetter {
                 .expect("invalid storage format encountered")
                 .to_string();
 
-            Ok(Some((
-                key,
-                sample
-                    .payload()
-                    .try_to_string()
-                    .expect("we only use utf8 encoded strings. someone messed up")
-                    .to_string(),
-            )))
+            Ok(Some((key, sample_to_string(sample))))
         })
     }
 }

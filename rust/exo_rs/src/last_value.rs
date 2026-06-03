@@ -1,8 +1,9 @@
-use networking::{Session, liveliness_aggregator::LivelinessAggregator};
+use networking::{AbortOnDrop, Session, liveliness_aggregator::LivelinessAggregator};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
+use tokio::sync::mpsc;
 use zenoh::{Result as ZResult, Wait};
 
 use parking_lot::Mutex;
@@ -18,6 +19,8 @@ use zenoh::{
 use zenoh_ext::{
     AdvancedPublisher, AdvancedSubscriber, AdvancedSubscriberBuilderExt, HistoryConfig,
 };
+
+use crate::sample_to_string;
 
 #[gen_stub_pyclass]
 #[pyclass]
@@ -52,14 +55,7 @@ pub fn spawn_lv_aggregator_onto(session: &Session, prefix: Arc<str>) -> ZResult<
                     let s = s.to_string();
                     match sample.kind() {
                         SampleKind::Put => {
-                            store.lock().insert(
-                                s,
-                                sample
-                                    .payload()
-                                    .try_to_string()
-                                    .expect("we only use utf8 encoded strings. someone messed up")
-                                    .to_string(),
-                            );
+                            store.lock().insert(s, sample_to_string(sample));
                         }
                         SampleKind::Delete => {
                             store.lock().remove(&s);
@@ -96,6 +92,27 @@ impl LVAggregator {
 
 #[gen_stub_pyclass]
 #[pyclass]
+pub struct ClearingLVSubscriber {
+    pub receiver: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<(String, Option<String>)>>>,
+    pub handle: AbortOnDrop,
+}
+#[gen_stub_pymethods]
+#[pymethods]
+impl ClearingLVSubscriber {
+    #[gen_stub(override_return_type(
+        type_repr="collections.abc.Awaitable[tuple[str, str | None] | None]",
+        imports=("collections.abc")
+    ))]
+    pub fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        pyo3_async_runtimes::tokio::future_into_py(py, {
+            let receiver = Arc::clone(&self.receiver);
+            async move { Ok(receiver.lock().await.recv().await) }
+        })
+    }
+}
+
+#[gen_stub_pyclass]
+#[pyclass]
 pub struct LVSubscriber {
     pub subscriber: AdvancedSubscriber<FifoChannelHandler<Sample>>,
 }
@@ -103,7 +120,7 @@ pub struct LVSubscriber {
 #[pymethods]
 impl LVSubscriber {
     #[gen_stub(override_return_type(
-        type_repr="collections.abc.Awaitable[tuple[str, str] | None]",
+        type_repr="collections.abc.Awaitable[tuple[str, str | None] | None]",
         imports=("collections.abc")
     ))]
     pub fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
@@ -115,24 +132,15 @@ impl LVSubscriber {
             }
             let subscriber = self.subscriber.clone();
             async move {
-                loop {
-                    match subscriber.recv_async().await {
-                        Ok(sample) if sample.kind() == SampleKind::Delete => continue,
-                        Err(_) => {
-                            return Ok(None);
-                        }
-                        Ok(sample) => {
-                            return Ok(Some((
-                                sample.key_expr().to_string(),
-                                sample
-                                    .payload()
-                                    .try_to_string()
-                                    .expect("we only use utf8 encoded strings. someone messed up")
-                                    .to_string(),
-                            )));
-                        }
-                    }
-                }
+                Ok(subscriber.recv_async().await.ok().map(|sample| {
+                    (
+                        sample.key_expr().to_string(),
+                        match sample.kind() {
+                            SampleKind::Put => Some(sample_to_string(sample)),
+                            SampleKind::Delete => None,
+                        },
+                    )
+                }))
             }
         })
     }

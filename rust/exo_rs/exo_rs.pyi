@@ -7,10 +7,12 @@ import os
 import pathlib
 import typing
 __all__ = [
+    "ClearingLVSubscriber",
     "FromSwarm",
     "LVAggregator",
     "LVPublisher",
     "LVSubscriber",
+    "Mailbox",
     "NetworkingHandle",
     "Pidfile",
     "PidfileError",
@@ -23,6 +25,10 @@ __all__ = [
     "TaskResponder",
     "TaskStream",
 ]
+
+@typing.final
+class ClearingLVSubscriber:
+    def recv(self) -> collections.abc.Awaitable[tuple[str, str | None] | None]: ...
 
 class FromSwarm:
     @typing.final
@@ -54,7 +60,11 @@ class LVPublisher:
 
 @typing.final
 class LVSubscriber:
-    def recv(self) -> collections.abc.Awaitable[tuple[str, str] | None]: ...
+    def recv(self) -> collections.abc.Awaitable[tuple[str, str | None] | None]: ...
+
+@typing.final
+class Mailbox:
+    def recv(self) -> collections.abc.Awaitable[str | None]: ...
 
 @typing.final
 class NetworkingHandle:
@@ -143,9 +153,15 @@ class SessionHandle:
     def last_value_aggregator(self, prefix: builtins.str) -> LVAggregator: ...
     def last_value_subscriber(self, kexpr: builtins.str) -> LVSubscriber: ...
     def last_value_publisher(self, kexpr: builtins.str) -> LVPublisher: ...
+    def clearing_last_value_subscriber(self, kexpr: builtins.str) -> ClearingLVSubscriber:
+        r"""
+        An LV subscriber which synthesizes delete events for offline nodes
+        """
     def storage_interface(self) -> Storage: ...
     def task_requester(self) -> TaskRequester: ...
     def task_responder(self, instance_id: builtins.str) -> TaskResponder: ...
+    def send_mail(self, node_ids: typing.Sequence[builtins.str], payload: builtins.str) -> collections.abc.Awaitable[None]: ...
+    def mailbox(self, node_id: builtins.str) -> Mailbox: ...
 
 @typing.final
 class Storage:

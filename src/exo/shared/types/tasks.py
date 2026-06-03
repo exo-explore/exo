@@ -88,7 +88,6 @@ class ImageEdits(BaseTask):  # emitted by Master
 class Shutdown(BaseTask):  # emitted by Worker
     runner_id: RunnerId
 
-
 Task = (
     CreateRunner
     | DownloadModel
