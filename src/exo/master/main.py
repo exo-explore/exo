@@ -7,8 +7,6 @@ from pydantic import ValidationError
 
 from exo.master.placement import (
     add_instance_to_placements,
-    cancel_unnecessary_downloads,
-    delete_instance,
     get_transition_events,
 )
 from exo.master.placement_utils import find_ip_prioritised
@@ -20,7 +18,6 @@ from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
     CreateInstance,
-    DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
     ImageEdits,
@@ -357,21 +354,6 @@ class Master:
                                     self._world_sizes[task_id] = len(
                                         selected_instance.shard_assignments.shards
                                     )
-                        case DeleteInstance():
-                            state = self.state.with_aggregator(self.aggregator)
-                            placement = delete_instance(command, state.instances)
-                            transition_events = get_transition_events(
-                                state.instances, placement, state.tasks
-                            )
-                            for cmd in cancel_unnecessary_downloads(
-                                placement, self.state.downloads
-                            ):
-                                await self.download_command_sender.send(
-                                    ForwarderDownloadCommand(
-                                        origin=self._system_id, command=cmd
-                                    )
-                                )
-                            generated_events.extend(transition_events)
                         case CreateInstance():
                             state = self.state.with_aggregator(self.aggregator)
                             placement = add_instance_to_placements(

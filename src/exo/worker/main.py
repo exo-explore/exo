@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import anyio
 from anyio import fail_after, to_thread
-from exo_rs import LVAggregator, Mailbox, SessionHandle
+from exo_rs import LVAggregator, LVPublisher, Mailbox, SessionHandle
 from loguru import logger
 from pydantic import TypeAdapter, ValidationError
 
@@ -49,7 +49,7 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
-from exo.shared.types.worker.instances import BoundInstance, InstanceId
+from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
@@ -97,7 +97,8 @@ class Worker:
             "nodes"
         )
         self.mailbox: Mailbox = session_handle.mailbox(node_id)
-        self.desired_runners: dict[RunnerId, BoundInstance] = {}
+        self.desired_instances: dict[InstanceId, Instance] = {}
+        self._primary_desired_instance_publishers: dict[InstanceId, LVPublisher] = {}
 
     async def run(self):
         logger.info("Starting Worker")
@@ -123,6 +124,9 @@ class Worker:
             self.download_command_sender.close()
             for runner in self.runners.values():
                 runner.shutdown()
+            with anyio.CancelScope(shield=True):
+                for publisher in self._primary_desired_instance_publishers.values():
+                    await publisher.delete()
             self._stopped.set()
 
     async def _listen_to_mailbox(self):
@@ -136,14 +140,23 @@ class Worker:
 
             match mail:
                 case JoinInstance(instance=instance):
-                    # no backoff - moving that inside the supervisor
-                    for runner_id in instance.runners_for(self.node_id):
-                        bound_instance = BoundInstance(
-                            instance=instance,
-                            bound_node_id=self.node_id,
-                            bound_runner_id=runner_id,
-                        )
-                        self.desired_runners[runner_id] = bound_instance
+                    self.desired_instances[instance.instance_id] = instance
+                    if instance.primary_output_node() == self.node_id:
+                        await self._publish_primary_desired_instance(instance)
+
+    async def _publish_primary_desired_instance(self, instance: Instance) -> None:
+        publisher = self._primary_desired_instance_publishers.get(instance.instance_id)
+        if publisher is None:
+            publisher = self._sh.last_value_publisher(
+                f"nodes/{self.node_id}/desired_instances/{instance.instance_id}"
+            )
+            self._primary_desired_instance_publishers[instance.instance_id] = publisher
+        await publisher.put(instance.model_dump_json())
+
+    async def _delete_primary_desired_instance(self, instance_id: InstanceId) -> None:
+        publisher = self._primary_desired_instance_publishers.pop(instance_id, None)
+        if publisher is not None:
+            await publisher.delete()
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -194,10 +207,7 @@ class Worker:
                 self.node_id,
                 self.runners,
                 state.downloads,  # comes from with_agg
-                {
-                    value.instance.instance_id: value.instance
-                    for value in self.desired_runners.values()
-                },  # comes from mailbox
+                self.desired_instances,  # comes from mailbox
                 state.runners,  # comes from with_agg
                 self._instance_backoff,
                 self._download_backoff,
@@ -211,7 +221,8 @@ class Worker:
                     logger.warning(
                         f"Instance {iid} exceeded {EXO_MAX_INSTANCE_RETRIES} retries, requesting deletion"
                     )
-                    self.desired_runners.pop(task.bound_instance.bound_runner_id)
+                    self.desired_instances.pop(iid, None)
+                    await self._delete_primary_desired_instance(iid)
                     await self.command_sender.send(
                         ForwarderCommand(
                             origin=self._system_id,
@@ -312,7 +323,7 @@ class Worker:
         await self._stopped.wait()
 
     async def _start_runner_task(self, task: Task):
-        if (instance := self.state.instances.get(task.instance_id)) is not None:
+        if (instance := self.desired_instances.get(task.instance_id)) is not None:
             for rid in instance.runners_for(self.node_id):
                 await self.runners[rid].start_task(task)
 

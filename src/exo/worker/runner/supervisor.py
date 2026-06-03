@@ -508,6 +508,7 @@ class RunnerSupervisor:
                         request.reply(command_id)
                     case DeleteInstance():
                         self.shutdown()
+                        request.reply("")
                     case _:
                         request.reply_err(f"Unsupported bridge command: {command}")
             except Exception as exception:
