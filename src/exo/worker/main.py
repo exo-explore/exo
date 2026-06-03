@@ -3,9 +3,9 @@ from datetime import datetime, timezone
 
 import anyio
 from anyio import fail_after, to_thread
-from exo_rs import LVAggregator, SessionHandle
+from exo_rs import LVAggregator, Mailbox, SessionHandle
 from loguru import logger
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from exo.download.download_utils import is_read_only_model_dir, resolve_existing_model
 from exo.routing.event_router import (
@@ -20,6 +20,8 @@ from exo.shared.types.commands import (
     DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
+    JoinInstance,
+    Mail,
     StartDownload,
 )
 from exo.shared.types.common import NodeId, SystemId
@@ -47,7 +49,7 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
-from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
@@ -92,8 +94,10 @@ class Worker:
         self._stopped: anyio.Event = anyio.Event()
         self._sh: SessionHandle = session_handle
         self.aggregator: LVAggregator = session_handle.last_value_aggregator(
-            "node_metrics"
+            "nodes"
         )
+        self.mailbox: Mailbox = session_handle.mailbox(node_id)
+        self.desired_runners: dict[RunnerId, BoundInstance] = {}
 
     async def run(self):
         logger.info("Starting Worker")
@@ -107,6 +111,7 @@ class Worker:
                 tg.start_soon(self._event_applier)
                 tg.start_soon(self._poll_connection_updates)
                 tg.start_soon(self._reconcile_custom_cards)
+                tg.start_soon(self._listen_to_mailbox)
         except* (EventRouterBrokenResourceError, EventRouterClosedResourceError):
             # Event router has been closed (try-star syntax handles error groups)
             pass
@@ -119,6 +124,26 @@ class Worker:
             for runner in self.runners.values():
                 runner.shutdown()
             self._stopped.set()
+
+    async def _listen_to_mailbox(self):
+        ta = TypeAdapter[Mail](Mail)
+        while (mail := await self.mailbox.recv()) is not None:
+            try:
+                mail = ta.validate_json(mail)
+            except ValidationError:
+                logger.warning(f"discarding corrupt mail {mail}")
+                continue
+
+            match mail:
+                case JoinInstance(instance=instance):
+                    # no backoff - moving that inside the supervisor
+                    for runner_id in instance.runners_for(self.node_id):
+                        bound_instance = BoundInstance(
+                            instance=instance,
+                            bound_node_id=self.node_id,
+                            bound_runner_id=runner_id,
+                        )
+                        self.desired_runners[runner_id] = bound_instance
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
@@ -164,13 +189,16 @@ class Worker:
     async def plan_step(self):
         while True:
             await anyio.sleep(0.1)
+            state = self.state.with_aggregator(self.aggregator)
             task: Task | None = plan(
                 self.node_id,
                 self.runners,
-                self.state.downloads,
-                self.state.instances,
-                self.state.runners,
-                self.state.tasks,
+                state.downloads,  # comes from with_agg
+                {
+                    value.instance.instance_id: value.instance
+                    for value in self.desired_runners.values()
+                },  # comes from mailbox
+                state.runners,  # comes from with_agg
                 self._instance_backoff,
                 self._download_backoff,
             )
@@ -183,10 +211,11 @@ class Worker:
                     logger.warning(
                         f"Instance {iid} exceeded {EXO_MAX_INSTANCE_RETRIES} retries, requesting deletion"
                     )
+                    self.desired_runners.pop(task.bound_instance.bound_runner_id)
                     await self.command_sender.send(
                         ForwarderCommand(
                             origin=self._system_id,
-                            command=DeleteInstance(instance_id=iid),
+                            command=DeleteInstance(),
                         )
                     )
                     continue
@@ -299,6 +328,9 @@ class Worker:
             event_sender=self.event_sender.clone(),
             task_assignment_subscriber=self._sh.last_value_subscriber(
                 f"task_assignments/{task.instance_id}/*"
+            ),
+            runner_status_publisher=self._sh.last_value_publisher(
+                f"nodes/{self.node_id}/runners/{task.bound_instance.bound_runner_id}/status"
             ),
             task_responder=task_responder,
         )

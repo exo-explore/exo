@@ -129,10 +129,10 @@ from exo.api.types.openai_responses import (
 )
 from exo.master.image_store import ImageStore
 from exo.master.placement import (
-    #add_instance_to_placements,
-    #cancel_unnecessary_downloads,
-    #delete_instance,
-    #get_transition_events,
+    # add_instance_to_placements,
+    # cancel_unnecessary_downloads,
+    # delete_instance,
+    # get_transition_events,
     place_instance,
 )
 from exo.shared.apply import apply
@@ -162,7 +162,6 @@ from exo.shared.types.chunks import (
 )
 from exo.shared.types.commands import (
     CancelDownload,
-    Command,
     DeleteDownload,
     DeleteInstance,
     DownloadCommand,
@@ -263,7 +262,7 @@ class API:
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
-        self.aggregator = session_handle.last_value_aggregator("node_metrics")
+        self.aggregator = session_handle.last_value_aggregator("nodes")
         self.storage = session_handle.storage_interface()
         self.task_requester = session_handle.task_requester()
         # TODO: Mail sender?
@@ -451,7 +450,6 @@ class API:
         mail = JoinInstance(instance=instance)
         self._sh.send_mail(nodes, mail.model_dump_json())
         # TODO: wait until we see all nodes have appeared
-        
 
         return CreateInstanceResponse(
             message="Command received.",
@@ -1919,13 +1917,6 @@ class API:
             removed = self._image_store.cleanup_expired()
             if removed > 0:
                 logger.debug(f"Cleaned up {removed} expired images")
-
-    async def _send(self, command: Command):
-        while self.paused:
-            await self.paused_ev.wait()
-        await self.command_sender.send(
-            ForwarderCommand(origin=self._system_id, command=command)
-        )
 
     async def _send_download(self, command: DownloadCommand):
         await self.download_command_sender.send(

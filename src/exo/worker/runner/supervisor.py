@@ -12,7 +12,13 @@ from anyio import (
     CancelScope,
     ClosedResourceError,
 )
-from exo_rs import LVSubscriber, TaskChunkSender, TaskRequest, TaskResponder
+from exo_rs import (
+    LVPublisher,
+    LVSubscriber,
+    TaskChunkSender,
+    TaskRequest,
+    TaskResponder,
+)
 from loguru import logger
 from pydantic import TypeAdapter, ValidationError
 
@@ -20,6 +26,7 @@ from exo.shared.constants import EXO_RUNNER_STDERR_LOG, EXO_RUNNER_STDOUT_LOG
 from exo.shared.types.chunks import ErrorChunk, PrefillProgressChunk
 from exo.shared.types.commands import (
     Command,
+    DeleteInstance,
     TaskCancelled,
     TaskFinished,
 )
@@ -39,7 +46,6 @@ from exo.shared.types.events import (
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskCreated,
-    TaskDeleted,
     TaskStatusUpdated,
 )
 from exo.shared.types.tasks import (
@@ -63,7 +69,6 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.async_process import AsyncProcess
 from exo.utils.channels import MpReceiver, MpSender, Receiver, Sender, mp_channel
 from exo.utils.fs import ensure_parent_directory_exists
@@ -216,7 +221,6 @@ class RunnerStdioHandler:
 
 @dataclass(eq=False)
 class RunnerSupervisor:
-    shard_metadata: ShardMetadata
     bound_instance: BoundInstance
     runner_process: AsyncProcess
     _runner_stdio_handler: RunnerStdioHandler
@@ -225,8 +229,9 @@ class RunnerSupervisor:
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
     _cancel_sender: MpSender[TaskId]
-    _task_responder: TaskResponder | None = None
-    _task_assignment_subscriber: LVSubscriber | None = None
+    _task_responder: TaskResponder | None
+    _task_assignment_subscriber: LVSubscriber
+    runner_status_publisher: LVPublisher
     _assigned_tasks: dict[TaskId, BridgeTask] = field(default_factory=dict, init=False)
     _tg: TaskGroup = field(default_factory=TaskGroup, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
@@ -251,8 +256,9 @@ class RunnerSupervisor:
         *,
         bound_instance: BoundInstance,
         event_sender: Sender[Event],
-        task_assignment_subscriber: LVSubscriber | None = None,
-        task_responder: TaskResponder | None = None,
+        task_assignment_subscriber: LVSubscriber,
+        runner_status_publisher: LVPublisher,
+        task_responder: TaskResponder | None,
         initialize_timeout: float = 400,
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event | RunnerTerminationError]()
@@ -274,11 +280,8 @@ class RunnerSupervisor:
             stdout_rx=runner_process.stdout, stderr_rx=runner_process.stderr
         )
 
-        shard_metadata = bound_instance.bound_shard
-
         self = cls(
             bound_instance=bound_instance,
-            shard_metadata=shard_metadata,
             runner_process=runner_process,
             _runner_stdio_handler=runner_stdio_handler,
             initialize_timeout=initialize_timeout,
@@ -288,6 +291,7 @@ class RunnerSupervisor:
             _event_sender=event_sender,
             _task_responder=task_responder,
             _task_assignment_subscriber=task_assignment_subscriber,
+            runner_status_publisher=runner_status_publisher,
         )
 
         return self
@@ -303,11 +307,10 @@ class RunnerSupervisor:
                 tg.start_soon(self._forward_events)
                 if self._task_responder is not None:
                     tg.start_soon(self._run_task_responder, self._task_responder)
-                if self._task_assignment_subscriber is not None:
-                    tg.start_soon(
-                        self._run_task_assignment_subscriber,
-                        self._task_assignment_subscriber,
-                    )
+                tg.start_soon(
+                    self._run_task_assignment_subscriber,
+                    self._task_assignment_subscriber,
+                )
         finally:
             logger.info("Runner supervisor shutting down")
             if not self._cancel_watch_runner.cancel_called:
@@ -324,6 +327,7 @@ class RunnerSupervisor:
                 self._cancel_sender.close()
 
             with anyio.CancelScope(shield=True):
+                await self.runner_status_publisher.delete()
                 await self.runner_process.stop()
                 logger.info(
                     f"Runner process successfully terminated: {self.runner_process.exitcode}"
@@ -336,6 +340,8 @@ class RunnerSupervisor:
         instance_id = self.bound_instance.instance.instance_id
         while (received := await subscriber.recv()) is not None:
             key, payload = received
+            if payload is None:
+                continue
             if (ids := _task_assignment_ids(key)) is None:
                 continue
             assigned_instance_id, assigned_task_id = ids
@@ -420,6 +426,9 @@ class RunnerSupervisor:
 
                         case RunnerStatusUpdated(runner_status=runner_status):
                             self.status = runner_status
+                            await self.runner_status_publisher.put(
+                                self.status.model_dump_json()
+                            )
                             await self._event_sender.send(event)
                             await self._reconcile_assigned_tasks()
 
@@ -497,6 +506,8 @@ class RunnerSupervisor:
                     case TaskFinished(finished_command_id=command_id):
                         await self._finish_bridge_task(command_id)
                         request.reply(command_id)
+                    case DeleteInstance():
+                        self.shutdown()
                     case _:
                         request.reply_err(f"Unsupported bridge command: {command}")
             except Exception as exception:
@@ -571,7 +582,6 @@ class RunnerSupervisor:
             return
         self.bridge_command_tasks.pop(task.command_id, None)
         self.bridge_chunk_senders.pop(task.command_id, None)
-        await self._event_sender.send(TaskDeleted(task_id=task_id))
         if self._task_responder is not None:
             await self._task_responder.unassign_task(task_id)
 
@@ -633,7 +643,7 @@ class RunnerSupervisor:
                         ChunkGenerated(
                             command_id=task.command_id,
                             chunk=ErrorChunk(
-                                model=self.shard_metadata.model_card.model_id,
+                                model=self.bound_instance.bound_shard.model_card.model_id,
                                 diagnostics=diagnostics,
                                 error_message=(
                                     "Runner shutdown before completing command "

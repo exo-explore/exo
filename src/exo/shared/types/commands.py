@@ -100,8 +100,10 @@ class ForwarderDownloadCommand(FrozenModel):
     origin: SystemId
     command: DownloadCommand
 
+
 class JoinInstance(TaggedModel):
     # TODO: strip this down to less data
     instance: Instance
+
 
 Mail = JoinInstance

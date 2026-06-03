@@ -49,3 +49,8 @@ impl Mailbox {
         })
     }
 }
+
+pub fn mailbox_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<Mailbox>()?;
+    Ok(())
+}

@@ -33,7 +33,9 @@ class BaseInstance(TaggedModel):
                 yield rid
 
     def primary_output_node(self) -> NodeId:
-        return self.shard_assignments.shards[self.shard_assignments.primary_output_node].node_id
+        return self.shard_assignments.shards[
+            self.shard_assignments.primary_output_node
+        ].node_id
 
 
 class MlxRingInstance(BaseInstance):

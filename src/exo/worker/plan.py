@@ -4,7 +4,6 @@ from collections.abc import Mapping, Sequence
 
 from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.tasks import (
-    CancelTask,
     ConnectToGroup,
     CreateRunner,
     DownloadModel,
@@ -12,8 +11,6 @@ from exo.shared.types.tasks import (
     Shutdown,
     StartWarmup,
     Task,
-    TaskId,
-    TaskStatus,
 )
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -43,17 +40,17 @@ def plan(
     # Runners is expected to be FRESH and so should not come from state
     runners: Mapping[RunnerId, RunnerSupervisor],
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
-    instances: Mapping[InstanceId, Instance],
+    desired_instances: Mapping[InstanceId, Instance],
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
-    tasks: Mapping[TaskId, Task],
     instance_backoff: KeyedBackoff[InstanceId],
     download_backoff: KeyedBackoff[ModelId],
 ) -> Task | None:
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
-        _cancel_tasks(runners, tasks)
-        or _kill_runner(runners, all_runners, instances)
-        or _create_runner(node_id, runners, all_runners, instances, instance_backoff)
+        _kill_runner(runners, all_runners, desired_instances)
+        or _create_runner(
+            node_id, runners, all_runners, desired_instances, instance_backoff
+        )
         or _model_needs_download(
             node_id, runners, global_download_status, download_backoff
         )
@@ -294,22 +291,3 @@ def _ready_to_warmup(
             return StartWarmup(instance_id=instance.instance_id)
 
     return None
-
-
-def _cancel_tasks(
-    runners: Mapping[RunnerId, RunnerSupervisor],
-    tasks: Mapping[TaskId, Task],
-) -> Task | None:
-    for task in tasks.values():
-        if task.task_status != TaskStatus.Cancelled:
-            continue
-        for runner_id, runner in runners.items():
-            if task.instance_id != runner.bound_instance.instance.instance_id:
-                continue
-            if task.task_id in runner.cancelled:
-                continue
-            return CancelTask(
-                instance_id=task.instance_id,
-                cancelled_task_id=task.task_id,
-                runner_id=runner_id,
-            )
