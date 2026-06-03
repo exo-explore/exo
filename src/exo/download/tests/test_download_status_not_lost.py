@@ -22,14 +22,14 @@ from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import ForwarderDownloadCommand
 from exo.shared.types.common import NodeId
-from exo.shared.types.events import Event, NodeDownloadProgress
+from exo.shared.types.events import Event
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadPending,
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
-from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.channels import Sender, channel
 
 NODE_ID = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 MODEL_ID = ModelId("test-org/test-model")
@@ -126,10 +126,9 @@ def _setup_coordinator(
 ) -> tuple[
     DownloadCoordinator,
     Sender[ForwarderDownloadCommand],
-    Receiver[Event],
 ]:
     cmd_send, cmd_recv = channel[ForwarderDownloadCommand]()
-    event_send, event_recv = channel[Event]()
+    event_send, _event_recv = channel[Event]()
     wrapped = SingletonShardDownloader(downloader)
     coordinator = DownloadCoordinator(
         node_id=NODE_ID,
@@ -137,21 +136,25 @@ def _setup_coordinator(
         download_command_receiver=cmd_recv,
         event_sender=event_send,
     )
-    return coordinator, cmd_send, event_recv
+    return coordinator, cmd_send
 
 
-async def _collect_events(
-    event_recv: Receiver[Event], timeout: float = 1.0
-) -> list[Event]:
-    """Drain events until timeout."""
-    events: list[Event] = []
+async def _wait_for_status(
+    coordinator: DownloadCoordinator,
+    model_id: ModelId,
+    expected_type: type[DownloadCompleted] | type[DownloadPending],
+    timeout: float = 1.0,
+) -> DownloadCompleted | DownloadPending | None:
+    """Wait until coordinator state has the expected status type."""
     try:
         async with asyncio.timeout(timeout):
             while True:
-                events.append(await event_recv.receive())
+                status = coordinator.download_status.get(model_id)
+                if isinstance(status, expected_type):
+                    return status
+                await asyncio.sleep(0.01)
     except TimeoutError:
-        pass
-    return events
+        return None
 
 
 async def test_completed_status_not_downgraded_by_rescan() -> None:
@@ -159,7 +162,7 @@ async def test_completed_status_not_downgraded_by_rescan() -> None:
     DownloadPending when the periodic rescan reports a non-complete
     file-size status (regression test for #1918)."""
     downloader = FakeShardDownloader(status="not_started")
-    coordinator, _cmd_send, event_recv = _setup_coordinator(downloader)
+    coordinator, _cmd_send = _setup_coordinator(downloader)
 
     # Pre-seed the coordinator with a completed status for the model
     completed = DownloadCompleted(
@@ -173,25 +176,14 @@ async def test_completed_status_not_downgraded_by_rescan() -> None:
     # Run the coordinator (the rescan loop fires immediately)
     coordinator_task = asyncio.create_task(coordinator.run())
     try:
-        # Wait for the rescan to process (it should skip the completed model)
-        events = await _collect_events(event_recv, timeout=1.5)
+        await asyncio.sleep(1.5)
 
         # The model must still be DownloadCompleted — not downgraded
         assert isinstance(coordinator.download_status[MODEL_ID], DownloadCompleted), (
             f"Expected DownloadCompleted but got {type(coordinator.download_status[MODEL_ID]).__name__}"
         )
 
-        # No DownloadPending event should have been emitted for this model
-        pending_events = [
-            e
-            for e in events
-            if isinstance(e, NodeDownloadProgress)
-            and isinstance(e.download_progress, DownloadPending)
-            and e.download_progress.shard_metadata.model_card.model_id == MODEL_ID
-        ]
-        assert len(pending_events) == 0, (
-            f"Expected no DownloadPending events for completed model, got {len(pending_events)}"
-        )
+        assert not isinstance(coordinator.download_status[MODEL_ID], DownloadPending)
     finally:
         await coordinator.shutdown()
         coordinator_task.cancel()
@@ -204,7 +196,7 @@ async def test_incomplete_model_with_files_present_detected_as_complete() -> Non
     confirms the model directory is complete, the model should be marked
     DownloadCompleted (regression test for #1918 — initial scan case)."""
     downloader = FakeShardDownloader(status="not_started")
-    coordinator, _cmd_send, event_recv = _setup_coordinator(downloader)
+    coordinator, _cmd_send = _setup_coordinator(downloader)
 
     # Mock resolve_existing_model to return a valid path (model is on disk)
     with patch(
@@ -213,26 +205,14 @@ async def test_incomplete_model_with_files_present_detected_as_complete() -> Non
     ):
         coordinator_task = asyncio.create_task(coordinator.run())
         try:
-            events = await _collect_events(event_recv, timeout=1.5)
-
-            # The model should be DownloadCompleted (resolve_existing_model confirmed it)
-            assert isinstance(
-                coordinator.download_status.get(MODEL_ID), DownloadCompleted
-            ), (
-                f"Expected DownloadCompleted but got "
-                f"{type(coordinator.download_status.get(MODEL_ID)).__name__}"
+            status = await _wait_for_status(
+                coordinator, MODEL_ID, DownloadCompleted, timeout=1.5
             )
 
-            # Should have emitted a DownloadCompleted event
-            completed_events = [
-                e
-                for e in events
-                if isinstance(e, NodeDownloadProgress)
-                and isinstance(e.download_progress, DownloadCompleted)
-                and e.download_progress.shard_metadata.model_card.model_id == MODEL_ID
-            ]
-            assert len(completed_events) > 0, (
-                "Expected at least one DownloadCompleted event"
+            # The model should be DownloadCompleted (resolve_existing_model confirmed it)
+            assert isinstance(status, DownloadCompleted), (
+                f"Expected DownloadCompleted but got "
+                f"{type(coordinator.download_status.get(MODEL_ID)).__name__}"
             )
         finally:
             await coordinator.shutdown()
@@ -246,7 +226,7 @@ async def test_genuinely_incomplete_model_stays_pending() -> None:
     returns None (model truly not complete), the model should correctly be
     DownloadPending."""
     downloader = FakeShardDownloader(status="not_started")
-    coordinator, _cmd_send, event_recv = _setup_coordinator(downloader)
+    coordinator, _cmd_send = _setup_coordinator(downloader)
 
     # Mock resolve_existing_model to return None (model not on disk)
     with patch(
@@ -255,26 +235,14 @@ async def test_genuinely_incomplete_model_stays_pending() -> None:
     ):
         coordinator_task = asyncio.create_task(coordinator.run())
         try:
-            events = await _collect_events(event_recv, timeout=1.5)
-
-            # The model should be DownloadPending
-            assert isinstance(
-                coordinator.download_status.get(MODEL_ID), DownloadPending
-            ), (
-                f"Expected DownloadPending but got "
-                f"{type(coordinator.download_status.get(MODEL_ID)).__name__}"
+            status = await _wait_for_status(
+                coordinator, MODEL_ID, DownloadPending, timeout=1.5
             )
 
-            # Should have emitted a DownloadPending event
-            pending_events = [
-                e
-                for e in events
-                if isinstance(e, NodeDownloadProgress)
-                and isinstance(e.download_progress, DownloadPending)
-                and e.download_progress.shard_metadata.model_card.model_id == MODEL_ID
-            ]
-            assert len(pending_events) > 0, (
-                "Expected at least one DownloadPending event"
+            # The model should be DownloadPending
+            assert isinstance(status, DownloadPending), (
+                f"Expected DownloadPending but got "
+                f"{type(coordinator.download_status.get(MODEL_ID)).__name__}"
             )
         finally:
             await coordinator.shutdown()

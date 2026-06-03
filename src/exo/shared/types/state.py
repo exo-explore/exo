@@ -1,15 +1,17 @@
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from exo_rs import LVAggregator
-from pydantic import ConfigDict, Field, model_serializer
+from pydantic import ConfigDict, Field, TypeAdapter, model_serializer
 from pydantic.alias_generators import to_camel
 from pydantic_core.core_schema import SerializerFunctionWrapHandler
 
+from exo.shared.models import model_cards
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.common import NodeId
+from exo.shared.types.events import NodeDownloadProgress, NodeGatheredInfo
 from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
@@ -26,11 +28,18 @@ from exo.shared.types.topology import (
     RDMAConnection,
     SocketConnection,
 )
-from exo.shared.types.worker.downloads import DownloadProgress
+from exo.shared.types.worker.downloads import DownloadPending, DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
-from exo.utils.info_gatherer.info_gatherer import MacThunderboltConnections
+from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.utils.info_gatherer.info_gatherer import (
+    GatheredInfo,
+    MacThunderboltConnections,
+)
 from exo.utils.pydantic_ext import FrozenModel
+
+_DOWNLOAD_PROGRESS_ADAPTER = TypeAdapter[DownloadProgress](DownloadProgress)
+_GATHERED_INFO_ADAPTER = TypeAdapter[GatheredInfo](GatheredInfo)
 
 
 class State(FrozenModel):
@@ -133,22 +142,49 @@ class State(FrozenModel):
         return topology
 
     def with_aggregator(self, aggregator: LVAggregator) -> "State":
-        from datetime import datetime, timezone
-
-        from pydantic import TypeAdapter
-
         from exo.shared.apply import event_apply
-        from exo.shared.types.events import NodeGatheredInfo
-        from exo.utils.info_gatherer.info_gatherer import GatheredInfo
-
         state = self.model_copy()
-        for key, value in aggregator.dump().items():
+        values = aggregator.dump()
+        node_ids = {NodeId(key.split("/")[0]) for key in values}
+        cached_cards = model_cards.card_cache.list_cached()
+        if cached_cards and node_ids:
+            state = state.model_copy(
+                update={
+                    "downloads": {
+                        node_id: [
+                            DownloadPending(
+                                node_id=node_id,
+                                shard_metadata=PipelineShardMetadata(
+                                    model_card=card,
+                                    device_rank=0,
+                                    world_size=1,
+                                    start_layer=0,
+                                    end_layer=card.n_layers,
+                                    n_layers=card.n_layers,
+                                ),
+                                total=card.storage_size,
+                            )
+                            for card in cached_cards
+                        ]
+                        for node_id in node_ids
+                    }
+                }
+            )
+
+        for key, value in values.items():
             try:
-                data = TypeAdapter[GatheredInfo](GatheredInfo).validate_json(value)
-                node_id = NodeId(key.split("/")[0])
-                event = NodeGatheredInfo(
-                    node_id=node_id, when=str(datetime.now(tz=timezone.utc)), info=data
-                )
+                parts = key.split("/")
+                if len(parts) >= 3 and parts[1] == "downloads":
+                    progress = _DOWNLOAD_PROGRESS_ADAPTER.validate_json(value)
+                    event = NodeDownloadProgress(download_progress=progress)
+                else:
+                    data = _GATHERED_INFO_ADAPTER.validate_json(value)
+                    node_id = NodeId(parts[0])
+                    event = NodeGatheredInfo(
+                        node_id=node_id,
+                        when=str(datetime.now(tz=timezone.utc)),
+                        info=data,
+                    )
                 state = event_apply(event, state)
             except Exception as e:
                 print(

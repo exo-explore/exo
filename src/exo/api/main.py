@@ -939,7 +939,9 @@ class API:
         task_params = await chat_request_to_text_generation(payload)
         command = await self._text_generation_command(task_params)
         bridge_stream = await self._submit_task_command(command)
-        chunk_stream = self._bridge_token_chunk_stream(command.command_id, bridge_stream)
+        chunk_stream = self._bridge_token_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         if payload.stream:
             return StreamingResponse(
@@ -979,7 +981,9 @@ class API:
 
         command = await self._text_generation_command(task_params)
         bridge_stream = await self._submit_task_command(command)
-        chunk_stream = self._bridge_token_chunk_stream(command.command_id, bridge_stream)
+        chunk_stream = self._bridge_token_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         if payload.stream:
             return StreamingResponse(
@@ -1061,7 +1065,9 @@ class API:
             task_params=payload,
         )
         bridge_stream = await self._submit_task_command(command)
-        chunk_stream = self._bridge_image_chunk_stream(command.command_id, bridge_stream)
+        chunk_stream = self._bridge_image_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         # Check if streaming is requested
         if payload.stream and payload.partial_images and payload.partial_images > 0:
@@ -1121,7 +1127,9 @@ class API:
             if len(image_chunks[key]) != image_total_chunks[key]:
                 continue
 
-            full_data = "".join(image_chunks[key][i] for i in range(len(image_chunks[key])))
+            full_data = "".join(
+                image_chunks[key][i] for i in range(len(image_chunks[key]))
+            )
             partial_idx, total_partials = image_metadata[key]
 
             if chunk.is_partial:
@@ -1132,7 +1140,9 @@ class API:
                     "total_partials": total_partials,
                     "format": str(chunk.format),
                     "data": {
-                        "b64_json": full_data if response_format == "b64_json" else None,
+                        "b64_json": full_data
+                        if response_format == "b64_json"
+                        else None,
                     },
                 }
                 yield f"data: {json.dumps(event_data)}\n\n"
@@ -1202,7 +1212,10 @@ class API:
             if capture_stats and chunk.stats is not None:
                 stats = chunk.stats
 
-            if len(image_chunks[chunk.image_index]) == image_total_chunks[chunk.image_index]:
+            if (
+                len(image_chunks[chunk.image_index])
+                == image_total_chunks[chunk.image_index]
+            ):
                 images_complete += 1
 
             if images_complete >= num_images:
@@ -1292,7 +1305,9 @@ class API:
             task_params=payload,
         )
         bridge_stream = await self._submit_task_command(command)
-        chunk_stream = self._bridge_image_chunk_stream(command.command_id, bridge_stream)
+        chunk_stream = self._bridge_image_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         return await self._collect_image_generation_with_stats(
             request=request,
@@ -1391,7 +1406,9 @@ class API:
         )
 
         bridge_stream = await self._submit_task_command(command)
-        chunk_stream = self._bridge_image_chunk_stream(command.command_id, bridge_stream)
+        chunk_stream = self._bridge_image_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         if stream_bool and partial_images_int > 0:
             return StreamingResponse(
@@ -1452,7 +1469,9 @@ class API:
         )
 
         bridge_stream = await self._submit_task_command(command)
-        chunk_stream = self._bridge_image_chunk_stream(command.command_id, bridge_stream)
+        chunk_stream = self._bridge_image_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         return await self._collect_image_generation_with_stats(
             request=request,
@@ -1469,7 +1488,9 @@ class API:
         task_params = await claude_request_to_text_generation(payload)
         command = await self._text_generation_command(task_params)
         bridge_stream = await self._submit_task_command(command)
-        chunk_stream = self._bridge_token_chunk_stream(command.command_id, bridge_stream)
+        chunk_stream = self._bridge_token_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         if payload.stream:
             return StreamingResponse(
@@ -1504,7 +1525,9 @@ class API:
         task_params = await responses_request_to_text_generation(payload)
         command = await self._text_generation_command(task_params)
         bridge_stream = await self._submit_task_command(command)
-        chunk_stream = self._bridge_token_chunk_stream(command.command_id, bridge_stream)
+        chunk_stream = self._bridge_token_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         if payload.stream:
             return StreamingResponse(
@@ -1544,7 +1567,9 @@ class API:
         task_params = ollama_request_to_text_generation(request)
         command = await self._text_generation_command(task_params)
         bridge_stream = await self._submit_task_command(command)
-        chunk_stream = self._bridge_token_chunk_stream(command.command_id, bridge_stream)
+        chunk_stream = self._bridge_token_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         if request.stream:
             return StreamingResponse(
@@ -1575,7 +1600,9 @@ class API:
         task_params = ollama_generate_request_to_text_generation(request)
         command = await self._text_generation_command(task_params)
         bridge_stream = await self._submit_task_command(command)
-        chunk_stream = self._bridge_token_chunk_stream(command.command_id, bridge_stream)
+        chunk_stream = self._bridge_token_chunk_stream(
+            command.command_id, bridge_stream
+        )
 
         if request.stream:
             return StreamingResponse(

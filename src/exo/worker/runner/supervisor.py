@@ -332,9 +332,7 @@ class RunnerSupervisor:
     def shutdown(self):
         self._tg.cancel_tasks()
 
-    async def _run_task_assignment_subscriber(
-        self, subscriber: LVSubscriber
-    ) -> None:
+    async def _run_task_assignment_subscriber(self, subscriber: LVSubscriber) -> None:
         instance_id = self.bound_instance.instance.instance_id
         while (received := await subscriber.recv()) is not None:
             key, payload = received

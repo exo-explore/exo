@@ -19,11 +19,11 @@ from exo.shared.types.commands import (
     StartDownload,
 )
 from exo.shared.types.common import NodeId, SystemId
-from exo.shared.types.events import Event, NodeDownloadProgress
+from exo.shared.types.events import Event
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import DownloadPending
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
-from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.channels import Sender, channel
 
 NODE_ID = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 MODEL_ID = ModelId("test-org/test-model")
@@ -137,10 +137,9 @@ def _setup_coordinator(
 ) -> tuple[
     DownloadCoordinator,
     Sender[ForwarderDownloadCommand],
-    Receiver[Event],
 ]:
     cmd_send, cmd_recv = channel[ForwarderDownloadCommand]()
-    event_send, event_recv = channel[Event]()
+    event_send, _event_recv = channel[Event]()
     wrapped = SingletonShardDownloader(downloader)
     coordinator = DownloadCoordinator(
         node_id=NODE_ID,
@@ -148,24 +147,20 @@ def _setup_coordinator(
         download_command_receiver=cmd_recv,
         event_sender=event_send,
     )
-    return coordinator, cmd_send, event_recv
+    return coordinator, cmd_send
 
 
 async def _wait_for_pending(
-    event_recv: Receiver[Event], model_id: ModelId, timeout: float = 2.0
+    coordinator: DownloadCoordinator, model_id: ModelId, timeout: float = 2.0
 ) -> DownloadPending | None:
-    """Drain events until we see a DownloadPending for the given model, or timeout."""
+    """Wait until coordinator state marks the given model as pending."""
     try:
         async with asyncio.timeout(timeout):
             while True:
-                event = await event_recv.receive()
-                if (
-                    isinstance(event, NodeDownloadProgress)
-                    and isinstance(event.download_progress, DownloadPending)
-                    and event.download_progress.shard_metadata.model_card.model_id
-                    == model_id
-                ):
-                    return event.download_progress
+                progress = coordinator.download_status.get(model_id)
+                if isinstance(progress, DownloadPending):
+                    return progress
+                await asyncio.sleep(0.01)
     except TimeoutError:
         return None
 
@@ -174,7 +169,7 @@ async def test_cancel_active_download_transitions_to_pending() -> None:
     """Cancelling an in-progress download should emit a DownloadPending event
     and remove the model from active_downloads."""
     slow_downloader = SlowShardDownloader()
-    coordinator, cmd_send, event_recv = _setup_coordinator(slow_downloader)
+    coordinator, cmd_send = _setup_coordinator(slow_downloader)
     shard = _make_shard()
     origin = SystemId("test")
 
@@ -191,14 +186,6 @@ async def test_cancel_active_download_transitions_to_pending() -> None:
         # Wait for the download to actually start (blocking in ensure_shard)
         await asyncio.wait_for(slow_downloader.download_started.wait(), timeout=2.0)
 
-        # Drain any events emitted before the cancel (initial DownloadPending, DownloadOngoing)
-        while True:
-            try:
-                async with asyncio.timeout(0.1):
-                    await event_recv.receive()
-            except TimeoutError:
-                break
-
         # Cancel the download
         await cmd_send.send(
             ForwarderDownloadCommand(
@@ -207,9 +194,8 @@ async def test_cancel_active_download_transitions_to_pending() -> None:
             )
         )
 
-        # Should receive a DownloadPending event with preserved progress
-        pending = await _wait_for_pending(event_recv, MODEL_ID)
-        assert pending is not None, "Cancel should emit DownloadPending"
+        pending = await _wait_for_pending(coordinator, MODEL_ID)
+        assert pending is not None, "Cancel should update state to DownloadPending"
         assert pending.shard_metadata.model_card.model_id == MODEL_ID
         assert pending.total == Memory.from_mb(100), "Should preserve total bytes"
 
@@ -231,7 +217,7 @@ async def test_cancel_active_download_transitions_to_pending() -> None:
 async def test_cancel_nonexistent_download_is_noop() -> None:
     """Cancelling a model that isn't being downloaded should be a no-op."""
     slow_downloader = SlowShardDownloader()
-    coordinator, cmd_send, event_recv = _setup_coordinator(slow_downloader)
+    coordinator, cmd_send = _setup_coordinator(slow_downloader)
     origin = SystemId("test")
 
     coordinator_task = asyncio.create_task(coordinator.run())
@@ -244,9 +230,10 @@ async def test_cancel_nonexistent_download_is_noop() -> None:
             )
         )
 
-        # Should NOT receive any DownloadPending event
-        pending = await _wait_for_pending(event_recv, MODEL_ID, timeout=0.5)
-        assert pending is None, "Cancel of non-existent download should not emit events"
+        pending = await _wait_for_pending(coordinator, MODEL_ID, timeout=0.5)
+        assert pending is None, (
+            "Cancel of non-existent download should not update state"
+        )
 
         # Coordinator state should be empty
         assert MODEL_ID not in coordinator.active_downloads
@@ -261,7 +248,7 @@ async def test_cancel_nonexistent_download_is_noop() -> None:
 async def test_cancel_then_resume_download() -> None:
     """After cancelling, re-issuing StartDownload should restart the download."""
     slow_downloader = SlowShardDownloader()
-    coordinator, cmd_send, event_recv = _setup_coordinator(slow_downloader)
+    coordinator, cmd_send = _setup_coordinator(slow_downloader)
     shard = _make_shard()
     origin = SystemId("test")
 
@@ -283,8 +270,8 @@ async def test_cancel_then_resume_download() -> None:
                 command=CancelDownload(target_node_id=NODE_ID, model_id=MODEL_ID),
             )
         )
-        pending = await _wait_for_pending(event_recv, MODEL_ID)
-        assert pending is not None, "Cancel should emit DownloadPending"
+        pending = await _wait_for_pending(coordinator, MODEL_ID)
+        assert pending is not None, "Cancel should update state to DownloadPending"
 
         await asyncio.sleep(0.05)
 

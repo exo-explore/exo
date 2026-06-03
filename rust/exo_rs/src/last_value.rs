@@ -32,8 +32,7 @@ pub fn spawn_lv_aggregator_onto(session: &Session, prefix: Arc<str>) -> ZResult<
     let store = Arc::new(Mutex::new(HashMap::default()));
     session
         .z
-        //assuming all LV aggregators are prefix/node_id/atomic_json
-        .declare_subscriber(format!("{prefix}/*/*"))
+        .declare_subscriber(format!("{prefix}/**"))
         .advanced()
         .history(
             HistoryConfig::default()
@@ -166,9 +165,22 @@ impl LVPublisher {
                 state
                     .put(data)
                     .await
-                    .map_err(|e| PyConnectionError::new_err(e.to_string()))?;
-                Ok(())
+                    .map_err(|e| PyConnectionError::new_err(e.to_string()))
             }
+        })
+    }
+
+    #[gen_stub(override_return_type(
+        type_repr="collections.abc.Awaitable[None]",
+        imports=("collections.abc")
+    ))]
+    pub fn delete<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let state = Arc::clone(&self.state);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            state
+                .delete()
+                .await
+                .map_err(|e| PyConnectionError::new_err(e.to_string()))
         })
     }
 }

@@ -20,11 +20,11 @@ from exo.shared.types.commands import (
     StartDownload,
 )
 from exo.shared.types.common import NodeId, SystemId
-from exo.shared.types.events import Event, NodeDownloadProgress
+from exo.shared.types.events import Event
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
-from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.channels import Sender, channel
 
 NODE_ID = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 MODEL_ID = ModelId("test-org/test-model")
@@ -133,7 +133,7 @@ async def test_re_download_after_delete_completes() -> None:
     the DownloadCoordinator."""
     cmd_send: Sender[ForwarderDownloadCommand]
     cmd_send, cmd_recv = channel[ForwarderDownloadCommand]()
-    event_send, event_recv = channel[Event]()
+    event_send, _event_recv = channel[Event]()
 
     fake_downloader = FakeShardDownloader()
     wrapped_downloader = SingletonShardDownloader(fake_downloader)
@@ -160,8 +160,7 @@ async def test_re_download_after_delete_completes() -> None:
                 )
             )
 
-            # Wait for DownloadCompleted
-            first_completed = await _wait_for_download_completed(event_recv, MODEL_ID)
+            first_completed = await _wait_for_download_completed(coordinator, MODEL_ID)
             assert first_completed is not None, "First download should complete"
 
             # 2. Delete the model
@@ -182,8 +181,7 @@ async def test_re_download_after_delete_completes() -> None:
                 )
             )
 
-            # Wait for second DownloadCompleted — this is the bug: it never arrives
-            second_completed = await _wait_for_download_completed(event_recv, MODEL_ID)
+            second_completed = await _wait_for_download_completed(coordinator, MODEL_ID)
             assert second_completed is not None, (
                 "Re-download after deletion should complete"
             )
@@ -195,19 +193,15 @@ async def test_re_download_after_delete_completes() -> None:
 
 
 async def _wait_for_download_completed(
-    event_recv: Receiver[Event], model_id: ModelId, timeout: float = 2.0
+    coordinator: DownloadCoordinator, model_id: ModelId, timeout: float = 2.0
 ) -> DownloadCompleted | None:
-    """Drain events until we see a DownloadCompleted for the given model, or timeout."""
+    """Wait until coordinator state marks the given model as complete."""
     try:
         async with asyncio.timeout(timeout):
             while True:
-                event = await event_recv.receive()
-                if (
-                    isinstance(event, NodeDownloadProgress)
-                    and isinstance(event.download_progress, DownloadCompleted)
-                    and event.download_progress.shard_metadata.model_card.model_id
-                    == model_id
-                ):
-                    return event.download_progress
+                progress = coordinator.download_status.get(model_id)
+                if isinstance(progress, DownloadCompleted):
+                    return progress
+                await asyncio.sleep(0.01)
     except TimeoutError:
         return None

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import anyio
 from anyio import BrokenResourceError, ClosedResourceError, current_time, to_thread
+from exo_rs import LVPublisher, SessionHandle
 from loguru import logger
 
 from exo.download.download_utils import (
@@ -31,7 +32,6 @@ from exo.shared.types.commands import (
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     Event,
-    NodeDownloadProgress,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import (
@@ -52,6 +52,7 @@ class DownloadCoordinator:
     shard_downloader: ShardDownloader
     download_command_receiver: Receiver[ForwarderDownloadCommand]
     event_sender: Sender[Event]
+    session_handle: SessionHandle
     offline: bool = False
 
     # Local state
@@ -63,6 +64,7 @@ class DownloadCoordinator:
 
     # Per-model throttle for download progress events
     _last_progress_time: dict[ModelId, float] = field(default_factory=dict)
+    _download_publishers: dict[ModelId, LVPublisher] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.shard_downloader.on_progress(self._download_progress_callback)
@@ -84,6 +86,26 @@ class DownloadCoordinator:
             model_directory=str(found),
             read_only=is_read_only_model_dir(found),
         )
+
+    def _publisher_for_model(self, model_id: ModelId) -> LVPublisher:
+        if (publisher := self._download_publishers.get(model_id)) is None:
+            publisher = self.session_handle.last_value_publisher(
+                f"node_metrics/{self.node_id}/downloads/{model_id}"
+            )
+            self._download_publishers[model_id] = publisher
+
+        return publisher
+
+    async def _set_download_status(self, status: DownloadProgress) -> None:
+        model_id = status.shard_metadata.model_card.model_id
+        self.download_status[model_id] = status
+        publisher = self._publisher_for_model(model_id)
+        await publisher.put(status.model_dump_json())
+
+    async def _delete_download_status(self, model_id: ModelId) -> None:
+        self.download_status.pop(model_id, None)
+        publisher = self._publisher_for_model(model_id)
+        await publisher.delete()
 
     async def _download_progress_callback(
         self, callback_shard: ShardMetadata, progress: RepoDownloadProgress
@@ -107,10 +129,7 @@ class DownloadCoordinator:
                         total=progress.total,
                         model_directory=self._default_model_dir(model_id),
                     )
-                self.download_status[model_id] = completed
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=completed)
-                )
+                await self._set_download_status(completed)
                 self._last_progress_time.pop(model_id, None)
             elif (
                 progress.status == "in_progress"
@@ -125,10 +144,7 @@ class DownloadCoordinator:
                     ),
                     model_directory=self._default_model_dir(model_id),
                 )
-                self.download_status[model_id] = ongoing
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=ongoing)
-                )
+                await self._set_download_status(ongoing)
                 self._last_progress_time[model_id] = current_time()
         except (BrokenResourceError, ClosedResourceError):
             logger.debug(
@@ -189,10 +205,7 @@ class DownloadCoordinator:
                 downloaded=downloaded,
                 total=total,
             )
-            self.download_status[model_id] = pending
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=pending)
-            )
+            await self._set_download_status(pending)
 
     async def _start_download(self, shard: ShardMetadata) -> None:
         model_id = shard.model_card.model_id
@@ -215,10 +228,7 @@ class DownloadCoordinator:
             completed = self._completed_from_path(
                 shard, found_path, shard.model_card.storage_size
             )
-            self.download_status[model_id] = completed
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=completed)
-            )
+            await self._set_download_status(completed)
             return
 
         # Emit pending status
@@ -227,8 +237,7 @@ class DownloadCoordinator:
             node_id=self.node_id,
             model_directory=self._default_model_dir(model_id),
         )
-        self.download_status[model_id] = progress
-        await self.event_sender.send(NodeDownloadProgress(download_progress=progress))
+        await self._set_download_status(progress)
 
         # Check initial status from downloader
         initial_progress = (
@@ -250,10 +259,7 @@ class DownloadCoordinator:
                     total=initial_progress.total,
                     model_directory=self._default_model_dir(model_id),
                 )
-            self.download_status[model_id] = completed
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=completed)
-            )
+            await self._set_download_status(completed)
             return
 
         if self.offline:
@@ -266,17 +272,8 @@ class DownloadCoordinator:
                 error_message=f"Model files not found locally in offline mode: {model_id}",
                 model_directory=self._default_model_dir(model_id),
             )
-            self.download_status[model_id] = failed
-            await self.event_sender.send(NodeDownloadProgress(download_progress=failed))
+            await self._set_download_status(failed)
             return
-
-        # Start actual download
-        self._start_download_task(shard, initial_progress)
-
-    def _start_download_task(
-        self, shard: ShardMetadata, initial_progress: RepoDownloadProgress
-    ) -> None:
-        model_id = shard.model_card.model_id
 
         # Emit ongoing status
         status = DownloadOngoing(
@@ -287,8 +284,7 @@ class DownloadCoordinator:
             ),
             model_directory=self._default_model_dir(model_id),
         )
-        self.download_status[model_id] = status
-        self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
+        await self._set_download_status(status)
 
         async def download_wrapper(cancel_scope: anyio.CancelScope) -> None:
             try:
@@ -302,10 +298,7 @@ class DownloadCoordinator:
                     error_message=str(e),
                     model_directory=self._default_model_dir(model_id),
                 )
-                self.download_status[model_id] = failed
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=failed)
-                )
+                await self._set_download_status(failed)
             except anyio.get_cancelled_exc_class():
                 # ignore cancellation - let cleanup do its thing
                 pass
@@ -338,18 +331,9 @@ class DownloadCoordinator:
         else:
             logger.warning(f"Model {model_id} was not found on disk")
 
-        # Emit pending status to reset UI state, then remove from local tracking
+        # Remove local and aggregated download status.
         if model_id in self.download_status:
-            current_status = self.download_status[model_id]
-            pending = DownloadPending(
-                shard_metadata=current_status.shard_metadata,
-                node_id=self.node_id,
-                model_directory=self._default_model_dir(model_id),
-            )
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=pending)
-            )
-            del self.download_status[model_id]
+            await self._delete_download_status(model_id)
 
     async def _emit_existing_download_progress(self) -> None:
         while True:
@@ -428,10 +412,7 @@ class DownloadCoordinator:
                     else:
                         continue
 
-                    self.download_status[progress.shard.model_card.model_id] = status
-                    await self.event_sender.send(
-                        NodeDownloadProgress(download_progress=status)
-                    )
+                    await self._set_download_status(status)
                 # Scan read-only directories for pre-downloaded models
                 if EXO_MODELS_READ_ONLY_DIRS:
                     for card in await model_cards.card_cache.list_all():
@@ -460,10 +441,7 @@ class DownloadCoordinator:
                                     path_shard, found, card.storage_size
                                 )
                             )
-                            self.download_status[mid] = path_completed
-                            await self.event_sender.send(
-                                NodeDownloadProgress(download_progress=path_completed)
-                            )
+                            await self._set_download_status(path_completed)
 
                 logger.debug(
                     "DownloadCoordinator: Done emitting existing download progress."
