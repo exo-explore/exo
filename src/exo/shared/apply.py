@@ -4,19 +4,14 @@ from datetime import datetime
 
 from loguru import logger
 
-from exo.shared.models.model_cards import ModelCard
-from exo.shared.types.common import ModelId, NodeId
+from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
-    CustomModelCardAdded,
-    CustomModelCardDeleted,
     Event,
     IndexedEvent,
     InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
-    InstanceLinkCreated,
-    InstanceLinkDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -32,7 +27,6 @@ from exo.shared.types.events import (
     TracesCollected,
     TracesMerged,
 )
-from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
     NodeIdentity,
     NodeNetworkInfo,
@@ -78,10 +72,6 @@ def event_apply(event: Event, state: State) -> State:
             | TracesMerged()
         ):  # Pass-through events that don't modify state
             return state
-        case CustomModelCardAdded():
-            return apply_custom_model_card_added(event, state)
-        case CustomModelCardDeleted():
-            return apply_custom_model_card_deleted(event, state)
         case InstanceCreated():
             return apply_instance_created(event, state)
         case InstanceDeleted():
@@ -106,10 +96,6 @@ def event_apply(event: Event, state: State) -> State:
             return apply_topology_edge_created(event, state)
         case TopologyEdgeDeleted():
             return apply_topology_edge_deleted(event, state)
-        case InstanceLinkCreated():
-            return apply_instance_link_created(event, state)
-        case InstanceLinkDeleted():
-            return apply_instance_link_deleted(event, state)
 
 
 def apply(state: State, event: IndexedEvent) -> State:
@@ -209,38 +195,7 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
     new_instances: Mapping[InstanceId, Instance] = {
         iid: inst for iid, inst in state.instances.items() if iid != event.instance_id
     }
-    new_links: dict[InstanceLinkId, InstanceLink] = {}
-    for link_id, link in state.instance_links.items():
-        prefill = [i for i in link.prefill_instances if i != event.instance_id]
-        decode = [i for i in link.decode_instances if i != event.instance_id]
-        if not prefill or not decode:
-            continue
-        if prefill == list(link.prefill_instances) and decode == list(
-            link.decode_instances
-        ):
-            new_links[link_id] = link
-        else:
-            new_links[link_id] = link.model_copy(
-                update={"prefill_instances": prefill, "decode_instances": decode}
-            )
-    return state.model_copy(
-        update={"instances": new_instances, "instance_links": new_links}
-    )
-
-
-def apply_instance_link_created(event: InstanceLinkCreated, state: State) -> State:
-    new_links: Mapping[InstanceLinkId, InstanceLink] = {
-        **state.instance_links,
-        event.link.link_id: event.link,
-    }
-    return state.model_copy(update={"instance_links": new_links})
-
-
-def apply_instance_link_deleted(event: InstanceLinkDeleted, state: State) -> State:
-    new_links: Mapping[InstanceLinkId, InstanceLink] = {
-        lid: link for lid, link in state.instance_links.items() if lid != event.link_id
-    }
-    return state.model_copy(update={"instance_links": new_links})
+    return state.model_copy(update={"instances": new_instances})
 
 
 def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> State:
@@ -467,22 +422,3 @@ def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> Sta
         }
     }
     return state.model_copy(update=update)
-
-
-def apply_custom_model_card_added(event: CustomModelCardAdded, state: State) -> State:
-    new_cards: Mapping[ModelId, ModelCard] = {
-        **state.custom_model_cards,
-        event.model_card.model_id: event.model_card,
-    }
-    return state.model_copy(update={"custom_model_cards": new_cards})
-
-
-def apply_custom_model_card_deleted(
-    event: CustomModelCardDeleted, state: State
-) -> State:
-    new_cards: Mapping[ModelId, ModelCard] = {
-        model_id: card
-        for model_id, card in state.custom_model_cards.items()
-        if model_id != event.model_id
-    }
-    return state.model_copy(update={"custom_model_cards": new_cards})
