@@ -7,6 +7,7 @@ from exo.shared.types.tasks import (
     ConnectToGroup,
     CreateRunner,
     DownloadModel,
+    ForgetInstance,
     LoadModel,
     Shutdown,
     StartWarmup,
@@ -44,12 +45,33 @@ def plan(
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
     instance_backoff: KeyedBackoff[InstanceId],
     download_backoff: KeyedBackoff[ModelId],
+    live_runner_ids: set[RunnerId] | None = None,
+    primary_runner_missing_since: Mapping[InstanceId, float] | None = None,
+    now: float = 0.0,
+    primary_runner_missing_timeout_seconds: float = 10.0,
 ) -> Task | None:
+    live_runner_ids = set(all_runners) if live_runner_ids is None else live_runner_ids
+    primary_runner_missing_since = (
+        {} if primary_runner_missing_since is None else primary_runner_missing_since
+    )
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
         _kill_runner(runners, all_runners, desired_instances)
+        or _forget_instance_without_primary_runner(
+            node_id,
+            desired_instances,
+            live_runner_ids,
+            primary_runner_missing_since,
+            now,
+            primary_runner_missing_timeout_seconds,
+        )
         or _create_runner(
-            node_id, runners, all_runners, desired_instances, instance_backoff
+            node_id,
+            runners,
+            all_runners,
+            desired_instances,
+            live_runner_ids,
+            instance_backoff,
         )
         or _model_needs_download(
             node_id, runners, global_download_status, download_backoff
@@ -90,25 +112,68 @@ def _kill_runner(
                 )
 
 
+def _local_runner_id_for(instance: Instance, node_id: NodeId) -> RunnerId | None:
+    return next(
+        fmap(
+            lambda it: it.runner_id if it.node_id == node_id else None,
+            instance.shard_assignments.shards,
+        ),
+        None,
+    )
+
+
+def _primary_runner_id_for(instance: Instance) -> RunnerId:
+    return instance.shard_assignments.shards[
+        instance.shard_assignments.primary_output_node
+    ].runner_id
+
+
+def _forget_instance_without_primary_runner(
+    node_id: NodeId,
+    instances: Mapping[InstanceId, Instance],
+    live_runner_ids: set[RunnerId],
+    primary_runner_missing_since: Mapping[InstanceId, float],
+    now: float,
+    primary_runner_missing_timeout_seconds: float,
+) -> ForgetInstance | None:
+    for instance_id, instance in instances.items():
+        local_runner_id = _local_runner_id_for(instance, node_id)
+        if local_runner_id is None:
+            continue
+
+        primary_runner_id = _primary_runner_id_for(instance)
+        if local_runner_id == primary_runner_id:
+            continue
+        if primary_runner_id in live_runner_ids:
+            continue
+
+        missing_since = primary_runner_missing_since.get(instance_id)
+        if missing_since is None:
+            continue
+        if now - missing_since < primary_runner_missing_timeout_seconds:
+            continue
+
+        return ForgetInstance(instance_id=instance_id)
+
+
 def _create_runner(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
     all_runners: Mapping[RunnerId, RunnerStatus],
     instances: Mapping[InstanceId, Instance],
+    live_runner_ids: set[RunnerId],
     instance_backoff: KeyedBackoff[InstanceId],
 ) -> CreateRunner | None:
     for instance in instances.values():
-        runner_id = next(
-            fmap(
-                lambda it: it.runner_id if it.node_id == node_id else None,
-                instance.shard_assignments.shards,
-            ),
-            None,
-        )
+        runner_id = _local_runner_id_for(instance, node_id)
         if runner_id is None:
             continue
 
         if runner_id in runners:
+            continue
+
+        primary_runner_id = _primary_runner_id_for(instance)
+        if runner_id != primary_runner_id and primary_runner_id not in live_runner_ids:
             continue
 
         # don't create runners if any other nodes have runners that have failed - wait for them to fix themselves first.

@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
 from exo.shared.types.common import NodeId
@@ -27,6 +27,10 @@ class SocketConnection(FrozenModel):
 
     def __hash__(self):
         return hash(self.sink_multiaddr.ip_address)
+
+
+class SocketConnections(FrozenModel):
+    connections: Mapping[NodeId, Sequence[SocketConnection]]
 
 
 class Connection(FrozenModel):

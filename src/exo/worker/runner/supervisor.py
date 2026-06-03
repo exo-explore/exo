@@ -26,7 +26,6 @@ from exo.shared.constants import EXO_RUNNER_STDERR_LOG, EXO_RUNNER_STDOUT_LOG
 from exo.shared.types.chunks import ErrorChunk, PrefillProgressChunk
 from exo.shared.types.commands import (
     Command,
-    DeleteInstance,
     TaskCancelled,
     TaskFinished,
 )
@@ -506,9 +505,6 @@ class RunnerSupervisor:
                     case TaskFinished(finished_command_id=command_id):
                         await self._finish_bridge_task(command_id)
                         request.reply(command_id)
-                    case DeleteInstance():
-                        self.shutdown()
-                        request.reply("")
                     case _:
                         request.reply_err(f"Unsupported bridge command: {command}")
             except Exception as exception:

@@ -32,6 +32,7 @@ from exo.shared.types.topology import (
     Connection,
     RDMAConnection,
     SocketConnection,
+    SocketConnections,
 )
 from exo.shared.types.worker.downloads import DownloadPending, DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -46,6 +47,7 @@ from exo.utils.pydantic_ext import FrozenModel
 _DOWNLOAD_PROGRESS_ADAPTER = TypeAdapter[DownloadProgress](DownloadProgress)
 _INSTANCE_ADAPTER = TypeAdapter[Instance](Instance)
 _RUNNER_STATUS_ADAPTER = TypeAdapter[RunnerStatus](RunnerStatus)
+_SOCKET_CONNECTIONS_ADAPTER = TypeAdapter[SocketConnections](SocketConnections)
 _GATHERED_INFO_ADAPTER = TypeAdapter[GatheredInfo](GatheredInfo)
 
 
@@ -193,6 +195,19 @@ class State(FrozenModel):
                     event = RunnerStatusUpdated(
                         runner_status=runner_status, runner_id=RunnerId(parts[2])
                     )
+                elif len(parts) == 2 and parts[1] == "socket_connections":
+                    socket_connections = _SOCKET_CONNECTIONS_ADAPTER.validate_json(
+                        value
+                    )
+                    state = state.model_copy(
+                        update={
+                            "node_socket_connections": {
+                                **state.node_socket_connections,
+                                NodeId(parts[0]): socket_connections.connections,
+                            }
+                        }
+                    )
+                    continue
                 else:
                     data = _GATHERED_INFO_ADAPTER.validate_json(value)
                     node_id = NodeId(parts[0])
