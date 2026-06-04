@@ -1,11 +1,11 @@
 use clap::Parser;
-use exo_rs::config::CliArgs;
+use exo_rs::config::{CliArgs, EXO_VERSION};
 use pyo3_stub_gen::Result;
 
 fn main() -> Result<()> {
     let a = CliArgs::parse();
     println!("{a:?}");
-    println!("{:?}", a.verbosity);
+    println!("{:?} - {}", a.verbosity, EXO_VERSION);
     return Ok(());
 
     env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "info")).init();

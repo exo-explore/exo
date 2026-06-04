@@ -1,10 +1,12 @@
-use clap::{ArgAction, Parser, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 
-// TODO: need to figure out incremental compilation and somehow include the right version
-//       for CLAP so that we display the right version either with shaddow-rs or include!()
+pub const EXO_VERSION: &str = match option_env!("EXO_PKG_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Verbosity {
     Off,
@@ -15,8 +17,8 @@ pub enum Verbosity {
     Trace,
 }
 
-#[derive(Parser, Debug, Clone, PartialEq, Eq)]
-#[command(name = "EXO", version, about, long_about = None)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Parser)]
+#[command(name = "EXO", version = EXO_VERSION, about, long_about = None)]
 pub struct CliArgs {
     #[arg(
           short = 'v',
@@ -100,12 +102,28 @@ pub struct CliArgs {
     bootstrap_peers: Option<Vec<String>>,
 
     #[arg(
-        long = "libp2p-port",
-        default_value_t = 0,
-        value_name = "PORT",
-        help = "Fixed TCP port for libp2p to listen on (0 = OS-assigned)"
+        long,
+        default_value_t = EXO_VERSION.to_string(),
+        value_name = "STRING",
+        help = "Discovery namespace, nodes with different namespaces will not connect."
     )]
-    libp2p_port: u16,
+    namespace: String,
+
+    #[arg(
+        long = "zenoh-port",
+        default_value_t = 52414,
+        value_name = "PORT",
+        help = "Fixed TCP port for zenoh to listen."
+    )]
+    zenoh_port: u16,
+
+    #[arg(
+        long = "discovery-port",
+        default_value_t = 52413,
+        value_name = "PORT",
+        help = "Fixed UDP port for the discovery service."
+    )]
+    discovery_port: u16,
 
     #[arg(
         long = "fast-synch",
@@ -113,6 +131,15 @@ pub struct CliArgs {
         help = "Force MLX FAST_SYNCH on/off (for JACCL backend); omit for auto"
     )]
     fast_synch: Option<bool>,
+
+    #[command(flatten)]
+    deprecated: DeprecatedArgs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
+pub struct DeprecatedArgs {
+    #[arg(long = "libp2p-port", hide = true)]
+    libp2p_port: Option<u16>,
 }
 
 fn env_flag(name: &str) -> bool {
