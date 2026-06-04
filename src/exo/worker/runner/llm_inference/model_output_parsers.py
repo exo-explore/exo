@@ -390,6 +390,9 @@ def parse_thinking_models(
             yield response.model_copy(update={"is_thinking": False})
             continue
 
+        # Fast path: the delimiter arrives as its own clean chunk (or the
+        # accumulation is exactly the delimiter). Preserved verbatim so the
+        # existing clean-token behavior and its regression tests are untouched.
         if accumulated == think_start and not is_thinking:
             is_thinking = True
             accumulated = ""
@@ -399,6 +402,60 @@ def parse_thinking_models(
             is_thinking = False
             accumulated = ""
             pending_buffer.clear()
+            continue
+
+        # Fused / embedded delimiter handling.
+        #
+        # The mlx-lm streaming detokenizer yields `last_segment` deltas that can
+        # carry MORE than one token's text, so a think delimiter may arrive
+        # glued to neighbouring text in a single chunk (e.g. "code.</think>def")
+        # or the accumulation may overshoot the exact match when the delimiter
+        # spans chunks (e.g. "</" then "think>def" -> "</think>def"). The
+        # exact-equality checks above miss both cases, which previously leaked
+        # the delimiter + the post-delimiter answer into the wrong stream
+        # (reasoning text + code dumped into `content`). Detect the currently
+        # active delimiter as a SUBSTRING and split around it. Loop so multiple
+        # delimiters fused into one chunk are all handled.
+        active = think_end if is_thinking else think_start
+        if active and active in accumulated:
+            # Any prefix-buffered tokens are mirrored in `accumulated` (both are
+            # appended in lockstep), so their text is already represented in the
+            # split below. Discard the parallel copy rather than draining it, to
+            # avoid double-emitting delimiter fragments that were buffered as a
+            # clean prefix (e.g. "</" then "think>answer").
+            pending_buffer.clear()
+            while True:
+                active = think_end if is_thinking else think_start
+                if not active or active not in accumulated:
+                    break
+                idx = accumulated.index(active)
+                pre = accumulated[:idx]
+                if pre:
+                    yield response.model_copy(
+                        update={"text": pre, "is_thinking": is_thinking}
+                    )
+                # Swallow the delimiter and flip the thinking state.
+                is_thinking = not is_thinking
+                accumulated = accumulated[idx + len(active):]
+            # Handle the remainder after the last delimiter. If it is a clean
+            # (incomplete) prefix of the next possible delimiter, keep it
+            # buffered and wait for more; otherwise emit it with the new flag.
+            if accumulated:
+                nxt = think_end if is_thinking else think_start
+                is_clean_prefix = bool(
+                    nxt
+                    and len(accumulated) < len(nxt)
+                    and accumulated == nxt[: len(accumulated)]
+                )
+                if is_clean_prefix:
+                    pending_buffer.append(
+                        response.model_copy(update={"text": accumulated})
+                    )
+                else:
+                    yield response.model_copy(
+                        update={"text": accumulated, "is_thinking": is_thinking}
+                    )
+                    accumulated = ""
             continue
 
         if (think_start and accumulated == think_start[: len(accumulated)]) or (
