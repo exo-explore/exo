@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["rust/networking", "rust/exo_rs", "rust/util"]
+members = ["rust/exo_rs", "rust/networking"]
 
 [workspace.package]
 version = "0.0.1"
@@ -20,31 +20,73 @@ opt-level = 3
 [workspace.dependencies]
 ## Crate members as common dependencies
 networking = { path = "rust/networking" }
-util = { path = "rust/util" }
 
-# Macro dependecies
+# pyo3
+pyo3 = "0.28.3"
+pyo3-async-runtimes = "0.28.0"
+pyo3-log = "0.13.3"
+pyo3-stub-gen = "0.22.3"
+
+# util
 extend = "1.2"
 delegate = "0.13"
 
 # Utility dependencies
-keccak-const = "0.2"
 nix = "0.31"
 
 # Async dependencies
-async-stream = "0.3"
 tokio = "1.46"
 futures-lite = "2.6.1"
-futures-timer = "3.0"
-
-# Data structures
-either = "1.15"
+async-stream = "0.3.6"
+pin-project = "1.1.10"
+serde_json = "1.0.149"
+rand = "0.10.1"
+parking_lot = "0.12.5"
 
 # Tracing/logging
 log = "0.4"
+env_logger = "0.11.10"
 
 # networking
-libp2p = "0.56"
-libp2p-tcp = "0.44"
+zenoh = "=1.9.0"
+zenoh-plugin-storage-manager = { version = "=1.9.0", default-features = false }
+zenoh-plugin-trait = "=1.9.0"
+netwatcher = "0.6.0"
+bytemuck = "1.25.0"
+blake3 = "1.8.5"
+smol = "2.0.2"
+socket2 = "0.6.4"
+tracing = "0.1.44"
+pidfile-rs = { git = "https://github.com/AndreiCravtov/pidfile-rs" }
+
+[patch.crates-io]
+zenoh = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-buffers = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-codec = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-collections = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-config = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-core = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-crypto = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-keyexpr = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-commons = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-quic = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-quic_datagram = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-tcp = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-tls = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-udp = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-unixsock_stream = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-link-ws = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-macros = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-plugin-trait = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-protocol = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-result = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-runtime = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-sync = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-task = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-transport = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh-util = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+zenoh_backend_traits = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
 
 [workspace.lints.rust]
 static_mut_refs = "warn"      # Or use "warn" instead of deny
