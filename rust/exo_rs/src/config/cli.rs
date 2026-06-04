@@ -133,9 +133,29 @@ pub struct CliArgs {
     fast_synch: Option<bool>,
 
     #[command(flatten)]
+    config: ConfigArgs,
+
+    #[command(flatten)]
     deprecated: DeprecatedArgs,
 }
 
+/// Arguments that will end up in the final configuration go here.
+///
+/// The precedence of the final configuration object will be:
+///  - Defaults < Config file < Env < Cli args
+///
+/// # Important
+///  - Make sure all are [`Option<T>`] so we can make it combinable with other
+///    sources of configuration
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
+pub struct ConfigArgs {}
+
+/// Deprecated arguments go here.
+///
+/// # Important
+///  - Make sure all are `hide = true` so it won't appear in `--help`
+///  - Make sure all are [`Option<T>`] so them being missing doesn't cause issues
+///  - Edit [`Self::get_error`] to handle changes of new/removed args in here
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
 pub struct DeprecatedArgs {
     #[arg(long = "libp2p-port", hide = true)]
@@ -144,7 +164,8 @@ pub struct DeprecatedArgs {
 
 impl DeprecatedArgs {
     pub fn get_error(&self) -> Option<clap::Error> {
-        // destructure: don't change because this errors when new options are moved here
+        // destructure: don't change because this becomes compile error when new options are
+        // moved into here or removed from here
         let Self { libp2p_port } = self.clone();
 
         if let Some(_) = libp2p_port {
@@ -152,7 +173,9 @@ impl DeprecatedArgs {
                 clap::error::ErrorKind::UnknownArgument,
                 "The argument --libp2p-port is deprecated; use --zenoh-port instead",
             ))
-        } else {
+        }
+        // add more options here
+        else {
             None
         }
     }
