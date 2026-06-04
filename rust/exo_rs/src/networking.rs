@@ -1,17 +1,17 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
+use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _, TokioRuntimeExt};
 use crate::ext::{ResultExt as _, TokioMpscSenderExt as _};
 use futures_lite::{Stream, StreamExt as _};
-use networking::swarm::{FromSwarm, Swarm, ToSwarm, create_swarm};
-use networking::{Session, is_valid_zid};
+use networking::swarm::{create_swarm, FromSwarm, Swarm, ToSwarm};
+use networking::{is_valid_zid, Session};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use pyo3::{Bound, Py, PyAny, PyErr, PyResult, Python, pymethods};
+use pyo3::{pymethods, Bound, Py, PyAny, PyErr, PyResult, Python};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 #[gen_stub_pyclass]
 #[pyclass(name = "NetworkingHandle")]
@@ -101,25 +101,11 @@ impl PyNetworkingHandle {
         })
     }
 
-    #[gen_stub(override_return_type(
-        type_repr="typing.Awaitable[FromSwarm]", imports=("typing")
-    ))]
-    pub fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let swarm = Arc::clone(&self.swarm);
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            swarm
-                .try_lock()
-                .map_err(|_| PyRuntimeError::new_err("called recv twice concurrently"))?
-                .next()
-                .await
-                .ok_or(PyErr::receiver_channel_closed())
-                .map(PyFromSwarm::from)
-        })
     // #[gen_stub(override_return_type(
     //     type_repr="typing.Awaitable[FromSwarm]", imports=("typing")
     // ))]
-    // fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-    //     let swarm = self.swarm.clone();
+    // pub fn recv<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    //     let swarm = Arc::clone(&self.swarm);
     //     pyo3_async_runtimes::tokio::future_into_py(py, async move {
     //         swarm
     //             .try_lock()
@@ -132,7 +118,7 @@ impl PyNetworkingHandle {
     // }
 
     async fn recv(&self) -> PyResult<PyFromSwarm> {
-        let swarm = self.swarm.clone();
+        let swarm = Arc::clone(&self.swarm);
         pyo3_async_runtimes::tokio::get_runtime()
             .run_with_scope(async move {
                 swarm

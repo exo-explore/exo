@@ -57,36 +57,39 @@ blake3 = "1.8.5"
 smol = "2.0.2"
 socket2 = "0.6.4"
 tracing = "0.1.44"
-pidfile-rs = { git = "https://github.com/AndreiCravtov/pidfile-rs" }
+pidfile-rs = "=0.3.1"
 
 [patch.crates-io]
-zenoh = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-buffers = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-codec = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-collections = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-config = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-core = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-crypto = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-keyexpr = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-link = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-link-commons = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-link-quic = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-link-quic_datagram = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-link-tcp = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-link-tls = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-link-udp = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-link-unixsock_stream = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-link-ws = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-macros = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-plugin-trait = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-protocol = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-result = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-runtime = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-sync = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-task = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-transport = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh-util = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
-zenoh_backend_traits = { git = "https://github.com/evanev7/zenoh.git", branch = "exo" }
+pidfile-rs = { git = "https://github.com/AndreiCravtov/pidfile-rs", rev = "faf6b79" }
+
+# zenoh
+zenoh = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-buffers = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-codec = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-collections = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-config = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-core = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-crypto = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-keyexpr = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-link = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-link-commons = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-link-quic = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-link-quic_datagram = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-link-tcp = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-link-tls = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-link-udp = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-link-unixsock_stream = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-link-ws = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-macros = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-plugin-trait = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-protocol = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-result = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-runtime = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-sync = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-task = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-transport = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh-util = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
+zenoh_backend_traits = { git = "https://github.com/evanev7/zenoh.git", rev = "2fed58e" }
 
 [workspace.lints.rust]
 static_mut_refs = "warn"      # Or use "warn" instead of deny

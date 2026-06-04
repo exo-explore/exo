@@ -341,6 +341,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomic"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a89cbf775b137e9b968e67227ef7f775587cde3fd31b0d8599dbd0f598a48340"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -582,6 +591,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ddb117e43bbf7dacf0a4190fef4d345b9bad68dfc649cb349e7d17d28428e51"
 dependencies = [
  "clap_builder",
+ "clap_derive",
 ]
 
 [[package]]
@@ -594,6 +604,18 @@ dependencies = [
  "anstyle",
  "clap_lex",
  "strsim",
+]
+
+[[package]]
+name = "clap_derive"
+version = "4.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2ce8604710f6733aa641a2b3731eaa1e8b3d9973d5e3565da11800813f997a9"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -991,8 +1013,10 @@ dependencies = [
 name = "exo_rs"
 version = "0.0.1"
 dependencies = [
+ "clap",
  "env_logger",
  "extend",
+ "figment",
  "futures-lite",
  "log",
  "networking",
@@ -1004,6 +1028,7 @@ dependencies = [
  "pyo3-log",
  "pyo3-stub-gen",
  "rand 0.10.1",
+ "serde",
  "serde_json",
  "tokio",
  "zenoh",
@@ -1048,6 +1073,20 @@ name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
+
+[[package]]
+name = "figment"
+version = "0.10.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cb01cd46b0cf372153850f4c6c272d9cbea2da513e07538405148f95bd789f3"
+dependencies = [
+ "atomic",
+ "pear",
+ "serde",
+ "toml 0.8.23",
+ "uncased",
+ "version_check",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -1566,6 +1605,12 @@ dependencies = [
  "serde",
  "serde_core",
 ]
+
+[[package]]
+name = "inlinable_string"
+version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8fae54786f62fb2918dcfae3d568594e50eb9b5c25bf04371af6fe7516452fb"
 
 [[package]]
 name = "inout"
@@ -2334,6 +2379,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
+name = "pear"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdeeaa00ce488657faba8ebf44ab9361f9365a97bd39ffb8a60663f57ff4b467"
+dependencies = [
+ "inlinable_string",
+ "pear_codegen",
+ "yansi",
+]
+
+[[package]]
+name = "pear_codegen"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bab5b985dc082b345f812b7df84e1bef27e7207b39e448439ba8bd69c93f147"
+dependencies = [
+ "proc-macro2",
+ "proc-macro2-diagnostics",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "pem"
 version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2497,7 +2565,7 @@ dependencies = [
 [[package]]
 name = "pidfile-rs"
 version = "0.3.1"
-source = "git+https://github.com/AndreiCravtov/pidfile-rs#faf6b79e40e931c149f1f58dc4fb53ec1be3ff3c"
+source = "git+https://github.com/AndreiCravtov/pidfile-rs?rev=faf6b79#faf6b79e40e931c149f1f58dc4fb53ec1be3ff3c"
 dependencies = [
  "flopen",
  "libc",
@@ -2664,7 +2732,7 @@ version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
 dependencies = [
- "toml_edit",
+ "toml_edit 0.25.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -2674,6 +2742,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "proc-macro2-diagnostics"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+ "version_check",
+ "yansi",
 ]
 
 [[package]]
@@ -3467,6 +3548,15 @@ dependencies = [
 
 [[package]]
 name = "serde_spanned"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "serde_spanned"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
@@ -4005,13 +4095,25 @@ dependencies = [
 
 [[package]]
 name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned 0.6.9",
+ "toml_datetime 0.6.11",
+ "toml_edit 0.22.27",
+]
+
+[[package]]
+name = "toml"
 version = "0.9.12+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
 dependencies = [
  "indexmap 2.14.0",
  "serde_core",
- "serde_spanned",
+ "serde_spanned 1.1.1",
  "toml_datetime 0.7.5+spec-1.1.0",
  "toml_parser",
  "toml_writer",
@@ -4026,11 +4128,20 @@ checksum = "81f3d15e84cbcd896376e6730314d59fb5a87f31e4b038454184435cd57defee"
 dependencies = [
  "indexmap 2.14.0",
  "serde_core",
- "serde_spanned",
+ "serde_spanned 1.1.1",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow 1.0.3",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -4053,6 +4164,20 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
+version = "0.22.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
+dependencies = [
+ "indexmap 2.14.0",
+ "serde",
+ "serde_spanned 0.6.9",
+ "toml_datetime 0.6.11",
+ "toml_write",
+ "winnow 0.7.15",
+]
+
+[[package]]
+name = "toml_edit"
 version = "0.25.12+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2153edc6955a6c354fad8f5efd38b6a8769bdccf9fe50f8e1329f81b0baa5d7"
@@ -4071,6 +4196,12 @@ checksum = "a2abe9b86193656635d2411dc43050282ca48aa31c2451210f4202550afb7526"
 dependencies = [
  "winnow 1.0.3",
 ]
+
+[[package]]
+name = "toml_write"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "toml_writer"
@@ -4211,6 +4342,15 @@ dependencies = [
  "rand 0.8.6",
  "serde",
  "spin 0.10.0",
+]
+
+[[package]]
+name = "uncased"
+version = "0.9.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1b88fcfe09e89d3866a5c11019378088af2d24c3fbd4f0543f96b479ec90697"
+dependencies = [
+ "version_check",
 ]
 
 [[package]]
@@ -4937,6 +5077,9 @@ name = "winnow"
 version = "0.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "winnow"
@@ -5072,6 +5215,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
+name = "yansi"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
+
+[[package]]
 name = "yasna"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5107,7 +5256,7 @@ dependencies = [
 [[package]]
 name = "zenoh"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -5157,7 +5306,7 @@ dependencies = [
 [[package]]
 name = "zenoh-buffers"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "zenoh-collections",
 ]
@@ -5165,7 +5314,7 @@ dependencies = [
 [[package]]
 name = "zenoh-codec"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "tracing",
  "uhlc",
@@ -5176,7 +5325,7 @@ dependencies = [
 [[package]]
 name = "zenoh-collections"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "ahash",
 ]
@@ -5184,7 +5333,7 @@ dependencies = [
 [[package]]
 name = "zenoh-config"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "json5",
  "nonempty-collections",
@@ -5209,7 +5358,7 @@ dependencies = [
 [[package]]
 name = "zenoh-core"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "lazy_static",
  "tokio",
@@ -5220,7 +5369,7 @@ dependencies = [
 [[package]]
 name = "zenoh-crypto"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "aes",
  "hmac",
@@ -5233,7 +5382,7 @@ dependencies = [
 [[package]]
 name = "zenoh-keyexpr"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "getrandom 0.2.17",
  "hashbrown 0.16.1",
@@ -5248,7 +5397,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "zenoh-config",
  "zenoh-link-commons",
@@ -5266,7 +5415,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-commons"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "base64",
@@ -5302,7 +5451,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-quic"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "rustls-webpki",
@@ -5318,7 +5467,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-quic_datagram"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "rustls-webpki",
@@ -5334,7 +5483,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-tcp"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "socket2 0.5.10",
@@ -5351,7 +5500,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-tls"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "base64",
@@ -5380,7 +5529,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-udp"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "libc",
@@ -5402,7 +5551,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-unixsock_stream"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "nix 0.29.0",
@@ -5420,7 +5569,7 @@ dependencies = [
 [[package]]
 name = "zenoh-link-ws"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -5440,7 +5589,7 @@ dependencies = [
 [[package]]
 name = "zenoh-macros"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5479,7 +5628,7 @@ dependencies = [
 [[package]]
 name = "zenoh-plugin-trait"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "git-version",
  "libloading",
@@ -5496,7 +5645,7 @@ dependencies = [
 [[package]]
 name = "zenoh-protocol"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "const_format",
  "rand 0.8.6",
@@ -5511,7 +5660,7 @@ dependencies = [
 [[package]]
 name = "zenoh-result"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "anyhow",
 ]
@@ -5519,7 +5668,7 @@ dependencies = [
 [[package]]
 name = "zenoh-runtime"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "lazy_static",
  "ron",
@@ -5533,7 +5682,7 @@ dependencies = [
 [[package]]
 name = "zenoh-sync"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "arc-swap",
  "event-listener",
@@ -5547,7 +5696,7 @@ dependencies = [
 [[package]]
 name = "zenoh-task"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "futures",
  "tokio",
@@ -5560,7 +5709,7 @@ dependencies = [
 [[package]]
 name = "zenoh-transport"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "crossbeam-utils",
@@ -5594,7 +5743,7 @@ dependencies = [
 [[package]]
 name = "zenoh-util"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "const_format",
@@ -5620,7 +5769,7 @@ dependencies = [
 [[package]]
 name = "zenoh_backend_traits"
 version = "1.9.0"
-source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+source = "git+https://github.com/evanev7/zenoh.git?rev=2fed58e#2fed58ef264a8415b29452cc37054b2e04c10396"
 dependencies = [
  "async-trait",
  "const_format",

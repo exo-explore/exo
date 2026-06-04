@@ -96,6 +96,7 @@ pub struct CliArgs {
         value_name = "MULTIADDRS",
         help = "Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)"
     )]
+    #[deprecated]
     bootstrap_peers: Option<Vec<String>>,
 
     #[arg(
