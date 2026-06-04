@@ -42,7 +42,7 @@ pub struct CliArgs {
     #[arg(
         long = "no-api",
         action = ArgAction::SetFalse,
-        default_value_t =` true,
+        default_value_t = true,
         help = "Disable the API"
     )]
     api_enabled: bool,

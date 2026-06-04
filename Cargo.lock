@@ -1017,6 +1017,7 @@ name = "exo_rs"
 version = "0.0.1"
 dependencies = [
  "clap",
+ "dirs",
  "env_logger",
  "extend",
  "figment",
