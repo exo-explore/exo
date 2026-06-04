@@ -10,11 +10,16 @@ use std::{fs, io};
 /// By default, any path-like argument goes here, but can be moved to [`ConfigArgs`] if needed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
 pub struct LocatorArgs {
-    #[arg(long, env, value_name = "PATH", help = "Path to Exo's home directory")]
+    #[arg(
+        long,
+        env = "EXO_HOME",
+        value_name = "PATH",
+        help = "Path to Exo's home directory"
+    )]
     pub exo_home: Option<PathBuf>,
     #[arg(
         long,
-        env,
+        env = "EXO_CONFIG_FILE",
         value_name = "PATH",
         help = "Path to Exo's .toml config file"
     )]
@@ -77,7 +82,12 @@ impl LocatorConfig {
         exo_home: &Option<PathBuf>,
         get_dir: impl FnOnce() -> Option<PathBuf>,
     ) -> PathBuf {
-        // TODO: better error handling and bubblong up
+        // TODO: This splits the folders into seperate ones in macOS **too**
+        //       so we can have persistent IDs in cache folder and avoid the copy bug Evan mentioned
+        //       BUT the user encountered the bug when he used "macOS time machine" or something
+        //       so test that the "macOS time machine" doesn't copy the cache folder
+
+        // TODO: better error handling and bubbling up
         let home = exo_home
             .clone()
             .or_else(|| get_dir().map(|p| p.join("exo")))
