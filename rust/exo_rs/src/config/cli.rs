@@ -1,3 +1,4 @@
+use crate::config::locator::LocatorArgs;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +23,7 @@ pub enum Verbosity {
 pub struct CliArgs {
     #[arg(
           short = 'v',
-          long = "verbosity",
+          long,
           value_enum,
           default_value_t = Verbosity::Info,
           value_name = "LEVEL",
@@ -32,7 +33,7 @@ pub struct CliArgs {
 
     #[arg(
         short = 'm',
-        long = "force-master",
+        long,
         action = ArgAction::SetTrue,
         help = "Force node to be master"
     )]
@@ -41,13 +42,13 @@ pub struct CliArgs {
     #[arg(
         long = "no-api",
         action = ArgAction::SetFalse,
-        default_value_t = true,
+        default_value_t =` true,
         help = "Disable the API"
     )]
     api_enabled: bool,
 
     #[arg(
-        long = "api-port",
+        long,
         default_value_t = 52415,
         value_name = "PORT",
         help = "Port on which the API runs"
@@ -71,7 +72,7 @@ pub struct CliArgs {
     downloads_enabled: bool,
 
     #[arg(
-        long = "offline",
+        long,
         action = ArgAction::SetTrue,
         help = "Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models"
     )]
@@ -86,14 +87,14 @@ pub struct CliArgs {
     continuous_batching_enabled: bool,
 
     #[arg(
-        long = "legacy-daemon",
+        long,
         action = ArgAction::SetTrue,
         help = "Run as a legacy SysV-style background daemon using double-fork daemonization"
     )]
     legacy_daemon: bool,
 
     #[arg(
-        long = "bootstrap-peers",
+        long,
         value_delimiter = ',',
         value_name = "MULTIADDRS",
         help = "Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)"
@@ -110,7 +111,7 @@ pub struct CliArgs {
     namespace: String,
 
     #[arg(
-        long = "zenoh-port",
+        long,
         default_value_t = 52414,
         value_name = "PORT",
         help = "Fixed TCP port for zenoh to listen."
@@ -118,7 +119,7 @@ pub struct CliArgs {
     zenoh_port: u16,
 
     #[arg(
-        long = "discovery-port",
+        long,
         default_value_t = 52413,
         value_name = "PORT",
         help = "Fixed UDP port for the discovery service."
@@ -126,11 +127,14 @@ pub struct CliArgs {
     discovery_port: u16,
 
     #[arg(
-        long = "fast-synch",
+        long,
         value_name = "BOOL",
         help = "Force MLX FAST_SYNCH on/off (for JACCL backend); omit for auto"
     )]
     fast_synch: Option<bool>,
+
+    #[command(flatten)]
+    locator: LocatorArgs,
 
     #[command(flatten)]
     config: ConfigArgs,
