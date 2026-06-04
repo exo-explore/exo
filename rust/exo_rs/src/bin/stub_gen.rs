@@ -1,5 +1,5 @@
 use clap::Parser;
-use exo_rs::config::{CliArgs, EXO_VERSION};
+use exo_rs::config::cli::{CliArgs, EXO_VERSION};
 use pyo3_stub_gen::Result;
 
 fn main() -> Result<()> {
