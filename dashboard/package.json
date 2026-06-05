@@ -11,8 +11,6 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
 	},
 	"devDependencies": {
-		"prettier": "^3.4.2",
-		"prettier-plugin-svelte": "^3.3.3",
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/kit": "^2.48.4",
 		"@sveltejs/vite-plugin-svelte": "^5.0.0",
@@ -20,6 +18,8 @@
 		"@types/d3": "^7.4.3",
 		"@types/node": "^22",
 		"d3": "^7.9.0",
+		"prettier": "^3.4.2",
+		"prettier-plugin-svelte": "^3.3.3",
 		"svelte": "^5.0.0",
 		"svelte-check": "^4.0.0",
 		"tailwindcss": "^4.0.0",
@@ -28,6 +28,7 @@
 		"vite": "^6.0.0"
 	},
 	"dependencies": {
+		"devalue": "^5.6.2",
 		"highlight.js": "^11.11.1",
 		"katex": "^0.16.27",
 		"marked": "^17.0.1",
