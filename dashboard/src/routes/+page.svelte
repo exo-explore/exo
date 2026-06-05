@@ -783,6 +783,7 @@
       quantization?: string;
       base_model?: string;
       capabilities?: string[];
+      recommended?: boolean;
     }>
   >([]);
   type ModelMemoryFitStatus =

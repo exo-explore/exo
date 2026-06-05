@@ -606,9 +606,12 @@ class AppStore {
   /** Number of consecutive fetch failures. */
   private consecutiveFailures = 0;
   private static readonly CONNECTION_LOST_THRESHOLD = 3;
+  private static readonly STATE_POLL_INTERVAL_MS = 2000;
 
   private fetchInterval: ReturnType<typeof setInterval> | null = null;
   private previewsInterval: ReturnType<typeof setInterval> | null = null;
+  private stateEtag: string | null = null;
+  private visibilityListener: (() => void) | null = null;
   private lastConversationPersistTs = 0;
   private previousNodeIds: Set<string> = new Set();
 
@@ -1284,13 +1287,44 @@ class AppStore {
   startPolling() {
     this.fetchState();
     this.fetchFeatureFlags();
-    this.fetchInterval = setInterval(() => this.fetchState(), 1000);
+    this.startStateInterval();
+
+    // Pause polling while the tab is hidden — a backgrounded dashboard has no
+    // reason to keep pulling /state. Resume with an immediate fetch when the
+    // tab becomes visible again.
+    if (typeof document !== "undefined" && !this.visibilityListener) {
+      this.visibilityListener = () => {
+        if (document.hidden) {
+          this.stopStateInterval();
+        } else if (!this.fetchInterval) {
+          this.fetchState();
+          this.startStateInterval();
+        }
+      };
+      document.addEventListener("visibilitychange", this.visibilityListener);
+    }
   }
 
-  stopPolling() {
+  private startStateInterval() {
+    if (this.fetchInterval) return;
+    this.fetchInterval = setInterval(
+      () => this.fetchState(),
+      AppStore.STATE_POLL_INTERVAL_MS,
+    );
+  }
+
+  private stopStateInterval() {
     if (this.fetchInterval) {
       clearInterval(this.fetchInterval);
       this.fetchInterval = null;
+    }
+  }
+
+  stopPolling() {
+    this.stopStateInterval();
+    if (this.visibilityListener && typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.visibilityListener);
+      this.visibilityListener = null;
     }
     this.stopPreviewsPolling();
   }
@@ -1307,10 +1341,25 @@ class AppStore {
 
   async fetchState() {
     try {
-      const response = await fetch("/state");
+      const headers: Record<string, string> = {};
+      if (this.stateEtag) {
+        headers["If-None-Match"] = this.stateEtag;
+      }
+      const response = await fetch("/state", { headers });
+
+      // 304: state unchanged since our last poll — no body shipped. Keep the
+      // data we already have and treat it as a successful poll.
+      if (response.status === 304) {
+        this.lastUpdate = Date.now();
+        if (!this.isConnected) this.isConnected = true;
+        this.consecutiveFailures = 0;
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(`Failed to fetch state: ${response.status}`);
       }
+      this.stateEtag = response.headers.get("ETag");
       const data: RawStateResponse = await response.json();
 
       if (data.topology) {

@@ -173,6 +173,7 @@ class ModelCard(FrozenModel):
     uses_cfg: bool = False
     trust_remote_code: bool = True
     is_custom: bool = False
+    recommended: bool = False
     vision: VisionCardConfig | None = None
     sampling_defaults: SamplingDefaults = Field(default_factory=SamplingDefaults)
 

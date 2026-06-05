@@ -11,6 +11,7 @@ capabilities = ["text", "code"]
 
 context_length = 262144
 backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+recommended = true
 [storage_size]
 in_bytes = 45644286500
 
