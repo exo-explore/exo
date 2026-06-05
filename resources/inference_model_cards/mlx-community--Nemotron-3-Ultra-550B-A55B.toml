@@ -1,0 +1,21 @@
+model_id = "mlx-community/Nemotron-3-Ultra-550B-A55B"
+n_layers = 108
+hidden_size = 8192
+num_key_value_heads = 2
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "nemotron"
+quantization = "int4"
+base_model = "NVIDIA Nemotron-3-Ultra-550B-A55B"
+capabilities = ["text"]
+
+context_length = 262144
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+recommended = true
+[storage_size]
+in_bytes = 360783261541
+
+# Source: https://huggingface.co/mlx-community/Nemotron-3-Ultra-550B-A55B
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95

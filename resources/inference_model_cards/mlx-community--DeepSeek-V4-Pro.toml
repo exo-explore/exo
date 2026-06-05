@@ -12,6 +12,7 @@ reasoning_dialect = "tool_conditional"
 
 context_length = 1048576
 backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+recommended = true
 [storage_size]
 in_bytes = 849681803879
 

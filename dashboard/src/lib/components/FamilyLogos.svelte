@@ -7,7 +7,14 @@
   let { family, class: className = "" }: FamilyLogoProps = $props();
 </script>
 
-{#if family === "favorites"}
+{#if family === "recommended"}
+  <svg class="w-6 h-6 {className}" viewBox="0 0 24 24" fill="currentColor">
+    <path
+      d="M11 3l1.8 4.7L17.5 9.5l-4.7 1.8L11 16l-1.8-4.7L4.5 9.5l4.7-1.8L11 3z"
+    />
+    <path d="M18 13l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9.9-2.4z" />
+  </svg>
+{:else if family === "favorites"}
   <svg class="w-6 h-6 {className}" viewBox="0 0 24 24" fill="currentColor">
     <path
       d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
