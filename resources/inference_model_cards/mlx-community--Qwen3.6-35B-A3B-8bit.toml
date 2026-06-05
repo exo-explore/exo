@@ -18,12 +18,12 @@ in_bytes = 37721128672
 # Source: https://huggingface.co/Qwen/Qwen3.6-35B-A3B#best-practices
 # Source: https://unsloth.ai/docs/models/qwen3.5
 [sampling_defaults]
-temperature = 1.0
+temperature = 0.6
 top_p = 0.95
 top_k = 20
 min_p = 0.0
 repetition_penalty = 1.0
-presence_penalty = 1.5
+presence_penalty = 0.0
 
 # Source: https://huggingface.co/Qwen/Qwen3.6-35B-A3B#best-practices
 # Source: https://unsloth.ai/docs/models/qwen3.5
