@@ -26,6 +26,11 @@ EXO_CONFIG_HOME = _get_xdg_dir("XDG_CONFIG_HOME", ".config")
 EXO_DATA_HOME = _get_xdg_dir("XDG_DATA_HOME", ".local/share")
 EXO_CACHE_HOME = _get_xdg_dir("XDG_CACHE_HOME", ".cache")
 
+# Exo website API endpoints
+EXO_TELEMETRY_API_URL = os.environ.get(
+    "EXO_TELEMETRY_API_URL", "https://telemetry.exolabs.net/"
+)
+
 # Default models directory (always included as first entry in writable dirs)
 _EXO_DEFAULT_MODELS_DIR_ENV = os.environ.get("EXO_DEFAULT_MODELS_DIR", None)
 EXO_DEFAULT_MODELS_DIR = (
@@ -69,8 +74,6 @@ DASHBOARD_DIR = (
 EXO_LOG_DIR = EXO_CACHE_HOME / "exo_log"
 EXO_LOG = EXO_LOG_DIR / "exo.log"
 EXO_RUNNER_LOG_DIR = EXO_LOG_DIR / "runner_log"
-EXO_RUNNER_STDOUT_LOG = EXO_RUNNER_LOG_DIR / "stdout.log"
-EXO_RUNNER_STDERR_LOG = EXO_RUNNER_LOG_DIR / "stderr.log"
 
 EXO_TEST_LOG = EXO_CACHE_HOME / "exo_test.log"
 EXO_PID_FILE = EXO_CACHE_HOME / "exo.pid"

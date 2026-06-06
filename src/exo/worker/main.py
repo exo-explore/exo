@@ -15,6 +15,7 @@ from exo.routing.event_router import (
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models.model_cards import ModelId, card_cache
+from exo.shared.telemetry import TelemetrySink
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     DeleteInstance,
@@ -74,6 +75,7 @@ class Worker:
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         api_port: int,
+        telemetry_sink: TelemetrySink,
     ):
         self.node_id: NodeId = node_id
         self.event_receiver = event_receiver
@@ -81,6 +83,7 @@ class Worker:
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
         self.api_port = api_port
+        self.telemetry_sink = telemetry_sink
 
         self.state: State = State()
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
@@ -122,6 +125,7 @@ class Worker:
             self.event_sender.close()
             self.command_sender.close()
             self.download_command_sender.close()
+            self.telemetry_sink.close()
             for runner in self.runners.values():
                 runner.shutdown()
             self._stopped.set()
@@ -381,6 +385,7 @@ class Worker:
         runner = await RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),
+            telemetry_sink=self.telemetry_sink.clone(),
         )
         self.runners[task.bound_instance.bound_runner_id] = runner
         self._tg.start_soon(runner.run)
