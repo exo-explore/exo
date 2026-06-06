@@ -1,7 +1,32 @@
 """Pytest configuration and shared fixtures for shared package tests."""
 
 import asyncio
+import sys
+import types
 from typing import Generator
+from unittest.mock import MagicMock
+
+# Stub the exo_rs Rust extension so tests can run without a compiled binary.
+# Only installed when the real extension is not already available.
+if "exo_rs" not in sys.modules:
+    _stub = types.ModuleType("exo_rs")
+
+    class _FromSwarm:
+        class Connection:
+            peer_id: str = ""
+            connected: bool = False
+
+    _stub.FromSwarm = _FromSwarm  # type: ignore[attr-defined]
+    _stub.AllQueuesFullError = type("AllQueuesFullError", (Exception,), {})  # type: ignore[attr-defined]
+    _stub.MessageTooLargeError = type("MessageTooLargeError", (Exception,), {})  # type: ignore[attr-defined]
+    _stub.NoPeersSubscribedToTopicError = type(
+        "NoPeersSubscribedToTopicError", (Exception,), {}
+    )  # type: ignore[attr-defined]
+    _stub.Keypair = MagicMock  # type: ignore[attr-defined]
+    _stub.NetworkingHandle = MagicMock  # type: ignore[attr-defined]
+    _stub.Pidfile = MagicMock  # type: ignore[attr-defined]
+    _stub.PidfileError = type("PidfileError", (Exception,), {})  # type: ignore[attr-defined]
+    sys.modules["exo_rs"] = _stub
 
 import pytest
 from _pytest.logging import LogCaptureFixture
