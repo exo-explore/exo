@@ -387,7 +387,19 @@ def parse_thinking_models(
 
         if response.finish_reason is not None:
             yield from drain_pending(is_thinking)
-            yield response.model_copy(update={"is_thinking": False})
+            if is_thinking:
+                # Generation ended without seeing think_end. The token's text
+                # belongs to reasoning_content, but downstream consumers that
+                # read only content and finish_reason still need a terminating
+                # delta, so split into a thinking chunk and an empty content
+                # chunk that carries finish_reason.
+                if response.text:
+                    yield response.model_copy(
+                        update={"is_thinking": True, "finish_reason": None}
+                    )
+                yield response.model_copy(update={"is_thinking": False, "text": ""})
+            else:
+                yield response.model_copy(update={"is_thinking": False})
             continue
 
         if accumulated == think_start and not is_thinking:
