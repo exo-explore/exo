@@ -26,10 +26,10 @@ class ElectionMessage(FrozenModel):
 
     # Could eventually include a list of neighbour nodes for centrality
     def __lt__(self, other: Self) -> bool:
-        if self.clock != other.clock:
-            return self.clock < other.clock
         if self.seniority != other.seniority:
             return self.seniority < other.seniority
+        if self.clock != other.clock:
+            return self.clock < other.clock
         elif self.commands_seen != other.commands_seen:
             return self.commands_seen < other.commands_seen
         else:
@@ -194,7 +194,7 @@ class Election:
             logger.info("Cancelling other campaign")
             self._campaign_cancel_scope.cancel()
         if self._campaign_done:
-            logger.info("Waiting for other campaign to finish")
+            logger.debug("Waiting for other campaign to finish")
             await self._campaign_done.wait()
 
         done = Event()
