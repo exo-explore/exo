@@ -3,7 +3,7 @@ use crate::version;
 use clap::{ArgAction, Parser, ValueEnum};
 use pyo3::prelude::PyAnyMethods;
 use pyo3::types::PyModule;
-use pyo3::{pyclass, pymethods, PyResult, Python};
+use pyo3::{PyResult, Python, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;

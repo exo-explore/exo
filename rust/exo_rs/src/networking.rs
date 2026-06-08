@@ -4,14 +4,14 @@ use std::sync::Arc;
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _, TokioRuntimeExt};
 use crate::ext::{ResultExt as _, TokioMpscSenderExt as _};
 use futures_lite::{Stream, StreamExt as _};
-use networking::swarm::{create_swarm, FromSwarm, Swarm, ToSwarm};
-use networking::{is_valid_zid, Session};
+use networking::swarm::{FromSwarm, Swarm, ToSwarm, create_swarm};
+use networking::{Session, is_valid_zid};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use pyo3::{pymethods, Bound, Py, PyErr, PyResult, Python};
+use pyo3::{Bound, Py, PyErr, PyResult, Python, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 #[gen_stub_pyclass]
 #[pyclass(name = "NetworkingHandle")]

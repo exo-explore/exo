@@ -13,7 +13,7 @@ use crate::config::config_submodule;
 use crate::networking::networking_submodule;
 use crate::pidfile::pidfile_submodule;
 use pyo3::prelude::PyModule;
-use pyo3::{pymodule, Bound, PyResult};
+use pyo3::{Bound, PyResult, pymodule};
 use pyo3_stub_gen::define_stub_info_gatherer;
 
 /// Namespace for crate-wide extension traits/methods
