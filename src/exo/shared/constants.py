@@ -71,19 +71,12 @@ EXO_LOG = EXO_LOG_DIR / "exo.log"
 EXO_RUNNER_LOG_DIR = EXO_LOG_DIR / "runner_log"
 EXO_RUNNER_STDOUT_LOG = EXO_RUNNER_LOG_DIR / "stdout.log"
 EXO_RUNNER_STDERR_LOG = EXO_RUNNER_LOG_DIR / "stderr.log"
-
-EXO_TEST_LOG = EXO_CACHE_HOME / "exo_test.log"
 EXO_PID_FILE = EXO_CACHE_HOME / "exo.pid"
 
 # Identity (config)
 EXO_NODE_ZID = EXO_CACHE_HOME / "node_zid"
 EXO_CONFIG_FILE = EXO_CONFIG_HOME / "config.toml"
 
-# libp2p topics for event forwarding
-LIBP2P_LOCAL_EVENTS_TOPIC = "worker_events"
-LIBP2P_GLOBAL_EVENTS_TOPIC = "global_events"
-LIBP2P_ELECTION_MESSAGES_TOPIC = "election_message"
-LIBP2P_COMMANDS_TOPIC = "commands"
 
 EXO_MAX_CHUNK_SIZE = 512 * 1024
 
@@ -96,8 +89,6 @@ EXO_TRACING_CACHE_DIR = EXO_CACHE_HOME / "traces"
 EXO_ENABLE_IMAGE_MODELS = (
     os.getenv("EXO_ENABLE_IMAGE_MODELS", "false").lower() == "true"
 )
-
-EXO_OFFLINE = os.getenv("EXO_OFFLINE", "false").lower() == "true"
 
 EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true"
 

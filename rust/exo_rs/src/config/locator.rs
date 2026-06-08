@@ -102,8 +102,17 @@ impl LocatorConfig {
         let exo_data_home = Self::get_home_dir(&exo_home, dirs::data_dir);
         let exo_cache_home = Self::get_home_dir(&exo_home, dirs::cache_dir);
 
-        // config file validation
-        let config_file = args
+        // Log files (data/logs or cache)
+        let exo_log_dir = exo_cache_home.join("exo_log");
+        let exo_log = exo_log_dir.join("exo.log");
+        let exo_runner_log_dir = exo_log_dir.join("runner_log");
+        let exo_runner_stdout_log = exo_runner_log_dir.join("stdout.log");
+        let exo_runner_stderr_log = exo_runner_log_dir.join("stderr.log");
+        let exo_pid = exo_cache_home.join("exo.pid");
+
+        // Identity (config)
+        let exo_node_zid = exo_cache_home.join("node_zid");
+        let exo_config_file = args
             .config_file
             .clone()
             .unwrap_or_else(|| exo_config_home.join("config.toml"));
