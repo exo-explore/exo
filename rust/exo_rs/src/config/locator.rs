@@ -122,7 +122,7 @@ impl LocatorConfig {
             exo_config_home,
             exo_data_home,
             exo_cache_home,
-            config_file,
+            config_file: exo_config_file,
         }
     }
 }
