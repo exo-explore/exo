@@ -1,7 +1,6 @@
 import argparse
 import multiprocessing as mp
 import os
-from re import A
 import resource
 import signal
 import sys
