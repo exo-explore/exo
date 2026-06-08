@@ -1,6 +1,7 @@
 import argparse
 import multiprocessing as mp
 import os
+from re import A
 import resource
 import signal
 import sys
@@ -10,7 +11,7 @@ from typing import Self
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
 from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
-from exo_rs import CliArgs, Pidfile, PidfileError
+from exo_rs import CliArgs, LocatorConfig, Pidfile, PidfileError
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -276,7 +277,9 @@ class Node:
 
 
 def main():
-    # a = CliArgs.parse()
+    args = CliArgs.parse()
+    locator = LocatorConfig.resolve(args.locator)
+    print(locator.exo_cache_home)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
