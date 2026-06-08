@@ -9,7 +9,7 @@ use networking::{is_valid_zid, Session};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use pyo3::{pymethods, Bound, Py, PyAny, PyErr, PyResult, Python};
+use pyo3::{pymethods, Bound, Py, PyErr, PyResult, Python};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
 use tokio::sync::{mpsc, oneshot, Mutex};
 

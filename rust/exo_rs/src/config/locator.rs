@@ -1,3 +1,5 @@
+use pyo3::pyclass;
+use pyo3_stub_gen::derive::gen_stub_pyclass;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{fs, io};
@@ -8,7 +10,10 @@ use std::{fs, io};
 /// therefore any args here cannot be specified by the configuration `.toml` file.
 ///
 /// By default, any path-like argument goes here, but can be moved to [`ConfigArgs`] if needed.
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
+#[command(about = None, long_about = None)]
 pub struct LocatorArgs {
     #[arg(
         long,
@@ -16,23 +21,33 @@ pub struct LocatorArgs {
         value_name = "PATH",
         help = "Path to Exo's home directory"
     )]
+    #[pyo3(get)]
     pub exo_home: Option<PathBuf>,
+
     #[arg(
         long,
         env = "EXO_CONFIG_FILE",
         value_name = "PATH",
         help = "Path to Exo's .toml config file"
     )]
+    #[pyo3(get)]
     pub config_file: Option<PathBuf>,
 }
 
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocatorConfig {
     // base XDG directories
+    #[pyo3(get)]
     pub exo_config_home: PathBuf,
+    #[pyo3(get)]
     pub exo_data_home: PathBuf,
+    #[pyo3(get)]
     pub exo_cache_home: PathBuf,
 
     // other
+    #[pyo3(get)]
     pub config_file: PathBuf,
 }
 

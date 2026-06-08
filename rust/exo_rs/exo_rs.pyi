@@ -2,15 +2,90 @@
 # ruff: noqa: E501, F401, F403, F405
 
 import builtins
+import enum
 import os
 import pathlib
 import typing
 __all__ = [
+    "CliArgs",
+    "ConfigArgs",
+    "DeprecatedArgs",
     "FromSwarm",
+    "LocatorArgs",
+    "LocatorConfig",
     "NetworkingHandle",
     "Pidfile",
     "PidfileError",
+    "Verbosity",
 ]
+
+@typing.final
+class CliArgs:
+    @property
+    def verbosity(self) -> Verbosity: ...
+    @property
+    def force_master(self) -> builtins.bool: ...
+    @property
+    def api_enabled(self) -> builtins.bool: ...
+    @property
+    def api_port(self) -> builtins.int: ...
+    @property
+    def worker_enabled(self) -> builtins.bool: ...
+    @property
+    def downloads_enabled(self) -> builtins.bool: ...
+    @property
+    def offline(self) -> builtins.bool: ...
+    @property
+    def continuous_batching_enabled(self) -> builtins.bool: ...
+    @property
+    def legacy_daemon(self) -> builtins.bool: ...
+    @property
+    def bootstrap_peers(self) -> typing.Optional[builtins.list[builtins.str]]: ...
+    @property
+    def namespace(self) -> builtins.str: ...
+    @property
+    def zenoh_port(self) -> builtins.int: ...
+    @property
+    def discovery_port(self) -> builtins.int: ...
+    @property
+    def fast_synch(self) -> typing.Optional[builtins.bool]: ...
+    @property
+    def locator(self) -> LocatorArgs: ...
+    @property
+    def config(self) -> ConfigArgs: ...
+    @property
+    def deprecated(self) -> DeprecatedArgs: ...
+    @staticmethod
+    def parse_from(argv: typing.Sequence[builtins.str]) -> CliArgs: ...
+    @staticmethod
+    def parse() -> CliArgs: ...
+
+@typing.final
+class ConfigArgs:
+    r"""
+    Arguments that will end up in the final configuration go here.
+    
+    The precedence of the final configuration object will be:
+     - Defaults < Config file < Env < Cli args
+    
+    # Important
+     - Make sure all are [`Option<T>`] so we can make it combinable with other
+       sources of configuration
+    """
+    ...
+
+@typing.final
+class DeprecatedArgs:
+    r"""
+    Deprecated arguments go here.
+    
+    # Important
+     - Make sure all are `hide = true` so it won't appear in `--help`
+     - Make sure all are [`Option<T>`] so them being missing doesn't cause issues
+     - Edit [`Self::get_error`] to handle changes of new/removed args in here
+    """
+    @property
+    def libp2p_port(self) -> typing.Optional[builtins.int]: ...
 
 class FromSwarm:
     @typing.final
@@ -30,6 +105,32 @@ class FromSwarm:
         def __new__(cls, topic: builtins.str, data: bytes) -> FromSwarm.Message: ...
     
     ...
+
+@typing.final
+class LocatorArgs:
+    r"""
+    Arguments that are needed to resolve paths to files go here.
+    
+    This is needed for such things as resolving the path of the configuration `.toml` file,
+    therefore any args here cannot be specified by the configuration `.toml` file.
+    
+    By default, any path-like argument goes here, but can be moved to [`ConfigArgs`] if needed.
+    """
+    @property
+    def exo_home(self) -> typing.Optional[pathlib.Path]: ...
+    @property
+    def config_file(self) -> typing.Optional[pathlib.Path]: ...
+
+@typing.final
+class LocatorConfig:
+    @property
+    def exo_config_home(self) -> pathlib.Path: ...
+    @property
+    def exo_data_home(self) -> pathlib.Path: ...
+    @property
+    def exo_cache_home(self) -> pathlib.Path: ...
+    @property
+    def config_file(self) -> pathlib.Path: ...
 
 @typing.final
 class NetworkingHandle:
@@ -110,4 +211,13 @@ class Pidfile:
 class PidfileError(builtins.Exception):
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
+
+@typing.final
+class Verbosity(enum.Enum):
+    Off = ...
+    Error = ...
+    Warn = ...
+    Info = ...
+    Debug = ...
+    Trace = ...
 

@@ -9,10 +9,11 @@ pub mod config;
 mod networking;
 mod pidfile;
 
+use crate::config::config_submodule;
 use crate::networking::networking_submodule;
 use crate::pidfile::pidfile_submodule;
 use pyo3::prelude::PyModule;
-use pyo3::{Bound, PyResult, pymodule};
+use pyo3::{pymodule, Bound, PyResult};
 use pyo3_stub_gen::define_stub_info_gatherer;
 
 /// Namespace for crate-wide extension traits/methods
@@ -157,6 +158,48 @@ pub(crate) mod ext {
     }
 }
 
+/// Resolving the version of the python project
+pub(crate) mod version {
+    use pyo3::exceptions::PyRuntimeError;
+    use pyo3::prelude::PyAnyMethods;
+    use pyo3::types::PyModule;
+    use pyo3::{PyResult, Python};
+    use std::env;
+    use std::sync::OnceLock;
+
+    const DEFAULT_VERSION: &str = env!("CARGO_PKG_VERSION");
+    static VERSION: OnceLock<String> = OnceLock::new();
+
+    /// Returns either the configured version of Exo (once set by [`set_version_once`])
+    /// or falls back to `CARGO_PKG_VERSION` if that hasn't been configured.
+    pub fn version() -> &'static str {
+        VERSION.get().map_or(DEFAULT_VERSION, String::as_str)
+    }
+
+    /// First tries to find `EXO_PKG_VERSION` env-var, falls back to calling Python
+    /// `importlib.metadata.version("exo")` to resolve the version of Exo
+    pub fn set_version_once(py: Python<'_>) -> PyResult<()> {
+        let v = if let Ok(v) = env::var("EXO_PKG_VERSION") {
+            v
+        } else {
+            // essentially runs:
+            // ```python
+            // from importlib.metadata import version
+            // version("exo")
+            // ```
+            PyModule::import(py, "importlib.metadata")?
+                .getattr("version")?
+                .call1(("exo",))?
+                .extract()?
+        };
+
+        // sets version only once
+        VERSION
+            .set(v)
+            .map_err(|_| PyRuntimeError::new_err("Cannot set exo_rs version twice".to_string()))
+    }
+}
+
 /// A Python module implemented in Rust. The name of this function must match
 /// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
 /// import the module.
@@ -164,6 +207,11 @@ pub(crate) mod ext {
 fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // install logger
     pyo3_log::init();
+
+    // resolve version
+    version::set_version_once(m.py())?;
+
+    // configure runtime
     let mut builder = tokio::runtime::Builder::new_multi_thread();
     builder.enable_all();
     pyo3_async_runtimes::tokio::init(builder);
@@ -172,8 +220,8 @@ fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     //       work with maturin, where the types generate correctly, in the right folder, without
     //       too many importing issues...
     pidfile_submodule(m)?;
-    // m.add_class::<PyKeypair>()?;
     networking_submodule(m)?;
+    config_submodule(m)?;
 
     // top-level constructs
     // TODO: ...

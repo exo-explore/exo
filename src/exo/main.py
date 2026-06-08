@@ -10,7 +10,7 @@ from typing import Self
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
 from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
-from exo_rs import Pidfile, PidfileError
+from exo_rs import CliArgs, Pidfile, PidfileError
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -276,6 +276,8 @@ class Node:
 
 
 def main():
+    # a = CliArgs.parse()
+
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
 

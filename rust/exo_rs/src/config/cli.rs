@@ -1,12 +1,15 @@
 use crate::config::locator::LocatorArgs;
-use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+use crate::version;
+use clap::{ArgAction, Parser, ValueEnum};
+use pyo3::prelude::PyAnyMethods;
+use pyo3::types::PyModule;
+use pyo3::{pyclass, pymethods, PyResult, Python};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
 
-pub const EXO_VERSION: &str = match option_env!("EXO_PKG_VERSION") {
-    Some(v) => v,
-    None => env!("CARGO_PKG_VERSION"),
-};
-
+#[gen_stub_pyclass_enum]
+#[pyclass(eq, eq_int, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Verbosity {
@@ -18,8 +21,10 @@ pub enum Verbosity {
     Trace,
 }
 
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Parser)]
-#[command(name = "EXO", version = EXO_VERSION, about, long_about = None)]
+#[command(name = "EXO", version = version::version(), about, long_about = None)]
 pub struct CliArgs {
     #[arg(
           short = 'v',
@@ -29,6 +34,7 @@ pub struct CliArgs {
           value_name = "LEVEL",
           help = "Set the verbosity level"
     )]
+    #[pyo3(get)]
     pub verbosity: Verbosity,
 
     #[arg(
@@ -37,6 +43,7 @@ pub struct CliArgs {
         action = ArgAction::SetTrue,
         help = "Force node to be master"
     )]
+    #[pyo3(get)]
     force_master: bool,
 
     #[arg(
@@ -45,6 +52,7 @@ pub struct CliArgs {
         default_value_t = true,
         help = "Disable the API"
     )]
+    #[pyo3(get)]
     api_enabled: bool,
 
     #[arg(
@@ -53,6 +61,7 @@ pub struct CliArgs {
         value_name = "PORT",
         help = "Port on which the API runs"
     )]
+    #[pyo3(get)]
     api_port: u16,
 
     #[arg(
@@ -61,6 +70,7 @@ pub struct CliArgs {
         default_value_t = true,
         help = "Disable the worker"
     )]
+    #[pyo3(get)]
     worker_enabled: bool,
 
     #[arg(
@@ -69,6 +79,7 @@ pub struct CliArgs {
         default_value_t = true,
         help = "Disable the download coordinator (node won't download models)"
     )]
+    #[pyo3(get)]
     downloads_enabled: bool,
 
     #[arg(
@@ -76,6 +87,7 @@ pub struct CliArgs {
         action = ArgAction::SetTrue,
         help = "Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models"
     )]
+    #[pyo3(get)]
     offline: bool,
 
     #[arg(
@@ -84,6 +96,7 @@ pub struct CliArgs {
         default_value_t = true,
         help = "Disable continuous batching, use sequential generation"
     )]
+    #[pyo3(get)]
     continuous_batching_enabled: bool,
 
     #[arg(
@@ -91,6 +104,7 @@ pub struct CliArgs {
         action = ArgAction::SetTrue,
         help = "Run as a legacy SysV-style background daemon using double-fork daemonization"
     )]
+    #[pyo3(get)]
     legacy_daemon: bool,
 
     #[arg(
@@ -99,15 +113,16 @@ pub struct CliArgs {
         value_name = "MULTIADDRS",
         help = "Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)"
     )]
-    #[deprecated]
+    #[pyo3(get)]
     bootstrap_peers: Option<Vec<String>>,
 
     #[arg(
         long,
-        default_value_t = EXO_VERSION.to_string(),
+        default_value_t = version::version().to_string(),
         value_name = "STRING",
         help = "Discovery namespace, nodes with different namespaces will not connect."
     )]
+    #[pyo3(get)]
     namespace: String,
 
     #[arg(
@@ -116,6 +131,7 @@ pub struct CliArgs {
         value_name = "PORT",
         help = "Fixed TCP port for zenoh to listen."
     )]
+    #[pyo3(get)]
     zenoh_port: u16,
 
     #[arg(
@@ -124,6 +140,7 @@ pub struct CliArgs {
         value_name = "PORT",
         help = "Fixed UDP port for the discovery service."
     )]
+    #[pyo3(get)]
     discovery_port: u16,
 
     #[arg(
@@ -131,16 +148,39 @@ pub struct CliArgs {
         value_name = "BOOL",
         help = "Force MLX FAST_SYNCH on/off (for JACCL backend); omit for auto"
     )]
+    #[pyo3(get)]
     fast_synch: Option<bool>,
 
     #[command(flatten)]
+    #[pyo3(get)]
     locator: LocatorArgs,
 
     #[command(flatten)]
+    #[pyo3(get)]
     config: ConfigArgs,
 
     #[command(flatten)]
+    #[pyo3(get)]
     deprecated: DeprecatedArgs,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl CliArgs {
+    #[staticmethod]
+    #[pyo3(name = "parse_from")]
+    pub fn py_parse_from(argv: Vec<OsString>) -> Self {
+        CliArgs::parse_from(argv)
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "parse")]
+    pub fn py_parse(py: Python<'_>) -> PyResult<Self> {
+        // the correct CLI args to parse is `sys.argv`, because the original ones
+        // (i.e. `sys.orig_argv`) may contain extra arguments which would mess up parsing
+        let argv: Vec<OsString> = PyModule::import(py, "sys")?.getattr("argv")?.extract()?;
+        Ok(CliArgs::parse_from(argv))
+    }
 }
 
 /// Arguments that will end up in the final configuration go here.
@@ -151,7 +191,10 @@ pub struct CliArgs {
 /// # Important
 ///  - Make sure all are [`Option<T>`] so we can make it combinable with other
 ///    sources of configuration
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
+#[command(about = None, long_about = None)]
 pub struct ConfigArgs {}
 
 /// Deprecated arguments go here.
@@ -160,9 +203,13 @@ pub struct ConfigArgs {}
 ///  - Make sure all are `hide = true` so it won't appear in `--help`
 ///  - Make sure all are [`Option<T>`] so them being missing doesn't cause issues
 ///  - Edit [`Self::get_error`] to handle changes of new/removed args in here
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
+#[command(about = None, long_about = None)]
 pub struct DeprecatedArgs {
     #[arg(long = "libp2p-port", hide = true)]
+    #[pyo3(get)]
     libp2p_port: Option<u16>,
 }
 
@@ -183,8 +230,4 @@ impl DeprecatedArgs {
             None
         }
     }
-}
-
-fn env_flag(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|value| value.eq_ignore_ascii_case("true"))
 }
