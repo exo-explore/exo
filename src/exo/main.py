@@ -348,6 +348,8 @@ def main_inner(args: "Args"):
         raise ValueError(
             "EXO_LIBP2P_NAMESPACE has been removed - use EXO_ZENOH_NAMESPACE instead"
         )
+    logger.info(f"Zenoh namespace: {args.namespace}")
+    # TODO: this literally here does NOTHING!!! why?
     logger.info(f"EXO_ZENOH_NAMESPACE: {os.getenv('EXO_ZENOH_NAMESPACE')}")
 
     if args.offline:
