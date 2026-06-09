@@ -1,0 +1,10 @@
+# Ignore downloaded/cached files (can be large)
+cache/*
+!cache/.gitkeep
+
+# Ignore converted model files
+output/*.rkllm
+!output/.gitkeep
+
+# Keep models directory structure
+!models/.gitkeep

@@ -1,0 +1,41 @@
+[Unit]
+Description=RKLLAMA Server - RKLLM Runtime for RK3588 NPU
+Documentation=https://github.com/jfreed-dev/rkllama
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/rkllama
+
+# Environment
+Environment="PATH=/opt/rkllama/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="VIRTUAL_ENV=/opt/rkllama/venv"
+
+# NPU frequency optimization (run before starting)
+ExecStartPre=/bin/bash -c '/opt/rkllama/lib/fix_freq_rk3588.sh || true'
+
+# Start the server
+ExecStart=/opt/rkllama/venv/bin/python server.py --target_platform rk3588 --port 8080
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rkllama
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=65535
+
+# Security (relaxed for NPU access)
+ProtectSystem=false
+ProtectHome=false
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target

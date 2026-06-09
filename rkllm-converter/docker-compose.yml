@@ -1,0 +1,92 @@
+# RKLLM Model Converter Docker Compose
+#
+# IMPORTANT: RKLLM-Toolkit only runs on x86_64 Linux.
+# On ARM64 systems (like DGX Spark), this uses QEMU emulation.
+#
+# Usage:
+#   docker compose run convert           # Interactive shell
+#   docker compose run convert --help    # Show convert.py help
+#   docker compose run convert -m Qwen/Qwen2.5-1.5B-Instruct -o model.rkllm
+#   docker compose run batch             # Run batch conversion
+
+services:
+  # Interactive conversion
+  convert:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    volumes:
+      - ./models:/workspace/models       # Local model files
+      - ./output:/workspace/output       # Converted .rkllm files
+      - ./cache:/workspace/cache         # HuggingFace cache
+      - ./models.yaml:/workspace/models.yaml:ro
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}           # For gated models
+      - HF_HOME=/workspace/cache
+      - TRANSFORMERS_CACHE=/workspace/cache
+    working_dir: /workspace
+    entrypoint: ["python", "/workspace/scripts/convert.py"]
+    tty: true
+    stdin_open: true
+
+  # Batch conversion
+  batch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    volumes:
+      - ./models:/workspace/models
+      - ./output:/workspace/output
+      - ./cache:/workspace/cache
+      - ./models.yaml:/workspace/models.yaml:ro
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HF_HOME=/workspace/cache
+      - TRANSFORMERS_CACHE=/workspace/cache
+    working_dir: /workspace
+    entrypoint: ["python", "/workspace/scripts/batch_convert.py"]
+    command: ["--config", "/workspace/models.yaml"]
+
+  # Interactive shell for debugging
+  shell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    volumes:
+      - ./models:/workspace/models
+      - ./output:/workspace/output
+      - ./cache:/workspace/cache
+      - ./models.yaml:/workspace/models.yaml:ro
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HF_HOME=/workspace/cache
+      - TRANSFORMERS_CACHE=/workspace/cache
+    working_dir: /workspace
+    entrypoint: ["/bin/bash"]
+    tty: true
+    stdin_open: true
+
+  # =============================================================================
+  # ARM64 Runtime Services (for RK3588/RK3576 devices)
+  # =============================================================================
+
+  # RKLLM runtime server for ARM64 devices
+  # Requires: --privileged and /dev access for NPU
+  runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile.arm64-runtime
+    platform: linux/arm64
+    privileged: true
+    volumes:
+      - /dev:/dev
+      - ./models:/workspace/models:ro
+      - ./output:/opt/rkllama/models:ro  # Converted models
+    ports:
+      - "8080:8080"
+    environment:
+      - RKLLM_MODEL_PATH=/opt/rkllama/models
+    restart: unless-stopped

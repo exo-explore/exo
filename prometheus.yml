@@ -1,0 +1,36 @@
+# Prometheus configuration for exo-rkllama monitoring
+# Usage: prometheus --config.file=prometheus.yml
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Exo inference server metrics
+  - job_name: 'exo'
+    static_configs:
+      - targets: ['localhost:52415']
+    metrics_path: /metrics
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Optional: RKLLAMA server health (if it exposes metrics)
+  # - job_name: 'rkllama'
+  #   static_configs:
+  #     - targets: ['localhost:8080']
+  #   metrics_path: /metrics
+
+  # Optional: Node exporter for system metrics
+  # - job_name: 'node'
+  #   static_configs:
+  #     - targets: ['localhost:9100']
+
+# Optional: Alerting rules
+# rule_files:
+#   - 'alerts.yml'
+
+# Optional: Alertmanager configuration
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['localhost:9093']

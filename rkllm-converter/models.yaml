@@ -1,0 +1,51 @@
+# RKLLM Batch Conversion Configuration
+#
+# Define models to convert for Rockchip RK3588/RK3576 NPU
+# Run with: python /workspace/scripts/batch_convert.py --config /workspace/models.yaml
+
+models:
+  # Qwen2.5 1.5B - Recommended for general use
+  - name: qwen2.5-1.5b-instruct
+    model: Qwen/Qwen2.5-1.5B-Instruct
+    output: qwen2.5-1.5b-instruct.rkllm
+    platform: rk3588
+    quant: w8a8
+    max_context: 4096
+    max_new_tokens: 2048
+
+  # Qwen2.5 3B - Higher quality, more memory
+  # - name: qwen2.5-3b-instruct
+  #   model: Qwen/Qwen2.5-3B-Instruct
+  #   output: qwen2.5-3b-instruct.rkllm
+  #   platform: rk3588
+  #   quant: w8a8
+  #   max_context: 4096
+  #   max_new_tokens: 2048
+
+  # DeepSeek R1 1.5B - Reasoning model (generates many thinking tokens)
+  # - name: deepseek-r1-1.5b
+  #   model: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+  #   output: deepseek-r1-1.5b.rkllm
+  #   platform: rk3588
+  #   quant: w8a8
+  #   max_context: 4096
+  #   max_new_tokens: 8192  # Needs more for chain-of-thought reasoning
+
+  # Phi-3 Mini - Microsoft's efficient model
+  # - name: phi-3-mini
+  #   model: microsoft/Phi-3-mini-4k-instruct
+  #   output: phi-3-mini.rkllm
+  #   platform: rk3588
+  #   quant: w8a8
+  #   max_context: 4096
+  #   max_new_tokens: 2048
+
+# Quantization options:
+#   w4a16     - 4-bit weights, 16-bit activations (smallest, lower quality)
+#   w4a16_g128 - Group-wise 4-bit quantization
+#   w8a8      - 8-bit weights and activations (recommended balance)
+#   w8a8_g128 - Group-wise 8-bit quantization (highest quality)
+
+# Platform options:
+#   rk3588 - Rockchip RK3588 (6 TOPS NPU)
+#   rk3576 - Rockchip RK3576 (6 TOPS NPU)
