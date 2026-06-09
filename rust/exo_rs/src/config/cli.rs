@@ -1,9 +1,11 @@
 use crate::config::locator::LocatorArgs;
+use crate::ext::ResultExt;
 use crate::version;
 use clap::{ArgAction, Parser, ValueEnum};
+use pyo3::ffi::PyObject;
 use pyo3::prelude::PyAnyMethods;
-use pyo3::types::PyModule;
-use pyo3::{PyResult, Python, pyclass, pymethods};
+use pyo3::types::{PyCFunction, PyModule, PyTuple};
+use pyo3::{Bound, PyAny, PyResult, Python, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
@@ -22,7 +24,7 @@ pub enum Verbosity {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(from_py_object)]
+#[pyclass(module = "exo_rs", from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Parser)]
 #[command(name = "EXO", version = version::version(), about, long_about = None)]
 pub struct CliArgs {
@@ -180,6 +182,22 @@ impl CliArgs {
         // (i.e. `sys.orig_argv`) may contain extra arguments which would mess up parsing
         let argv: Vec<OsString> = PyModule::import(py, "sys")?.getattr("argv")?.extract()?;
         Ok(CliArgs::parse_from(argv))
+    }
+
+    pub fn to_bytes(&self) -> PyResult<Vec<u8>> {
+        postcard::to_allocvec(self).pyerr()
+    }
+
+    #[staticmethod]
+    pub fn from_bytes(bytes: Vec<u8>) -> PyResult<Self> {
+        postcard::from_bytes(&bytes).pyerr()
+    }
+
+    pub fn __reduce__(slf: Bound<'_, Self>) -> PyResult<(Bound<'_, PyAny>, Bound<'_, PyTuple>)> {
+        let callable = slf.getattr("__class__")?.getattr("from_bytes")?;
+        let args = PyTuple::new(slf.py(), [slf.borrow().to_bytes()?])?;
+
+        Ok((callable, args))
     }
 }
 
