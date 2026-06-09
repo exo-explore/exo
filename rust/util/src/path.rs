@@ -6,7 +6,7 @@ use std::{io, path};
 #[ext(pub, name = PathExt)]
 impl Path {
     /// Converts path to UTF-8 string, or returns `Err` if not UTF-8.
-    #[inline]
+    #[inline(always)]
     fn to_str_utf8(&self) -> io::Result<&str> {
         self.to_str().ok_or_else(|| {
             io::Error::new(
