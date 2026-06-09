@@ -38,13 +38,8 @@ pub struct LocatorArgs {
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocatorConfig {
-    // base XDG directories
     #[pyo3(get)]
-    pub exo_config_home: PathBuf,
-    #[pyo3(get)]
-    pub exo_data_home: PathBuf,
-    #[pyo3(get)]
-    pub exo_cache_home: PathBuf,
+    pub exo_home: ExoHome,
 
     // other
     #[pyo3(get)]
@@ -98,31 +93,55 @@ impl LocatorConfig {
             .expect("This is entirely a placeholder for error handling");
 
         // create config/data/cache folders which the rest of the paths are derived from
-        let exo_config_home = Self::get_home_dir(&exo_home, dirs::config_dir);
-        let exo_data_home = Self::get_home_dir(&exo_home, dirs::data_dir);
-        let exo_cache_home = Self::get_home_dir(&exo_home, dirs::cache_dir);
+        let exo_home = ExoHome {
+            config: Self::get_home_dir(&exo_home, dirs::config_dir),
+            data: Self::get_home_dir(&exo_home, dirs::data_dir),
+            cache: Self::get_home_dir(&exo_home, dirs::cache_dir),
+        };
 
         // Log files (data/logs or cache)
-        let exo_log_dir = exo_cache_home.join("exo_log");
+        let exo_log_dir = exo_home.cache.join("exo_log");
         let exo_log = exo_log_dir.join("exo.log");
         let exo_runner_log_dir = exo_log_dir.join("runner_log");
         let exo_runner_stdout_log = exo_runner_log_dir.join("stdout.log");
         let exo_runner_stderr_log = exo_runner_log_dir.join("stderr.log");
-        let exo_pid = exo_cache_home.join("exo.pid");
+        let exo_pid = exo_home.cache.join("exo.pid");
 
         // Identity (config)
-        let exo_node_zid = exo_cache_home.join("node_zid");
+        let exo_node_zid = exo_home.cache.join("node_zid");
         let exo_config_file = args
             .config_file
             .clone()
-            .unwrap_or_else(|| exo_config_home.join("config.toml"));
+            .unwrap_or_else(|| exo_home.config.join("config.toml"));
         // TODO: check if exists (if it was arg) otherwise create if it doesn't exist (default location)
 
         Self {
-            exo_config_home,
-            exo_data_home,
-            exo_cache_home,
+            exo_home,
             config_file: exo_config_file,
         }
     }
+}
+
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExoHome {
+    #[pyo3(get)]
+    pub config: PathBuf,
+    #[pyo3(get)]
+    pub data: PathBuf,
+    #[pyo3(get)]
+    pub cache: PathBuf,
+}
+
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelDirs {
+    #[pyo3(get)]
+    pub default_models_dir: PathBuf,
+    #[pyo3(get)]
+    pub models_dirs: Vec<PathBuf>,
+    #[pyo3(get)]
+    pub models_read_only_dirs: Vec<PathBuf>,
 }
