@@ -10,9 +10,11 @@ __all__ = [
     "CliArgs",
     "ConfigArgs",
     "DeprecatedArgs",
+    "ExoHome",
     "FromSwarm",
     "LocatorArgs",
     "LocatorConfig",
+    "ModelDirs",
     "NetworkingHandle",
     "Pidfile",
     "PidfileError",
@@ -91,6 +93,15 @@ class DeprecatedArgs:
     @property
     def libp2p_port(self) -> typing.Optional[builtins.int]: ...
 
+@typing.final
+class ExoHome:
+    @property
+    def config(self) -> pathlib.Path: ...
+    @property
+    def data(self) -> pathlib.Path: ...
+    @property
+    def cache(self) -> pathlib.Path: ...
+
 class FromSwarm:
     @typing.final
     class Connection(FromSwarm):
@@ -123,20 +134,31 @@ class LocatorArgs:
     @property
     def exo_home(self) -> typing.Optional[pathlib.Path]: ...
     @property
+    def default_models_dir(self) -> typing.Optional[pathlib.Path]: ...
+    @property
+    def models_read_only_dirs(self) -> builtins.list[pathlib.Path]: ...
+    @property
+    def models_dirs(self) -> builtins.list[pathlib.Path]: ...
+    @property
     def config_file(self) -> typing.Optional[pathlib.Path]: ...
 
 @typing.final
 class LocatorConfig:
     @property
-    def exo_config_home(self) -> pathlib.Path: ...
-    @property
-    def exo_data_home(self) -> pathlib.Path: ...
-    @property
-    def exo_cache_home(self) -> pathlib.Path: ...
+    def exo_home(self) -> ExoHome: ...
     @property
     def config_file(self) -> pathlib.Path: ...
     @staticmethod
     def resolve(args: LocatorArgs) -> LocatorConfig: ...
+
+@typing.final
+class ModelDirs:
+    @property
+    def default_models_dir(self) -> pathlib.Path: ...
+    @property
+    def models_read_only_dirs(self) -> builtins.list[pathlib.Path]: ...
+    @property
+    def models_dirs(self) -> builtins.list[pathlib.Path]: ...
 
 @typing.final
 class NetworkingHandle:

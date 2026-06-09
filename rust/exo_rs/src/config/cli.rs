@@ -1,11 +1,12 @@
 use crate::config::locator::LocatorArgs;
 use crate::ext::ResultExt;
 use crate::version;
+use clap::builder::{PathBufValueParser, TypedValueParser};
 use clap::{ArgAction, Parser, ValueEnum};
 use pyo3::ffi::PyObject;
 use pyo3::prelude::PyAnyMethods;
 use pyo3::types::{PyCFunction, PyModule, PyTuple};
-use pyo3::{Bound, PyAny, PyResult, Python, pyclass, pymethods};
+use pyo3::{pyclass, pymethods, Bound, PyAny, PyResult, Python};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
