@@ -25,6 +25,9 @@ class GenerationResponse(BaseRunnerResponse):
     stats: GenerationStats | None = None
     usage: Usage | None
     is_thinking: bool = False
+    # The stop sequence that terminated generation, when ``finish_reason`` is
+    # "stop" because a user-supplied stop sequence matched (vs. a natural EOS).
+    matched_stop_sequence: str | None = None
 
 
 class ImageGenerationResponse(BaseRunnerResponse):
