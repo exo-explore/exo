@@ -1,3 +1,4 @@
+use crate::config::path::{parse_path, PathBufValueParserExt};
 use pyo3::{pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,7 @@ pub struct LocatorArgs {
     #[arg(
         long,
         env = "EXO_HOME",
+        value_parser = parse_path().create_dir(),
         value_name = "PATH",
         help = "Path to Exo's home directory"
     )]
@@ -27,6 +29,7 @@ pub struct LocatorArgs {
     #[arg(
         long,
         env = "EXO_DEFAULT_MODELS_DIR",
+        value_parser = parse_path().dir_exists(),
         value_name = "PATH",
         help = "Default models directory; always included as first entry in writable models directories"
     )]
@@ -37,6 +40,7 @@ pub struct LocatorArgs {
         long,
         value_delimiter = ':',
         env = "EXO_MODELS_READ_ONLY_DIRS",
+        value_parser = parse_path().dir_exists(),
         value_name = "PATH",
         help = "Read-only model directories (colon-separated); never written to or deleted from"
     )]
@@ -47,6 +51,7 @@ pub struct LocatorArgs {
         long,
         value_delimiter = ':',
         env = "EXO_MODELS_DIRS",
+        value_parser = parse_path().dir_exists(),
         value_name = "PATH",
         help = "Writable model directories (colon-separated); default directory is always prepended"
     )]
@@ -56,6 +61,7 @@ pub struct LocatorArgs {
     #[arg(
         long,
         env = "EXO_CONFIG_FILE",
+        value_parser = parse_path().file_exists(),
         value_name = "PATH",
         help = "Path to Exo's .toml config file"
     )]

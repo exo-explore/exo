@@ -6,7 +6,7 @@ use pyo3::{Bound, PyResult};
 pub mod cli;
 pub mod defaults;
 pub mod locator;
-mod path;
+pub mod path;
 
 pub fn config_submodule(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<Verbosity>()?;
