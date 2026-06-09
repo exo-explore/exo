@@ -17,3 +17,6 @@ extend.workspace = true
 
 expanduser = "1.2"
 path-clean = "1.0"
+
+[dev-dependencies]
+tempfile = "3.23"

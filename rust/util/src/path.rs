@@ -106,3 +106,101 @@ pub fn resolve_path(path: PathBuf) -> io::Result<PathBuf> {
 
     Ok(path)
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::resolve_path;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+    use std::path::{Component, Path};
+    use tempfile::TempDir;
+
+    fn assert_is_root_followed_by_normal_components(path: &Path) {
+        let mut components = path.components();
+
+        assert_eq!(
+            components.next(),
+            Some(Component::RootDir),
+            "resolved path should start with root: {}",
+            path.display()
+        );
+        assert!(
+            components.all(|component| matches!(component, Component::Normal(_))),
+            "resolved path should contain only normal components after root: {}",
+            path.display()
+        );
+    }
+
+    #[test]
+    fn resolve_path_lexically_cleans_nonexistent_suffix() {
+        let test_dir = TempDir::new().unwrap();
+        let base = test_dir.path().join("base");
+        fs::create_dir_all(&base).unwrap();
+
+        let resolved = resolve_path(base.join("missing").join("..").join("leaf")).unwrap();
+
+        assert_eq!(resolved, base.canonicalize().unwrap().join("leaf"));
+        assert_is_root_followed_by_normal_components(&resolved);
+    }
+
+    #[test]
+    fn resolve_path_applies_leading_suffix_parents_to_canonical_prefix() {
+        let test_dir = TempDir::new().unwrap();
+        let base = test_dir.path().join("base");
+        fs::create_dir_all(&base).unwrap();
+
+        let resolved = resolve_path(
+            base.join("missing")
+                .join("..")
+                .join("..")
+                .join("outside")
+                .join("leaf"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolved,
+            test_dir.path().canonicalize().unwrap().join("outside/leaf")
+        );
+        assert_is_root_followed_by_normal_components(&resolved);
+    }
+
+    #[test]
+    fn resolve_path_resolves_symlinks_exposed_by_cleaned_suffix() {
+        let test_dir = TempDir::new().unwrap();
+        let base = test_dir.path().join("base");
+        let real_target = test_dir.path().join("real-target");
+        let link = base.join("link");
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(&real_target).unwrap();
+        symlink(&real_target, &link).unwrap();
+
+        let resolved = resolve_path(
+            base.join("missing")
+                .join("..")
+                .join("link")
+                .join("future")
+                .join("..")
+                .join("leaf"),
+        )
+        .unwrap();
+
+        assert_eq!(resolved, real_target.canonicalize().unwrap().join("leaf"));
+        assert_is_root_followed_by_normal_components(&resolved);
+    }
+
+    #[test]
+    fn resolve_path_preserves_existing_symlink_parent_semantics() {
+        let test_dir = TempDir::new().unwrap();
+        let real_parent = test_dir.path().join("real-parent");
+        let real_target = real_parent.join("target");
+        let link = test_dir.path().join("link");
+        fs::create_dir_all(&real_target).unwrap();
+        symlink(&real_target, &link).unwrap();
+
+        let resolved = resolve_path(link.join("..")).unwrap();
+
+        assert_eq!(resolved, real_parent.canonicalize().unwrap());
+        assert_is_root_followed_by_normal_components(&resolved);
+    }
+}
