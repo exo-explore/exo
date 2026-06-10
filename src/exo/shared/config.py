@@ -1,4 +1,4 @@
-from exo_rs import LocatorArgs, LocatorConfig
+from exo_rs import LocatorConfig
 
 # TODO: for now we are only going to have "load once" globals as our configuration,
 #       so "reloading" isn't supported yet; would have to figure out in the future
@@ -12,8 +12,8 @@ def locator() -> LocatorConfig:
     return _locator_config
 
 
-def load_locator(args: LocatorArgs):
+def load_locator(cfg: LocatorConfig):
     global _locator_config
     if _locator_config is not None:
         raise RuntimeError("Configuration already loaded")
-    _locator_config = LocatorConfig.resolve(args)
+    _locator_config = cfg

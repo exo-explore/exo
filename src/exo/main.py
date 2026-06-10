@@ -10,7 +10,7 @@ from typing import Self
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
 from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
-from exo_rs import CliArgs, Pidfile, PidfileError
+from exo_rs import CliArgs, LocatorConfig, Pidfile, PidfileError
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -32,7 +32,6 @@ from exo.shared.constants import (
     EXO_LOG_DIR,
     EXO_MODELS_DIRS,
     EXO_MODELS_READ_ONLY_DIRS,
-    EXO_PID_FILE,
     EXO_RUNNER_LOG_DIR,
     EXO_RUNNER_STDERR_LOG,
     EXO_RUNNER_STDOUT_LOG,
@@ -290,11 +289,11 @@ class Node:
 
 
 def main():
-    # parse args and resolve locator config
+    # parse args and resolve/load the locator config
     args = CliArgs.parse()
-    config.load_locator(args.locator)
-    c = config.locator()
+    config.load_locator(LocatorConfig.resolve(args.locator))
 
+    c = config.locator()
     print(c.exo_home.config, EXO_CONFIG_HOME)
     print(c.exo_home.data, EXO_DATA_HOME)
     print(c.exo_home.cache, EXO_CACHE_HOME)
@@ -306,14 +305,14 @@ def main():
     print(c.log_files.exo_runner_log_dir, EXO_RUNNER_LOG_DIR)
     print(c.log_files.exo_runner_stdout_log, EXO_RUNNER_STDOUT_LOG)
     print(c.log_files.exo_runner_stderr_log, EXO_RUNNER_STDERR_LOG)
-    print(c.pid_file, EXO_PID_FILE)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
 
     # Exit early if cannot acquire PID file
     try:
-        pidfile = Pidfile(EXO_PID_FILE, 0o0600)
+        pidfile_path = config.locator().pid_file
+        pidfile = Pidfile(pidfile_path, 0o0600)
     except PidfileError as e:
         print(e, file=sys.stderr)
         raise SystemExit(1) from e
