@@ -1,7 +1,7 @@
 use extend::ext;
 use path_clean::PathClean;
 use std::path::{Component, Path, PathBuf};
-use std::{io, path};
+use std::{fs, io, path};
 
 #[ext(pub, name = PathExt)]
 impl Path {
@@ -51,6 +51,17 @@ pub fn resolve_path(path: PathBuf) -> io::Result<PathBuf> {
 
             match prefix.canonicalize() {
                 Ok(p) => {
+                    // ensure non-leaf components are directories
+                    if i != components.len() && !fs::metadata(&p)?.is_dir() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::AddrInUse,
+                            format!(
+                                "cannot resolve {:?}: {:?} is not a directory",
+                                PathBuf::from_iter(components),
+                                prefix
+                            ),
+                        ));
+                    }
                     prefix = p;
 
                     // clean + substitute "." with empty buffer
@@ -60,7 +71,15 @@ pub fn resolve_path(path: PathBuf) -> io::Result<PathBuf> {
                     }
                     break;
                 }
-                Err(e) if i > 1 && e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e)
+                    if i > 1
+                        && matches!(
+                            e.kind(),
+                            io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                        ) =>
+                {
+                    continue;
+                }
                 Err(e) => return Err(e),
             }
         }

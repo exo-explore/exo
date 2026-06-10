@@ -278,7 +278,7 @@ class Node:
 def main():
     args = CliArgs.parse()
     locator = LocatorConfig.resolve(args.locator)
-    print(locator.exo_cache_home)
+    print(locator.exo_home.cache)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
