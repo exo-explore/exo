@@ -11,6 +11,7 @@ No model weights needed: caches are constructed directly.
 
 import hashlib
 import json
+import time
 
 import mlx.core as mx
 import pytest
@@ -56,6 +57,37 @@ def test_disk_persistence_is_opt_in(tmp_path, monkeypatch):
     kv = KVPrefixCache(None, model_id=MODEL_ID)
     assert kv._disk_dir is None
     assert list(tmp_path.iterdir()) == []
+
+
+def test_janitor_sweeps_other_models_stale_slots(tmp_path, kvp_factory):
+    """Init must TTL-sweep OTHER models' dirs (their runners may never come
+    back to clean up), while leaving fresh slots and our own dir alone."""
+    other = tmp_path / "deadbeef00112233"
+    other.mkdir()
+
+    def write_slot(i, ts):
+        (other / f"slot_{i}_meta.json").write_text(
+            json.dumps({"model_id": "other/model", "token_count": 5, "timestamp": ts})
+        )
+        (other / f"slot_{i}_tokens.safetensors").write_text("stub")
+        (other / f"slot_{i}_cache.safetensors").write_text("stub")
+
+    write_slot(0, 1.0)  # ancient -> swept
+    write_slot(1, time.time())  # fresh -> kept
+    # A stale slot in OUR OWN dir is left to the hot-slot-aware eviction.
+    own = _slot_dir(tmp_path)
+    own.mkdir(parents=True)
+    (own / "slot_7_meta.json").write_text(
+        json.dumps({"model_id": MODEL_ID, "token_count": 5, "timestamp": 1.0})
+    )
+
+    kvp_factory()  # __init__ runs the janitor
+
+    assert not (other / "slot_0_meta.json").exists()
+    assert not (other / "slot_0_cache.safetensors").exists()
+    assert not (other / "slot_0_tokens.safetensors").exists()
+    assert (other / "slot_1_meta.json").exists()
+    assert (own / "slot_7_meta.json").exists()
 
 
 def _filled_kv(n=N_TOKENS, heads=2, dim=8):

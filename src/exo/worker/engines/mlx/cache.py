@@ -383,6 +383,8 @@ class KVPrefixCache:
         self._disk_dirty = False
         self._flush_requested_at: float = 0.0
         self._hot_slot_disk_id: int | None = None
+        if self._disk_dir is not None:
+            self._janitor_sweep_stale_slots()
 
     def clear(self):
         """Clear all cached prompts and caches."""
@@ -710,6 +712,44 @@ class KVPrefixCache:
             )
         except Exception as e:
             logger.warning(f"KV cache disk flush failed: {e}")
+
+    def _janitor_sweep_stale_slots(self) -> None:
+        """TTL-sweep every model's slot dir under the kv-cache root, once at init.
+
+        Per-flush eviction only ever sees this model's own dir and only runs
+        while this model is loaded — without this sweep, slots of models that
+        are never loaded again live forever.
+        """
+        disk_dir = self._disk_dir
+        if disk_dir is None:
+            return
+        max_age_hours = float(os.environ.get("EXO_KV_DISK_TTL_HOURS", "24"))
+        cutoff = _time.time() - (max_age_hours * 3600)
+        for meta_file in disk_dir.parent.glob("*/slot_*_meta.json"):
+            try:
+                # Own dir is handled by _evict_stale_disk_slots, which knows
+                # the hot slot; other models' dirs are swept on timestamp only.
+                if meta_file.parent == disk_dir:
+                    continue
+                with open(meta_file) as f:
+                    meta = cast("dict[str, Any]", json.load(f))
+                if cast(float, meta.get("timestamp", 0)) >= cutoff:
+                    continue
+                base = str(meta_file)[: -len("_meta.json")]
+                for ext in [
+                    "_cache.safetensors",
+                    "_tokens.safetensors",
+                    "_tokens.npy",  # legacy slot format
+                    "_meta.json",
+                ]:
+                    with contextlib.suppress(FileNotFoundError):
+                        os.remove(base + ext)
+                logger.info(
+                    f"KV cache janitor: evicted stale "
+                    f"{meta_file.parent.name}/{meta_file.stem.removesuffix('_meta')}"
+                )
+            except Exception:
+                continue
 
     def _evict_stale_disk_slots(self) -> None:
         """Delete stale disk slots (TTL) then evict oldest while over the size cap."""
