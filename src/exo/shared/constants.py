@@ -80,8 +80,9 @@ EXO_PID_FILE = EXO_CACHE_HOME / "exo.pid"
 EXO_NODE_ZID = EXO_CACHE_HOME / "node_zid"
 EXO_CONFIG_FILE = EXO_CONFIG_HOME / "config.toml"
 
-
-EXO_MAX_CHUNK_SIZE = 512 * 1024
+EXO_MAX_CHUNK_SIZE = (
+    512 * 1024
+)  # NOTE: I will leave these alone here for now - I don't know how I should port raw constants
 
 EXO_CUSTOM_MODEL_CARDS_DIR = EXO_DATA_HOME / "custom_model_cards"
 

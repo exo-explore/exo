@@ -1,5 +1,6 @@
 use crate::config::path::{PathBufValueParserExt, parse_path};
-use pyo3::{PyResult, pyclass, pymethods};
+use pyo3::prelude::{PyModule, PyModuleMethods};
+use pyo3::{Bound, PyResult, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -93,6 +94,16 @@ pub struct LocatorConfig {
 
     #[pyo3(get)]
     pub config_file: PathBuf,
+
+    #[pyo3(get)]
+    pub custom_model_cards_dir: PathBuf,
+
+    #[pyo3(get)]
+    pub event_log_dir: PathBuf,
+    #[pyo3(get)]
+    pub image_cache_dir: PathBuf,
+    #[pyo3(get)]
+    pub trace_cache_dir: PathBuf,
 }
 
 #[gen_stub_pymethods]
@@ -115,6 +126,13 @@ impl LocatorConfig {
             .unwrap_or_else(|| exo_home.config.join("config.toml"));
         config_file.create_file_if_not_found()?;
 
+        // custom model card dirs TODO: see model_cards.py "todo"
+        let custom_model_cards_dir = exo_home.data.join("custom_model_cards");
+
+        let event_log_dir = exo_home.data.join("event_log");
+        let image_cache_dir = exo_home.cache.join("images");
+        let trace_cache_dir = exo_home.cache.join("traces");
+
         Ok(Self {
             exo_home,
             models_dirs,
@@ -122,6 +140,10 @@ impl LocatorConfig {
             pid_file,
             node_zid,
             config_file,
+            custom_model_cards_dir,
+            event_log_dir,
+            image_cache_dir,
+            trace_cache_dir,
         })
     }
 }
@@ -258,4 +280,14 @@ impl LogFiles {
             exo_runner_stderr_log,
         })
     }
+}
+
+pub fn locator_submodule(m: &Bound<PyModule>) -> PyResult<()> {
+    m.add_class::<LocatorArgs>()?;
+    m.add_class::<LocatorConfig>()?;
+    m.add_class::<ExoHome>()?;
+    m.add_class::<ModelsDirs>()?;
+    m.add_class::<LogFiles>()?;
+
+    Ok(())
 }
