@@ -28,6 +28,7 @@ from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils import STDIO_FDS
 from exo.utils.channels import Receiver, channel
+from exo.utils.dashboard_path import find_resources
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
@@ -278,7 +279,7 @@ class Node:
 def main():
     args = CliArgs.parse()
     locator = LocatorConfig.resolve(args.locator)
-    print(locator.exo_home.cache)
+    print(locator.exo_home)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()

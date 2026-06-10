@@ -56,6 +56,7 @@ EXO_MODELS_DIRS: tuple[Path, ...] = tuple(
 )
 EXO_MODELS_READ_ONLY_DIRS: tuple[Path, ...] = _EXO_MODELS_READ_ONLY_DIRS_ENV
 
+# NOTE: I will leave these alone here for now - I don't wanna port them to Rust yet
 _RESOURCES_DIR_ENV = os.environ.get("EXO_RESOURCES_DIR", None)
 RESOURCES_DIR = (
     find_resources() if _RESOURCES_DIR_ENV is None else Path.home() / _RESOURCES_DIR_ENV
@@ -72,6 +73,7 @@ EXO_RUNNER_LOG_DIR = EXO_LOG_DIR / "runner_log"
 EXO_RUNNER_STDOUT_LOG = EXO_RUNNER_LOG_DIR / "stdout.log"
 EXO_RUNNER_STDERR_LOG = EXO_RUNNER_LOG_DIR / "stderr.log"
 
+# PID file
 EXO_PID_FILE = EXO_CACHE_HOME / "exo.pid"
 
 # Identity (config)

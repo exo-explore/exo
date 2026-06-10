@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{fs, io};
 use util::VecExt;
+use util::path::PathExt;
 
 /// Arguments that are needed to resolve paths to files go here.
 ///
@@ -80,7 +81,16 @@ pub struct LocatorConfig {
     #[pyo3(get)]
     pub models_dirs: ModelsDirs,
 
+    #[pyo3(get)]
+    pub log_files: LogFiles,
+
     // other
+    #[pyo3(get)]
+    pub pid_file: PathBuf,
+
+    #[pyo3(get)]
+    pub node_zid: PathBuf,
+
     #[pyo3(get)]
     pub config_file: PathBuf,
 }
@@ -92,27 +102,26 @@ impl LocatorConfig {
     pub fn resolve(args: &LocatorArgs) -> PyResult<Self> {
         let exo_home = ExoHome::resolve(args)?;
         let models_dirs = ModelsDirs::resolve(args, &exo_home)?;
+        let log_files = LogFiles::resolve(&exo_home)?;
 
-        // Log files (data/logs or cache)
-        let exo_log_dir = exo_home.cache.join("exo_log");
-        let exo_log = exo_log_dir.join("exo.log");
-        let exo_runner_log_dir = exo_log_dir.join("runner_log");
-        let exo_runner_stdout_log = exo_runner_log_dir.join("stdout.log");
-        let exo_runner_stderr_log = exo_runner_log_dir.join("stderr.log");
-        let exo_pid = exo_home.cache.join("exo.pid");
+        // PID file
+        let pid_file = exo_home.cache.join("exo.pid");
 
         // Identity (config)
-        let exo_node_zid = exo_home.cache.join("node_zid");
-        let exo_config_file = args
+        let node_zid = exo_home.cache.join("node_zid");
+        let config_file = args
             .config_file
             .clone()
             .unwrap_or_else(|| exo_home.config.join("config.toml"));
-        // TODO: check if exists (if it was arg) otherwise create if it doesn't exist (default location)
+        config_file.create_file_if_not_found()?;
 
         Ok(Self {
             exo_home,
             models_dirs,
-            config_file: exo_config_file,
+            log_files,
+            pid_file,
+            node_zid,
+            config_file,
         })
     }
 }
@@ -208,6 +217,45 @@ impl ModelsDirs {
             default_models_dir,
             models_read_only_dirs,
             models_dirs,
+        })
+    }
+}
+
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogFiles {
+    #[pyo3(get)]
+    pub exo_log_dir: PathBuf,
+    #[pyo3(get)]
+    pub exo_log: PathBuf,
+    #[pyo3(get)]
+    pub exo_runner_log_dir: PathBuf,
+    #[pyo3(get)]
+    pub exo_runner_stdout_log: PathBuf,
+    #[pyo3(get)]
+    pub exo_runner_stderr_log: PathBuf,
+}
+
+impl LogFiles {
+    pub fn resolve(exo_home: &ExoHome) -> io::Result<Self> {
+        // Exo log
+        let exo_log_dir = exo_home.cache.join("exo_log");
+        fs::create_dir_all(&exo_log_dir)?;
+        let exo_log = exo_log_dir.join("exo.log");
+
+        // Exo runner log
+        let exo_runner_log_dir = exo_log_dir.join("runner_log");
+        fs::create_dir_all(&exo_log_dir)?;
+        let exo_runner_stdout_log = exo_runner_log_dir.join("stdout.log");
+        let exo_runner_stderr_log = exo_runner_log_dir.join("stderr.log");
+
+        Ok(Self {
+            exo_log_dir,
+            exo_log,
+            exo_runner_log_dir,
+            exo_runner_stdout_log,
+            exo_runner_stderr_log,
         })
     }
 }

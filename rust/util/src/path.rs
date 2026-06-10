@@ -1,5 +1,6 @@
 use extend::ext;
 use path_clean::PathClean;
+use std::fs::File;
 use std::path::{Component, Path, PathBuf};
 use std::{fs, io, path};
 
@@ -14,6 +15,23 @@ impl Path {
                 "path contains non-utf8 characters",
             )
         })
+    }
+
+    #[inline(always)]
+    fn create_file_if_not_found(&self) -> io::Result<()> {
+        match File::create_new(self) {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                if self.is_dir() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::IsADirectory,
+                        format!("{self:?} is a directory, not a file"),
+                    ));
+                }
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 
