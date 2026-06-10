@@ -298,8 +298,8 @@ class Node:
 def main():
     # parse args and resolve locator config
     args = CliArgs.parse()
-    config.load_locator_config(args.locator)
-    c = config.locator_config()
+    config.load_locator(args.locator)
+    c = config.locator()
 
     print(c.exo_home.config, EXO_CONFIG_HOME)
     print(c.exo_home.data, EXO_DATA_HOME)
