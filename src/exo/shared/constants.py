@@ -66,10 +66,6 @@ DASHBOARD_DIR = (
     find_dashboard() if _DASHBOARD_DIR_ENV is None else Path.home() / _DASHBOARD_DIR_ENV
 )
 
-# Log files (data/logs or cache)
-EXO_LOG_DIR = EXO_CACHE_HOME / "exo_log"
-EXO_LOG = EXO_LOG_DIR / "exo.log"
-
 EXO_MAX_CHUNK_SIZE = (
     512 * 1024
 )  # NOTE: I will leave these alone here for now - I don't know how I should port raw constants
