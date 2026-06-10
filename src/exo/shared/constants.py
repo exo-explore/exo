@@ -76,9 +76,6 @@ EXO_RUNNER_STDERR_LOG = EXO_RUNNER_LOG_DIR / "stderr.log"
 # PID file
 EXO_PID_FILE = EXO_CACHE_HOME / "exo.pid"
 
-# Identity (config)
-EXO_NODE_ZID = EXO_CACHE_HOME / "node_zid"
-
 EXO_MAX_CHUNK_SIZE = (
     512 * 1024
 )  # NOTE: I will leave these alone here for now - I don't know how I should port raw constants

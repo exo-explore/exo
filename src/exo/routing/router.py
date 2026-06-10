@@ -17,7 +17,7 @@ from exo_rs import (
 )
 from loguru import logger
 
-from exo.shared.constants import EXO_NODE_ZID
+from exo.shared.config import locator
 from exo.shared.types.common import NodeId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import FrozenModel
@@ -230,12 +230,15 @@ class Router:
 
 
 def get_node_zid(
-    path: Path = EXO_NODE_ZID,
+    path: Path | None = None,
 ) -> NodeId:
     """
     Obtains the :class:`Keypair` associated with this node-ID.
     Obtain the :class:`PeerId` by from it.
     """
+    if path is None:
+        path = locator().node_zid
+
     # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
     return NodeId(os.urandom(16).hex().lstrip("0"))
 

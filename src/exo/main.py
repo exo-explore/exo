@@ -32,7 +32,6 @@ from exo.shared.constants import (
     EXO_LOG_DIR,
     EXO_MODELS_DIRS,
     EXO_MODELS_READ_ONLY_DIRS,
-    EXO_NODE_ZID,
     EXO_PID_FILE,
     EXO_RUNNER_LOG_DIR,
     EXO_RUNNER_STDERR_LOG,
@@ -308,7 +307,6 @@ def main():
     print(c.log_files.exo_runner_stdout_log, EXO_RUNNER_STDOUT_LOG)
     print(c.log_files.exo_runner_stderr_log, EXO_RUNNER_STDERR_LOG)
     print(c.pid_file, EXO_PID_FILE)
-    print(c.node_zid, EXO_NODE_ZID)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
