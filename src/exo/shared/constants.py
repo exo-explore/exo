@@ -84,8 +84,6 @@ EXO_MAX_CHUNK_SIZE = (
     512 * 1024
 )  # NOTE: I will leave these alone here for now - I don't know how I should port raw constants
 
-EXO_CUSTOM_MODEL_CARDS_DIR = EXO_DATA_HOME / "custom_model_cards"
-
 EXO_ENABLE_IMAGE_MODELS = (
     os.getenv("EXO_ENABLE_IMAGE_MODELS", "false").lower() == "true"
 )
