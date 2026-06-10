@@ -86,8 +86,6 @@ EXO_MAX_CHUNK_SIZE = (
 
 EXO_CUSTOM_MODEL_CARDS_DIR = EXO_DATA_HOME / "custom_model_cards"
 
-EXO_EVENT_LOG_DIR = EXO_DATA_HOME / "event_log"
-
 EXO_ENABLE_IMAGE_MODELS = (
     os.getenv("EXO_ENABLE_IMAGE_MODELS", "false").lower() == "true"
 )

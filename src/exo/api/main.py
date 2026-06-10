@@ -131,7 +131,6 @@ from exo.shared.constants import (
     DASHBOARD_DIR,
     ENABLE_DISAGGREGATION,
     EXO_CACHE_HOME,
-    EXO_EVENT_LOG_DIR,
     EXO_MAX_CHUNK_SIZE,
 )
 from exo.shared.election import ElectionMessage
@@ -206,7 +205,6 @@ from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
 
-_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
 
 
@@ -247,7 +245,8 @@ class API:
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
-        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
+        self._api_event_log_dir = locator().event_log_dir / "api"
+        self._event_log = DiskEventLog(self._api_event_log_dir)
         self._system_id = SystemId()
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
@@ -298,7 +297,7 @@ class API:
     def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):
         logger.info("Resetting API State")
         self._event_log.close()
-        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
+        self._event_log = DiskEventLog(self._api_event_log_dir)
         self.state = State()
         self._system_id = SystemId()
         self._text_generation_queues = {}

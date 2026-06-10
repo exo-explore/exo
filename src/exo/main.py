@@ -30,7 +30,6 @@ from exo.shared.constants import (
     EXO_CUSTOM_MODEL_CARDS_DIR,
     EXO_DATA_HOME,
     EXO_DEFAULT_MODELS_DIR,
-    EXO_EVENT_LOG_DIR,
     EXO_LOG,
     EXO_LOG_DIR,
     EXO_MODELS_DIRS,
@@ -314,7 +313,6 @@ def main():
     print(c.node_zid, EXO_NODE_ZID)
     print(c.config_file, EXO_CONFIG_FILE)
     print(c.custom_model_cards_dir, EXO_CUSTOM_MODEL_CARDS_DIR)
-    print(c.event_log_dir, EXO_EVENT_LOG_DIR)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
