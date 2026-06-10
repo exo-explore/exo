@@ -126,6 +126,7 @@ from exo.api.types.openai_responses import (
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
+from exo.shared.config import locator as locator_config
 from exo.shared.constants import (
     DASHBOARD_DIR,
     ENABLE_DISAGGREGATION,
@@ -133,7 +134,6 @@ from exo.shared.constants import (
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
-    EXO_TRACING_CACHE_DIR,
 )
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
@@ -258,6 +258,7 @@ class API:
         self.last_completed_election: int = 0
         self.port = port
         self._sent_image_hashes: set[str] = set()
+        self._tracing_cache_dir = locator_config().tracing_cache_dir
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -2020,7 +2021,7 @@ class API:
             )
             for t in event.traces
         ]
-        output_path = EXO_TRACING_CACHE_DIR / f"trace_{event.task_id}.json"
+        output_path = self._tracing_cache_dir / f"trace_{event.task_id}.json"
         export_trace(traces, output_path)
         logger.debug(f"Saved merged trace to {output_path}")
 
@@ -2082,10 +2083,9 @@ class API:
         await self._send_download(command)
         return CancelDownloadResponse(command_id=command.command_id)
 
-    @staticmethod
-    def _get_trace_path(task_id: str) -> Path:
-        trace_path = EXO_TRACING_CACHE_DIR / f"trace_{task_id}.json"
-        if not trace_path.resolve().is_relative_to(EXO_TRACING_CACHE_DIR.resolve()):
+    def _get_trace_path(self, task_id: str) -> Path:
+        trace_path = self._tracing_cache_dir / f"trace_{task_id}.json"
+        if not trace_path.resolve().is_relative_to(self._tracing_cache_dir.resolve()):
             raise HTTPException(status_code=400, detail=f"Invalid task ID: {task_id}")
         return trace_path
 
@@ -2093,7 +2093,7 @@ class API:
         traces: list[TraceListItem] = []
 
         for trace_file in sorted(
-            EXO_TRACING_CACHE_DIR.glob("trace_*.json"),
+            self._tracing_cache_dir.glob("trace_*.json"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         ):

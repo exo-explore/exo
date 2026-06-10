@@ -22,6 +22,7 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_zid
+from exo.shared import config
 from exo.shared.constants import (
     EXO_CACHE_HOME,
     EXO_CONFIG_FILE,
@@ -40,7 +41,6 @@ from exo.shared.constants import (
     EXO_RUNNER_LOG_DIR,
     EXO_RUNNER_STDERR_LOG,
     EXO_RUNNER_STDOUT_LOG,
-    EXO_TRACING_CACHE_DIR,
 )
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
@@ -50,7 +50,6 @@ from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
-from exo.shared import config
 
 
 @dataclass
@@ -318,7 +317,6 @@ def main():
     print(c.custom_model_cards_dir, EXO_CUSTOM_MODEL_CARDS_DIR)
     print(c.event_log_dir, EXO_EVENT_LOG_DIR)
     print(c.image_cache_dir, EXO_IMAGE_CACHE_DIR)
-    print(c.tracing_cache_dir, EXO_TRACING_CACHE_DIR)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
