@@ -90,6 +90,37 @@ def test_janitor_sweeps_other_models_stale_slots(tmp_path, kvp_factory):
     assert (own / "slot_7_meta.json").exists()
 
 
+def test_size_cap_is_global_and_evicts_oldest_first(tmp_path, kvp_factory, monkeypatch):
+    """The size cap spans ALL model dirs: the globally oldest slot is evicted
+    first (cross-model LRU), eviction stops once back under the cap, and the
+    flushing model's own hot slot is never touched."""
+    kv = kvp_factory()  # created first: the init janitor must not see fixtures
+    kv.add_kv_cache(_tokens(), [_filled_kv()])
+    kv._flush_hot_slot()  # own hot slot
+
+    other = tmp_path / "feedface00112233"
+    other.mkdir()
+
+    def write_slot(i, ts, payload):
+        (other / f"slot_{i}_meta.json").write_text(
+            json.dumps({"model_id": "other/model", "token_count": 5, "timestamp": ts})
+        )
+        (other / f"slot_{i}_tokens.safetensors").write_text(payload)
+        (other / f"slot_{i}_cache.safetensors").write_text(payload)
+
+    write_slot(0, 2.0, "x" * 500)  # globally oldest, and big
+    write_slot(1, time.time(), "y" * 10)  # fresh and small
+
+    # Cap sits between (old + fresh) and (fresh alone); the hot slot is
+    # excluded from the accounting, so only the foreign slots count.
+    monkeypatch.setenv("EXO_KV_DISK_MAX_SIZE_GB", str(600 / 1024**3))
+    kv._evict_stale_disk_slots()
+
+    assert not (other / "slot_0_meta.json").exists()  # oldest evicted
+    assert (other / "slot_1_meta.json").exists()  # under cap again -> kept
+    assert (_slot_dir(tmp_path) / "slot_0_cache.safetensors").exists()  # hot slot safe
+
+
 def _filled_kv(n=N_TOKENS, heads=2, dim=8):
     c = KVCache()
     c.update_and_fetch(

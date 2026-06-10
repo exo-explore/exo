@@ -752,7 +752,10 @@ class KVPrefixCache:
                 continue
 
     def _evict_stale_disk_slots(self) -> None:
-        """Delete stale disk slots (TTL) then evict oldest while over the size cap."""
+        """Delete stale own-dir slots (TTL), then enforce the GLOBAL size cap:
+        while the whole kv-cache root exceeds EXO_KV_DISK_MAX_SIZE_GB, evict
+        the globally oldest slot regardless of owning model (cross-model LRU).
+        """
         disk_dir = self._disk_dir
         if disk_dir is None:
             return
@@ -780,16 +783,19 @@ class KVPrefixCache:
                 continue
         max_bytes = max_size_gb * 1024 * 1024 * 1024
         while True:
-            slots: list[tuple[float, int, int]] = []
+            slots: list[tuple[float, _Path, int]] = []
             total_size = 0
-            for meta_file in disk_dir.glob("slot_*_meta.json"):
+            for meta_file in disk_dir.parent.glob("*/slot_*_meta.json"):
                 try:
                     with open(meta_file) as f:
                         meta = cast("dict[str, Any]", json.load(f))
                     slot_id = int(meta_file.stem.split("_")[1])
-                    if slot_id == self._hot_slot_disk_id:
+                    if (
+                        meta_file.parent == disk_dir
+                        and slot_id == self._hot_slot_disk_id
+                    ):
                         continue
-                    base = disk_dir / f"slot_{slot_id}"
+                    base = meta_file.parent / f"slot_{slot_id}"
                     slot_size = sum(
                         f.stat().st_size
                         for ext in [
@@ -801,21 +807,22 @@ class KVPrefixCache:
                     )
                     total_size += slot_size
                     slots.append(
-                        (cast(float, meta.get("timestamp", 0)), slot_id, slot_size)
+                        (cast(float, meta.get("timestamp", 0)), base, slot_size)
                     )
                 except Exception:
                     continue
             if total_size <= max_bytes or not slots:
                 break
             slots.sort()
-            _oldest_ts, oldest_id, oldest_size = slots[0]
-            base = disk_dir / f"slot_{oldest_id}"
+            _oldest_ts, oldest_base, oldest_size = slots[0]
             for ext in ["_cache.safetensors", "_tokens.safetensors", "_meta.json"]:
                 with contextlib.suppress(FileNotFoundError):
-                    os.remove(str(base) + ext)
+                    os.remove(str(oldest_base) + ext)
             logger.info(
-                f"KV cache evicted disk slot_{oldest_id} "
-                f"({oldest_size / 1024 / 1024 / 1024:.1f} GB) — over {max_size_gb} GB limit"
+                f"KV cache evicted disk slot "
+                f"{oldest_base.parent.name}/{oldest_base.name} "
+                f"({oldest_size / 1024 / 1024 / 1024:.1f} GB) — "
+                f"kv-cache over {max_size_gb} GB total"
             )
 
     def flush_to_disk(self, force: bool = False) -> None:
