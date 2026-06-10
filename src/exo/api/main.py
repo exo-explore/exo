@@ -126,13 +126,12 @@ from exo.api.types.openai_responses import (
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
-from exo.shared.config import locator as locator_config
+from exo.shared.config import locator
 from exo.shared.constants import (
     DASHBOARD_DIR,
     ENABLE_DISAGGREGATION,
     EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
-    EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
 )
 from exo.shared.election import ElectionMessage
@@ -258,7 +257,7 @@ class API:
         self.last_completed_election: int = 0
         self.port = port
         self._sent_image_hashes: set[str] = set()
-        self._tracing_cache_dir = locator_config().tracing_cache_dir
+        self._tracing_cache_dir = locator().tracing_cache_dir
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -293,7 +292,7 @@ class API:
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
         ] = {}
-        self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
+        self._image_store = ImageStore(locator().image_cache_dir)
         self._tg: TaskGroup = TaskGroup()
 
     def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):
