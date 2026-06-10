@@ -6,6 +6,7 @@ from unittest.mock import patch
 import mlx.core as mx
 import pytest
 from mlx_lm.models.cache import KVCache
+from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
 from mlx_lm.sample_utils import make_sampler
 
 from exo.shared.types.common import ModelId
@@ -16,6 +17,8 @@ from exo.worker.engines.mlx.cache import (
     encode_prompt,
     get_prefix_length,
     make_kv_cache,
+    snapshot_ssm_states,
+    trim_cache,
 )
 from exo.worker.engines.mlx.generator.generate import mlx_generate, prefill
 from exo.worker.engines.mlx.types import Model
@@ -600,3 +603,56 @@ class TestKVPrefixCacheWithModel:
         assert len(kv_prefix_cache.prompts) == 1
         # The surviving entry should be the newly added one
         assert get_prefix_length(kv_prefix_cache.prompts[0], tokens) == len(tokens)
+
+
+class TestTrimCacheDeepseekV4:
+    """trim_cache must treat DeepseekV4Cache as non-trimmable.
+
+    DeepseekV4Cache.is_trimmable() is False and .trim() is a no-op, and
+    is_non_trimmable_cache_entry() already classifies it as non-trimmable —
+    but trim_cache used a stale inline copy of that predicate which omitted
+    it, so V4 entries fell through to the no-op .trim() and were silently
+    reused untrimmed instead of being restored from the snapshot.
+    """
+
+    @staticmethod
+    def _v4_cache(n_tokens: int, sliding_window: int = 64) -> DeepseekV4Cache:
+        c = DeepseekV4Cache(sliding_window)
+        c.local.update_and_fetch(
+            mx.random.normal([1, 1, n_tokens, 8]),
+            mx.random.normal([1, 1, n_tokens, 8]),
+        )
+        return c
+
+    def test_restores_v4_from_snapshot(self):
+        v4 = self._v4_cache(200)
+        kv = KVCache()
+        kv.update_and_fetch(
+            mx.random.normal([1, 2, 200, 8]), mx.random.normal([1, 2, 200, 8])
+        )
+        cache = [kv, v4]
+        snapshot = snapshot_ssm_states(cache)
+        assert snapshot.token_count == 200
+
+        # Advance both entries past the snapshot point.
+        v4.local.update_and_fetch(
+            mx.random.normal([1, 1, 100, 8]), mx.random.normal([1, 1, 100, 8])
+        )
+        kv.update_and_fetch(
+            mx.random.normal([1, 2, 100, 8]), mx.random.normal([1, 2, 100, 8])
+        )
+        assert cache_length(cache) == 300
+
+        trim_cache(cache, 100, snapshot)
+
+        # V4 entry must come back from the snapshot, not stay at 300.
+        assert cache[1].offset == 200
+        # Trimmable entries still trim normally.
+        assert cache[0].offset == 200
+
+    def test_v4_without_snapshot_does_not_raise(self):
+        v4 = self._v4_cache(200)
+        # No snapshot available: must be a no-op, not a TypeError from
+        # iterating a non-iterable cache in the CacheList fallback arm.
+        trim_cache([v4], 50, None)
+        assert v4.offset == 200
