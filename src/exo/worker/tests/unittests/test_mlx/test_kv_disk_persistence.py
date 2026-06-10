@@ -90,6 +90,25 @@ def test_janitor_sweeps_other_models_stale_slots(tmp_path, kvp_factory):
     assert (own / "slot_7_meta.json").exists()
 
 
+def test_per_flush_eviction_also_ttl_sweeps_other_models(tmp_path, kvp_factory):
+    """The TTL must reach other models' dirs from the per-flush path too —
+    not only at init — so one model kept loaded for weeks still cleans up."""
+    kv = kvp_factory()  # init janitor runs before the fixtures exist
+
+    other = tmp_path / "cafebabe00112233"
+    other.mkdir()
+    (other / "slot_0_meta.json").write_text(
+        json.dumps({"model_id": "other/model", "token_count": 5, "timestamp": 1.0})
+    )
+    (other / "slot_0_tokens.safetensors").write_text("stub")
+    (other / "slot_0_cache.safetensors").write_text("stub")
+
+    kv._evict_stale_disk_slots()  # what flush_to_disk calls after each flush
+
+    assert not (other / "slot_0_meta.json").exists()
+    assert not (other / "slot_0_cache.safetensors").exists()
+
+
 def test_size_cap_is_global_and_evicts_oldest_first(tmp_path, kvp_factory, monkeypatch):
     """The size cap spans ALL model dirs: the globally oldest slot is evicted
     first (cross-model LRU), eviction stops once back under the cap, and the

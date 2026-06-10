@@ -714,11 +714,11 @@ class KVPrefixCache:
             logger.warning(f"KV cache disk flush failed: {e}")
 
     def _janitor_sweep_stale_slots(self) -> None:
-        """TTL-sweep every model's slot dir under the kv-cache root, once at init.
+        """TTL-sweep OTHER models' slot dirs under the kv-cache root.
 
-        Per-flush eviction only ever sees this model's own dir and only runs
-        while this model is loaded — without this sweep, slots of models that
-        are never loaded again live forever.
+        Runs at init and from per-flush eviction: the own-dir TTL pass only
+        covers this model, so without this sweep, slots of models that are
+        never loaded again would only fall to the global size cap.
         """
         disk_dir = self._disk_dir
         if disk_dir is None:
@@ -781,6 +781,9 @@ class KVPrefixCache:
                     logger.info(f"KV cache evicted stale disk slot_{slot_id}")
             except Exception:
                 continue
+        # TTL for everyone else too — a single model kept loaded for weeks
+        # would otherwise leave other models' stale slots to the size cap only.
+        self._janitor_sweep_stale_slots()
         max_bytes = max_size_gb * 1024 * 1024 * 1024
         while True:
             slots: list[tuple[float, _Path, int]] = []
