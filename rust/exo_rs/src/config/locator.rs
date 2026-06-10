@@ -103,7 +103,7 @@ pub struct LocatorConfig {
     #[pyo3(get)]
     pub image_cache_dir: PathBuf,
     #[pyo3(get)]
-    pub trace_cache_dir: PathBuf,
+    pub tracing_cache_dir: PathBuf,
 }
 
 #[gen_stub_pymethods]
@@ -131,7 +131,7 @@ impl LocatorConfig {
 
         let event_log_dir = exo_home.data.join("event_log");
         let image_cache_dir = exo_home.cache.join("images");
-        let trace_cache_dir = exo_home.cache.join("traces");
+        let tracing_cache_dir = exo_home.cache.join("traces");
 
         Ok(Self {
             exo_home,
@@ -143,7 +143,7 @@ impl LocatorConfig {
             custom_model_cards_dir,
             event_log_dir,
             image_cache_dir,
-            trace_cache_dir,
+            tracing_cache_dir,
         })
     }
 }

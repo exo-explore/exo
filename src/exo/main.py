@@ -10,7 +10,7 @@ from typing import Self
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
 from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
-from exo_rs import CliArgs, LocatorConfig, Pidfile, PidfileError
+from exo_rs import CliArgs, Pidfile, PidfileError
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -22,7 +22,26 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_zid
-from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG, EXO_PID_FILE
+from exo.shared.constants import (
+    EXO_CACHE_HOME,
+    EXO_CONFIG_FILE,
+    EXO_CONFIG_HOME,
+    EXO_CUSTOM_MODEL_CARDS_DIR,
+    EXO_DATA_HOME,
+    EXO_DEFAULT_MODELS_DIR,
+    EXO_EVENT_LOG_DIR,
+    EXO_IMAGE_CACHE_DIR,
+    EXO_LOG,
+    EXO_LOG_DIR,
+    EXO_MODELS_DIRS,
+    EXO_MODELS_READ_ONLY_DIRS,
+    EXO_NODE_ZID,
+    EXO_PID_FILE,
+    EXO_RUNNER_LOG_DIR,
+    EXO_RUNNER_STDERR_LOG,
+    EXO_RUNNER_STDOUT_LOG,
+    EXO_TRACING_CACHE_DIR,
+)
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
@@ -31,6 +50,7 @@ from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
+from exo.shared import config
 
 
 @dataclass
@@ -276,9 +296,29 @@ class Node:
 
 
 def main():
+    # parse args and resolve locator config
     args = CliArgs.parse()
-    locator = LocatorConfig.resolve(args.locator)
-    print(locator.exo_home)
+    config.load_locator_config(args.locator)
+    c = config.locator_config()
+
+    print(c.exo_home.config, EXO_CONFIG_HOME)
+    print(c.exo_home.data, EXO_DATA_HOME)
+    print(c.exo_home.cache, EXO_CACHE_HOME)
+    print(c.models_dirs.default_models_dir, EXO_DEFAULT_MODELS_DIR)
+    print(c.models_dirs.models_read_only_dirs, EXO_MODELS_READ_ONLY_DIRS)
+    print(c.models_dirs.models_dirs, EXO_MODELS_DIRS)
+    print(c.log_files.exo_log_dir, EXO_LOG_DIR)
+    print(c.log_files.exo_log, EXO_LOG)
+    print(c.log_files.exo_runner_log_dir, EXO_RUNNER_LOG_DIR)
+    print(c.log_files.exo_runner_stdout_log, EXO_RUNNER_STDOUT_LOG)
+    print(c.log_files.exo_runner_stderr_log, EXO_RUNNER_STDERR_LOG)
+    print(c.pid_file, EXO_PID_FILE)
+    print(c.node_zid, EXO_NODE_ZID)
+    print(c.config_file, EXO_CONFIG_FILE)
+    print(c.custom_model_cards_dir, EXO_CUSTOM_MODEL_CARDS_DIR)
+    print(c.event_log_dir, EXO_EVENT_LOG_DIR)
+    print(c.image_cache_dir, EXO_IMAGE_CACHE_DIR)
+    print(c.tracing_cache_dir, EXO_TRACING_CACHE_DIR)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
