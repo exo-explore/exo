@@ -78,7 +78,6 @@ EXO_PID_FILE = EXO_CACHE_HOME / "exo.pid"
 
 # Identity (config)
 EXO_NODE_ZID = EXO_CACHE_HOME / "node_zid"
-EXO_CONFIG_FILE = EXO_CONFIG_HOME / "config.toml"
 
 EXO_MAX_CHUNK_SIZE = (
     512 * 1024

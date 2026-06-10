@@ -25,7 +25,6 @@ from exo.routing.router import Router, get_node_zid
 from exo.shared import config
 from exo.shared.constants import (
     EXO_CACHE_HOME,
-    EXO_CONFIG_FILE,
     EXO_CONFIG_HOME,
     EXO_DATA_HOME,
     EXO_DEFAULT_MODELS_DIR,
@@ -310,7 +309,6 @@ def main():
     print(c.log_files.exo_runner_stderr_log, EXO_RUNNER_STDERR_LOG)
     print(c.pid_file, EXO_PID_FILE)
     print(c.node_zid, EXO_NODE_ZID)
-    print(c.config_file, EXO_CONFIG_FILE)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
