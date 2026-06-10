@@ -31,8 +31,8 @@ from exo.download.huggingface_utils import (
     get_hf_endpoint,
     get_hf_token,
 )
+from exo.shared.config import locator
 from exo.shared.constants import (
-    EXO_DEFAULT_MODELS_DIR,
     EXO_MODELS_DIRS,
     EXO_MODELS_READ_ONLY_DIRS,
 )
@@ -47,6 +47,10 @@ from exo.shared.types.worker.downloads import (
     RepoFileDownloadProgress,
 )
 from exo.shared.types.worker.shards import ShardMetadata
+
+
+def _default_models_dir():
+    return locator().models_dirs.default_models_dir
 
 
 class HuggingFaceAuthenticationError(Exception):
@@ -175,7 +179,7 @@ def build_model_path(model_id: ModelId) -> Path:
     found = resolve_existing_model(model_id)
     if found is not None:
         return found
-    return EXO_DEFAULT_MODELS_DIR / model_id.normalize()
+    return _default_models_dir() / model_id.normalize()
 
 
 def select_download_dir(required_bytes: int) -> Path:
@@ -234,7 +238,7 @@ async def resolve_model_dir(model_id: ModelId) -> Path:
 
 async def ensure_cache_dir(model_id: ModelId) -> Path:
     """Return the cache directory for a model's metadata, creating it if needed."""
-    target = EXO_DEFAULT_MODELS_DIR / "caches" / model_id.normalize()
+    target = _default_models_dir() / "caches" / model_id.normalize()
     await aios.makedirs(target, exist_ok=True)
     return target
 
@@ -250,7 +254,7 @@ async def delete_model(model_id: ModelId) -> bool:
             deleted = True
 
     # Clear cache from default dir
-    cache_dir = EXO_DEFAULT_MODELS_DIR / "caches" / normalized
+    cache_dir = _default_models_dir() / "caches" / normalized
     if await aios.path.exists(cache_dir):
         await asyncio.to_thread(shutil.rmtree, cache_dir, ignore_errors=False)
 
@@ -260,8 +264,8 @@ async def delete_model(model_id: ModelId) -> bool:
 async def seed_models(seed_dir: str | Path):
     """Move models from resources folder to the default models directory."""
     source_dir = Path(seed_dir)
-    await aios.makedirs(EXO_DEFAULT_MODELS_DIR, exist_ok=True)
-    dest_dir = EXO_DEFAULT_MODELS_DIR
+    await aios.makedirs(_default_models_dir(), exist_ok=True)
+    dest_dir = _default_models_dir()
     for path in source_dir.iterdir():
         if path.is_dir() and path.name.startswith("models--"):
             dest_path = dest_dir / path.name
@@ -910,7 +914,7 @@ async def download_shard(
             status="not_started",
             file_progress={},
         )
-        return EXO_DEFAULT_MODELS_DIR / model_id.normalize(), not_started_progress
+        return _default_models_dir() / model_id.normalize(), not_started_progress
     filtered_file_list = list(
         filter_repo_objects(
             file_list,
@@ -936,7 +940,7 @@ async def download_shard(
         target_dir = (
             existing
             if existing is not None
-            else EXO_DEFAULT_MODELS_DIR / model_id.normalize()
+            else _default_models_dir() / model_id.normalize()
         )
     else:
         models_dir = await select_download_dir_for_shard(

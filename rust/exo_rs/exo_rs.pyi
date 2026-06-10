@@ -59,6 +59,11 @@ class CliArgs:
     @property
     def deprecated(self) -> DeprecatedArgs: ...
     @staticmethod
+    def from_env_only() -> CliArgs:
+        r"""
+        Create only from env-variables
+        """
+    @staticmethod
     def parse_from(argv: typing.Sequence[builtins.str]) -> CliArgs: ...
     @staticmethod
     def parse() -> CliArgs: ...
@@ -165,6 +170,16 @@ class LocatorConfig:
     def image_cache_dir(self) -> pathlib.Path: ...
     @property
     def tracing_cache_dir(self) -> pathlib.Path: ...
+    @staticmethod
+    def default() -> LocatorConfig:
+        r"""
+        Create default instance
+        """
+    @staticmethod
+    def from_env_only() -> LocatorConfig:
+        r"""
+        Create only from env-variables
+        """
     @staticmethod
     def resolve(args: LocatorArgs) -> LocatorConfig: ...
 

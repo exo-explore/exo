@@ -19,7 +19,8 @@ from exo.routing.event_router import (
     EventRouterBrokenResourceError,
     EventRouterClosedResourceError,
 )
-from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_MODELS_READ_ONLY_DIRS
+from exo.shared.config import locator
+from exo.shared.constants import EXO_MODELS_READ_ONLY_DIRS
 from exo.shared.models import model_cards
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
@@ -69,7 +70,7 @@ class DownloadCoordinator:
 
     @staticmethod
     def _default_model_dir(model_id: ModelId) -> str:
-        return str(EXO_DEFAULT_MODELS_DIR / model_id.normalize())
+        return str(locator().models_dirs.default_models_dir / model_id.normalize())
 
     def _completed_from_path(
         self,

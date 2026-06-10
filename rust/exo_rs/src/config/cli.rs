@@ -45,7 +45,7 @@ pub struct CliArgs {
         help = "Force node to be master"
     )]
     #[pyo3(get)]
-    force_master: bool,
+    pub force_master: bool,
 
     #[arg(
         long = "no-api",
@@ -54,7 +54,7 @@ pub struct CliArgs {
         help = "Disable the API"
     )]
     #[pyo3(get)]
-    api_enabled: bool,
+    pub api_enabled: bool,
 
     #[arg(
         long,
@@ -63,7 +63,7 @@ pub struct CliArgs {
         help = "Port on which the API runs"
     )]
     #[pyo3(get)]
-    api_port: u16,
+    pub api_port: u16,
 
     #[arg(
         long = "no-worker",
@@ -72,7 +72,7 @@ pub struct CliArgs {
         help = "Disable the worker"
     )]
     #[pyo3(get)]
-    worker_enabled: bool,
+    pub worker_enabled: bool,
 
     #[arg(
         long = "no-downloads",
@@ -81,7 +81,7 @@ pub struct CliArgs {
         help = "Disable the download coordinator (node won't download models)"
     )]
     #[pyo3(get)]
-    downloads_enabled: bool,
+    pub downloads_enabled: bool,
 
     #[arg(
         long,
@@ -89,7 +89,7 @@ pub struct CliArgs {
         help = "Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models"
     )]
     #[pyo3(get)]
-    offline: bool,
+    pub offline: bool,
 
     #[arg(
         long = "no-batch",
@@ -98,7 +98,7 @@ pub struct CliArgs {
         help = "Disable continuous batching, use sequential generation"
     )]
     #[pyo3(get)]
-    continuous_batching_enabled: bool,
+    pub continuous_batching_enabled: bool,
 
     #[arg(
         long,
@@ -106,7 +106,7 @@ pub struct CliArgs {
         help = "Run as a legacy SysV-style background daemon using double-fork daemonization"
     )]
     #[pyo3(get)]
-    legacy_daemon: bool,
+    pub legacy_daemon: bool,
 
     #[arg(
         long,
@@ -115,7 +115,7 @@ pub struct CliArgs {
         help = "Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)"
     )]
     #[pyo3(get)]
-    bootstrap_peers: Option<Vec<String>>,
+    pub bootstrap_peers: Option<Vec<String>>,
 
     #[arg(
         long,
@@ -124,7 +124,7 @@ pub struct CliArgs {
         help = "Discovery namespace, nodes with different namespaces will not connect."
     )]
     #[pyo3(get)]
-    namespace: String,
+    pub namespace: String,
 
     #[arg(
         long,
@@ -133,7 +133,7 @@ pub struct CliArgs {
         help = "Fixed TCP port for zenoh to listen."
     )]
     #[pyo3(get)]
-    zenoh_port: u16,
+    pub zenoh_port: u16,
 
     #[arg(
         long,
@@ -142,7 +142,7 @@ pub struct CliArgs {
         help = "Fixed UDP port for the discovery service."
     )]
     #[pyo3(get)]
-    discovery_port: u16,
+    pub discovery_port: u16,
 
     #[arg(
         long,
@@ -150,24 +150,31 @@ pub struct CliArgs {
         help = "Force MLX FAST_SYNCH on/off (for JACCL backend); omit for auto"
     )]
     #[pyo3(get)]
-    fast_synch: Option<bool>,
+    pub fast_synch: Option<bool>,
 
     #[command(flatten)]
     #[pyo3(get)]
-    locator: LocatorArgs,
+    pub locator: LocatorArgs,
 
     #[command(flatten)]
     #[pyo3(get)]
-    config: ConfigArgs,
+    pub config: ConfigArgs,
 
     #[command(flatten)]
     #[pyo3(get)]
-    deprecated: DeprecatedArgs,
+    pub deprecated: DeprecatedArgs,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl CliArgs {
+    /// Create only from env-variables
+    #[staticmethod]
+    pub fn from_env_only() -> Self {
+        // parse only from env - no arguments
+        CliArgs::parse_from(&["exo"])
+    }
+
     #[staticmethod]
     #[pyo3(name = "parse_from")]
     pub fn py_parse_from(argv: Vec<OsString>) -> Self {
@@ -227,7 +234,7 @@ pub struct ConfigArgs {}
 pub struct DeprecatedArgs {
     #[arg(long = "libp2p-port", hide = true)]
     #[pyo3(get)]
-    libp2p_port: Option<u16>,
+    pub libp2p_port: Option<u16>,
 }
 
 impl DeprecatedArgs {

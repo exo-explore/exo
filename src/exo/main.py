@@ -82,9 +82,6 @@ class Node:
 
         logger.info(f"Starting node {node_id}")
 
-        # Errors the very first time exo is run as dir doesn't exist
-        EXO_DEFAULT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
-
         # Create DownloadCoordinator (unless --no-downloads)
         if not args.no_downloads:
             download_coordinator = DownloadCoordinator(

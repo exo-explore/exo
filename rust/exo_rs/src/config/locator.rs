@@ -1,3 +1,4 @@
+use crate::config::cli::CliArgs;
 use crate::config::path::{PathBufValueParserExt, parse_path};
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use pyo3::{Bound, PyResult, pyclass, pymethods};
@@ -16,7 +17,7 @@ use util::path::PathExt;
 /// By default, any path-like argument goes here, but can be moved to [`ConfigArgs`] if needed.
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, clap::Args)]
 #[command(about = None, long_about = None)]
 pub struct LocatorArgs {
     #[arg(
@@ -32,7 +33,7 @@ pub struct LocatorArgs {
     #[arg(
         long,
         env = "EXO_DEFAULT_MODELS_DIR",
-        value_parser = parse_path().dir_exists(),
+        value_parser = parse_path(),
         value_name = "PATH",
         help = "Default models directory; always included as first entry in writable models directories"
     )]
@@ -54,7 +55,7 @@ pub struct LocatorArgs {
         long,
         value_delimiter = ':',
         env = "EXO_MODELS_DIRS",
-        value_parser = parse_path().dir_exists(),
+        value_parser = parse_path(),
         value_name = "PATHS",
         help = "Writable model directories (colon-separated); default directory is always prepended"
     )]
@@ -109,6 +110,21 @@ pub struct LocatorConfig {
 #[gen_stub_pymethods]
 #[pymethods]
 impl LocatorConfig {
+    /// Create default instance
+    #[staticmethod]
+    #[pyo3(name = "default")]
+    pub fn py_default() -> PyResult<Self> {
+        // resolve from env only
+        Self::resolve(&LocatorArgs::default())
+    }
+
+    /// Create only from env-variables
+    #[staticmethod]
+    pub fn from_env_only() -> PyResult<Self> {
+        // resolve from env only
+        Self::resolve(&CliArgs::from_env_only().locator)
+    }
+
     #[staticmethod]
     pub fn resolve(args: &LocatorArgs) -> PyResult<Self> {
         let exo_home = ExoHome::resolve(args)?;
@@ -126,7 +142,7 @@ impl LocatorConfig {
             .unwrap_or_else(|| exo_home.config.join("config.toml"));
         config_file.create_file_if_not_found()?;
 
-        // custom model card dirs TODO: see model_cards.py "todo"
+        // custom model pub(crate) card dirs TODO: see model_cards.py "todo"
         let custom_model_cards_dir = exo_home.data.join("custom_model_cards");
 
         let event_log_dir = exo_home.data.join("event_log");

@@ -7,13 +7,12 @@ _locator_config: LocatorConfig | None = None
 
 
 def locator() -> LocatorConfig:
+    global _locator_config
     if _locator_config is None:
-        raise RuntimeError("Configuration object accessed before loaded")
+        _locator_config = LocatorConfig.from_env_only()
     return _locator_config
 
 
 def load_locator(cfg: LocatorConfig):
     global _locator_config
-    if _locator_config is not None:
-        raise RuntimeError("Configuration already loaded")
     _locator_config = cfg
