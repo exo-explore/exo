@@ -69,9 +69,6 @@ DASHBOARD_DIR = (
 # Log files (data/logs or cache)
 EXO_LOG_DIR = EXO_CACHE_HOME / "exo_log"
 EXO_LOG = EXO_LOG_DIR / "exo.log"
-EXO_RUNNER_LOG_DIR = EXO_LOG_DIR / "runner_log"
-EXO_RUNNER_STDOUT_LOG = EXO_RUNNER_LOG_DIR / "stdout.log"
-EXO_RUNNER_STDERR_LOG = EXO_RUNNER_LOG_DIR / "stderr.log"
 
 EXO_MAX_CHUNK_SIZE = (
     512 * 1024

@@ -32,9 +32,6 @@ from exo.shared.constants import (
     EXO_LOG_DIR,
     EXO_MODELS_DIRS,
     EXO_MODELS_READ_ONLY_DIRS,
-    EXO_RUNNER_LOG_DIR,
-    EXO_RUNNER_STDERR_LOG,
-    EXO_RUNNER_STDOUT_LOG,
 )
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
@@ -302,9 +299,6 @@ def main():
     print(c.models_dirs.models_dirs, EXO_MODELS_DIRS)
     print(c.log_files.exo_log_dir, EXO_LOG_DIR)
     print(c.log_files.exo_log, EXO_LOG)
-    print(c.log_files.exo_runner_log_dir, EXO_RUNNER_LOG_DIR)
-    print(c.log_files.exo_runner_stdout_log, EXO_RUNNER_STDOUT_LOG)
-    print(c.log_files.exo_runner_stderr_log, EXO_RUNNER_STDERR_LOG)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
