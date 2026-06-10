@@ -1,5 +1,8 @@
 from exo_rs import LocatorArgs, LocatorConfig
 
+# TODO: for now we are only going to have "load once" globals as our configuration,
+#       so "reloading" isn't supported yet; would have to figure out in the future
+#       how to create "reactive" configuration that can be reloaded and injected and whatnot
 _locator_config: LocatorConfig | None = None
 
 

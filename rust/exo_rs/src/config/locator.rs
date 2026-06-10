@@ -1,12 +1,12 @@
-use crate::config::path::{PathBufValueParserExt, parse_path};
+use crate::config::path::{parse_path, PathBufValueParserExt};
 use pyo3::prelude::{PyModule, PyModuleMethods};
-use pyo3::{Bound, PyResult, pyclass, pymethods};
+use pyo3::{pyclass, pymethods, Bound, PyResult};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{fs, io};
-use util::VecExt;
 use util::path::PathExt;
+use util::VecExt;
 
 /// Arguments that are needed to resolve paths to files go here.
 ///
@@ -268,7 +268,7 @@ impl LogFiles {
 
         // Exo runner log
         let exo_runner_log_dir = exo_log_dir.join("runner_log");
-        fs::create_dir_all(&exo_log_dir)?;
+        fs::create_dir_all(&exo_runner_log_dir)?;
         let exo_runner_stdout_log = exo_runner_log_dir.join("stdout.log");
         let exo_runner_stderr_log = exo_runner_log_dir.join("stderr.log");
 
