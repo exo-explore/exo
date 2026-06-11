@@ -292,7 +292,7 @@ def main():
         raise SystemExit(1) from e
 
     try:
-        if args.legacy_daemon:
+        if cli_args.legacy_daemon:
             # keep stdio backed by explicit /dev/null streams. multiprocessing spawn expects
             # valid stdio FDs; letting DaemonContext close/reopen them can break runner startup.
             for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
@@ -386,7 +386,6 @@ class Args(FrozenModel):
     no_downloads: bool = False
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
-    legacy_daemon: bool = False
     bootstrap_peers: list[str] = []
     namespace: str
     zenoh_port: int
@@ -449,11 +448,6 @@ class Args(FrozenModel):
             help="Disable continuous batching, use sequential generation",
         )
         parser.add_argument(
-            "--legacy-daemon",
-            action="store_true",
-            help="Run as a legacy SysV-style background daemon using double-fork daemonization",
-        )
-        parser.add_argument(
             "--bootstrap-peers",
             type=lambda s: [p for p in s.split(",") if p],
             default=os.getenv("EXO_BOOTSTRAP_PEERS", "").split(",")
@@ -483,6 +477,15 @@ class Args(FrozenModel):
             dest="discovery_port",
             help="Fixed UDP port for the discovery service.",
         )
+
+        # un-needed arguments definitions
+        parser.add_argument(
+            "--legacy-daemon",
+            action="store_true",
+            dest="_legacy_daemon_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
         parser.add_argument(
             "--fast-synch",
             nargs="?",
@@ -495,6 +498,7 @@ class Args(FrozenModel):
         parsed_args = vars(args)
 
         # remove un-needed arguments
+        parsed_args.pop("_legacy_daemon_ignored", None)
         parsed_args.pop("_fast_synch_ignored", None)
 
         return cls(**parsed_args)  # pyright: ignore[reportAny] - We are intentionally validating here, we can't do it statically
