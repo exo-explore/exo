@@ -4,7 +4,7 @@ use crate::pickle_reduce;
 use clap::builder::{BoolishValueParser, TypedValueParser};
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use pyo3::types::PyTuple;
-use pyo3::{pyclass, pymethods, Bound, PyAny, PyResult};
+use pyo3::{Bound, PyAny, PyResult, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 
