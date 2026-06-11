@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import aiofiles
 import aiofiles.os as aios
-from exo_rs import LocatorConfig
 import pytest
+from exo_rs import LocatorConfig
 
 from exo.download.download_utils import (
     _download_file,  # pyright: ignore[reportPrivateUsage]
