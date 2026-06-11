@@ -283,15 +283,15 @@ class Node:
 def main():
     # parse args and resolve/load the locator config
     args = CliArgs.parse()
-    config.load_locator(LocatorConfig.resolve(args.locator))
+    config.load_locator(LocatorConfig.resolve(args.locator()))
 
     c = config.locator()
-    print(c.exo_home.config, EXO_CONFIG_HOME)
-    print(c.exo_home.data, EXO_DATA_HOME)
-    print(c.exo_home.cache, EXO_CACHE_HOME)
-    print(c.models_dirs.default_models_dir, EXO_DEFAULT_MODELS_DIR)
-    print(c.models_dirs.models_read_only_dirs, EXO_MODELS_READ_ONLY_DIRS)
-    print(c.models_dirs.models_dirs, EXO_MODELS_DIRS)
+    print(c.exo_home().config, EXO_CONFIG_HOME)
+    print(c.exo_home().data, EXO_DATA_HOME)
+    print(c.exo_home().cache, EXO_CACHE_HOME)
+    print(c.models_dirs().default_models_dir, EXO_DEFAULT_MODELS_DIR)
+    print(c.models_dirs().models_read_only_dirs, EXO_MODELS_READ_ONLY_DIRS)
+    print(c.models_dirs().models_dirs, EXO_MODELS_DIRS)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
@@ -355,7 +355,7 @@ def main_inner(args: "Args"):
     mp.set_start_method("spawn", force=True)
 
     # TODO: Refactor the current verbosity system
-    logger_setup(config.locator().log_files.exo_log, args.verbosity)
+    logger_setup(config.locator().log_files().exo_log, args.verbosity)
 
     logger.info(f"pid = {os.getpid()}")
     if os.getenv("EXO_LIBP2P_NAMESPACE"):

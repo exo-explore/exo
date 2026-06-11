@@ -77,13 +77,13 @@ pub struct LocatorArgs {
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocatorConfig {
-    #[pyo3(get, set)]
+    #[pyo3(set)]
     pub exo_home: ExoHome,
 
-    #[pyo3(get, set)]
+    #[pyo3(set)]
     pub models_dirs: ModelsDirs,
 
-    #[pyo3(get, set)]
+    #[pyo3(set)]
     pub log_files: LogFiles,
 
     // other
@@ -101,8 +101,10 @@ pub struct LocatorConfig {
 
     #[pyo3(get, set)]
     pub event_log_dir: PathBuf,
+
     #[pyo3(get, set)]
     pub image_cache_dir: PathBuf,
+
     #[pyo3(get, set)]
     pub tracing_cache_dir: PathBuf,
 }
@@ -161,6 +163,18 @@ impl LocatorConfig {
             image_cache_dir,
             tracing_cache_dir,
         })
+    }
+
+    pub fn exo_home(&self) -> ExoHome {
+        self.exo_home.clone()
+    }
+
+    pub fn models_dirs(&self) -> ModelsDirs {
+        self.models_dirs.clone()
+    }
+
+    pub fn log_files(&self) -> LogFiles {
+        self.log_files.clone()
     }
 }
 

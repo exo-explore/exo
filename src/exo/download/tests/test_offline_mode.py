@@ -25,15 +25,21 @@ def model_id() -> ModelId:
     return ModelId("test-org/test-model")
 
 
+def _mock_locator_config(models_dir: Path) -> LocatorConfig:
+    cfg = LocatorConfig.default()
+    models_dirs = cfg.models_dirs()
+    models_dirs.default_models_dir = models_dir
+    models_dirs.models_dirs = [models_dir]
+    cfg.models_dirs = models_dirs
+    return cfg
+
+
 @pytest.fixture
 async def temp_models_dir(tmp_path: Path) -> AsyncIterator[Path]:
     models_dir = tmp_path / "models"
     await aios.makedirs(models_dir, exist_ok=True)
 
-    # create mock locator-configuration
-    cfg = LocatorConfig.default()
-    cfg.models_dirs.default_models_dir = models_dir
-    cfg.models_dirs.models_dirs = [models_dir]
+    cfg = _mock_locator_config(models_dir)
 
     with (
         patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),

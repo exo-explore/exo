@@ -53,7 +53,7 @@ def create_hostfile(world_size: int, base_port: int) -> tuple[str, list[str]]:
 # Use GPT OSS 20b to test as it is a model with a lot of strange behaviour
 
 DEFAULT_GPT_OSS_CONFIG = PipelineTestConfig(
-    model_path=locator().models_dirs.default_models_dir
+    model_path=locator().models_dirs().default_models_dir
     / "mlx-community--gpt-oss-20b-MXFP4-Q8",
     total_layers=24,
     base_port=29600,

@@ -153,15 +153,15 @@ pub struct CliArgs {
     pub fast_synch: Option<bool>,
 
     #[command(flatten)]
-    #[pyo3(get, set)]
+    #[pyo3(set)]
     pub locator: LocatorArgs,
 
     #[command(flatten)]
-    #[pyo3(get, set)]
+    #[pyo3(set)]
     pub config: ConfigArgs,
 
     #[command(flatten)]
-    #[pyo3(get, set)]
+    #[pyo3(set)]
     pub deprecated: DeprecatedArgs,
 }
 
@@ -188,6 +188,18 @@ impl CliArgs {
         // (i.e. `sys.orig_argv`) may contain extra arguments which would mess up parsing
         let argv: Vec<OsString> = PyModule::import(py, "sys")?.getattr("argv")?.extract()?;
         Ok(CliArgs::parse_from(argv))
+    }
+
+    pub fn locator(&self) -> LocatorArgs {
+        self.locator.clone()
+    }
+
+    pub fn config(&self) -> ConfigArgs {
+        self.config.clone()
+    }
+
+    pub fn deprecated(&self) -> DeprecatedArgs {
+        self.deprecated.clone()
     }
 
     pub fn to_bytes(&self) -> PyResult<Vec<u8>> {

@@ -43,6 +43,15 @@ def _create_incomplete_model(model_dir: Path) -> None:
     # model.safetensors is missing
 
 
+def _mock_locator_config(default: Path, writable: list[Path]) -> LocatorConfig:
+    cfg = LocatorConfig.default()
+    models_dirs = cfg.models_dirs()
+    models_dirs.default_models_dir = default
+    models_dirs.models_dirs = writable
+    cfg.models_dirs = models_dirs
+    return cfg
+
+
 # ---------------------------------------------------------------------------
 # resolve_existing_model
 # ---------------------------------------------------------------------------
@@ -240,10 +249,7 @@ class TestDeleteModel:
         await aios.makedirs(writable2, exist_ok=True)
         await aios.makedirs(default, exist_ok=True)
 
-        # create mock locator-configuration
-        cfg = LocatorConfig.default()
-        cfg.models_dirs.default_models_dir = default
-        cfg.models_dirs.models_dirs = [writable1, writable2, default]
+        cfg = _mock_locator_config(default, [writable1, writable2, default])
 
         with (
             patch(

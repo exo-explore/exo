@@ -24,7 +24,7 @@ from exo.shared.types.text_generation import InputMessage, TextGenerationTaskPar
 
 MODEL_ID = "mlx-community/gpt-oss-20b-MXFP4-Q8"
 MODEL_PATH = (
-    locator().models_dirs.default_models_dir / "mlx-community--gpt-oss-20b-MXFP4-Q8"
+    locator().models_dirs().default_models_dir / "mlx-community--gpt-oss-20b-MXFP4-Q8"
 )
 TOTAL_LAYERS = 24
 MAX_TOKENS = 10
