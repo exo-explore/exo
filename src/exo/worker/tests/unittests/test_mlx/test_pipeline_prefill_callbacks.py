@@ -15,7 +15,7 @@ from typing import Any, cast
 
 import pytest
 
-from exo.shared.constants import EXO_DEFAULT_MODELS_DIR
+from exo.shared.config import locator
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.backends import Backend
 from exo.shared.types.common import ModelId
@@ -23,7 +23,9 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 
 MODEL_ID = "mlx-community/gpt-oss-20b-MXFP4-Q8"
-MODEL_PATH = EXO_DEFAULT_MODELS_DIR / "mlx-community--gpt-oss-20b-MXFP4-Q8"
+MODEL_PATH = (
+    locator().models_dirs.default_models_dir / "mlx-community--gpt-oss-20b-MXFP4-Q8"
+)
 TOTAL_LAYERS = 24
 MAX_TOKENS = 10
 SEED = 42
