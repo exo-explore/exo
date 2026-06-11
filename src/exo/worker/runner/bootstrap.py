@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from typing import Self, cast
 
 import loguru
+from exo_rs import LocatorConfig
 
+from exo.shared.config import load_locator
 from exo.shared.types.events import Event
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
@@ -42,8 +44,13 @@ def entrypoint(
     event_sender: MpSender[Event | RunnerTerminationError],
     task_receiver: MpReceiver[Task],
     cancel_receiver: MpReceiver[TaskId],
+    locator: LocatorConfig,
     _logger: "loguru.Logger",
 ) -> None:
+    # set global configuration
+    # TODO: in the future I really hope that its not going to be a global :)
+    load_locator(locator)
+
     global logger
     logger = _logger
 

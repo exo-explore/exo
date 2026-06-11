@@ -1,6 +1,6 @@
 use crate::config::locator::LocatorArgs;
 use crate::ext::ResultExt;
-use crate::version;
+use crate::{pickle_reduce, version};
 use clap::{ArgAction, Parser, ValueEnum};
 use pyo3::prelude::PyAnyMethods;
 use pyo3::types::{PyModule, PyTuple};
@@ -202,6 +202,8 @@ impl CliArgs {
         self.deprecated = deprecated;
     }
 
+    // -------- SERDE/PICKLING support --------
+
     pub fn to_bytes(&self) -> PyResult<Vec<u8>> {
         postcard::to_allocvec(self).pyerr()
     }
@@ -212,10 +214,7 @@ impl CliArgs {
     }
 
     pub fn __reduce__(slf: Bound<'_, Self>) -> PyResult<(Bound<'_, PyAny>, Bound<'_, PyTuple>)> {
-        let callable = slf.getattr("__class__")?.getattr("from_bytes")?;
-        let args = PyTuple::new(slf.py(), [slf.borrow().to_bytes()?])?;
-
-        Ok((callable, args))
+        pickle_reduce(slf, "from_bytes", Self::to_bytes)
     }
 }
 

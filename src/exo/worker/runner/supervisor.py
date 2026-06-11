@@ -223,6 +223,7 @@ class RunnerSupervisor:
                 ev_send,
                 task_recv,
                 cancel_recv,
+                locator(),
                 logger,
             ),
             daemon=True,

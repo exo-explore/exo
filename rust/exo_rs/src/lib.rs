@@ -12,8 +12,9 @@ mod pidfile;
 use crate::config::config_submodule;
 use crate::networking::networking_submodule;
 use crate::pidfile::pidfile_submodule;
-use pyo3::prelude::PyModule;
-use pyo3::{Bound, PyResult, pymodule};
+use pyo3::prelude::{PyAnyMethods, PyModule};
+use pyo3::types::{DerefToPyAny, PyTuple};
+use pyo3::{Bound, PyAny, PyClass, PyResult, pymodule};
 use pyo3_stub_gen::define_stub_info_gatherer;
 
 /// Namespace for crate-wide extension traits/methods
@@ -198,6 +199,23 @@ pub(crate) mod version {
             .set(v)
             .map_err(|_| PyRuntimeError::new_err("Cannot set exo_rs version twice".to_string()))
     }
+}
+
+/// Default `__reduce__` implementation for Pyo3 classes to support Python pickling.
+///
+/// Must provide a "from bytes" class method, a "to bytes" closure and the pyclass must have
+/// e.g. `module = "exo_rs"` set to prevent Pyo3 from putting it in `builtins.<CLASS_NAME>`
+/// (which will cause errors when pickling.)
+#[inline(always)]
+pub(crate) fn pickle_reduce<'py, T: PyClass + DerefToPyAny>(
+    obj: Bound<'py, T>,
+    from_bytes_method: &str,
+    to_bytes: impl for<'a> FnOnce(&'a T) -> PyResult<Vec<u8>>,
+) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>)> {
+    let callable = obj.getattr("__class__")?.getattr(from_bytes_method)?;
+    let args = PyTuple::new(obj.py(), [to_bytes(&obj.borrow())?])?;
+
+    Ok((callable, args))
 }
 
 /// A Python module implemented in Rust. The name of this function must match

@@ -1,7 +1,10 @@
 use crate::config::cli::CliArgs;
 use crate::config::path::{PathBufValueParserExt, parse_path};
-use pyo3::prelude::{PyModule, PyModuleMethods};
-use pyo3::{Bound, PyResult, pyclass, pymethods};
+use crate::ext::ResultExt;
+use crate::pickle_reduce;
+use pyo3::prelude::{PyAnyMethods, PyModule, PyModuleMethods};
+use pyo3::types::PyTuple;
+use pyo3::{Bound, PyAny, PyResult, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -74,7 +77,7 @@ pub struct LocatorArgs {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(from_py_object)]
+#[pyclass(module = "exo_rs", from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocatorConfig {
     #[pyo3(get)]
@@ -175,6 +178,21 @@ impl LocatorConfig {
 
     pub fn set_log_files(&mut self, log_files: LogFiles) {
         self.log_files = log_files;
+    }
+
+    // -------- SERDE/PICKLING support --------
+
+    pub fn to_bytes(&self) -> PyResult<Vec<u8>> {
+        postcard::to_allocvec(self).pyerr()
+    }
+
+    #[staticmethod]
+    pub fn from_bytes(bytes: Vec<u8>) -> PyResult<Self> {
+        postcard::from_bytes(&bytes).pyerr()
+    }
+
+    pub fn __reduce__(slf: Bound<'_, Self>) -> PyResult<(Bound<'_, PyAny>, Bound<'_, PyTuple>)> {
+        pickle_reduce(slf, "from_bytes", Self::to_bytes)
     }
 }
 
