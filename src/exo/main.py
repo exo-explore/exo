@@ -10,7 +10,7 @@ from typing import Self
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
 from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
-from exo_rs import CliArgs, LocatorConfig, Pidfile, PidfileError
+from exo_rs import AppSettings, BootstrapSettings, CliArgs, Pidfile, PidfileError
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -273,16 +273,19 @@ class Node:
 
 
 def main():
-    # parse args and resolve/load the locator config
-    args = CliArgs.parse()
-    config.load_locator(LocatorConfig.resolve(args.locator))
+    # parse args and resolve/load bootstrap + app settings
+    cli_args = CliArgs.parse()
+    config.load(
+        BootstrapSettings.resolve(cli_args.bootstrap),
+        AppSettings.resolve(cli_args.app),
+    )
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
 
     # Exit early if cannot acquire PID file
     try:
-        pidfile_path = config.locator().pid_file
+        pidfile_path = config.bootstrap().pid_file
         pidfile = Pidfile(pidfile_path, 0o0600)
     except PidfileError as e:
         print(e, file=sys.stderr)
@@ -339,7 +342,7 @@ def main_inner(args: "Args"):
     mp.set_start_method("spawn", force=True)
 
     # TODO: Refactor the current verbosity system
-    logger_setup(config.locator().log_files.exo_log, args.verbosity)
+    logger_setup(config.bootstrap().log_files.exo_log, args.verbosity)
 
     logger.info(f"pid = {os.getpid()}")
     if os.getenv("EXO_LIBP2P_NAMESPACE"):
