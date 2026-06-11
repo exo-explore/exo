@@ -1,6 +1,7 @@
 use crate::config::cli::CliArgs;
 use crate::ext::ResultExt;
 use crate::pickle_reduce;
+use clap::builder::{BoolishValueParser, TypedValueParser};
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use pyo3::types::PyTuple;
 use pyo3::{Bound, PyAny, PyResult, pyclass, pymethods};
@@ -18,9 +19,25 @@ use serde::{Deserialize, Serialize};
 ///    settings sources.
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, clap::Args)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
 #[command(about = None, long_about = None)]
 pub struct AppArgs {
+    // this parser cannot use the default boolean parser + ArgAction::SetFalse
+    // since it needs to logically invert --no-batch and EXO_NO_BATCH
+    #[arg(
+      long = "no-batch",
+      env = "EXO_NO_BATCH",
+      num_args = 0..=1,
+      require_equals = true,
+      default_missing_value = "true",
+      default_value = "false", // TODO: when config.toml introduced, remove this
+      value_parser = BoolishValueParser::new().map(|no_batch| !no_batch),
+      value_name = "BOOL",
+      help = "Disable continuous batching, use sequential generation"
+    )]
+    #[pyo3(get, set)]
+    pub continuous_batching_enabled: Option<bool>,
+
     #[arg(
         long,
         env = "EXO_FAST_SYNCH",
@@ -31,10 +48,21 @@ pub struct AppArgs {
     pub fast_synch: Option<bool>,
 }
 
+impl Default for AppArgs {
+    fn default() -> Self {
+        Self {
+            continuous_batching_enabled: Some(true),
+            fast_synch: None,
+        }
+    }
+}
+
 #[gen_stub_pyclass]
 #[pyclass(module = "exo_rs", from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppSettings {
+    #[pyo3(get, set)]
+    pub continuous_batching_enabled: bool,
     #[pyo3(get, set)]
     pub fast_synch: Option<bool>,
 }
@@ -58,6 +86,7 @@ impl AppSettings {
     #[staticmethod]
     pub fn resolve(args: &AppArgs) -> PyResult<Self> {
         Ok(Self {
+            continuous_batching_enabled: args.continuous_batching_enabled.unwrap_or(true),
             fast_synch: args.fast_synch,
         })
     }

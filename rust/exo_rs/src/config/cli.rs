@@ -93,15 +93,6 @@ pub struct CliArgs {
     pub offline: bool,
 
     #[arg(
-        long = "no-batch",
-        action = ArgAction::SetFalse,
-        default_value_t = true,
-        help = "Disable continuous batching, use sequential generation"
-    )]
-    #[pyo3(get, set)]
-    pub continuous_batching_enabled: bool,
-
-    #[arg(
         long,
         action = ArgAction::SetTrue,
         help = "Run as a legacy SysV-style background daemon using double-fork daemonization"
@@ -145,6 +136,7 @@ pub struct CliArgs {
     #[pyo3(get, set)]
     pub discovery_port: u16,
 
+    // -------- FLATTENED SUBCOMMANDS --------
     #[command(flatten)]
     #[pyo3(get)]
     pub bootstrap: BootstrapArgs,
