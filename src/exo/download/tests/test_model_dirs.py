@@ -4,11 +4,12 @@ import json
 import shutil
 from collections.abc import AsyncIterator
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import aiofiles
 import aiofiles.os as aios
 import pytest
+from exo_rs import LocatorConfig
 
 from exo.download.download_utils import (
     InsufficientDiskSpaceError,
@@ -238,12 +239,22 @@ class TestDeleteModel:
         await aios.makedirs(writable1, exist_ok=True)
         await aios.makedirs(writable2, exist_ok=True)
         await aios.makedirs(default, exist_ok=True)
+
+        # create mock locator-configuration
+        cfg = LocatorConfig.default()
+        cfg.models_dirs.default_models_dir = default
+        cfg.models_dirs.models_dirs = [writable1, writable2, default]
+
         with (
             patch(
                 "exo.download.download_utils.EXO_MODELS_DIRS",
                 (writable1, writable2, default),
             ),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", default),
+            patch(
+                "exo.download.download_utils.locator",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
         ):
             yield writable1, writable2, default
 

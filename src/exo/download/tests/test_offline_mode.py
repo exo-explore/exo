@@ -4,10 +4,11 @@ import os
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import aiofiles
 import aiofiles.os as aios
+from exo_rs import LocatorConfig
 import pytest
 
 from exo.download.download_utils import (
@@ -28,9 +29,19 @@ def model_id() -> ModelId:
 async def temp_models_dir(tmp_path: Path) -> AsyncIterator[Path]:
     models_dir = tmp_path / "models"
     await aios.makedirs(models_dir, exist_ok=True)
+
+    # create mock locator-configuration
+    cfg = LocatorConfig.default()
+    cfg.models_dirs.default_models_dir = models_dir
+    cfg.models_dirs.models_dirs = [models_dir]
+
     with (
         patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-        patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+        patch(
+            "exo.download.download_utils.locator",
+            new_callable=Mock,
+            return_value=cfg,
+        ),
     ):
         yield models_dir
 
