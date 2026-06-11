@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import aiofiles
 import aiofiles.os as aios
 import pytest
-from exo_rs import LocatorConfig
+from exo_rs import BootstrapSettings
 
 from exo.download.download_utils import (
     _download_file,  # pyright: ignore[reportPrivateUsage]
@@ -25,8 +25,8 @@ def model_id() -> ModelId:
     return ModelId("test-org/test-model")
 
 
-def _mock_locator_config(models_dir: Path) -> LocatorConfig:
-    cfg = LocatorConfig.default()
+def _mock_bootstrap_settings(models_dir: Path) -> BootstrapSettings:
+    cfg = BootstrapSettings.default()
     models_dirs = cfg.models_dirs
     models_dirs.default_models_dir = models_dir
     models_dirs.models_dirs = [models_dir]
@@ -39,11 +39,11 @@ async def temp_models_dir(tmp_path: Path) -> AsyncIterator[Path]:
     models_dir = tmp_path / "models"
     await aios.makedirs(models_dir, exist_ok=True)
 
-    cfg = _mock_locator_config(models_dir)
+    cfg = _mock_bootstrap_settings(models_dir)
 
     with (
         patch(
-            "exo.download.download_utils.locator",
+            "exo.download.download_utils.config.bootstrap",
             new_callable=Mock,
             return_value=cfg,
         ),

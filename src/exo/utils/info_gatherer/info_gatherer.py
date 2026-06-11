@@ -12,7 +12,7 @@ from anyio.streams.buffered import BufferedByteReceiveStream
 from loguru import logger
 from pydantic import ValidationError
 
-from exo.shared.config import locator
+import exo.shared.config as config
 from exo.shared.types.backends import Backend
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
@@ -310,7 +310,7 @@ class NodeDiskUsage(TaggedModel):
     async def gather(cls) -> Self:
         return cls(
             disk_usage=await to_thread.run_sync(
-                DiskUsage.from_path, locator().models_dirs.default_models_dir
+                DiskUsage.from_path, config.bootstrap().models_dirs.default_models_dir
             )
         )
 

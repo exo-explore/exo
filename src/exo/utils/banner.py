@@ -4,13 +4,13 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from exo.shared.config import locator
+import exo.shared.config as config
 
 logger = logging.getLogger(__name__)
 
 
 def _first_run_marker() -> Path:
-    return locator().exo_home.config / ".dashboard_opened"
+    return config.bootstrap().exo_home.config / ".dashboard_opened"
 
 
 def _is_first_run() -> bool:

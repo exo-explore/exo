@@ -20,7 +20,7 @@ from pydantic import (
 )
 from tomlkit.exceptions import TOMLKitError
 
-from exo.shared.config import locator
+import exo.shared.config as config
 from exo.shared.constants import (
     EXO_ENABLE_IMAGE_MODELS,
     RESOURCES_DIR,
@@ -40,7 +40,7 @@ _BUILTIN_CARD_DIRS = [
 
 
 def _custom_cards_dir() -> Path:
-    return Path(str(locator().custom_model_cards_dir))
+    return Path(str(config.bootstrap().custom_model_cards_dir))
 
 
 class _CardCache:
@@ -99,7 +99,9 @@ card_cache = _CardCache()
 
 def detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
     normalized = model_id.normalize()
-    for model_dir in [d / normalized for d in locator().models_dirs.models_dirs]:
+    for model_dir in [
+        d / normalized for d in config.bootstrap().models_dirs.models_dirs
+    ]:
         config_path = model_dir / "config.json"
         if not config_path.exists():
             continue

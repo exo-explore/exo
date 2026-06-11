@@ -7,6 +7,7 @@ import anyio
 from anyio import BrokenResourceError, ClosedResourceError, current_time, to_thread
 from loguru import logger
 
+import exo.shared.config as config
 from exo.download.download_utils import (
     RepoDownloadProgress,
     delete_model,
@@ -19,7 +20,6 @@ from exo.routing.event_router import (
     EventRouterBrokenResourceError,
     EventRouterClosedResourceError,
 )
-from exo.shared.config import locator
 from exo.shared.models import model_cards
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
@@ -69,7 +69,9 @@ class DownloadCoordinator:
 
     @staticmethod
     def _default_model_dir(model_id: ModelId) -> str:
-        return str(locator().models_dirs.default_models_dir / model_id.normalize())
+        return str(
+            config.bootstrap().models_dirs.default_models_dir / model_id.normalize()
+        )
 
     def _completed_from_path(
         self,
@@ -433,7 +435,7 @@ class DownloadCoordinator:
                         NodeDownloadProgress(download_progress=status)
                     )
                 # Scan read-only directories for pre-downloaded models
-                if locator().models_dirs.models_read_only_dirs:
+                if config.bootstrap().models_dirs.models_read_only_dirs:
                     for card in await model_cards.card_cache.list_all():
                         mid = card.model_id
                         if mid in self.active_downloads:

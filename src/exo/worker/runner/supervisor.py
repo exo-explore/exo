@@ -14,7 +14,7 @@ from anyio import (
 )
 from loguru import logger
 
-from exo.shared import config
+import exo.shared.config as config
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -79,10 +79,12 @@ class RunnerStdioHandler:
         stdout_log_path: PathLike[str] | None = None,
         stderr_log_path: PathLike[str] | None = None,
     ) -> Self:
-        if stdout_log_path is None:
-            stdout_log_path = config.bootstrap().log_files.exo_runner_stdout_log
-        if stderr_log_path is None:
-            stderr_log_path = config.bootstrap().log_files.exo_runner_stderr_log
+        stdout_log_path = (
+            stdout_log_path or config.bootstrap().log_files.exo_runner_stdout_log
+        )
+        stderr_log_path = (
+            stderr_log_path or config.bootstrap().log_files.exo_runner_stderr_log
+        )
 
         # these are append only logs used to gather data for log template mining
         #

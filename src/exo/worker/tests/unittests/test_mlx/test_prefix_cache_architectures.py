@@ -14,8 +14,8 @@ import pytest
 from mlx.utils import tree_flatten, tree_unflatten
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+import exo.shared.config as config
 from exo.download.download_utils import resolve_existing_model
-from exo.shared.config import locator
 from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import (
     InputMessage,
@@ -107,7 +107,7 @@ def _reduce_config(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def _search_dirs():
-    m = locator().models_dirs
+    m = config.bootstrap().models_dirs
     return (*m.models_read_only_dirs, *m.models_dirs)
 
 

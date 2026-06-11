@@ -23,6 +23,7 @@ from hypercorn.typing import ASGIFramework
 from hypercorn.utils import LifespanTimeoutError, ShutdownError
 from loguru import logger
 
+import exo.shared.config as config
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
@@ -126,7 +127,6 @@ from exo.api.types.openai_responses import (
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
-from exo.shared.config import locator
 from exo.shared.constants import (
     DASHBOARD_DIR,
     ENABLE_DISAGGREGATION,
@@ -242,7 +242,7 @@ class API:
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
-        self._api_event_log_dir = locator().event_log_dir / "api"
+        self._api_event_log_dir = config.bootstrap().event_log_dir / "api"
         self._event_log = DiskEventLog(self._api_event_log_dir)
         self._system_id = SystemId()
         self.command_sender = command_sender
@@ -253,9 +253,9 @@ class API:
         self.last_completed_election: int = 0
         self.port = port
         self._sent_image_hashes: set[str] = set()
-        self._tracing_cache_dir = locator().tracing_cache_dir
+        self._tracing_cache_dir = config.bootstrap().tracing_cache_dir
         self._onboarding_complete_file = (
-            locator().exo_home.cache / "onboarding_complete"
+            config.bootstrap().exo_home.cache / "onboarding_complete"
         )
 
         self.paused: bool = False
@@ -291,7 +291,7 @@ class API:
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
         ] = {}
-        self._image_store = ImageStore(locator().image_cache_dir)
+        self._image_store = ImageStore(config.bootstrap().image_cache_dir)
         self._tg: TaskGroup = TaskGroup()
 
     def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):

@@ -7,7 +7,7 @@ from typing import Self, cast
 import loguru
 from exo_rs import AppSettings, BootstrapSettings
 
-from exo.shared import config
+import exo.shared.config as config
 from exo.shared.types.events import Event
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance

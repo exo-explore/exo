@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 import aiofiles
 import aiofiles.os as aios
 import pytest
-from exo_rs import LocatorConfig
+from exo_rs import BootstrapSettings
 
 from exo.download.download_utils import (
     InsufficientDiskSpaceError,
@@ -44,13 +44,13 @@ def _create_incomplete_model(model_dir: Path) -> None:
     # model.safetensors is missing
 
 
-def _mock_locator_config(
+def _mock_bootstrap_settings(
     default: Path,
     *,
     writable: list[Path] | None = None,
     read_only: list[Path] | None = None,
-) -> LocatorConfig:
-    cfg = LocatorConfig.default()
+) -> BootstrapSettings:
+    cfg = BootstrapSettings.default()
     models_dirs = cfg.models_dirs
     models_dirs.default_models_dir = default
     models_dirs.models_dirs = writable or []
@@ -66,11 +66,13 @@ def _patched_model_dirs(
     writable: Sequence[Path] = (),
     read_only: Sequence[Path] = (),
 ) -> Iterator[None]:
-    cfg = _mock_locator_config(
+    cfg = _mock_bootstrap_settings(
         default, writable=list(writable), read_only=list(read_only)
     )
     with patch(
-        "exo.download.download_utils.locator", new_callable=Mock, return_value=cfg
+        "exo.download.download_utils.config.bootstrap",
+        new_callable=Mock,
+        return_value=cfg,
     ):
         yield
 
@@ -256,10 +258,12 @@ class TestDeleteModel:
         await aios.makedirs(writable2, exist_ok=True)
         await aios.makedirs(default, exist_ok=True)
 
-        cfg = _mock_locator_config(default, writable=[writable1, writable2, default])
+        cfg = _mock_bootstrap_settings(
+            default, writable=[writable1, writable2, default]
+        )
 
         with patch(
-            "exo.download.download_utils.locator",
+            "exo.download.download_utils.config.bootstrap",
             new_callable=Mock,
             return_value=cfg,
         ):

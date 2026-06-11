@@ -15,6 +15,7 @@ from loguru import logger
 from pydantic import PositiveInt
 
 import exo.routing.topics as topics
+import exo.shared.config as config
 from exo import __version__
 from exo.api.main import API
 from exo.download.coordinator import DownloadCoordinator
@@ -22,7 +23,6 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_zid
-from exo.shared import config
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId

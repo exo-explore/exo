@@ -24,6 +24,7 @@ from pydantic import (
     TypeAdapter,
 )
 
+import exo.shared.config as config
 from exo.download.huggingface_utils import (
     filter_repo_objects,
     get_allow_patterns,
@@ -31,7 +32,6 @@ from exo.download.huggingface_utils import (
     get_hf_endpoint,
     get_hf_token,
 )
-from exo.shared.config import locator
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -46,19 +46,19 @@ from exo.shared.types.worker.shards import ShardMetadata
 
 
 def _default_models_dir() -> Path:
-    return locator().models_dirs.default_models_dir
+    return config.bootstrap().models_dirs.default_models_dir
 
 
 def _writable_models_dirs() -> list[Path]:
-    return locator().models_dirs.models_dirs
+    return config.bootstrap().models_dirs.models_dirs
 
 
 def _read_only_models_dirs() -> list[Path]:
-    return locator().models_dirs.models_read_only_dirs
+    return config.bootstrap().models_dirs.models_read_only_dirs
 
 
 def _model_search_dirs() -> tuple[Path, ...]:
-    models_dirs = locator().models_dirs
+    models_dirs = config.bootstrap().models_dirs
     return (*models_dirs.models_read_only_dirs, *models_dirs.models_dirs)
 
 
