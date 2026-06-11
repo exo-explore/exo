@@ -50,7 +50,7 @@ from exo.shared.types.worker.shards import ShardMetadata
 
 
 def _default_models_dir():
-    return locator().models_dirs().default_models_dir
+    return locator().models_dirs.default_models_dir
 
 
 class HuggingFaceAuthenticationError(Exception):

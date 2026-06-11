@@ -70,7 +70,7 @@ class DownloadCoordinator:
 
     @staticmethod
     def _default_model_dir(model_id: ModelId) -> str:
-        return str(locator().models_dirs().default_models_dir / model_id.normalize())
+        return str(locator().models_dirs.default_models_dir / model_id.normalize())
 
     def _completed_from_path(
         self,

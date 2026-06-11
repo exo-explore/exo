@@ -80,9 +80,9 @@ class RunnerStdioHandler:
         stderr_log_path: PathLike[str] | None = None,
     ) -> Self:
         if stdout_log_path is None:
-            stdout_log_path = locator().log_files().exo_runner_stdout_log
+            stdout_log_path = locator().log_files.exo_runner_stdout_log
         if stderr_log_path is None:
-            stderr_log_path = locator().log_files().exo_runner_stderr_log
+            stderr_log_path = locator().log_files.exo_runner_stderr_log
 
         # these are append only logs used to gather data for log template mining
         #

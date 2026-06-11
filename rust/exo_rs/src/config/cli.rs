@@ -153,15 +153,15 @@ pub struct CliArgs {
     pub fast_synch: Option<bool>,
 
     #[command(flatten)]
-    #[pyo3(set)]
+    #[pyo3(get)]
     pub locator: LocatorArgs,
 
     #[command(flatten)]
-    #[pyo3(set)]
+    #[pyo3(get)]
     pub config: ConfigArgs,
 
     #[command(flatten)]
-    #[pyo3(set)]
+    #[pyo3(get)]
     pub deprecated: DeprecatedArgs,
 }
 
@@ -190,16 +190,16 @@ impl CliArgs {
         Ok(CliArgs::parse_from(argv))
     }
 
-    pub fn locator(&self) -> LocatorArgs {
-        self.locator.clone()
+    pub fn set_locator(&mut self, locator: LocatorArgs) {
+        self.locator = locator;
     }
 
-    pub fn config(&self) -> ConfigArgs {
-        self.config.clone()
+    pub fn set_config(&mut self, config: ConfigArgs) {
+        self.config = config;
     }
 
-    pub fn deprecated(&self) -> DeprecatedArgs {
-        self.deprecated.clone()
+    pub fn set_deprecated(&mut self, deprecated: DeprecatedArgs) {
+        self.deprecated = deprecated;
     }
 
     pub fn to_bytes(&self) -> PyResult<Vec<u8>> {

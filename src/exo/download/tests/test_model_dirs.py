@@ -45,10 +45,10 @@ def _create_incomplete_model(model_dir: Path) -> None:
 
 def _mock_locator_config(default: Path, writable: list[Path]) -> LocatorConfig:
     cfg = LocatorConfig.default()
-    models_dirs = cfg.models_dirs()
+    models_dirs = cfg.models_dirs
     models_dirs.default_models_dir = default
     models_dirs.models_dirs = writable
-    cfg.models_dirs = models_dirs
+    cfg.set_models_dirs(models_dirs)
     return cfg
 
 

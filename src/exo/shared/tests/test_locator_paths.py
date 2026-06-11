@@ -19,7 +19,7 @@ def test_xdg_paths_on_linux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
     monkeypatch.setenv("XDG_CACHE_HOME", str(cache_home))
 
-    exo_home = LocatorConfig.from_env_only().exo_home()
+    exo_home = LocatorConfig.from_env_only().exo_home
 
     assert config_home / "exo" == exo_home.config
     assert data_home / "exo" == exo_home.data
@@ -37,7 +37,7 @@ def test_standard_directories_on_macos(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "ignored-data"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "ignored-cache"))
 
-    exo_home = LocatorConfig.from_env_only().exo_home()
+    exo_home = LocatorConfig.from_env_only().exo_home
 
     assert home / "Library" / "Application Support" / "exo" == exo_home.config
     assert home / "Library" / "Application Support" / "exo" == exo_home.data
@@ -55,7 +55,7 @@ def test_xdg_default_paths_on_linux(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
     monkeypatch.setenv("HOME", str(home))
 
-    exo_home = LocatorConfig.from_env_only().exo_home()
+    exo_home = LocatorConfig.from_env_only().exo_home
 
     assert home / ".config" / "exo" == exo_home.config
     assert home / ".local" / "share" / "exo" == exo_home.data
@@ -73,7 +73,7 @@ def test_legacy_exo_home_takes_precedence(
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "ignored-data"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "ignored-cache"))
 
-    exo_home = LocatorConfig.from_env_only().exo_home()
+    exo_home = LocatorConfig.from_env_only().exo_home
 
     assert exo_home_path == exo_home.config
     assert exo_home_path == exo_home.data
@@ -92,7 +92,7 @@ def test_models_in_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     cfg = LocatorConfig.from_env_only()
 
-    assert cfg.models_dirs().default_models_dir.parent == cfg.exo_home().data
+    assert cfg.models_dirs.default_models_dir.parent == cfg.exo_home.data
 
 
 def test_default_dir_always_prepended_to_models_dirs(
@@ -106,7 +106,7 @@ def test_default_dir_always_prepended_to_models_dirs(
     monkeypatch.delenv("EXO_MODELS_READ_ONLY_DIRS", raising=False)
     monkeypatch.setenv("EXO_MODELS_DIRS", str(custom_models_dir))
 
-    models_dirs = LocatorConfig.from_env_only().models_dirs()
+    models_dirs = LocatorConfig.from_env_only().models_dirs
 
     assert models_dirs.models_dirs[0] == models_dirs.default_models_dir
     assert custom_models_dir in models_dirs.models_dirs
@@ -121,7 +121,7 @@ def test_default_models_dir_override(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.delenv("EXO_MODELS_READ_ONLY_DIRS", raising=False)
     monkeypatch.setenv("EXO_DEFAULT_MODELS_DIR", str(default_models_dir))
 
-    models_dirs = LocatorConfig.from_env_only().models_dirs()
+    models_dirs = LocatorConfig.from_env_only().models_dirs
 
     assert default_models_dir == models_dirs.default_models_dir
     assert models_dirs.models_dirs[0] == models_dirs.default_models_dir
@@ -134,7 +134,7 @@ def test_default_dir_only_entry_when_env_unset(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("EXO_MODELS_DIRS", raising=False)
     monkeypatch.delenv("EXO_MODELS_READ_ONLY_DIRS", raising=False)
 
-    models_dirs = LocatorConfig.from_env_only().models_dirs()
+    models_dirs = LocatorConfig.from_env_only().models_dirs
 
     assert models_dirs.models_dirs == [models_dirs.default_models_dir]
 
@@ -154,7 +154,7 @@ def test_overlap_between_dirs_and_read_only_dirs(
     monkeypatch.setenv("EXO_MODELS_DIRS", f"{shared}:{writable_only}")
     monkeypatch.setenv("EXO_MODELS_READ_ONLY_DIRS", f"{shared}:{read_only}")
 
-    models_dirs = LocatorConfig.from_env_only().models_dirs()
+    models_dirs = LocatorConfig.from_env_only().models_dirs
 
     assert shared not in models_dirs.models_dirs
     assert writable_only in models_dirs.models_dirs
@@ -169,6 +169,6 @@ def test_empty_read_only_dirs_when_unset(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("EXO_MODELS_DIRS", raising=False)
     monkeypatch.delenv("EXO_MODELS_READ_ONLY_DIRS", raising=False)
 
-    models_dirs = LocatorConfig.from_env_only().models_dirs()
+    models_dirs = LocatorConfig.from_env_only().models_dirs
 
     assert models_dirs.models_read_only_dirs == []

@@ -27,10 +27,10 @@ def model_id() -> ModelId:
 
 def _mock_locator_config(models_dir: Path) -> LocatorConfig:
     cfg = LocatorConfig.default()
-    models_dirs = cfg.models_dirs()
+    models_dirs = cfg.models_dirs
     models_dirs.default_models_dir = models_dir
     models_dirs.models_dirs = [models_dir]
-    cfg.models_dirs = models_dirs
+    cfg.set_models_dirs(models_dirs)
     return cfg
 
 
