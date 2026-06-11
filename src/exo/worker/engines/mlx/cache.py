@@ -458,6 +458,29 @@ class KVPrefixCache:
             self._flush_requested_at = _time.time()
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
 
+    def should_update_entry(
+        self,
+        matched_index: int | None,
+        prefix_hit_length: int,
+        min_prefix_hit_length: int = 1000,
+    ) -> bool:
+        """True only when the new prompt EXTENDS the matched cached entry.
+
+        A sibling conversation that merely shares a long prefix (e.g. two
+        agent sessions with a common system prompt + bootstrap) must NOT be
+        saved as an update: with disk persistence the update inherits the
+        matched entry's disk slot id, so the next flush overwrites the OTHER
+        conversation's slot and destroys its cache (observed live as two
+        sessions ping-ponging a single slot). Extension test: the hit covers
+        the stored prompt up to the prefill-rollback slack.
+        """
+        if matched_index is None or matched_index >= len(self.prompts):
+            return False
+        if prefix_hit_length < min_prefix_hit_length:
+            return False
+        cached_len = int(self.prompts[matched_index].shape[0])
+        return prefix_hit_length >= cached_len - 8
+
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
     ) -> tuple[int, CacheSnapshot | None]:

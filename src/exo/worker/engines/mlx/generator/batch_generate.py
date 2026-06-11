@@ -58,7 +58,6 @@ from exo.worker.engines.mlx.vision import (
 )
 from exo.worker.runner.bootstrap import logger
 
-_MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 REMOTE_PREFILL_MIN_TOKENS = 1000
 
 
@@ -505,15 +504,10 @@ class ExoBatchGenerator:
             return
 
         try:
-            hit_ratio = (
-                prefix_hit_length / len(all_prompt_tokens)
-                if len(all_prompt_tokens) > 0
-                else 0.0
-            )
-            if matched_index is not None and (
-                prefix_hit_length >= min_prefix_hit_length
-                and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
+            if self.kv_prefix_cache.should_update_entry(
+                matched_index, prefix_hit_length, min_prefix_hit_length
             ):
+                assert matched_index is not None
                 self.kv_prefix_cache.update_kv_cache(
                     matched_index,
                     all_prompt_tokens,

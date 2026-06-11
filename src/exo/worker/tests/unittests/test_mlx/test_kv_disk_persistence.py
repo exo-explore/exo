@@ -90,6 +90,48 @@ def test_janitor_sweeps_other_models_stale_slots(tmp_path, kvp_factory):
     assert (own / "slot_7_meta.json").exists()
 
 
+def test_should_update_entry_only_for_extensions(tmp_path, kvp_factory):
+    """Update-in-place is for continuations only. A sibling conversation
+    sharing a long prefix (two agent sessions with a common bootstrap) must
+    get its own entry — updating steals the matched entry's disk slot."""
+    kv = kvp_factory()
+    kv.add_kv_cache(_tokens(2000), [_filled_kv(2000)])
+
+    # Continuation: hit covers the stored prompt (modulo prefill rollback)
+    assert kv.should_update_entry(0, 1998) is True
+    assert kv.should_update_entry(0, 2000) is True
+    # Sibling: long shared prefix but far short of the stored conversation
+    assert kv.should_update_entry(0, 1500) is False
+    # Below the minimum hit threshold
+    assert kv.should_update_entry(0, 500) is False
+    # No match / stale index
+    assert kv.should_update_entry(None, 1998) is False
+    assert kv.should_update_entry(5, 1998) is False
+
+
+def test_sibling_conversation_gets_own_slot(tmp_path, kvp_factory):
+    """Slot-theft regression: saving a sibling conversation must not
+    overwrite the other conversation's disk slot (observed live as two
+    sessions ping-ponging slot_10, each switch destroying the other's
+    cache back to the shared prefix)."""
+    kv = kvp_factory()
+    conv_a = _tokens(2000)
+    kv.add_kv_cache(conv_a, [_filled_kv(2000)])
+    kv._flush_hot_slot()  # conv A -> slot_0
+
+    # Sibling: shares the first 1500 tokens, then diverges.
+    conv_b = mx.concatenate([conv_a[:1500], mx.array([9000 + i for i in range(600)])])
+    assert kv.should_update_entry(0, 1500) is False  # decision: add, not update
+    kv.add_kv_cache(conv_b, [_filled_kv(2100)])
+    kv._flush_hot_slot()  # conv B -> its own slot_1
+
+    d = _slot_dir(tmp_path)
+    tok0 = mx.load(str(d / "slot_0_tokens.safetensors"))["tokens"]
+    tok1 = mx.load(str(d / "slot_1_tokens.safetensors"))["tokens"]
+    assert mx.array_equal(tok0, conv_a).item()  # A's slot intact
+    assert mx.array_equal(tok1, conv_b).item()
+
+
 def test_per_flush_eviction_also_ttl_sweeps_other_models(tmp_path, kvp_factory):
     """The TTL must reach other models' dirs from the per-flush path too —
     not only at init — so one model kept loaded for weeks still cleans up."""
