@@ -1,13 +1,13 @@
 use crate::config::cli::CliArgs;
-use crate::config::path::{parse_path, PathBufValueParserExt};
+use crate::config::path::{PathBufValueParserExt, parse_path};
 use pyo3::prelude::{PyModule, PyModuleMethods};
-use pyo3::{pyclass, pymethods, Bound, PyResult};
+use pyo3::{Bound, PyResult, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{fs, io};
-use util::path::PathExt;
 use util::VecExt;
+use util::path::PathExt;
 
 /// Arguments that are needed to resolve paths to files go here.
 ///
