@@ -359,8 +359,7 @@ def main_inner(args: "Args", cli_args: CliArgs):
     if args.bootstrap_peers:
         raise ValueError("Bootstrap peers has been temporarily removed")
 
-    if args.no_batch:
-        os.environ["EXO_NO_BATCH"] = "1"
+    if not config.app().continuous_batching_enabled:
         logger.info("Continuous batching disabled (--no-batch)")
 
     node = anyio.run(Node.create, args, cli_args)
@@ -380,7 +379,6 @@ class Args(FrozenModel):
     verbosity: int = 0
     api_port: PositiveInt = 52415
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
-    no_batch: bool = False
     bootstrap_peers: list[str] = []
     namespace: str
     zenoh_port: int
@@ -416,11 +414,6 @@ class Args(FrozenModel):
             action="store_true",
             default=os.getenv("EXO_OFFLINE", "false").lower() == "true",
             help="Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models",
-        )
-        parser.add_argument(
-            "--no-batch",
-            action="store_true",
-            help="Disable continuous batching, use sequential generation",
         )
         parser.add_argument(
             "--bootstrap-peers",
@@ -491,6 +484,13 @@ class Args(FrozenModel):
             help=argparse.SUPPRESS,
         )
         parser.add_argument(
+            "--no-batch",
+            nargs="?",
+            dest="_no_batch_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
             "--fast-synch",
             nargs="?",
             dest="_fast_synch_ignored",
@@ -507,6 +507,7 @@ class Args(FrozenModel):
         parsed_args.pop("_no_worker_ignored", None)
         parsed_args.pop("_no_downloads_ignored", None)
         parsed_args.pop("_legacy_daemon_ignored", None)
+        parsed_args.pop("_no_batch_ignored", None)
         parsed_args.pop("_fast_synch_ignored", None)
 
         return cls(**parsed_args)  # pyright: ignore[reportAny] - We are intentionally validating here, we can't do it statically
