@@ -234,9 +234,18 @@ class TestFileListCache:
                 TypeAdapter(list[FileListEntry]).dump_json(cached_file_list).decode()
             )
 
+        # create mock locator-configuration
+        cfg = LocatorConfig.default()
+        cfg.models_dirs.default_models_dir = models_dir
+        cfg.models_dirs.models_dirs = [models_dir]
+
         with (
             patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.locator",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
             patch(
                 "exo.download.download_utils.fetch_file_list_with_retry",
                 new_callable=AsyncMock,
@@ -253,9 +262,18 @@ class TestFileListCache:
         """Test that errors propagate when fetch fails and no cache exists."""
         models_dir = tmp_path / "models"
 
+        # create mock locator-configuration
+        cfg = LocatorConfig.default()
+        cfg.models_dirs.default_models_dir = models_dir
+        cfg.models_dirs.models_dirs = [models_dir]
+
         with (
             patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.locator",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
             patch(
                 "exo.download.download_utils.fetch_file_list_with_retry",
                 new_callable=AsyncMock,
@@ -287,9 +305,18 @@ class TestModelDeletion:
         async with aiofiles.open(cache_dir / "file_list.json", "w") as f:
             await f.write("[]")
 
+        # create mock locator-configuration
+        cfg = LocatorConfig.default()
+        cfg.models_dirs.default_models_dir = models_dir
+        cfg.models_dirs.models_dirs = [models_dir]
+
         with (
             patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.locator",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
         ):
             result = await delete_model(model_id)
 
@@ -309,9 +336,18 @@ class TestModelDeletion:
         async with aiofiles.open(cache_dir / "file_list.json", "w") as f:
             await f.write("[]")
 
+        # create mock locator-configuration
+        cfg = LocatorConfig.default()
+        cfg.models_dirs.default_models_dir = models_dir
+        cfg.models_dirs.models_dirs = [models_dir]
+
         with (
             patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.locator",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
         ):
             result = await delete_model(model_id)
 
@@ -327,9 +363,18 @@ class TestModelDeletion:
         models_dir = tmp_path / "models"
         await aios.makedirs(models_dir, exist_ok=True)
 
+        # create mock locator-configuration
+        cfg = LocatorConfig.default()
+        cfg.models_dirs.default_models_dir = models_dir
+        cfg.models_dirs.models_dirs = [models_dir]
+
         with (
             patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.locator",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
         ):
             result = await delete_model(model_id)
 
