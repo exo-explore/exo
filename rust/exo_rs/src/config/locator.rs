@@ -1,13 +1,13 @@
 use crate::config::cli::CliArgs;
-use crate::config::path::{PathBufValueParserExt, parse_path};
+use crate::config::path::{parse_path, PathBufValueParserExt};
 use pyo3::prelude::{PyModule, PyModuleMethods};
-use pyo3::{Bound, PyResult, pyclass, pymethods};
+use pyo3::{pyclass, pymethods, Bound, PyResult};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{fs, io};
-use util::VecExt;
 use util::path::PathExt;
+use util::VecExt;
 
 /// Arguments that are needed to resolve paths to files go here.
 ///
@@ -27,7 +27,7 @@ pub struct LocatorArgs {
         value_name = "PATH",
         help = "Path to Exo's home directory"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub exo_home: Option<PathBuf>,
 
     #[arg(
@@ -37,7 +37,7 @@ pub struct LocatorArgs {
         value_name = "PATH",
         help = "Default models directory; always included as first entry in writable models directories"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub default_models_dir: Option<PathBuf>,
 
     #[arg(
@@ -48,7 +48,7 @@ pub struct LocatorArgs {
         value_name = "PATHS",
         help = "Read-only model directories (colon-separated); never written to or deleted from"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub models_read_only_dirs: Option<Vec<PathBuf>>,
 
     #[arg(
@@ -59,7 +59,7 @@ pub struct LocatorArgs {
         value_name = "PATHS",
         help = "Writable model directories (colon-separated); default directory is always prepended"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub models_dirs: Option<Vec<PathBuf>>,
 
     #[arg(
@@ -69,7 +69,7 @@ pub struct LocatorArgs {
         value_name = "PATH",
         help = "Path to Exo's .toml config file"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub config_file: Option<PathBuf>,
 }
 
@@ -77,33 +77,33 @@ pub struct LocatorArgs {
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocatorConfig {
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub exo_home: ExoHome,
 
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub models_dirs: ModelsDirs,
 
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub log_files: LogFiles,
 
     // other
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub pid_file: PathBuf,
 
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub node_zid: PathBuf,
 
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub config_file: PathBuf,
 
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub custom_model_cards_dir: PathBuf,
 
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub event_log_dir: PathBuf,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub image_cache_dir: PathBuf,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub tracing_cache_dir: PathBuf,
 }
 
@@ -168,11 +168,11 @@ impl LocatorConfig {
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExoHome {
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub config: PathBuf,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub data: PathBuf,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub cache: PathBuf,
 }
 
@@ -222,11 +222,11 @@ impl ExoHome {
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelsDirs {
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub default_models_dir: PathBuf,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub models_read_only_dirs: Vec<PathBuf>,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub models_dirs: Vec<PathBuf>,
 }
 
@@ -263,15 +263,15 @@ impl ModelsDirs {
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogFiles {
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub exo_log_dir: PathBuf,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub exo_log: PathBuf,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub exo_runner_log_dir: PathBuf,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub exo_runner_stdout_log: PathBuf,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub exo_runner_stderr_log: PathBuf,
 }
 

@@ -4,7 +4,7 @@ use crate::version;
 use clap::{ArgAction, Parser, ValueEnum};
 use pyo3::prelude::PyAnyMethods;
 use pyo3::types::{PyModule, PyTuple};
-use pyo3::{Bound, PyAny, PyResult, Python, pyclass, pymethods};
+use pyo3::{pyclass, pymethods, Bound, PyAny, PyResult, Python};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
@@ -35,7 +35,7 @@ pub struct CliArgs {
           value_name = "LEVEL",
           help = "Set the verbosity level"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub verbosity: Verbosity,
 
     #[arg(
@@ -44,7 +44,7 @@ pub struct CliArgs {
         action = ArgAction::SetTrue,
         help = "Force node to be master"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub force_master: bool,
 
     #[arg(
@@ -53,7 +53,7 @@ pub struct CliArgs {
         default_value_t = true,
         help = "Disable the API"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub api_enabled: bool,
 
     #[arg(
@@ -62,7 +62,7 @@ pub struct CliArgs {
         value_name = "PORT",
         help = "Port on which the API runs"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub api_port: u16,
 
     #[arg(
@@ -71,7 +71,7 @@ pub struct CliArgs {
         default_value_t = true,
         help = "Disable the worker"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub worker_enabled: bool,
 
     #[arg(
@@ -80,7 +80,7 @@ pub struct CliArgs {
         default_value_t = true,
         help = "Disable the download coordinator (node won't download models)"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub downloads_enabled: bool,
 
     #[arg(
@@ -88,7 +88,7 @@ pub struct CliArgs {
         action = ArgAction::SetTrue,
         help = "Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub offline: bool,
 
     #[arg(
@@ -97,7 +97,7 @@ pub struct CliArgs {
         default_value_t = true,
         help = "Disable continuous batching, use sequential generation"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub continuous_batching_enabled: bool,
 
     #[arg(
@@ -105,7 +105,7 @@ pub struct CliArgs {
         action = ArgAction::SetTrue,
         help = "Run as a legacy SysV-style background daemon using double-fork daemonization"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub legacy_daemon: bool,
 
     #[arg(
@@ -114,7 +114,7 @@ pub struct CliArgs {
         value_name = "MULTIADDRS",
         help = "Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub bootstrap_peers: Option<Vec<String>>,
 
     #[arg(
@@ -123,7 +123,7 @@ pub struct CliArgs {
         value_name = "STRING",
         help = "Discovery namespace, nodes with different namespaces will not connect."
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub namespace: String,
 
     #[arg(
@@ -132,7 +132,7 @@ pub struct CliArgs {
         value_name = "PORT",
         help = "Fixed TCP port for zenoh to listen."
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub zenoh_port: u16,
 
     #[arg(
@@ -141,7 +141,7 @@ pub struct CliArgs {
         value_name = "PORT",
         help = "Fixed UDP port for the discovery service."
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub discovery_port: u16,
 
     #[arg(
@@ -149,19 +149,19 @@ pub struct CliArgs {
         value_name = "BOOL",
         help = "Force MLX FAST_SYNCH on/off (for JACCL backend); omit for auto"
     )]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub fast_synch: Option<bool>,
 
     #[command(flatten)]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub locator: LocatorArgs,
 
     #[command(flatten)]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub config: ConfigArgs,
 
     #[command(flatten)]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub deprecated: DeprecatedArgs,
 }
 
@@ -233,7 +233,7 @@ pub struct ConfigArgs {}
 #[command(about = None, long_about = None)]
 pub struct DeprecatedArgs {
     #[arg(long = "libp2p-port", hide = true)]
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub libp2p_port: Option<u16>,
 }
 
