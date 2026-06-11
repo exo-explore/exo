@@ -183,6 +183,7 @@ final class ExoProcessController: ObservableObject {
                 at: exoHomeURL, withIntermediateDirectories: true
             )
             child.currentDirectoryURL = exoHomeURL
+            child.arguments = makeArgs()
             child.environment = makeEnvironment(for: runtimeURL)
 
             child.standardOutput = FileHandle.nullDevice
@@ -365,8 +366,6 @@ final class ExoProcessController: ObservableObject {
         if offlineMode {
             environment["EXO_OFFLINE"] = "true"
         }
-        environment["EXO_FAST_SYNCH"] = fastSynchEnabled ? "true" : "false"
-
         var paths: [String] = []
         if let existing = environment["PATH"], !existing.isEmpty {
             paths = existing.split(separator: ":").map(String.init)
@@ -414,6 +413,12 @@ final class ExoProcessController: ObservableObject {
         }
 
         return environment
+    }
+
+    private func makeArgs() -> [String] {
+        [
+            "--fast-synch=\(fastSynchEnabled ? "true" : "false")"
+        ]
     }
 
     private func buildTag() -> String {

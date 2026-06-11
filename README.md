@@ -313,7 +313,7 @@ exo supports several environment variables for configuration:
 | `EXO_OFFLINE` | Run without internet connection (uses only local models) | `false` |
 | `EXO_ENABLE_IMAGE_MODELS` | Enable image model support | `false` |
 | `EXO_ZENOH_NAMESPACE` | Custom namespace for cluster isolation | None |
-| `EXO_FAST_SYNCH` | Control MLX_METAL_FAST_SYNCH behavior (for JACCL backend) | Auto |
+| `EXO_FAST_SYNCH` | Startup default for `--fast-synch=true\|false` when the CLI flag is omitted (for JACCL backend). Leave unset for automatic behavior. | Auto |
 | `EXO_TRACING_ENABLED` | Enable distributed tracing for performance analysis | `false` |
 
 **Example usage:**
@@ -333,6 +333,10 @@ EXO_ENABLE_IMAGE_MODELS=true uv run exo
 
 # Use custom namespace for cluster isolation
 EXO_ZENOH_NAMESPACE=my-dev-cluster uv run exo
+
+# Force MLX FAST_SYNCH off (CLI or ENV arg)
+uv run exo --fast-synch=false
+EXO_FAST_SYNCH=false uv run exo
 ```
 
 ---

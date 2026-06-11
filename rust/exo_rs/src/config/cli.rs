@@ -145,15 +145,6 @@ pub struct CliArgs {
     #[pyo3(get, set)]
     pub discovery_port: u16,
 
-    #[arg(
-        long,
-        env = "EXO_FAST_SYNCH",
-        value_name = "BOOL",
-        help = "Force MLX FAST_SYNCH on/off (for JACCL backend); omit for auto"
-    )]
-    #[pyo3(get, set)]
-    pub fast_synch: Option<bool>,
-
     #[command(flatten)]
     #[pyo3(get)]
     pub bootstrap: BootstrapArgs,

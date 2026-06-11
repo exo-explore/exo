@@ -20,12 +20,24 @@ use serde::{Deserialize, Serialize};
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, clap::Args)]
 #[command(about = None, long_about = None)]
-pub struct AppArgs {}
+pub struct AppArgs {
+    #[arg(
+        long,
+        env = "EXO_FAST_SYNCH",
+        value_name = "BOOL",
+        help = "Force MLX FAST_SYNCH on/off (for JACCL backend); omit for auto"
+    )]
+    #[pyo3(get, set)]
+    pub fast_synch: Option<bool>,
+}
 
 #[gen_stub_pyclass]
 #[pyclass(module = "exo_rs", from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AppSettings {}
+pub struct AppSettings {
+    #[pyo3(get, set)]
+    pub fast_synch: Option<bool>,
+}
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -44,8 +56,10 @@ impl AppSettings {
     }
 
     #[staticmethod]
-    pub fn resolve(_args: &AppArgs) -> PyResult<Self> {
-        Ok(Self {})
+    pub fn resolve(args: &AppArgs) -> PyResult<Self> {
+        Ok(Self {
+            fast_synch: args.fast_synch,
+        })
     }
 
     // -------- SERDE/PICKLING support --------
