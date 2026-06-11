@@ -3,11 +3,12 @@
 import time
 from datetime import timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import aiofiles
 import aiofiles.os as aios
 import pytest
+from exo_rs import LocatorConfig
 from pydantic import TypeAdapter
 
 from exo.download.download_utils import (
@@ -177,9 +178,18 @@ class TestFileListCache:
             FileListEntry(type="file", path="config.json", size=100),
         ]
 
+        # create mock locator-configuration
+        cfg = LocatorConfig.default()
+        cfg.models_dirs.default_models_dir = models_dir
+        cfg.models_dirs.models_dirs = [models_dir]
+
         with (
             patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.locator",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
             patch(
                 "exo.download.download_utils.fetch_file_list_with_retry",
                 new_callable=AsyncMock,
