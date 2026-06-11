@@ -4,7 +4,7 @@ use crate::pickle_reduce;
 use clap::builder::{BoolishValueParser, TypedValueParser};
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use pyo3::types::PyTuple;
-use pyo3::{Bound, PyAny, PyResult, pyclass, pymethods};
+use pyo3::{pyclass, pymethods, Bound, PyAny, PyResult};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +46,8 @@ pub struct AppArgs {
     #[pyo3(get, set)]
     pub continuous_batching_enabled: Option<bool>,
 
+    // this parser cannot use the default boolean parser + ArgAction::SetTrue
+    // since it needs to accept the syntax of EXO_OFFLINE=<true/false> (not presence check)
     #[arg(
         long,
         env = "EXO_OFFLINE",
