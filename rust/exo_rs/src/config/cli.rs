@@ -1,8 +1,8 @@
-use crate::config::locator::LocatorArgs;
+use crate::config::bootstrap::BootstrapArgs;
 use crate::ext::ResultExt;
 use crate::{pickle_reduce, version};
 use clap::{ArgAction, Parser, ValueEnum};
-use pyo3::prelude::PyAnyMethods;
+use pyo3::prelude::{PyAnyMethods, PyModuleMethods};
 use pyo3::types::{PyModule, PyTuple};
 use pyo3::{Bound, PyAny, PyResult, Python, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
@@ -146,6 +146,7 @@ pub struct CliArgs {
 
     #[arg(
         long,
+        env = "EXO_FAST_SYNCH",
         value_name = "BOOL",
         help = "Force MLX FAST_SYNCH on/off (for JACCL backend); omit for auto"
     )]
@@ -154,7 +155,7 @@ pub struct CliArgs {
 
     #[command(flatten)]
     #[pyo3(get)]
-    pub locator: LocatorArgs,
+    pub bootstrap: BootstrapArgs,
 
     #[command(flatten)]
     #[pyo3(get)]
@@ -190,8 +191,8 @@ impl CliArgs {
         Ok(CliArgs::parse_from(argv))
     }
 
-    pub fn set_locator(&mut self, locator: LocatorArgs) {
-        self.locator = locator;
+    pub fn set_bootstrap(&mut self, bootstrap: BootstrapArgs) {
+        self.bootstrap = bootstrap;
     }
 
     pub fn set_config(&mut self, config: ConfigArgs) {
@@ -218,14 +219,14 @@ impl CliArgs {
     }
 }
 
-/// Arguments that will end up in the final configuration go here.
+/// Arguments that will end up in application settings go here.
 ///
-/// The precedence of the final configuration object will be:
+/// The precedence of application settings will be:
 ///  - Defaults < Config file < Env < Cli args
 ///
 /// # Important
 ///  - Make sure all are [`Option<T>`] so we can make it combinable with other
-///    sources of configuration
+///    settings sources
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
@@ -249,6 +250,7 @@ pub struct DeprecatedArgs {
 }
 
 impl DeprecatedArgs {
+    // TODO: actually run these at some point - maybe automatically..?
     pub fn get_error(&self) -> Option<clap::Error> {
         // destructure: don't change because this becomes compile error when new options are
         // moved into here or removed from here
@@ -265,4 +267,13 @@ impl DeprecatedArgs {
             None
         }
     }
+}
+
+pub fn cli_submodule(m: &Bound<PyModule>) -> PyResult<()> {
+    m.add_class::<Verbosity>()?;
+    m.add_class::<CliArgs>()?;
+    m.add_class::<ConfigArgs>()?;
+    m.add_class::<DeprecatedArgs>()?;
+
+    Ok(())
 }

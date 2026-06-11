@@ -2,7 +2,7 @@ use crate::config::cli::CliArgs;
 use crate::config::path::{PathBufValueParserExt, parse_path};
 use crate::ext::ResultExt;
 use crate::pickle_reduce;
-use pyo3::prelude::{PyAnyMethods, PyModule, PyModuleMethods};
+use pyo3::prelude::{PyModule, PyModuleMethods};
 use pyo3::types::PyTuple;
 use pyo3::{Bound, PyAny, PyResult, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
@@ -12,17 +12,19 @@ use std::{fs, io};
 use util::VecExt;
 use util::path::PathExt;
 
-/// Arguments that are needed to resolve paths to files go here.
+/// Arguments that are needed to resolve bootstrap settings.
 ///
-/// This is needed for such things as resolving the path of the configuration `.toml` file,
-/// therefore any args here cannot be specified by the configuration `.toml` file.
+/// These values are resolved before `config.toml` can be loaded. For example, the
+/// `config.toml` path itself depends on these values, so these arguments cannot be
+/// specified by `config.toml`.
 ///
-/// By default, any path-like argument goes here, but can be moved to [`ConfigArgs`] if needed.
+/// By default, any path-like argument goes here, but it can be moved to [`ConfigArgs`]
+/// if it no longer participates in bootstrap resolution.
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, clap::Args)]
 #[command(about = None, long_about = None)]
-pub struct LocatorArgs {
+pub struct BootstrapArgs {
     #[arg(
         long,
         env = "EXO_HOME",
@@ -79,7 +81,7 @@ pub struct LocatorArgs {
 #[gen_stub_pyclass]
 #[pyclass(module = "exo_rs", from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LocatorConfig {
+pub struct BootstrapSettings {
     #[pyo3(get)]
     pub exo_home: ExoHome,
 
@@ -114,24 +116,24 @@ pub struct LocatorConfig {
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl LocatorConfig {
+impl BootstrapSettings {
     /// Create default instance
     #[staticmethod]
     #[pyo3(name = "default")]
     pub fn py_default() -> PyResult<Self> {
         // resolve from env only
-        Self::resolve(&LocatorArgs::default())
+        Self::resolve(&BootstrapArgs::default())
     }
 
     /// Create only from env-variables
     #[staticmethod]
     pub fn from_env_only() -> PyResult<Self> {
         // resolve from env only
-        Self::resolve(&CliArgs::from_env_only().locator)
+        Self::resolve(&CliArgs::from_env_only().bootstrap)
     }
 
     #[staticmethod]
-    pub fn resolve(args: &LocatorArgs) -> PyResult<Self> {
+    pub fn resolve(args: &BootstrapArgs) -> PyResult<Self> {
         let exo_home = ExoHome::resolve(args)?;
         let models_dirs = ModelsDirs::resolve(args, &exo_home)?;
         let log_files = LogFiles::resolve(&exo_home)?;
@@ -240,7 +242,7 @@ impl ExoHome {
         Ok(home)
     }
 
-    pub fn resolve(args: &LocatorArgs) -> io::Result<Self> {
+    pub fn resolve(args: &BootstrapArgs) -> io::Result<Self> {
         // create config/data/cache folders which the rest of the paths are derived from
         Ok(Self {
             config: Self::get_home_dir(&args.exo_home, dirs::config_dir)?,
@@ -263,7 +265,7 @@ pub struct ModelsDirs {
 }
 
 impl ModelsDirs {
-    pub fn resolve(args: &LocatorArgs, exo_home: &ExoHome) -> io::Result<Self> {
+    pub fn resolve(args: &BootstrapArgs, exo_home: &ExoHome) -> io::Result<Self> {
         // create default models dir
         let default_models_dir = args
             .default_models_dir
@@ -330,9 +332,9 @@ impl LogFiles {
     }
 }
 
-pub fn locator_submodule(m: &Bound<PyModule>) -> PyResult<()> {
-    m.add_class::<LocatorArgs>()?;
-    m.add_class::<LocatorConfig>()?;
+pub fn bootstrap_submodule(m: &Bound<PyModule>) -> PyResult<()> {
+    m.add_class::<BootstrapArgs>()?;
+    m.add_class::<BootstrapSettings>()?;
     m.add_class::<ExoHome>()?;
     m.add_class::<ModelsDirs>()?;
     m.add_class::<LogFiles>()?;
