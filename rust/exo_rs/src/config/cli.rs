@@ -87,14 +87,6 @@ pub struct CliArgs {
     #[arg(
         long,
         action = ArgAction::SetTrue,
-        help = "Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models"
-    )]
-    #[pyo3(get, set)]
-    pub offline: bool,
-
-    #[arg(
-        long,
-        action = ArgAction::SetTrue,
         help = "Run as a legacy SysV-style background daemon using double-fork daemonization"
     )]
     #[pyo3(get, set)]

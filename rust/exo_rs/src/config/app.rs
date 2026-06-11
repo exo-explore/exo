@@ -8,6 +8,14 @@ use pyo3::{Bound, PyAny, PyResult, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 
+/// TODO: once config.toml is integrated, we should still figure out a way to display
+///       what would be "default" values here (very informative to user) ((same for BootstrapArgs))
+///       or what would be ENV variables that are read - but without those having any effect
+///       on what value this one takes.
+///       i.e. user sees "Description \[env: FOO_BAR=] \[default: 12345]"
+///       and yet those defaults are not ACTUALLY parsed by this CLI and instead consumed
+///       later on by the settings merger
+///
 /// Arguments that participate in application settings resolution.
 ///
 /// These values may come from defaults, `config.toml`, environment variables, or
@@ -40,6 +48,20 @@ pub struct AppArgs {
 
     #[arg(
         long,
+        env = "EXO_OFFLINE",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        default_value = "false", // TODO: when config.toml introduced, remove this
+        value_parser = BoolishValueParser::new(),
+        value_name = "BOOL",
+        help = "Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models"
+    )]
+    #[pyo3(get, set)]
+    pub offline: Option<bool>,
+
+    #[arg(
+        long,
         env = "EXO_FAST_SYNCH",
         value_name = "BOOL",
         help = "Force MLX FAST_SYNCH on/off (for JACCL backend); omit for auto"
@@ -52,6 +74,7 @@ impl Default for AppArgs {
     fn default() -> Self {
         Self {
             continuous_batching_enabled: Some(true),
+            offline: Some(false),
             fast_synch: None,
         }
     }
@@ -63,6 +86,8 @@ impl Default for AppArgs {
 pub struct AppSettings {
     #[pyo3(get, set)]
     pub continuous_batching_enabled: bool,
+    #[pyo3(get, set)]
+    pub offline: bool,
     #[pyo3(get, set)]
     pub fast_synch: Option<bool>,
 }
@@ -87,6 +112,7 @@ impl AppSettings {
     pub fn resolve(args: &AppArgs) -> PyResult<Self> {
         Ok(Self {
             continuous_batching_enabled: args.continuous_batching_enabled.unwrap_or(true),
+            offline: args.offline.unwrap_or(false),
             fast_synch: args.fast_synch,
         })
     }

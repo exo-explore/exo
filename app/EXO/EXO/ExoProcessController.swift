@@ -363,9 +363,6 @@ final class ExoProcessController: ObservableObject {
         if enableImageModels {
             environment["EXO_ENABLE_IMAGE_MODELS"] = "true"
         }
-        if offlineMode {
-            environment["EXO_OFFLINE"] = "true"
-        }
         var paths: [String] = []
         if let existing = environment["PATH"], !existing.isEmpty {
             paths = existing.split(separator: ":").map(String.init)
@@ -416,9 +413,13 @@ final class ExoProcessController: ObservableObject {
     }
 
     private func makeArgs() -> [String] {
-        [
+        var args = [
             "--fast-synch=\(fastSynchEnabled ? "true" : "false")"
         ]
+        if offlineMode {
+            args.append("--offline")
+        }
+        return args
     }
 
     private func buildTag() -> String {

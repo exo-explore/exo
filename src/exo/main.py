@@ -73,15 +73,16 @@ class Node:
         )
 
         logger.info(f"Starting node {node_id}")
+        offline = config.app().offline
 
         # Create DownloadCoordinator (unless --no-downloads)
         if cli_args.downloads_enabled:
             download_coordinator = DownloadCoordinator(
                 node_id,
-                exo_shard_downloader(offline=args.offline),
+                exo_shard_downloader(offline=offline),
                 event_sender=event_router.sender(),
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
-                offline=args.offline,
+                offline=offline,
             )
         else:
             download_coordinator = None
@@ -145,7 +146,7 @@ class Node:
             master,
             api,
             node_id,
-            args.offline,
+            offline,
             args.api_port,
         )
 
@@ -353,7 +354,7 @@ def main_inner(args: "Args", cli_args: CliArgs):
     # TODO: this literally here does NOTHING!!! why?
     logger.info(f"EXO_ZENOH_NAMESPACE: {os.getenv('EXO_ZENOH_NAMESPACE')}")
 
-    if args.offline:
+    if config.app().offline:
         logger.info("Running in OFFLINE mode — no internet checks, local models only")
 
     if args.bootstrap_peers:
@@ -378,7 +379,6 @@ def main_inner(args: "Args", cli_args: CliArgs):
 class Args(FrozenModel):
     verbosity: int = 0
     api_port: PositiveInt = 52415
-    offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     bootstrap_peers: list[str] = []
     namespace: str
     zenoh_port: int
@@ -408,12 +408,6 @@ class Args(FrozenModel):
             type=int,
             dest="api_port",
             default=52415,
-        )
-        parser.add_argument(
-            "--offline",
-            action="store_true",
-            default=os.getenv("EXO_OFFLINE", "false").lower() == "true",
-            help="Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models",
         )
         parser.add_argument(
             "--bootstrap-peers",
@@ -484,6 +478,13 @@ class Args(FrozenModel):
             help=argparse.SUPPRESS,
         )
         parser.add_argument(
+            "--offline",
+            nargs="?",
+            dest="_offline_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
             "--no-batch",
             nargs="?",
             dest="_no_batch_ignored",
@@ -507,6 +508,7 @@ class Args(FrozenModel):
         parsed_args.pop("_no_worker_ignored", None)
         parsed_args.pop("_no_downloads_ignored", None)
         parsed_args.pop("_legacy_daemon_ignored", None)
+        parsed_args.pop("_offline_ignored", None)
         parsed_args.pop("_no_batch_ignored", None)
         parsed_args.pop("_fast_synch_ignored", None)
 
