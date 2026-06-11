@@ -18,8 +18,9 @@ use util::path::PathExt;
 /// `config.toml` path itself depends on these values, so these arguments cannot be
 /// specified by `config.toml`.
 ///
-/// By default, any path-like argument goes here, but it can be moved to [`ConfigArgs`]
-/// if it no longer participates in bootstrap resolution.
+/// By default, any path-like argument goes here, but it can be moved to
+/// [`AppArgs`](crate::config::app::AppArgs) if it no longer participates in bootstrap
+/// resolution.
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, clap::Args)]

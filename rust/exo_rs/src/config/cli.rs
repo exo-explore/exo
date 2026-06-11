@@ -1,3 +1,4 @@
+use crate::config::app::AppArgs;
 use crate::config::bootstrap::BootstrapArgs;
 use crate::ext::ResultExt;
 use crate::{pickle_reduce, version};
@@ -159,7 +160,7 @@ pub struct CliArgs {
 
     #[command(flatten)]
     #[pyo3(get)]
-    pub config: ConfigArgs,
+    pub app: AppArgs,
 
     #[command(flatten)]
     #[pyo3(get)]
@@ -195,8 +196,8 @@ impl CliArgs {
         self.bootstrap = bootstrap;
     }
 
-    pub fn set_config(&mut self, config: ConfigArgs) {
-        self.config = config;
+    pub fn set_app(&mut self, app: AppArgs) {
+        self.app = app;
     }
 
     pub fn set_deprecated(&mut self, deprecated: DeprecatedArgs) {
@@ -218,20 +219,6 @@ impl CliArgs {
         pickle_reduce(slf, "from_bytes", Self::to_bytes)
     }
 }
-
-/// Arguments that will end up in application settings go here.
-///
-/// The precedence of application settings will be:
-///  - Defaults < Config file < Env < Cli args
-///
-/// # Important
-///  - Make sure all are [`Option<T>`] so we can make it combinable with other
-///    settings sources
-#[gen_stub_pyclass]
-#[pyclass(from_py_object)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
-#[command(about = None, long_about = None)]
-pub struct ConfigArgs {}
 
 /// Deprecated arguments go here.
 ///
@@ -272,7 +259,6 @@ impl DeprecatedArgs {
 pub fn cli_submodule(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<Verbosity>()?;
     m.add_class::<CliArgs>()?;
-    m.add_class::<ConfigArgs>()?;
     m.add_class::<DeprecatedArgs>()?;
 
     Ok(())

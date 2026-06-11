@@ -7,10 +7,11 @@ import os
 import pathlib
 import typing
 __all__ = [
+    "AppArgs",
+    "AppSettings",
     "BootstrapArgs",
     "BootstrapSettings",
     "CliArgs",
-    "ConfigArgs",
     "DeprecatedArgs",
     "ExoHome",
     "FromSwarm",
@@ -23,6 +24,40 @@ __all__ = [
 ]
 
 @typing.final
+class AppArgs:
+    r"""
+    Arguments that participate in application settings resolution.
+    
+    These values may come from defaults, `config.toml`, environment variables, or
+    CLI arguments. Unlike [`BootstrapArgs`](crate::config::bootstrap::BootstrapArgs),
+    they do not participate in finding or loading `config.toml`.
+    
+    # Important
+     - Make sure all fields are [`Option<T>`] so they can be layered with other
+       settings sources.
+    """
+    ...
+
+@typing.final
+class AppSettings:
+    @staticmethod
+    def default() -> AppSettings:
+        r"""
+        Create default instance.
+        """
+    @staticmethod
+    def from_env_only() -> AppSettings:
+        r"""
+        Create only from environment variables.
+        """
+    @staticmethod
+    def resolve(_args: AppArgs) -> AppSettings: ...
+    def to_bytes(self) -> builtins.list[builtins.int]: ...
+    @staticmethod
+    def from_bytes(bytes: typing.Sequence[builtins.int]) -> AppSettings: ...
+    def __reduce__(self) -> tuple[typing.Any, tuple]: ...
+
+@typing.final
 class BootstrapArgs:
     r"""
     Arguments that are needed to resolve bootstrap settings.
@@ -31,8 +66,9 @@ class BootstrapArgs:
     `config.toml` path itself depends on these values, so these arguments cannot be
     specified by `config.toml`.
     
-    By default, any path-like argument goes here, but it can be moved to [`ConfigArgs`]
-    if it no longer participates in bootstrap resolution.
+    By default, any path-like argument goes here, but it can be moved to
+    [`AppArgs`](crate::config::app::AppArgs) if it no longer participates in bootstrap
+    resolution.
     """
     @property
     def exo_home(self) -> typing.Optional[pathlib.Path]: ...
@@ -172,7 +208,7 @@ class CliArgs:
     @property
     def bootstrap(self) -> BootstrapArgs: ...
     @property
-    def config(self) -> ConfigArgs: ...
+    def app(self) -> AppArgs: ...
     @property
     def deprecated(self) -> DeprecatedArgs: ...
     @staticmethod
@@ -185,26 +221,12 @@ class CliArgs:
     @staticmethod
     def parse() -> CliArgs: ...
     def set_bootstrap(self, bootstrap: BootstrapArgs) -> None: ...
-    def set_config(self, config: ConfigArgs) -> None: ...
+    def set_app(self, app: AppArgs) -> None: ...
     def set_deprecated(self, deprecated: DeprecatedArgs) -> None: ...
     def to_bytes(self) -> builtins.list[builtins.int]: ...
     @staticmethod
     def from_bytes(bytes: typing.Sequence[builtins.int]) -> CliArgs: ...
     def __reduce__(self) -> tuple[typing.Any, tuple]: ...
-
-@typing.final
-class ConfigArgs:
-    r"""
-    Arguments that will end up in application settings go here.
-    
-    The precedence of application settings will be:
-     - Defaults < Config file < Env < Cli args
-    
-    # Important
-     - Make sure all are [`Option<T>`] so we can make it combinable with other
-       settings sources
-    """
-    ...
 
 @typing.final
 class DeprecatedArgs:
