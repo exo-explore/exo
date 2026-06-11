@@ -325,7 +325,7 @@ EXO_MODELS_READ_ONLY_DIRS=/mnt/nfs/models:/opt/ai-models uv run exo
 # Download models to an external SSD (falls back to default dir if full)
 EXO_MODELS_DIRS=/Volumes/ExternalSSD/exo-models uv run exo
 
-# Run in offline mode
+# Run it in offline mode
 EXO_OFFLINE=true uv run exo
 
 # Enable image models
