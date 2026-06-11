@@ -80,7 +80,7 @@ class MlxBuilder(Builder):
                 self.tokenizer.tool_parser,  # type: ignore
             )
 
-        kv_prefix_cache = KVPrefixCache(self.group)
+        kv_prefix_cache = KVPrefixCache(self.group, model_id=self.model_id)
 
         device_rank = 0 if self.group is None else self.group.rank()
         if os.environ.get("EXO_NO_BATCH"):

@@ -60,8 +60,10 @@ def run_prefill_for_request(
     if kv_prefix_cache is not None:
         try:
             cache_snapshots = [snapshot_ssm_states(cache)]
-            hit_ratio = prefix_hit_length / n_tokens if n_tokens > 0 else 0.0
-            if matched_index is not None and hit_ratio >= 0.5:
+            if kv_prefix_cache.should_update_entry(
+                matched_index, prefix_hit_length, min_prefix_hit_length=0
+            ):
+                assert matched_index is not None
                 kv_prefix_cache.update_kv_cache(
                     matched_index,
                     prompt_tokens,

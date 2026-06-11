@@ -3,7 +3,10 @@ import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, cast
+
+if TYPE_CHECKING:
+    from exo.worker.engines.mlx.cache import KVPrefixCache
 
 from anyio import ClosedResourceError, EndOfStream
 
@@ -310,8 +313,17 @@ class Runner:
                     f"Received {task.__class__.__name__} outside of state machine in {self.current_status=}"
                 )
 
+    def _flush_kv_cache_to_disk(self) -> None:
+        """Force-flush the hot KV slot to disk; no-op for engines without one."""
+        kv = cast(
+            "KVPrefixCache | None", getattr(self.generator, "kv_prefix_cache", None)
+        )
+        if kv is not None:
+            kv.flush_to_disk(force=True)
+
     def shutdown(self, task: Task):
         logger.info("runner shutting down")
+        self._flush_kv_cache_to_disk()
         self.update_status(RunnerShuttingDown())
         self.acknowledge_task(task)
         self.generator.close()
@@ -379,6 +391,11 @@ class Runner:
                     raise ValueError(
                         f"Received {item.__class__.__name__} outside of state machine in {self.current_status=}"
                     )
+
+        # Generation queue drained — persist the hot KV slot while idle so a
+        # later crash doesn't lose it (otherwise it is only flushed on
+        # conversation switch).
+        self._flush_kv_cache_to_disk()
 
         self.update_status(RunnerReady(prefill_server_port=self._prefill_server_port))
         logger.info("runner ready")
