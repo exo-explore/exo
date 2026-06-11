@@ -23,7 +23,6 @@ from tomlkit.exceptions import TOMLKitError
 from exo.shared.config import locator
 from exo.shared.constants import (
     EXO_ENABLE_IMAGE_MODELS,
-    EXO_MODELS_DIRS,
     RESOURCES_DIR,
 )
 from exo.shared.types.backends import Backend
@@ -100,7 +99,7 @@ card_cache = _CardCache()
 
 def detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
     normalized = model_id.normalize()
-    for model_dir in [d / normalized for d in EXO_MODELS_DIRS]:
+    for model_dir in [d / normalized for d in locator().models_dirs.models_dirs]:
         config_path = model_dir / "config.json"
         if not config_path.exists():
             continue

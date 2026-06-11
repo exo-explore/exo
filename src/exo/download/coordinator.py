@@ -20,7 +20,6 @@ from exo.routing.event_router import (
     EventRouterClosedResourceError,
 )
 from exo.shared.config import locator
-from exo.shared.constants import EXO_MODELS_READ_ONLY_DIRS
 from exo.shared.models import model_cards
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
@@ -434,7 +433,7 @@ class DownloadCoordinator:
                         NodeDownloadProgress(download_progress=status)
                     )
                 # Scan read-only directories for pre-downloaded models
-                if EXO_MODELS_READ_ONLY_DIRS:
+                if locator().models_dirs.models_read_only_dirs:
                     for card in await model_cards.card_cache.list_all():
                         mid = card.model_id
                         if mid in self.active_downloads:

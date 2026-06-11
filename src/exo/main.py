@@ -27,9 +27,6 @@ from exo.shared.constants import (
     EXO_CACHE_HOME,
     EXO_CONFIG_HOME,
     EXO_DATA_HOME,
-    EXO_DEFAULT_MODELS_DIR,
-    EXO_MODELS_DIRS,
-    EXO_MODELS_READ_ONLY_DIRS,
 )
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
@@ -289,9 +286,6 @@ def main():
     print(c.exo_home.config, EXO_CONFIG_HOME)
     print(c.exo_home.data, EXO_DATA_HOME)
     print(c.exo_home.cache, EXO_CACHE_HOME)
-    print(c.models_dirs.default_models_dir, EXO_DEFAULT_MODELS_DIR)
-    print(c.models_dirs.models_read_only_dirs, EXO_MODELS_READ_ONLY_DIRS)
-    print(c.models_dirs.models_dirs, EXO_MODELS_DIRS)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()

@@ -32,10 +32,6 @@ from exo.download.huggingface_utils import (
     get_hf_token,
 )
 from exo.shared.config import locator
-from exo.shared.constants import (
-    EXO_MODELS_DIRS,
-    EXO_MODELS_READ_ONLY_DIRS,
-)
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -49,8 +45,21 @@ from exo.shared.types.worker.downloads import (
 from exo.shared.types.worker.shards import ShardMetadata
 
 
-def _default_models_dir():
+def _default_models_dir() -> Path:
     return locator().models_dirs.default_models_dir
+
+
+def _writable_models_dirs() -> list[Path]:
+    return locator().models_dirs.models_dirs
+
+
+def _read_only_models_dirs() -> list[Path]:
+    return locator().models_dirs.models_read_only_dirs
+
+
+def _model_search_dirs() -> tuple[Path, ...]:
+    models_dirs = locator().models_dirs
+    return (*models_dirs.models_read_only_dirs, *models_dirs.models_dirs)
 
 
 class HuggingFaceAuthenticationError(Exception):
@@ -163,7 +172,7 @@ def resolve_existing_model(
     all weight files are present.
     """
     normalized = model_id.normalize()
-    for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
+    for search_dir in _model_search_dirs():
         candidate = search_dir / normalized
         if candidate.is_dir() and is_model_directory_complete(candidate, card):
             return candidate
@@ -172,7 +181,7 @@ def resolve_existing_model(
 
 def is_read_only_model_dir(model_dir: Path) -> bool:
     """Check if a model directory lives under a read-only models root."""
-    return any(model_dir.is_relative_to(d) for d in EXO_MODELS_READ_ONLY_DIRS)
+    return any(model_dir.is_relative_to(d) for d in _read_only_models_dirs())
 
 
 def build_model_path(model_id: ModelId) -> Path:
@@ -187,7 +196,8 @@ def select_download_dir(required_bytes: int) -> Path:
 
     Raises ``InsufficientDiskSpaceError`` if none have enough space.
     """
-    for candidate_dir in EXO_MODELS_DIRS:
+    writable_models_dirs = _writable_models_dirs()
+    for candidate_dir in writable_models_dirs:
         if not candidate_dir.exists():
             continue
         try:
@@ -198,7 +208,7 @@ def select_download_dir(required_bytes: int) -> Path:
             continue
     raise InsufficientDiskSpaceError(
         f"No writable model directory has {required_bytes / (1024**3):.1f} GiB free. "
-        f"Checked: {[str(d) for d in EXO_MODELS_DIRS]}"
+        f"Checked: {[str(d) for d in writable_models_dirs]}"
     )
 
 
@@ -207,7 +217,7 @@ async def select_download_dir_for_shard(
     filtered_file_list: list[FileListEntry],
     total_size: int,
 ) -> Path:
-    for candidate_dir in EXO_MODELS_DIRS:
+    for candidate_dir in _writable_models_dirs():
         if not candidate_dir.exists():
             continue
         sub = candidate_dir / model_id.normalize()
@@ -247,7 +257,7 @@ async def delete_model(model_id: ModelId) -> bool:
     """Delete a model from writable directories. Skips read-only dirs."""
     normalized = model_id.normalize()
     deleted = False
-    for models_dir in EXO_MODELS_DIRS:
+    for models_dir in _writable_models_dirs():
         model_dir = models_dir / normalized
         if await aios.path.exists(model_dir):
             await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
@@ -353,7 +363,7 @@ def is_model_directory_complete(model_dir: Path, card: ModelCard | None = None) 
     ):
         vision_id = ModelId(card.vision.weights_repo)
         normalized = vision_id.normalize()
-        for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
+        for search_dir in _model_search_dirs():
             candidate = search_dir / normalized
             if candidate.is_dir() and is_model_directory_complete(candidate):
                 return True
@@ -372,7 +382,7 @@ async def _build_file_list_from_local_directory(
     safetensors listed there.
     """
     normalized = model_id.normalize()
-    for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
+    for search_dir in _model_search_dirs():
         model_dir = search_dir / normalized
         if await aios.path.exists(model_dir):
             file_list = await asyncio.to_thread(
