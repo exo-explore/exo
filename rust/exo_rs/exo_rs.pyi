@@ -20,12 +20,20 @@ __all__ = [
     "NetworkingHandle",
     "Pidfile",
     "PidfileError",
-    "Verbosity",
+    "VerbosityFilter",
 ]
 
 @typing.final
 class AppArgs:
     r"""
+    TODO: once config.toml is integrated, we should still figure out a way to display
+          what would be "default" values here (very informative to user) ((same for BootstrapArgs))
+          or what would be ENV variables that are read - but without those having any effect
+          on what value this one takes.
+          i.e. user sees "Description \[env: FOO_BAR=] \[default: 12345]"
+          and yet those defaults are not ACTUALLY parsed by this CLI and instead consumed
+          later on by the settings merger
+    
     Arguments that participate in application settings resolution.
     
     These values may come from defaults, `config.toml`, environment variables, or
@@ -36,6 +44,10 @@ class AppArgs:
      - Make sure all fields are [`Option<T>`] so they can be layered with other
        settings sources.
     """
+    @property
+    def verbosity(self) -> typing.Optional[VerbosityFilter]: ...
+    @verbosity.setter
+    def verbosity(self, value: typing.Optional[VerbosityFilter]) -> None: ...
     @property
     def continuous_batching_enabled(self) -> typing.Optional[builtins.bool]: ...
     @continuous_batching_enabled.setter
@@ -51,6 +63,10 @@ class AppArgs:
 
 @typing.final
 class AppSettings:
+    @property
+    def verbosity(self) -> VerbosityFilter: ...
+    @verbosity.setter
+    def verbosity(self, value: VerbosityFilter) -> None: ...
     @property
     def continuous_batching_enabled(self) -> builtins.bool: ...
     @continuous_batching_enabled.setter
@@ -172,10 +188,6 @@ class BootstrapSettings:
 
 @typing.final
 class CliArgs:
-    @property
-    def verbosity(self) -> Verbosity: ...
-    @verbosity.setter
-    def verbosity(self, value: Verbosity) -> None: ...
     @property
     def force_master(self) -> builtins.bool: ...
     @force_master.setter
@@ -407,7 +419,10 @@ class PidfileError(builtins.Exception):
     def __str__(self) -> builtins.str: ...
 
 @typing.final
-class Verbosity(enum.Enum):
+class VerbosityFilter(enum.Enum):
+    r"""
+    Verbosity level used by EXO's logger.
+    """
     Off = ...
     Error = ...
     Warn = ...

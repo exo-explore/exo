@@ -1,7 +1,11 @@
+use crate::config::VerbosityFilter;
 use crate::config::cli::CliArgs;
 use crate::ext::ResultExt;
 use crate::pickle_reduce;
-use clap::builder::{BoolishValueParser, TypedValueParser};
+use clap::{
+    ArgAction,
+    builder::{BoolishValueParser, TypedValueParser},
+};
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use pyo3::types::PyTuple;
 use pyo3::{Bound, PyAny, PyResult, pyclass, pymethods};
@@ -30,6 +34,29 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
 #[command(about = None, long_about = None)]
 pub struct AppArgs {
+    #[arg(
+        short = 'q',
+        long = "quiet",
+        action = ArgAction::SetTrue,
+        conflicts_with = "verbosity",
+        help = "Disable non-error logging (alias for --verbosity=off)"
+    )]
+    #[serde(skip)]
+    verbosity_off: bool,
+    #[arg(
+        short = 'v',
+        long,
+        env = "EXO_VERBOSITY",
+        value_enum,
+        default_value = "info", // TODO: when config.toml introduced, remove this
+        default_value_if("verbosity_off", "true", Some("off")),
+        value_name = "LEVEL",
+        conflicts_with = "verbosity_off",
+        help = "Set the verbosity filter"
+    )]
+    #[pyo3(get, set)]
+    pub verbosity: Option<VerbosityFilter>,
+
     // this parser cannot use the default boolean parser + ArgAction::SetFalse
     // since it needs to logically invert --no-batch and EXO_NO_BATCH
     #[arg(
@@ -75,6 +102,11 @@ pub struct AppArgs {
 impl Default for AppArgs {
     fn default() -> Self {
         Self {
+            // verbosity
+            verbosity_off: false,
+            verbosity: Some(VerbosityFilter::Info),
+
+            // rest
             continuous_batching_enabled: Some(true),
             offline: Some(false),
             fast_synch: None,
@@ -86,6 +118,8 @@ impl Default for AppArgs {
 #[pyclass(module = "exo_rs", from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppSettings {
+    #[pyo3(get, set)]
+    pub verbosity: VerbosityFilter,
     #[pyo3(get, set)]
     pub continuous_batching_enabled: bool,
     #[pyo3(get, set)]
@@ -113,6 +147,7 @@ impl AppSettings {
     #[staticmethod]
     pub fn resolve(args: &AppArgs) -> PyResult<Self> {
         Ok(Self {
+            verbosity: args.verbosity.unwrap_or(VerbosityFilter::Info),
             continuous_batching_enabled: args.continuous_batching_enabled.unwrap_or(true),
             offline: args.offline.unwrap_or(false),
             fast_synch: args.fast_synch,

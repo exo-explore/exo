@@ -2,43 +2,19 @@ use crate::config::app::AppArgs;
 use crate::config::bootstrap::BootstrapArgs;
 use crate::ext::ResultExt;
 use crate::{pickle_reduce, version};
-use clap::{ArgAction, Parser, ValueEnum};
+use clap::{ArgAction, Parser};
 use pyo3::prelude::{PyAnyMethods, PyModuleMethods};
 use pyo3::types::{PyModule, PyTuple};
 use pyo3::{Bound, PyAny, PyResult, Python, pyclass, pymethods};
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
-
-#[gen_stub_pyclass_enum]
-#[pyclass(eq, eq_int, from_py_object)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
-#[serde(rename_all = "lowercase")]
-pub enum Verbosity {
-    Off,
-    Error,
-    Warn,
-    Info,
-    Debug,
-    Trace,
-}
 
 #[gen_stub_pyclass]
 #[pyclass(module = "exo_rs", from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Parser)]
 #[command(name = "EXO", version = version::version(), about, long_about = None)]
 pub struct CliArgs {
-    #[arg(
-          short = 'v',
-          long,
-          value_enum,
-          default_value_t = Verbosity::Info,
-          value_name = "LEVEL",
-          help = "Set the verbosity level"
-    )]
-    #[pyo3(get, set)]
-    pub verbosity: Verbosity,
-
     #[arg(
         short = 'm',
         long,
@@ -232,7 +208,6 @@ impl DeprecatedArgs {
 }
 
 pub fn cli_submodule(m: &Bound<PyModule>) -> PyResult<()> {
-    m.add_class::<Verbosity>()?;
     m.add_class::<CliArgs>()?;
     m.add_class::<DeprecatedArgs>()?;
 
