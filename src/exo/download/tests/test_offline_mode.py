@@ -42,7 +42,6 @@ async def temp_models_dir(tmp_path: Path) -> AsyncIterator[Path]:
     cfg = _mock_locator_config(models_dir)
 
     with (
-        patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
         patch(
             "exo.download.download_utils.locator",
             new_callable=Mock,
