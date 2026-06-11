@@ -24,7 +24,6 @@ from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_zid
 from exo.shared import config
 from exo.shared.constants import (
-    EXO_CACHE_HOME,
     EXO_CONFIG_HOME,
     EXO_DATA_HOME,
 )
@@ -285,7 +284,7 @@ def main():
     c = config.locator()
     print(c.exo_home.config, EXO_CONFIG_HOME)
     print(c.exo_home.data, EXO_DATA_HOME)
-    print(c.exo_home.cache, EXO_CACHE_HOME)
+    print(c.exo_home.cache)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()

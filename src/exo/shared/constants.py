@@ -24,7 +24,6 @@ def _get_xdg_dir(env_var: str, fallback: str) -> Path:
 
 EXO_CONFIG_HOME = _get_xdg_dir("XDG_CONFIG_HOME", ".config")
 EXO_DATA_HOME = _get_xdg_dir("XDG_DATA_HOME", ".local/share")
-EXO_CACHE_HOME = _get_xdg_dir("XDG_CACHE_HOME", ".cache")
 
 # NOTE: I will leave these alone here for now - I don't wanna port them to Rust yet
 _RESOURCES_DIR_ENV = os.environ.get("EXO_RESOURCES_DIR", None)

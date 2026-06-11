@@ -130,7 +130,6 @@ from exo.shared.config import locator
 from exo.shared.constants import (
     DASHBOARD_DIR,
     ENABLE_DISAGGREGATION,
-    EXO_CACHE_HOME,
     EXO_MAX_CHUNK_SIZE,
 )
 from exo.shared.election import ElectionMessage
@@ -205,8 +204,6 @@ from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
 
-ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
-
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
     return f"image/{image_format or 'png'}"
@@ -257,6 +254,9 @@ class API:
         self.port = port
         self._sent_image_hashes: set[str] = set()
         self._tracing_cache_dir = locator().tracing_cache_dir
+        self._onboarding_complete_file = (
+            locator().exo_home.cache / "onboarding_complete"
+        )
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -2197,9 +2197,9 @@ class API:
         return DeleteTracesResponse(deleted=deleted, not_found=not_found)
 
     async def get_onboarding(self) -> JSONResponse:
-        return JSONResponse({"completed": ONBOARDING_COMPLETE_FILE.exists()})
+        return JSONResponse({"completed": self._onboarding_complete_file.exists()})
 
     async def complete_onboarding(self) -> JSONResponse:
-        ONBOARDING_COMPLETE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        ONBOARDING_COMPLETE_FILE.write_text("true")
+        self._onboarding_complete_file.parent.mkdir(parents=True, exist_ok=True)
+        self._onboarding_complete_file.write_text("true")
         return JSONResponse({"completed": True})
