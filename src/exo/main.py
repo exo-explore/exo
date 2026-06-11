@@ -50,7 +50,7 @@ class Node:
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
-    async def create(cls, args: "Args") -> Self:
+    async def create(cls, args: "Args", cli_args: CliArgs) -> Self:
         node_id = get_node_zid()
         session_id = SessionId(master_node_id=node_id, election_clock=0)
         router = Router.create(
@@ -75,7 +75,7 @@ class Node:
         logger.info(f"Starting node {node_id}")
 
         # Create DownloadCoordinator (unless --no-downloads)
-        if not args.no_downloads:
+        if cli_args.downloads_enabled:
             download_coordinator = DownloadCoordinator(
                 node_id,
                 exo_shard_downloader(offline=args.offline),
@@ -86,7 +86,7 @@ class Node:
         else:
             download_coordinator = None
 
-        if args.spawn_api:
+        if cli_args.api_enabled:
             api = API(
                 node_id,
                 port=args.api_port,
@@ -98,7 +98,7 @@ class Node:
         else:
             api = None
 
-        if not args.no_worker:
+        if cli_args.worker_enabled:
             worker = Worker(
                 node_id,
                 event_receiver=event_router.receiver(),
@@ -125,7 +125,7 @@ class Node:
         election = Election(
             node_id,
             # If someone manages to assemble 1 MILLION devices into an exo cluster then. well done. good job champ.
-            seniority=1_000_000 if args.force_master else 0,
+            seniority=1_000_000 if cli_args.force_master else 0,
             # nb: this DOES feedback right now. i have thoughts on how to address this,
             # but ultimately it seems not worth the complexity
             election_message_sender=router.sender(topics.ELECTION_MESSAGES),
@@ -321,7 +321,7 @@ def main():
                 except PidfileError as e:
                     print(e, file=sys.stderr)
                     raise SystemExit(1) from e
-                main_inner(args)
+                main_inner(args, cli_args)
         else:
             # 2) otherwise      => just write PID
             try:
@@ -329,12 +329,12 @@ def main():
             except PidfileError as e:
                 print(e, file=sys.stderr)
                 raise SystemExit(1) from e
-            main_inner(args)
+            main_inner(args, cli_args)
     finally:
         pidfile.close()
 
 
-def main_inner(args: "Args"):
+def main_inner(args: "Args", cli_args: CliArgs):
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
@@ -363,7 +363,7 @@ def main_inner(args: "Args"):
         os.environ["EXO_NO_BATCH"] = "1"
         logger.info("Continuous batching disabled (--no-batch)")
 
-    node = anyio.run(Node.create, args)
+    node = anyio.run(Node.create, args, cli_args)
     try:
         anyio.run(node.run)
     except BaseException as exception:
@@ -378,12 +378,7 @@ def main_inner(args: "Args"):
 
 class Args(FrozenModel):
     verbosity: int = 0
-    force_master: bool = False
-    spawn_api: bool = False
     api_port: PositiveInt = 52415
-    tb_only: bool = False
-    no_worker: bool = False
-    no_downloads: bool = False
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
     bootstrap_peers: list[str] = []
@@ -411,30 +406,10 @@ class Args(FrozenModel):
             default=default_verbosity,
         )
         parser.add_argument(
-            "-m",
-            "--force-master",
-            action="store_true",
-            dest="force_master",
-        )
-        parser.add_argument(
-            "--no-api",
-            action="store_false",
-            dest="spawn_api",
-        )
-        parser.add_argument(
             "--api-port",
             type=int,
             dest="api_port",
             default=52415,
-        )
-        parser.add_argument(
-            "--no-worker",
-            action="store_true",
-        )
-        parser.add_argument(
-            "--no-downloads",
-            action="store_true",
-            help="Disable the download coordinator (node won't download models)",
         )
         parser.add_argument(
             "--offline",
@@ -480,6 +455,35 @@ class Args(FrozenModel):
 
         # un-needed arguments definitions
         parser.add_argument(
+            "-m",
+            "--force-master",
+            action="store_true",
+            dest="_force_master_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
+            "--no-api",
+            action="store_true",
+            dest="_no_api_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
+            "--no-worker",
+            action="store_true",
+            dest="_no_worker_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
+            "--no-downloads",
+            action="store_true",
+            dest="_no_downloads_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
             "--legacy-daemon",
             action="store_true",
             dest="_legacy_daemon_ignored",
@@ -498,6 +502,10 @@ class Args(FrozenModel):
         parsed_args = vars(args)
 
         # remove un-needed arguments
+        parsed_args.pop("_force_master_ignored", None)
+        parsed_args.pop("_no_api_ignored", None)
+        parsed_args.pop("_no_worker_ignored", None)
+        parsed_args.pop("_no_downloads_ignored", None)
         parsed_args.pop("_legacy_daemon_ignored", None)
         parsed_args.pop("_fast_synch_ignored", None)
 
