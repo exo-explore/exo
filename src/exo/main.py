@@ -23,10 +23,6 @@ from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_zid
 from exo.shared import config
-from exo.shared.constants import (
-    EXO_CONFIG_HOME,
-    EXO_DATA_HOME,
-)
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
@@ -280,11 +276,6 @@ def main():
     # parse args and resolve/load the locator config
     args = CliArgs.parse()
     config.load_locator(LocatorConfig.resolve(args.locator))
-
-    c = config.locator()
-    print(c.exo_home.config, EXO_CONFIG_HOME)
-    print(c.exo_home.data, EXO_DATA_HOME)
-    print(c.exo_home.cache)
 
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()

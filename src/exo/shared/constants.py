@@ -1,29 +1,7 @@
 import os
-import sys
 from pathlib import Path
 
 from exo.utils.dashboard_path import find_dashboard, find_resources
-
-_EXO_HOME_ENV = os.environ.get("EXO_HOME", None)
-
-
-def _get_xdg_dir(env_var: str, fallback: str) -> Path:
-    """Get XDG directory, prioritising EXO_HOME environment variable if its set. On non-Linux platforms, default to ~/.exo."""
-
-    if _EXO_HOME_ENV is not None:
-        return Path.home() / _EXO_HOME_ENV
-
-    if sys.platform != "linux":
-        return Path.home() / ".exo"
-
-    xdg_value = os.environ.get(env_var, None)
-    if xdg_value is not None:
-        return Path(xdg_value) / "exo"
-    return Path.home() / fallback / "exo"
-
-
-EXO_CONFIG_HOME = _get_xdg_dir("XDG_CONFIG_HOME", ".config")
-EXO_DATA_HOME = _get_xdg_dir("XDG_DATA_HOME", ".local/share")
 
 # NOTE: I will leave these alone here for now - I don't wanna port them to Rust yet
 _RESOURCES_DIR_ENV = os.environ.get("EXO_RESOURCES_DIR", None)
