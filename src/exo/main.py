@@ -18,7 +18,6 @@ from exo_rs import (
     PidfileError,
 )
 from loguru import logger
-from pydantic import PositiveInt
 
 import exo.routing.topics as topics
 import exo.shared.config as config
@@ -96,7 +95,7 @@ class Node:
         if cli_args.api_enabled:
             api = API(
                 node_id,
-                port=args.api_port,
+                port=cli_args.api_port,
                 event_receiver=event_router.receiver(),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
@@ -112,7 +111,7 @@ class Node:
                 event_sender=event_router.sender(),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
-                api_port=args.api_port,
+                api_port=cli_args.api_port,
             )
         else:
             worker = None
@@ -153,7 +152,7 @@ class Node:
             api,
             node_id,
             offline,
-            args.api_port,
+            cli_args.api_port,
         )
 
     async def run(self):
@@ -383,7 +382,6 @@ def main_inner(args: "Args", cli_args: CliArgs):
 
 
 class Args(FrozenModel):
-    api_port: PositiveInt = 52415
     bootstrap_peers: list[str] = []
     namespace: str
     zenoh_port: int
@@ -392,12 +390,6 @@ class Args(FrozenModel):
     @classmethod
     def parse(cls) -> Self:
         parser = argparse.ArgumentParser(prog="EXO")
-        parser.add_argument(
-            "--api-port",
-            type=int,
-            dest="api_port",
-            default=52415,
-        )
         parser.add_argument(
             "--bootstrap-peers",
             type=lambda s: [p for p in s.split(",") if p],
@@ -442,6 +434,12 @@ class Args(FrozenModel):
             "--no-api",
             action="store_true",
             dest="_no_api_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
+            "--api-port",
+            dest="_api_port_ignored",
             default=argparse.SUPPRESS,
             help=argparse.SUPPRESS,
         )
@@ -510,6 +508,7 @@ class Args(FrozenModel):
         # remove un-needed arguments
         parsed_args.pop("_force_master_ignored", None)
         parsed_args.pop("_no_api_ignored", None)
+        parsed_args.pop("_api_port_ignored", None)
         parsed_args.pop("_no_worker_ignored", None)
         parsed_args.pop("_no_downloads_ignored", None)
         parsed_args.pop("_legacy_daemon_ignored", None)
