@@ -353,7 +353,6 @@ final class ExoProcessController: ObservableObject {
     private func makeEnvironment(for runtimeURL: URL) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         environment["EXO_RUNTIME_DIR"] = runtimeURL.path
-        environment["EXO_ZENOH_NAMESPACE"] = computeNamespace()
         if !hfToken.isEmpty {
             environment["HF_TOKEN"] = hfToken
         }
@@ -414,7 +413,8 @@ final class ExoProcessController: ObservableObject {
 
     private func makeArgs() -> [String] {
         var args = [
-            "--fast-synch=\(fastSynchEnabled ? "true" : "false")"
+            "--namespace=\(computeNamespace())",
+            "--fast-synch=\(fastSynchEnabled ? "true" : "false")",
         ]
         if offlineMode {
             args.append("--offline")

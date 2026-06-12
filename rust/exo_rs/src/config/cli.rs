@@ -79,6 +79,7 @@ pub struct CliArgs {
 
     #[arg(
         long,
+        env = "EXO_NAMESPACE",
         default_value_t = version::version().to_string(),
         value_name = "STRING",
         help = "Discovery namespace, nodes with different namespaces will not connect."

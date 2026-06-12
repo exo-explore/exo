@@ -21,7 +21,6 @@ from loguru import logger
 
 import exo.routing.topics as topics
 import exo.shared.config as config
-from exo import __version__
 from exo.api.main import API
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.impl_shard_downloader import exo_shard_downloader
@@ -60,7 +59,7 @@ class Node:
         session_id = SessionId(master_node_id=node_id, election_clock=0)
         router = Router.create(
             node_id,
-            namespace=args.namespace,
+            namespace=cli_args.namespace,
             listen_port=cli_args.zenoh_port,
             discovery_service_port=cli_args.discovery_port,
         )
@@ -353,11 +352,9 @@ def main_inner(args: "Args", cli_args: CliArgs):
     logger.info(f"pid = {os.getpid()}")
     if os.getenv("EXO_LIBP2P_NAMESPACE"):
         raise ValueError(
-            "EXO_LIBP2P_NAMESPACE has been removed - use EXO_ZENOH_NAMESPACE instead"
+            "EXO_LIBP2P_NAMESPACE has been removed - use EXO_NAMESPACE instead"
         )
-    logger.info(f"Zenoh namespace: {args.namespace}")
-    # TODO: this literally here does NOTHING!!! why?
-    logger.info(f"EXO_ZENOH_NAMESPACE: {os.getenv('EXO_ZENOH_NAMESPACE')}")
+    logger.info(f"Discovery namespace: {cli_args.namespace}")
 
     if config.app().offline:
         logger.info("Running in OFFLINE mode — no internet checks, local models only")
@@ -383,7 +380,6 @@ def main_inner(args: "Args", cli_args: CliArgs):
 
 class Args(FrozenModel):
     bootstrap_peers: list[str] = []
-    namespace: str
 
     @classmethod
     def parse(cls) -> Self:
@@ -396,13 +392,6 @@ class Args(FrozenModel):
             else [],
             dest="bootstrap_peers",
             help="Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)",
-        )
-        parser.add_argument(
-            "--namespace",
-            type=str,
-            default=__version__,
-            dest="namespace",
-            help="Discovery namespace, nodes with different namespaces will not connect.",
         )
         # un-needed arguments definitions
         parser.add_argument(
@@ -435,6 +424,12 @@ class Args(FrozenModel):
         parser.add_argument(
             "--discovery-port",
             dest="_discovery_port_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
+            "--namespace",
+            dest="_namespace_ignored",
             default=argparse.SUPPRESS,
             help=argparse.SUPPRESS,
         )
@@ -506,6 +501,7 @@ class Args(FrozenModel):
         parsed_args.pop("_api_port_ignored", None)
         parsed_args.pop("_zenoh_port_ignored", None)
         parsed_args.pop("_discovery_port_ignored", None)
+        parsed_args.pop("_namespace_ignored", None)
         parsed_args.pop("_no_worker_ignored", None)
         parsed_args.pop("_no_downloads_ignored", None)
         parsed_args.pop("_legacy_daemon_ignored", None)

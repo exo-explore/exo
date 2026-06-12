@@ -239,14 +239,14 @@ The app will ask for permission to modify system settings and install a new Netw
 
 **Custom Namespace for Cluster Isolation:**
 
-The macOS app includes a custom namespace feature that allows you to isolate your exo cluster from others on the same network. This is configured through the `EXO_ZENOH_NAMESPACE` setting:
+The macOS app includes a custom namespace feature that allows you to isolate your exo cluster from others on the same network. The app passes this to exo with `--namespace`; source runs can use `--namespace` or `EXO_NAMESPACE`.
 
 - **Use cases**:
   - Running multiple separate exo clusters on the same network
   - Isolating development/testing clusters from production clusters
   - Preventing accidental cluster joining
 
-- **Configuration**: Access this setting in the app's Advanced settings (or set the `EXO_ZENOH_NAMESPACE` environment variable when running from source)
+- **Configuration**: Access this setting in the app's Advanced settings (or use `--namespace` / `EXO_NAMESPACE` when running from source)
 
 The namespace is logged on startup for debugging purposes.
 
@@ -312,7 +312,7 @@ exo supports several environment variables for configuration:
 | `EXO_MODELS_READ_ONLY_DIRS` | Colon-separated read-only directories to search for pre-downloaded models (e.g., NFS mounts, shared storage). Models here cannot be deleted. | None |
 | `EXO_OFFLINE` | Startup default for `--offline` when the CLI flag is omitted. Uses only local models and skips internet checks. | `false` |
 | `EXO_ENABLE_IMAGE_MODELS` | Enable image model support | `false` |
-| `EXO_ZENOH_NAMESPACE` | Custom namespace for cluster isolation | None |
+| `EXO_NAMESPACE` | Custom namespace for cluster isolation | None |
 | `EXO_VERBOSITY` | Startup default for `--verbosity=<LEVEL>` when the CLI flag is omitted. Valid levels: `off`, `error`, `warn`, `info`, `debug`, `trace`. | `info` |
 | `EXO_FAST_SYNCH` | Startup default for `--fast-synch=true\|false` when the CLI flag is omitted (for JACCL backend). Leave unset for automatic behavior. | Auto |
 | `EXO_TRACING_ENABLED` | Enable distributed tracing for performance analysis | `false` |
@@ -334,7 +334,8 @@ EXO_OFFLINE=true uv run exo
 EXO_ENABLE_IMAGE_MODELS=true uv run exo
 
 # Use custom namespace for cluster isolation
-EXO_ZENOH_NAMESPACE=my-dev-cluster uv run exo
+uv run exo --namespace=my-dev-cluster
+EXO_NAMESPACE=my-dev-cluster uv run exo
 
 # Set logging verbosity (CLI or ENV arg)
 uv run exo --verbosity=debug
