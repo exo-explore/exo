@@ -346,10 +346,6 @@ def main_inner(args: CliArgs):
     logger_setup(config.bootstrap().log_files.exo_log, config.app().verbosity)
 
     logger.info(f"pid = {os.getpid()}")
-    if os.getenv("EXO_LIBP2P_NAMESPACE"):
-        raise ValueError(
-            "EXO_LIBP2P_NAMESPACE has been removed - use EXO_NAMESPACE instead"
-        )
     logger.info(f"Discovery namespace: {args.namespace}")
 
     if config.app().offline:
