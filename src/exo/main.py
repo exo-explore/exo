@@ -61,8 +61,8 @@ class Node:
         router = Router.create(
             node_id,
             namespace=args.namespace,
-            listen_port=args.zenoh_port,
-            discovery_service_port=args.discovery_port,
+            listen_port=cli_args.zenoh_port,
+            discovery_service_port=cli_args.discovery_port,
         )
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
@@ -384,8 +384,6 @@ def main_inner(args: "Args", cli_args: CliArgs):
 class Args(FrozenModel):
     bootstrap_peers: list[str] = []
     namespace: str
-    zenoh_port: int
-    discovery_port: int
 
     @classmethod
     def parse(cls) -> Self:
@@ -406,21 +404,6 @@ class Args(FrozenModel):
             dest="namespace",
             help="Discovery namespace, nodes with different namespaces will not connect.",
         )
-        parser.add_argument(
-            "--zenoh-port",
-            type=int,
-            default=52414,
-            dest="zenoh_port",
-            help="Fixed TCP port for zenoh to listen.",
-        )
-        parser.add_argument(
-            "--discovery-port",
-            type=int,
-            default=52413,
-            dest="discovery_port",
-            help="Fixed UDP port for the discovery service.",
-        )
-
         # un-needed arguments definitions
         parser.add_argument(
             "-m",
@@ -440,6 +423,18 @@ class Args(FrozenModel):
         parser.add_argument(
             "--api-port",
             dest="_api_port_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
+            "--zenoh-port",
+            dest="_zenoh_port_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
+            "--discovery-port",
+            dest="_discovery_port_ignored",
             default=argparse.SUPPRESS,
             help=argparse.SUPPRESS,
         )
@@ -509,6 +504,8 @@ class Args(FrozenModel):
         parsed_args.pop("_force_master_ignored", None)
         parsed_args.pop("_no_api_ignored", None)
         parsed_args.pop("_api_port_ignored", None)
+        parsed_args.pop("_zenoh_port_ignored", None)
+        parsed_args.pop("_discovery_port_ignored", None)
         parsed_args.pop("_no_worker_ignored", None)
         parsed_args.pop("_no_downloads_ignored", None)
         parsed_args.pop("_legacy_daemon_ignored", None)
