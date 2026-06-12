@@ -39,7 +39,7 @@ pub struct AppArgs {
         long = "quiet",
         action = ArgAction::SetTrue,
         conflicts_with = "verbosity",
-        help = "Disable non-error logging (alias for --verbosity=off)"
+        help = "Only show error logs (alias for --verbosity=error)"
     )]
     #[serde(skip)]
     verbosity_off: bool,
@@ -49,7 +49,7 @@ pub struct AppArgs {
         env = "EXO_VERBOSITY",
         value_enum,
         default_value = "info", // TODO: when config.toml introduced, remove this
-        default_value_if("verbosity_off", "true", Some("off")),
+        default_value_if("verbosity_off", "true", Some("error")),
         value_name = "LEVEL",
         conflicts_with = "verbosity_off",
         help = "Set the verbosity filter"

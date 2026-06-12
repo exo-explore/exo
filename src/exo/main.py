@@ -10,7 +10,13 @@ from typing import Self
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
 from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
-from exo_rs import AppSettings, BootstrapSettings, CliArgs, Pidfile, PidfileError
+from exo_rs import (
+    AppSettings,
+    BootstrapSettings,
+    CliArgs,
+    Pidfile,
+    PidfileError,
+)
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -343,7 +349,7 @@ def main_inner(args: "Args", cli_args: CliArgs):
     mp.set_start_method("spawn", force=True)
 
     # TODO: Refactor the current verbosity system
-    logger_setup(config.bootstrap().log_files.exo_log, args.verbosity)
+    logger_setup(config.bootstrap().log_files.exo_log, config.app().verbosity)
 
     logger.info(f"pid = {os.getpid()}")
     if os.getenv("EXO_LIBP2P_NAMESPACE"):
@@ -377,7 +383,6 @@ def main_inner(args: "Args", cli_args: CliArgs):
 
 
 class Args(FrozenModel):
-    verbosity: int = 0
     api_port: PositiveInt = 52415
     bootstrap_peers: list[str] = []
     namespace: str
@@ -387,22 +392,6 @@ class Args(FrozenModel):
     @classmethod
     def parse(cls) -> Self:
         parser = argparse.ArgumentParser(prog="EXO")
-        default_verbosity = 0
-        parser.add_argument(
-            "-q",
-            "--quiet",
-            action="store_const",
-            const=-1,
-            dest="verbosity",
-            default=default_verbosity,
-        )
-        parser.add_argument(
-            "-v",
-            "--verbose",
-            action="count",
-            dest="verbosity",
-            default=default_verbosity,
-        )
         parser.add_argument(
             "--api-port",
             type=int,
@@ -498,6 +487,22 @@ class Args(FrozenModel):
             default=argparse.SUPPRESS,
             help=argparse.SUPPRESS,
         )
+        parser.add_argument(
+            "-q",
+            "--quiet",
+            action="store_true",
+            dest="_verbosity_off_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
+            "-v",
+            "--verbosity",
+            nargs="?",
+            dest="_verbosity_ignored",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
 
         args = parser.parse_args()
         parsed_args = vars(args)
@@ -511,5 +516,7 @@ class Args(FrozenModel):
         parsed_args.pop("_offline_ignored", None)
         parsed_args.pop("_no_batch_ignored", None)
         parsed_args.pop("_fast_synch_ignored", None)
+        parsed_args.pop("_verbosity_off_ignored", None)
+        parsed_args.pop("_verbosity_ignored", None)
 
         return cls(**parsed_args)  # pyright: ignore[reportAny] - We are intentionally validating here, we can't do it statically

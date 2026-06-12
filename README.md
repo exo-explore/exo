@@ -313,6 +313,7 @@ exo supports several environment variables for configuration:
 | `EXO_OFFLINE` | Startup default for `--offline` when the CLI flag is omitted. Uses only local models and skips internet checks. | `false` |
 | `EXO_ENABLE_IMAGE_MODELS` | Enable image model support | `false` |
 | `EXO_ZENOH_NAMESPACE` | Custom namespace for cluster isolation | None |
+| `EXO_VERBOSITY` | Startup default for `--verbosity=<LEVEL>` when the CLI flag is omitted. Valid levels: `off`, `error`, `warn`, `info`, `debug`, `trace`. | `info` |
 | `EXO_FAST_SYNCH` | Startup default for `--fast-synch=true\|false` when the CLI flag is omitted (for JACCL backend). Leave unset for automatic behavior. | Auto |
 | `EXO_TRACING_ENABLED` | Enable distributed tracing for performance analysis | `false` |
 
@@ -334,6 +335,17 @@ EXO_ENABLE_IMAGE_MODELS=true uv run exo
 
 # Use custom namespace for cluster isolation
 EXO_ZENOH_NAMESPACE=my-dev-cluster uv run exo
+
+# Set logging verbosity (CLI or ENV arg)
+uv run exo --verbosity=debug
+uv run exo -v debug
+EXO_VERBOSITY=debug uv run exo
+
+# Only show error logs
+uv run exo --quiet
+
+# Disable logging output
+uv run exo --verbosity=off
 
 # Force MLX FAST_SYNCH off (CLI or ENV arg)
 uv run exo --fast-synch=false
