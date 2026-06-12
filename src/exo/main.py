@@ -1,4 +1,3 @@
-import argparse
 import multiprocessing as mp
 import os
 import resource
@@ -32,7 +31,6 @@ from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils import STDIO_FDS
 from exo.utils.channels import Receiver, channel
-from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
 
@@ -54,14 +52,14 @@ class Node:
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
-    async def create(cls, args: "Args", cli_args: CliArgs) -> Self:
+    async def create(cls, args: CliArgs) -> Self:
         node_id = get_node_zid()
         session_id = SessionId(master_node_id=node_id, election_clock=0)
         router = Router.create(
             node_id,
-            namespace=cli_args.namespace,
-            listen_port=cli_args.zenoh_port,
-            discovery_service_port=cli_args.discovery_port,
+            namespace=args.namespace,
+            listen_port=args.zenoh_port,
+            discovery_service_port=args.discovery_port,
         )
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
@@ -80,7 +78,7 @@ class Node:
         offline = config.app().offline
 
         # Create DownloadCoordinator (unless --no-downloads)
-        if cli_args.downloads_enabled:
+        if args.downloads_enabled:
             download_coordinator = DownloadCoordinator(
                 node_id,
                 exo_shard_downloader(offline=offline),
@@ -91,10 +89,10 @@ class Node:
         else:
             download_coordinator = None
 
-        if cli_args.api_enabled:
+        if args.api_enabled:
             api = API(
                 node_id,
-                port=cli_args.api_port,
+                port=args.api_port,
                 event_receiver=event_router.receiver(),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
@@ -103,14 +101,14 @@ class Node:
         else:
             api = None
 
-        if cli_args.worker_enabled:
+        if args.worker_enabled:
             worker = Worker(
                 node_id,
                 event_receiver=event_router.receiver(),
                 event_sender=event_router.sender(),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
-                api_port=cli_args.api_port,
+                api_port=args.api_port,
             )
         else:
             worker = None
@@ -130,7 +128,7 @@ class Node:
         election = Election(
             node_id,
             # If someone manages to assemble 1 MILLION devices into an exo cluster then. well done. good job champ.
-            seniority=1_000_000 if cli_args.force_master else 0,
+            seniority=1_000_000 if args.force_master else 0,
             # nb: this DOES feedback right now. i have thoughts on how to address this,
             # but ultimately it seems not worth the complexity
             election_message_sender=router.sender(topics.ELECTION_MESSAGES),
@@ -151,7 +149,7 @@ class Node:
             api,
             node_id,
             offline,
-            cli_args.api_port,
+            args.api_port,
         )
 
     async def run(self):
@@ -278,15 +276,13 @@ class Node:
 
 
 def main():
-    # parse args and resolve/load bootstrap + app settings
-    cli_args = CliArgs.parse()
+    # Parse args first & resolve/load bootstrap + app settings
+    #   => --help or bad args don't require PID-locking
+    args = CliArgs.parse()
     config.load(
-        BootstrapSettings.resolve(cli_args.bootstrap),
-        AppSettings.resolve(cli_args.app),
+        BootstrapSettings.resolve(args.bootstrap),
+        AppSettings.resolve(args.app),
     )
-
-    # Parse args first => --help or bad args don't require PID-locking
-    args = Args.parse()
 
     # Exit early if cannot acquire PID file
     try:
@@ -297,7 +293,7 @@ def main():
         raise SystemExit(1) from e
 
     try:
-        if cli_args.legacy_daemon:
+        if args.legacy_daemon:
             # keep stdio backed by explicit /dev/null streams. multiprocessing spawn expects
             # valid stdio FDs; letting DaemonContext close/reopen them can break runner startup.
             for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
@@ -326,7 +322,7 @@ def main():
                 except PidfileError as e:
                     print(e, file=sys.stderr)
                     raise SystemExit(1) from e
-                main_inner(args, cli_args)
+                main_inner(args)
         else:
             # 2) otherwise      => just write PID
             try:
@@ -334,12 +330,12 @@ def main():
             except PidfileError as e:
                 print(e, file=sys.stderr)
                 raise SystemExit(1) from e
-            main_inner(args, cli_args)
+            main_inner(args)
     finally:
         pidfile.close()
 
 
-def main_inner(args: "Args", cli_args: CliArgs):
+def main_inner(args: CliArgs):
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
@@ -354,18 +350,15 @@ def main_inner(args: "Args", cli_args: CliArgs):
         raise ValueError(
             "EXO_LIBP2P_NAMESPACE has been removed - use EXO_NAMESPACE instead"
         )
-    logger.info(f"Discovery namespace: {cli_args.namespace}")
+    logger.info(f"Discovery namespace: {args.namespace}")
 
     if config.app().offline:
         logger.info("Running in OFFLINE mode — no internet checks, local models only")
 
-    if args.bootstrap_peers:
-        raise ValueError("Bootstrap peers has been temporarily removed")
-
     if not config.app().continuous_batching_enabled:
         logger.info("Continuous batching disabled (--no-batch)")
 
-    node = anyio.run(Node.create, args, cli_args)
+    node = anyio.run(Node.create, args)
     try:
         anyio.run(node.run)
     except BaseException as exception:
@@ -376,139 +369,3 @@ def main_inner(args: "Args", cli_args: CliArgs):
     finally:
         logger.info("EXO Shutdown complete")
         logger_cleanup()
-
-
-class Args(FrozenModel):
-    bootstrap_peers: list[str] = []
-
-    @classmethod
-    def parse(cls) -> Self:
-        parser = argparse.ArgumentParser(prog="EXO")
-        parser.add_argument(
-            "--bootstrap-peers",
-            type=lambda s: [p for p in s.split(",") if p],
-            default=os.getenv("EXO_BOOTSTRAP_PEERS", "").split(",")
-            if os.getenv("EXO_BOOTSTRAP_PEERS")
-            else [],
-            dest="bootstrap_peers",
-            help="Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)",
-        )
-        # un-needed arguments definitions
-        parser.add_argument(
-            "-m",
-            "--force-master",
-            action="store_true",
-            dest="_force_master_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "--no-api",
-            action="store_true",
-            dest="_no_api_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "--api-port",
-            dest="_api_port_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "--zenoh-port",
-            dest="_zenoh_port_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "--discovery-port",
-            dest="_discovery_port_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "--namespace",
-            dest="_namespace_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "--no-worker",
-            action="store_true",
-            dest="_no_worker_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "--no-downloads",
-            action="store_true",
-            dest="_no_downloads_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "--legacy-daemon",
-            action="store_true",
-            dest="_legacy_daemon_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "--offline",
-            nargs="?",
-            dest="_offline_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "--no-batch",
-            nargs="?",
-            dest="_no_batch_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "--fast-synch",
-            nargs="?",
-            dest="_fast_synch_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "-q",
-            "--quiet",
-            action="store_true",
-            dest="_verbosity_off_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-        parser.add_argument(
-            "-v",
-            "--verbosity",
-            nargs="?",
-            dest="_verbosity_ignored",
-            default=argparse.SUPPRESS,
-            help=argparse.SUPPRESS,
-        )
-
-        args = parser.parse_args()
-        parsed_args = vars(args)
-
-        # remove un-needed arguments
-        parsed_args.pop("_force_master_ignored", None)
-        parsed_args.pop("_no_api_ignored", None)
-        parsed_args.pop("_api_port_ignored", None)
-        parsed_args.pop("_zenoh_port_ignored", None)
-        parsed_args.pop("_discovery_port_ignored", None)
-        parsed_args.pop("_namespace_ignored", None)
-        parsed_args.pop("_no_worker_ignored", None)
-        parsed_args.pop("_no_downloads_ignored", None)
-        parsed_args.pop("_legacy_daemon_ignored", None)
-        parsed_args.pop("_offline_ignored", None)
-        parsed_args.pop("_no_batch_ignored", None)
-        parsed_args.pop("_fast_synch_ignored", None)
-        parsed_args.pop("_verbosity_off_ignored", None)
-        parsed_args.pop("_verbosity_ignored", None)
-
-        return cls(**parsed_args)  # pyright: ignore[reportAny] - We are intentionally validating here, we can't do it statically

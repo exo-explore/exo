@@ -2,15 +2,16 @@ use crate::config::app::AppArgs;
 use crate::config::bootstrap::BootstrapArgs;
 use crate::ext::ResultExt;
 use crate::{pickle_reduce, version};
-use clap::builder::{TypedValueParser, ValueParserFactory};
 use clap::{ArgAction, Parser};
-use itertools::Itertools;
 use pyo3::prelude::{PyAnyMethods, PyModuleMethods};
 use pyo3::types::{PyModule, PyTuple};
-use pyo3::{pyclass, pymethods, Bound, PyAny, PyResult, Python};
+use pyo3::{Bound, PyAny, PyResult, Python, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
+
+// re-export
+pub use parser_impl::*;
 
 #[gen_stub_pyclass]
 #[pyclass(module = "exo_rs", from_py_object)]
@@ -72,15 +73,6 @@ pub struct CliArgs {
 
     #[arg(
         long,
-        value_delimiter = ',',
-        value_name = "MULTIADDRS",
-        help = "Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)"
-    )]
-    #[pyo3(get, set)]
-    pub bootstrap_peers: Option<Vec<String>>,
-
-    #[arg(
-        long,
         env = "EXO_NAMESPACE",
         default_value_t = version::version().to_string(),
         value_name = "STRING",
@@ -118,7 +110,7 @@ pub struct CliArgs {
 
     #[command(flatten)]
     #[pyo3(get)]
-    pub deprecated: DeprecatedArgs,
+    pub rejected: RejectedArgs,
 }
 
 #[gen_stub_pymethods]
@@ -154,8 +146,8 @@ impl CliArgs {
         self.app = app;
     }
 
-    pub fn set_deprecated(&mut self, deprecated: DeprecatedArgs) {
-        self.deprecated = deprecated;
+    pub fn set_rejected(&mut self, rejected: RejectedArgs) {
+        self.rejected = rejected;
     }
 
     // -------- SERDE/PICKLING support --------
@@ -174,20 +166,36 @@ impl CliArgs {
     }
 }
 
-/// Deprecated arguments go here.
+/// Rejected arguments go here.
 ///
 /// # Important
 ///  - Make sure all are `hide = true` so it won't appear in `--help`
 ///  - Make sure all are [`Option<T>`] so them being missing doesn't cause issues
-///  - Edit [`Self::get_error`] to handle changes of new/removed args in here
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
 #[command(about = None, long_about = None)]
-pub struct DeprecatedArgs {
+pub struct RejectedArgs {
+    // -------- temporarily unavailable --------
     #[arg(
-        long = "libp2p-port", value_name = "PORT", hide = true,
-        value_parser = deprecated::<u16>(
+        long,
+        env = "EXO_BOOTSTRAP_PEERS",
+        value_delimiter = ',',
+        value_name = "MULTIADDRS",
+        help = "Comma-separated libp2p multiaddrs to dial on startup",
+        hide = true,
+        value_parser = Rejected::<String>::unavailable(
+            Some("--bootstrap-peers"), None, Some("EXO_BOOTSTRAP_PEERS"),
+            "bootstrap peers are temporarily removed",
+        )
+    )]
+    #[pyo3(get, set)]
+    pub bootstrap_peers: Option<Vec<String>>,
+
+    // -------- deprecated --------
+    #[arg(
+        long, value_name = "PORT", hide = true,
+        value_parser = Rejected::<u16>::deprecated(
             Some("--libp2p-port"), None, None,
             Some("--zenoh-port"), None, None,
         )
@@ -197,7 +205,7 @@ pub struct DeprecatedArgs {
 
     #[arg(
         env = "EXO_LIBP2P_NAMESPACE", value_name = "STRING", hide = true,
-        value_parser = deprecated::<String>(
+        value_parser = Rejected::<String>::deprecated(
             None, None, Some("EXO_LIBP2P_NAMESPACE"),
             Some("--namespace"), None, Some("EXO_NAMESPACE"),
         )
@@ -206,58 +214,91 @@ pub struct DeprecatedArgs {
     pub libp2p_namespace: Option<String>,
 }
 
-// impl DeprecatedArgs {
-//     // TODO: actually run these at some point - maybe automatically..?
-//     pub fn get_error(&self) -> Option<clap::Error> {
-//         // destructure: don't change because this becomes compile error when new options are
-//         // moved into here or removed from here
-//         let Self { libp2p_port } = self.clone();
-//
-//         if let Some(_) = libp2p_port {
-//             Some(clap::Error::raw(
-//                 clap::error::ErrorKind::UnknownArgument,
-//                 "The argument --libp2p-port is deprecated; use --zenoh-port instead",
-//             ))
-//         }
-//         // add more options here
-//         else {
-//             None
-//         }
-//     }
-// }
+mod parser_impl {
+    use clap::builder::TypedValueParser;
+    use itertools::Itertools;
+    use std::ffi::OsStr;
+    use std::marker::PhantomData;
 
-fn deprecated<T>(
-    old_long: Option<&str>,
-    old_short: Option<&str>,
-    old_env: Option<&str>,
-    new_long: Option<&str>,
-    new_short: Option<&str>,
-    new_env: Option<&str>,
-) -> impl TypedValueParser<Value = T>
-where
-    T: ValueParserFactory + Send + Sync + Clone,
-    T::Parser: TypedValueParser<Value = T>,
-{
-    let a = clap::value_parser!(String);
+    #[derive(Clone)]
+    pub struct Rejected<T> {
+        message: String,
+        _ty: PhantomData<T>,
+    }
 
-    let old_names = vec![old_short, old_long, old_env]
-        .into_iter()
-        .flatten()
-        .join("/");
-    let new_names = vec![new_short, new_long, new_env]
-        .into_iter()
-        .flatten()
-        .join("/");
-    clap::value_parser!(T).try_map(move |_| -> Result<T, _> {
-        Err(format!(
-            "the argument {old_names} is deprecated{}",
-            if new_names.is_empty() {
-                String::new()
-            } else {
-                format!("; use {new_names} instead",)
+    impl<T> Rejected<T> {
+        #[inline(always)]
+        pub fn new(message: impl Into<String>) -> Self {
+            let mut message = message.into();
+            if !message.ends_with('\n') {
+                message.push('\n');
             }
-        ))
-    })
+            Self {
+                message,
+                _ty: PhantomData,
+            }
+        }
+
+        #[inline(always)]
+        pub fn deprecated(
+            old_long: Option<&str>,
+            old_short: Option<&str>,
+            old_env: Option<&str>,
+            new_long: Option<&str>,
+            new_short: Option<&str>,
+            new_env: Option<&str>,
+        ) -> Self {
+            let old_names = vec![old_short, old_long, old_env]
+                .into_iter()
+                .flatten()
+                .join("/");
+            let new_names = vec![new_short, new_long, new_env]
+                .into_iter()
+                .flatten()
+                .join("/");
+            Self::new(format!(
+                "the argument {old_names} is deprecated{}",
+                if new_names.is_empty() {
+                    String::new()
+                } else {
+                    format!("; use {new_names} instead")
+                }
+            ))
+        }
+
+        #[inline(always)]
+        pub fn unavailable(
+            long: Option<&str>,
+            short: Option<&str>,
+            env: Option<&str>,
+            reason: impl AsRef<str>,
+        ) -> Self {
+            let names = vec![short, long, env].into_iter().flatten().join("/");
+            Self::new(format!(
+                "the argument {names} is unavailable: {}",
+                reason.as_ref()
+            ))
+        }
+    }
+
+    impl<T> TypedValueParser for Rejected<T>
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        type Value = T;
+        fn parse_ref(
+            &self,
+            cmd: &clap::Command,
+            _arg: Option<&clap::Arg>,
+            _value: &OsStr,
+        ) -> Result<Self::Value, clap::Error> {
+            Err(clap::Error::raw(
+                clap::error::ErrorKind::ValueValidation,
+                self.message.clone(),
+            )
+            .with_cmd(cmd))
+        }
+    }
 }
 
 // pub mod cli_py {
@@ -480,7 +521,7 @@ where
 
 pub fn cli_submodule(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<CliArgs>()?;
-    m.add_class::<DeprecatedArgs>()?;
+    m.add_class::<RejectedArgs>()?;
 
     Ok(())
 }

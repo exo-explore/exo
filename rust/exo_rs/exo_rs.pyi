@@ -12,7 +12,6 @@ __all__ = [
     "BootstrapArgs",
     "BootstrapSettings",
     "CliArgs",
-    "DeprecatedArgs",
     "ExoHome",
     "FromSwarm",
     "LogFiles",
@@ -20,6 +19,7 @@ __all__ = [
     "NetworkingHandle",
     "Pidfile",
     "PidfileError",
+    "RejectedArgs",
     "VerbosityFilter",
 ]
 
@@ -213,10 +213,6 @@ class CliArgs:
     @legacy_daemon.setter
     def legacy_daemon(self, value: builtins.bool) -> None: ...
     @property
-    def bootstrap_peers(self) -> typing.Optional[builtins.list[builtins.str]]: ...
-    @bootstrap_peers.setter
-    def bootstrap_peers(self, value: typing.Optional[typing.Sequence[builtins.str]]) -> None: ...
-    @property
     def namespace(self) -> builtins.str: ...
     @namespace.setter
     def namespace(self, value: builtins.str) -> None: ...
@@ -233,7 +229,7 @@ class CliArgs:
     @property
     def app(self) -> AppArgs: ...
     @property
-    def deprecated(self) -> DeprecatedArgs: ...
+    def rejected(self) -> RejectedArgs: ...
     @staticmethod
     def from_env_only() -> CliArgs:
         r"""
@@ -245,26 +241,11 @@ class CliArgs:
     def parse() -> CliArgs: ...
     def set_bootstrap(self, bootstrap: BootstrapArgs) -> None: ...
     def set_app(self, app: AppArgs) -> None: ...
-    def set_deprecated(self, deprecated: DeprecatedArgs) -> None: ...
+    def set_rejected(self, rejected: RejectedArgs) -> None: ...
     def to_bytes(self) -> builtins.list[builtins.int]: ...
     @staticmethod
     def from_bytes(bytes: typing.Sequence[builtins.int]) -> CliArgs: ...
     def __reduce__(self) -> tuple[typing.Any, tuple]: ...
-
-@typing.final
-class DeprecatedArgs:
-    r"""
-    Deprecated arguments go here.
-    
-    # Important
-     - Make sure all are `hide = true` so it won't appear in `--help`
-     - Make sure all are [`Option<T>`] so them being missing doesn't cause issues
-     - Edit [`Self::get_error`] to handle changes of new/removed args in here
-    """
-    @property
-    def libp2p_port(self) -> typing.Optional[builtins.int]: ...
-    @libp2p_port.setter
-    def libp2p_port(self, value: typing.Optional[builtins.int]) -> None: ...
 
 @typing.final
 class ExoHome:
@@ -417,6 +398,28 @@ class Pidfile:
 class PidfileError(builtins.Exception):
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
+
+@typing.final
+class RejectedArgs:
+    r"""
+    Rejected arguments go here.
+    
+    # Important
+     - Make sure all are `hide = true` so it won't appear in `--help`
+     - Make sure all are [`Option<T>`] so them being missing doesn't cause issues
+    """
+    @property
+    def bootstrap_peers(self) -> typing.Optional[builtins.list[builtins.str]]: ...
+    @bootstrap_peers.setter
+    def bootstrap_peers(self, value: typing.Optional[typing.Sequence[builtins.str]]) -> None: ...
+    @property
+    def libp2p_port(self) -> typing.Optional[builtins.int]: ...
+    @libp2p_port.setter
+    def libp2p_port(self, value: typing.Optional[builtins.int]) -> None: ...
+    @property
+    def libp2p_namespace(self) -> typing.Optional[builtins.str]: ...
+    @libp2p_namespace.setter
+    def libp2p_namespace(self, value: typing.Optional[builtins.str]) -> None: ...
 
 @typing.final
 class VerbosityFilter(enum.Enum):
