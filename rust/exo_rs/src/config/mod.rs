@@ -3,7 +3,7 @@ use crate::config::bootstrap::bootstrap_submodule;
 use crate::config::cli::cli_submodule;
 use clap::ValueEnum;
 use pyo3::prelude::{PyModule, PyModuleMethods};
-use pyo3::{pyclass, Bound, PyResult};
+use pyo3::{Bound, PyResult, pyclass};
 use pyo3_stub_gen::derive::gen_stub_pyclass_enum;
 use serde::{Deserialize, Serialize};
 

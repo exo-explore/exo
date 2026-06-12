@@ -2,7 +2,9 @@ use crate::config::app::AppArgs;
 use crate::config::bootstrap::BootstrapArgs;
 use crate::ext::ResultExt;
 use crate::{pickle_reduce, version};
+use clap::builder::{TypedValueParser, ValueParserFactory};
 use clap::{ArgAction, Parser};
+use itertools::Itertools;
 use pyo3::prelude::{PyAnyMethods, PyModuleMethods};
 use pyo3::types::{PyModule, PyTuple};
 use pyo3::{pyclass, pymethods, Bound, PyAny, PyResult, Python};
@@ -183,29 +185,79 @@ impl CliArgs {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
 #[command(about = None, long_about = None)]
 pub struct DeprecatedArgs {
-    #[arg(long = "libp2p-port", hide = true)]
+    #[arg(
+        long = "libp2p-port", value_name = "PORT", hide = true,
+        value_parser = deprecated::<u16>(
+            Some("--libp2p-port"), None, None,
+            Some("--zenoh-port"), None, None,
+        )
+    )]
     #[pyo3(get, set)]
     pub libp2p_port: Option<u16>,
+
+    #[arg(
+        env = "EXO_LIBP2P_NAMESPACE", value_name = "STRING", hide = true,
+        value_parser = deprecated::<String>(
+            None, None, Some("EXO_LIBP2P_NAMESPACE"),
+            Some("--namespace"), None, Some("EXO_NAMESPACE"),
+        )
+    )]
+    #[pyo3(get, set)]
+    pub libp2p_namespace: Option<String>,
 }
 
-impl DeprecatedArgs {
-    // TODO: actually run these at some point - maybe automatically..?
-    pub fn get_error(&self) -> Option<clap::Error> {
-        // destructure: don't change because this becomes compile error when new options are
-        // moved into here or removed from here
-        let Self { libp2p_port } = self.clone();
+// impl DeprecatedArgs {
+//     // TODO: actually run these at some point - maybe automatically..?
+//     pub fn get_error(&self) -> Option<clap::Error> {
+//         // destructure: don't change because this becomes compile error when new options are
+//         // moved into here or removed from here
+//         let Self { libp2p_port } = self.clone();
+//
+//         if let Some(_) = libp2p_port {
+//             Some(clap::Error::raw(
+//                 clap::error::ErrorKind::UnknownArgument,
+//                 "The argument --libp2p-port is deprecated; use --zenoh-port instead",
+//             ))
+//         }
+//         // add more options here
+//         else {
+//             None
+//         }
+//     }
+// }
 
-        if let Some(_) = libp2p_port {
-            Some(clap::Error::raw(
-                clap::error::ErrorKind::UnknownArgument,
-                "The argument --libp2p-port is deprecated; use --zenoh-port instead",
-            ))
-        }
-        // add more options here
-        else {
-            None
-        }
-    }
+fn deprecated<T>(
+    old_long: Option<&str>,
+    old_short: Option<&str>,
+    old_env: Option<&str>,
+    new_long: Option<&str>,
+    new_short: Option<&str>,
+    new_env: Option<&str>,
+) -> impl TypedValueParser<Value = T>
+where
+    T: ValueParserFactory + Send + Sync + Clone,
+    T::Parser: TypedValueParser<Value = T>,
+{
+    let a = clap::value_parser!(String);
+
+    let old_names = vec![old_short, old_long, old_env]
+        .into_iter()
+        .flatten()
+        .join("/");
+    let new_names = vec![new_short, new_long, new_env]
+        .into_iter()
+        .flatten()
+        .join("/");
+    clap::value_parser!(T).try_map(move |_| -> Result<T, _> {
+        Err(format!(
+            "the argument {old_names} is deprecated{}",
+            if new_names.is_empty() {
+                String::new()
+            } else {
+                format!("; use {new_names} instead",)
+            }
+        ))
+    })
 }
 
 // pub mod cli_py {
