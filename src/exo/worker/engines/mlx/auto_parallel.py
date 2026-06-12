@@ -1254,9 +1254,18 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                     Qwen3_5SparseMoeBlock,
                 ),
             ):
-                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
-                self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
-                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
+                # Qwen3MoeSparseMoeBlock uses SwitchLinear with 3-D stacked
+                # weights [num_experts, hidden, input]. shard_inplace slices on
+                # the wrong axis for this layout, corrupting the weight tensors.
+                # Additionally, wrapping in ShardedMoE would call all_sum on the
+                # full unsharded output, which is both mathematically wrong
+                # (scales by world_size) and causes a JACCL buffer overrun on
+                # prefill-sized tensors. Leave the block unwrapped; pipeline
+                # parallelism handles cross-node communication correctly.
+                if not isinstance(layer.mlp, Qwen3MoeSparseMoeBlock):
+                    self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
+                    self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
+                    self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
                 if isinstance(
                     layer.mlp, (Qwen3NextSparseMoeBlock, Qwen3_5SparseMoeBlock)
                 ):
@@ -1267,8 +1276,9 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                         layer.mlp.shared_expert.down_proj
                     )
                     self.all_to_sharded_linear_in_place(layer.mlp.shared_expert.up_proj)
-                layer.mlp = ShardedMoE(layer.mlp)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
-                layer.mlp.sharding_group = self.group
+                if not isinstance(layer.mlp, Qwen3MoeSparseMoeBlock):
+                    layer.mlp = ShardedMoE(layer.mlp)  # pyright: ignore[reportAttributeAccessIssue, reportArgumentType]
+                    layer.mlp.sharding_group = self.group
 
             # Shard the MLP
             else:
