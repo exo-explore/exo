@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from typing import Self, cast
 
 import loguru
+from exo_rs import AppSettings, BootstrapSettings
 
+import exo.shared.config as config
 from exo.shared.types.events import Event
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
@@ -42,19 +44,29 @@ def entrypoint(
     event_sender: MpSender[Event | RunnerTerminationError],
     task_receiver: MpReceiver[Task],
     cancel_receiver: MpReceiver[TaskId],
+    settings: tuple[BootstrapSettings, AppSettings],
     _logger: "loguru.Logger",
 ) -> None:
+    # set global configuration
+    # TODO: in the future I really hope that its not going to be a global :)
+    config.load(*settings)
+
     global logger
     logger = _logger
 
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
-    fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
-    if fast_synch_override == "false":
-        os.environ["MLX_METAL_FAST_SYNCH"] = "0"
-    else:
-        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+    match config.app().fast_synch:
+        case False:
+            os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+            logger.info("FAST_SYNCH forced OFF")
+        case True:
+            os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+            logger.info("FAST_SYNCH forced ON")
+        case None:
+            # By default it is on, but it could change..?
+            os.environ["MLX_METAL_FAST_SYNCH"] = "1"
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 

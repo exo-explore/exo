@@ -544,8 +544,7 @@ class DiffusionRunner:
         num_sync_steps: int,
         capture_steps: set[int] | None = None,
     ):
-        if capture_steps is None:
-            capture_steps = set()
+        capture_steps = capture_steps or set()
 
         self._reset_all_caches()
         clear_trace_buffer()

@@ -20,10 +20,9 @@ from pydantic import (
 )
 from tomlkit.exceptions import TOMLKitError
 
+import exo.shared.config as config
 from exo.shared.constants import (
-    EXO_CUSTOM_MODEL_CARDS_DIR,
     EXO_ENABLE_IMAGE_MODELS,
-    EXO_MODELS_DIRS,
     RESOURCES_DIR,
 )
 from exo.shared.types.backends import Backend
@@ -34,11 +33,14 @@ from exo.utils.pydantic_ext import FrozenModel
 
 # kinda ugly...
 # TODO: load search path from config.toml
-_custom_cards_dir = Path(str(EXO_CUSTOM_MODEL_CARDS_DIR))
 _BUILTIN_CARD_DIRS = [
     Path(RESOURCES_DIR) / "inference_model_cards",
     Path(RESOURCES_DIR) / "image_model_cards",
 ]
+
+
+def _custom_cards_dir() -> Path:
+    return Path(str(config.bootstrap().custom_model_cards_dir))
 
 
 class _CardCache:
@@ -57,7 +59,7 @@ class _CardCache:
 
     async def pop(self, model_id: ModelId) -> "ModelCard | None":
         """Delete a user-added custom model card. Returns True if deleted."""
-        card_path = _custom_cards_dir / (ModelId(model_id).normalize() + ".toml")
+        card_path = _custom_cards_dir() / (ModelId(model_id).normalize() + ".toml")
         try:
             if await card_path.exists():
                 await card_path.unlink()
@@ -89,7 +91,7 @@ class _CardCache:
     async def refresh(self) -> None:
         for path in _BUILTIN_CARD_DIRS:
             await self._load_cards_from_dir(path, is_custom=False)
-        await self._load_cards_from_dir(_custom_cards_dir, is_custom=True)
+        await self._load_cards_from_dir(_custom_cards_dir(), is_custom=True)
 
 
 card_cache = _CardCache()
@@ -97,7 +99,9 @@ card_cache = _CardCache()
 
 def detect_vision_from_config(model_id: ModelId) -> "VisionCardConfig | None":
     normalized = model_id.normalize()
-    for model_dir in [d / normalized for d in EXO_MODELS_DIRS]:
+    for model_dir in [
+        d / normalized for d in config.bootstrap().models_dirs.models_dirs
+    ]:
         config_path = model_dir / "config.json"
         if not config_path.exists():
             continue
@@ -211,8 +215,8 @@ class ModelCard(FrozenModel):
             await f.write(data)
 
     async def save_to_custom_dir(self) -> None:
-        await aios.makedirs(str(_custom_cards_dir), exist_ok=True)
-        await self.save(_custom_cards_dir / (self.model_id.normalize() + ".toml"))
+        await aios.makedirs(str(_custom_cards_dir()), exist_ok=True)
+        await self.save(_custom_cards_dir() / (self.model_id.normalize() + ".toml"))
 
     @staticmethod
     async def load_from_path(path: Path) -> "ModelCard":

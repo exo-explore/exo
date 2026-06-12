@@ -2,21 +2,25 @@ import logging
 import os
 import sys
 import webbrowser
+from pathlib import Path
 
-from exo.shared.constants import EXO_CONFIG_HOME
+import exo.shared.config as config
 
 logger = logging.getLogger(__name__)
 
-_FIRST_RUN_MARKER = EXO_CONFIG_HOME / ".dashboard_opened"
+
+def _first_run_marker() -> Path:
+    return config.bootstrap().exo_home.config / ".dashboard_opened"
 
 
 def _is_first_run() -> bool:
-    return not _FIRST_RUN_MARKER.exists()
+    return not _first_run_marker().exists()
 
 
 def _mark_first_run_done() -> None:
-    _FIRST_RUN_MARKER.parent.mkdir(parents=True, exist_ok=True)
-    _FIRST_RUN_MARKER.touch()
+    first_run_marker = _first_run_marker()
+    first_run_marker.parent.mkdir(parents=True, exist_ok=True)
+    first_run_marker.touch()
 
 
 def print_startup_banner(port: int) -> None:

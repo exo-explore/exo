@@ -4,11 +4,12 @@ import os
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import aiofiles
 import aiofiles.os as aios
 import pytest
+from exo_rs import BootstrapSettings
 
 from exo.download.download_utils import (
     _download_file,  # pyright: ignore[reportPrivateUsage]
@@ -24,13 +25,28 @@ def model_id() -> ModelId:
     return ModelId("test-org/test-model")
 
 
+def _mock_bootstrap_settings(models_dir: Path) -> BootstrapSettings:
+    cfg = BootstrapSettings.default()
+    models_dirs = cfg.models_dirs
+    models_dirs.default_models_dir = models_dir
+    models_dirs.models_dirs = [models_dir]
+    cfg.set_models_dirs(models_dirs)
+    return cfg
+
+
 @pytest.fixture
 async def temp_models_dir(tmp_path: Path) -> AsyncIterator[Path]:
     models_dir = tmp_path / "models"
     await aios.makedirs(models_dir, exist_ok=True)
+
+    cfg = _mock_bootstrap_settings(models_dir)
+
     with (
-        patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-        patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+        patch(
+            "exo.download.download_utils.config.bootstrap",
+            new_callable=Mock,
+            return_value=cfg,
+        ),
     ):
         yield models_dir
 

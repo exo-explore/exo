@@ -3,11 +3,12 @@
 import time
 from datetime import timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import aiofiles
 import aiofiles.os as aios
 import pytest
+from exo_rs import BootstrapSettings
 from pydantic import TypeAdapter
 
 from exo.download.download_utils import (
@@ -22,6 +23,15 @@ from exo.shared.types.worker.downloads import FileListEntry, RepoFileDownloadPro
 @pytest.fixture
 def model_id() -> ModelId:
     return ModelId("test-org/test-model")
+
+
+def _mock_bootstrap_settings(models_dir: Path) -> BootstrapSettings:
+    cfg = BootstrapSettings.default()
+    models_dirs = cfg.models_dirs
+    models_dirs.default_models_dir = models_dir
+    models_dirs.models_dirs = [models_dir]
+    cfg.set_models_dirs(models_dirs)
+    return cfg
 
 
 class TestFileVerification:
@@ -177,9 +187,14 @@ class TestFileListCache:
             FileListEntry(type="file", path="config.json", size=100),
         ]
 
+        cfg = _mock_bootstrap_settings(models_dir)
+
         with (
-            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.config.bootstrap",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
             patch(
                 "exo.download.download_utils.fetch_file_list_with_retry",
                 new_callable=AsyncMock,
@@ -224,9 +239,14 @@ class TestFileListCache:
                 TypeAdapter(list[FileListEntry]).dump_json(cached_file_list).decode()
             )
 
+        cfg = _mock_bootstrap_settings(models_dir)
+
         with (
-            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.config.bootstrap",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
             patch(
                 "exo.download.download_utils.fetch_file_list_with_retry",
                 new_callable=AsyncMock,
@@ -243,9 +263,14 @@ class TestFileListCache:
         """Test that errors propagate when fetch fails and no cache exists."""
         models_dir = tmp_path / "models"
 
+        cfg = _mock_bootstrap_settings(models_dir)
+
         with (
-            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.config.bootstrap",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
             patch(
                 "exo.download.download_utils.fetch_file_list_with_retry",
                 new_callable=AsyncMock,
@@ -277,9 +302,14 @@ class TestModelDeletion:
         async with aiofiles.open(cache_dir / "file_list.json", "w") as f:
             await f.write("[]")
 
+        cfg = _mock_bootstrap_settings(models_dir)
+
         with (
-            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.config.bootstrap",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
         ):
             result = await delete_model(model_id)
 
@@ -299,9 +329,14 @@ class TestModelDeletion:
         async with aiofiles.open(cache_dir / "file_list.json", "w") as f:
             await f.write("[]")
 
+        cfg = _mock_bootstrap_settings(models_dir)
+
         with (
-            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.config.bootstrap",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
         ):
             result = await delete_model(model_id)
 
@@ -317,9 +352,14 @@ class TestModelDeletion:
         models_dir = tmp_path / "models"
         await aios.makedirs(models_dir, exist_ok=True)
 
+        cfg = _mock_bootstrap_settings(models_dir)
+
         with (
-            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
-            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            patch(
+                "exo.download.download_utils.config.bootstrap",
+                new_callable=Mock,
+                return_value=cfg,
+            ),
         ):
             result = await delete_model(model_id)
 

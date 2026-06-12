@@ -1,4 +1,3 @@
-import argparse
 import multiprocessing as mp
 import os
 import resource
@@ -10,25 +9,28 @@ from typing import Self
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
 from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
-from exo_rs import Pidfile, PidfileError
+from exo_rs import (
+    AppSettings,
+    BootstrapSettings,
+    CliArgs,
+    Pidfile,
+    PidfileError,
+)
 from loguru import logger
-from pydantic import PositiveInt
 
 import exo.routing.topics as topics
-from exo import __version__
+import exo.shared.config as config
 from exo.api.main import API
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_zid
-from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG, EXO_PID_FILE
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils import STDIO_FDS
 from exo.utils.channels import Receiver, channel
-from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
 
@@ -50,7 +52,7 @@ class Node:
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     @classmethod
-    async def create(cls, args: "Args") -> Self:
+    async def create(cls, args: CliArgs) -> Self:
         node_id = get_node_zid()
         session_id = SessionId(master_node_id=node_id, election_clock=0)
         router = Router.create(
@@ -73,23 +75,21 @@ class Node:
         )
 
         logger.info(f"Starting node {node_id}")
-
-        # Errors the very first time exo is run as dir doesn't exist
-        EXO_DEFAULT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        offline = config.app().offline
 
         # Create DownloadCoordinator (unless --no-downloads)
-        if not args.no_downloads:
+        if args.downloads_enabled:
             download_coordinator = DownloadCoordinator(
                 node_id,
-                exo_shard_downloader(offline=args.offline),
+                exo_shard_downloader(offline=offline),
                 event_sender=event_router.sender(),
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
-                offline=args.offline,
+                offline=offline,
             )
         else:
             download_coordinator = None
 
-        if args.spawn_api:
+        if args.api_enabled:
             api = API(
                 node_id,
                 port=args.api_port,
@@ -101,7 +101,7 @@ class Node:
         else:
             api = None
 
-        if not args.no_worker:
+        if args.worker_enabled:
             worker = Worker(
                 node_id,
                 event_receiver=event_router.receiver(),
@@ -148,7 +148,7 @@ class Node:
             master,
             api,
             node_id,
-            args.offline,
+            offline,
             args.api_port,
         )
 
@@ -276,12 +276,18 @@ class Node:
 
 
 def main():
-    # Parse args first => --help or bad args don't require PID-locking
-    args = Args.parse()
+    # Parse args first & resolve/load bootstrap + app settings
+    #   => --help or bad args don't require PID-locking
+    args = CliArgs.parse()
+    config.load(
+        BootstrapSettings.resolve(args.bootstrap),
+        AppSettings.resolve(args.app),
+    )
 
     # Exit early if cannot acquire PID file
     try:
-        pidfile = Pidfile(EXO_PID_FILE, 0o0600)
+        pidfile_path = config.bootstrap().pid_file
+        pidfile = Pidfile(pidfile_path, 0o0600)
     except PidfileError as e:
         print(e, file=sys.stderr)
         raise SystemExit(1) from e
@@ -329,7 +335,7 @@ def main():
         pidfile.close()
 
 
-def main_inner(args: "Args"):
+def main_inner(args: CliArgs):
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
@@ -337,32 +343,16 @@ def main_inner(args: "Args"):
     mp.set_start_method("spawn", force=True)
 
     # TODO: Refactor the current verbosity system
-    logger_setup(EXO_LOG, args.verbosity)
+    logger_setup(config.bootstrap().log_files.exo_log, config.app().verbosity)
 
     logger.info(f"pid = {os.getpid()}")
-    if os.getenv("EXO_LIBP2P_NAMESPACE"):
-        raise ValueError(
-            "EXO_LIBP2P_NAMESPACE has been removed - use EXO_ZENOH_NAMESPACE instead"
-        )
-    logger.info(f"EXO_ZENOH_NAMESPACE: {os.getenv('EXO_ZENOH_NAMESPACE')}")
+    logger.info(f"Discovery namespace: {args.namespace}")
 
-    if args.offline:
+    if config.app().offline:
         logger.info("Running in OFFLINE mode — no internet checks, local models only")
 
-    if args.bootstrap_peers:
-        raise ValueError("Bootstrap peers has been temporarily removed")
-
-    if args.no_batch:
-        os.environ["EXO_NO_BATCH"] = "1"
+    if not config.app().continuous_batching_enabled:
         logger.info("Continuous batching disabled (--no-batch)")
-
-    # Set FAST_SYNCH override env var for runner subprocesses
-    if args.fast_synch is True:
-        os.environ["EXO_FAST_SYNCH"] = "true"
-        logger.info("FAST_SYNCH forced ON")
-    elif args.fast_synch is False:
-        os.environ["EXO_FAST_SYNCH"] = "false"
-        logger.info("FAST_SYNCH forced OFF")
 
     node = anyio.run(Node.create, args)
     try:
@@ -375,130 +365,3 @@ def main_inner(args: "Args"):
     finally:
         logger.info("EXO Shutdown complete")
         logger_cleanup()
-
-
-class Args(FrozenModel):
-    verbosity: int = 0
-    force_master: bool = False
-    spawn_api: bool = False
-    api_port: PositiveInt = 52415
-    tb_only: bool = False
-    no_worker: bool = False
-    no_downloads: bool = False
-    offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
-    no_batch: bool = False
-    fast_synch: bool | None = None  # None = auto, True = force on, False = force off
-    legacy_daemon: bool = False
-    bootstrap_peers: list[str] = []
-    namespace: str
-    zenoh_port: int
-    discovery_port: int
-
-    @classmethod
-    def parse(cls) -> Self:
-        parser = argparse.ArgumentParser(prog="EXO")
-        default_verbosity = 0
-        parser.add_argument(
-            "-q",
-            "--quiet",
-            action="store_const",
-            const=-1,
-            dest="verbosity",
-            default=default_verbosity,
-        )
-        parser.add_argument(
-            "-v",
-            "--verbose",
-            action="count",
-            dest="verbosity",
-            default=default_verbosity,
-        )
-        parser.add_argument(
-            "-m",
-            "--force-master",
-            action="store_true",
-            dest="force_master",
-        )
-        parser.add_argument(
-            "--no-api",
-            action="store_false",
-            dest="spawn_api",
-        )
-        parser.add_argument(
-            "--api-port",
-            type=int,
-            dest="api_port",
-            default=52415,
-        )
-        parser.add_argument(
-            "--no-worker",
-            action="store_true",
-        )
-        parser.add_argument(
-            "--no-downloads",
-            action="store_true",
-            help="Disable the download coordinator (node won't download models)",
-        )
-        parser.add_argument(
-            "--offline",
-            action="store_true",
-            default=os.getenv("EXO_OFFLINE", "false").lower() == "true",
-            help="Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models",
-        )
-        parser.add_argument(
-            "--no-batch",
-            action="store_true",
-            help="Disable continuous batching, use sequential generation",
-        )
-        parser.add_argument(
-            "--legacy-daemon",
-            action="store_true",
-            help="Run as a legacy SysV-style background daemon using double-fork daemonization",
-        )
-        parser.add_argument(
-            "--bootstrap-peers",
-            type=lambda s: [p for p in s.split(",") if p],
-            default=os.getenv("EXO_BOOTSTRAP_PEERS", "").split(",")
-            if os.getenv("EXO_BOOTSTRAP_PEERS")
-            else [],
-            dest="bootstrap_peers",
-            help="Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)",
-        )
-        parser.add_argument(
-            "--namespace",
-            type=str,
-            default=__version__,
-            dest="namespace",
-            help="Discovery namespace, nodes with different namespaces will not connect.",
-        )
-        parser.add_argument(
-            "--zenoh-port",
-            type=int,
-            default=52414,
-            dest="zenoh_port",
-            help="Fixed TCP port for zenoh to listen.",
-        )
-        parser.add_argument(
-            "--discovery-port",
-            type=int,
-            default=52413,
-            dest="discovery_port",
-            help="Fixed UDP port for the discovery service.",
-        )
-        fast_synch_group = parser.add_mutually_exclusive_group()
-        fast_synch_group.add_argument(
-            "--fast-synch",
-            action="store_true",
-            dest="fast_synch",
-            default=None,
-            help="Force MLX FAST_SYNCH on (for JACCL backend)",
-        )
-        fast_synch_group.add_argument(
-            "--no-fast-synch",
-            action="store_false",
-            dest="fast_synch",
-            help="Force MLX FAST_SYNCH off",
-        )
-
-        args = parser.parse_args()
-        return cls(**vars(args))  # pyright: ignore[reportAny] - We are intentionally validating here, we can't do it statically

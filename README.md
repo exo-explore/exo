@@ -239,14 +239,14 @@ The app will ask for permission to modify system settings and install a new Netw
 
 **Custom Namespace for Cluster Isolation:**
 
-The macOS app includes a custom namespace feature that allows you to isolate your exo cluster from others on the same network. This is configured through the `EXO_LIBP2P_NAMESPACE` setting:
+The macOS app includes a custom namespace feature that allows you to isolate your exo cluster from others on the same network. The app passes this to exo with `--namespace`; source runs can use `--namespace` or `EXO_NAMESPACE`.
 
 - **Use cases**:
   - Running multiple separate exo clusters on the same network
   - Isolating development/testing clusters from production clusters
   - Preventing accidental cluster joining
 
-- **Configuration**: Access this setting in the app's Advanced settings (or set the `EXO_LIBP2P_NAMESPACE` environment variable when running from source)
+- **Configuration**: Access this setting in the app's Advanced settings (or use `--namespace` / `EXO_NAMESPACE` when running from source)
 
 The namespace is logged on startup for debugging purposes.
 
@@ -310,10 +310,11 @@ exo supports several environment variables for configuration:
 | `EXO_DEFAULT_MODELS_DIR` | Default directory for model downloads and caches. Always first in the writable dirs list. | `~/.local/share/exo/models` (Linux) or `~/.exo/models` (macOS) |
 | `EXO_MODELS_DIRS` | Colon-separated additional writable directories for model downloads. Checked in order after the default; first with enough free space is used. | None |
 | `EXO_MODELS_READ_ONLY_DIRS` | Colon-separated read-only directories to search for pre-downloaded models (e.g., NFS mounts, shared storage). Models here cannot be deleted. | None |
-| `EXO_OFFLINE` | Run without internet connection (uses only local models) | `false` |
+| `EXO_OFFLINE` | Startup default for `--offline` when the CLI flag is omitted. Uses only local models and skips internet checks. | `false` |
 | `EXO_ENABLE_IMAGE_MODELS` | Enable image model support | `false` |
-| `EXO_LIBP2P_NAMESPACE` | Custom namespace for cluster isolation | None |
-| `EXO_FAST_SYNCH` | Control MLX_METAL_FAST_SYNCH behavior (for JACCL backend) | Auto |
+| `EXO_NAMESPACE` | Custom namespace for cluster isolation | None |
+| `EXO_VERBOSITY` | Startup default for `--verbosity=<LEVEL>` when the CLI flag is omitted. Valid levels: `off`, `error`, `warn`, `info`, `debug`, `trace`. | `info` |
+| `EXO_FAST_SYNCH` | Startup default for `--fast-synch=true\|false` when the CLI flag is omitted (for JACCL backend). Leave unset for automatic behavior. | Auto |
 | `EXO_TRACING_ENABLED` | Enable distributed tracing for performance analysis | `false` |
 
 **Example usage:**
@@ -325,14 +326,31 @@ EXO_MODELS_READ_ONLY_DIRS=/mnt/nfs/models:/opt/ai-models uv run exo
 # Download models to an external SSD (falls back to default dir if full)
 EXO_MODELS_DIRS=/Volumes/ExternalSSD/exo-models uv run exo
 
-# Run in offline mode
+# Run it in offline mode (CLI or ENV arg)
+uv run exo --offline
 EXO_OFFLINE=true uv run exo
 
 # Enable image models
 EXO_ENABLE_IMAGE_MODELS=true uv run exo
 
 # Use custom namespace for cluster isolation
-EXO_LIBP2P_NAMESPACE=my-dev-cluster uv run exo
+uv run exo --namespace=my-dev-cluster
+EXO_NAMESPACE=my-dev-cluster uv run exo
+
+# Set logging verbosity (CLI or ENV arg)
+uv run exo --verbosity=debug
+uv run exo -v debug
+EXO_VERBOSITY=debug uv run exo
+
+# Only show error logs
+uv run exo --quiet
+
+# Disable logging output
+uv run exo --verbosity=off
+
+# Force MLX FAST_SYNCH off (CLI or ENV arg)
+uv run exo --fast-synch=false
+EXO_FAST_SYNCH=false uv run exo
 ```
 
 ---
