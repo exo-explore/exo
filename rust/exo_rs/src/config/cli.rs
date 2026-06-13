@@ -214,6 +214,16 @@ pub struct RejectedArgs {
     pub libp2p_namespace: Option<String>,
 
     #[arg(
+        env = "EXO_ZENOH_NAMESPACE", value_name = "STRING", hide = true,
+        value_parser = Rejected::<String>::deprecated(
+            None, None, Some("EXO_ZENOH_NAMESPACE"),
+            Some("--namespace"), None, Some("EXO_NAMESPACE"),
+        )
+    )]
+    #[pyo3(get, set)]
+    pub zenoh_namespace: Option<String>,
+
+    #[arg(
         env = "EXO_ENABLE_IMAGE_MODELS", value_name = "BOOL", hide = true,
         value_parser = Rejected::<bool>::deprecated(
             None, None, Some("EXO_ENABLE_IMAGE_MODELS"),
@@ -232,6 +242,28 @@ pub struct RejectedArgs {
     )]
     #[pyo3(get, set)]
     pub enable_disaggregation: Option<bool>,
+
+    #[arg(
+        long = "no-fast-synch", hide = true,
+        num_args = 0..=1, default_missing_value = "true",
+        value_parser = Rejected::<bool>::deprecated(
+            Some("--no-fast-synch"), None, None,
+            Some("--fast-synch=false"), None, None,
+        )
+    )]
+    #[pyo3(get, set)]
+    pub no_fast_synch: Option<bool>,
+
+    #[arg(
+        long = "verbose", hide = true,
+        num_args = 0..=1, default_missing_value = "true",
+        value_parser = Rejected::<bool>::deprecated(
+            Some("--verbose"), None, None,
+            Some("--verbosity=debug"), None, Some("EXO_VERBOSITY=debug"),
+        )
+    )]
+    #[pyo3(get, set)]
+    pub verbose: Option<bool>,
 }
 
 mod parser_impl {
