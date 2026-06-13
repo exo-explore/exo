@@ -359,9 +359,6 @@ final class ExoProcessController: ObservableObject {
         if !hfEndpoint.isEmpty {
             environment["HF_ENDPOINT"] = hfEndpoint
         }
-        if enableImageModels {
-            environment["EXO_ENABLE_IMAGE_MODELS"] = "true"
-        }
         var paths: [String] = []
         if let existing = environment["PATH"], !existing.isEmpty {
             paths = existing.split(separator: ":").map(String.init)
@@ -418,6 +415,9 @@ final class ExoProcessController: ObservableObject {
         ]
         if offlineMode {
             args.append("--offline")
+        }
+        if enableImageModels {
+            args.append("--enable-image-models")
         }
         return args
     }

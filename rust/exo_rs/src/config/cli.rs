@@ -212,6 +212,16 @@ pub struct RejectedArgs {
     )]
     #[pyo3(get, set)]
     pub libp2p_namespace: Option<String>,
+
+    #[arg(
+        env = "EXO_ENABLE_IMAGE_MODELS", value_name = "BOOL", hide = true,
+        value_parser = Rejected::<bool>::deprecated(
+            None, None, Some("EXO_ENABLE_IMAGE_MODELS"),
+            Some("--enable-image-models"), None, Some("EXO_IMAGE_MODELS_ENABLED"),
+        )
+    )]
+    #[pyo3(get, set)]
+    pub enable_image_models: Option<bool>,
 }
 
 mod parser_impl {

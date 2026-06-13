@@ -21,10 +21,7 @@ from pydantic import (
 from tomlkit.exceptions import TOMLKitError
 
 import exo.shared.config as config
-from exo.shared.constants import (
-    EXO_ENABLE_IMAGE_MODELS,
-    RESOURCES_DIR,
-)
+from exo.shared.constants import RESOURCES_DIR
 from exo.shared.types.backends import Backend
 from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
@@ -70,7 +67,7 @@ class _CardCache:
     async def list_all(self) -> list["ModelCard"]:
         if len(self.cc) == 0:
             await self.refresh()
-        if EXO_ENABLE_IMAGE_MODELS:
+        if config.app().image_models_enabled:
             return list(self.cc.values())
         return [c for c in self.cc.values() if not _is_image_card(c)]
 

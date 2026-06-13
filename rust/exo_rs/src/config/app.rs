@@ -73,21 +73,25 @@ pub struct AppArgs {
     #[pyo3(get, set)]
     pub continuous_batching_enabled: Option<bool>,
 
-    // this parser cannot use the default boolean parser + ArgAction::SetTrue
-    // since it needs to accept the syntax of EXO_OFFLINE=<true/false> (not presence check)
     #[arg(
         long,
         env = "EXO_OFFLINE",
-        num_args = 0..=1,
-        require_equals = true,
-        default_missing_value = "true",
+        action = ArgAction::SetTrue,
         default_value = "false", // TODO: when config.toml introduced, remove this
-        value_parser = BoolishValueParser::new(),
-        value_name = "BOOL",
         help = "Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models"
     )]
     #[pyo3(get, set)]
     pub offline: Option<bool>,
+
+    #[arg(
+        long = "enable-image-models",
+        env = "EXO_IMAGE_MODELS_ENABLED",
+        action = ArgAction::SetTrue,
+        default_value = "false", // TODO: when config.toml introduced, remove this
+        help = "Enable image model support"
+    )]
+    #[pyo3(get, set)]
+    pub image_models_enabled: Option<bool>,
 
     #[arg(
         long,
@@ -109,6 +113,7 @@ impl Default for AppArgs {
             // rest
             continuous_batching_enabled: Some(true),
             offline: Some(false),
+            image_models_enabled: Some(false),
             fast_synch: None,
         }
     }
@@ -124,6 +129,8 @@ pub struct AppSettings {
     pub continuous_batching_enabled: bool,
     #[pyo3(get, set)]
     pub offline: bool,
+    #[pyo3(get, set)]
+    pub image_models_enabled: bool,
     #[pyo3(get, set)]
     pub fast_synch: Option<bool>,
 }
@@ -150,6 +157,7 @@ impl AppSettings {
             verbosity: args.verbosity.unwrap_or(VerbosityFilter::Info),
             continuous_batching_enabled: args.continuous_batching_enabled.unwrap_or(true),
             offline: args.offline.unwrap_or(false),
+            image_models_enabled: args.image_models_enabled.unwrap_or(false),
             fast_synch: args.fast_synch,
         })
     }

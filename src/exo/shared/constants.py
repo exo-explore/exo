@@ -17,10 +17,6 @@ EXO_MAX_CHUNK_SIZE = (
     512 * 1024
 )  # NOTE: I will leave these alone here for now - I don't know how I should port raw constants
 
-EXO_ENABLE_IMAGE_MODELS = (
-    os.getenv("EXO_ENABLE_IMAGE_MODELS", "false").lower() == "true"
-)
-
 EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true"
 
 ENABLE_DISAGGREGATION = os.getenv("ENABLE_DISAGGREGATION", "false").lower() == "true"
