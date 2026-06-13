@@ -129,7 +129,6 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
-    ENABLE_DISAGGREGATION,
     EXO_MAX_CHUNK_SIZE,
 )
 from exo.shared.election import ElectionMessage
@@ -219,12 +218,12 @@ def _ensure_seed(params: AdvancedImageParams | None) -> AdvancedImageParams:
 
 
 def _require_disaggregation_enabled() -> None:
-    if not ENABLE_DISAGGREGATION:
+    if not config.app().disaggregation_enabled:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(
                 "Prefill/decode disaggregation is disabled. "
-                "Set ENABLE_DISAGGREGATION=true to enable."
+                "Run with --enable-disaggregation or EXO_DISAGGREGATION_ENABLED=true to enable."
             ),
         )
 
@@ -692,10 +691,10 @@ class API:
         )
 
     async def get_feature_flags(self) -> dict[str, bool]:
-        return {"disaggregation": ENABLE_DISAGGREGATION}
+        return {"disaggregation": config.app().disaggregation_enabled}
 
     async def list_instance_links(self) -> list[InstanceLink]:
-        if not ENABLE_DISAGGREGATION:
+        if not config.app().disaggregation_enabled:
             return []
         return list(self.state.instance_links.values())
 

@@ -17,8 +17,6 @@ EXO_MAX_CHUNK_SIZE = (
     512 * 1024
 )  # NOTE: I will leave these alone here for now - I don't know how I should port raw constants
 
-ENABLE_DISAGGREGATION = os.getenv("ENABLE_DISAGGREGATION", "false").lower() == "true"
-
 EXO_MAX_CONCURRENT_REQUESTS = int(os.getenv("EXO_MAX_CONCURRENT_REQUESTS", "8"))
 
 EXO_MAX_INSTANCE_RETRIES = 5

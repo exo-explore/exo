@@ -40,7 +40,7 @@
     {:else if !enabled}
       <div class="text-exo-light-gray/60 text-sm">
         No advanced features enabled. Set <code
-          class="text-exo-yellow font-mono">ENABLE_DISAGGREGATION=true</code
+          class="text-exo-yellow font-mono">--enable-disaggregation</code
         > on the cluster to access prefill/decode disaggregation.
       </div>
     {:else}

@@ -222,6 +222,16 @@ pub struct RejectedArgs {
     )]
     #[pyo3(get, set)]
     pub enable_image_models: Option<bool>,
+
+    #[arg(
+        env = "ENABLE_DISAGGREGATION", value_name = "BOOL", hide = true,
+        value_parser = Rejected::<bool>::deprecated(
+            None, None, Some("ENABLE_DISAGGREGATION"),
+            Some("--enable-disaggregation"), None, Some("EXO_DISAGGREGATION_ENABLED"),
+        )
+    )]
+    #[pyo3(get, set)]
+    pub enable_disaggregation: Option<bool>,
 }
 
 mod parser_impl {

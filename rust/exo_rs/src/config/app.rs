@@ -104,6 +104,16 @@ pub struct AppArgs {
     pub tracing_enabled: Option<bool>,
 
     #[arg(
+        long = "enable-disaggregation",
+        env = "EXO_DISAGGREGATION_ENABLED",
+        action = ArgAction::SetTrue,
+        default_value = "false", // TODO: when config.toml introduced, remove this
+        help = "Enable prefill/decode disaggregation"
+    )]
+    #[pyo3(get, set)]
+    pub disaggregation_enabled: Option<bool>,
+
+    #[arg(
         long,
         env = "EXO_FAST_SYNCH",
         value_name = "BOOL",
@@ -125,6 +135,7 @@ impl Default for AppArgs {
             offline: Some(false),
             image_models_enabled: Some(false),
             tracing_enabled: Some(false),
+            disaggregation_enabled: Some(false),
             fast_synch: None,
         }
     }
@@ -144,6 +155,8 @@ pub struct AppSettings {
     pub image_models_enabled: bool,
     #[pyo3(get, set)]
     pub tracing_enabled: bool,
+    #[pyo3(get, set)]
+    pub disaggregation_enabled: bool,
     #[pyo3(get, set)]
     pub fast_synch: Option<bool>,
 }
@@ -172,6 +185,7 @@ impl AppSettings {
             offline: args.offline.unwrap_or(false),
             image_models_enabled: args.image_models_enabled.unwrap_or(false),
             tracing_enabled: args.tracing_enabled.unwrap_or(false),
+            disaggregation_enabled: args.disaggregation_enabled.unwrap_or(false),
             fast_synch: args.fast_synch,
         })
     }

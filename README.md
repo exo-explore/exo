@@ -316,6 +316,7 @@ exo supports several environment variables for configuration:
 | `EXO_VERBOSITY` | Startup default for `--verbosity=<LEVEL>` when the CLI flag is omitted. Valid levels: `off`, `error`, `warn`, `info`, `debug`, `trace`. | `info` |
 | `EXO_FAST_SYNCH` | Startup default for `--fast-synch=true\|false` when the CLI flag is omitted (for JACCL backend). Leave unset for automatic behavior. | Auto |
 | `EXO_TRACING_ENABLED` | Boolean env equivalent for distributed tracing. The CLI form is the presence-only `--enable-tracing` flag. | `false` |
+| `EXO_DISAGGREGATION_ENABLED` | Boolean env equivalent for prefill/decode disaggregation. The CLI form is the presence-only `--enable-disaggregation` flag. | `false` |
 
 **Example usage:**
 
@@ -337,6 +338,10 @@ EXO_IMAGE_MODELS_ENABLED=true uv run exo
 # Enable distributed tracing
 uv run exo --enable-tracing
 EXO_TRACING_ENABLED=true uv run exo
+
+# Enable prefill/decode disaggregation
+uv run exo --enable-disaggregation
+EXO_DISAGGREGATION_ENABLED=true uv run exo
 
 # Use custom namespace for cluster isolation
 uv run exo --namespace=my-dev-cluster
