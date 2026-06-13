@@ -94,6 +94,16 @@ pub struct AppArgs {
     pub image_models_enabled: Option<bool>,
 
     #[arg(
+        long = "enable-tracing",
+        env = "EXO_TRACING_ENABLED",
+        action = ArgAction::SetTrue,
+        default_value = "false", // TODO: when config.toml introduced, remove this
+        help = "Enable distributed tracing for performance analysis"
+    )]
+    #[pyo3(get, set)]
+    pub tracing_enabled: Option<bool>,
+
+    #[arg(
         long,
         env = "EXO_FAST_SYNCH",
         value_name = "BOOL",
@@ -114,6 +124,7 @@ impl Default for AppArgs {
             continuous_batching_enabled: Some(true),
             offline: Some(false),
             image_models_enabled: Some(false),
+            tracing_enabled: Some(false),
             fast_synch: None,
         }
     }
@@ -131,6 +142,8 @@ pub struct AppSettings {
     pub offline: bool,
     #[pyo3(get, set)]
     pub image_models_enabled: bool,
+    #[pyo3(get, set)]
+    pub tracing_enabled: bool,
     #[pyo3(get, set)]
     pub fast_synch: Option<bool>,
 }
@@ -158,6 +171,7 @@ impl AppSettings {
             continuous_batching_enabled: args.continuous_batching_enabled.unwrap_or(true),
             offline: args.offline.unwrap_or(false),
             image_models_enabled: args.image_models_enabled.unwrap_or(false),
+            tracing_enabled: args.tracing_enabled.unwrap_or(false),
             fast_synch: args.fast_synch,
         })
     }

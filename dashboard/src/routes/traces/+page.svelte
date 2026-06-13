@@ -194,7 +194,8 @@
       >
         <div class="text-sm">No traces found.</div>
         <div class="text-xs text-exo-light-gray/70">
-          Run exo with EXO_TRACING_ENABLED=1 to collect traces.
+          Run exo with --enable-tracing or EXO_TRACING_ENABLED=true to collect
+          traces.
         </div>
       </div>
     {:else}
