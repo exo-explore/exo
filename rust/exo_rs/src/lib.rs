@@ -7,6 +7,7 @@
 mod allow_threading;
 pub mod config;
 mod networking;
+mod newtype;
 mod pidfile;
 
 use crate::config::config_submodule;
