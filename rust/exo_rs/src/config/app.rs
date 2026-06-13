@@ -75,6 +75,17 @@ pub struct AppArgs {
 
     #[arg(
         long,
+        env = "EXO_MAX_CONCURRENT_REQUESTS",
+        default_value = "8", // TODO: when config.toml introduced, remove this
+        value_parser = clap::value_parser!(u16).range(1..),
+        value_name = "NUM",
+        help = "Maximum number of concurrent generation requests per runner"
+    )]
+    #[pyo3(get, set)]
+    pub max_concurrent_requests: Option<u16>,
+
+    #[arg(
+        long,
         env = "EXO_OFFLINE",
         action = ArgAction::SetTrue,
         default_value = "false", // TODO: when config.toml introduced, remove this
@@ -132,6 +143,7 @@ impl Default for AppArgs {
 
             // rest
             continuous_batching_enabled: Some(true),
+            max_concurrent_requests: Some(8),
             offline: Some(false),
             image_models_enabled: Some(false),
             tracing_enabled: Some(false),
@@ -149,6 +161,8 @@ pub struct AppSettings {
     pub verbosity: VerbosityFilter,
     #[pyo3(get, set)]
     pub continuous_batching_enabled: bool,
+    #[pyo3(get, set)]
+    pub max_concurrent_requests: u16,
     #[pyo3(get, set)]
     pub offline: bool,
     #[pyo3(get, set)]
@@ -182,6 +196,7 @@ impl AppSettings {
         Ok(Self {
             verbosity: args.verbosity.unwrap_or(VerbosityFilter::Info),
             continuous_batching_enabled: args.continuous_batching_enabled.unwrap_or(true),
+            max_concurrent_requests: args.max_concurrent_requests.unwrap_or(8),
             offline: args.offline.unwrap_or(false),
             image_models_enabled: args.image_models_enabled.unwrap_or(false),
             tracing_enabled: args.tracing_enabled.unwrap_or(false),
