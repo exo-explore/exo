@@ -3,6 +3,16 @@ from pathlib import Path
 
 from exo.utils.dashboard_path import find_dashboard, find_resources
 
+# TODO: Remaining to-Rust migration candidates (some make more sense than others):
+#
+# EXO_MEMORY_THRESHOLD
+# EXO_MAX_INSTANCE_RETRIES
+# EXO_DASHBOARD_DIR + EXO_RESOURCES_DIR
+# EXO_MACMON_PATH
+#
+# OVERRIDE_MEMORY_MB ??
+# EXO_MAX_CHUNK_SIZE ??
+
 # NOTE: I will leave these alone here for now - I don't know how I should port raw constants
 EXO_MAX_CHUNK_SIZE = 512 * 1024
 EXO_MAX_INSTANCE_RETRIES = 5
