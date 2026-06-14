@@ -28,7 +28,7 @@ extend.workspace = true
 itertools = "0.14.0"
 
 # interop
-pyo3 = { workspace = true, features = ["experimental-async"] }
+pyo3 = { workspace = true, features = ["serde", "experimental-async"] }
 pyo3-stub-gen.workspace = true
 pyo3-async-runtimes = { workspace = true, features = [
   "attributes",

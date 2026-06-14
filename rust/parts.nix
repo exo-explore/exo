@@ -97,7 +97,7 @@
                   --release \
                   --manylinux off \
                   --manifest-path rust/exo_rs/Cargo.toml \
-                  --features "pyo3/extension-module,pyo3/experimental-async" \
+                  --features "pyo3/extension-module,pyo3/serde,pyo3/experimental-async" \
                   --interpreter ${pkgs.python313}/bin/python \
                   --out dist
               '';

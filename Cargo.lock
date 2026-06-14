@@ -2926,6 +2926,7 @@ dependencies = [
  "pyo3-build-config",
  "pyo3-ffi",
  "pyo3-macros",
+ "serde",
 ]
 
 [[package]]

@@ -1,7 +1,12 @@
 use crate::ext::ResultExt;
 use clap::{ArgMatches, Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use pyo3::pyclass::boolean_struct::False;
-use pyo3::{Py, PyClass, PyClassInitializer, PyErr, PyResult, Python};
+use pyo3::{
+    Borrowed, FromPyObject, IntoPyObject, Py, PyAny, PyClass, PyClassInitializer, PyErr, PyResult,
+    Python,
+};
+use pyo3_stub_gen::{PyStubType, TypeInfo};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ffi::OsString;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Deref, DerefMut};
@@ -82,6 +87,68 @@ impl<T> DerefMut for NewPy<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner_mut()
+    }
+}
+
+impl<'a, 'py, T> FromPyObject<'a, 'py> for NewPy<T>
+where
+    Py<T>: FromPyObject<'a, 'py>,
+{
+    type Error = <Py<T> as FromPyObject<'a, 'py>>::Error;
+
+    #[inline(always)]
+    fn extract(ob: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+        <Py<T> as FromPyObject<'a, 'py>>::extract(ob).map(Self::new)
+    }
+}
+
+impl<'py, T> IntoPyObject<'py> for NewPy<T>
+where
+    Py<T>: IntoPyObject<'py>,
+{
+    type Target = <Py<T> as IntoPyObject<'py>>::Target;
+    type Output = <Py<T> as IntoPyObject<'py>>::Output;
+    type Error = <Py<T> as IntoPyObject<'py>>::Error;
+
+    #[inline(always)]
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        <Py<T> as IntoPyObject<'py>>::into_pyobject(self.into_inner(), py)
+    }
+}
+
+impl<T> Serialize for NewPy<T>
+where
+    Py<T>: Serialize,
+{
+    #[inline(always)]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        <Py<T> as Serialize>::serialize(&*self, serializer)
+    }
+}
+
+impl<'de, T> Deserialize<'de> for NewPy<T>
+where
+    Py<T>: Deserialize<'de>,
+{
+    #[inline(always)]
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        <Py<T> as Deserialize<'de>>::deserialize(deserializer).map(Self::new)
+    }
+}
+
+impl<T> PyStubType for NewPy<T>
+where
+    Py<T>: PyStubType,
+{
+    #[inline(always)]
+    fn type_output() -> TypeInfo {
+        <Py<T> as PyStubType>::type_output()
     }
 }
 
