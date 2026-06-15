@@ -68,10 +68,15 @@ DASHBOARD_DIR = (
 # Log files (data/logs or cache)
 EXO_LOG_DIR = EXO_CACHE_HOME / "exo_log"
 EXO_LOG = EXO_LOG_DIR / "exo.log"
+EXO_RUNNER_LOG_DIR = EXO_LOG_DIR / "runner_log"
+EXO_RUNNER_STDOUT_LOG = EXO_RUNNER_LOG_DIR / "stdout.log"
+EXO_RUNNER_STDERR_LOG = EXO_RUNNER_LOG_DIR / "stderr.log"
+
 EXO_TEST_LOG = EXO_CACHE_HOME / "exo_test.log"
+EXO_PID_FILE = EXO_CACHE_HOME / "exo.pid"
 
 # Identity (config)
-EXO_NODE_ID_KEYPAIR = EXO_CONFIG_HOME / "node_id.keypair"
+EXO_NODE_ZID = EXO_CACHE_HOME / "node_zid"
 EXO_CONFIG_FILE = EXO_CONFIG_HOME / "config.toml"
 
 # libp2p topics for event forwarding

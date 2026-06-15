@@ -1461,6 +1461,9 @@
         addToast({ type: "info", message: `Launching model...` });
         // Always auto-select the newly launched model so the user chats to what they just launched
         setSelectedChatModel(modelId);
+        userForcedIdle = false;
+        pendingChatModelId = modelId;
+        chatLaunchState = "launching";
 
         // Record the launch in recent models history
         recordRecentLaunch(modelId);
@@ -2547,12 +2550,10 @@
   ];
 
   // ── Seamless chat: launch models from chat view ──
-  type ChatLaunchState =
-    | "idle"
-    | "launching"
-    | "downloading"
-    | "loading"
-    | "ready";
+  type InFlightChatLaunchState = "launching" | "downloading" | "loading";
+  type ReadyLikeChatLaunchState = "idle" | "ready";
+  type ChatLaunchState = InFlightChatLaunchState | ReadyLikeChatLaunchState;
+
   let chatLaunchState = $state<ChatLaunchState>("idle");
   let pendingChatModelId = $state<string | null>(null);
   let selectedChatCategory = $state<string | null>(null);
@@ -3129,6 +3130,15 @@
     if (model) {
       pendingAutoMessage = { content, files };
       userForcedIdle = false;
+      // The selected model is already being placed or loaded; keep the queued
+      // message and let the existing launch state effects send it once ready.
+      if (
+        pendingChatModelId === model &&
+        chatLaunchState !== "idle" &&
+        chatLaunchState !== "ready"
+      ) {
+        return;
+      }
       launchModelForChat(model, "picker", messages().length > 0);
       return;
     }
@@ -3435,6 +3445,7 @@
             >
               <li>Connect nodes with TB5 cables</li>
               <li>Boot to Recovery (hold power 10s → Options)</li>
+              <li>Open Terminal from the Utilities menu</li>
               <li>
                 Run
                 <code class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
@@ -4602,7 +4613,7 @@
                 type="button"
                 onclick={() => {
                   completeOnboarding();
-                  sendMessage(chip, undefined, thinkingEnabled());
+                  handleChatSend(chip);
                 }}
                 class="px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm text-white/60 hover:bg-white/10 hover:text-white/80 hover:border-white/20 transition-all duration-200 cursor-pointer"
               >
@@ -4822,6 +4833,7 @@
                 >
                   <li>Connect nodes with TB5 cables</li>
                   <li>Boot to Recovery (hold power 10s → Options)</li>
+                  <li>Open Terminal from the Utilities menu</li>
                   <li>
                     Run
                     <code class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
@@ -4968,6 +4980,7 @@
                   >
                     <li>Connect nodes with TB5 cables</li>
                     <li>Boot to Recovery (hold power 10s → Options)</li>
+                    <li>Open Terminal from the Utilities menu</li>
                     <li>
                       Run
                       <code
@@ -6097,7 +6110,7 @@
                           onclick={() => {
                             chatLaunchState = "idle";
                             selectedChatCategory = null;
-                            sendMessage(prompt, undefined, thinkingEnabled());
+                            handleChatSend(prompt);
                           }}
                           class="text-left px-3 py-2.5 text-xs text-exo-light-gray hover:text-white font-mono rounded-lg border border-exo-medium-gray/30 hover:border-exo-yellow/30 bg-exo-dark-gray/30 hover:bg-exo-dark-gray/60 transition-all duration-200 cursor-pointer"
                         >

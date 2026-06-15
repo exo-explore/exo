@@ -10,7 +10,7 @@ base_model = "Qwen3 235B"
 capabilities = ["text", "thinking", "thinking_toggle"]
 
 context_length = 262144
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 268435456000
 
