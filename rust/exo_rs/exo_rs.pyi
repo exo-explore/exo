@@ -26,14 +26,6 @@ __all__ = [
 @typing.final
 class AppArgs:
     r"""
-    TODO: once config.toml is integrated, we should still figure out a way to display
-          what would be "default" values here (very informative to user) ((same for BootstrapArgs))
-          or what would be ENV variables that are read - but without those having any effect
-          on what value this one takes.
-          i.e. user sees "Description \[env: FOO_BAR=] \[default: 12345]"
-          and yet those defaults are not ACTUALLY parsed by this CLI and instead consumed
-          later on by the settings merger
-    
     Arguments that participate in application settings resolution.
     
     These values may come from defaults, `config.toml`, environment variables, or
@@ -122,7 +114,7 @@ class AppSettings:
         Create only from environment variables.
         """
     @staticmethod
-    def resolve(args: AppArgs) -> AppSettings: ...
+    def resolve(args: AppArgs, bootstrap: BootstrapSettings) -> AppSettings: ...
     def to_bytes(self) -> builtins.list[builtins.int]: ...
     @staticmethod
     def from_bytes(bytes: typing.Sequence[builtins.int]) -> AppSettings: ...

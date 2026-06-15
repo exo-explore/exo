@@ -1,25 +1,21 @@
-use crate::config::VerbosityFilter;
+use crate::config::bootstrap::BootstrapSettings;
 use crate::config::cli::CliArgs;
+use crate::config::{VerbosityFilter, default};
 use crate::ext::ResultExt;
 use crate::pickle_reduce;
 use clap::{
     ArgAction,
     builder::{BoolishValueParser, TypedValueParser},
 };
+use figment::Figment;
+use figment::providers::{Format, Serialized, Toml};
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use pyo3::types::PyTuple;
 use pyo3::{Bound, PyAny, PyResult, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
-/// TODO: once config.toml is integrated, we should still figure out a way to display
-///       what would be "default" values here (very informative to user) ((same for BootstrapArgs))
-///       or what would be ENV variables that are read - but without those having any effect
-///       on what value this one takes.
-///       i.e. user sees "Description \[env: FOO_BAR=] \[default: 12345]"
-///       and yet those defaults are not ACTUALLY parsed by this CLI and instead consumed
-///       later on by the settings merger
-///
 /// Arguments that participate in application settings resolution.
 ///
 /// These values may come from defaults, `config.toml`, environment variables, or
@@ -31,7 +27,8 @@ use serde::{Deserialize, Serialize};
 ///    settings sources.
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::Args)]
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, clap::Args)]
 #[command(about = None, long_about = None)]
 pub struct AppArgs {
     #[arg(
@@ -42,17 +39,16 @@ pub struct AppArgs {
         help = "Only show error logs (alias for --verbosity=error)"
     )]
     #[serde(skip)]
-    verbosity_off: bool,
+    pub verbosity_off: bool,
     #[arg(
         short = 'v',
         long,
         env = "EXO_VERBOSITY",
         value_enum,
-        default_value = "info", // TODO: when config.toml introduced, remove this
         default_value_if("verbosity_off", "true", Some("error")),
         value_name = "LEVEL",
         conflicts_with = "verbosity_off",
-        help = "Set the verbosity filter"
+        help = "Verbosity filter of the application"
     )]
     #[pyo3(get, set)]
     pub verbosity: Option<VerbosityFilter>,
@@ -65,7 +61,6 @@ pub struct AppArgs {
       num_args = 0..=1,
       require_equals = true,
       default_missing_value = "true",
-      default_value = "false", // TODO: when config.toml introduced, remove this
       value_parser = BoolishValueParser::new().map(|no_batch| !no_batch),
       value_name = "BOOL",
       help = "Disable continuous batching, use sequential generation"
@@ -76,7 +71,6 @@ pub struct AppArgs {
     #[arg(
         long,
         env = "EXO_MAX_CONCURRENT_REQUESTS",
-        default_value = "8", // TODO: when config.toml introduced, remove this
         value_parser = clap::value_parser!(u16).range(1..),
         value_name = "NUM",
         help = "Maximum number of concurrent generation requests per runner"
@@ -87,8 +81,10 @@ pub struct AppArgs {
     #[arg(
         long,
         env = "EXO_OFFLINE",
-        action = ArgAction::SetTrue,
-        default_value = "false", // TODO: when config.toml introduced, remove this
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        value_name = "BOOL",
         help = "Run in offline/air-gapped mode: skip internet checks, use only pre-staged local models"
     )]
     #[pyo3(get, set)]
@@ -97,8 +93,10 @@ pub struct AppArgs {
     #[arg(
         long = "enable-image-models",
         env = "EXO_IMAGE_MODELS_ENABLED",
-        action = ArgAction::SetTrue,
-        default_value = "false", // TODO: when config.toml introduced, remove this
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        value_name = "BOOL",
         help = "Enable image model support"
     )]
     #[pyo3(get, set)]
@@ -107,8 +105,10 @@ pub struct AppArgs {
     #[arg(
         long = "enable-tracing",
         env = "EXO_TRACING_ENABLED",
-        action = ArgAction::SetTrue,
-        default_value = "false", // TODO: when config.toml introduced, remove this
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        value_name = "BOOL",
         help = "Enable distributed tracing for performance analysis"
     )]
     #[pyo3(get, set)]
@@ -117,8 +117,10 @@ pub struct AppArgs {
     #[arg(
         long = "enable-disaggregation",
         env = "EXO_DISAGGREGATION_ENABLED",
-        action = ArgAction::SetTrue,
-        default_value = "false", // TODO: when config.toml introduced, remove this
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        value_name = "BOOL",
         help = "Enable prefill/decode disaggregation"
     )]
     #[pyo3(get, set)]
@@ -128,29 +130,10 @@ pub struct AppArgs {
         long,
         env = "EXO_FAST_SYNCH",
         value_name = "BOOL",
-        help = "Force MLX FAST_SYNCH on/off (for JACCL backend); omit for auto"
+        help = "Force MLX FAST_SYNCH on/off (for JACCL backend)"
     )]
     #[pyo3(get, set)]
     pub fast_synch: Option<bool>,
-}
-
-impl Default for AppArgs {
-    fn default() -> Self {
-        Self {
-            // verbosity
-            verbosity_off: false,
-            verbosity: Some(VerbosityFilter::Info),
-
-            // rest
-            continuous_batching_enabled: Some(true),
-            max_concurrent_requests: Some(8),
-            offline: Some(false),
-            image_models_enabled: Some(false),
-            tracing_enabled: Some(false),
-            disaggregation_enabled: Some(false),
-            fast_synch: None,
-        }
-    }
 }
 
 #[gen_stub_pyclass]
@@ -182,27 +165,30 @@ impl AppSettings {
     #[staticmethod]
     #[pyo3(name = "default")]
     pub fn py_default() -> PyResult<Self> {
-        Self::resolve(&AppArgs::default())
+        let bootstrap = BootstrapSettings::py_default()?;
+        let args = AppArgs::default();
+        Self::resolve(&args, &bootstrap)
     }
 
     /// Create only from environment variables.
     #[staticmethod]
     pub fn from_env_only() -> PyResult<Self> {
-        Self::resolve(&CliArgs::from_env_only().app)
+        let args = CliArgs::from_env_only();
+        let bootstrap = BootstrapSettings::resolve(&args.bootstrap)?;
+        Self::resolve(&args.app, &bootstrap)
     }
 
     #[staticmethod]
-    pub fn resolve(args: &AppArgs) -> PyResult<Self> {
-        Ok(Self {
-            verbosity: args.verbosity.unwrap_or(VerbosityFilter::Info),
-            continuous_batching_enabled: args.continuous_batching_enabled.unwrap_or(true),
-            max_concurrent_requests: args.max_concurrent_requests.unwrap_or(8),
-            offline: args.offline.unwrap_or(false),
-            image_models_enabled: args.image_models_enabled.unwrap_or(false),
-            tracing_enabled: args.tracing_enabled.unwrap_or(false),
-            disaggregation_enabled: args.disaggregation_enabled.unwrap_or(false),
-            fast_synch: args.fast_synch,
-        })
+    pub fn resolve(args: &AppArgs, bootstrap: &BootstrapSettings) -> PyResult<Self> {
+        Figment::new()
+            // merge default CLI values
+            .merge(Serialized::defaults(default::APP_ARGS))
+            // merge configuration file
+            .merge(Toml::file(&bootstrap.config_file))
+            // merge CLI args (with ENV already merged)
+            .merge(Serialized::defaults(args.clone()))
+            .extract::<Self>()
+            .pyerr()
     }
 
     // -------- SERDE/PICKLING support --------

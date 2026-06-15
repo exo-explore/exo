@@ -301,22 +301,51 @@ After that, RDMA will be enabled in macOS and exo will take care of the rest.
 
 ---
 
-## Environment Variables
+## Configuration
 
-exo supports several environment variables for configuration:
+exo reads configuration in this order:
+
+1. Built-in defaults
+2. `config.toml`
+3. Environment variables
+4. CLI arguments
+
+The default config file is created automatically at the resolved Exo config
+directory. Use `--config-file` or `EXO_CONFIG_FILE` to point at an existing
+custom file.
+
+Example `config.toml`:
+
+```toml
+verbosity = "info"
+continuous_batching_enabled = true
+max_concurrent_requests = 8
+offline = false
+image_models_enabled = false
+tracing_enabled = false
+disaggregation_enabled = false
+# fast_synch = true # or false; omit for automatic behavior
+```
+
+Some paths are resolved before `config.toml` can be loaded, so they are configured
+only through CLI arguments or environment variables.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `EXO_DEFAULT_MODELS_DIR` | Default directory for model downloads and caches. Always first in the writable dirs list. | `~/.local/share/exo/models` (Linux) or `~/.exo/models` (macOS) |
+| `EXO_HOME` | Base directory for Exo config, data, and cache paths. CLI form: `--exo-home`. | Platform config/data/cache dirs |
+| `EXO_CONFIG_FILE` | Path to Exo's `config.toml`. CLI form: `--config-file`. | Resolved Exo config dir + `config.toml` |
+| `EXO_DEFAULT_MODELS_DIR` | Default directory for model downloads and caches. Always first in the writable dirs list. | Platform data dir + `models` |
 | `EXO_MODELS_DIRS` | Colon-separated additional writable directories for model downloads. Checked in order after the default; first with enough free space is used. | None |
 | `EXO_MODELS_READ_ONLY_DIRS` | Colon-separated read-only directories to search for pre-downloaded models (e.g., NFS mounts, shared storage). Models here cannot be deleted. | None |
-| `EXO_OFFLINE` | Boolean env equivalent for offline mode. The CLI form is the presence-only `--offline` flag. Uses only local models and skips internet checks. | `false` |
-| `EXO_IMAGE_MODELS_ENABLED` | Boolean env equivalent for image model support. The CLI form is the presence-only `--enable-image-models` flag. | `false` |
-| `EXO_NAMESPACE` | Custom namespace for cluster isolation | None |
-| `EXO_VERBOSITY` | Startup default for `--verbosity=<LEVEL>` when the CLI flag is omitted. Valid levels: `off`, `error`, `warn`, `info`, `debug`, `trace`. | `info` |
-| `EXO_FAST_SYNCH` | Startup default for `--fast-synch=true\|false` when the CLI flag is omitted (for JACCL backend). Leave unset for automatic behavior. | Auto |
-| `EXO_TRACING_ENABLED` | Boolean env equivalent for distributed tracing. The CLI form is the presence-only `--enable-tracing` flag. | `false` |
-| `EXO_DISAGGREGATION_ENABLED` | Boolean env equivalent for prefill/decode disaggregation. The CLI form is the presence-only `--enable-disaggregation` flag. | `false` |
+| `EXO_NAMESPACE` | Custom namespace for cluster isolation. CLI form: `--namespace`. | Package version |
+| `EXO_VERBOSITY` | Verbosity filter. CLI forms: `--verbosity=<LEVEL>` or `-v <LEVEL>`. Valid levels: `off`, `error`, `warn`, `info`, `debug`, `trace`. | `info` |
+| `EXO_NO_BATCH` | Boolean inverse of `continuous_batching_enabled`. CLI form: `--no-batch[=true\|false]`. | `false` |
+| `EXO_MAX_CONCURRENT_REQUESTS` | Maximum number of concurrent generation requests per runner. CLI form: `--max-concurrent-requests`. | `8` |
+| `EXO_OFFLINE` | Boolean equivalent for offline mode. CLI form: `--offline[=true\|false]`. Uses only local models and skips internet checks. | `false` |
+| `EXO_IMAGE_MODELS_ENABLED` | Boolean equivalent for image model support. CLI form: `--enable-image-models[=true\|false]`. | `false` |
+| `EXO_TRACING_ENABLED` | Boolean equivalent for distributed tracing. CLI form: `--enable-tracing[=true\|false]`. | `false` |
+| `EXO_DISAGGREGATION_ENABLED` | Boolean equivalent for prefill/decode disaggregation. CLI form: `--enable-disaggregation[=true\|false]`. | `false` |
+| `EXO_FAST_SYNCH` | Boolean FAST_SYNCH override for JACCL backend. CLI form: `--fast-synch=true\|false`. Leave unset or omit `fast_synch` from `config.toml` for automatic behavior. | Auto |
 
 **Example usage:**
 
@@ -327,21 +356,32 @@ EXO_MODELS_READ_ONLY_DIRS=/mnt/nfs/models:/opt/ai-models uv run exo
 # Download models to an external SSD (falls back to default dir if full)
 EXO_MODELS_DIRS=/Volumes/ExternalSSD/exo-models uv run exo
 
-# Run it in offline mode (presence-only CLI flag or boolean env arg)
+# Run it in offline mode (CLI or ENV arg)
 uv run exo --offline
 EXO_OFFLINE=true uv run exo
 
 # Enable image models
 uv run exo --enable-image-models
+uv run exo --enable-image-models=false
 EXO_IMAGE_MODELS_ENABLED=true uv run exo
 
 # Enable distributed tracing
 uv run exo --enable-tracing
+uv run exo --enable-tracing=false
 EXO_TRACING_ENABLED=true uv run exo
 
 # Enable prefill/decode disaggregation
 uv run exo --enable-disaggregation
+uv run exo --enable-disaggregation=false
 EXO_DISAGGREGATION_ENABLED=true uv run exo
+
+# Disable continuous batching
+uv run exo --no-batch
+EXO_NO_BATCH=true uv run exo
+
+# Set request concurrency
+uv run exo --max-concurrent-requests 16
+EXO_MAX_CONCURRENT_REQUESTS=16 uv run exo
 
 # Use custom namespace for cluster isolation
 uv run exo --namespace=my-dev-cluster

@@ -1,5 +1,6 @@
 use crate::config::app::AppArgs;
 use crate::config::bootstrap::BootstrapArgs;
+use crate::config::default;
 use crate::ext::ResultExt;
 use crate::{pickle_reduce, version};
 use clap::{ArgAction, Parser};
@@ -38,7 +39,7 @@ pub struct CliArgs {
 
     #[arg(
         long,
-        default_value_t = 52415,
+        default_value_t = default::API_PORT,
         value_name = "PORT",
         help = "Port on which the API runs"
     )]
@@ -74,27 +75,27 @@ pub struct CliArgs {
     #[arg(
         long,
         env = "EXO_NAMESPACE",
-        default_value_t = version::version().to_string(),
+        default_value_t = default::NAMESPACE(),
         value_name = "STRING",
-        help = "Discovery namespace, nodes with different namespaces will not connect."
+        help = "Discovery namespace, nodes with different namespaces will not connect"
     )]
     #[pyo3(get, set)]
     pub namespace: String,
 
     #[arg(
         long,
-        default_value_t = 52414,
+        default_value_t = default::ZENOH_PORT,
         value_name = "PORT",
-        help = "Fixed TCP port for zenoh to listen."
+        help = "Fixed TCP port for zenoh to listen"
     )]
     #[pyo3(get, set)]
     pub zenoh_port: u16,
 
     #[arg(
         long,
-        default_value_t = 52413,
+        default_value_t = default::DISCOVERY_PORT,
         value_name = "PORT",
-        help = "Fixed UDP port for the discovery service."
+        help = "Fixed UDP port for the discovery service"
     )]
     #[pyo3(get, set)]
     pub discovery_port: u16,
@@ -267,10 +268,14 @@ pub struct RejectedArgs {
 }
 
 mod parser_impl {
+    use clap::builder::PathBufValueParser;
     use clap::builder::TypedValueParser;
     use itertools::Itertools;
     use std::ffi::OsStr;
     use std::marker::PhantomData;
+    use std::path::PathBuf;
+    use std::{fs, io};
+    use util::path::resolve_path;
 
     #[derive(Clone)]
     pub struct Rejected<T> {
@@ -351,6 +356,70 @@ mod parser_impl {
             .with_cmd(cmd))
         }
     }
+
+    /// Default path parser that should be used to ensure paths are
+    /// resolved to absolute paths before being further processed.
+    pub fn parse_path() -> impl TypedValueParser<Value = PathBuf> {
+        PathBufValueParser::new().try_map(resolve_path)
+    }
+
+    // extension trait to tack on extra validation on path parsing
+    pub trait PathBufValueParserExt: TypedValueParser<Value = PathBuf> {
+        #[inline]
+        fn canonicalize(self) -> impl TypedValueParser<Value = PathBuf> {
+            self.try_map(|p| p.canonicalize())
+        }
+
+        #[inline]
+        fn dir_exists(self) -> impl TypedValueParser<Value = PathBuf> {
+            self.canonicalize().try_map(|p| {
+                let m = fs::metadata(&p)?;
+                if m.is_dir() {
+                    Ok(p)
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::NotADirectory,
+                        format!("{p:?} is not a directory"),
+                    ))
+                }
+            })
+        }
+
+        #[inline]
+        fn file_exists(self) -> impl TypedValueParser<Value = PathBuf> {
+            self.canonicalize().try_map(|p| {
+                let m = fs::metadata(&p)?;
+                if !m.is_dir() {
+                    Ok(p)
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::IsADirectory,
+                        format!("{p:?} is a directory"),
+                    ))
+                }
+            })
+        }
+
+        #[inline]
+        fn create_dir(self) -> impl TypedValueParser<Value = PathBuf> {
+            self.try_map(|p| -> io::Result<_> {
+                fs::create_dir_all(&p)?;
+                Ok(p)
+            })
+        }
+
+        #[inline]
+        fn create_parent_dir(self) -> impl TypedValueParser<Value = PathBuf> {
+            self.try_map(|p| -> io::Result<_> {
+                if let Some(parent) = p.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                Ok(p)
+            })
+        }
+    }
+
+    impl<T: TypedValueParser<Value = PathBuf>> PathBufValueParserExt for T {}
 }
 
 pub fn cli_submodule(m: &Bound<PyModule>) -> PyResult<()> {

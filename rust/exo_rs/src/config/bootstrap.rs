@@ -1,5 +1,5 @@
 use crate::config::cli::CliArgs;
-use crate::config::path::{PathBufValueParserExt, parse_path};
+use crate::config::cli::{PathBufValueParserExt, parse_path};
 use crate::ext::ResultExt;
 use crate::pickle_reduce;
 use pyo3::prelude::{PyModule, PyModuleMethods};

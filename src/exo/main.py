@@ -279,9 +279,10 @@ def main():
     # Parse args first & resolve/load bootstrap + app settings
     #   => --help or bad args don't require PID-locking
     args = CliArgs.parse()
+    bootstrap_settings = BootstrapSettings.resolve(args.bootstrap)
     config.load(
-        BootstrapSettings.resolve(args.bootstrap),
-        AppSettings.resolve(args.app),
+        bootstrap_settings,
+        AppSettings.resolve(args.app, bootstrap_settings),
     )
 
     # Exit early if cannot acquire PID file
