@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount } from "svelte";
   import FamilyLogos from "$lib/components/FamilyLogos.svelte";
   import {
     instances,
@@ -19,14 +19,10 @@
     VllmInstance?: Instance;
   };
 
-  let interval: ReturnType<typeof setInterval> | null = null;
-
   onMount(() => {
+    // One immediate refresh on mount; live updates ride the global /state poll
+    // in app.svelte.ts (no separate interval here — it doubled /state traffic).
     refreshState();
-    interval = setInterval(refreshState, 3000);
-  });
-  onDestroy(() => {
-    if (interval) clearInterval(interval);
   });
 
   type InstanceRow = {

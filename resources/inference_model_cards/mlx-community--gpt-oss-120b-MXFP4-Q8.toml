@@ -11,6 +11,7 @@ capabilities = ["text", "thinking"]
 reasoning_dialect = "channel"
 context_length = 131072
 backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+recommended = true
 [storage_size]
 in_bytes = 70652212224
 

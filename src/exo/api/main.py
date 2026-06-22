@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import gzip
 import hashlib
 import json
 import random
@@ -13,7 +14,16 @@ from uuid import uuid4
 
 import anyio
 from anyio import BrokenResourceError, ClosedResourceError
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +32,8 @@ from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from hypercorn.utils import LifespanTimeoutError, ShutdownError
 from loguru import logger
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
@@ -235,6 +247,74 @@ def _require_disaggregation_enabled() -> None:
         )
 
 
+class ContentTypeGZipMiddleware:
+    _COMPRESSIBLE: tuple[str, ...] = ("application/json", "text/plain")
+    _MIN_SIZE: int = 500
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = Headers(scope=scope)
+        if "gzip" not in headers.get("accept-encoding", ""):
+            await self.app(scope, receive, send)
+            return
+
+        start_message: Message | None = None
+        body_chunks: list[bytes] = []
+        compressible = False
+
+        async def buffering_send(message: Message) -> None:
+            nonlocal start_message, compressible
+            message_type: str = message["type"]  # pyright: ignore[reportAny]
+            if message_type == "http.response.start":
+                start_message = message
+                response_headers = MutableHeaders(raw=start_message["headers"])  # pyright: ignore[reportAny]
+                content_type = response_headers.get("content-type", "")
+                already_encoded = "content-encoding" in response_headers
+                compressible = (not already_encoded) and any(
+                    content_type.startswith(prefix) for prefix in self._COMPRESSIBLE
+                )
+                if not compressible:
+                    await send(message)
+                return
+
+            if message_type != "http.response.body":
+                await send(message)
+                return
+
+            if not compressible:
+                await send(message)
+                return
+
+            assert start_message is not None
+            body_chunks.append(message.get("body", b""))  # pyright: ignore[reportAny]
+            if message.get("more_body", False):
+                return
+
+            body = b"".join(body_chunks)
+            response_headers = MutableHeaders(raw=start_message["headers"])  # pyright: ignore[reportAny]
+            if len(body) >= self._MIN_SIZE:
+                body = gzip.compress(body)
+                response_headers["content-encoding"] = "gzip"
+                response_headers["content-length"] = str(len(body))
+                vary = response_headers.get("vary")
+                if not vary:
+                    response_headers["vary"] = "Accept-Encoding"
+                elif "accept-encoding" not in vary.lower():
+                    response_headers["vary"] = f"{vary}, Accept-Encoding"
+            else:
+                response_headers["content-length"] = str(len(body))
+            await send(start_message)
+            await send({"type": "http.response.body", "body": body, "more_body": False})
+
+        await self.app(scope, receive, buffering_send)
+
+
 class API:
     def __init__(
         self,
@@ -274,6 +354,7 @@ class API:
 
         self._setup_exception_handlers()
         self._setup_cors()
+        self._setup_gzip()
         self._setup_routes()
 
         self.app.mount(
@@ -339,6 +420,9 @@ class API:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+    def _setup_gzip(self) -> None:
+        self.app.add_middleware(ContentTypeGZipMiddleware)
 
     def _setup_routes(self) -> None:
         self.app.get("/node_id")(lambda: self.node_id)
@@ -408,8 +492,12 @@ class API:
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
 
-    def get_state(self, path: str = ""):
+    def get_state(self, request: Request, response: Response, path: str = ""):
         if path == "":
+            etag = f'"{self.state.last_event_applied_idx}"'
+            if request.headers.get("if-none-match") == etag:
+                return Response(status_code=304, headers={"ETag": etag})
+            response.headers["ETag"] = etag
             return self.state
         try:
             x = self.state.model_dump(by_alias=True)
@@ -1813,6 +1901,7 @@ class API:
                     capabilities=card.capabilities,
                     reasoning_dialect=card.reasoning_dialect,
                     context_length=card.context_length,
+                    recommended=card.recommended,
                 )
                 for card in cards
             ]
