@@ -7,10 +7,9 @@ use pyo3::types::PyTuple;
 use pyo3::{Bound, PyAny, PyResult, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
+use std::io;
 use std::path::PathBuf;
-use std::{fs, io};
 use util::VecExt;
-use util::path::PathExt;
 
 /// Arguments that are needed to resolve bootstrap settings.
 ///
@@ -29,7 +28,7 @@ pub struct BootstrapArgs {
     #[arg(
         long,
         env = "EXO_HOME",
-        value_parser = parse_path().create_dir(),
+        value_parser = parse_path().is_dir_if_exists(),
         value_name = "PATH",
         help = "Path to Exo's home directory"
     )]
@@ -39,7 +38,7 @@ pub struct BootstrapArgs {
     #[arg(
         long,
         env = "EXO_DEFAULT_MODELS_DIR",
-        value_parser = parse_path(),
+        value_parser = parse_path().is_dir_if_exists(),
         value_name = "PATH",
         help = "Default models directory; always included as first entry in writable models directories"
     )]
@@ -61,7 +60,7 @@ pub struct BootstrapArgs {
         long,
         value_delimiter = ':',
         env = "EXO_MODELS_DIRS",
-        value_parser = parse_path(),
+        value_parser = parse_path().is_dir_if_exists(),
         value_name = "PATHS",
         help = "Writable model directories (colon-separated); default directory is always prepended"
     )]
@@ -71,7 +70,7 @@ pub struct BootstrapArgs {
     #[arg(
         long,
         env = "EXO_CONFIG_FILE",
-        value_parser = parse_path().file_exists(),
+        value_parser = parse_path().toml_file_exists(),
         value_name = "PATH",
         help = "Path to Exo's .toml config file"
     )]
@@ -148,9 +147,8 @@ impl BootstrapSettings {
             .config_file
             .clone()
             .unwrap_or_else(|| exo_home.config.join("config.toml"));
-        config_file.create_file_if_not_found()?;
 
-        // custom model pub(crate) card dirs TODO: see model_cards.py "todo"
+        // custom model card dirs TODO: see model_cards.py "todo"
         let custom_model_cards_dir = exo_home.data.join("custom_model_cards");
 
         let event_log_dir = exo_home.data.join("event_log");
@@ -212,7 +210,7 @@ pub struct ExoHome {
 }
 
 impl ExoHome {
-    /// Get (and create if missing) the home directory for a specific purpose, with this precedence:
+    /// Get the home directory for a specific purpose, with this precedence:
     ///  1. Prioritize `exo_home` if set
     ///  2. Fall back to "`<dir>`/exo" if specified; should be [XDG Directories] on Linux,
     ///     and [Standard Directories] on macOS
@@ -229,7 +227,7 @@ impl ExoHome {
         //       BUT the user encountered the bug when he used "macOS time machine" or something
         //       so test that the "macOS time machine" doesn't copy the cache folder
 
-        let home = exo_home
+        exo_home
             .clone()
             .or_else(|| get_dir().map(|p| p.join("exo")))
             .or_else(|| dirs::home_dir().map(|p| p.join(".exo")))
@@ -238,13 +236,11 @@ impl ExoHome {
                     io::ErrorKind::NotFound,
                     "no home EXO home directory found: none specified, and $HOME directory doesn't exist",
                 )
-            })?;
-        fs::create_dir_all(&home)?;
-        Ok(home)
+            })
     }
 
     pub fn resolve(args: &BootstrapArgs) -> io::Result<Self> {
-        // create config/data/cache folders which the rest of the paths are derived from
+        // resolve config/data/cache folders which the rest of the paths are derived from
         Ok(Self {
             config: Self::get_home_dir(&args.exo_home, dirs::config_dir)?,
             data: Self::get_home_dir(&args.exo_home, dirs::data_dir)?,
@@ -267,12 +263,11 @@ pub struct ModelsDirs {
 
 impl ModelsDirs {
     pub fn resolve(args: &BootstrapArgs, exo_home: &ExoHome) -> io::Result<Self> {
-        // create default models dir
+        // resolve default models dir
         let default_models_dir = args
             .default_models_dir
             .clone()
             .unwrap_or_else(|| exo_home.data.join("models"));
-        fs::create_dir_all(&default_models_dir)?;
 
         // set of read-only directories
         let mut models_read_only_dirs = args.models_read_only_dirs.clone().unwrap_or_else(Vec::new);
@@ -314,12 +309,10 @@ impl LogFiles {
     pub fn resolve(exo_home: &ExoHome) -> io::Result<Self> {
         // Exo log
         let exo_log_dir = exo_home.cache.join("exo_log");
-        fs::create_dir_all(&exo_log_dir)?;
         let exo_log = exo_log_dir.join("exo.log");
 
         // Exo runner log
         let exo_runner_log_dir = exo_log_dir.join("runner_log");
-        fs::create_dir_all(&exo_runner_log_dir)?;
         let exo_runner_stdout_log = exo_runner_log_dir.join("stdout.log");
         let exo_runner_stderr_log = exo_runner_log_dir.join("stderr.log");
 

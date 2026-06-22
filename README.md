@@ -310,9 +310,9 @@ exo reads configuration in this order:
 3. Environment variables
 4. CLI arguments
 
-The default config file is created automatically at the resolved Exo config
-directory. Use `--config-file` or `EXO_CONFIG_FILE` to point at an existing
-custom file.
+If a default `config.toml` exists in the resolved Exo config directory, exo reads
+it automatically. Use `--config-file` or `EXO_CONFIG_FILE` to point at an
+existing custom file.
 
 Example `config.toml`:
 

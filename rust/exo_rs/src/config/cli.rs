@@ -271,11 +271,13 @@ mod parser_impl {
     use clap::builder::PathBufValueParser;
     use clap::builder::TypedValueParser;
     use itertools::Itertools;
+    use std::error::Error;
     use std::ffi::OsStr;
+    use std::fs;
     use std::marker::PhantomData;
     use std::path::PathBuf;
-    use std::{fs, io};
-    use util::path::resolve_path;
+    use std::str::FromStr;
+    use util::path::{PathExt, resolve_path};
 
     #[derive(Clone)]
     pub struct Rejected<T> {
@@ -372,50 +374,46 @@ mod parser_impl {
 
         #[inline]
         fn dir_exists(self) -> impl TypedValueParser<Value = PathBuf> {
-            self.canonicalize().try_map(|p| {
-                let m = fs::metadata(&p)?;
-                if m.is_dir() {
-                    Ok(p)
-                } else {
-                    Err(io::Error::new(
-                        io::ErrorKind::NotADirectory,
-                        format!("{p:?} is not a directory"),
-                    ))
-                }
-            })
+            self.canonicalize()
+                .try_map(|p| p.try_dir_exists().map(|_| p))
         }
 
         #[inline]
         fn file_exists(self) -> impl TypedValueParser<Value = PathBuf> {
-            self.canonicalize().try_map(|p| {
-                let m = fs::metadata(&p)?;
-                if !m.is_dir() {
-                    Ok(p)
+            self.canonicalize()
+                .try_map(|p| p.try_file_exists().map(|_| p))
+        }
+
+        #[inline]
+        fn is_dir_if_exists(self) -> impl TypedValueParser<Value = PathBuf> {
+            self.try_map(|p| {
+                if p.exists() {
+                    p.canonicalize()?.try_dir_exists().map(|_| p)
                 } else {
-                    Err(io::Error::new(
-                        io::ErrorKind::IsADirectory,
-                        format!("{p:?} is a directory"),
-                    ))
+                    Ok(p)
                 }
             })
         }
 
         #[inline]
-        fn create_dir(self) -> impl TypedValueParser<Value = PathBuf> {
-            self.try_map(|p| -> io::Result<_> {
-                fs::create_dir_all(&p)?;
-                Ok(p)
+        fn is_file_if_exists(self) -> impl TypedValueParser<Value = PathBuf> {
+            self.try_map(|p| {
+                if p.exists() {
+                    p.canonicalize()?.try_file_exists().map(|_| p)
+                } else {
+                    Ok(p)
+                }
             })
         }
 
         #[inline]
-        fn create_parent_dir(self) -> impl TypedValueParser<Value = PathBuf> {
-            self.try_map(|p| -> io::Result<_> {
-                if let Some(parent) = p.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                Ok(p)
-            })
+        fn toml_file_exists(self) -> impl TypedValueParser<Value = PathBuf> {
+            self.file_exists()
+                .try_map(|p| -> Result<_, Box<dyn Error + Send + Sync + 'static>> {
+                    let toml = fs::read_to_string(&p)?;
+                    let _ = toml_edit::Document::from_str(&toml)?;
+                    Ok(p)
+                })
         }
     }
 

@@ -33,6 +33,34 @@ impl Path {
             Err(e) => Err(e),
         }
     }
+
+    #[cfg(unix)]
+    #[inline(always)]
+    fn try_dir_exists(&self) -> io::Result<()> {
+        let m = fs::metadata(self)?;
+        if m.is_dir() {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                format!("{self:?} is not a directory"),
+            ))
+        }
+    }
+
+    #[cfg(unix)]
+    #[inline(always)]
+    fn try_file_exists(&self) -> io::Result<()> {
+        let m = fs::metadata(self)?;
+        if !m.is_dir() {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::IsADirectory,
+                format!("{self:?} is a directory"),
+            ))
+        }
+    }
 }
 
 /// Resolves any path to its true absolute form as much as possible.

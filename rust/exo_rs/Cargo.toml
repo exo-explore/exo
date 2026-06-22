@@ -52,6 +52,7 @@ clap = { version = "4.6.1", features = [
 ] }
 figment = { version = "0.10", features = ["env", "toml"] }
 dirs = "6.0"
+toml_edit = "0.25"
 
 
 # async runtime

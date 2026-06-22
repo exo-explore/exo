@@ -77,6 +77,10 @@ class Node:
         logger.info(f"Starting node {node_id}")
         offline = config.app().offline
 
+        # Create writable model roots before download selection checks disk space.
+        for models_dir in config.bootstrap().models_dirs.models_dirs:
+            models_dir.mkdir(parents=True, exist_ok=True)
+
         # Create DownloadCoordinator (unless --no-downloads)
         if args.downloads_enabled:
             download_coordinator = DownloadCoordinator(

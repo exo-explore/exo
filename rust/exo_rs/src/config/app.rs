@@ -180,13 +180,15 @@ impl AppSettings {
 
     #[staticmethod]
     pub fn resolve(args: &AppArgs, bootstrap: &BootstrapSettings) -> PyResult<Self> {
-        Figment::new()
+        let mut f = Figment::new()
             // merge default CLI values
-            .merge(Serialized::defaults(default::APP_ARGS))
-            // merge configuration file
-            .merge(Toml::file(&bootstrap.config_file))
-            // merge CLI args (with ENV already merged)
-            .merge(Serialized::defaults(args.clone()))
+            .merge(Serialized::defaults(default::APP_ARGS));
+        // merge configuration file IF EXISTS!!
+        if bootstrap.config_file.exists() {
+            f = f.merge(Toml::file(&bootstrap.config_file))
+        }
+        // merge CLI args (with ENV already merged)
+        f.merge(Serialized::defaults(args.clone()))
             .extract::<Self>()
             .pyerr()
     }
