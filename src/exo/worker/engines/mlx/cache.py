@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 
 import mlx.core as mx
 import numpy as np
-import psutil
 from mlx_lm.models.cache import (
     ArraysCache,
     CacheList,
@@ -22,6 +21,7 @@ from mlx_lm.models.deepseek_v4 import (
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
+from exo.utils.virtual_memory import virtual_memory_statistics
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.runner.bootstrap import logger
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 # Fraction of device memory above which LRU eviction kicks in.
 # Smaller machines need more aggressive eviction.
 def _default_memory_threshold() -> float:
-    total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb
+    total_gb = Memory.from_bytes(virtual_memory_statistics().total_bytes).in_gb
     if total_gb >= 128:
         return 0.85
     if total_gb >= 64:
@@ -547,14 +547,11 @@ def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
 
 
 def get_available_memory() -> Memory:
-    mem: int = psutil.virtual_memory().available
-    return Memory.from_bytes(mem)
+    return Memory.from_bytes(virtual_memory_statistics().available_bytes)
 
 
 def get_memory_used_percentage() -> float:
-    mem = psutil.virtual_memory()
-    # percent is 0-100
-    return float(mem.percent / 100)
+    return virtual_memory_statistics().used_fraction
 
 
 def make_kv_cache(
