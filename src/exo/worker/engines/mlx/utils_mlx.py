@@ -114,10 +114,24 @@ def mlx_distributed_init(
                 )
 
                 os.environ["MLX_HOSTFILE"] = coordination_file
+                os.environ["MLX_HOSTS_JSON"] = hosts_json
                 os.environ["MLX_RANK"] = str(rank)
                 # os.environ["MLX_RING_VERBOSE"] = "1"  # NOTE: we don't use it enough to care (turn on again if need to)
 
                 group = mx.distributed.init(backend="ring", strict=True)
+
+                # Eagerly start TcpRelay server on CUDA nodes
+                import platform
+                is_linux_gpu = platform.system() == "Linux" and mx.default_device().type == mx.DeviceType.gpu
+                logger.info(f"CUDA check: os={platform.system()}, device={mx.default_device()}, is_linux_gpu={is_linux_gpu}")
+                if is_linux_gpu:
+                    try:
+                        from exo.worker.engines.mlx.auto_parallel import _get_tcp_relay
+                        relay = _get_tcp_relay()
+                        relay._ensure_server()
+                        logger.info(f"CUDA TcpRelay server started on port {relay._tcp_port}")
+                    except Exception as e:
+                        logger.error(f"Failed to start TcpRelay: {e}")
 
             case MlxJacclInstance(
                 jaccl_devices=jaccl_devices, jaccl_coordinators=jaccl_coordinators
@@ -259,6 +273,37 @@ def shard_and_load(
     tokenizer = get_tokenizer(model_path, shard_metadata)
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
+
+    # Probe peers' TcpRelay ports to determine CUDA ranks (non-invasive).
+    # TcpRelay servers are started eagerly during distributed init.
+    import platform as _plat
+    import socket as _sock
+    import struct as _struct
+    _is_cuda = _plat.system() == "Linux" and mx.default_device().type == mx.DeviceType.gpu
+    _cuda_ranks = []
+    if _is_cuda:
+        hosts_json = os.environ.get("MLX_HOSTS_JSON", "[]")
+        import json as _json
+        _hosts = _json.loads(hosts_json)
+        _my_rank = int(os.environ.get("MLX_RANK", "0"))
+        for i, h in enumerate(_hosts):
+            if i == _my_rank:
+                if _is_cuda:
+                    _cuda_ranks.append(str(i))
+                continue
+            ip = str(h).split(":")[0] if not isinstance(h, dict) else h.get("ip", "")
+            peer_port = 40000 + i
+            try:
+                s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                s.settimeout(2.0)
+                s.connect((ip, peer_port))
+                s.setsockopt(_sock.SOL_SOCKET, _sock.SO_LINGER, _struct.pack("ii", 1, 0))
+                s.close()
+                _cuda_ranks.append(str(i))
+            except Exception:
+                pass
+    os.environ["MLX_CUDA_RANKS"] = ",".join(_cuda_ranks)
+    logger.info(f"CUDA ranks probed: {_cuda_ranks}")
 
     match shard_metadata:
         case TensorShardMetadata():
@@ -793,29 +838,22 @@ def mlx_force_oom(size: int = 200000) -> None:
     mx.eval(f)
 
 
-def set_wired_limit_for_model(model_size: Memory):
-    """
-    A context manager to temporarily change the wired limit.
-
-    Note, the wired limit should not be changed during an async eval.  If an
-    async eval could be running pass in the streams to synchronize with prior
-    to exiting the context manager.
-    """
-    if not mx.metal.is_available():
-        return
-
-    max_rec_size = Memory.from_bytes(
-        int(mx.device_info()["max_recommended_working_set_size"])
-    )
-    if model_size > 0.9 * max_rec_size:
-        logger.warning(
-            f"Generating with a model that requires {model_size.in_float_mb:.1f} MB "
-            f"which is close to the maximum recommended size of {max_rec_size.in_float_mb:.1f} "
-            "MB. This can be slow. See the documentation for possible work-arounds: "
-            "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
+def set_wired_limit_for_model(model_size: Memory) -> None:
+    if mx.metal.is_available():
+        max_rec_size = Memory.from_bytes(
+            int(mx.device_info()["max_recommended_working_set_size"])
         )
-    mx.set_wired_limit(max_rec_size.in_bytes)
-    logger.info(f"Wired limit set to {max_rec_size}.")
+        if model_size > 0.9 * max_rec_size:
+            logger.warning(
+                f"Generating with a model that requires {model_size.in_float_mb:.1f} MB "
+                f"which is close to the maximum recommended size of {max_rec_size.in_float_mb:.1f} "
+                "MB. This can be slow. See the documentation for possible work-arounds: "
+                "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
+            )
+        mx.set_wired_limit(max_rec_size.in_bytes)
+        logger.info(f"Wired limit set to {max_rec_size}.")
+    elif hasattr(mx, "cuda") and mx.cuda.is_available():
+        logger.info("CUDA backend active — skipping Metal wired limit.")
 
 
 def mlx_cleanup(

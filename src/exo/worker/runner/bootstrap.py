@@ -1,5 +1,6 @@
 import os
 import resource
+import sys
 import traceback
 from dataclasses import dataclass
 from typing import Self, cast
@@ -51,12 +52,14 @@ def entrypoint(
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
-    if fast_synch_override == "false":
-        os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+    if sys.platform == "darwin":
+        if fast_synch_override == "false":
+            os.environ["MLX_METAL_FAST_SYNCH"] = "0"
+        else:
+            os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+        logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
     else:
-        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
-
-    logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
+        logger.info("Fast synch flag: skipped (non-Darwin platform)")
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:

@@ -1,3 +1,5 @@
+import atexit as _atexit
+import socket as _socket
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator
 from functools import partial
@@ -70,12 +72,242 @@ if TYPE_CHECKING:
 
 
 _pending_prefill_sends: list[tuple[mx.array, int, mx.distributed.Group]] = []
+_tcp_relay: "TcpRelay | None" = None
+
+
+def _is_cuda_device() -> bool:
+    """Check if the current MLX device is CUDA (Linux GPU)."""
+    import platform
+    if platform.system() != "Linux":
+        return False
+    return mx.default_device().type == mx.DeviceType.gpu
+
+
+def _get_tcp_relay() -> "TcpRelay":
+    global _tcp_relay
+    if _tcp_relay is None:
+        _tcp_relay = TcpRelay()
+    return _tcp_relay
+
+
+class TcpRelay:
+    """Custom TCP-based send/recv to bypass MLX's broken CUDA send/recv.
+
+    Uses the IP addresses from the MLX ring hostfile but with raw TCP sockets
+    for data transfer. The MLX ring backend is still used for collective ops
+    (all_gather, all_sum) which work correctly.
+    """
+
+    def __init__(self) -> None:
+        import json
+        import os
+        import struct as _struct
+
+        # The MLX_HOSTFILE may be a deleted tempfile. Try MLX_HOSTS_JSON first.
+        hosts_json = os.environ.get("MLX_HOSTS_JSON")
+        if hosts_json:
+            hosts = json.loads(hosts_json)
+        else:
+            hostfile = os.environ.get("MLX_HOSTFILE", "")
+            if not hostfile:
+                raise RuntimeError("Neither MLX_HOSTFILE nor MLX_HOSTS_JSON set")
+            try:
+                with open(hostfile) as f:
+                    hosts = json.loads(f.read())
+            except FileNotFoundError:
+                raise RuntimeError(
+                    "MLX_HOSTFILE was deleted (tempdir cleanup). "
+                    "Set MLX_HOSTS_JSON in utils_mlx.py."
+                )
+
+        if isinstance(hosts, str):
+            hosts = json.loads(hosts)
+
+        self.rank = int(os.environ.get("MLX_RANK", "0"))
+        self.world_size = len(hosts)
+
+        # Port configurable via env var, default 40000
+        self._port_base = int(os.environ.get("MLX_TCPRELAY_PORT", "40000"))
+        self._tcp_port = self._port_base + self.rank
+
+        # Build peer IP map: peer_ips[rank] = actual IP from hostfile
+        # In each rank's hostfile, self is "0.0.0.0" and others have real IPs.
+        self.peer_ips: list[str] = []
+        for h in hosts:
+            if isinstance(h, dict):
+                ip = h.get("ip", h.get("address", ""))
+            else:
+                ip = str(h).split(":")[0]  # "192.168.177.11:65392" → "192.168.177.11"
+            self.peer_ips.append(ip)
+
+        # CUDA rank detection: self status from device check.
+        self._is_cuda = _is_cuda_device()
+        # Determine CUDA peers using env var set by utils_mlx.py,
+        # or fallback to self-only (conservative).
+        cuda_ranks_str = os.environ.get("MLX_CUDA_RANKS", "")
+        if cuda_ranks_str:
+            self._cuda_peers: set[int] = set(int(r) for r in cuda_ranks_str.split(",") if r.strip())
+        elif self._is_cuda:
+            self._cuda_peers = {self.rank}
+        else:
+            self._cuda_peers = set()
+
+        # Dtype serialization maps (built once)
+        import numpy as _np
+        self._DTYPE_TO_CODE = {
+            _np.float32: 0, _np.float16: 1, _np.int32: 2, _np.int64: 3,
+            _np.bool_: 4, _np.uint8: 5, _np.bfloat16: 6,
+        }
+        self._CODE_TO_DTYPE = {v: k for k, v in self._DTYPE_TO_CODE.items()}
+
+        self._server_socket: _socket.socket | None = None
+        self._connections: dict[int, _socket.socket] = {}
+
+    def is_cuda_to_cuda(self, dst_rank: int) -> bool:
+        """Check if both self and dst_rank are CUDA."""
+        return self._is_cuda and dst_rank in self._cuda_peers
+
+    def _ensure_server(self) -> None:
+        if self._server_socket is not None:
+            return
+        self._server_socket = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        self._server_socket.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        self._server_socket.bind(("0.0.0.0", self._tcp_port))
+        self._server_socket.listen(self.world_size)
+        self._server_socket.settimeout(120.0)
+        _atexit.register(self.close)
+
+    def close(self) -> None:
+        for sock in self._connections.values():
+            try:
+                sock.close()
+            except Exception:
+                pass
+        self._connections.clear()
+        if self._server_socket is not None:
+            try:
+                self._server_socket.close()
+            except Exception:
+                pass
+            self._server_socket = None
+
+    def _connect_to(self, dst_rank: int) -> _socket.socket:
+        if dst_rank in self._connections:
+            return self._connections[dst_rank]
+
+        peer_ip = self.peer_ips[dst_rank]
+        assert peer_ip != "0.0.0.0", f"Cannot connect to self (rank {dst_rank})"
+        peer_port = self._port_base + dst_rank
+
+        import time
+        last_err = None
+        for attempt in range(60):
+            try:
+                sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+                sock.settimeout(60.0)
+                sock.connect((peer_ip, peer_port))
+                self._connections[dst_rank] = sock
+                return sock
+            except Exception as e:
+                last_err = e
+                sock.close()
+                if attempt == 0 or attempt % 10 == 9:
+                    from exo.worker.runner.bootstrap import logger
+                    logger.warning(f"TcpRelay connect({peer_ip}:{peer_port}) attempt {attempt+1}/60: {e}")
+                time.sleep(1)
+        raise ConnectionError(f"Could not connect to rank {dst_rank} at {peer_ip}:{peer_port}") from last_err
+
+    def send(self, x: mx.array, dst: int) -> mx.array:
+        """Send array to dst rank via TCP."""
+        import struct
+
+        import numpy as np
+
+        x_np = np.array(x)
+        mx.eval(x)
+
+        dtype_code = self._DTYPE_TO_CODE.get(x_np.dtype.type, 0)
+
+        data = x_np.tobytes()
+        header = struct.pack("!IIIQ", len(x_np.shape), dtype_code, x_np.dtype.itemsize, len(data))
+        shape_data = struct.pack(f"!{len(x_np.shape)}I", *x_np.shape)
+
+        self._ensure_server()
+        sock = self._connect_to(dst)
+        sock.sendall(header + shape_data + data)
+        return x
+
+    def recv_like(self, ref: mx.array, src: int) -> mx.array:
+        """Recv array from src rank via TCP."""
+        import struct
+
+        import numpy as np
+
+        self._ensure_server()
+
+        if src in self._connections:
+            sock = self._connections[src]
+        else:
+            import time
+            for attempt in range(120):
+                try:
+                    self._server_socket.settimeout(5.0)
+                    sock, _ = self._server_socket.accept()
+                    self._server_socket.settimeout(120.0)
+                    # Probe for valid data — if the peer sent nothing, it's a
+                    # stale connection from the CUDA-detection probe (RST).
+                    # Discard it and accept again.
+                    sock.settimeout(2.0)
+                    try:
+                        peek = sock.recv(1, _socket.MSG_PEEK)
+                        if not peek:
+                            sock.close()
+                            continue
+                    except Exception:
+                        sock.close()
+                        continue
+                    sock.settimeout(120.0)
+                    self._connections[src] = sock
+                    break
+                except _socket.timeout:
+                    if attempt % 10 == 0:
+                        from exo.worker.runner.bootstrap import logger
+                        logger.warning(f"TcpRelay accept from rank {src} attempt {attempt+1}/20 timeout")
+                    time.sleep(1)
+            else:
+                raise ConnectionError(f"TcpRelay accept from rank {src} timed out after 20 attempts")
+
+        header = self._recv_exact(sock, 20)
+        ndim, dtype_code, itemsize, total = struct.unpack("!IIIQ", header)
+        shape_data = self._recv_exact(sock, ndim * 4)
+        shape = struct.unpack(f"!{ndim}I", shape_data)
+
+        data = self._recv_exact(sock, total)
+        np_dtype = self._CODE_TO_DTYPE.get(dtype_code, np.float32)
+        arr = np.frombuffer(data, dtype=np_dtype).reshape(shape)
+        return mx.array(arr)
+
+    @staticmethod
+    def _recv_exact(sock: _socket.socket, n: int) -> bytes:
+        buf = bytearray(n)
+        view = memoryview(buf)
+        while view:
+            chunk = sock.recv(min(view.nbytes, 65536))
+            if not chunk:
+                raise ConnectionError("Connection closed")
+            view[:len(chunk)] = chunk
+            view = view[len(chunk):]
+        return bytes(buf)
 
 
 def flush_prefill_sends() -> None:
     for output, dst, group in _pending_prefill_sends:
-        sent = mx.distributed.send(output, dst, group=group)
-        mx.async_eval(sent)
+        if _is_cuda_device() and _get_tcp_relay().is_cuda_to_cuda(dst):
+            relay = _get_tcp_relay()
+            relay.send(output, dst)
+        else:
+            sent = mx.distributed.send(output, dst, group=group)
+            mx.async_eval(sent)
     _pending_prefill_sends.clear()
 
 
@@ -131,11 +363,15 @@ class PipelineFirstLayer(CustomMlxLayer):
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
-            # We want to avoid GPU timeout errors by evalling the distributed operation
-            # so that it stays on CPU, which does not have a timeout.
             mx.eval(x)
-            x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
-            mx.eval(x)
+            src = self.r - 1
+            if _is_cuda_device() and _get_tcp_relay().is_cuda_to_cuda(src):
+                relay = _get_tcp_relay()
+                x = relay.recv_like(x, src)
+                mx.eval(x)
+            else:
+                x = mx.distributed.recv_like(x, src, group=self.group)
+                mx.eval(x)
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -161,23 +397,22 @@ class PipelineLastLayer(CustomMlxLayer):
         ).arguments.get("cache", None)
 
         output: mx.array = self.original_layer(x, *args, **kwargs)
-
-        # Eval layer output to materialize it before send — this splits the graph
-        # so the send is isolated and the receiving rank's recv can complete.
         mx.eval(output)
 
         if self.r != self.s - 1:
+            dst = (self.r + 1) % self.s
             if self.queue_sends:
                 _pending_prefill_sends.append(
-                    (output, (self.r + 1) % self.s, self.group)
+                    (output, dst, self.group)
                 )
+            elif _is_cuda_device() and _get_tcp_relay().is_cuda_to_cuda(dst):
+                relay = _get_tcp_relay()
+                relay.send(output, dst)
             else:
                 output = mx.distributed.send(
-                    output, (self.r + 1) % self.s, group=self.group
+                    output, dst, group=self.group
                 )
             if cache is not None:
-                # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
-                # doesn't have .keys directly; access via first sub-cache.
                 _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
                 if hasattr(_cache, "keys"):  # pyright: ignore[reportAny]
                     _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
