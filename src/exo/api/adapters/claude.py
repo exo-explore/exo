@@ -273,6 +273,7 @@ async def collect_claude_response(
     thinking_parts: list[str] = []
     tool_use_blocks: list[ClaudeToolUseBlock] = []
     stop_reason: ClaudeStopReason | None = None
+    matched_stop_sequence: str | None = None
     last_usage: Usage | None = None
     error_message: str | None = None
 
@@ -303,11 +304,18 @@ async def collect_claude_response(
         else:
             text_parts.append(chunk.text)
 
+        if chunk.matched_stop_sequence is not None:
+            matched_stop_sequence = chunk.matched_stop_sequence
         if chunk.finish_reason is not None:
             stop_reason = finish_reason_to_claude_stop_reason(chunk.finish_reason)
 
     if error_message is not None:
         raise ValueError(error_message)
+
+    # A matched stop sequence is reported as "stop_sequence", not the generic
+    # "end_turn" that a bare "stop" finish_reason maps to.
+    if matched_stop_sequence is not None:
+        stop_reason = "stop_sequence"
 
     combined_text = "".join(text_parts)
     combined_thinking = "".join(thinking_parts)
@@ -333,6 +341,7 @@ async def collect_claude_response(
         model=model,
         content=content,
         stop_reason=stop_reason,
+        stop_sequence=matched_stop_sequence,
         usage=ClaudeUsage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -362,6 +371,7 @@ async def generate_claude_stream(
 
     output_tokens = 0
     stop_reason: ClaudeStopReason | None = None
+    matched_stop_sequence: str | None = None
     last_usage: Usage | None = None
     next_block_index = 0
 
@@ -454,8 +464,15 @@ async def generate_claude_stream(
             )
             yield f"event: content_block_delta\ndata: {delta_event.model_dump_json()}\n\n"
 
+        if chunk.matched_stop_sequence is not None:
+            matched_stop_sequence = chunk.matched_stop_sequence
         if chunk.finish_reason is not None:
             stop_reason = finish_reason_to_claude_stop_reason(chunk.finish_reason)
+
+    # A matched stop sequence is reported as "stop_sequence", not the generic
+    # "end_turn" that a bare "stop" finish_reason maps to.
+    if matched_stop_sequence is not None:
+        stop_reason = "stop_sequence"
 
     # Use actual token count from usage if available
     if last_usage is not None:
@@ -480,7 +497,9 @@ async def generate_claude_stream(
 
     # message_delta
     message_delta = ClaudeMessageDeltaEvent(
-        delta=ClaudeMessageDelta(stop_reason=stop_reason),
+        delta=ClaudeMessageDelta(
+            stop_reason=stop_reason, stop_sequence=matched_stop_sequence
+        ),
         usage=ClaudeMessageDeltaUsage(output_tokens=output_tokens),
     )
     yield f"event: message_delta\ndata: {message_delta.model_dump_json()}\n\n"
