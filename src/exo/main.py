@@ -25,6 +25,7 @@ from exo.routing.router import Router, get_node_zid
 from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG, EXO_PID_FILE
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
+from exo.shared.telemetry import TelemetryService
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils import STDIO_FDS
 from exo.utils.channels import Receiver, channel
@@ -43,6 +44,7 @@ class Node:
     election_result_receiver: Receiver[ElectionResult]
     master: Master | None
     api: API | None
+    telemetry: TelemetryService
 
     node_id: NodeId
     offline: bool
@@ -71,6 +73,7 @@ class Node:
             external_outbound=router.sender(topics.LOCAL_EVENTS),
             external_inbound=router.receiver(topics.GLOBAL_EVENTS),
         )
+        telemetry = TelemetryService.create(telemetry_disabled=not args.telemetry)
 
         logger.info(f"Starting node {node_id}")
 
@@ -109,6 +112,7 @@ class Node:
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 api_port=args.api_port,
+                telemetry_sink=telemetry.sink(),
             )
         else:
             worker = None
@@ -147,6 +151,7 @@ class Node:
             er_recv,
             master,
             api,
+            telemetry,
             node_id,
             args.offline,
             args.api_port,
@@ -158,6 +163,7 @@ class Node:
             signal.signal(signal.SIGTERM, lambda _, __: self.shutdown())
             tg.start_soon(self.router.run)
             tg.start_soon(self.event_router.run)
+            tg.start_soon(self.telemetry.run)
             tg.start_soon(self.election.run)
             if self.download_coordinator:
                 tg.start_soon(self.download_coordinator.run)
@@ -265,6 +271,7 @@ class Node:
                                 topics.DOWNLOAD_COMMANDS
                             ),
                             api_port=self._api_port,
+                            telemetry_sink=self.telemetry.sink(),
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:
@@ -387,6 +394,7 @@ class Args(FrozenModel):
     no_downloads: bool = False
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
+    telemetry: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
     legacy_daemon: bool = False
     bootstrap_peers: list[str] = []
@@ -449,6 +457,11 @@ class Args(FrozenModel):
             "--no-batch",
             action="store_true",
             help="Disable continuous batching, use sequential generation",
+        )
+        parser.add_argument(
+            "--telemetry",
+            action="store_true",
+            help="Enable telemetry uploads. Disabled by default; disabled mode keeps telemetry in dry-run.",
         )
         parser.add_argument(
             "--legacy-daemon",
