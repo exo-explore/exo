@@ -672,3 +672,139 @@ class TestThinkingModelsPrefixBuffering:
         assert "<parameter=pattern>" in raw
         assert "</parameter>" in raw
         assert "</function>" in raw
+
+
+# ── parse_thinking_models fused / embedded delimiter ────────────
+#
+# Regression coverage for the bug where the mlx-lm streaming detokenizer
+# delivers a think delimiter glued to neighbouring text in a single chunk
+# (e.g. "Let's code.</think>def fibonacci(n):"). The exact-equality boundary
+# check missed this and leaked the delimiter + the real answer into the
+# reasoning stream, dumping chain-of-thought prose into `content`.
+
+
+class TestThinkingModelsFusedDelimiter:
+    def test_fused_end_delimiter_single_chunk(self):
+        # The confirmed production bug: </think> fused mid-chunk with both the
+        # trailing reasoning and the opening of the real answer.
+        tokens = [
+            _make_response("reasoning here ", 0),
+            _make_response("done.</think>def fibonacci(n):", 1),
+            _make_response("", 2, finish_reason="stop"),
+        ]
+        results = _step_until_finish(
+            parse_thinking_models(
+                _queue_source(tokens),
+                think_start="<think>",
+                think_end="</think>",
+                starts_in_thinking=True,
+            )
+        )
+        gens = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse) and r.finish_reason is None
+        ]
+        texts = [(r.text, r.is_thinking) for r in gens]
+        # pre-delimiter text stays in the thinking stream, post-delimiter
+        # answer is content, delimiter itself is swallowed.
+        assert texts == [
+            ("reasoning here ", True),
+            ("done.", True),
+            ("def fibonacci(n):", False),
+        ]
+        assert "</think>" not in _drain_text(results)
+
+    def test_end_delimiter_spanning_two_chunks(self):
+        # Delimiter split across chunks so accumulation overshoots the exact
+        # match: "</" then "think>def" -> accumulated "</think>def".
+        tokens = [
+            _make_response("body", 0),
+            _make_response("</", 1),
+            _make_response("think>answer", 2),
+            _make_response("", 3, finish_reason="stop"),
+        ]
+        results = _step_until_finish(
+            parse_thinking_models(
+                _queue_source(tokens),
+                think_start="<think>",
+                think_end="</think>",
+                starts_in_thinking=True,
+            )
+        )
+        gens = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse) and r.finish_reason is None
+        ]
+        texts = [(r.text, r.is_thinking) for r in gens]
+        assert texts == [("body", True), ("answer", False)]
+        assert "</think>" not in _drain_text(results)
+
+    def test_clean_end_delimiter_token_regression(self):
+        # The delimiter arriving as its own clean token must keep working
+        # exactly as before (fast path untouched).
+        tokens = [
+            _make_response("body", 0),
+            _make_response("</think>", 1),
+            _make_response("answer", 2),
+            _make_response("", 3, finish_reason="stop"),
+        ]
+        results = _step_until_finish(
+            parse_thinking_models(
+                _queue_source(tokens),
+                think_start="<think>",
+                think_end="</think>",
+                starts_in_thinking=True,
+            )
+        )
+        gens = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse) and r.finish_reason is None
+        ]
+        texts = [(r.text, r.is_thinking) for r in gens]
+        assert texts == [("body", True), ("answer", False)]
+
+    def test_fused_start_delimiter_single_chunk(self):
+        # Symmetric case: <think> fused with surrounding text while not yet
+        # thinking.
+        tokens = [
+            _make_response("preamble <think>now reasoning", 0),
+            _make_response("", 1, finish_reason="stop"),
+        ]
+        results = _step_until_finish(
+            parse_thinking_models(
+                _queue_source(tokens),
+                think_start="<think>",
+                think_end="</think>",
+                starts_in_thinking=False,
+            )
+        )
+        gens = [
+            r
+            for r in results
+            if isinstance(r, GenerationResponse) and r.finish_reason is None
+        ]
+        texts = [(r.text, r.is_thinking) for r in gens]
+        assert texts == [("preamble ", False), ("now reasoning", True)]
+        assert "<think>" not in _drain_text(results)
+
+    def test_no_thinking_passthrough(self):
+        # No delimiters at all: every chunk flows through as content.
+        tokens = [
+            _make_response("hello ", 0),
+            _make_response("world", 1),
+            _make_response("", 2, finish_reason="stop"),
+        ]
+        results = _step_until_finish(
+            parse_thinking_models(
+                _queue_source(tokens),
+                think_start="<think>",
+                think_end="</think>",
+                starts_in_thinking=False,
+            )
+        )
+        assert _drain_text(results) == "hello world"
+        gens = [r for r in results if isinstance(r, GenerationResponse)]
+        assert all(not r.is_thinking for r in gens)
