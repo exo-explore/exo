@@ -1,6 +1,7 @@
 import contextlib
 import functools
 import math
+import os
 import time
 import uuid
 from typing import Callable, Generator, cast, get_args
@@ -331,7 +332,7 @@ def prefill(
 
     is_pipeline = _has_pipeline_communication_layer(model)
 
-    prefill_step_size = 4096
+    prefill_step_size = int(os.getenv("EXO_PREFILL_STEP_SIZE", "4096"))
 
     try:
         if is_pipeline and num_tokens >= prefill_step_size:
