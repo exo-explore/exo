@@ -391,4 +391,14 @@ class Runner:
         command_id: CommandId,
     ):
         assert isinstance(self.generator, Engine)
+        # Only rank 0 emits ChunkGenerated. Under tensor-parallel execution
+        # across multiple nodes (e.g. JACCL on 2 Mac Studios), every rank
+        # runs the same forward pass and reaches this method on every
+        # accepted token. Without this guard the API server's event channel
+        # receives the same ChunkGenerated event from each rank, and the
+        # client sees every token duplicated — e.g. asking the model to
+        # repeat "FALCON-MERCURY-7749" produces "FALCONFALCON-MERCURY-MERCURY-7749-7749".
+        # Rank 0 is canonical, so we de-duplicate at the emission point.
+        if self.device_rank != 0:
+            return
         self.event_sender.send(ChunkGenerated(command_id=command_id, chunk=chunk))
