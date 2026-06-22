@@ -76,8 +76,6 @@ REMOTE_PREFILL_MIN_TOKENS = 1000
 
 generation_stream = mx.new_stream(mx.default_device())
 
-_MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
-
 
 @contextlib.contextmanager
 def patch_embed_tokens(
@@ -679,15 +677,10 @@ def mlx_generate(
         prefill_tps = kv_prefix_cache.prefill_tps[matched_index]
 
     if kv_prefix_cache is not None:
-        hit_ratio = (
-            prefix_hit_length / len(all_prompt_tokens)
-            if len(all_prompt_tokens) > 0
-            else 0.0
-        )
-        if matched_index is not None and (
-            prefix_hit_length >= min_prefix_hit_length
-            and hit_ratio >= _MIN_PREFIX_HIT_RATIO_TO_UPDATE
+        if kv_prefix_cache.should_update_entry(
+            matched_index, prefix_hit_length, min_prefix_hit_length
         ):
+            assert matched_index is not None
             kv_prefix_cache.update_kv_cache(
                 matched_index,
                 all_prompt_tokens,
