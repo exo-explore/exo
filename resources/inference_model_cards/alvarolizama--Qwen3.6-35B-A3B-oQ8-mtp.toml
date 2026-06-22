@@ -1,0 +1,39 @@
+model_id = "alvarolizama/Qwen3.6-35B-A3B-oQ8-mtp"
+n_layers = 40
+hidden_size = 2048
+num_key_value_heads = 2
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "oQ8 MTP"
+base_model = "Qwen3.6 35B A3B"
+capabilities = ["text"]
+reasoning_dialect = "none"
+context_length = 262144
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+[storage_size]
+in_bytes = 38604987852
+
+# Native Qwen3.6 MoE MTP weights are embedded in the checkpoint shards.
+# Measured-best fixed K on local M5 Max: K=1, capped at K=3.
+[native_mtp]
+num_layers = 1
+default_k = 1
+max_k = 3
+
+# Source: https://huggingface.co/Qwen/Qwen3.6-35B-A3B (best-practices)
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0
+presence_penalty = 1.5
+
+[sampling_defaults.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0
+presence_penalty = 1.5

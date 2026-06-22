@@ -42,6 +42,7 @@ from .api import Logprobs as Logprobs
 from .api import LogprobsContentItem as LogprobsContentItem
 from .api import ModelList as ModelList
 from .api import ModelListModel as ModelListModel
+from .api import NativeMTPModelInfo as NativeMTPModelInfo
 from .api import NodePowerStats as NodePowerStats
 from .api import PlaceInstanceParams as PlaceInstanceParams
 from .api import PlacementPreview as PlacementPreview

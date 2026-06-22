@@ -29,6 +29,16 @@ class ErrorResponse(BaseModel):
     error: ErrorInfo
 
 
+class NativeMTPModelInfo(BaseModel):
+    """Native Multi-Token Prediction metadata surfaced for cards whose
+    on-disk checkpoint ships MTP weights handled by exo's in-process
+    draft+verify loop. ``default_k`` is the K used when a request doesn't
+    override; ``max_k`` is the card-declared upper bound."""
+
+    default_k: int
+    max_k: int
+
+
 class ModelListModel(BaseModel):
     id: str
     object: str = "model"
@@ -49,6 +59,9 @@ class ModelListModel(BaseModel):
     base_model: str = Field(default="")
     capabilities: list[str] = Field(default_factory=list)
     reasoning_dialect: ReasoningDialect = "none"
+    # Native MTP metadata for checkpoints whose card declares exo's
+    # in-process MTP draft+verify path. ``None`` for all other models.
+    native_mtp: NativeMTPModelInfo | None = None
 
 
 class ModelList(BaseModel):
@@ -167,6 +180,39 @@ class GenerationStats(BaseModel):
     generation_tokens: int
     peak_memory_usage: Memory
     prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
+    drafter_model_id: str | None = None
+    accepted_draft_tokens: int = 0
+    proposed_draft_tokens: int = 0
+    spec_decode_rounds: int = 0
+    num_draft_tokens: int | None = None
+    draft_mode: (
+        Literal["model", "pipelined", "ngram", "eagle", "lookahead", "none"] | None
+    ) = None
+    drafter_kind: Literal["standard", "mtp", "dflash", "native_mtp"] | None = None
+
+    @property
+    def drafter_acceptance_fraction(self) -> float | None:
+        """Fraction of generated tokens that came from accepted drafts."""
+        if self.generation_tokens == 0:
+            return None
+        if self.draft_mode is None:
+            if self.drafter_model_id is None and self.drafter_kind is None:
+                return None
+        elif self.draft_mode == "none":
+            return None
+        return self.accepted_draft_tokens / self.generation_tokens
+
+    @property
+    def drafter_acceptance_rate(self) -> float | None:
+        """Classical speculative acceptance rate: accepted / proposed."""
+        if self.proposed_draft_tokens == 0:
+            return None
+        if self.draft_mode is None:
+            if self.drafter_model_id is None and self.drafter_kind is None:
+                return None
+        elif self.draft_mode == "none":
+            return None
+        return self.accepted_draft_tokens / self.proposed_draft_tokens
 
 
 class ImageGenerationStats(BaseModel):
