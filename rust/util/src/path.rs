@@ -161,7 +161,9 @@ pub fn resolve_path(path: PathBuf) -> io::Result<PathBuf> {
     );
 
     // 5) prefix/suffix joined in final absolute clean path with symlinks resolved and no ".."
-    prefix.push(&suffix);
+    if !suffix.as_os_str().is_empty() {
+        prefix.push(&suffix);
+    }
     let path = prefix;
     assert!(
         path.components()
@@ -266,6 +268,22 @@ mod tests {
         let resolved = resolve_path(link.join("..")).unwrap();
 
         assert_eq!(resolved, real_parent.canonicalize().unwrap());
+        assert_is_root_followed_by_normal_components(&resolved);
+    }
+
+    #[test]
+    fn resolve_path_supports_existing_file() {
+        let test_dir = TempDir::new().unwrap();
+        let file = test_dir.path().join("config.toml");
+        fs::write(&file, "verbosity = \"warn\"\n").unwrap();
+
+        let resolved = resolve_path(file.clone()).unwrap();
+
+        assert_eq!(resolved, file.canonicalize().unwrap());
+        assert_eq!(
+            resolved.canonicalize().unwrap(),
+            file.canonicalize().unwrap()
+        );
         assert_is_root_followed_by_normal_components(&resolved);
     }
 }

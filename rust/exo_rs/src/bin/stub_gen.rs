@@ -2,15 +2,21 @@ use clap::Parser;
 use exo_rs::config::app::AppSettings;
 use exo_rs::config::bootstrap::BootstrapSettings;
 use exo_rs::config::cli::CliArgs;
+use pyo3::Python;
 use pyo3_stub_gen::Result;
 
 fn main() -> Result<()> {
-    let a = CliArgs::parse();
-    println!("{a:?}\n");
-    let b = BootstrapSettings::resolve(&a.bootstrap)?;
-    println!("{b:?}\n");
-    let app = AppSettings::resolve(&a.app, &b)?;
-    println!("{app:?}\n");
+    Python::initialize();
+
+    Python::attach(|py| -> Result<()> {
+        let a = CliArgs::parse();
+        println!("{a:?}\n");
+        let b = BootstrapSettings::resolve(py, &a.bootstrap.borrow(py))?;
+        println!("{b:?}\n");
+        let app = AppSettings::resolve(&a.app.borrow(py), &b)?;
+        println!("{app:?}\n");
+        Ok(())
+    })?;
 
     // return Ok(());
 

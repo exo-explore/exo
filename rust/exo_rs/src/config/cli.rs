@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 
 // re-export
+use crate::newtype::NewPy;
 pub use parser_impl::*;
 
 #[gen_stub_pyclass]
@@ -102,16 +103,16 @@ pub struct CliArgs {
 
     // -------- FLATTENED SUBCOMMANDS --------
     #[command(flatten)]
-    #[pyo3(get)]
-    pub bootstrap: BootstrapArgs,
+    #[pyo3(get, set)]
+    pub bootstrap: NewPy<BootstrapArgs>,
 
     #[command(flatten)]
-    #[pyo3(get)]
-    pub app: AppArgs,
+    #[pyo3(get, set)]
+    pub app: NewPy<AppArgs>,
 
     #[command(flatten)]
-    #[pyo3(get)]
-    pub rejected: RejectedArgs,
+    #[pyo3(get, set)]
+    pub rejected: NewPy<RejectedArgs>,
 }
 
 #[gen_stub_pymethods]
@@ -137,18 +138,6 @@ impl CliArgs {
         // (i.e. `sys.orig_argv`) may contain extra arguments which would mess up parsing
         let argv: Vec<OsString> = PyModule::import(py, "sys")?.getattr("argv")?.extract()?;
         Ok(CliArgs::parse_from(argv))
-    }
-
-    pub fn set_bootstrap(&mut self, bootstrap: BootstrapArgs) {
-        self.bootstrap = bootstrap;
-    }
-
-    pub fn set_app(&mut self, app: AppArgs) {
-        self.app = app;
-    }
-
-    pub fn set_rejected(&mut self, rejected: RejectedArgs) {
-        self.rejected = rejected;
     }
 
     // -------- SERDE/PICKLING support --------
@@ -205,6 +194,7 @@ pub struct RejectedArgs {
     pub libp2p_port: Option<u16>,
 
     #[arg(
+        long = Rejected::fake_name(),
         env = "EXO_LIBP2P_NAMESPACE", value_name = "STRING", hide = true,
         value_parser = Rejected::<String>::deprecated(
             None, None, Some("EXO_LIBP2P_NAMESPACE"),
@@ -215,6 +205,7 @@ pub struct RejectedArgs {
     pub libp2p_namespace: Option<String>,
 
     #[arg(
+        long = Rejected::fake_name(),
         env = "EXO_ZENOH_NAMESPACE", value_name = "STRING", hide = true,
         value_parser = Rejected::<String>::deprecated(
             None, None, Some("EXO_ZENOH_NAMESPACE"),
@@ -225,6 +216,7 @@ pub struct RejectedArgs {
     pub zenoh_namespace: Option<String>,
 
     #[arg(
+        long = Rejected::fake_name(),
         env = "EXO_ENABLE_IMAGE_MODELS", value_name = "BOOL", hide = true,
         value_parser = Rejected::<bool>::deprecated(
             None, None, Some("EXO_ENABLE_IMAGE_MODELS"),
@@ -235,6 +227,7 @@ pub struct RejectedArgs {
     pub enable_image_models: Option<bool>,
 
     #[arg(
+        long = Rejected::fake_name(),
         env = "ENABLE_DISAGGREGATION", value_name = "BOOL", hide = true,
         value_parser = Rejected::<bool>::deprecated(
             None, None, Some("ENABLE_DISAGGREGATION"),
@@ -271,6 +264,7 @@ mod parser_impl {
     use clap::builder::PathBufValueParser;
     use clap::builder::TypedValueParser;
     use itertools::Itertools;
+    use rand::distr::SampleString;
     use std::error::Error;
     use std::ffi::OsStr;
     use std::fs;
@@ -280,9 +274,15 @@ mod parser_impl {
     use util::path::{PathExt, resolve_path};
 
     #[derive(Clone)]
-    pub struct Rejected<T> {
+    pub struct Rejected<T = ()> {
         message: String,
         _ty: PhantomData<T>,
+    }
+
+    impl Rejected {
+        pub fn fake_name() -> String {
+            rand::distr::Alphanumeric.sample_string(&mut rand::rng(), 32)
+        }
     }
 
     impl<T> Rejected<T> {

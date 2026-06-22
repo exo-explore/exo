@@ -27,10 +27,8 @@ def model_id() -> ModelId:
 
 def _mock_bootstrap_settings(models_dir: Path) -> BootstrapSettings:
     cfg = BootstrapSettings.default()
-    models_dirs = cfg.models_dirs
-    models_dirs.default_models_dir = models_dir
-    models_dirs.models_dirs = [models_dir]
-    cfg.set_models_dirs(models_dirs)
+    cfg.models_dirs.default_models_dir = models_dir
+    cfg.models_dirs.models_dirs = [models_dir]
     return cfg
 
 

@@ -1,10 +1,11 @@
 use crate::config::cli::CliArgs;
 use crate::config::cli::{PathBufValueParserExt, parse_path};
 use crate::ext::ResultExt;
+use crate::newtype::NewPy;
 use crate::pickle_reduce;
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use pyo3::types::PyTuple;
-use pyo3::{Bound, PyAny, PyResult, pyclass, pymethods};
+use pyo3::{Bound, PyAny, PyResult, Python, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -79,17 +80,17 @@ pub struct BootstrapArgs {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(module = "exo_rs", from_py_object)]
+#[pyclass(module = "exo_rs", skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BootstrapSettings {
-    #[pyo3(get)]
-    pub exo_home: ExoHome,
+    #[pyo3(get, set)]
+    pub exo_home: NewPy<ExoHome>,
 
-    #[pyo3(get)]
-    pub models_dirs: ModelsDirs,
+    #[pyo3(get, set)]
+    pub models_dirs: NewPy<ModelsDirs>,
 
-    #[pyo3(get)]
-    pub log_files: LogFiles,
+    #[pyo3(get, set)]
+    pub log_files: NewPy<LogFiles>,
 
     // other
     #[pyo3(get, set)]
@@ -120,20 +121,20 @@ impl BootstrapSettings {
     /// Create default instance
     #[staticmethod]
     #[pyo3(name = "default")]
-    pub fn py_default() -> PyResult<Self> {
+    pub fn py_default(py: Python<'_>) -> PyResult<Self> {
         // resolve from env only
-        Self::resolve(&BootstrapArgs::default())
+        Self::resolve(py, &BootstrapArgs::default())
     }
 
     /// Create only from env-variables
     #[staticmethod]
-    pub fn from_env_only() -> PyResult<Self> {
+    pub fn from_env_only(py: Python<'_>) -> PyResult<Self> {
         // resolve from env only
-        Self::resolve(&CliArgs::from_env_only().bootstrap)
+        Self::resolve(py, &*CliArgs::from_env_only().bootstrap.borrow(py))
     }
 
     #[staticmethod]
-    pub fn resolve(args: &BootstrapArgs) -> PyResult<Self> {
+    pub fn resolve(py: Python<'_>, args: &BootstrapArgs) -> PyResult<Self> {
         let exo_home = ExoHome::resolve(args)?;
         let models_dirs = ModelsDirs::resolve(args, &exo_home)?;
         let log_files = LogFiles::resolve(&exo_home)?;
@@ -156,9 +157,9 @@ impl BootstrapSettings {
         let tracing_cache_dir = exo_home.cache.join("traces");
 
         Ok(Self {
-            exo_home,
-            models_dirs,
-            log_files,
+            exo_home: NewPy::py_try_new_with(py, exo_home)?,
+            models_dirs: NewPy::py_try_new_with(py, models_dirs)?,
+            log_files: NewPy::py_try_new_with(py, log_files)?,
             pid_file,
             node_zid,
             config_file,
@@ -167,18 +168,6 @@ impl BootstrapSettings {
             image_cache_dir,
             tracing_cache_dir,
         })
-    }
-
-    pub fn set_exo_home(&mut self, exo_home: ExoHome) {
-        self.exo_home = exo_home;
-    }
-
-    pub fn set_models_dirs(&mut self, models_dirs: ModelsDirs) {
-        self.models_dirs = models_dirs;
-    }
-
-    pub fn set_log_files(&mut self, log_files: LogFiles) {
-        self.log_files = log_files;
     }
 
     // -------- SERDE/PICKLING support --------
@@ -198,7 +187,7 @@ impl BootstrapSettings {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(from_py_object)]
+#[pyclass(skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExoHome {
     #[pyo3(get, set)]
@@ -250,7 +239,7 @@ impl ExoHome {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(from_py_object)]
+#[pyclass(skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelsDirs {
     #[pyo3(get, set)]
@@ -290,7 +279,7 @@ impl ModelsDirs {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(from_py_object)]
+#[pyclass(skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogFiles {
     #[pyo3(get, set)]

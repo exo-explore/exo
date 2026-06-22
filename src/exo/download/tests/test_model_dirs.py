@@ -51,11 +51,9 @@ def _mock_bootstrap_settings(
     read_only: list[Path] | None = None,
 ) -> BootstrapSettings:
     cfg = BootstrapSettings.default()
-    models_dirs = cfg.models_dirs
-    models_dirs.default_models_dir = default
-    models_dirs.models_dirs = writable or []
-    models_dirs.models_read_only_dirs = read_only or []
-    cfg.set_models_dirs(models_dirs)
+    cfg.models_dirs.default_models_dir = default
+    cfg.models_dirs.models_dirs = writable or []
+    cfg.models_dirs.models_read_only_dirs = read_only or []
     return cfg
 
 

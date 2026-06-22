@@ -11,7 +11,7 @@ use figment::Figment;
 use figment::providers::{Format, Serialized, Toml};
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use pyo3::types::PyTuple;
-use pyo3::{Bound, PyAny, PyResult, pyclass, pymethods};
+use pyo3::{Bound, PyAny, PyResult, Python, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -164,18 +164,18 @@ impl AppSettings {
     /// Create default instance.
     #[staticmethod]
     #[pyo3(name = "default")]
-    pub fn py_default() -> PyResult<Self> {
-        let bootstrap = BootstrapSettings::py_default()?;
+    pub fn py_default(py: Python<'_>) -> PyResult<Self> {
+        let bootstrap = BootstrapSettings::py_default(py)?;
         let args = AppArgs::default();
         Self::resolve(&args, &bootstrap)
     }
 
     /// Create only from environment variables.
     #[staticmethod]
-    pub fn from_env_only() -> PyResult<Self> {
+    pub fn from_env_only(py: Python<'_>) -> PyResult<Self> {
         let args = CliArgs::from_env_only();
-        let bootstrap = BootstrapSettings::resolve(&args.bootstrap)?;
-        Self::resolve(&args.app, &bootstrap)
+        let bootstrap = BootstrapSettings::resolve(py, &*args.bootstrap.borrow(py))?;
+        Self::resolve(&*args.app.borrow(py), &bootstrap)
     }
 
     #[staticmethod]
