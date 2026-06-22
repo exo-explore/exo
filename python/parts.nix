@@ -211,6 +211,9 @@ let
         text: name: pkgs.writeShellApplication {
           inherit name;
           text = ''
+            unset PYTHONPATH
+            unset PYTHONHOME
+
             LD_LIBRARY_PATH="${libPath}''${LD_LIBRARY_PATH:+:}''${LD_LIBRARY_PATH:-}" exec \
               ${lib.optionalString cudaSupport "nixglhost "} ${text}
           '';

@@ -239,14 +239,14 @@ The app will ask for permission to modify system settings and install a new Netw
 
 **Custom Namespace for Cluster Isolation:**
 
-The macOS app includes a custom namespace feature that allows you to isolate your exo cluster from others on the same network. This is configured through the `EXO_LIBP2P_NAMESPACE` setting:
+The macOS app includes a custom namespace feature that allows you to isolate your exo cluster from others on the same network. The app passes this to exo with `--namespace`; source runs can use `--namespace` or `EXO_NAMESPACE`.
 
 - **Use cases**:
   - Running multiple separate exo clusters on the same network
   - Isolating development/testing clusters from production clusters
   - Preventing accidental cluster joining
 
-- **Configuration**: Access this setting in the app's Advanced settings (or set the `EXO_LIBP2P_NAMESPACE` environment variable when running from source)
+- **Configuration**: Access this setting in the app's Advanced settings (or use `--namespace` / `EXO_NAMESPACE` when running from source)
 
 The namespace is logged on startup for debugging purposes.
 
@@ -301,20 +301,51 @@ After that, RDMA will be enabled in macOS and exo will take care of the rest.
 
 ---
 
-## Environment Variables
+## Configuration
 
-exo supports several environment variables for configuration:
+exo reads configuration in this order:
+
+1. Built-in defaults
+2. `config.toml`
+3. Environment variables
+4. CLI arguments
+
+If a default `config.toml` exists in the resolved Exo config directory, exo reads
+it automatically. Use `--config-file` or `EXO_CONFIG_FILE` to point at an
+existing custom file.
+
+Example `config.toml`:
+
+```toml
+verbosity = "info"
+continuous_batching_enabled = true
+max_concurrent_requests = 8
+offline = false
+image_models_enabled = false
+tracing_enabled = false
+disaggregation_enabled = false
+# fast_synch = true # or false; omit for automatic behavior
+```
+
+Some paths are resolved before `config.toml` can be loaded, so they are configured
+only through CLI arguments or environment variables.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `EXO_DEFAULT_MODELS_DIR` | Default directory for model downloads and caches. Always first in the writable dirs list. | `~/.local/share/exo/models` (Linux) or `~/.exo/models` (macOS) |
+| `EXO_HOME` | Base directory for Exo config, data, and cache paths. CLI form: `--exo-home`. | Platform config/data/cache dirs |
+| `EXO_CONFIG_FILE` | Path to Exo's `config.toml`. CLI form: `--config-file`. | Resolved Exo config dir + `config.toml` |
+| `EXO_DEFAULT_MODELS_DIR` | Default directory for model downloads and caches. Always first in the writable dirs list. | Platform data dir + `models` |
 | `EXO_MODELS_DIRS` | Colon-separated additional writable directories for model downloads. Checked in order after the default; first with enough free space is used. | None |
 | `EXO_MODELS_READ_ONLY_DIRS` | Colon-separated read-only directories to search for pre-downloaded models (e.g., NFS mounts, shared storage). Models here cannot be deleted. | None |
-| `EXO_OFFLINE` | Run without internet connection (uses only local models) | `false` |
-| `EXO_ENABLE_IMAGE_MODELS` | Enable image model support | `false` |
-| `EXO_LIBP2P_NAMESPACE` | Custom namespace for cluster isolation | None |
-| `EXO_FAST_SYNCH` | Control MLX_METAL_FAST_SYNCH behavior (for JACCL backend) | Auto |
-| `EXO_TRACING_ENABLED` | Enable distributed tracing for performance analysis | `false` |
+| `EXO_NAMESPACE` | Custom namespace for cluster isolation. CLI form: `--namespace`. | Package version |
+| `EXO_VERBOSITY` | Verbosity filter. CLI forms: `--verbosity=<LEVEL>` or `-v <LEVEL>`. Valid levels: `off`, `error`, `warn`, `info`, `debug`, `trace`. | `info` |
+| `EXO_NO_BATCH` | Boolean inverse of `continuous_batching_enabled`. CLI form: `--no-batch[=true\|false]`. | `false` |
+| `EXO_MAX_CONCURRENT_REQUESTS` | Maximum number of concurrent generation requests per runner. CLI form: `--max-concurrent-requests`. | `8` |
+| `EXO_OFFLINE` | Boolean equivalent for offline mode. CLI form: `--offline[=true\|false]`. Uses only local models and skips internet checks. | `false` |
+| `EXO_IMAGE_MODELS_ENABLED` | Boolean equivalent for image model support. CLI form: `--enable-image-models[=true\|false]`. | `false` |
+| `EXO_TRACING_ENABLED` | Boolean equivalent for distributed tracing. CLI form: `--enable-tracing[=true\|false]`. | `false` |
+| `EXO_DISAGGREGATION_ENABLED` | Boolean equivalent for prefill/decode disaggregation. CLI form: `--enable-disaggregation[=true\|false]`. | `false` |
+| `EXO_FAST_SYNCH` | Boolean FAST_SYNCH override for JACCL backend. CLI form: `--fast-synch=true\|false`. Leave unset or omit `fast_synch` from `config.toml` for automatic behavior. | Auto |
 
 **Example usage:**
 
@@ -325,14 +356,51 @@ EXO_MODELS_READ_ONLY_DIRS=/mnt/nfs/models:/opt/ai-models uv run exo
 # Download models to an external SSD (falls back to default dir if full)
 EXO_MODELS_DIRS=/Volumes/ExternalSSD/exo-models uv run exo
 
-# Run in offline mode
+# Run it in offline mode (CLI or ENV arg)
+uv run exo --offline
 EXO_OFFLINE=true uv run exo
 
 # Enable image models
-EXO_ENABLE_IMAGE_MODELS=true uv run exo
+uv run exo --enable-image-models
+uv run exo --enable-image-models=false
+EXO_IMAGE_MODELS_ENABLED=true uv run exo
+
+# Enable distributed tracing
+uv run exo --enable-tracing
+uv run exo --enable-tracing=false
+EXO_TRACING_ENABLED=true uv run exo
+
+# Enable prefill/decode disaggregation
+uv run exo --enable-disaggregation
+uv run exo --enable-disaggregation=false
+EXO_DISAGGREGATION_ENABLED=true uv run exo
+
+# Disable continuous batching
+uv run exo --no-batch
+EXO_NO_BATCH=true uv run exo
+
+# Set request concurrency
+uv run exo --max-concurrent-requests 16
+EXO_MAX_CONCURRENT_REQUESTS=16 uv run exo
 
 # Use custom namespace for cluster isolation
-EXO_LIBP2P_NAMESPACE=my-dev-cluster uv run exo
+uv run exo --namespace=my-dev-cluster
+EXO_NAMESPACE=my-dev-cluster uv run exo
+
+# Set logging verbosity (CLI or ENV arg)
+uv run exo --verbosity=debug
+uv run exo -v debug
+EXO_VERBOSITY=debug uv run exo
+
+# Only show error logs
+uv run exo --quiet
+
+# Disable logging output
+uv run exo --verbosity=off
+
+# Force MLX FAST_SYNCH off (CLI or ENV arg)
+uv run exo --fast-synch=false
+EXO_FAST_SYNCH=false uv run exo
 ```
 
 ---

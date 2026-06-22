@@ -7,8 +7,8 @@ from typing import BinaryIO
 import mlx.core as mx
 from loguru import logger
 
+import exo.shared.config as config
 from exo.api.types import ImageEditsTaskParams, ImageGenerationTaskParams
-from exo.shared.constants import EXO_TRACING_ENABLED
 from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
 from exo.shared.types.chunks import Chunk, ErrorChunk
 from exo.shared.types.events import (
@@ -70,7 +70,7 @@ def _send_traces_if_enabled(
     task_id: TaskId,
     rank: int,
 ) -> None:
-    if not EXO_TRACING_ENABLED:
+    if not config.app().tracing_enabled:
         return
 
     traces = get_trace_buffer()

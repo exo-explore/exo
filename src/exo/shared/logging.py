@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import zstandard
+from exo_rs import VerbosityFilter
 from hypercorn import Config
 from hypercorn.logging import Logger as HypercornLogger
 from loguru import logger
@@ -43,7 +44,27 @@ class _InterceptHandler(logging.Handler):
         logger.opt(depth=3, exception=record.exc_info).log(level, record.getMessage())
 
 
-def logger_setup(log_file: Path | None, verbosity: int = 0):
+def _loguru_log_level(verbosity: VerbosityFilter):
+    match verbosity:
+        case VerbosityFilter.Off:
+            raise ValueError(
+                "VerbosityFilter.Off does not translate to a loguru log-level"
+            )
+        case VerbosityFilter.Error:
+            return "ERROR"
+        case VerbosityFilter.Warn:
+            return "WARNING"
+        case VerbosityFilter.Info:
+            return "INFO"
+        case VerbosityFilter.Debug:
+            return "DEBUG"
+        case VerbosityFilter.Trace:
+            return "TRACE"
+
+
+def logger_setup(
+    log_file: Path | None, verbosity: VerbosityFilter = VerbosityFilter.Info
+):
     """Set up logging for this process - formatting, file handles, verbosity and output"""
 
     logging.getLogger("exo_rs").setLevel(logging.INFO)
@@ -56,11 +77,17 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
     # replace all stdlib loggers with _InterceptHandlers that log to loguru
     logging.basicConfig(handlers=[_InterceptHandler()], level=0)
 
-    if verbosity == 0:
+    # if Off then no logging - return early
+    if verbosity == VerbosityFilter.Off:
+        return
+
+    # info (or less verbose than info) gets a different formatter
+    level = _loguru_log_level(verbosity)
+    if verbosity <= VerbosityFilter.Info:
         logger.add(
             sys.__stderr__,  # type: ignore
             format="[ {time:hh:mm:ss.SSSSA} | <level>{level: <8}</level>] <level>{message}</level>",
-            level="INFO",
+            level=level,
             colorize=True,
             enqueue=True,
         )
@@ -68,7 +95,7 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
         logger.add(
             sys.__stderr__,  # type: ignore
             format="[ {time:YYYY-MM-DD HH:mm:ss.SSS} | <level>{level: <8}</level> | {name}:{function}:{line} ] <level>{message}</level>",
-            level="DEBUG",
+            level=level,
             colorize=True,
             enqueue=True,
         )
@@ -77,7 +104,7 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
         logger.add(
             log_file,
             format="[ {time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} ] {message}",
-            level="DEBUG" if verbosity > 0 else "INFO",
+            level=level,
             colorize=False,
             enqueue=True,
             rotation=lambda _, __: next(rotate_once),
@@ -89,29 +116,3 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
 def logger_cleanup():
     """Flush all queues before shutting down so any in-flight logs are written to disk"""
     logger.complete()
-
-
-""" --- TODO: Capture MLX Log output:
-import contextlib
-import sys
-from loguru import logger
-
-class StreamToLogger:
-
-    def __init__(self, level="INFO"):
-        self._level = level
-
-    def write(self, buffer):
-        for line in buffer.rstrip().splitlines():
-            logger.opt(depth=1).log(self._level, line.rstrip())
-
-    def flush(self):
-        pass
-
-logger.remove()
-logger.add(sys.__stdout__)
-
-stream = StreamToLogger()
-with contextlib.redirect_stdout(stream):
-    print("Standard output is sent to added handlers.")
-"""

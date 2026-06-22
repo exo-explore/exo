@@ -183,6 +183,7 @@ final class ExoProcessController: ObservableObject {
                 at: exoHomeURL, withIntermediateDirectories: true
             )
             child.currentDirectoryURL = exoHomeURL
+            child.arguments = makeArgs()
             child.environment = makeEnvironment(for: runtimeURL)
 
             child.standardOutput = FileHandle.nullDevice
@@ -352,21 +353,12 @@ final class ExoProcessController: ObservableObject {
     private func makeEnvironment(for runtimeURL: URL) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         environment["EXO_RUNTIME_DIR"] = runtimeURL.path
-        environment["EXO_ZENOH_NAMESPACE"] = computeNamespace()
         if !hfToken.isEmpty {
             environment["HF_TOKEN"] = hfToken
         }
         if !hfEndpoint.isEmpty {
             environment["HF_ENDPOINT"] = hfEndpoint
         }
-        if enableImageModels {
-            environment["EXO_ENABLE_IMAGE_MODELS"] = "true"
-        }
-        if offlineMode {
-            environment["EXO_OFFLINE"] = "true"
-        }
-        environment["EXO_FAST_SYNCH"] = fastSynchEnabled ? "true" : "false"
-
         var paths: [String] = []
         if let existing = environment["PATH"], !existing.isEmpty {
             paths = existing.split(separator: ":").map(String.init)
@@ -414,6 +406,20 @@ final class ExoProcessController: ObservableObject {
         }
 
         return environment
+    }
+
+    private func makeArgs() -> [String] {
+        var args = [
+            "--namespace=\(computeNamespace())",
+            "--fast-synch=\(fastSynchEnabled ? "true" : "false")",
+        ]
+        if offlineMode {
+            args.append("--offline")
+        }
+        if enableImageModels {
+            args.append("--enable-image-models")
+        }
+        return args
     }
 
     private func buildTag() -> String {

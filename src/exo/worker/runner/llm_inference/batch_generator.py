@@ -8,7 +8,7 @@ from typing import BinaryIO
 import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
+import exo.shared.config as config
 from exo.shared.types.chunks import ErrorChunk, GenerationChunk, PrefillProgressChunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import ChunkGenerated, Event
@@ -337,6 +337,7 @@ class BatchGenerator(Engine):
     _all_tasks: dict[TaskId, TextGeneration] = field(default_factory=dict, init=False)
     _queue: deque[TextGeneration] = field(default_factory=deque, init=False)
     _gen: ExoBatchGenerator = field(init=False)
+    _max_concurrent_requests: int = field(init=False)
     _active_tasks: dict[
         int,
         tuple[
@@ -347,6 +348,7 @@ class BatchGenerator(Engine):
     ] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
+        self._max_concurrent_requests = config.app().max_concurrent_requests
         self._gen = ExoBatchGenerator(
             model=self.model,
             tokenizer=self.tokenizer,
@@ -406,7 +408,7 @@ class BatchGenerator(Engine):
             self.agree_on_tasks()
 
         # Submit any queued tasks to the engine
-        while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
+        while self._queue and len(self._active_tasks) < self._max_concurrent_requests:
             task = self._queue.popleft()
             try:
                 uid = self._start_task(task)
