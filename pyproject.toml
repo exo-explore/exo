@@ -23,7 +23,6 @@ exclude-dependencies = [
   "nvidia-cublas-cu13",
   "cuda-toolkit",
   "flashinfer-cubin",
-  "humming-kernels",
   "nvidia-cublas",
   "nvidia-cuda-cccl",
   "nvidia-cuda-crt",
@@ -77,7 +76,6 @@ exclude-dependencies = [
   "tilelang",
   "tokenspeed-mla",
   "tokenspeed-triton",
-  "triton",
 ]
 
 [tool.uv.sources]
