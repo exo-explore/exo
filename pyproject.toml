@@ -22,6 +22,7 @@ exclude-dependencies = [
   "nvidia-cublas-cu12",
   "nvidia-cublas-cu13",
   "cuda-toolkit",
+  "flashinfer-cubin",
   "nvidia-cublas",
   "nvidia-cuda-cccl",
   "nvidia-cuda-crt",
