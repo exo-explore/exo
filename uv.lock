@@ -17,7 +17,6 @@ excludes = [
     "cuda-bindings",
     "cuda-toolkit",
     "flashinfer-cubin",
-    "flashinfer-python",
     "humming-kernels",
     "nvidia-cublas",
     "nvidia-cublas-cu12",
@@ -619,6 +618,28 @@ wheels = [
 ]
 
 [[package]]
+name = "cuda-tile"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions", marker = "sys_platform == 'linux'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c2/df/0bb510403487484bed0a844793a1e8a043e3c4fe35f92f6e1cb5de3bd35e/cuda_tile-1.4.0-cp310-cp310-manylinux2014_aarch64.whl", hash = "sha256:8758454ae3971cd8dc195a61210e42ad3696528a9da6a4a429da4cdbbf305d80", size = 281176, upload-time = "2026-05-27T17:45:03.394Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/6f/a20b815a20b578c42bd056e40749477efc33dc098cb04dc3c7a3417b17b3/cuda_tile-1.4.0-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:63fc9edd9376a196870ff9dcd9cdb9a7e4d2f2271a4e531c390b232bc60ee0f0", size = 282606, upload-time = "2026-05-27T17:44:58.828Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/d4/a5849ee8ee58d0275c9e7738aa5b16d1ad669ed5aa4d1b26af683eda065e/cuda_tile-1.4.0-cp311-cp311-manylinux2014_aarch64.whl", hash = "sha256:da2649de97cbaf886d564a9f75b3bd2fb112999c99c58a27c817a46bb8725f29", size = 280897, upload-time = "2026-05-27T17:44:57.197Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/1b/575207f424c75e7b1608e056a89c15bfc3750f6178e5c659f693a7e822b1/cuda_tile-1.4.0-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:5741a789aaff85e3b2417b8611f0d11f967b9bac567432f0057b2b8bf72259ac", size = 282060, upload-time = "2026-05-27T17:44:58.877Z" },
+    { url = "https://files.pythonhosted.org/packages/42/93/64ef40d3982dcda7a97ebfa3e3bb9045b573d4eb3877fa5d1fa3cd2541d3/cuda_tile-1.4.0-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:9e358a85a153820aa0a51d0e09346d884a3c14b88c0313d20d0fb9f53952abae", size = 280953, upload-time = "2026-05-27T17:46:53.03Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/9a/7fbdbdb30c375f80818941165adfc4f1dc6cebaf937c6a9081a02d5871f0/cuda_tile-1.4.0-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:1d9d99b6fa57366af3f8707ac4fd91411275af2ee736996a60620240fcf92070", size = 282503, upload-time = "2026-05-27T17:45:05.543Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/ad/42f0655e6aee5c59015634b46d7f13bc22e74af28d10fb2008a062b37349/cuda_tile-1.4.0-cp313-cp313-manylinux2014_aarch64.whl", hash = "sha256:fc74185efd81f6153af0a19549d111dec6861ee9b9bc27927a2cef6e19173eb5", size = 280958, upload-time = "2026-05-27T17:46:53.061Z" },
+    { url = "https://files.pythonhosted.org/packages/11/0b/4770f9e36b8108ce8c9078f71eb21c65e594d79c0770dd38daa045cfbd6c/cuda_tile-1.4.0-cp313-cp313-manylinux2014_x86_64.whl", hash = "sha256:45be74f6568c440446f510bc7799b953858e64c6abf26e96f2c9598a79084860", size = 282508, upload-time = "2026-05-27T17:45:18.515Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/c6/46a329f4c56ce54471784366394e235804423df2531307e14112e4636c76/cuda_tile-1.4.0-cp314-cp314-manylinux2014_aarch64.whl", hash = "sha256:738593650784ebb3c601486914b563e7569144fe596048766ea9e12280ac3bb9", size = 281208, upload-time = "2026-05-27T17:46:48.325Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/fb/bf3849ad68b1858ba50e6992863d266892d7d7db02d11c485c26cd090a1b/cuda_tile-1.4.0-cp314-cp314-manylinux2014_x86_64.whl", hash = "sha256:4b1a591c26836a550c2bf87c22d31c4716e5f83d24d255f843d9429625cca973", size = 282630, upload-time = "2026-05-27T17:45:10.789Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/df/f7f1dfa4d1ee7cc5b69e11d756be6ffec1561a5c7e3836fd0f71ca49adcf/cuda_tile-1.4.0-cp314-cp314t-manylinux2014_aarch64.whl", hash = "sha256:b3cbeffbe0fedac4936edcf00b6ba13ab5ddb74d3b7ce4a287dfc04491b5f6af", size = 283249, upload-time = "2026-05-27T17:46:12.032Z" },
+    { url = "https://files.pythonhosted.org/packages/18/c0/fee527a085fca414fc993769912eb8ba2e15ce388f3168b868706e6d4c61/cuda_tile-1.4.0-cp314-cp314t-manylinux2014_x86_64.whl", hash = "sha256:675b2afff62af5d4e72c34bc72d0be27b0933a44933b8a449f590fbded8c1107", size = 284336, upload-time = "2026-05-27T17:44:59.489Z" },
+]
+
+[[package]]
 name = "depyf"
 version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -900,6 +921,31 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/1d/65/ce7f1b70157833bf3cb851b556a37d4547ceafc158aa9b34b36782f23696/filelock-3.20.3.tar.gz", hash = "sha256:18c57ee915c7ec61cff0ecf7f0f869936c7c30191bb0cf406f1341778d0834e1", size = 19485, upload-time = "2026-01-09T17:55:05.421Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b5/36/7fb70f04bf00bc646cd5bb45aa9eddb15e19437a28b8fb2b4a5249fac770/filelock-3.20.3-py3-none-any.whl", hash = "sha256:4b0dda527ee31078689fc205ec4f1c1bf7d56cf88b6dc9426c4f230e46c2dce1", size = 16701, upload-time = "2026-01-09T17:55:04.334Z" },
+]
+
+[[package]]
+name = "flashinfer-python"
+version = "0.6.12"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "apache-tvm-ffi", marker = "sys_platform == 'linux'" },
+    { name = "click", marker = "sys_platform == 'linux'" },
+    { name = "cuda-tile", marker = "sys_platform == 'linux'" },
+    { name = "einops", marker = "sys_platform == 'linux'" },
+    { name = "ninja", marker = "sys_platform == 'linux'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and sys_platform == 'linux'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and python_full_version < '3.13' and sys_platform == 'linux'" },
+    { name = "numpy", version = "2.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13' and sys_platform == 'linux'" },
+    { name = "nvidia-ml-py", marker = "sys_platform == 'linux'" },
+    { name = "packaging", marker = "sys_platform == 'linux'" },
+    { name = "requests", marker = "sys_platform == 'linux'" },
+    { name = "tabulate", marker = "sys_platform == 'linux'" },
+    { name = "torch", marker = "sys_platform == 'linux'" },
+    { name = "tqdm", marker = "sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/61/d0/114a64319f5a804def2f307d5ed8f95e6d94a2acdacac4ed5f57525cbf46/flashinfer_python-0.6.12.tar.gz", hash = "sha256:bed67f9c46d81dd22611dfef2787998fc412b2fe2648d9e7d336861dda912694", size = 9453326, upload-time = "2026-05-29T23:45:16.466Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/85/26/3ca33edbf64906603633cb91904798e427c0ac1c55a13707f8081708f3ae/flashinfer_python-0.6.12-py3-none-any.whl", hash = "sha256:0c7a01e586b4796810d974cbf13a9c0eb2ade6a94d12e3220cf7782a1c09b8d3", size = 13985243, upload-time = "2026-05-29T23:45:13.477Z" },
 ]
 
 [[package]]
@@ -1893,6 +1939,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/6b/2b/55d980cfa2c93bd40ff4c290bf824d792bd41d2fe3487b07707559071760/numpy-2.4.1-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:e7b6b5e28bbd47b7532698e5db2fe1db693d84b58c254e4389d99a27bb9b8f6b", size = 18330053, upload-time = "2026-01-10T06:44:34.617Z" },
     { url = "https://files.pythonhosted.org/packages/33/9b/9dd6e2db8d49eb24f86acaaa5258e5f4c8ed38209a4ee9de2d1a0ca25045/numpy-2.4.1-pp311-pypy311_pp73-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:2023ef86243690c2791fd6353e5b4848eedaa88ca8a2d129f462049f6d484696", size = 14538937, upload-time = "2026-01-10T06:44:51.498Z" },
     { url = "https://files.pythonhosted.org/packages/53/87/d5bd995b0f798a37105b876350d346eea5838bd8f77ea3d7a48392f3812b/numpy-2.4.1-pp311-pypy311_pp73-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8361ea4220d763e54cff2fbe7d8c93526b744f7cd9ddab47afeff7e14e8503be", size = 16479830, upload-time = "2026-01-10T06:44:53.931Z" },
+]
+
+[[package]]
+name = "nvidia-ml-py"
+version = "13.610.43"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/b5/a8fbc356f768fa5c9cfd646668fd7d34bf55bdd1c6e20754642a64d930d4/nvidia_ml_py-13.610.43.tar.gz", hash = "sha256:65437eb73d68d0c62c931ca4d45038472faff03bd0b8729abba4b899f70d60f2", size = 52109, upload-time = "2026-06-01T18:54:08.829Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/45/caa600acfab94560807a20a64b5830d2cd3c3202b7f1328644d70b7d6bd8/nvidia_ml_py-13.610.43-py3-none-any.whl", hash = "sha256:f13c72698edef492f985cc225f14faafe68ae065a2e407f45bdf6f4b9b43fde8", size = 53163, upload-time = "2026-06-01T18:54:07.704Z" },
 ]
 
 [[package]]
@@ -3310,6 +3365,15 @@ wheels = [
 ]
 
 [[package]]
+name = "tabulate"
+version = "0.10.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/46/58/8c37dea7bbf769b20d58e7ace7e5edfe65b849442b00ffcdd56be88697c6/tabulate-0.10.0.tar.gz", hash = "sha256:e2cfde8f79420f6deeffdeda9aaec3b6bc5abce947655d17ac662b126e48a60d", size = 91754, upload-time = "2026-03-04T18:55:34.402Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl", hash = "sha256:f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3", size = 39814, upload-time = "2026-03-04T18:55:31.284Z" },
+]
+
+[[package]]
 name = "tiktoken"
 version = "0.12.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3656,6 +3720,7 @@ dependencies = [
     { name = "fastapi", extra = ["standard"], marker = "sys_platform == 'linux'" },
     { name = "fastsafetensors", marker = "sys_platform == 'linux'" },
     { name = "filelock", marker = "sys_platform == 'linux'" },
+    { name = "flashinfer-python", marker = "sys_platform == 'linux'" },
     { name = "gguf", marker = "sys_platform == 'linux'" },
     { name = "ijson", marker = "sys_platform == 'linux'" },
     { name = "lark", marker = "sys_platform == 'linux'" },
