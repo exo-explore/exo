@@ -41,6 +41,9 @@ exclude-dependencies = [
   "nvidia-cuda-tileiras",
   "nvidia-cudnn",
   "nvidia-cudnn-cu12",
+  "nvidia-cutlass-dsl",
+  "nvidia-cutlass-dsl-libs-base",
+  "nvidia-cutlass-dsl-libs-cu13",
   "nvidia-cufft",
   "nvidia-cufft-cu12",
   "nvidia-cufft-cu13",
@@ -69,6 +72,10 @@ exclude-dependencies = [
   "nvidia-nvtx-cu12",
   "nvidia-nvtx-cu13",
   "nvidia-nvvm",
+  "quack-kernels",
+  "tilelang",
+  "tokenspeed-mla",
+  "tokenspeed-triton",
 ]
 
 [tool.uv.sources]
