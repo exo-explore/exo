@@ -66,6 +66,7 @@ exclude-dependencies = [
   "nvidia-cusparse-cu13",
   "nvidia-cusparselt",
   "nvidia-cusparselt-cu12",
+  "nvidia-cusparselt-cu13",
   "nvidia-nccl",
   "nvidia-nccl-cu12",
   "nvidia-nccl-cu13",
