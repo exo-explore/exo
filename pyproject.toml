@@ -24,6 +24,7 @@ exclude-dependencies = [
   "cuda-toolkit",
   "flashinfer-cubin",
   "flashinfer-python",
+  "cuda-bindings",
   "humming-kernels",
   "nvidia-cublas",
   "nvidia-cuda-cccl",
