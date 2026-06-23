@@ -1,254 +1,84 @@
 [project]
-name = "exo"
-version = "0.3.70"
-description = "Exo"
-readme = "README.md"
-requires-python = "==3.13.*"
+name = "pytorch-system-cuda"
+version = "0.1.0"
+description = "Minimal PyTorch/vLLM environment that relies on system CUDA libraries."
+requires-python = ">=3.10,<3.15"
 dependencies = [
-  "aiofiles>=24.1.0",
-  "aiohttp>=3.12.14",
-  "types-aiofiles>=24.1.0.20250708",
-  "pydantic>=2.11.7",
-  "fastapi>=0.116.1",
-  "filelock>=3.18.0",
-  "rustworkx>=0.17.1",
-  "huggingface-hub>=1.8.0",
-  "psutil>=7.0.0",
-  "loguru>=0.7.3",
-  "exo-rs",                          # rust bindings
-  "anyio==4.11.0",
-  "tiktoken>=0.12.0",                # required for kimi k2 tokenizer
-  "hypercorn>=0.18.0",
-  "openai-harmony>=0.0.8",
-  "httpx>=0.28.1",
-  "tomlkit>=0.14.0",
-  "python-multipart>=0.0.21",
-  "msgspec>=0.19.0",
-  "zstandard>=0.23.0",
-  "transformers>=5.6.2",
-  "python-daemon>=3.1.2",
+  "vllm",
+  "torch==2.11.0",
+  "torchvision==0.26.0",
+  "torchaudio==2.11.0",
 ]
 
-[project.scripts]
-exo = "exo.main:main"
+[tool.uv]
+required-version = ">=0.8.6"
+package = false
+environments = ["sys_platform == 'linux'"]
 
-# dependencies only required for development
-[dependency-groups]
-dev = [
-  "basedpyright>=1.29.0",
-  "pyinstaller>=6.17.0",
-  "playwright>=1.52.0",
-  "pytest>=8.4.0",
-  "pytest-asyncio>=1.0.0",
-  "pytest-env",
-  "ruff>=0.11.13",
+# Hack: omit PyTorch's Python-distributed CUDA runtime wheels and rely on
+# system CUDA/cuDNN/NCCL libraries being discoverable at runtime instead.
+exclude-dependencies = [
+  "nvidia-cublas-cu12",
+  "nvidia-cublas-cu13",
+  "cuda-toolkit",
+  "nvidia-cublas",
+  "nvidia-cuda-cccl",
+  "nvidia-cuda-crt",
+  "nvidia-cuda-cupti",
+  "nvidia-cuda-cupti-cu12",
+  "nvidia-cuda-cupti-cu13",
+  "nvidia-cuda-nvcc",
+  "nvidia-cuda-nvcc-cu12",
+  "nvidia-cuda-nvcc-cu13",
+  "nvidia-cuda-nvrtc",
+  "nvidia-cuda-nvrtc-cu12",
+  "nvidia-cuda-nvrtc-cu13",
+  "nvidia-cuda-runtime",
+  "nvidia-cuda-runtime-cu12",
+  "nvidia-cuda-runtime-cu13",
+  "nvidia-cuda-tileiras",
+  "nvidia-cudnn",
+  "nvidia-cudnn-cu12",
+  "nvidia-cudnn-cu13",
+  "nvidia-cufft",
+  "nvidia-cufft-cu12",
+  "nvidia-cufft-cu13",
+  "nvidia-cufile",
+  "nvidia-cufile-cu12",
+  "nvidia-cufile-cu13",
+  "nvidia-curand",
+  "nvidia-curand-cu12",
+  "nvidia-curand-cu13",
+  "nvidia-cusolver",
+  "nvidia-cusolver-cu12",
+  "nvidia-cusolver-cu13",
+  "nvidia-cusparse",
+  "nvidia-cusparse-cu12",
+  "nvidia-cusparse-cu13",
+  "nvidia-cusparselt",
+  "nvidia-cusparselt-cu12",
+  "nvidia-cusparselt-cu13",
+  "nvidia-nccl",
+  "nvidia-nccl-cu12",
+  "nvidia-nccl-cu13",
+  "nvidia-nvjitlink",
+  "nvidia-nvjitlink-cu12",
+  "nvidia-nvjitlink-cu13",
+  "nvidia-nvshmem",
+  "nvidia-nvshmem-cu12",
+  "nvidia-nvshmem-cu13",
+  "nvidia-nvtx",
+  "nvidia-nvtx-cu12",
+  "nvidia-nvtx-cu13",
+  "nvidia-nvvm",
 ]
-
-[project.optional-dependencies]
-build = ["nanobind"]
-mlx-none = ["anyio"]
-mlx = [
-  "mlx==0.32.0",
-  "mlx-lm",
-  "mlx-vlm>=0.3.11",
-  "mflux==0.17.5",
-  "torch==2.10.0; sys_platform == 'darwin'",
-  "torch==2.10.0; sys_platform == 'linux'",
-  "torchaudio==2.10.0; sys_platform == 'darwin'",
-  "torchaudio==2.10.0; sys_platform == 'linux'",
-  "torchvision==0.25.0; sys_platform == 'darwin'",
-  "torchvision==0.25.0; sys_platform == 'linux'",
-]
-mlx-cpu = ["exo[mlx]", "mlx-cpu==0.31.2; sys_platform == 'linux'"]
-mlx-cuda12 = [
-  "exo[mlx]",
-  "mlx-cuda-12==0.32.0; sys_platform == 'linux'",
-  "nvidia-ml-py>=13.595.45",
-]
-mlx-cuda13 = [
-  "exo[mlx]",
-  "mlx-cuda-13==0.32.0; sys_platform == 'linux'",
-  "nvidia-ml-py>=13.595.45",
-]
-
-###
-# workspace configuration
-###
-
-[tool.uv.workspace]
-members = ["rust/exo_rs", "bench", "tools"]
 
 [tool.uv.sources]
-exo-rs = { workspace = true }
-mlx = [
-  { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", branch = "address-rdma-gpu-locks", marker = "sys_platform == 'darwin'" },
-  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
-  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine != 'aarch64'" },
-]
-mlx-cuda-12 = [
-  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_12-0.32.0-py3-none-manylinux_2_35_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
-  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_12-0.32.0-py3-none-manylinux_2_35_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine != 'aarch64'" },
-]
-mlx-cuda-13 = [
-  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.32.0-py3-none-manylinux_2_35_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
-  { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.32.0-py3-none-manylinux_2_35_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine != 'aarch64'" },
-]
-mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
-mflux = { git = "https://github.com/evanev7/mflux", branch = "exo2" }
-torch = [
-  { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'mlx-cpu' and extra != 'mlx-cuda13' and extra != 'mlx-cuda12'" },
-  { index = "pytorch-cu128", marker = "sys_platform == 'linux' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13' " },
-  { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'mlx-cuda13'" },
-]
-torchvision = [
-  { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'mlx-cpu' and extra != 'mlx-cuda13' and extra != 'mlx-cuda12'" },
-  { index = "pytorch-cu128", marker = "sys_platform == 'linux' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13'" },
-  { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'mlx-cuda13'" },
-]
-torchaudio = [
-  { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'mlx-cpu' and extra != 'mlx-cuda13' and extra != 'mlx-cuda12'" },
-  { index = "pytorch-cu128", marker = "sys_platform == 'linux' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13'" },
-  { index = "pytorch-cu130", marker = "sys_platform == 'linux' and extra == 'mlx-cuda13'" },
-]
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
+torchaudio = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
 explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[build-system]
-requires = ["uv_build>=0.8.9,<0.9.0"]
-build-backend = "uv_build"
-
-###
-# type-checker configuration
-###
-
-[tool.basedpyright]
-include = ["src", "bench", "tools"]
-typeCheckingMode = "strict"
-failOnWarnings = true
-
-reportAny = "error"
-reportUnknownVariableType = "error"
-reportUnknownParameterType = "error"
-reportMissingParameterType = "error"
-reportMissingTypeStubs = "error"
-reportInvalidCast = "error"
-reportUnnecessaryCast = "error"
-reportUnnecessaryTypeIgnoreComment = "error"
-
-pythonVersion = "3.13"
-pythonPlatform = "Darwin"
-
-exclude = [
-  "**/.venv",
-  "**/venv",
-  "**/__pycache__",
-  "**/exo_scripts",
-  "**/.direnv",
-  "**/rust",
-  "**/.github",
-]
-stubPath = ".typings"
-
-[[tool.basedpyright.executionEnvironments]]
-root = "src/exo/worker/engines/image"
-reportMissingModuleSource = false
-
-[[tool.basedpyright.executionEnvironments]]
-root = "src"
-
-[[tool.basedpyright.executionEnvironments]]
-root = "bench"
-extraPaths = ["tools/src"]
-
-[[tool.basedpyright.executionEnvironments]]
-root = "tools/src"
-
-
-###
-# uv configuration
-###
-
-# supported platforms for this project
-[tool.uv]
-required-version = ">=0.8.6"
-prerelease = "allow"
-environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
-override-dependencies = ["opencv-python; python_version < '0'"]
-conflicts = [
-  [
-    { extra = "mlx-cuda13" },
-    { extra = "mlx-cuda12" },
-    { extra = "mlx-cpu" },
-    { extra = "mlx-none" },
-  ],
-]
-
-[tool.uv.extra-build-dependencies]
-miniaudio = ["setuptools", "cffi", "pycparser"]
-mlx = [
-  "setuptools",
-  "typing-extensions",
-  "nanobind",
-  "pybind11",
-  "wheel",
-  "cmake",
-  "ninja",
-]
-mlx-lm = ["setuptools"]
-mflux = ["uv_build"]
-xgrammar = [
-  "nanobind",
-  "setuptools",
-  "scikit-build-core",
-  "packaging",
-  "pathspec",
-]
-rouge-score = ["setuptools"]
-sacrebleu = ["setuptools"]
-sqlitedict = ["setuptools"]
-word2number = ["setuptools"]
-vllm = [
-  "setuptools",
-  "setuptools-scm",
-  "scikit-build-core",
-  "jinja2",
-  "wheel",
-  "markupsafe",
-  "typing-extensions",
-  "torch",
-]
-fastsafetensors = ["setuptools", "pybind11"]
-torch = ["typing-extensions"]
-torchvision = ["torch"]
-torchaudio = ["torch"]
-
-###
-# ruff configuration
-###
-
-[tool.ruff]
-extend-exclude = [".typings/**", "rust/exo_rs/**", "bench/vendor/**"]
-
-[tool.ruff.lint]
-extend-select = ["I", "N", "B", "A", "PIE", "SIM"]
-
-[tool.pytest.ini_options]
-pythonpath = "."
-asyncio_mode = "auto"
-markers = ["slow: marks tests as slow (deselected by default)"]
-env = ["EXO_TESTS=1"]
-addopts = "-m 'not slow' --ignore=tests --ignore=tmp"
-filterwarnings = ["ignore:builtin type Swig:DeprecationWarning"]
