@@ -15,9 +15,9 @@ required-version = ">=0.8.6"
 package = false
 environments = ["sys_platform == 'linux'"]
 
-# Hack: omit CUDA toolkit wheels for libraries already present under
-# /usr/local/cuda, while keeping PyTorch wheel deps for libraries this host
-# does not provide system-wide: cuDNN, cuSPARSELt, NCCL, and NVSHMEM.
+# Hack: omit CUDA toolkit wheels for libraries already present system-wide,
+# while keeping PyTorch wheel deps only for libraries this host does not
+# provide system-wide.
 exclude-dependencies = [
   "nvidia-cublas-cu12",
   "nvidia-cublas-cu13",
@@ -44,6 +44,7 @@ exclude-dependencies = [
   "nvidia-cuda-tileiras",
   "nvidia-cudnn",
   "nvidia-cudnn-cu12",
+  "nvidia-cudnn-cu13",
   "nvidia-cudnn-frontend",
   "nvidia-cutlass-dsl",
   "nvidia-cutlass-dsl-libs-base",
@@ -67,11 +68,13 @@ exclude-dependencies = [
   "nvidia-cusparselt-cu12",
   "nvidia-nccl",
   "nvidia-nccl-cu12",
+  "nvidia-nccl-cu13",
   "nvidia-nvjitlink",
   "nvidia-nvjitlink-cu12",
   "nvidia-nvjitlink-cu13",
   "nvidia-nvshmem",
   "nvidia-nvshmem-cu12",
+  "nvidia-nvshmem-cu13",
   "nvidia-nvtx",
   "nvidia-nvtx-cu12",
   "nvidia-nvtx-cu13",
