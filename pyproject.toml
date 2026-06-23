@@ -15,8 +15,9 @@ required-version = ">=0.8.6"
 package = false
 environments = ["sys_platform == 'linux'"]
 
-# Hack: omit PyTorch's Python-distributed CUDA runtime wheels and rely on
-# system CUDA/cuDNN/NCCL libraries being discoverable at runtime instead.
+# Hack: omit CUDA toolkit wheels for libraries already present under
+# /usr/local/cuda, while keeping PyTorch wheel deps for libraries this host
+# does not provide system-wide: cuDNN, cuSPARSELt, NCCL, and NVSHMEM.
 exclude-dependencies = [
   "nvidia-cublas-cu12",
   "nvidia-cublas-cu13",
