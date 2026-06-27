@@ -86,6 +86,25 @@ class TestParseToolCalls:
         assert results[0].text == "<tool_call>bad content</tool_call>"
         assert results[0].finish_reason == "error"
 
+    def test_truncated_tool_call_preserves_finish_reason(self):
+        """A tool call cut off by the model's stop reason (no closing tag) is a
+        normal truncated completion, not an error: the partial text is yielded
+        with the model's real finish_reason rather than being relabeled "error"
+        (which downstream serializes as an InternalServerError chunk)."""
+        texts = ["<tool_call>", "partial cont"]
+        results = list(
+            parse_tool_calls(
+                _make_responses(texts),
+                _dummy_parser,
+                tools=None,
+            )
+        )
+
+        assert len(results) == 1
+        assert isinstance(results[0], GenerationResponse)
+        assert results[0].text == "<tool_call>partial cont"
+        assert results[0].finish_reason == "stop"
+
     def test_tool_schema_coerces_string_arguments_to_expected_types(self):
         """Tool argument values should be coerced using provided JSON schema."""
 
