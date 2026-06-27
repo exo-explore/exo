@@ -476,6 +476,12 @@ def parse_tool_calls(
             continue
 
         if response.finish_reason is not None:
+            # Generation stopped (e.g. length/stop) before the tool call's
+            # closing tag. This is a normal truncated completion, not a server
+            # failure: surface the partial tool-call text with the model's real
+            # finish_reason so clients get standard truncation semantics instead
+            # of an error chunk. Overwriting it with "error" here turned an
+            # out-of-budget tool call into an InternalServerError.
             logger.info(
                 "tool call parsing interrupted, yield partial tool call as text"
             )
@@ -483,7 +489,6 @@ def parse_tool_calls(
                 update={
                     "text": "".join(tool_call_text_parts),
                     "token": 0,
-                    "finish_reason": "error",
                 }
             )
             yield response
