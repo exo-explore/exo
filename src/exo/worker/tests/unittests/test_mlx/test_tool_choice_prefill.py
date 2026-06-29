@@ -89,5 +89,9 @@ def test_model_without_tool_marker_is_noop():
 
 
 def test_prompt_suffix_detected_when_prefill_present():
-    assert detect_tool_call_prompt_suffix("...<|im_start|>assistant\n<tool_call>", _tokenizer(_START))
-    assert not detect_tool_call_prompt_suffix("...<|im_start|>assistant\n", _tokenizer(_START))
+    assert detect_tool_call_prompt_suffix(
+        "...<|im_start|>assistant\n<tool_call>", _tokenizer(_START)
+    )
+    assert not detect_tool_call_prompt_suffix(
+        "...<|im_start|>assistant\n", _tokenizer(_START)
+    )

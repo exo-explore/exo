@@ -426,8 +426,6 @@ def parse_tool_calls(
     starts_in_tool_call: bool = False,
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
     in_tool_call = starts_in_tool_call
-    # A forced tool_choice prefill puts the start marker in the prompt, not the
-    # output, so seed it here to keep the parsed call well-formed.
     tool_call_text_parts: list[str] = (
         [tool_parser.start_parsing] if starts_in_tool_call else []
     )
