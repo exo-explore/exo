@@ -30,6 +30,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
+import pandas as pd
 from exo_tools.client import ExoClient, ExoHttpError
 from exo_tools.harness import (
     add_common_instance_args,
@@ -44,7 +45,6 @@ from exo_tools.harness import (
     wait_for_instance_gone,
     wait_for_instance_ready,
 )
-import pandas as pd
 from loguru import logger
 from transformers import AutoTokenizer
 
@@ -279,8 +279,13 @@ def run_one_completion(
     *,
     use_prefix_cache: bool = False,
     stream: bool = False,
+    content_override: str | None = None,
 ) -> tuple[dict[str, Any], int]:
-    content, pp_tokens = prompt_sizer.build(pp_hint)
+    if content_override is not None:
+        content = content_override
+        pp_tokens = prompt_sizer.count_fn(content)
+    else:
+        content, pp_tokens = prompt_sizer.build(pp_hint)
     payload: dict[str, Any] = {
         "model": model_id,
         "messages": [{"role": "user", "content": content}],
@@ -444,6 +449,17 @@ def _run_model(client: ExoClient, args: argparse.Namespace) -> dict[str, Any]:
     prompt_sizer = PromptSizer(tokenizer)
     logger.debug(f"[exo-bench] loaded tokenizer: {full_model_id} for prompt sizer")
 
+    bench_prompts: dict[int, list[str]] | None = None
+    if getattr(args, "prompts_file", None):
+        with open(args.prompts_file, encoding="utf-8") as _f:
+            _data = json.load(_f)
+        # support both list-of-prompts (new) and single-string (legacy) per key
+        bench_prompts = {
+            int(k): v if isinstance(v, list) else [v]
+            for k, v in _data["prompts"].items()
+        }
+        logger.info(f"Loaded {len(bench_prompts)} bench prompts from {args.prompts_file}")
+
     reused_instance_id: str | None = None
     if args.reuse_instance:
         existing = find_existing_instance(client, full_model_id)
@@ -566,7 +582,12 @@ def _run_model(client: ExoClient, args: argparse.Namespace) -> dict[str, Any]:
             )
             sampler.start()
 
-        def _do_one(c: ExoClient, pp: int, tg: int) -> tuple[dict[str, Any], int]:
+        def _do_one(c: ExoClient, pp: int, tg: int, repeat_idx: int = 0) -> tuple[dict[str, Any], int]:
+            override: str | None = None
+            if bench_prompts:
+                nearest = min(bench_prompts, key=lambda k: abs(k - pp))
+                pool = bench_prompts[nearest]
+                override = pool[repeat_idx % len(pool)]
             return run_one_completion(
                 c,
                 full_model_id,
@@ -575,6 +596,7 @@ def _run_model(client: ExoClient, args: argparse.Namespace) -> dict[str, Any]:
                 prompt_sizer,
                 use_prefix_cache=args.use_prefix_cache,
                 stream=args.stream,
+                content_override=override,
             )
 
         try:
@@ -598,7 +620,7 @@ def _run_model(client: ExoClient, args: argparse.Namespace) -> dict[str, Any]:
                         if concurrency <= 1:
                             try:
                                 inf_t0 = time.monotonic()
-                                row, actual_pp_tokens = _do_one(client, pp, tg)
+                                row, actual_pp_tokens = _do_one(client, pp, tg, r)
                                 inference_windows.append((inf_t0, time.monotonic()))
                             except Exception as e:
                                 logger.error(e)
@@ -625,7 +647,13 @@ def _run_model(client: ExoClient, args: argparse.Namespace) -> dict[str, Any]:
                             runs.append(row)
                             all_rows.append(row)
                         else:
-                            content, actual_pp = prompt_sizer.build(pp)
+                            if bench_prompts:
+                                nearest = min(bench_prompts, key=lambda k: abs(k - pp))
+                                pool = bench_prompts[nearest]
+                                content = pool[r % len(pool)]
+                                actual_pp = prompt_sizer.count_fn(content)
+                            else:
+                                content, actual_pp = prompt_sizer.build(pp)
                             pre_built_payload: dict[str, Any] = {
                                 "model": full_model_id,
                                 "messages": [{"role": "user", "content": content}],
@@ -892,6 +920,11 @@ def main() -> int:
         type=float,
         default=1.0,
         help="System metrics polling interval in seconds (default: 1.0).",
+    )
+    ap.add_argument(
+        "--prompts-file",
+        default=None,
+        help="JSON file from gen_bench_prompts.py with meaningful prompts. When provided, replaces the default 'a ' atom repetition with realistic sentences.",
     )
     ap.add_argument(
         "--use-prefix-cache",

@@ -34,6 +34,7 @@ hosts_*.json
 
 # bench files
 bench/**/*.json
+bench/**/*.xlsx
 
 # tmp
 tmp/models

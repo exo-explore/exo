@@ -16,6 +16,7 @@ dependencies = [
   "lm-eval[api,math]>=0.4.0",
   "human-eval>=1.0.3",
   "numpy>=1.24.0",
+  "openpyxl>=3.1.0",
 ]
 
 [build-system]

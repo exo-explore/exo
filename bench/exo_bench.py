@@ -460,8 +460,8 @@ def main() -> int:
     )
     ap.add_argument(
         "--json-out",
-        default="bench/results.json",
-        help="Write raw per-run results JSON to this path.",
+        default=None,
+        help="Write raw per-run results JSON to this path (default: results_{model}_{datetime}.json).",
     )
     ap.add_argument("--stdout", action="store_true", help="Write results to stdout")
     ap.add_argument(
@@ -924,10 +924,11 @@ def main() -> int:
 
     if args.stdout:
         json.dump(output, sys.stdout, indent=2, ensure_ascii=False)
-    elif args.json_out:
-        with open(args.json_out, "w", encoding="utf-8") as f:
+    else:
+        json_out = args.json_out or f"results_{args.model.replace('/', '_')}_{time.strftime('%Y%m%d_%H%M%S')}.json"
+        with open(json_out, "w", encoding="utf-8") as f:
             json.dump(output, f, indent=2, ensure_ascii=False)
-        logger.debug(f"\nWrote results JSON: {args.json_out}")
+        logger.debug(f"\nWrote results JSON: {json_out}")
 
     return 0
 
