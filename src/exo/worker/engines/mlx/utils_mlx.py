@@ -538,6 +538,35 @@ def consolidate_system_messages(
     return formatted_messages
 
 
+def _forced_tool_call_prefill(
+    tokenizer: TokenizerWrapper,
+    task_params: TextGenerationTaskParams,
+) -> str | None:
+    """Assistant prefill that forces a tool call when tool_choice requires one.
+
+    Returns the tool-call start marker (optionally seeded with the chosen
+    function name) so the model is forced to emit that call, or None when
+    tool_choice leaves the model free or the template has no inferable parser.
+    """
+    choice = task_params.tool_choice
+    if not task_params.tools or choice is None or choice in ("auto", "none"):
+        return None
+    chat_template = getattr(tokenizer, "chat_template", None)
+    if not isinstance(chat_template, str):
+        return None
+    from exo.worker.runner.llm_inference.tool_parsers import infer_tool_parser
+
+    parser = infer_tool_parser(chat_template)
+    if parser is None:
+        return None
+    if isinstance(choice, dict):
+        function = choice.get("function")
+        name = function.get("name") if isinstance(function, dict) else None
+        if isinstance(name, str) and name:
+            return f'{parser.start_parsing}\n{{"name": {json.dumps(name)}, "arguments": '
+    return parser.start_parsing
+
+
 def render_chat_template(
     tokenizer: TokenizerWrapper,
     messages: list[dict[str, Any]],
@@ -559,6 +588,9 @@ def render_chat_template(
     if formatted_messages and formatted_messages[-1].get("role") == "assistant":
         partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
         formatted_messages = formatted_messages[:-1]
+
+    if not partial_assistant_content:
+        partial_assistant_content = _forced_tool_call_prefill(tokenizer, task_params)
 
     if _needs_dsml_encoding(task_params):
         from exo.worker.engines.mlx.vendor.dsml_encoding import encode_messages

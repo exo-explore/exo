@@ -162,6 +162,7 @@ async def chat_request_to_text_generation(
         seed=request.seed,
         stream=request.stream,
         tools=request.tools,
+        tool_choice=request.tool_choice,
         reasoning_effort=resolved_effort,
         enable_thinking=resolved_thinking,
         chat_template_messages=chat_template_messages

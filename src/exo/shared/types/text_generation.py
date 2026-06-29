@@ -114,6 +114,7 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     top_p: float | None = None
     stream: bool = False
     tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
     bench: bool = False
     use_prefix_cache: bool = False
     top_k: int | None = None
