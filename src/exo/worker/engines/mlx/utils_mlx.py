@@ -538,6 +538,26 @@ def consolidate_system_messages(
     return formatted_messages
 
 
+def _forced_tool_call_prefill(
+    tokenizer: TokenizerWrapper,
+    task_params: TextGenerationTaskParams,
+) -> str | None:
+    """Assistant prefill that forces a tool call when tool_choice requires one.
+
+    Returns the model's tool-call start marker so the model is forced to
+    continue with a tool call in its own format, or None when tool_choice
+    leaves the model free or the model has no tool-call marker. The parser is
+    seeded to start inside the call via detect_tool_call_prompt_suffix.
+    """
+    choice = task_params.tool_choice
+    if not task_params.tools or choice is None or choice in ("auto", "none"):
+        return None
+    start = getattr(tokenizer, "tool_call_start", None)
+    if not isinstance(start, str) or not start:
+        return None
+    return start
+
+
 def render_chat_template(
     tokenizer: TokenizerWrapper,
     messages: list[dict[str, Any]],
@@ -559,6 +579,9 @@ def render_chat_template(
     if formatted_messages and formatted_messages[-1].get("role") == "assistant":
         partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
         formatted_messages = formatted_messages[:-1]
+
+    if not partial_assistant_content:
+        partial_assistant_content = _forced_tool_call_prefill(tokenizer, task_params)
 
     if _needs_dsml_encoding(task_params):
         from exo.worker.engines.mlx.vendor.dsml_encoding import encode_messages
@@ -712,6 +735,16 @@ def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> b
     think_token = tokenizer.think_start
 
     return think_token is not None and prompt.rstrip().endswith(think_token)
+
+
+def detect_tool_call_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> bool:
+    """
+    Detect if the prompt ends with a tool-call opening tag (a forced
+    tool_choice prefill) so the parser starts inside the tool call.
+    """
+    start = getattr(tokenizer, "tool_call_start", None)
+
+    return isinstance(start, str) and bool(start) and prompt.rstrip().endswith(start)
 
 
 def fix_unmatched_think_end_tokens(
