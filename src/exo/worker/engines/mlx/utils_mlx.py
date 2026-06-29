@@ -544,27 +544,18 @@ def _forced_tool_call_prefill(
 ) -> str | None:
     """Assistant prefill that forces a tool call when tool_choice requires one.
 
-    Returns the tool-call start marker (optionally seeded with the chosen
-    function name) so the model is forced to emit that call, or None when
-    tool_choice leaves the model free or the template has no inferable parser.
+    Returns the model's tool-call start marker so the model is forced to
+    continue with a tool call in its own format, or None when tool_choice
+    leaves the model free or the model has no tool-call marker. The parser is
+    seeded to start inside the call via detect_tool_call_prompt_suffix.
     """
     choice = task_params.tool_choice
     if not task_params.tools or choice is None or choice in ("auto", "none"):
         return None
-    chat_template = getattr(tokenizer, "chat_template", None)
-    if not isinstance(chat_template, str):
+    start = getattr(tokenizer, "tool_call_start", None)
+    if not isinstance(start, str) or not start:
         return None
-    from exo.worker.runner.llm_inference.tool_parsers import infer_tool_parser
-
-    parser = infer_tool_parser(chat_template)
-    if parser is None:
-        return None
-    if isinstance(choice, dict):
-        function = choice.get("function")
-        name = function.get("name") if isinstance(function, dict) else None
-        if isinstance(name, str) and name:
-            return f'{parser.start_parsing}\n{{"name": {json.dumps(name)}, "arguments": '
-    return parser.start_parsing
+    return start
 
 
 def render_chat_template(
@@ -744,6 +735,16 @@ def detect_thinking_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> b
     think_token = tokenizer.think_start
 
     return think_token is not None and prompt.rstrip().endswith(think_token)
+
+
+def detect_tool_call_prompt_suffix(prompt: str, tokenizer: TokenizerWrapper) -> bool:
+    """
+    Detect if the prompt ends with a tool-call opening tag (a forced
+    tool_choice prefill) so the parser starts inside the tool call.
+    """
+    start = getattr(tokenizer, "tool_call_start", None)
+
+    return isinstance(start, str) and bool(start) and prompt.rstrip().endswith(start)
 
 
 def fix_unmatched_think_end_tokens(

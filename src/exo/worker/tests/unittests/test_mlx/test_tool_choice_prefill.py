@@ -12,10 +12,12 @@ from exo.shared.types.text_generation import (
     InputMessageContent,
     TextGenerationTaskParams,
 )
-from exo.worker.engines.mlx.utils_mlx import _forced_tool_call_prefill
+from exo.worker.engines.mlx.utils_mlx import (
+    _forced_tool_call_prefill,
+    detect_tool_call_prompt_suffix,
+)
 
-# Minimal fragment that infer_tool_parser recognizes as the Hermes/Qwen format.
-_TEMPLATE = "{{ '<tool_call>' }}{{ tool_call.name }}{{ '</tool_call>' }}"
+_START = "<tool_call>"
 _TOOLS = [{"type": "function", "function": {"name": "bash", "parameters": {}}}]
 
 
@@ -28,32 +30,32 @@ def _params(*, tools=None, tool_choice=None):
     )
 
 
-def _tokenizer(template):
-    return SimpleNamespace(chat_template=template)
+def _tokenizer(tool_call_start):
+    return SimpleNamespace(tool_call_start=tool_call_start)
 
 
-def test_named_function_seeds_the_call():
+def test_named_function_forces_the_start_marker():
     prefill = _forced_tool_call_prefill(
-        _tokenizer(_TEMPLATE),
+        _tokenizer(_START),
         _params(
             tools=_TOOLS,
             tool_choice={"type": "function", "function": {"name": "bash"}},
         ),
     )
-    assert prefill == '<tool_call>\n{"name": "bash", "arguments": '
+    assert prefill == _START
 
 
-def test_required_forces_some_call():
+def test_required_forces_the_start_marker():
     prefill = _forced_tool_call_prefill(
-        _tokenizer(_TEMPLATE), _params(tools=_TOOLS, tool_choice="required")
+        _tokenizer(_START), _params(tools=_TOOLS, tool_choice="required")
     )
-    assert prefill == "<tool_call>"
+    assert prefill == _START
 
 
 def test_auto_leaves_the_model_free():
     assert (
         _forced_tool_call_prefill(
-            _tokenizer(_TEMPLATE), _params(tools=_TOOLS, tool_choice="auto")
+            _tokenizer(_START), _params(tools=_TOOLS, tool_choice="auto")
         )
         is None
     )
@@ -62,7 +64,7 @@ def test_auto_leaves_the_model_free():
 def test_none_choice_is_noop():
     assert (
         _forced_tool_call_prefill(
-            _tokenizer(_TEMPLATE), _params(tools=_TOOLS, tool_choice=None)
+            _tokenizer(_START), _params(tools=_TOOLS, tool_choice=None)
         )
         is None
     )
@@ -71,17 +73,21 @@ def test_none_choice_is_noop():
 def test_no_tools_is_noop():
     assert (
         _forced_tool_call_prefill(
-            _tokenizer(_TEMPLATE), _params(tools=None, tool_choice="required")
+            _tokenizer(_START), _params(tools=None, tool_choice="required")
         )
         is None
     )
 
 
-def test_uninferable_template_is_noop():
+def test_model_without_tool_marker_is_noop():
     assert (
         _forced_tool_call_prefill(
-            _tokenizer("no tool markers here"),
-            _params(tools=_TOOLS, tool_choice="required"),
+            _tokenizer(None), _params(tools=_TOOLS, tool_choice="required")
         )
         is None
     )
+
+
+def test_prompt_suffix_detected_when_prefill_present():
+    assert detect_tool_call_prompt_suffix("...<|im_start|>assistant\n<tool_call>", _tokenizer(_START))
+    assert not detect_tool_call_prompt_suffix("...<|im_start|>assistant\n", _tokenizer(_START))

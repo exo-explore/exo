@@ -26,6 +26,7 @@ from exo.shared.types.worker.runner_response import GenerationResponse, ToolCall
 from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
     detect_thinking_prompt_suffix,
+    detect_tool_call_prompt_suffix,
 )
 from exo.worker.engines.mlx.vendor.dsml_encoding import parse_dsml_output
 from exo.worker.runner.bootstrap import logger
@@ -106,7 +107,12 @@ def apply_all_parsers(
             )
 
         if tool_parser:
-            generator = parse_tool_calls(generator, tool_parser, tools)
+            generator = parse_tool_calls(
+                generator,
+                tool_parser,
+                tools,
+                starts_in_tool_call=detect_tool_call_prompt_suffix(prompt, tokenizer),
+            )
 
     generator = count_reasoning_tokens(generator)
 
@@ -417,9 +423,14 @@ def parse_tool_calls(
     responses: Generator[GenerationResponse | None],
     tool_parser: ToolParser,
     tools: list[dict[str, Any]] | None,
+    starts_in_tool_call: bool = False,
 ) -> Generator[GenerationResponse | ToolCallResponse | None]:
-    in_tool_call = False
-    tool_call_text_parts: list[str] = []
+    in_tool_call = starts_in_tool_call
+    # A forced tool_choice prefill puts the start marker in the prompt, not the
+    # output, so seed it here to keep the parsed call well-formed.
+    tool_call_text_parts: list[str] = (
+        [tool_parser.start_parsing] if starts_in_tool_call else []
+    )
     accumulated_tool_calls: list[ToolCallItem] = []
 
     for response in responses:
