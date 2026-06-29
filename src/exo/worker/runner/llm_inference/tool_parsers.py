@@ -3,6 +3,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from loguru import logger
+
 from exo.api.types import ToolCallItem
 
 
@@ -193,10 +195,22 @@ def make_mlx_parser(
             text = text.removeprefix(tool_call_start)
             text = text.removesuffix(tool_call_end)
             parsed = tool_parser(text)
-            if isinstance(parsed, list):
-                return [ToolCallItem.model_validate(_flatten(p)) for p in parsed]
-            else:
-                return [ToolCallItem.model_validate(_flatten(parsed))]
+            raw_calls = parsed if isinstance(parsed, list) else [parsed]
+            items: list[ToolCallItem] = []
+            for call in raw_calls:
+                if _has_residual_markup(call):
+                    # The upstream parser hit malformed/partial markup and fell
+                    # back to a lenient path that left tool-call protocol
+                    # fragments (e.g. <arg_key> / <arg_value>) embedded in the
+                    # call name or arguments. Dispatching it would forward
+                    # corrupted arguments downstream, so drop it and let the
+                    # model regenerate the call.
+                    logger.warning(
+                        f"Dropping tool call with residual markup (parser={tool_call_start!r})"
+                    )
+                    continue
+                items.append(ToolCallItem.model_validate(_flatten(call)))
+            return items or None
 
         except Exception:
             return None
@@ -227,6 +241,49 @@ def _flatten(p: dict[str, Any]) -> dict[str, str]:
         k: json.dumps(v) if isinstance(v, (dict, list)) else str(v)  # pyright: ignore[reportAny]
         for k, v in p.items()  # pyright: ignore[reportAny]
     }
+
+
+# GLM-style argument delimiters that the GLM format parser consumes during a
+# clean parse and so must never survive into a parsed call's name or arguments.
+# When the parser meets malformed or partial markup it can fall back to a
+# lenient path that leaves these fragments embedded in argument keys or values
+# (observed: a key like "file<arg_key" and a value like
+# "page</arg_key><arg_value>5"); detecting them lets the caller drop the
+# corrupted call instead of forwarding garbage arguments downstream. Kept
+# narrow to the arg_key/arg_value family so other formats' legitimate
+# delimiters (e.g. qwen3_coder's <function=>/<parameter=>) are never flagged.
+_MARKUP_FRAGMENTS: tuple[str, ...] = (
+    "<arg_key",
+    "</arg_key>",
+    "<arg_value",
+    "</arg_value>",
+)
+
+
+def _contains_markup(text: str) -> bool:
+    return any(fragment in text for fragment in _MARKUP_FRAGMENTS)
+
+
+def _value_has_markup(value: Any) -> bool:  # pyright: ignore[reportAny]
+    if isinstance(value, dict):
+        return any(
+            (isinstance(k, str) and _contains_markup(k)) or _value_has_markup(v)  # pyright: ignore[reportAny]
+            for k, v in value.items()  # pyright: ignore[reportAny]
+        )
+    if isinstance(value, list):
+        return any(_value_has_markup(item) for item in value)  # pyright: ignore[reportAny]
+    if isinstance(value, str):
+        return _contains_markup(value)
+    return False
+
+
+def _has_residual_markup(parsed_call: dict[str, Any]) -> bool:
+    if not isinstance(parsed_call, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
+        return False
+    name = parsed_call.get("name")  # pyright: ignore[reportAny]
+    if isinstance(name, str) and _contains_markup(name):
+        return True
+    return _value_has_markup(parsed_call.get("arguments"))
 
 
 def make_json_parser() -> ToolParser:
