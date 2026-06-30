@@ -35,8 +35,12 @@ from exo.worker.engines.mlx.vendor.dsml_encoding import parse_dsml_output
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.tool_parsers import ToolParser
 
-_GPT_OSS_VOCAB_URL = "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"
-_GPT_OSS_VOCAB_SHA256 = "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d"
+_GPT_OSS_VOCAB_URL = (
+    "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"
+)
+_GPT_OSS_VOCAB_SHA256 = (
+    "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d"
+)
 
 
 def _ensure_gpt_oss_vocab_cached() -> None:
@@ -47,7 +51,10 @@ def _ensure_gpt_oss_vocab_cached() -> None:
     Python's urllib as a fallback to pre-populate the tiktoken-rs cache so that
     the Rust library can load from disk instead.
     """
-    cache_dir = os.environ.get("TIKTOKEN_RS_CACHE_DIR", os.path.join(tempfile.gettempdir(), "tiktoken-rs-cache"))
+    cache_dir = os.environ.get(
+        "TIKTOKEN_RS_CACHE_DIR",
+        os.path.join(tempfile.gettempdir(), "tiktoken-rs-cache"),
+    )
     # tiktoken-rs keys cached files by the SHA-1 of the download URL
     cache_key = hashlib.sha1(_GPT_OSS_VOCAB_URL.encode()).hexdigest()
     cache_path = os.path.join(cache_dir, cache_key)
@@ -62,7 +69,9 @@ def _ensure_gpt_oss_vocab_cached() -> None:
             digest = hashlib.sha256(f.read()).hexdigest()
         if digest != _GPT_OSS_VOCAB_SHA256:
             os.remove(tmp_path)
-            raise RuntimeError(f"SHA-256 mismatch for GPT-OSS vocab: expected {_GPT_OSS_VOCAB_SHA256}, got {digest}")
+            raise RuntimeError(
+                f"SHA-256 mismatch for GPT-OSS vocab: expected {_GPT_OSS_VOCAB_SHA256}, got {digest}"
+            )
         os.replace(tmp_path, cache_path)
         logger.info("GPT-OSS vocab file cached successfully")
     except Exception:
