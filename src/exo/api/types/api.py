@@ -241,11 +241,11 @@ class ChatCompletionRequest(BaseModel):
     tools: list[dict[str, Any]] | None = None
     reasoning_effort: ReasoningEffort | None = None
     enable_thinking: bool | None = None
-    # When true, run prefill+decode normally but never read from or write to the
-    # shared KV prefix cache: a fresh per-request cache is used and discarded.
-    # Useful for one-off or throwaway requests that should not evict cached
-    # prefixes or leave a cache entry behind.
-    ephemeral: bool | None = None
+    # Whether this request may use the shared KV prefix cache. Defaults to True.
+    # Set to False to run a full prefill+decode on a fresh per-request cache that
+    # is discarded afterwards, for one-off or throwaway requests that should not
+    # evict other clients' cached prefixes or leave a cache entry behind.
+    use_prefix_cache: bool = True
     min_p: float | None = None
     repetition_penalty: float | None = None
     repetition_context_size: int | None = None

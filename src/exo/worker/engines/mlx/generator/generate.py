@@ -572,11 +572,11 @@ def mlx_generate(
         all_prompt_tokens = vision.prompt_tokens
     media_regions: list[MediaRegion] = vision.media_regions if vision else []
 
-    # Skip the prefix cache for benchmarks, and for ephemeral requests that must
-    # leave no cache trace. Nulling it here makes both the read below and the
-    # post-generation store a no-op.
+    # Skip the prefix cache when the request opts out (use_prefix_cache=False),
+    # e.g. benchmarks or one-off requests that must leave no cache trace. Nulling
+    # it here makes both the read below and the post-generation store a no-op.
     is_bench = task.bench
-    if (is_bench and not task.use_prefix_cache) or task.ephemeral:
+    if not task.use_prefix_cache:
         kv_prefix_cache = None
 
     # Use prefix cache if available, otherwise create fresh cache

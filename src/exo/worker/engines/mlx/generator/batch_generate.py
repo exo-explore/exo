@@ -161,11 +161,7 @@ class ExoBatchGenerator:
         is_exact_hit = False
         prompt_tokens = all_prompt_tokens
 
-        if (
-            self.kv_prefix_cache is not None
-            and (not is_bench or task_params.use_prefix_cache)
-            and not task_params.ephemeral
-        ):
+        if self.kv_prefix_cache is not None and task_params.use_prefix_cache:
             cache, remaining_tokens, matched_index, is_exact_hit = (
                 self.kv_prefix_cache.get_kv_cache(
                     self.model, all_prompt_tokens, media_regions=media_regions
@@ -266,7 +262,7 @@ class ExoBatchGenerator:
                 c.values = c._trim(trim_size, c.values)
                 c._idx = c.max_size
 
-        if (not is_bench or task_params.use_prefix_cache) and not task_params.ephemeral:
+        if task_params.use_prefix_cache:
             min_prefix_hit_length = max(
                 1000, system_prompt_token_count(task_params, self.tokenizer)
             )
