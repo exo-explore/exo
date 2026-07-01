@@ -195,6 +195,14 @@ This starts the exo dashboard and API at http://localhost:52415/
 
 **Configuration Options:**
 
+- `--api-host` / `--api-port`: Set the host and port for the HTTP API. These can also be set in `~/.config/exo/config.toml` on Linux or `~/.exo/config.toml` on macOS:
+
+  ```toml
+  [api]
+  host = "127.0.0.1"
+  port = 52415
+  ```
+
 - `--no-worker`: Run exo without the worker component. Useful for coordinator-only nodes that handle networking and orchestration but don't execute inference tasks. This is helpful for machines without sufficient GPU resources but with good network connectivity.
 
   ```bash
