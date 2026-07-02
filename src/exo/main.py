@@ -5,14 +5,14 @@ import resource
 import signal
 import sys
 from dataclasses import dataclass, field
-from typing import Self
+from typing import Self, cast
 
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
 from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
 from exo_rs import Pidfile, PidfileError
 from loguru import logger
-from pydantic import PositiveInt
+from pydantic import Field
 
 import exo.routing.topics as topics
 from exo import __version__
@@ -22,6 +22,7 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_zid
+from exo.shared.config import ApiConfig, NodeConfig
 from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG, EXO_PID_FILE
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
@@ -92,7 +93,8 @@ class Node:
         if args.spawn_api:
             api = API(
                 node_id,
-                port=args.api_port,
+                host=args.api.host,
+                port=args.api.port,
                 event_receiver=event_router.receiver(),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
@@ -108,7 +110,7 @@ class Node:
                 event_sender=event_router.sender(),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
-                api_port=args.api_port,
+                api_port=args.api.port,
             )
         else:
             worker = None
@@ -149,7 +151,7 @@ class Node:
             api,
             node_id,
             args.offline,
-            args.api_port,
+            args.api.port,
         )
 
     async def run(self):
@@ -381,7 +383,7 @@ class Args(FrozenModel):
     verbosity: int = 0
     force_master: bool = False
     spawn_api: bool = False
-    api_port: PositiveInt = 52415
+    api: ApiConfig = Field(default_factory=ApiConfig)
     tb_only: bool = False
     no_worker: bool = False
     no_downloads: bool = False
@@ -396,6 +398,7 @@ class Args(FrozenModel):
 
     @classmethod
     def parse(cls) -> Self:
+        config = NodeConfig.load()
         parser = argparse.ArgumentParser(prog="EXO")
         default_verbosity = 0
         parser.add_argument(
@@ -425,10 +428,18 @@ class Args(FrozenModel):
             dest="spawn_api",
         )
         parser.add_argument(
+            "--api-host",
+            type=str,
+            dest="api_host",
+            default=config.api.host,
+            help="HTTP API host to bind.",
+        )
+        parser.add_argument(
             "--api-port",
             type=int,
             dest="api_port",
-            default=52415,
+            default=config.api.port,
+            help="HTTP API port.",
         )
         parser.add_argument(
             "--no-worker",
@@ -500,5 +511,12 @@ class Args(FrozenModel):
             help="Force MLX FAST_SYNCH off",
         )
 
-        args = parser.parse_args()
-        return cls(**vars(args))  # pyright: ignore[reportAny] - We are intentionally validating here, we can't do it statically
+        parsed_args = cast("dict[str, object]", vars(parser.parse_args()))
+        api_host_value = parsed_args.pop("api_host")
+        api_port_value = parsed_args.pop("api_port")
+        if not isinstance(api_host_value, str):
+            raise TypeError("api_host must be a string")
+        if not isinstance(api_port_value, int):
+            raise TypeError("api_port must be an integer")
+        parsed_args["api"] = ApiConfig(host=api_host_value, port=api_port_value)
+        return cls.model_validate(parsed_args)
