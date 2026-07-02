@@ -1,4 +1,5 @@
 import itertools
+import os
 import time
 from collections import deque
 from collections.abc import Generator, Iterator
@@ -70,9 +71,18 @@ EXO_RUNNER_MUST_TIMEOUT = "EXO RUNNER MUST TIMEOUT"
 
 
 def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
-    """Check for debug prompt triggers in the input."""
+    """Check for debug prompt triggers in the input.
+
+    Armed only when EXO_DEBUG_PROMPT_TRIGGERS=1: scanning every user prompt for
+    these magic strings is a denial-of-service footgun in normal operation — any
+    long prompt that happens to CONTAIN exo's own source (e.g. a coding-agent
+    session about this repo, or a source-padded benchmark context) would kill
+    the runner. Observed live at ~370k-token depth.
+    """
     from exo.worker.engines.mlx.utils_mlx import mlx_force_oom
 
+    if os.environ.get("EXO_DEBUG_PROMPT_TRIGGERS") != "1":
+        return
     if len(task_params.input) == 0:
         return
     prompt = task_params.input[0].content
