@@ -296,15 +296,27 @@ def get_shard_assignments(
 def get_mlx_jaccl_devices_matrix(
     selected_cycle: list[NodeId],
     cycle_digraph: Topology,
-) -> list[list[str | None]]:
+) -> list[list[list[str] | None]]:
     """Build connectivity matrix mapping device i to device j via RDMA interface names.
 
-    The matrix element [i][j] contains the interface name on device i that connects
-    to device j, or None if no connection exists or no interface name is found.
-    Diagonal elements are always None.
+    The matrix element [i][j] contains the list of interface names on device i that
+    connect to device j, or None if no connection exists. Diagonal elements are always
+    None.
+
+    Multiple parallel RDMA links between the same pair are returned as a list so the
+    JACCL backend can bond them. The backend's ring path stripes across up to
+    RING_MAX_CONNS (=4) wires per direction; extra links beyond that are dropped here
+    to stay within the backend's limit. Note the mesh path only consumes the first
+    interface per pair, so bonding is effective for ring/tensor-parallel workloads.
+
+    The JACCL ring validator requires every ring edge to carry the same number of
+    connections, so the counts are normalised down to the minimum across all pairs to
+    avoid the backend rejecting an asymmetric matrix.
     """
     num_nodes = len(selected_cycle)
-    matrix: list[list[str | None]] = [
+    # First pass: collect every RDMA interface per pair (order is stable: insertion
+    # order from get_all_connections_between).
+    interfaces_per_pair: list[list[list[str] | None]] = [
         [None for _ in range(num_nodes)] for _ in range(num_nodes)
     ]
 
@@ -313,14 +325,35 @@ def get_mlx_jaccl_devices_matrix(
             if i == j:
                 continue
 
+            names: list[str] = []
             for conn in cycle_digraph.get_all_connections_between(node_i, node_j):
                 if isinstance(conn, RDMAConnection):
-                    matrix[i][j] = conn.source_rdma_iface
-                    break
-            else:
+                    names.append(conn.source_rdma_iface)
+
+            if not names:
                 raise ValueError(
                     "Current jaccl backend requires all-to-all RDMA connections"
                 )
+            interfaces_per_pair[i][j] = names
+
+    # Second pass: normalise to a uniform connection count across all pairs. The
+    # backend's ring validator rejects matrices where ring edges have differing
+    # numbers of connections, and bonding only helps when it's consistent, so trim
+    # every pair down to the smallest count observed anywhere in the matrix.
+    non_null_counts = [
+        len(names) for row in interfaces_per_pair for names in row if names is not None
+    ]
+    target_count = min(non_null_counts) if non_null_counts else 0
+
+    matrix: list[list[list[str] | None]] = [
+        [None for _ in range(num_nodes)] for _ in range(num_nodes)
+    ]
+    for i in range(num_nodes):
+        for j in range(num_nodes):
+            if i == j:
+                continue
+            assert interfaces_per_pair[i][j] is not None
+            matrix[i][j] = interfaces_per_pair[i][j][:target_count]  # type: ignore[slice]
 
     return matrix
 
