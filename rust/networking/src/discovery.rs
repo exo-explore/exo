@@ -249,13 +249,15 @@ impl Discovery {
 
         let addrs = self.ifaces.lock().clone();
         debug!("announcing Hello({nonce:?}) to {addrs:?}");
-        // rev so .remove() doesn't break things
-        for (i, addr) in addrs.into_iter().enumerate().rev() {
+        for addr in addrs.into_iter().rev() {
             match self.sock.send_to(&buf, addr).await {
                 Ok(bytes) => trace!("sent {bytes} to {addr}"),
                 Err(e) if e.kind() == io::ErrorKind::HostUnreachable => {
-                    debug!("disabling discovery address {addr}: {e}");
-                    _ = self.ifaces.lock().swap_remove(i);
+                    // EHOSTUNREACH is transient on macOS (observed right after boot /
+                    // wake / link changes). Interfaces that actually disappear are
+                    // already pruned by the netwatcher callback via diff.removed, so
+                    // don't permanently drop the address here.
+                    debug!("transient host unreachable for {addr}: {e}");
                 }
                 Err(e) => debug!("failed to reach {addr}: {e}"),
             }
