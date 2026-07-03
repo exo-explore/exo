@@ -1056,3 +1056,57 @@ def test_mlx_jaccl_rejects_cuda_only_cycle(model_card: ModelCard):
             node_backends,
             node_rdma_ctl=node_rdma_ctl,
         )
+
+
+def test_placement_assigns_a_backend_to_every_shard(model_card: ModelCard):
+    topology = Topology()
+    node_metal = NodeId()
+    node_cuda = NodeId()
+    node_cpu = NodeId()
+    for n in (node_metal, node_cuda, node_cpu):
+        topology.add_node(n)
+
+    eth = create_socket_connection(1)
+    for src, dst in [
+        (node_metal, node_cuda),
+        (node_cuda, node_cpu),
+        (node_cpu, node_metal),
+        (node_metal, node_cpu),
+        (node_cpu, node_cuda),
+        (node_cuda, node_metal),
+    ]:
+        topology.add_connection(Connection(source=src, sink=dst, edge=eth))
+
+    nodes = (node_metal, node_cuda, node_cpu)
+    node_memory = {n: create_node_memory(500 * 1024) for n in nodes}
+    node_network = {n: create_node_network() for n in nodes}
+    node_backends = {
+        node_metal: [Backend.MlxMetal],
+        node_cuda: [Backend.MlxCuda],
+        node_cpu: [Backend.MlxCpu],
+    }
+
+    cic = place_instance_command(
+        model_card.model_copy(
+            update={
+                "backends": [Backend.MlxMetal, Backend.MlxCuda, Backend.MlxCpu],
+                "n_layers": 12,
+                "storage_size": Memory.from_kb(1500),
+            }
+        )
+    )
+
+    placements = place_instance(
+        cic, topology, {}, node_memory, node_network, node_backends
+    )
+
+    (instance,) = placements.values()
+    expected_backends = {
+        node_metal: Backend.MlxMetal,
+        node_cuda: Backend.MlxCuda,
+        node_cpu: Backend.MlxCpu,
+    }
+    for node_id, expected_backend in expected_backends.items():
+        runner_id = instance.shard_assignments.node_to_runner[node_id]
+        shard = instance.shard_assignments.runner_to_shard[runner_id]
+        assert shard.backend == expected_backend

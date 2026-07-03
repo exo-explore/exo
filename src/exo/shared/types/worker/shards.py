@@ -4,6 +4,7 @@ from typing import TypeAlias, final
 from pydantic import Field
 
 from exo.shared.models.model_cards import ModelCard
+from exo.shared.types.backends import Backend
 from exo.utils.pydantic_ext import TaggedModel
 
 
@@ -21,6 +22,9 @@ class BaseShardMetadata(TaggedModel):
     model_card: ModelCard
     device_rank: int
     world_size: int
+
+    backend: Backend | None = None
+    """The compute backend this shard should run on; None preserves the engine default."""
 
     # Error handling; equivalent to monkey-patch, but we can't monkey-patch runner.py
     # This is kinda annoying because it allocates memory in the ShardMetadata object. Can be rethought after Shanghai.

@@ -225,6 +225,7 @@ async def test_master():
                     ),
                     device_rank=0,
                     world_size=1,
+                    backend=Backend.MlxMetal,
                 )
             },
             node_to_runner={node_id: runner_id},

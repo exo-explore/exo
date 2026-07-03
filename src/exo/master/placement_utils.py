@@ -1,9 +1,10 @@
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Mapping, Sequence
 
 from loguru import logger
 
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology
+from exo.shared.types.backends import Backend
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
@@ -459,3 +460,32 @@ def get_mlx_jaccl_coordinators(
         n: f"{get_ip_for_node(n)}:{coordinator_port}"
         for n in cycle_digraph.list_nodes()
     }
+
+
+def assign_shard_backends(
+    shard_assignments: ShardAssignments,
+    node_backends: Mapping[NodeId, list[Backend]],
+    preferred_backends: Sequence[Backend],
+) -> ShardAssignments:
+    """Pick, for every runner, the first preferred backend its node supports.
+
+    Runners on nodes with no matching backend keep `backend=None`, which
+    preserves the engine default device selection.
+    """
+    runner_to_shard = dict(shard_assignments.runner_to_shard)
+    for node_id, runner_id in shard_assignments.node_to_runner.items():
+        shard = runner_to_shard.get(runner_id)
+        if shard is None:
+            continue
+        node_supported = set(node_backends.get(node_id, []))
+        backend = next(
+            (
+                candidate
+                for candidate in preferred_backends
+                if candidate in node_supported
+            ),
+            None,
+        )
+        if backend is not None:
+            runner_to_shard[runner_id] = shard.model_copy(update={"backend": backend})
+    return shard_assignments.model_copy(update={"runner_to_shard": runner_to_shard})

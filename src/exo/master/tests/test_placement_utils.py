@@ -689,3 +689,61 @@ class TestCfgParallelPlacement:
         # First shard starts at 0, last shard ends at 57
         assert layer_ranges[0][0] == 0
         assert layer_ranges[-1][1] == 57
+
+
+def test_assign_shard_backends_picks_first_preferred_backend_per_node():
+    from exo.master.placement_utils import assign_shard_backends
+    from exo.shared.types.worker.runners import RunnerId, ShardAssignments
+
+    model_card = ModelCard(
+        model_id=ModelId("test-model"),
+        storage_size=Memory.from_mb(100),
+        n_layers=4,
+        hidden_size=64,
+        supports_tensor=False,
+        tasks=[ModelTask.TextGeneration],
+        backends=[Backend.MlxMetal, Backend.MlxCuda, Backend.MlxCpu],
+    )
+
+    node_metal = NodeId()
+    node_cuda = NodeId()
+    node_unassigned = NodeId()
+    node_to_runner = {
+        node_metal: RunnerId(),
+        node_cuda: RunnerId(),
+        node_unassigned: RunnerId(),
+    }
+    runner_to_shard = {
+        runner_id: PipelineShardMetadata(
+            model_card=model_card,
+            device_rank=device_rank,
+            world_size=3,
+            start_layer=0,
+            end_layer=4,
+            n_layers=4,
+        )
+        for device_rank, runner_id in enumerate(node_to_runner.values())
+    }
+    shard_assignments = ShardAssignments(
+        model_id=model_card.model_id,
+        runner_to_shard=runner_to_shard,
+        node_to_runner=node_to_runner,
+    )
+    node_backends = {
+        node_metal: [Backend.MlxCpu, Backend.MlxMetal],
+        node_cuda: [Backend.MlxCuda, Backend.MlxCpu],
+        node_unassigned: [],
+    }
+
+    result = assign_shard_backends(
+        shard_assignments,
+        node_backends,
+        [Backend.MlxMetal, Backend.MlxCuda, Backend.MlxCpu],
+    )
+
+    def backend_of(node_id: NodeId) -> Backend | None:
+        return result.runner_to_shard[result.node_to_runner[node_id]].backend
+
+    assert backend_of(node_metal) == Backend.MlxMetal
+    assert backend_of(node_cuda) == Backend.MlxCuda
+    assert backend_of(node_unassigned) is None
