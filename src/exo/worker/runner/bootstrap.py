@@ -1,5 +1,7 @@
 import os
 import resource
+import threading
+import time
 import traceback
 from dataclasses import dataclass
 from typing import Self, cast
@@ -37,6 +39,38 @@ class RunnerTerminationError:
         return f"{self.exception_type}: {self.exception_message}\n{self.traceback}"
 
 
+def _start_orphan_watchdog() -> None:
+    """Exit the runner if its parent worker process dies.
+
+    The runner is a multiprocessing child holding large Metal/unified-memory
+    allocations and, for multi-node instances, RDMA queue pairs. If the worker
+    is killed hard (SIGKILL, crash), the runner is silently reparented (pid 1 /
+    launchd) and idles forever: RSS looks small while the real physical
+    footprint can be hundreds of GB, so later placements fail with "does not
+    fit" and replacement runners can crash-loop on the still-held queue pairs.
+    There is nothing to clean up gracefully once the parent is gone — poll the
+    parent pid and hard-exit when it changes.
+
+    Disable with EXO_DISABLE_ORPHAN_WATCHDOG=1 (e.g. when intentionally
+    debugging a runner that outlives its worker).
+    """
+    if os.environ.get("EXO_DISABLE_ORPHAN_WATCHDOG") == "1":
+        return
+    parent_process_id = os.getppid()
+
+    def watch_parent() -> None:
+        while True:
+            time.sleep(5.0)
+            if os.getppid() != parent_process_id:
+                logger.warning(
+                    f"runner parent (pid {parent_process_id}) died; "
+                    "exiting to release model memory and interconnect resources"
+                )
+                os._exit(1)
+
+    threading.Thread(target=watch_parent, name="orphan-watchdog", daemon=True).start()
+
+
 def entrypoint(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event | RunnerTerminationError],
@@ -46,6 +80,8 @@ def entrypoint(
 ) -> None:
     global logger
     logger = _logger
+
+    _start_orphan_watchdog()
 
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
