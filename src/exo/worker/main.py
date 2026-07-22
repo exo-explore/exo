@@ -129,13 +129,16 @@ class Worker:
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
             async for info in info_stream:
-                await self.event_sender.send(
-                    NodeGatheredInfo(
-                        node_id=self.node_id,
-                        when=str(datetime.now(tz=timezone.utc)),
-                        info=info,
+                try:
+                    await self.event_sender.send(
+                        NodeGatheredInfo(
+                            node_id=self.node_id,
+                            when=str(datetime.now(tz=timezone.utc)),
+                            info=info,
+                        )
                     )
-                )
+                except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                    return
 
     async def _event_applier(self):
         with self.event_receiver as events:
