@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -190,9 +191,12 @@ class DownloadCoordinator:
                 total=total,
             )
             self.download_status[model_id] = pending
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=pending)
-            )
+            try:
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=pending)
+                )
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                return
 
     async def _start_download(self, shard: ShardMetadata) -> None:
         model_id = shard.model_card.model_id
@@ -216,9 +220,12 @@ class DownloadCoordinator:
                 shard, found_path, shard.model_card.storage_size
             )
             self.download_status[model_id] = completed
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=completed)
-            )
+            try:
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=completed)
+                )
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                return
             return
 
         # Emit pending status
@@ -228,7 +235,12 @@ class DownloadCoordinator:
             model_directory=self._default_model_dir(model_id),
         )
         self.download_status[model_id] = progress
-        await self.event_sender.send(NodeDownloadProgress(download_progress=progress))
+        try:
+            await self.event_sender.send(
+                NodeDownloadProgress(download_progress=progress)
+            )
+        except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+            return
 
         # Check initial status from downloader
         initial_progress = (
@@ -251,9 +263,12 @@ class DownloadCoordinator:
                     model_directory=self._default_model_dir(model_id),
                 )
             self.download_status[model_id] = completed
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=completed)
-            )
+            try:
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=completed)
+                )
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                return
             return
 
         if self.offline:
@@ -267,7 +282,12 @@ class DownloadCoordinator:
                 model_directory=self._default_model_dir(model_id),
             )
             self.download_status[model_id] = failed
-            await self.event_sender.send(NodeDownloadProgress(download_progress=failed))
+            try:
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=failed)
+                )
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                return
             return
 
         # Start actual download
@@ -288,7 +308,12 @@ class DownloadCoordinator:
             model_directory=self._default_model_dir(model_id),
         )
         self.download_status[model_id] = status
-        self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
+        with contextlib.suppress(
+            anyio.BrokenResourceError, anyio.ClosedResourceError, anyio.WouldBlock
+        ):
+            self.event_sender.send_nowait(
+                NodeDownloadProgress(download_progress=status)
+            )
 
         async def download_wrapper(cancel_scope: anyio.CancelScope) -> None:
             try:
@@ -303,9 +328,12 @@ class DownloadCoordinator:
                     model_directory=self._default_model_dir(model_id),
                 )
                 self.download_status[model_id] = failed
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=failed)
-                )
+                with contextlib.suppress(
+                    anyio.BrokenResourceError, anyio.ClosedResourceError
+                ):
+                    await self.event_sender.send(
+                        NodeDownloadProgress(download_progress=failed)
+                    )
             except anyio.get_cancelled_exc_class():
                 # ignore cancellation - let cleanup do its thing
                 pass
@@ -346,9 +374,12 @@ class DownloadCoordinator:
                 node_id=self.node_id,
                 model_directory=self._default_model_dir(model_id),
             )
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=pending)
-            )
+            with contextlib.suppress(
+                anyio.BrokenResourceError, anyio.ClosedResourceError
+            ):
+                await self.event_sender.send(
+                    NodeDownloadProgress(download_progress=pending)
+                )
             del self.download_status[model_id]
 
     async def _emit_existing_download_progress(self) -> None:
@@ -429,9 +460,12 @@ class DownloadCoordinator:
                         continue
 
                     self.download_status[progress.shard.model_card.model_id] = status
-                    await self.event_sender.send(
-                        NodeDownloadProgress(download_progress=status)
-                    )
+                    try:
+                        await self.event_sender.send(
+                            NodeDownloadProgress(download_progress=status)
+                        )
+                    except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                        return
                 # Scan read-only directories for pre-downloaded models
                 if EXO_MODELS_READ_ONLY_DIRS:
                     for card in await model_cards.card_cache.list_all():
@@ -461,13 +495,23 @@ class DownloadCoordinator:
                                 )
                             )
                             self.download_status[mid] = path_completed
-                            await self.event_sender.send(
-                                NodeDownloadProgress(download_progress=path_completed)
-                            )
+                            try:
+                                await self.event_sender.send(
+                                    NodeDownloadProgress(
+                                        download_progress=path_completed
+                                    )
+                                )
+                            except (
+                                anyio.BrokenResourceError,
+                                anyio.ClosedResourceError,
+                            ):
+                                return
 
                 logger.debug(
                     "DownloadCoordinator: Done emitting existing download progress."
                 )
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                return
             except Exception as e:
                 logger.error(
                     f"DownloadCoordinator: Error emitting existing download progress: {e}"
