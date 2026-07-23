@@ -607,6 +607,14 @@ async def file_meta(
                 f"HuggingFace rate limit hit fetching metadata for {model_id}/{path}",
                 retry_after=_parse_retry_after(r.headers),
             )
+        if r.status != 200:
+            # An error body has its own Content-Length (e.g. 20 bytes of
+            # "Repository not found" on a 404) — treating it as the remote
+            # size makes _download_file delete perfectly good local files on
+            # the false size mismatch (repos absent from HF, HF outages).
+            raise FileNotFoundError(
+                f"HTTP {r.status} fetching metadata for {model_id}/{path}"
+            )
         content_length = int(
             r.headers.get("x-linked-size") or r.headers.get("content-length") or 0
         )
