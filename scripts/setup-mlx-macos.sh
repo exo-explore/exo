@@ -38,6 +38,11 @@ if [[ "$(uname)" != "Darwin" ]]; then
   die "MLX requires macOS (Apple Silicon). Detected: $(uname)"
 fi
 
+if [[ "$(uname -m)" != "arm64" ]]; then
+  die "MLX requires Apple Silicon (arm64). Detected architecture: $(uname -m)
+       MLX does not support Intel Macs."
+fi
+
 # ---------------------------------------------------------------------------
 # 2. Xcode.app check
 # ---------------------------------------------------------------------------
