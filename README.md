@@ -89,6 +89,15 @@ Then restart the Nix daemon: `sudo launchctl kickstart -k system/org.nixos.nix-d
 
 **Prerequisites:**
 - [Xcode](https://developer.apple.com/xcode/) (provides the Metal ToolChain required for MLX compilation)
+
+  > **Important:** the full **Xcode.app** is required — Command Line Tools alone are not sufficient. After installing, run:
+  > ```bash
+  > sudo xcodebuild -license accept
+  > sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+  > xcodebuild -downloadComponent MetalToolchain
+  > ```
+  > See [Troubleshooting MLX build failures](#troubleshooting-mlx-build-failures) if you hit issues.
+
 - [brew](https://github.com/Homebrew/brew) (for simple package management on macOS)
 
   ```bash
@@ -124,6 +133,9 @@ Clone the repo, build the dashboard, and run exo:
 # Clone exo
 git clone https://github.com/exo-explore/exo
 
+# Install MLX and all Python dependencies (handles Xcode/Metal checks)
+bash exo/scripts/setup-mlx-macos.sh
+
 # Build dashboard
 cd exo/dashboard && npm install && npm run build && cd ..
 
@@ -135,6 +147,20 @@ This starts the exo dashboard and API at http://localhost:52415/
 
 
 *Please view the section on RDMA to enable this feature on MacOS >=26.2!*
+
+
+#### Troubleshooting MLX build failures
+
+MLX compiles Metal GPU kernels at install time and requires the full Xcode toolchain. Common errors and fixes:
+
+| Error | Fix |
+|---|---|
+| `xcrun: error: unable to find utility "metal"` | Run `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` |
+| `Agreeing to the Xcode license requires admin privileges` | Run `sudo xcodebuild -license accept` |
+| `cannot execute tool 'metal' due to missing Metal Toolchain` | Run `xcodebuild -downloadComponent MetalToolchain` |
+| `ModuleNotFoundError: No module named 'mlx'` | Re-run `bash scripts/setup-mlx-macos.sh` or `uv sync --extra mlx` |
+
+The setup script (`scripts/setup-mlx-macos.sh`) checks each of these automatically and prints the exact command to run if something is missing.
 
 
 ### Run from Source (Linux)
