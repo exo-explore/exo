@@ -46,16 +46,63 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Xcode.app check
 # ---------------------------------------------------------------------------
-XCODE_APP="/Applications/Xcode.app"
-XCODE_DEVELOPER_DIR="${XCODE_APP}/Contents/Developer"
+# The full Xcode application (not just Command Line Tools) is required to
+# compile MLX Metal kernels. Xcode may live at a non-default path (e.g. a beta
+# install like /Applications/Xcode-beta.app) or already be selected via
+# xcode-select / DEVELOPER_DIR, so discover it in order of preference:
+#   1. An explicit DEVELOPER_DIR that points inside an Xcode .app.
+#   2. The currently selected developer dir (xcode-select -p), if it is an Xcode
+#      .app rather than the Command Line Tools.
+#   3. Any /Applications/Xcode*.app (covers stable and beta installs).
+#   4. The conventional /Applications/Xcode.app fallback.
 
-if [[ ! -d "$XCODE_APP" ]]; then
-  die "Xcode.app not found at ${XCODE_APP}.
+# Given a Developer dir, return the enclosing .app bundle path (or empty).
+xcode_app_from_developer_dir() {
+  local dev_dir="$1"
+  case "$dev_dir" in
+    */Contents/Developer) printf '%s' "${dev_dir%/Contents/Developer}" ;;
+    *) printf '' ;;
+  esac
+}
+
+XCODE_APP=""
+XCODE_DEVELOPER_DIR=""
+
+# 1. Honor an explicitly exported DEVELOPER_DIR if it points inside an Xcode.app.
+if [[ -n "${DEVELOPER_DIR:-}" ]]; then
+  candidate_app="$(xcode_app_from_developer_dir "$DEVELOPER_DIR")"
+  if [[ -n "$candidate_app" && -d "$candidate_app" ]]; then
+    XCODE_APP="$candidate_app"
+  fi
+fi
+
+# 2. Use the currently selected developer dir if it is a full Xcode (not CLT).
+if [[ -z "$XCODE_APP" ]]; then
+  CURRENT_DEVELOPER_DIR="$(xcode-select -p 2>/dev/null || true)"
+  candidate_app="$(xcode_app_from_developer_dir "$CURRENT_DEVELOPER_DIR")"
+  if [[ -n "$candidate_app" && -d "$candidate_app" ]]; then
+    XCODE_APP="$candidate_app"
+  fi
+fi
+
+# 3. Fall back to any Xcode*.app under /Applications (stable or beta).
+if [[ -z "$XCODE_APP" ]]; then
+  for candidate_app in /Applications/Xcode.app /Applications/Xcode*.app; do
+    if [[ -d "$candidate_app" ]]; then
+      XCODE_APP="$candidate_app"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$XCODE_APP" || ! -d "$XCODE_APP" ]]; then
+  die "No Xcode.app found (checked DEVELOPER_DIR, xcode-select, and /Applications/Xcode*.app).
        The full Xcode application is required to compile MLX Metal kernels.
        Install Xcode from the App Store: https://apps.apple.com/app/xcode/id497799835
        Command Line Tools alone are not sufficient."
 fi
 
+XCODE_DEVELOPER_DIR="${XCODE_APP}/Contents/Developer"
 info "Xcode.app found at ${XCODE_APP}"
 
 # ---------------------------------------------------------------------------
@@ -64,7 +111,7 @@ info "Xcode.app found at ${XCODE_APP}"
 CURRENT_DEVELOPER_DIR="$(xcode-select -p 2>/dev/null || true)"
 
 if [[ "$CURRENT_DEVELOPER_DIR" != "$XCODE_DEVELOPER_DIR" ]]; then
-  warn "xcode-select points to '${CURRENT_DEVELOPER_DIR}' instead of Xcode.app."
+  warn "xcode-select points to '${CURRENT_DEVELOPER_DIR}' instead of ${XCODE_DEVELOPER_DIR}."
   echo "       Fix with: sudo xcode-select -s ${XCODE_DEVELOPER_DIR}"
   echo ""
   echo "       Attempting to proceed using DEVELOPER_DIR environment variable..."
