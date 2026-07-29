@@ -51,8 +51,8 @@ from exo.worker.engines.mlx.cache import (
 )
 from exo.worker.engines.mlx.constants import (
     DEFAULT_TOP_LOGPROBS,
-    KV_BITS,
-    KV_GROUP_SIZE,
+    KV_CACHE_BITS,
+    KV_CACHE_GROUP_SIZE,
     MAX_TOKENS,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
@@ -342,8 +342,8 @@ def prefill(
                 prompt=prompt_tokens,
                 prompt_cache=cache,
                 prefill_step_size=prefill_step_size,
-                kv_group_size=KV_GROUP_SIZE,
-                kv_bits=KV_BITS,
+                kv_group_size=KV_CACHE_GROUP_SIZE,
+                kv_bits=KV_CACHE_BITS,
                 prompt_progress_callback=progress_callback,
                 distributed_prompt_progress_callback=distributed_prompt_progress_callback,
                 group=group,
@@ -359,8 +359,8 @@ def prefill(
                 sampler=sampler,
                 prompt_cache=cache,
                 prefill_step_size=prefill_step_size,
-                kv_group_size=KV_GROUP_SIZE,
-                kv_bits=KV_BITS,
+                kv_group_size=KV_CACHE_GROUP_SIZE,
+                kv_bits=KV_CACHE_BITS,
                 prompt_progress_callback=combined_progress_callback,
             ):
                 break  # Stop after first iteration - cache is now filled
@@ -727,8 +727,8 @@ def mlx_generate(
             logits_processors=logits_processors,
             prompt_cache=caches,
             prefill_step_size=1,
-            kv_group_size=KV_GROUP_SIZE,
-            kv_bits=KV_BITS,
+            kv_group_size=KV_CACHE_GROUP_SIZE,
+            kv_bits=KV_CACHE_BITS,
         ),
         start=1,
     ):
