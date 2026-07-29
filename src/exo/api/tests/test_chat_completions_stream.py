@@ -11,6 +11,7 @@ from exo.api.adapters.chat_completions import (
 )
 from exo.api.types import (
     CompletionTokensDetails,
+    GenerationStats,
     PromptTokensDetails,
     ToolCallItem,
     Usage,
@@ -22,6 +23,7 @@ from exo.shared.types.chunks import (
     ToolCallChunk,
 )
 from exo.shared.types.common import CommandId, ModelId
+from exo.shared.types.memory import Memory
 
 _TEST_MODEL = ModelId("test-model")
 _NULLABLE_DELTA_FIELDS = {"content", "refusal"}
@@ -193,3 +195,39 @@ class TestNonStreamingResponseShape:
         assert "function_call" not in message
         assert "name" not in message
         assert "tool_call_id" not in message
+
+    async def test_collected_response_attaches_generation_stats(self):
+        """Regression test: the non-streaming path used to silently drop
+        GenerationStats even though the streaming path carries it."""
+        stats = GenerationStats(
+            prompt_tps=100.0,
+            generation_tps=50.0,
+            prompt_tokens=10,
+            generation_tokens=5,
+            peak_memory_usage=Memory(in_bytes=1024),
+            prefix_cache_hit="exact",
+        )
+        chunks: list[PrefillProgressChunk | ErrorChunk | ToolCallChunk | TokenChunk] = [
+            TokenChunk(
+                model=_TEST_MODEL,
+                token_id=1,
+                text="Hello",
+                usage=_make_usage(),
+                finish_reason="stop",
+                stats=stats,
+            ),
+        ]
+        parts: list[str] = []
+        async for part in collect_chat_response(
+            CommandId("test-cmd-stats"), _stream(chunks)
+        ):
+            parts.append(part)
+
+        payload = json.loads(parts[0])
+        assert payload["generation_stats"]["generation_tps"] == 50.0
+        assert payload["generation_stats"]["prefix_cache_hit"] == "exact"
+        # Memory is a FrozenModel (to_camel alias generator), but nested
+        # model_dump_json(by_alias=False) still emits snake_case "in_bytes" —
+        # pin this so the dashboard's `stats.peak_memory_usage.in_bytes` read
+        # doesn't silently break if serialization ever changes.
+        assert payload["generation_stats"]["peak_memory_usage"]["in_bytes"] == 1024
