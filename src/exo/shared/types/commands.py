@@ -39,6 +39,9 @@ class PlaceInstance(BaseCommand):
     sharding: Sharding
     instance_meta: InstanceMeta
     min_nodes: int
+    # None means "use the model's native context_length". Never allowed to
+    # exceed the model's native context_length — only capping down is supported.
+    max_context_length: int | None = None
 
 
 class CreateInstance(BaseCommand):

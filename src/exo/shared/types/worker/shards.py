@@ -31,6 +31,12 @@ class BaseShardMetadata(TaggedModel):
     end_layer: int = Field(ge=0)
     n_layers: int = Field(ge=0)
 
+    # Resolved by placement to a concrete value (defaulting to the model's
+    # native context_length when the caller didn't request a cap). None here
+    # means "no cap configured" (e.g. shards built outside the placement path,
+    # such as tests) and is treated as unbounded at runtime.
+    max_context_length: int | None = None
+
     @property
     def is_first_layer(self) -> bool:
         return self.start_layer == 0

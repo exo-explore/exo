@@ -84,13 +84,19 @@ def _metal_only(
     return {node_id: [Backend.MlxMetal] for node_id in node_memory}
 
 
-def place_instance_command(model_card: ModelCard) -> PlaceInstance:
+def place_instance_command(
+    model_card: ModelCard,
+    sharding: Sharding = Sharding.Pipeline,
+    min_nodes: int = 1,
+    max_context_length: int | None = None,
+) -> PlaceInstance:
     return PlaceInstance(
         command_id=CommandId(),
         model_card=model_card,
-        sharding=Sharding.Pipeline,
+        sharding=sharding,
         instance_meta=InstanceMeta.MlxRing,
-        min_nodes=1,
+        min_nodes=min_nodes,
+        max_context_length=max_context_length,
     )
 
 
@@ -272,6 +278,144 @@ def test_get_instance_placements_one_node_not_fit() -> None:
     )
 
     with pytest.raises(ValueError, match="No cycles found with sufficient memory"):
+        place_instance(
+            cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
+        )
+
+
+def _kv_heavy_model_card(context_length: int = 5000) -> ModelCard:
+    """A model card with num_key_value_heads/head_dim set, so KV cache cost
+    is a real (non-fallback) part of the memory estimate: 8 kv heads * 128
+    head_dim * 2 (K+V) * 2 bytes (bf16) = 4096 bytes per layer per token."""
+    return ModelCard(
+        model_id=ModelId("kv-heavy-test-model"),
+        storage_size=Memory.from_kb(1000),
+        n_layers=32,
+        hidden_size=4096,
+        num_key_value_heads=8,
+        head_dim=128,
+        supports_tensor=True,
+        context_length=context_length,
+        tasks=[ModelTask.TextGeneration],
+        backends=[Backend.MlxMetal],
+    )
+
+
+def test_context_window_fits_within_node_memory() -> None:
+    """4096 bytes/layer/token * 32 layers * 500 tokens = ~64MB of KV cache,
+    comfortably within a node sized for exactly 1000 tokens of headroom."""
+    topology = Topology()
+    node_id = NodeId()
+    topology.add_node(node_id)
+    node_memory = {node_id: create_node_memory(1000 * 1024 + 4096 * 32 * 1000)}
+    node_network = {node_id: create_node_network()}
+    cic = place_instance_command(_kv_heavy_model_card(), max_context_length=500)
+
+    placements = place_instance(
+        cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
+    )
+
+    assert len(placements) == 1
+    instance = next(iter(placements.values()))
+    runner_id = instance.shard_assignments.node_to_runner[node_id]
+    shard = instance.shard_assignments.runner_to_shard[runner_id]
+    assert shard.max_context_length == 500
+
+
+def test_context_window_rejects_when_kv_cache_does_not_fit() -> None:
+    """A tiny node forced to hold at least 1 layer (minimum-1-per-node) can't
+    hold that layer's KV cache at the requested context length, even though
+    the *aggregate* cluster memory (dominated by the other, huge node) easily
+    clears the coarse pre-filter -- this must be caught at the per-node
+    check, with a clear message naming what context would actually fit."""
+    topology = Topology()
+    node_big = NodeId()
+    node_small = NodeId()
+    topology.add_node(node_big)
+    topology.add_node(node_small)
+    topology.add_connection(
+        Connection(source=node_big, sink=node_small, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_small, sink=node_big, edge=create_socket_connection(2))
+    )
+    node_memory = {
+        node_big: create_node_memory(1024 * 1024 * 1024 * 1024),  # 1TB
+        node_small: create_node_memory(1024 * 1024),  # 1MB
+    }
+    node_network = {
+        node_big: create_node_network(),
+        node_small: create_node_network(),
+    }
+    # Force the 2-node split (min_nodes=2) -- otherwise placement would
+    # simply prefer the single huge node alone, since it can hold the whole
+    # model by itself, sidestepping the uneven-node scenario being tested.
+    cic = place_instance_command(
+        _kv_heavy_model_card(), min_nodes=2, max_context_length=1500
+    )
+
+    with pytest.raises(ValueError, match="largest context length"):
+        place_instance(
+            cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
+        )
+
+
+def test_context_window_rejects_exceeding_model_native_max() -> None:
+    """max_context_length can only cap down, never extrapolate above the
+    model's own reported context_length."""
+    topology = Topology()
+    node_id = NodeId()
+    topology.add_node(node_id)
+    node_memory = {node_id: create_node_memory(10 * 1024 * 1024 * 1024)}
+    node_network = {node_id: create_node_network()}
+    cic = place_instance_command(
+        _kv_heavy_model_card(context_length=2000), max_context_length=3000
+    )
+
+    with pytest.raises(ValueError, match="exceeds this model's native context length"):
+        place_instance(
+            cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
+        )
+
+
+def test_tensor_parallel_rejects_uneven_memory_that_cannot_hold_equal_share() -> None:
+    """Regression test for exo-explore/exo#1936: tensor parallelism splits
+    the model evenly across all ranks, so a node whose memory can't hold its
+    equal share must be rejected at placement time instead of silently
+    accepted (and OOMing at load) just because the *aggregate* cluster
+    memory happens to be sufficient."""
+    topology = Topology()
+    node_a = NodeId()
+    node_b = NodeId()
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_connection(
+        Connection(source=node_a, sink=node_b, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_b, sink=node_a, edge=create_socket_connection(2))
+    )
+
+    # 100GB model split across 2 ranks needs 50GB/rank. Node A has plenty;
+    # node B has 40GB -- individually insufficient even though the
+    # aggregate (128 + 40 = 168GB) comfortably exceeds the 100GB total.
+    node_memory = {
+        node_a: create_node_memory(128 * 1024 * 1024 * 1024),
+        node_b: create_node_memory(40 * 1024 * 1024 * 1024),
+    }
+    node_network = {node_a: create_node_network(), node_b: create_node_network()}
+    model_card = ModelCard(
+        model_id=ModelId("tensor-uneven-test-model"),
+        storage_size=Memory.from_gb(100),
+        n_layers=32,
+        hidden_size=4096,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+        backends=[Backend.MlxMetal],
+    )
+    cic = place_instance_command(model_card, sharding=Sharding.Tensor, min_nodes=2)
+
+    with pytest.raises(ValueError, match="insufficient memory for tensor-parallel"):
         place_instance(
             cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
         )

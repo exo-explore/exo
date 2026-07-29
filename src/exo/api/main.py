@@ -432,6 +432,7 @@ class API:
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
+            max_context_length=payload.max_context_length,
         )
         await self._send(command)
 
@@ -472,6 +473,7 @@ class API:
         sharding: Sharding = Sharding.Pipeline,
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
+        max_context_length: int | None = None,
     ) -> Instance:
         model_card = await ModelCard.load(model_id)
 
@@ -482,6 +484,7 @@ class API:
                     sharding=sharding,
                     instance_meta=instance_meta,
                     min_nodes=min_nodes,
+                    max_context_length=max_context_length,
                 ),
                 node_memory=self.state.node_memory,
                 node_network=self.state.node_network,
@@ -510,6 +513,7 @@ class API:
         self,
         model_id: ModelId,
         node_ids: Annotated[list[NodeId] | None, Query()] = None,
+        max_context_length: int | None = None,
     ) -> PlacementPreviewResponse:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
@@ -546,6 +550,7 @@ class API:
                         sharding=sharding,
                         instance_meta=instance_meta,
                         min_nodes=min_nodes,
+                        max_context_length=max_context_length,
                     ),
                     node_memory=self.state.node_memory,
                     node_network=self.state.node_network,

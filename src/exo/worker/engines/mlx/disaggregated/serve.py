@@ -24,6 +24,7 @@ def run_prefill_for_request(
     group: mx.distributed.Group | None,
     kv_prefix_cache: KVPrefixCache | None,
     request: PrefillRequest,
+    max_context_length: int | None = None,
 ) -> KVCacheType:
     prompt_tokens = mx.array(request.token_ids)
     prompt_tokens = fix_unmatched_think_end_tokens(prompt_tokens, tokenizer)
@@ -38,7 +39,7 @@ def run_prefill_for_request(
         )
         prefix_hit_length = n_tokens - int(remaining.shape[0])
     else:
-        cache = make_kv_cache(model)
+        cache = make_kv_cache(model, max_kv_size=max_context_length)
         remaining = prompt_tokens
 
     target_offset = max(0, n_tokens - 2)
