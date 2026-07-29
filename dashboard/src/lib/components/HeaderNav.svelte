@@ -280,6 +280,25 @@
       <span class="hidden sm:inline">Downloads</span>
     </a>
     <a
+      href="/#/logs"
+      class="text-xs md:text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-1.5 md:gap-2 cursor-pointer"
+      title="View node logs"
+    >
+      <svg
+        class="w-4 h-4"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M4 4h16v16H4z" />
+        <path d="M8 9h8M8 13h8M8 17h5" />
+      </svg>
+      <span class="hidden sm:inline">Logs</span>
+    </a>
+    <a
       href="/#/integrations"
       class="text-xs md:text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-1.5 md:gap-2 cursor-pointer"
       title="Integration configs for external tools"

@@ -219,6 +219,22 @@ export interface TraceListResponse {
   traces: TraceListItem[];
 }
 
+export interface LogFileListItem {
+  name: string;
+  fileSize: number;
+  modifiedAt: string;
+}
+
+export interface LogFileListResponse {
+  logs: LogFileListItem[];
+}
+
+export interface LogTailResponse {
+  name: string;
+  content: string;
+  truncated: boolean;
+}
+
 interface RawStateResponse {
   topology?: RawTopology;
   instances?: Record<
@@ -3474,6 +3490,37 @@ class AppStore {
   getTraceRawUrl(taskId: string): string {
     return `/v1/traces/${encodeURIComponent(taskId)}/raw`;
   }
+
+  /**
+   * List available log files on this node
+   */
+  async listLogs(): Promise<LogFileListResponse> {
+    const response = await fetch("/v1/logs");
+    if (!response.ok) {
+      throw new Error(`Failed to list logs: ${response.status}`);
+    }
+    return (await response.json()) as LogFileListResponse;
+  }
+
+  /**
+   * Fetch the tail of a log file by name
+   */
+  async getLogTail(name: string, lines = 1000): Promise<LogTailResponse> {
+    const response = await fetch(
+      `/v1/logs/${encodeURIComponent(name)}?lines=${lines}`,
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to fetch log: ${response.status}`);
+    }
+    return (await response.json()) as LogTailResponse;
+  }
+
+  /**
+   * Get the URL for downloading the full raw log file
+   */
+  getLogRawUrl(name: string): string {
+    return `/v1/logs/${encodeURIComponent(name)}/raw`;
+  }
 }
 
 export const appStore = new AppStore();
@@ -3641,3 +3688,9 @@ export const getTraceRawUrl = (taskId: string) =>
   appStore.getTraceRawUrl(taskId);
 export const deleteTraces = (taskIds: string[]) =>
   appStore.deleteTraces(taskIds);
+
+// Log actions
+export const listLogs = () => appStore.listLogs();
+export const getLogTail = (name: string, lines?: number) =>
+  appStore.getLogTail(name, lines);
+export const getLogRawUrl = (name: string) => appStore.getLogRawUrl(name);
