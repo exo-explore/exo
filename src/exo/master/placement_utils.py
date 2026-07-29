@@ -18,6 +18,26 @@ from exo.shared.types.worker.shards import (
 )
 
 
+def kv_cache_bytes_per_layer(model_card: ModelCard, dtype_bytes: int = 2) -> Memory:
+    """Conservative estimate of KV cache memory per layer, per context token.
+
+    Uses num_key_value_heads * head_dim when both are known on the model card
+    (this accounts for GQA/MQA head reduction). Falls back to hidden_size
+    (equivalent to assuming full multi-head attention with no GQA
+    compression) when either is missing -- a safe overestimate for GQA
+    models, never an underestimate that could let a node OOM.
+
+    This is deliberately uniform across layers: hybrid architectures
+    (Mamba/SSM layers that don't need a full KV cache) aren't modeled
+    separately, so the estimate is conservative for those too.
+    """
+    if model_card.num_key_value_heads is not None and model_card.head_dim is not None:
+        kv_dim = model_card.num_key_value_heads * model_card.head_dim
+    else:
+        kv_dim = model_card.hidden_size
+    return Memory.from_bytes(2 * kv_dim * dtype_bytes)  # 2 for K and V
+
+
 def filter_cycles_by_memory(
     cycles: list[Cycle],
     node_memory: Mapping[NodeId, MemoryUsage],
@@ -98,6 +118,7 @@ def _allocate_and_validate_layers(
     node_memory: Mapping[NodeId, MemoryUsage],
     total_memory: Memory,
     model_card: ModelCard,
+    max_context_length: int | None,
 ) -> list[int]:
     layer_allocations = allocate_layers_proportionally(
         total_layers=model_card.n_layers,
@@ -108,39 +129,72 @@ def _allocate_and_validate_layers(
 
     total_storage = model_card.storage_size
     total_layers = model_card.n_layers
+    kv_per_layer = kv_cache_bytes_per_layer(model_card)
     for i, node_id in enumerate(node_ids):
         node_layers = layer_allocations[i]
-        required_memory = (total_storage * node_layers) // total_layers
+        weight_memory = (total_storage * node_layers) // total_layers
+        kv_memory = (
+            kv_per_layer * node_layers * max_context_length
+            if max_context_length is not None
+            else Memory()
+        )
+        required_memory = weight_memory + kv_memory
         available_memory = node_memory[node_id].ram_available
         if required_memory > available_memory:
+            fitting_context = _largest_fitting_context_length(
+                available_memory, weight_memory, kv_per_layer * node_layers
+            )
             raise ValueError(
                 f"Node {i} ({node_id}) has insufficient memory: "
-                f"requires {required_memory.in_gb:.2f} GB for {node_layers} layers, "
-                f"but only has {available_memory.in_gb:.2f} GB available"
+                f"requires {required_memory.in_gb:.2f} GB for {node_layers} layers"
+                f"{f' at {max_context_length} tokens of context' if max_context_length is not None else ''}, "
+                f"but only has {available_memory.in_gb:.2f} GB available. "
+                f"The largest context length that would fit on this node's layer "
+                f"share is {fitting_context} tokens."
             )
 
     return layer_allocations
+
+
+def _largest_fitting_context_length(
+    available_memory: Memory,
+    weight_memory: Memory,
+    kv_bytes_per_context_token: Memory,
+) -> int:
+    """Given a node's available memory, its share of model weights, and its
+    KV-cache cost per context token, solve (linearly) for the largest context
+    length that would fit alongside those weights."""
+    remaining = available_memory - weight_memory
+    if remaining.in_bytes <= 0 or kv_bytes_per_context_token.in_bytes <= 0:
+        return 0
+    return max(0, int(remaining / kv_bytes_per_context_token))
 
 
 def get_shard_assignments_for_pipeline_parallel(
     model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
+    max_context_length: int | None,
 ) -> ShardAssignments:
     """Create shard assignments for pipeline parallel execution."""
     world_size = len(cycle)
     use_cfg_parallel = model_card.uses_cfg and world_size >= 2 and world_size % 2 == 0
 
     if use_cfg_parallel:
-        return _get_shard_assignments_for_cfg_parallel(model_card, cycle, node_memory)
+        return _get_shard_assignments_for_cfg_parallel(
+            model_card, cycle, node_memory, max_context_length
+        )
     else:
-        return _get_shard_assignments_for_pure_pipeline(model_card, cycle, node_memory)
+        return _get_shard_assignments_for_pure_pipeline(
+            model_card, cycle, node_memory, max_context_length
+        )
 
 
 def _get_shard_assignments_for_cfg_parallel(
     model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
+    max_context_length: int | None,
 ) -> ShardAssignments:
     """Create shard assignments for CFG parallel execution.
 
@@ -159,7 +213,7 @@ def _get_shard_assignments_for_cfg_parallel(
     pipeline_node_ids = cycle.node_ids[:pipeline_world_size]
     pipeline_memory = _compute_total_memory(pipeline_node_ids, node_memory)
     layer_allocations = _allocate_and_validate_layers(
-        pipeline_node_ids, node_memory, pipeline_memory, model_card
+        pipeline_node_ids, node_memory, pipeline_memory, model_card, max_context_length
     )
 
     # Ring topology: group 0 ascending [0,1,2,...], group 1 descending [...,2,1,0]
@@ -187,6 +241,7 @@ def _get_shard_assignments_for_cfg_parallel(
             cfg_world_size=cfg_world_size,
             pipeline_rank=pipeline_rank,
             pipeline_world_size=pipeline_world_size,
+            max_context_length=max_context_length,
         )
 
         runner_id = RunnerId()
@@ -204,13 +259,14 @@ def _get_shard_assignments_for_pure_pipeline(
     model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
+    max_context_length: int | None,
 ) -> ShardAssignments:
     """Create shard assignments for pure pipeline execution."""
     _validate_cycle(cycle)
     total_memory = _compute_total_memory(cycle.node_ids, node_memory)
 
     layer_allocations = _allocate_and_validate_layers(
-        cycle.node_ids, node_memory, total_memory, model_card
+        cycle.node_ids, node_memory, total_memory, model_card, max_context_length
     )
 
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
@@ -227,6 +283,7 @@ def _get_shard_assignments_for_pure_pipeline(
             start_layer=layers_before,
             end_layer=layers_before + node_layers,
             n_layers=model_card.n_layers,
+            max_context_length=max_context_length,
         )
 
         runner_id = RunnerId()
@@ -240,10 +297,55 @@ def _get_shard_assignments_for_pure_pipeline(
     )
 
 
+def _validate_tensor_parallel_memory(
+    model_card: ModelCard,
+    cycle: Cycle,
+    node_memory: Mapping[NodeId, MemoryUsage],
+    max_context_length: int | None,
+) -> None:
+    """Every rank in tensor parallelism holds an equal share of the model
+    (weights and KV heads are both split evenly by world_size), so unlike
+    pipeline sharding there is no redistribution to do -- just verify every
+    node can hold its equal share, raising a clear error naming the largest
+    context that would fit if not.
+    """
+    world_size = len(cycle)
+    weight_per_rank = model_card.storage_size // world_size
+    kv_per_layer_per_rank = kv_cache_bytes_per_layer(model_card) // world_size
+
+    for i, node_id in enumerate(cycle):
+        kv_memory = (
+            kv_per_layer_per_rank * model_card.n_layers * max_context_length
+            if max_context_length is not None
+            else Memory()
+        )
+        required_memory = weight_per_rank + kv_memory
+        available_memory = node_memory[node_id].ram_available
+        if required_memory > available_memory:
+            fitting_context = _largest_fitting_context_length(
+                available_memory,
+                weight_per_rank,
+                kv_per_layer_per_rank * model_card.n_layers,
+            )
+            raise ValueError(
+                f"Node {i} ({node_id}) has insufficient memory for tensor-parallel "
+                f"rank {i}/{world_size}: requires {required_memory.in_gb:.2f} GB "
+                f"(model split evenly across all {world_size} nodes)"
+                f"{f' at {max_context_length} tokens of context' if max_context_length is not None else ''}, "
+                f"but only has {available_memory.in_gb:.2f} GB available. "
+                f"The largest context length that would fit on this node is "
+                f"{fitting_context} tokens."
+            )
+
+
 def get_shard_assignments_for_tensor_parallel(
     model_card: ModelCard,
     cycle: Cycle,
+    node_memory: Mapping[NodeId, MemoryUsage],
+    max_context_length: int | None,
 ):
+    _validate_tensor_parallel_memory(model_card, cycle, node_memory, max_context_length)
+
     total_layers = model_card.n_layers
     world_size = len(cycle)
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
@@ -257,6 +359,7 @@ def get_shard_assignments_for_tensor_parallel(
             start_layer=0,
             end_layer=total_layers,
             n_layers=total_layers,
+            max_context_length=max_context_length,
         )
 
         runner_id = RunnerId()
@@ -278,6 +381,7 @@ def get_shard_assignments(
     cycle: Cycle,
     sharding: Sharding,
     node_memory: Mapping[NodeId, MemoryUsage],
+    max_context_length: int | None = None,
 ) -> ShardAssignments:
     match sharding:
         case Sharding.Pipeline:
@@ -285,11 +389,14 @@ def get_shard_assignments(
                 model_card=model_card,
                 cycle=cycle,
                 node_memory=node_memory,
+                max_context_length=max_context_length,
             )
         case Sharding.Tensor:
             return get_shard_assignments_for_tensor_parallel(
                 model_card=model_card,
                 cycle=cycle,
+                node_memory=node_memory,
+                max_context_length=max_context_length,
             )
 
 
