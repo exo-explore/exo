@@ -39,6 +39,7 @@
     clearPreviewNodeFilter,
     previewNodeFilter,
     createConversation,
+    deleteDownload,
     setSelectedChatModel,
     selectedChatModel,
     sendMessage,
@@ -1978,11 +1979,23 @@
     return 0;
   }
 
-  async function deleteInstance(instanceId: string) {
-    if (!confirm(`Delete instance ${instanceId.slice(0, 8)}...?`)) return;
+  // Get the node IDs an instance is running on, from its shard assignments
+  function getInstanceNodeIds(instanceWrapped: unknown): string[] {
+    const [, instance] = getTagged(instanceWrapped);
+    if (!instance || typeof instance !== "object") return [];
+    const inst = instance as {
+      shardAssignments?: { nodeToRunner?: Record<string, string> };
+    };
+    return Object.keys(inst.shardAssignments?.nodeToRunner ?? {});
+  }
 
-    // Get the model ID of the instance being deleted before we delete it
-    const deletedInstanceModelId = getInstanceModelId(instanceData[instanceId]);
+  async function ejectInstance(instanceId: string) {
+    if (!confirm(`Eject instance ${instanceId.slice(0, 8)}...?`)) return;
+
+    // Get the model ID and node IDs of the instance before we delete it
+    const wrappedInstance = instanceData[instanceId];
+    const deletedInstanceModelId = getInstanceModelId(wrappedInstance);
+    const nodeIds = getInstanceNodeIds(wrappedInstance);
     const wasSelected = selectedChatModel() === deletedInstanceModelId;
 
     try {
@@ -1993,8 +2006,36 @@
 
       if (!response.ok) {
         console.error("Failed to delete instance:", response.status);
-        addToast({ type: "error", message: "Failed to delete instance" });
-      } else if (wasSelected) {
+        addToast({ type: "error", message: "Failed to eject instance" });
+        return;
+      }
+
+      if (
+        deletedInstanceModelId &&
+        deletedInstanceModelId !== "Unknown" &&
+        deletedInstanceModelId !== "Unknown Model" &&
+        nodeIds.length > 0 &&
+        confirm(
+          `Also delete the downloaded weights for ${deletedInstanceModelId} from disk to free storage?`,
+        )
+      ) {
+        await Promise.all(
+          nodeIds.map((nodeId) =>
+            deleteDownload(nodeId, deletedInstanceModelId).catch((error) => {
+              console.error(
+                `Failed to delete weights on node ${nodeId}:`,
+                error,
+              );
+              addToast({
+                type: "error",
+                message: `Failed to delete weights on node ${nodeId.slice(0, 8)}...`,
+              });
+            }),
+          ),
+        );
+      }
+
+      if (wasSelected) {
         // If we deleted the currently selected model, switch to another available model
         // Find another instance that isn't the one we just deleted
         const remainingInstances = Object.entries(instanceData).filter(
@@ -5222,10 +5263,10 @@
                           >
                         </div>
                         <button
-                          onclick={() => deleteInstance(id)}
+                          onclick={() => ejectInstance(id)}
                           class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
                         >
-                          DELETE
+                          EJECT
                         </button>
                       </div>
                       <div class="pl-2">
@@ -6357,10 +6398,10 @@
                             >
                           </div>
                           <button
-                            onclick={() => deleteInstance(id)}
+                            onclick={() => ejectInstance(id)}
                             class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
                           >
-                            DELETE
+                            EJECT
                           </button>
                         </div>
                         <div class="pl-2">
