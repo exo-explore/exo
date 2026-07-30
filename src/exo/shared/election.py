@@ -9,13 +9,19 @@ from anyio import (
 from loguru import logger
 
 from exo.routing.connection_message import ConnectionMessage
-from exo.shared.types.commands import ForwarderCommand
+from exo.shared.types.commands import ForwarderCommand, PromoteMaster
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 
 DEFAULT_ELECTION_TIMEOUT = 3.0
+
+# Seniority high enough that no node can realistically out-grow it through
+# normal re-election (seniority only ever grows to at most the number of
+# candidates seen in a round). Shared by --force-master at startup and by
+# a runtime PromoteMaster command.
+FORCE_MASTER_SENIORITY = 1_000_000
 
 
 class ElectionMessage(FrozenModel):
@@ -83,6 +89,11 @@ class Election:
         self._campaign_done: Event | None = None
         self._tg = TaskGroup()
 
+        # Highest seniority ever observed from a peer, used by _force_promote
+        # so repeated PromoteMaster commands always outrank whatever the
+        # cluster has seen so far, instead of tying against each other.
+        self._max_peer_seniority_seen = 0
+
     async def run(self):
         logger.info("Starting Election")
         try:
@@ -132,6 +143,9 @@ class Election:
                     logger.debug("Dropping message from ourselves")
                     # Drop messages from us (See exo.routing.router)
                     continue
+                self._max_peer_seniority_seen = max(
+                    self._max_peer_seniority_seen, message.seniority
+                )
                 # If a new round is starting, we participate
                 if message.clock > self.clock:
                     self.clock = message.clock
@@ -181,8 +195,41 @@ class Election:
 
     async def _command_counter(self) -> None:
         with self._co_receiver as commands:
-            async for _command in commands:
+            async for forwarder_command in commands:
                 self.commands_seen += 1
+                command = forwarder_command.command
+                if (
+                    isinstance(command, PromoteMaster)
+                    and command.target_node_id == self.node_id
+                ):
+                    self._force_promote()
+
+    def _force_promote(self) -> None:
+        """Guarantee this node wins the next election round, then trigger one.
+
+        Sets seniority to one more than the highest value this node or any
+        peer has ever been observed at (floored at FORCE_MASTER_SENIORITY, the
+        same baseline --force-master uses at startup). Using a fixed constant
+        here would let a *second* PromoteMaster tie the first: both nodes
+        would sit at the same seniority and the round would fall through to
+        the commands_seen tiebreak, which favours whichever node has been
+        master longest -- silently no-opping the newer promotion. Always
+        going one higher than anything seen so far keeps repeated
+        promotions, and promotions away from a --force-master node, working.
+        """
+        logger.info("Forcing this node to win the next master election")
+        self.seniority = (
+            max(
+                self.seniority,
+                self._max_peer_seniority_seen,
+                FORCE_MASTER_SENIORITY - 1,
+            )
+            + 1
+        )
+        self.clock += 1
+        candidates: list[ElectionMessage] = []
+        self._candidates = candidates
+        self._tg.start_soon(self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT)
 
     async def _campaign(
         self, candidates: list[ElectionMessage], campaign_timeout: float
