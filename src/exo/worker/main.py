@@ -58,7 +58,7 @@ from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
 from exo.utils.task_group import TaskGroup
-from exo.worker.plan import plan
+from exo.worker.plan import instance_to_reset_backoff, plan
 from exo.worker.runner.supervisor import RunnerSupervisor
 
 
@@ -146,6 +146,9 @@ class Worker:
 
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
+
+                if (iid := instance_to_reset_backoff(event, self.runners)) is not None:
+                    self._instance_backoff.reset(iid)
 
                 # Buffer input image chunks for image editing
                 if isinstance(event, InputChunkReceived):
@@ -291,6 +294,14 @@ class Worker:
                         )
                     finally:
                         runner.shutdown()
+                        # Wait for the runner's process (and whatever OS-level
+                        # resources it held, e.g. an RDMA queue pair) to
+                        # actually go away before the next plan() tick is free
+                        # to create a replacement for this same instance --
+                        # otherwise a fast Shutdown->CreateRunner cycle can
+                        # race the old process's teardown.
+                        with anyio.move_on_after(15):
+                            await runner.wait_stopped()
                 case CancelTask(
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):

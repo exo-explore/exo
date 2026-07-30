@@ -1,3 +1,4 @@
+import time
 from typing import cast
 
 import anyio
@@ -20,6 +21,10 @@ from exo.utils.channels import channel, mp_channel
 from exo.worker.runner.bootstrap import RunnerTerminationError
 from exo.worker.runner.supervisor import RunnerStdioHandler, RunnerSupervisor
 from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance
+
+
+def _sleep_forever(*_args: object) -> None:
+    time.sleep(1000)
 
 
 class _DeadProcess:
@@ -91,6 +96,67 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
 
     assert isinstance(got_status, RunnerStatusUpdated)
     assert isinstance(got_status.runner_status, RunnerFailed)
+
+    event_sender.close()
+    with anyio.move_on_after(0.1):
+        await event_receiver.aclose()
+
+
+@pytest.mark.anyio
+async def test_wait_stopped_resolves_only_after_process_actually_exits() -> None:
+    """Regression test: main.py's Shutdown handling awaits wait_stopped()
+    before the next plan() tick is allowed to create a replacement runner for
+    the same instance. If wait_stopped() resolved before the OS process (and
+    whatever resources it held, e.g. an RDMA queue pair) actually went away,
+    a fast Shutdown->CreateRunner cycle could race the old process's
+    teardown."""
+    event_sender, event_receiver = channel[Event]()
+    task_sender, _ = mp_channel[Task]()
+    cancel_sender, _ = mp_channel[TaskId]()
+    _, ev_recv = mp_channel[Event | RunnerTerminationError]()
+
+    bound_instance: BoundInstance = get_bound_mlx_ring_instance(
+        instance_id=InstanceId("instance-a"),
+        model_id=ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit"),
+        runner_id=RunnerId("runner-a"),
+        node_id=NodeId("node-a"),
+    )
+
+    runner_process = AsyncProcess(target=_sleep_forever, args=(), daemon=True)
+    handler = await RunnerStdioHandler.create(
+        stdout_rx=runner_process.stdout, stderr_rx=runner_process.stderr
+    )
+    supervisor = RunnerSupervisor(
+        shard_metadata=bound_instance.bound_shard,
+        bound_instance=bound_instance,
+        runner_process=runner_process,
+        _runner_stdio_handler=handler,
+        initialize_timeout=400,
+        _ev_recv=ev_recv,
+        _task_sender=task_sender,
+        _event_sender=event_sender,
+        _cancel_sender=cancel_sender,
+    )
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(supervisor.run)
+
+        with anyio.fail_after(5):
+            while not runner_process.is_alive():
+                await anyio.sleep(0.01)
+
+        assert not supervisor._stopped.is_set()  # pyright: ignore[reportPrivateUsage]
+
+        supervisor.shutdown()
+
+        with anyio.fail_after(10):
+            await supervisor.wait_stopped()
+
+        assert not runner_process.is_alive()
+
+        # Safe to await again once already stopped (level-triggered event).
+        with anyio.fail_after(1):
+            await supervisor.wait_stopped()
 
     event_sender.close()
     with anyio.move_on_after(0.1):
