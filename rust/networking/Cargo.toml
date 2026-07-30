@@ -1,42 +1,27 @@
 [package]
 name = "networking"
-version = { workspace = true }
-edition = { workspace = true }
-publish = false
+version.workspace = true
+edition.workspace = true
 
-[lib]
-doctest = false
-name = "networking"
-path = "src/lib.rs"
+[dependencies]
+async-stream.workspace = true
+futures-lite.workspace = true
+netwatcher = { workspace = true, features = ["tokio"] }
+parking_lot.workspace = true
+tokio = { workspace = true, features = ["full"] }
+zenoh = { workspace = true, features = ["internal", "plugins", "unstable"] }
+zenoh-plugin-storage-manager.workspace = true
+zenoh-plugin-trait.workspace = true
+rand.workspace = true
+log.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
+socket2.workspace = true
+blake3.workspace = true
 
 [lints]
 workspace = true
 
-[dependencies]
-# datastructures
-either = { workspace = true }
-
-# macro dependencies
-extend = { workspace = true }
-delegate = { workspace = true }
-
-# async
-async-stream = { workspace = true }
-futures-lite = { workspace = true }
-futures-timer = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
-
-# utility dependencies
-util = { workspace = true }
-tracing-subscriber = { version = "0.3.19", features = [
-  "default",
-  "env-filter",
-] }
-keccak-const = { workspace = true }
-
-# tracing/logging
-log = { workspace = true }
-
-# networking
-libp2p = { workspace = true, features = ["full"] }
-pin-project = "1.1.10"
+[dev-dependencies]
+env_logger.workspace = true
+smol.workspace = true
+tracing.workspace = true

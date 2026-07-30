@@ -1,390 +1,339 @@
-use crate::ext::MultiaddrExt;
-use delegate::delegate;
-use either::Either;
-use futures_lite::FutureExt;
-use futures_timer::Delay;
-use libp2p::core::transport::PortUse;
-use libp2p::core::{ConnectedPoint, Endpoint};
-use libp2p::swarm::behaviour::ConnectionEstablished;
-use libp2p::swarm::dial_opts::DialOpts;
-use libp2p::swarm::{
-    CloseConnection, ConnectionClosed, ConnectionDenied, ConnectionHandler,
-    ConnectionHandlerSelect, ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent,
-    THandlerOutEvent, ToSwarm, dummy,
+use std::{
+    io,
+    net::{Ipv6Addr, SocketAddr, SocketAddrV6},
+    sync::Arc,
+    time::Duration,
 };
-use libp2p::{Multiaddr, PeerId, identity, mdns};
-use std::collections::{BTreeSet, HashMap};
-use std::convert::Infallible;
-use std::io;
-use std::net::IpAddr;
-use std::task::{Context, Poll};
-use std::time::Duration;
-use util::wakerdeque::WakerDeque;
 
-const RETRY_CONNECT_INTERVAL: Duration = Duration::from_secs(5);
+use bytemuck::{Pod, Zeroable};
+use log::{debug, trace, warn};
+use netwatcher::WatchHandle;
+use parking_lot::Mutex;
+use tokio::{
+    net::UdpSocket,
+    time::{Interval, interval},
+};
+use zenoh::config::ZenohId;
 
-mod managed {
-    use libp2p::swarm::NetworkBehaviour;
-    use libp2p::{identity, mdns, ping};
-    use std::io;
-    use std::time::Duration;
+const GROUP: Ipv6Addr = Ipv6Addr::new(0xff12, 0, 0, 0, 0, 0, 0xe0a1, 0xde89);
+const MAGIC: [u8; 3] = *b"EXO";
 
-    const MDNS_RECORD_TTL: Duration = Duration::from_secs(2_500);
-    const MDNS_QUERY_INTERVAL: Duration = Duration::from_secs(1_500);
-    const PING_TIMEOUT: Duration = Duration::from_millis(2_500);
-    const PING_INTERVAL: Duration = Duration::from_millis(2_500);
-
-    #[derive(NetworkBehaviour)]
-    pub struct Behaviour {
-        mdns: mdns::tokio::Behaviour,
-        ping: ping::Behaviour,
-    }
-
-    impl Behaviour {
-        pub fn new(keypair: &identity::Keypair) -> io::Result<Self> {
-            Ok(Self {
-                mdns: mdns_behaviour(keypair)?,
-                ping: ping_behaviour(),
-            })
-        }
-    }
-
-    fn mdns_behaviour(keypair: &identity::Keypair) -> io::Result<mdns::tokio::Behaviour> {
-        use mdns::{Config, tokio};
-
-        // mDNS config => enable IPv6
-        let mdns_config = Config {
-            ttl: MDNS_RECORD_TTL,
-            query_interval: MDNS_QUERY_INTERVAL,
-
-            // enable_ipv6: true, // TODO: for some reason, TCP+mDNS don't work well with ipv6?? figure out how to make work
-            ..Default::default()
-        };
-
-        let mdns_behaviour = tokio::Behaviour::new(mdns_config, keypair.public().to_peer_id());
-        Ok(mdns_behaviour?)
-    }
-
-    fn ping_behaviour() -> ping::Behaviour {
-        ping::Behaviour::new(
-            ping::Config::new()
-                .with_timeout(PING_TIMEOUT)
-                .with_interval(PING_INTERVAL),
-        )
-    }
+pub struct Discovery {
+    sock: Arc<UdpSocket>,
+    ifaces: Arc<Mutex<Vec<SocketAddrV6>>>,
+    namespace: [u8; 8],
+    last_nonce: Mutex<[u8; 8]>,
+    /// the port of the service we are doing discovery for - transmitted to peers
+    listen_port: u16,
+    zid: ZenohId,
+    tick: Interval,
+    _sync: Mutex<WatchHandle>,
 }
 
-/// Events for when a listening connection is truly established and truly closed.
-#[derive(Debug, Clone)]
-pub enum Event {
-    ConnectionEstablished {
-        peer_id: PeerId,
-        connection_id: ConnectionId,
-        remote_ip: IpAddr,
-        remote_tcp_port: u16,
-    },
-    ConnectionClosed {
-        peer_id: PeerId,
-        connection_id: ConnectionId,
-        remote_ip: IpAddr,
-        remote_tcp_port: u16,
-    },
+#[derive(Debug, Clone, Copy)]
+pub struct Discovered {
+    pub zid: ZenohId,
+    pub addr: SocketAddrV6,
 }
 
-/// Discovery behavior that wraps mDNS to produce truly discovered durable peer-connections.
-///
-/// The behaviour operates as such:
-///  1) All true (listening) connections/disconnections are tracked, emitting corresponding events
-///     to the swarm.
-///  1) mDNS discovered/expired peers are tracked; discovered but not connected peers are dialed
-///     immediately, and expired but connected peers are disconnected from immediately.
-///  2) Every fixed interval: discovered but not connected peers are dialed, and expired but
-///     connected peers are disconnected from.
-pub struct Behaviour {
-    // state-tracking for managed behaviors & mDNS-discovered peers
-    managed: managed::Behaviour,
-    mdns_discovered: HashMap<PeerId, BTreeSet<Multiaddr>>,
-    bootstrap_peers: Vec<Multiaddr>,
-
-    retry_delay: Delay, // retry interval
-
-    // pending events to emmit => waker-backed Deque to control polling
-    pending_events: WakerDeque<ToSwarm<Event, Infallible>>,
-}
-
-impl Behaviour {
-    pub fn new(keypair: &identity::Keypair, bootstrap_peers: Vec<Multiaddr>) -> io::Result<Self> {
-        Ok(Self {
-            managed: managed::Behaviour::new(keypair)?,
-            mdns_discovered: HashMap::new(),
-            bootstrap_peers,
-            retry_delay: Delay::new(RETRY_CONNECT_INTERVAL),
-            pending_events: WakerDeque::new(),
-        })
-    }
-
-    fn dial(&mut self, peer_id: PeerId, addr: Multiaddr) {
-        self.pending_events.push_back(ToSwarm::Dial {
-            opts: DialOpts::peer_id(peer_id).addresses(vec![addr]).build(),
-        })
-    }
-
-    fn close_connection(&mut self, peer_id: PeerId, connection: ConnectionId) {
-        // push front to make this IMMEDIATE
-        self.pending_events.push_front(ToSwarm::CloseConnection {
-            peer_id,
-            connection: CloseConnection::One(connection),
-        })
-    }
-
-    fn handle_mdns_discovered(&mut self, peers: Vec<(PeerId, Multiaddr)>) {
-        for (p, ma) in peers {
-            self.dial(p, ma.clone()); // always connect
-
-            // get peer's multi-addresses or insert if missing
-            let Some(mas) = self.mdns_discovered.get_mut(&p) else {
-                self.mdns_discovered.insert(p, BTreeSet::from([ma]));
-                continue;
-            };
-
-            // multiaddress should never already be present - else something has gone wrong
-            let is_new_addr = mas.insert(ma);
-            assert!(is_new_addr, "cannot discover a discovered peer");
-        }
-    }
-
-    fn handle_mdns_expired(&mut self, peers: Vec<(PeerId, Multiaddr)>) {
-        for (p, ma) in peers {
-            // at this point, we *must* have the peer
-            let mas = self
-                .mdns_discovered
-                .get_mut(&p)
-                .expect("nonexistent peer cannot expire");
-
-            // at this point, we *must* have the multiaddress
-            let was_present = mas.remove(&ma);
-            assert!(was_present, "nonexistent multiaddress cannot expire");
-
-            // if empty, remove the peer-id entirely
-            if mas.is_empty() {
-                self.mdns_discovered.remove(&p);
-            }
-        }
-    }
-
-    fn on_connection_established(
-        &mut self,
-        peer_id: PeerId,
-        connection_id: ConnectionId,
-        remote_ip: IpAddr,
-        remote_tcp_port: u16,
-    ) {
-        // send out connected event
-        self.pending_events
-            .push_back(ToSwarm::GenerateEvent(Event::ConnectionEstablished {
-                peer_id,
-                connection_id,
-                remote_ip,
-                remote_tcp_port,
-            }));
-    }
-
-    fn on_connection_closed(
-        &mut self,
-        peer_id: PeerId,
-        connection_id: ConnectionId,
-        remote_ip: IpAddr,
-        remote_tcp_port: u16,
-    ) {
-        // send out disconnected event
-        self.pending_events
-            .push_back(ToSwarm::GenerateEvent(Event::ConnectionClosed {
-                peer_id,
-                connection_id,
-                remote_ip,
-                remote_tcp_port,
-            }));
-    }
-}
-
-impl NetworkBehaviour for Behaviour {
-    type ConnectionHandler =
-        ConnectionHandlerSelect<dummy::ConnectionHandler, THandler<managed::Behaviour>>;
-    type ToSwarm = Event;
-
-    // simply delegate to underlying mDNS behaviour
-
-    delegate! {
-        to self.managed {
-            fn handle_pending_inbound_connection(&mut self, connection_id: ConnectionId, local_addr: &Multiaddr, remote_addr: &Multiaddr) -> Result<(), ConnectionDenied>;
-            fn handle_pending_outbound_connection(&mut self, connection_id: ConnectionId, maybe_peer: Option<PeerId>, addresses: &[Multiaddr], effective_role: Endpoint) -> Result<Vec<Multiaddr>, ConnectionDenied>;
-        }
-    }
-
-    fn handle_established_inbound_connection(
-        &mut self,
-        connection_id: ConnectionId,
-        peer: PeerId,
-        local_addr: &Multiaddr,
-        remote_addr: &Multiaddr,
-    ) -> Result<THandler<Self>, ConnectionDenied> {
-        Ok(ConnectionHandler::select(
-            dummy::ConnectionHandler,
-            self.managed.handle_established_inbound_connection(
-                connection_id,
-                peer,
-                local_addr,
-                remote_addr,
-            )?,
-        ))
-    }
-
-    #[allow(clippy::needless_question_mark)]
-    fn handle_established_outbound_connection(
-        &mut self,
-        connection_id: ConnectionId,
-        peer: PeerId,
-        addr: &Multiaddr,
-        role_override: Endpoint,
-        port_use: PortUse,
-    ) -> Result<THandler<Self>, ConnectionDenied> {
-        Ok(ConnectionHandler::select(
-            dummy::ConnectionHandler,
-            self.managed.handle_established_outbound_connection(
-                connection_id,
-                peer,
-                addr,
-                role_override,
-                port_use,
-            )?,
-        ))
-    }
-
-    fn on_connection_handler_event(
-        &mut self,
-        peer_id: PeerId,
-        connection_id: ConnectionId,
-        event: THandlerOutEvent<Self>,
-    ) {
-        match event {
-            Either::Left(ev) => libp2p::core::util::unreachable(ev),
-            Either::Right(ev) => {
-                self.managed
-                    .on_connection_handler_event(peer_id, connection_id, ev)
-            }
-        }
-    }
-
-    // hook into these methods to drive behavior
-
-    fn on_swarm_event(&mut self, event: FromSwarm) {
-        self.managed.on_swarm_event(event); // let mDNS handle swarm events
-
-        // handle swarm events to update internal state:
-        match event {
-            FromSwarm::ConnectionEstablished(ConnectionEstablished {
-                peer_id,
-                connection_id,
-                endpoint,
-                ..
-            }) => {
-                let remote_address = match endpoint {
-                    ConnectedPoint::Dialer { address, .. } => address,
-                    ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr,
-                };
-
-                if let Some((ip, port)) = remote_address.try_to_tcp_addr() {
-                    // handle connection established event which is filtered correctly
-                    self.on_connection_established(peer_id, connection_id, ip, port)
-                }
-            }
-            FromSwarm::ConnectionClosed(ConnectionClosed {
-                peer_id,
-                connection_id,
-                endpoint,
-                ..
-            }) => {
-                let remote_address = match endpoint {
-                    ConnectedPoint::Dialer { address, .. } => address,
-                    ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr,
-                };
-
-                if let Some((ip, port)) = remote_address.try_to_tcp_addr() {
-                    // handle connection closed event which is filtered correctly
-                    self.on_connection_closed(peer_id, connection_id, ip, port)
-                }
-            }
-
-            // since we are running TCP/IP transport layer, we are assuming that
-            // no address changes can occur, hence encountering one is a fatal error
-            FromSwarm::AddressChange(a) => {
-                unreachable!("unhandlable: address change encountered: {:?}", a)
-            }
-            _ => {}
-        }
-    }
-
-    fn poll(&mut self, cx: &mut Context) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
-        // delegate to managed behaviors for any behaviors they need to perform
-        match self.managed.poll(cx) {
-            Poll::Ready(ToSwarm::GenerateEvent(e)) => {
-                match e {
-                    // handle discovered and expired events from mDNS
-                    managed::BehaviourEvent::Mdns(e) => match e.clone() {
-                        mdns::Event::Discovered(peers) => {
-                            self.handle_mdns_discovered(peers);
+impl Discovery {
+    pub async fn new(
+        zid: ZenohId,
+        namespace: [u8; 8],
+        listen_port: u16,
+        discovery_port: u16,
+    ) -> io::Result<Self> {
+        let sock = socket2::Socket::new(
+            socket2::Domain::IPV6,
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )?;
+        sock.set_reuse_address(true)?;
+        #[cfg(unix)]
+        sock.set_reuse_port(true)?;
+        sock.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, discovery_port, 0, 0).into())?;
+        sock.set_nonblocking(true)?;
+        sock.set_multicast_loop_v6(true)?;
+        let sock = Arc::new(UdpSocket::from_std(sock.into())?);
+        let ifaces: Arc<Mutex<Vec<SocketAddrV6>>> = Default::default();
+        let _sync = Mutex::new(
+            netwatcher::watch_interfaces_with_callback({
+                let sock = sock.clone();
+                let ifaces = ifaces.clone();
+                move |update| {
+                    for (iface_idx, iface) in update.interfaces.iter() {
+                        if iface
+                            .ipv6_ips()
+                            .all(|addr| addr.is_loopback() || addr.is_unspecified())
+                        {
+                            continue;
                         }
-                        mdns::Event::Expired(peers) => {
-                            self.handle_mdns_expired(peers);
-                        }
-                    },
 
-                    // handle ping events => if error then disconnect
-                    managed::BehaviourEvent::Ping(e) => {
-                        if let Err(_) = e.result {
-                            self.close_connection(e.peer, e.connection.clone())
+                        match sock.join_multicast_v6(&GROUP, *iface_idx) {
+                            Ok(()) => ifaces.lock().push(SocketAddrV6::new(
+                                GROUP,
+                                discovery_port,
+                                0,
+                                *iface_idx,
+                            )),
+                            Err(e) if e.kind() != io::ErrorKind::AddrInUse => {
+                                // skip AddrInUse - just means we've already joined the mv6
+                                if let Some(iface) = update.interfaces.get(&iface_idx) {
+                                    warn!(
+                                        "failed to join multicast v6 for interface {}: {e}",
+                                        iface.name
+                                    )
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    for iface_idx in update.diff.removed {
+                        ifaces.lock().retain(|addr| addr.scope_id() != iface_idx);
+
+                        if let Err(e) = sock.leave_multicast_v6(&GROUP, iface_idx) {
+                            if let Some(iface) = update.interfaces.get(&iface_idx) {
+                                warn!(
+                                    "failed to leave multicast v6 for interface {}: {e}",
+                                    iface.name
+                                )
+                            }
                         }
                     }
                 }
+            })
+            // todo: better error handling here
+            .expect("failed to bind discovery watcher"),
+        );
+        Ok(Self {
+            sock,
+            namespace,
+            ifaces,
+            last_nonce: Mutex::new(rand::random()),
+            listen_port,
+            zid,
+            tick: interval(Duration::from_secs(1)),
+            _sync,
+        })
+    }
 
-                // since we just consumed an event, we should immediately wake just in case
-                // there are more events to come where that came from
-                cx.waker().wake_by_ref();
-            }
-
-            // forward any other mDNS event to the swarm or its connection handler(s)
-            Poll::Ready(e) => {
-                return Poll::Ready(
-                    e.map_out(|_| unreachable!("events returning to swarm already handled"))
-                        .map_in(Either::Right),
-                );
-            }
-
-            Poll::Pending => {}
-        }
-
-        // retry connecting to all mDNS peers periodically (fails safely if already connected)
-        if self.retry_delay.poll(cx).is_ready() {
-            for (p, mas) in self.mdns_discovered.clone() {
-                for ma in mas {
-                    self.dial(p, ma)
+    pub async fn next(&mut self) -> io::Result<Discovered> {
+        let mut buf = [0u8; Hello::buf_size() + WhatsUp::buf_size() + 1];
+        loop {
+            tokio::select! {
+                _ = self.tick.tick() => {
+                    self.announce().await?;
+                }
+                res = self.sock.recv_from(&mut buf) => {
+                    let Ok((bytes_read, addr)) = res else { continue; };
+                    if let Some(discovered) = self.respond(bytes_read, addr, &buf).await? {
+                        return Ok(discovered)
+                    }
                 }
             }
-            // dial bootstrap peers (for environments where mDNS is unavailable)
-            for addr in &self.bootstrap_peers {
-                self.pending_events.push_back(ToSwarm::Dial {
-                    opts: DialOpts::unknown_peer_id().address(addr.clone()).build(),
-                })
+        }
+    }
+
+    async fn respond(
+        &self,
+        bytes_read: usize,
+        addr: SocketAddr,
+        buf: &[u8],
+    ) -> io::Result<Option<Discovered>> {
+        trace!(
+            "raw recv: {bytes_read} bytes from {addr}: {:02x?}",
+            &buf[..bytes_read]
+        );
+        if bytes_read < size_of::<Header>() {
+            trace!("dropped: early EOF");
+            return Ok(None);
+        }
+        let header: &Header = bytemuck::from_bytes(&buf[0..size_of::<Header>()]);
+        if header.magic != MAGIC {
+            trace!("dropped: wrong magic");
+            return Ok(None);
+        }
+        let Ok(kind) = header.kind.try_into() else {
+            trace!("dropped: unknown message kind {}", header.kind);
+            return Ok(None);
+        };
+        match kind {
+            Kind::Hello => {
+                let total = Hello::buf_size();
+                if bytes_read != total {
+                    trace!("dropped: hello wrong size");
+                    return Ok(None);
+                }
+                let hello: &Hello = bytemuck::from_bytes(&buf[size_of::<Header>()..total]);
+                if hello.nonce == *self.last_nonce.lock() {
+                    trace!("dropped: local hello nonce");
+                    return Ok(None);
+                }
+                if hello.namespace != self.namespace {
+                    trace!("dropped: different namespace");
+                    return Ok(None);
+                }
+
+                // reply
+                trace!("replying to Hello({:?})", hello.nonce);
+                let reply = WhatsUp {
+                    nonce: hello.nonce,
+                    zid: self.zid.to_le_bytes(),
+                    port_le: self.listen_port.to_le_bytes(),
+                }
+                .alloc();
+
+                for i in 1..6 {
+                    if self
+                        .sock
+                        .send_to(&reply, addr)
+                        .await
+                        .inspect_err(|e| debug!("send to {addr} failed: {e}"))
+                        .is_ok_and(|sent| sent == WhatsUp::buf_size())
+                    {
+                        trace!(
+                            "sent {} bytes to {addr} after {} attempt(s)",
+                            WhatsUp::buf_size(),
+                            i
+                        );
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                }
+                Ok(None)
             }
-            self.retry_delay.reset(RETRY_CONNECT_INTERVAL) // reset timeout
+            Kind::WhatsUp => {
+                let total = WhatsUp::buf_size();
+                if bytes_read != total {
+                    trace!("dropped: whatsup wrong size");
+                    return Ok(None);
+                }
+                let whats_up: &WhatsUp = bytemuck::from_bytes(&buf[size_of::<Header>()..total]);
+                if whats_up.nonce != *self.last_nonce.lock() {
+                    trace!("dropped: stale nonce");
+                    return Ok(None);
+                }
+                let SocketAddr::V6(v6) = addr else {
+                    trace!("dropped: v4 addr used");
+                    return Ok(None);
+                };
+                let Ok(zid) = ZenohId::try_from(&whats_up.zid[..]) else {
+                    trace!("dropped: zenoh conversion failed");
+                    return Ok(None);
+                };
+                if zid == self.zid {
+                    trace!("dropped: self zenoh id");
+                    return Ok(None);
+                }
+                // discovery success!
+                // the incoming port is our listen port;
+                // overwrite it with the whats_up port corresponding to the remote zenoh service
+                let addr = {
+                    let mut x = v6;
+                    x.set_port(u16::from_le_bytes(whats_up.port_le));
+                    x
+                };
+                Ok(Some(Discovered { addr, zid }))
+            }
         }
+    }
 
-        // send out any pending events from our own service
-        if let Some(e) = self.pending_events.pop_front(cx) {
-            return Poll::Ready(e.map_in(Either::Left));
+    async fn announce(&self) -> io::Result<()> {
+        let nonce = rand::random();
+        *self.last_nonce.lock() = nonce;
+        let buf = Hello {
+            nonce,
+            namespace: self.namespace,
         }
+        .alloc();
 
-        // wait for pending events
-        Poll::Pending
+        let addrs = self.ifaces.lock().clone();
+        debug!("announcing Hello({nonce:?}) to {addrs:?}");
+        // rev so .remove() doesn't break things
+        for (i, addr) in addrs.into_iter().enumerate().rev() {
+            match self.sock.send_to(&buf, addr).await {
+                Ok(bytes) => trace!("sent {bytes} to {addr}"),
+                Err(e) if e.kind() == io::ErrorKind::HostUnreachable => {
+                    debug!("disabling discovery address {addr}: {e}");
+                    _ = self.ifaces.lock().swap_remove(i);
+                }
+                Err(e) => debug!("failed to reach {addr}: {e}"),
+            }
+        }
+        Ok(())
     }
 }
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy)]
+// packet & version
+pub enum Kind {
+    Hello = 0,
+    WhatsUp = 1,
+}
+
+pub struct UnknownKind;
+impl TryFrom<u8> for Kind {
+    type Error = UnknownKind;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Hello),
+            1 => Ok(Self::WhatsUp),
+            _ => Err(UnknownKind),
+        }
+    }
+}
+
+pub trait Message: Pod {
+    const KIND: Kind;
+}
+// should be part of the Message trait, but const in traits isnt stabilized. this lets alloc :: Self -> [u8; Self::buf_size()]
+macro_rules! impl_alloc {
+    ($a:ident) => {
+        impl $a {
+            const fn buf_size() -> usize {
+                size_of::<Header>() + size_of::<Self>()
+            }
+            pub fn alloc(self) -> [u8; Self::buf_size()] {
+                let mut buf = [0u8; Self::buf_size()];
+                buf[0..size_of::<Header>()].copy_from_slice(bytemuck::bytes_of(&Header {
+                    magic: MAGIC,
+                    kind: Self::KIND as u8,
+                }));
+                buf[size_of::<Header>()..Self::buf_size()]
+                    .copy_from_slice(bytemuck::bytes_of(&self));
+                buf
+            }
+        }
+    };
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct Header {
+    magic: [u8; 3],
+    kind: u8,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct Hello {
+    pub nonce: [u8; 8],
+    pub namespace: [u8; 8],
+}
+impl Message for Hello {
+    const KIND: Kind = Kind::Hello;
+}
+impl_alloc!(Hello);
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct WhatsUp {
+    pub nonce: [u8; 8],
+    pub zid: [u8; 16],
+    pub port_le: [u8; 2],
+}
+impl Message for WhatsUp {
+    const KIND: Kind = Kind::WhatsUp;
+}
+impl_alloc!(WhatsUp);

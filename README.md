@@ -201,6 +201,12 @@ This starts the exo dashboard and API at http://localhost:52415/
   uv run exo --no-worker
   ```
 
+- `--legacy-daemon`: Run exo as a legacy SysV-style background daemon using double-fork daemonization. This is intended for legacy init scripts; systemd and launchd should run exo in the foreground without this flag.
+
+  ```bash
+  uv run exo --legacy-daemon
+  ```
+
 **File Locations (Linux):**
 
 exo follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html) on Linux:
@@ -222,6 +228,12 @@ exo ships a macOS app that runs in the background on your Mac.
 The macOS app requires macOS Tahoe 26.2 or later.
 
 Download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-latest.dmg).
+
+You can also install the latest build with Homebrew:
+
+```bash
+brew install --cask exo
+```
 
 The app will ask for permission to modify system settings and install a new Network profile. Improvements to this are being worked on.
 
@@ -394,6 +406,18 @@ Sample response:
   "command_id": "e9d1a8ab-...."
 }
 ```
+
+This command is asynchronous. Before sending inference requests, wait until the
+API sees the new instance for this model:
+
+```bash
+curl -N "http://localhost:52415/instance/await?model_id=mlx-community/Llama-3.2-1B-Instruct-4bit"
+```
+
+The endpoint returns an SSE stream. A successful wait emits a message with
+`"type": "ready"` and the matching instance; a timeout emits `"type": "timeout"`.
+By default it waits indefinitely. Set `timeout_seconds` to a positive value to
+bound the wait.
 
 ---
 

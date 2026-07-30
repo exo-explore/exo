@@ -37,7 +37,7 @@ final class ClusterStateService: ObservableObject {
     /// gain nothing from being cached on disk. Use an ephemeral session
     /// with `urlCache = nil` so neither response bodies nor metadata
     /// touch disk.
-    private static func makeNonCachingSession() -> URLSession {
+    nonisolated private static func makeNonCachingSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.urlCache = nil
         config.requestCachePolicy = .reloadIgnoringLocalCacheData

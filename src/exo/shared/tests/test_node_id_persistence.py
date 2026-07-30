@@ -10,8 +10,8 @@ from multiprocessing.synchronize import Semaphore as SemaphoreT
 from loguru import logger
 from pytest import LogCaptureFixture, mark
 
-from exo.routing.router import get_node_id_keypair
-from exo.shared.constants import EXO_NODE_ID_KEYPAIR
+from exo.routing.router import get_node_zid
+from exo.shared.constants import EXO_NODE_ZID
 
 NUM_CONCURRENT_PROCS = 10
 
@@ -23,7 +23,7 @@ def _get_keypair_concurrent_subprocess_task(
     sem.release()
     # wait to be told to begin simultaneous read
     ev.wait()
-    queue.put(get_node_id_keypair().to_bytes())
+    queue.put(get_node_zid().encode())
 
 
 def _get_keypair_concurrent(num_procs: int) -> bytes:
@@ -79,7 +79,7 @@ def test_node_id_fetching(caplog: LogCaptureFixture):
     reps = 10
 
     # delete current file and write a new one
-    _delete_if_exists(EXO_NODE_ID_KEYPAIR)
+    _delete_if_exists(EXO_NODE_ZID)
     kp = _get_keypair_concurrent(NUM_CONCURRENT_PROCS)
 
     with caplog.at_level(101):  # supress logs
@@ -88,6 +88,6 @@ def test_node_id_fetching(caplog: LogCaptureFixture):
             assert kp == _get_keypair_concurrent(NUM_CONCURRENT_PROCS)
 
         # make sure that after deleting, we are not fetching the same value
-        _delete_if_exists(EXO_NODE_ID_KEYPAIR)
+        _delete_if_exists(EXO_NODE_ZID)
         for _ in range(reps):
             assert kp != _get_keypair_concurrent(NUM_CONCURRENT_PROCS)

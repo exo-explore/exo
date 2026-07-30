@@ -15,8 +15,13 @@ from exo.download.download_utils import (
     resolve_existing_model,
 )
 from exo.download.shard_downloader import ShardDownloader
+from exo.routing.event_router import (
+    EventRouterBrokenResourceError,
+    EventRouterClosedResourceError,
+)
 from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_MODELS_READ_ONLY_DIRS
-from exo.shared.models.model_cards import ModelId, get_model_cards
+from exo.shared.models import model_cards
+from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
     CancelDownload,
     DeleteDownload,
@@ -138,7 +143,14 @@ class DownloadCoordinator:
             async with self._tg as tg:
                 tg.start_soon(self._command_processor)
                 tg.start_soon(self._emit_existing_download_progress)
+        except* (EventRouterBrokenResourceError, EventRouterClosedResourceError):
+            # Event router has been closed (try-star syntax handles error groups)
+            pass
         finally:
+            # don't forget to clean up resources
+            self.download_command_receiver.close()
+            self.event_sender.close()
+
             self._stopped.set()
 
     async def shutdown(self) -> None:
@@ -422,7 +434,7 @@ class DownloadCoordinator:
                     )
                 # Scan read-only directories for pre-downloaded models
                 if EXO_MODELS_READ_ONLY_DIRS:
-                    for card in await get_model_cards():
+                    for card in await model_cards.card_cache.list_all():
                         mid = card.model_id
                         if mid in self.active_downloads:
                             continue

@@ -18,7 +18,6 @@ digest.txt
 app/EXO/build/
 dist/
 
-
 # rust
 target/
 **/*.rs.bk
@@ -39,4 +38,8 @@ bench/**/*.json
 # tmp
 tmp/models
 /build/exo
+/.agents
 /.claude/skills
+/.claude
+/.codex
+skills-lock.json

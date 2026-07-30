@@ -9,7 +9,7 @@ base_model = "Qwen3-VL 4B"
 capabilities = ["text", "thinking", "vision"]
 
 context_length = 262144
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 3340000000
 

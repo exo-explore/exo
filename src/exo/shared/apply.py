@@ -4,7 +4,8 @@ from datetime import datetime
 
 from loguru import logger
 
-from exo.shared.types.common import NodeId
+from exo.shared.models.model_cards import ModelCard
+from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
     CustomModelCardAdded,
@@ -56,6 +57,7 @@ from exo.utils.info_gatherer.info_gatherer import (
     MacThunderboltIdentifiers,
     MemoryUsage,
     MiscData,
+    NodeBackends,
     NodeConfig,
     NodeDiskUsage,
     NodeNetworkInterfaces,
@@ -63,6 +65,18 @@ from exo.utils.info_gatherer.info_gatherer import (
     StaticNodeInformation,
     ThunderboltBridgeInfo,
 )
+
+
+def _is_rdma_ctl_enabled(
+    node_id: NodeId, node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus]
+) -> bool:
+    """A node is RDMA-capable only if rdma_ctl status has been observed as enabled.
+
+    Missing entries default to ``False`` — if we have not yet observed (or the node
+    cannot run) ``rdma_ctl``, it must not participate in an RDMA-backed instance.
+    """
+    status = node_rdma_ctl.get(node_id)
+    return status is not None and status.enabled
 
 
 def event_apply(event: Event, state: State) -> State:
@@ -75,10 +89,12 @@ def event_apply(event: Event, state: State) -> State:
             | InputChunkReceived()
             | TracesCollected()
             | TracesMerged()
-            | CustomModelCardAdded()
-            | CustomModelCardDeleted()
         ):  # Pass-through events that don't modify state
             return state
+        case CustomModelCardAdded():
+            return apply_custom_model_card_added(event, state)
+        case CustomModelCardDeleted():
+            return apply_custom_model_card_deleted(event, state)
         case InstanceCreated():
             return apply_instance_created(event, state)
         case InstanceDeleted():
@@ -397,6 +413,9 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 for nid in state.node_thunderbolt
                 for tb_ident in state.node_thunderbolt[nid].interfaces
             }
+            source_is_rdma_enabled = _is_rdma_ctl_enabled(
+                event.node_id, state.node_rdma_ctl
+            )
             as_rdma_conns = [
                 Connection(
                     source=event.node_id,
@@ -409,6 +428,10 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 for tb_conn in info.conns
                 if tb_conn.source_uuid in conn_map
                 if tb_conn.sink_uuid in conn_map
+                if source_is_rdma_enabled
+                and _is_rdma_ctl_enabled(
+                    conn_map[tb_conn.sink_uuid][0], state.node_rdma_ctl
+                )
             ]
             topology.replace_all_out_rdma_connections(event.node_id, as_rdma_conns)
         case ThunderboltBridgeInfo():
@@ -432,6 +455,17 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 **state.node_rdma_ctl,
                 event.node_id: NodeRdmaCtlStatus(enabled=info.enabled),
             }
+            # If RDMA just got disabled on this node, drop any RDMA edges touching it
+            # so placement / topology consumers cannot pick a disabled node for an
+            # RDMA-backed instance. (Edges will repopulate on the next
+            # MacThunderboltConnections poll once both endpoints are enabled again.)
+            if not info.enabled:
+                topology.remove_all_rdma_connections_touching(event.node_id)
+        case NodeBackends():
+            update["node_backends"] = {
+                **state.node_backends,
+                event.node_id: info.backends,
+            }
 
     return state.model_copy(update=update)
 
@@ -447,3 +481,22 @@ def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> Sta
     topology.remove_connection(event.conn)
     # TODO: Clean up removing the reverse connection
     return state.model_copy(update={"topology": topology})
+
+
+def apply_custom_model_card_added(event: CustomModelCardAdded, state: State) -> State:
+    new_cards: Mapping[ModelId, ModelCard] = {
+        **state.custom_model_cards,
+        event.model_card.model_id: event.model_card,
+    }
+    return state.model_copy(update={"custom_model_cards": new_cards})
+
+
+def apply_custom_model_card_deleted(
+    event: CustomModelCardDeleted, state: State
+) -> State:
+    new_cards: Mapping[ModelId, ModelCard] = {
+        model_id: card
+        for model_id, card in state.custom_model_cards.items()
+        if model_id != event.model_id
+    }
+    return state.model_copy(update={"custom_model_cards": new_cards})

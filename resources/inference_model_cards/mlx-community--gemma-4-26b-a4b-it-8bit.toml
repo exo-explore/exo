@@ -10,7 +10,7 @@ base_model = "Gemma 4 26B A4B"
 capabilities = ["text", "vision"]
 
 context_length = 262144
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 27953417372
 

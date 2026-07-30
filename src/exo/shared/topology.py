@@ -169,6 +169,22 @@ class Topology:
         for conn in new_connections:
             self.add_connection(conn)
 
+    def remove_all_rdma_connections_touching(self, node_id: NodeId) -> None:
+        """Remove every RDMA edge incident to ``node_id`` (incoming or outgoing)."""
+        if node_id not in self._vertex_indices:
+            return
+        rx_idx = self._vertex_indices[node_id]
+        rdma_edge_idxs = [
+            edge_idx
+            for edge_idx in (
+                *self._graph.out_edge_indices(rx_idx),
+                *self._graph.in_edge_indices(rx_idx),
+            )
+            if isinstance(self._graph.get_edge_data_by_index(edge_idx), RDMAConnection)
+        ]
+        for edge_idx in rdma_edge_idxs:
+            self._graph.remove_edge_from_index(edge_idx)
+
     def remove_connection(self, conn: Connection) -> None:
         if (
             conn.source not in self._vertex_indices

@@ -10,7 +10,7 @@ base_model = "GLM 4.7 Flash"
 capabilities = ["text", "thinking", "thinking_toggle"]
 reasoning_dialect = "post_last_user"
 context_length = 202752
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 22548578304
 

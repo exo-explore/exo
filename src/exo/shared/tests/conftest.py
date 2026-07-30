@@ -8,6 +8,7 @@ from _pytest.logging import LogCaptureFixture
 from loguru import logger
 
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
+from exo.shared.types.backends import Backend
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 
@@ -38,6 +39,7 @@ def get_pipeline_shard_metadata(
             hidden_size=1000,
             supports_tensor=True,
             tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
         ),
         device_rank=device_rank,
         world_size=world_size,

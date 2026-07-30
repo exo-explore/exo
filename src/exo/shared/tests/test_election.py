@@ -327,7 +327,7 @@ async def test_connection_message_triggers_new_round_broadcast() -> None:
             tg.start_soon(election.run)
 
             # Send any connection message object; we close quickly to cancel before result creation
-            await cm_tx.send(ConnectionMessage(node_id=NodeId(), connected=True))
+            await cm_tx.send(ConnectionMessage(connected=True))
 
             # Expect a broadcast for the new round at clock=1
             while True:

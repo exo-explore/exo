@@ -6,6 +6,7 @@ from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import Id, NodeId
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.pydantic_ext import FrozenModel, TaggedModel
+from exo.worker.runner.diagnostics import KnownRunnerDiagnostic
 
 
 class RunnerId(Id):
@@ -64,6 +65,7 @@ class RunnerShutdown(BaseRunnerStatus):
 
 class RunnerFailed(BaseRunnerStatus):
     error_message: str | None = None
+    diagnostics: list[KnownRunnerDiagnostic]
 
 
 RunnerStatus = (

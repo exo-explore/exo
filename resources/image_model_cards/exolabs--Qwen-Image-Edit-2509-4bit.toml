@@ -8,6 +8,7 @@ family = "qwen-image"
 quantization = "4bit"
 base_model = "Qwen Image Edit"
 capabilities = ["image_edit"]
+backends = ["MlxMetal"]
 
 [storage_size]
 in_bytes = 26799533856

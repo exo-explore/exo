@@ -35,9 +35,8 @@ from exo_bench import (
     load_tokenizer_for_bench,
     parse_int_list,
 )
-from harness import (
-    ExoClient,
-    ExoHttpError,
+from exo_tools.client import ExoClient, ExoHttpError
+from exo_tools.harness import (
     add_common_instance_args,
     instance_id_from_instance,
     node_ids_from_instance,

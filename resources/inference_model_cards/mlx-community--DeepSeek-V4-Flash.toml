@@ -11,7 +11,7 @@ capabilities = ["text", "thinking", "thinking_toggle"]
 reasoning_dialect = "tool_conditional"
 
 context_length = 1048576
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 155095760030
 

@@ -115,7 +115,8 @@ def mlx_distributed_init(
 
                 os.environ["MLX_HOSTFILE"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
-                os.environ["MLX_RING_VERBOSE"] = "1"
+                # os.environ["MLX_RING_VERBOSE"] = "1"  # NOTE: we don't use it enough to care (turn on again if need to)
+
                 group = mx.distributed.init(backend="ring", strict=True)
 
             case MlxJacclInstance(
@@ -310,12 +311,11 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     model_id_lower = model_id.lower()
     if "kimi-k2" in model_id_lower:
         return [163586]
-    elif "glm-5" in model_id_lower or "glm-4.7" in model_id_lower:
-        # For GLM-5 and GLM-4.7
+    elif "glm-5" in model_id_lower:
         # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
         return [154820, 154827, 154829]
     elif "glm" in model_id_lower:
-        # For GLM-4.5 and older
+        # For GLM-4.7 and older
         return [151336, 151329, 151338]
     elif "gpt-oss" in model_id_lower:
         return [200002, 200012]

@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## Project Overview
 
-exo is a distributed AI inference system that connects multiple devices into a cluster. It enables running large language models across multiple machines using MLX as the inference backend and libp2p for peer-to-peer networking.
+exo is a distributed AI inference system that connects multiple devices into a cluster. It enables running large language models across multiple machines using MLX as the inference backend and zenoh for peer-to-peer networking.
 
 ## Build & Run Commands
 
@@ -69,7 +69,7 @@ If `nix fmt` changes any files, stage them before committing. The CI runs `nix f
 
 ### Node Composition
 A single exo `Node` (src/exo/main.py) runs multiple components:
-- **Router**: libp2p-based pub/sub messaging via Rust bindings (exo_pyo3_bindings)
+- **Router**: zenoh-based pub/sub messaging via Rust bindings (exo_rs)
 - **Worker**: Handles inference tasks, downloads models, manages runner processes
 - **Master**: Coordinates cluster state, places model instances across nodes
 - **Election**: Bully algorithm for master election
@@ -81,7 +81,7 @@ Components communicate via typed pub/sub topics (src/exo/routing/topics.py):
 - `LOCAL_EVENTS`: Workers send events to master for indexing
 - `COMMANDS`: Workers/API send commands to master
 - `ELECTION_MESSAGES`: Election protocol messages
-- `CONNECTION_MESSAGES`: libp2p connection updates
+- `CONNECTION_MESSAGES`: zenoh connection updates
 
 ### Event Sourcing
 The system uses event sourcing for state management:
@@ -98,8 +98,8 @@ The system uses event sourcing for state management:
 
 ### Rust Components
 Rust code in `rust/` provides:
-- `networking`: libp2p networking (gossipsub, peer discovery)
-- `exo_pyo3_bindings`: PyO3 bindings exposing Rust to Python
+- `networking`: zenoh networking (gossipsub, peer discovery)
+- `exo_rs`: PyO3 bindings exposing Rust to Python
 - `system_custodian`: System-level operations
 
 ### Dashboard

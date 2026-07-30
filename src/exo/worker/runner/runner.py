@@ -390,5 +390,5 @@ class Runner:
         chunk: Chunk,
         command_id: CommandId,
     ):
-        if self.device_rank == 0:
-            self.event_sender.send(ChunkGenerated(command_id=command_id, chunk=chunk))
+        assert isinstance(self.generator, Engine)
+        self.event_sender.send(ChunkGenerated(command_id=command_id, chunk=chunk))

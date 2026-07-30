@@ -138,8 +138,10 @@ class SequentialGenerator(Engine):
     def agree_on_tasks(self) -> None:
         """Agree between all ranks about the task ordering (some may have received in different order or not at all)."""
         agreed, different = mx_all_gather_tasks(self._maybe_queue, self.group)
-        self._queue.extend(task for task in self._maybe_queue if task in agreed)
-        self._maybe_queue = [task for task in self._maybe_queue if task in different]
+        # Extend from `agreed` (sorted by task_id on all ranks) to guarantee every
+        # rank enqueues tasks in the same order, preventing TP collective deadlocks.
+        self._queue.extend(agreed)
+        self._maybe_queue = list(different)
 
     def agree_on_cancellations(self) -> None:
         """Agree between all ranks about which tasks to cancel."""
@@ -197,9 +199,14 @@ class SequentialGenerator(Engine):
             self._active = None
             raise
 
-        return itertools.chain(
-            output,
-            map(lambda task: (task, CancelledResponse()), self._cancelled_tasks),
+        return filter(
+            lambda chunk: (
+                not isinstance(chunk[1], GenerationChunk) or self.device_rank == 0
+            ),
+            itertools.chain(
+                output,
+                map(lambda task: (task, CancelledResponse()), self._cancelled_tasks),
+            ),
         )
 
     def _start_next(self) -> None:
@@ -368,8 +375,10 @@ class BatchGenerator(Engine):
     def agree_on_tasks(self) -> None:
         """Agree between all ranks about the task ordering (some may have received in different order or not at all)."""
         agreed, different = mx_all_gather_tasks(self._maybe_queue, self.group)
-        self._queue.extend(task for task in self._maybe_queue if task in agreed)
-        self._maybe_queue = [task for task in self._maybe_queue if task in different]
+        # Extend from `agreed` (sorted by task_id on all ranks) to guarantee every
+        # rank enqueues tasks in the same order, preventing TP collective deadlocks.
+        self._queue.extend(agreed)
+        self._maybe_queue = list(different)
 
     def agree_on_cancellations(self) -> None:
         """Agree between all ranks about which tasks to cancel."""
@@ -449,7 +458,12 @@ class BatchGenerator(Engine):
                 output.append((task.task_id, FinishedResponse()))
                 del self._active_tasks[uid]
 
-        return itertools.chain(output, self._apply_cancellations())
+        return filter(
+            lambda chunk: (
+                not isinstance(chunk[1], GenerationChunk) or self.device_rank == 0
+            ),
+            itertools.chain(output, self._apply_cancellations()),
+        )
 
     def _apply_cancellations(
         self,

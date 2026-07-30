@@ -10,7 +10,7 @@ base_model = "Kimi K2.6"
 capabilities = ["text", "thinking", "thinking_toggle", "vision"]
 reasoning_dialect = "suffix"
 context_length = 262144
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 470628683776
 

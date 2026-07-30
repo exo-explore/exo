@@ -2253,10 +2253,9 @@ class AppStore {
    * @returns The model ID to use, or null if none available
    */
   private getModelForRequest(modelId?: string): string | null {
-    if (modelId) return modelId;
-    if (this.selectedChatModel) return this.selectedChatModel;
+    const requestedModelId = modelId || this.selectedChatModel;
 
-    // Try to get model from first running instance
+    // Only models with a placed instance can receive requests; disk downloads alone are not enough.
     for (const [, instanceWrapper] of Object.entries(this.instances)) {
       if (instanceWrapper && typeof instanceWrapper === "object") {
         const keys = Object.keys(instanceWrapper as Record<string, unknown>);
@@ -2264,8 +2263,15 @@ class AppStore {
           const instance = (instanceWrapper as Record<string, unknown>)[
             keys[0]
           ] as { shardAssignments?: { modelId?: string } };
-          if (instance?.shardAssignments?.modelId) {
-            return instance.shardAssignments.modelId;
+          const instanceModelId = instance?.shardAssignments?.modelId;
+
+          // ensure to only return requestedModelId that matches an instance
+          // or fall back to first instance
+          if (
+            instanceModelId &&
+            (!requestedModelId || requestedModelId === instanceModelId)
+          ) {
+            return instanceModelId;
           }
         }
       }

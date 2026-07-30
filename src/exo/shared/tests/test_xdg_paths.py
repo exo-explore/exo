@@ -97,13 +97,6 @@ def test_macos_uses_traditional_paths():
         assert home / ".exo" == constants.EXO_CACHE_HOME
 
 
-def test_node_id_in_config_dir():
-    """Test that node ID keypair is in the config directory."""
-    import exo.shared.constants as constants
-
-    assert constants.EXO_NODE_ID_KEYPAIR.parent == constants.EXO_CONFIG_HOME
-
-
 def test_models_in_data_dir():
     """Test that default models directory is in the data directory."""
     # Clear EXO_MODELS_DIRS to test default behavior

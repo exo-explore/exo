@@ -10,7 +10,7 @@ base_model = "Qwen3 Coder Next"
 capabilities = ["text", "code"]
 
 context_length = 262144
-
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 157548627945
 

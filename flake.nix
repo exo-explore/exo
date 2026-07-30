@@ -110,7 +110,7 @@
               nixpkgs-fmt.enable = true;
               ruff-format = {
                 enable = true;
-                excludes = [ "rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi" ];
+                excludes = [ "rust/exo_rs/exo_rs.pyi" ];
               };
               rustfmt = {
                 enable = true;
@@ -146,7 +146,7 @@
                 config.treefmt.build.wrapper
 
                 # PYTHON
-                self'.packages.editableVenv
+                self'.packages.exo.passthru.evenv
                 uv
 
                 # RUST
