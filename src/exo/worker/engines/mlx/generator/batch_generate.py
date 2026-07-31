@@ -1,4 +1,5 @@
 import contextlib
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -102,10 +103,14 @@ class ExoBatchGenerator:
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
+        # A 4096-token prefill chunk needs more activation memory than an 8GB card
+        # has left once the shard's weights are resident, so long prompts (agent
+        # system prompt + repo map) OOM before reaching decode. Make it tunable.
+        prefill_step_size = int(os.getenv("EXO_PREFILL_STEP_SIZE", "4096"))
         self._mlx_gen = MlxBatchGenerator(
             model=self.model,
             stop_tokens=[[t] for t in eos_ids_from_tokenizer(self.tokenizer)],
-            prefill_step_size=4096,
+            prefill_step_size=prefill_step_size,
         )
         self._step_count = 0
 
