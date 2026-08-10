@@ -235,7 +235,10 @@
   let hoveredTooltip = $state<string | null>(null);
   let tooltipAnchor = $state<{ x: number; y: number } | null>(null);
 
-  function showTooltip(category: string, e: MouseEvent | FocusEvent) {
+  function showTooltip(
+    category: string,
+    e: MouseEvent | FocusEvent | KeyboardEvent,
+  ) {
     hoveredTooltip = category;
     const target = e.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
@@ -290,11 +293,21 @@
             <div class="ml-auto flex-shrink-0">
               <span
                 role="button"
-                tabindex="-1"
+                tabindex="0"
                 class="text-exo-light-gray/40 hover:text-exo-light-gray transition-colors cursor-help inline-flex"
                 onmouseenter={(e: MouseEvent) => showTooltip(rec.category, e)}
                 onmouseleave={() => hideTooltip()}
                 onclick={(e: MouseEvent) => {
+                  e.stopPropagation();
+                  if (hoveredTooltip === rec.category) {
+                    hideTooltip();
+                  } else {
+                    showTooltip(rec.category, e);
+                  }
+                }}
+                onkeydown={(e: KeyboardEvent) => {
+                  if (e.key !== "Enter" && e.key !== " ") return;
+                  e.preventDefault();
                   e.stopPropagation();
                   if (hoveredTooltip === rec.category) {
                     hideTooltip();

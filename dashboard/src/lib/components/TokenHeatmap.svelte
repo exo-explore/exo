@@ -152,6 +152,7 @@
   <div
     class="fixed z-50 pb-2"
     style="left: {hoveredToken.x}px; top: {hoveredToken.y}px; transform: translate(-50%, -100%);"
+    role="tooltip"
     onmouseenter={handleTooltipEnter}
     onmouseleave={handleTooltipLeave}
   >

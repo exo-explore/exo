@@ -279,7 +279,7 @@
   ondrop={handleDrop}
 >
   <div
-    class="relative command-panel rounded overflow-hidden transition-all duration-200 {isDragOver
+    class="relative command-panel rounded-2xl overflow-hidden transition-all duration-200 {isDragOver
       ? 'ring-2 ring-exo-yellow ring-opacity-50'
       : ''}"
   >
@@ -328,11 +328,11 @@
     <!-- Model selector (when enabled) -->
     {#if showModelSelector}
       <div
-        class="flex items-center justify-between gap-2 px-3 py-2 border-b border-exo-medium-gray/30"
+        class="flex items-center justify-between gap-2 px-3 py-2.5 border-b border-white/[0.06]"
       >
         <div class="flex items-center gap-2 flex-1">
           <span
-            class="text-xs text-exo-light-gray uppercase tracking-wider flex-shrink-0"
+            class="text-[10px] font-mono font-semibold text-white/40 uppercase tracking-[0.14em] flex-shrink-0"
             >MODEL:</span
           >
           <!-- Model button — opens the full model picker -->
@@ -340,7 +340,7 @@
             <button
               type="button"
               onclick={() => onOpenModelPicker?.()}
-              class="w-full bg-exo-medium-gray/50 border border-exo-yellow/30 rounded pl-3 pr-8 py-1.5 text-xs font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70"
+              class="w-full rounded-lg border border-white/[0.08] bg-white/[0.035] pl-3 pr-8 py-1.5 text-xs font-mono text-left tracking-wide cursor-pointer transition-all duration-200 hover:border-exo-yellow/35 hover:bg-exo-yellow/[0.04] focus:border-exo-yellow/55"
             >
               {#if currentModelLabel}
                 <span class="text-exo-yellow truncate">{currentModelLabel}</span
@@ -440,7 +440,7 @@
         type="button"
         onclick={openFilePicker}
         disabled={loading}
-        class="flex items-center justify-center w-7 h-7 rounded text-exo-light-gray hover:text-exo-yellow transition-all disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 cursor-pointer"
+        class="flex items-center justify-center w-8 h-8 rounded-lg border border-transparent text-exo-light-gray/70 hover:border-white/[0.07] hover:bg-white/[0.04] hover:text-exo-yellow transition-all disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 cursor-pointer"
         title="Attach file"
       >
         <svg
@@ -459,8 +459,9 @@
       </button>
 
       <!-- Terminal prompt -->
-      <span class="text-exo-yellow text-sm font-bold flex-shrink-0 leading-7"
-        >▶</span
+      <span
+        class="text-exo-yellow/70 text-xs font-bold flex-shrink-0 leading-8"
+        aria-hidden="true">▶</span
       >
 
       <textarea
@@ -477,7 +478,7 @@
               ? "Describe the image you want to generate..."
               : placeholder}
         rows={1}
-        class="flex-1 resize-none bg-transparent text-foreground placeholder:text-exo-light-gray/60 placeholder:text-sm placeholder:tracking-[0.15em] placeholder:leading-7 focus:outline-none focus:ring-0 focus:border-none text-sm leading-7 font-mono"
+        class="flex-1 resize-none bg-transparent text-foreground placeholder:text-exo-light-gray/45 placeholder:text-sm placeholder:leading-8 focus:outline-none focus:ring-0 focus:border-none text-sm leading-8"
         style="min-height: 28px; max-height: 150px;"
       ></textarea>
 
@@ -503,10 +504,10 @@
         <button
           type="submit"
           disabled={!canSend || isEditOnlyWithoutImage}
-          class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap
+          class="min-h-9 px-3.5 sm:px-5 py-1.5 rounded-lg text-xs tracking-[0.08em] uppercase font-semibold transition-all duration-200 whitespace-nowrap
 					{!canSend || isEditOnlyWithoutImage
-            ? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed'
-            : 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
+            ? 'bg-white/[0.045] text-white/25 cursor-not-allowed'
+            : 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-glow hover:shadow-[0_0_22px_rgba(255,215,0,0.22)]'}"
           aria-label={shouldShowEditMode
             ? "Edit image"
             : isImageModel()

@@ -1,387 +1,506 @@
-@import 'tailwindcss';
-@import 'tw-animate-css';
+@import "tailwindcss";
+@import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
-	/* EXO Brand Colors - Command Center Theme (neutral dark greys) */
-	--exo-black: oklch(0.12 0 0);
-	--exo-dark-gray: oklch(0.16 0 0);
-	--exo-medium-gray: oklch(0.22 0 0);
-	--exo-light-gray: oklch(0.6 0 0);
-	--exo-yellow: oklch(0.85 0.18 85);
-	--exo-yellow-darker: oklch(0.7 0.16 85);
-	--exo-yellow-glow: oklch(0.9 0.2 85);
-	
-	/* Gotham-inspired accent colors */
-	--exo-grid: oklch(0.25 0 0);
-	--exo-scanline: oklch(0.15 0 0);
-	--exo-glow-yellow: 0 0 20px oklch(0.85 0.18 85 / 0.3);
-	--exo-glow-yellow-strong: 0 0 40px oklch(0.85 0.18 85 / 0.5);
-	
-	/* Theme Variables */
-	--radius: 0.375rem;
-	--background: var(--exo-black);
-	--foreground: oklch(0.9 0 0);
-	--card: var(--exo-dark-gray);
-	--card-foreground: oklch(0.9 0 0);
-	--popover: var(--exo-dark-gray);
-	--popover-foreground: oklch(0.9 0 0);
-	--primary: var(--exo-yellow);
-	--primary-foreground: var(--exo-black);
-	--secondary: var(--exo-medium-gray);
-	--secondary-foreground: oklch(0.9 0 0);
-	--muted: var(--exo-medium-gray);
-	--muted-foreground: var(--exo-light-gray);
-	--accent: var(--exo-medium-gray);
-	--accent-foreground: oklch(0.9 0 0);
-	--destructive: oklch(0.6 0.25 25);
-	--border: oklch(0.22 0 0);
-	--input: oklch(0.22 0 0);
-	--ring: var(--exo-yellow);
+  /* EXO brand palette: warm signal yellow on a cool, low-glare canvas. */
+  --exo-black: oklch(0.105 0.012 255);
+  --exo-dark-gray: oklch(0.145 0.014 255);
+  --exo-medium-gray: oklch(0.225 0.018 255);
+  --exo-light-gray: oklch(0.68 0.018 255);
+  --exo-yellow: oklch(0.88 0.18 92);
+  --exo-yellow-darker: oklch(0.72 0.15 88);
+  --exo-yellow-glow: oklch(0.92 0.2 95);
+  --exo-cyan: oklch(0.76 0.1 210);
+
+  /* Gotham-inspired accent colors */
+  --exo-grid: oklch(0.25 0 0);
+  --exo-scanline: oklch(0.15 0 0);
+  --exo-glow-yellow: 0 0 20px oklch(0.85 0.18 85 / 0.3);
+  --exo-glow-yellow-strong: 0 0 40px oklch(0.85 0.18 85 / 0.5);
+
+  /* Theme Variables */
+  --radius: 0.75rem;
+  --background: var(--exo-black);
+  --foreground: oklch(0.9 0 0);
+  --card: var(--exo-dark-gray);
+  --card-foreground: oklch(0.9 0 0);
+  --popover: var(--exo-dark-gray);
+  --popover-foreground: oklch(0.9 0 0);
+  --primary: var(--exo-yellow);
+  --primary-foreground: var(--exo-black);
+  --secondary: var(--exo-medium-gray);
+  --secondary-foreground: oklch(0.9 0 0);
+  --muted: var(--exo-medium-gray);
+  --muted-foreground: var(--exo-light-gray);
+  --accent: var(--exo-medium-gray);
+  --accent-foreground: oklch(0.9 0 0);
+  --destructive: oklch(0.6 0.25 25);
+  --border: oklch(0.22 0 0);
+  --input: oklch(0.22 0 0);
+  --ring: var(--exo-yellow);
 }
 
 @theme inline {
-	--radius-sm: calc(var(--radius) - 2px);
-	--radius-md: var(--radius);
-	--radius-lg: calc(var(--radius) + 2px);
-	--radius-xl: calc(var(--radius) + 4px);
-	--color-background: var(--background);
-	--color-foreground: var(--foreground);
-	--color-card: var(--card);
-	--color-card-foreground: var(--card-foreground);
-	--color-popover: var(--popover);
-	--color-popover-foreground: var(--popover-foreground);
-	--color-primary: var(--primary);
-	--color-primary-foreground: var(--primary-foreground);
-	--color-secondary: var(--secondary);
-	--color-secondary-foreground: var(--secondary-foreground);
-	--color-muted: var(--muted);
-	--color-muted-foreground: var(--muted-foreground);
-	--color-accent: var(--accent);
-	--color-accent-foreground: var(--accent-foreground);
-	--color-destructive: var(--destructive);
-	--color-border: var(--border);
-	--color-input: var(--input);
-	--color-ring: var(--ring);
-	
-	/* Custom EXO colors */
-	--color-exo-yellow: var(--exo-yellow);
-	--color-exo-yellow-darker: var(--exo-yellow-darker);
-	--color-exo-black: var(--exo-black);
-	--color-exo-dark-gray: var(--exo-dark-gray);
-	--color-exo-medium-gray: var(--exo-medium-gray);
-	--color-exo-light-gray: var(--exo-light-gray);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Custom EXO colors */
+  --color-exo-yellow: var(--exo-yellow);
+  --color-exo-yellow-darker: var(--exo-yellow-darker);
+  --color-exo-black: var(--exo-black);
+  --color-exo-dark-gray: var(--exo-dark-gray);
+  --color-exo-medium-gray: var(--exo-medium-gray);
+  --color-exo-light-gray: var(--exo-light-gray);
+  --color-exo-cyan: var(--exo-cyan);
 }
 
 @layer base {
-	* {
-		@apply border-border outline-ring/50;
-	}
-	html, body {
-		@apply bg-background text-foreground;
-		font-family: 'SF Mono', 'Fira Code', 'Monaco', 'Consolas', 'Liberation Mono', monospace;
-		letter-spacing: 0.02em;
-	}
+  * {
+    @apply border-border outline-ring/50;
+    box-sizing: border-box;
+  }
+  html,
+  body {
+    @apply bg-background text-foreground;
+    min-width: 320px;
+    min-height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-feature-settings:
+      "ss01" 1,
+      "cv11" 1;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background:
+      radial-gradient(
+        circle at 50% -10%,
+        oklch(0.28 0.06 92 / 0.12),
+        transparent 32rem
+      ),
+      var(--exo-black);
+  }
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+  button,
+  a,
+  input,
+  textarea,
+  select {
+    -webkit-tap-highlight-color: transparent;
+  }
+  ::selection {
+    background: oklch(0.88 0.18 92 / 0.28);
+    color: white;
+  }
+  :focus-visible {
+    outline: 2px solid oklch(0.88 0.18 92 / 0.92);
+    outline-offset: 3px;
+  }
 }
 
 @layer utilities {
-	.scrollbar-hide {
-		&::-webkit-scrollbar {
-			display: none;
-		}
-		-ms-overflow-style: none;
-		scrollbar-width: none;
-	}
-	
-	/* CRT Scanline effect */
-	.scanlines {
-		position: relative;
-		&::before {
-			content: '';
-			position: absolute;
-			inset: 0;
-			background: repeating-linear-gradient(
-				0deg,
-				transparent,
-				transparent 2px,
-				oklch(0 0 0 / 0.03) 2px,
-				oklch(0 0 0 / 0.03) 4px
-			);
-			pointer-events: none;
-			z-index: 100;
-		}
-	}
-	
-	/* Command panel styling */
-	.command-panel {
-		background: linear-gradient(
-			180deg,
-			oklch(0.16 0 0 / 0.95) 0%,
-			oklch(0.12 0 0 / 0.98) 100%
-		);
-		border: 1px solid oklch(0.25 0 0);
-		box-shadow: 
-			inset 0 1px 0 oklch(1 0 0 / 0.03),
-			0 4px 20px oklch(0 0 0 / 0.5);
-	}
-	
-	/* Glow text */
-	.glow-text {
-		text-shadow: 
-			0 0 10px oklch(0.85 0.18 85 / 0.5),
-			0 0 20px oklch(0.85 0.18 85 / 0.3),
-			0 0 40px oklch(0.85 0.18 85 / 0.1);
-	}
-	
-	/* Status indicator pulse */
-	.status-pulse {
-		animation: statusPulse 2s ease-in-out infinite;
-	}
-	
-	/* Grid background */
-	.grid-bg {
-		background-image: 
-			linear-gradient(oklch(0.2 0 0 / 0.3) 1px, transparent 1px),
-			linear-gradient(90deg, oklch(0.2 0 0 / 0.3) 1px, transparent 1px);
-		background-size: 40px 40px;
-	}
+  .scrollbar-hide {
+    &::-webkit-scrollbar {
+      display: none;
+    }
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* CRT Scanline effect */
+  .scanlines {
+    position: relative;
+    &::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        oklch(0 0 0 / 0.03) 2px,
+        oklch(0 0 0 / 0.03) 4px
+      );
+      pointer-events: none;
+      z-index: 100;
+    }
+  }
+
+  /* Command panel styling */
+  .command-panel {
+    background: linear-gradient(
+      180deg,
+      oklch(0.16 0 0 / 0.95) 0%,
+      oklch(0.12 0 0 / 0.98) 100%
+    );
+    border: 1px solid oklch(0.25 0 0);
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 0.03),
+      0 4px 20px oklch(0 0 0 / 0.5);
+  }
+
+  /* Glow text */
+  .glow-text {
+    text-shadow:
+      0 0 10px oklch(0.85 0.18 85 / 0.5),
+      0 0 20px oklch(0.85 0.18 85 / 0.3),
+      0 0 40px oklch(0.85 0.18 85 / 0.1);
+  }
+
+  /* Status indicator pulse */
+  .status-pulse {
+    animation: statusPulse 2s ease-in-out infinite;
+  }
+
+  /* Grid background */
+  .grid-bg {
+    background-image:
+      linear-gradient(oklch(0.2 0 0 / 0.3) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(0.2 0 0 / 0.3) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .exo-panel {
+    background: linear-gradient(
+      180deg,
+      oklch(0.18 0.016 255 / 0.86),
+      oklch(0.125 0.012 255 / 0.94)
+    );
+    border: 1px solid oklch(0.9 0.02 255 / 0.08);
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 0.035),
+      0 20px 50px oklch(0 0 0 / 0.22);
+    backdrop-filter: blur(18px);
+  }
+
+  .exo-eyebrow {
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+
+  .exo-skip-link {
+    position: fixed;
+    left: 1rem;
+    top: 1rem;
+    z-index: 1000;
+    transform: translateY(-160%);
+    border-radius: 0.6rem;
+    background: var(--exo-yellow);
+    color: var(--exo-black);
+    padding: 0.6rem 0.9rem;
+    font-weight: 700;
+    transition: transform 150ms ease;
+  }
+
+  .exo-skip-link:focus {
+    transform: translateY(0);
+  }
 }
 
 /* Animations */
 @keyframes flowAnimation {
-	from {
-		stroke-dashoffset: 0;
-	}
-	to {
-		stroke-dashoffset: -16;
-	}
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -16;
+  }
 }
 
 @keyframes statusPulse {
-	0%, 100% {
-		opacity: 1;
-	}
-	50% {
-		opacity: 0.5;
-	}
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 @keyframes radarSweep {
-	from {
-		transform: rotate(0deg);
-	}
-	to {
-		transform: rotate(360deg);
-	}
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes glowPulse {
-	0%, 100% {
-		box-shadow: 0 0 5px oklch(0.85 0.18 85 / 0.3), 0 0 10px oklch(0.85 0.18 85 / 0.1);
-	}
-	50% {
-		box-shadow: 0 0 15px oklch(0.85 0.18 85 / 0.5), 0 0 30px oklch(0.85 0.18 85 / 0.2);
-	}
+  0%,
+  100% {
+    box-shadow:
+      0 0 5px oklch(0.85 0.18 85 / 0.3),
+      0 0 10px oklch(0.85 0.18 85 / 0.1);
+  }
+  50% {
+    box-shadow:
+      0 0 15px oklch(0.85 0.18 85 / 0.5),
+      0 0 30px oklch(0.85 0.18 85 / 0.2);
+  }
 }
 
 @keyframes dataPulse {
-	0%, 100% {
-		opacity: 0.6;
-	}
-	50% {
-		opacity: 1;
-	}
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .graph-link {
-	stroke: oklch(0.85 0.18 85 / 0.4);
-	stroke-width: 1.5px;
-	stroke-dasharray: 8, 8;
-	animation: flowAnimation 1s linear infinite;
-	filter: drop-shadow(0 0 3px oklch(0.85 0.18 85 / 0.5));
+  stroke: oklch(0.85 0.18 85 / 0.4);
+  stroke-width: 1.5px;
+  stroke-dasharray: 8, 8;
+  animation: flowAnimation 1s linear infinite;
+  filter: drop-shadow(0 0 3px oklch(0.85 0.18 85 / 0.5));
 }
 
 /* Onboarding step 2: connection line between devices */
 .onboarding-connection-line {
-	stroke: oklch(0.85 0.18 85 / 0.5);
-	stroke-width: 1.5px;
-	stroke-dasharray: 6, 6;
-	animation: flowAnimation 1s linear infinite;
-	filter: drop-shadow(0 0 4px oklch(0.85 0.18 85 / 0.4));
+  stroke: oklch(0.85 0.18 85 / 0.5);
+  stroke-width: 1.5px;
+  stroke-dasharray: 6, 6;
+  animation: flowAnimation 1s linear infinite;
+  filter: drop-shadow(0 0 4px oklch(0.85 0.18 85 / 0.4));
 }
 
 /* Onboarding step 4: red connection line for disconnect */
 .onboarding-connection-line-red {
-	stroke: rgba(220, 38, 38, 0.7);
-	stroke-width: 1.5px;
-	stroke-dasharray: 6, 6;
-	filter: drop-shadow(0 0 2px rgba(220, 38, 38, 0.3));
+  stroke: rgba(220, 38, 38, 0.7);
+  stroke-width: 1.5px;
+  stroke-dasharray: 6, 6;
+  filter: drop-shadow(0 0 2px rgba(220, 38, 38, 0.3));
 }
 
 .graph-link-active {
-	stroke: oklch(0.85 0.18 85 / 0.8);
-	stroke-width: 2px;
-	filter: drop-shadow(0 0 6px oklch(0.85 0.18 85 / 0.8));
+  stroke: oklch(0.85 0.18 85 / 0.8);
+  stroke-width: 2px;
+  filter: drop-shadow(0 0 6px oklch(0.85 0.18 85 / 0.8));
 }
 
 /* CRT Screen effect for topology */
 .crt-screen {
-	position: relative;
-	border-radius: 50%;
-	background: radial-gradient(
-		ellipse at center,
-		oklch(0.16 0 0) 0%,
-		oklch(0.12 0 0) 50%,
-		oklch(0.09 0 0) 100%
-	);
-	box-shadow:
-		inset 0 0 100px oklch(0 0 0 / 0.5),
-		0 0 50px oklch(0.85 0.18 85 / 0.1);
+  position: relative;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    oklch(0.16 0 0) 0%,
+    oklch(0.12 0 0) 50%,
+    oklch(0.09 0 0) 100%
+  );
+  box-shadow:
+    inset 0 0 100px oklch(0 0 0 / 0.5),
+    0 0 50px oklch(0.85 0.18 85 / 0.1);
 }
 
 /* Data readout styling */
 .data-readout {
-	font-family: 'SF Mono', 'Fira Code', monospace;
-	font-size: 11px;
-	letter-spacing: 0.05em;
-	text-transform: uppercase;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 /* Terminal cursor blink */
 .cursor-blink {
-	animation: cursorBlink 1s step-end infinite;
+  animation: cursorBlink 1s step-end infinite;
 }
 
 @keyframes cursorBlink {
-	0%, 100% { opacity: 1; }
-	50% { opacity: 0; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
 }
 
 /* Custom scrollbar for command center */
 ::-webkit-scrollbar {
-	width: 6px;
-	height: 6px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-	background: oklch(0.1 0 0);
+  background: oklch(0.1 0 0);
 }
 
 ::-webkit-scrollbar-thumb {
-	background: oklch(0.3 0 0);
-	border-radius: 3px;
+  background: oklch(0.3 0 0);
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-	background: oklch(0.85 0.18 85 / 0.5);
+  background: oklch(0.85 0.18 85 / 0.5);
 }
 
-/* Remove focus outline/border for inputs */
-input:focus, textarea:focus {
-	outline: none;
-	box-shadow: none;
+/* Keep form focus visible without changing layout. */
+input:focus,
+select:focus {
+  border-color: oklch(0.88 0.18 92 / 0.55);
+  box-shadow: 0 0 0 3px oklch(0.88 0.18 92 / 0.1);
+}
+
+textarea:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.command-panel:focus-within {
+  border-color: oklch(0.88 0.18 92 / 0.24);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.04),
+    0 0 0 3px oklch(0.88 0.18 92 / 0.055),
+    0 18px 50px oklch(0 0 0 / 0.3);
 }
 
 /* Shooting Stars Animation */
 .shooting-stars {
-	position: fixed;
-	inset: 0;
-	overflow: hidden;
-	pointer-events: none;
-	z-index: 0;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .shooting-star {
-	position: absolute;
-	width: 3px;
-	height: 3px;
-	background: oklch(0.85 0.18 85 / 1);
-	border-radius: 50%;
-	box-shadow: 0 0 6px oklch(0.85 0.18 85 / 0.8);
-	animation: shootingStar var(--duration, 3s) linear infinite;
-	animation-delay: var(--delay, 0s);
-	opacity: 0;
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: oklch(0.85 0.18 85 / 1);
+  border-radius: 50%;
+  box-shadow: 0 0 6px oklch(0.85 0.18 85 / 0.8);
+  animation: shootingStar var(--duration, 3s) linear infinite;
+  animation-delay: var(--delay, 0s);
+  opacity: 0;
 }
 
 .shooting-star::before {
-	content: '';
-	position: absolute;
-	width: 80px;
-	height: 2px;
-	background: linear-gradient(90deg, oklch(0.85 0.18 85 / 0), oklch(0.85 0.18 85 / 0.6));
-	transform: rotate(45deg);
-	transform-origin: right center;
-	top: 0;
-	right: 2px;
+  content: "";
+  position: absolute;
+  width: 80px;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    oklch(0.85 0.18 85 / 0),
+    oklch(0.85 0.18 85 / 0.6)
+  );
+  transform: rotate(45deg);
+  transform-origin: right center;
+  top: 0;
+  right: 2px;
 }
 
 @keyframes shootingStar {
-	0% {
-		opacity: 0;
-		transform: translate(0, 0);
-	}
-	0.5% {
-		opacity: 1;
-	}
-	2.5% {
-		opacity: 0.8;
-		transform: translate(300px, 300px);
-	}
-	3.5% {
-		opacity: 0;
-		transform: translate(400px, 400px);
-	}
-	100% {
-		opacity: 0;
-		transform: translate(400px, 400px);
-	}
+  0% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  0.5% {
+    opacity: 1;
+  }
+  2.5% {
+    opacity: 0.8;
+    transform: translate(300px, 300px);
+  }
+  3.5% {
+    opacity: 0;
+    transform: translate(400px, 400px);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(400px, 400px);
+  }
 }
 
 /* Onboarding smooth fade-in */
 @keyframes onb-fade-in {
-	from { opacity: 0; transform: translateY(8px); }
-	to { opacity: 1; transform: none; }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* Opacity-only fade-in — no transform, safe for containers with fixed-position children */
 @keyframes onb-fade-opacity {
-	from { opacity: 0; }
-	to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* Respect reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
-	.shooting-star,
-	.shooting-star::before {
-		animation: none !important;
-		opacity: 0 !important;
-	}
-	.graph-link {
-		animation: none;
-	}
-	.status-pulse {
-		animation: none;
-	}
-	.cursor-blink {
-		animation: none;
-	}
-	.onboarding-connection-line {
-		animation: none;
-	}
-	.onboarding-connection-line-red {
-		animation: none;
-	}
-	[style*="onb-fade-in"],
-	[style*="onb-fade-opacity"] {
-		animation: none !important;
-		opacity: 1 !important;
-	}
-	*,
-	*::before,
-	*::after {
-		transition-duration: 0.01ms !important;
-		animation-duration: 0.01ms !important;
-		animation-iteration-count: 1 !important;
-	}
+  .shooting-star,
+  .shooting-star::before {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+  .graph-link {
+    animation: none;
+  }
+  .status-pulse {
+    animation: none;
+  }
+  .cursor-blink {
+    animation: none;
+  }
+  .onboarding-connection-line {
+    animation: none;
+  }
+  .onboarding-connection-line-red {
+    animation: none;
+  }
+  [style*="onb-fade-in"],
+  [style*="onb-fade-opacity"] {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
