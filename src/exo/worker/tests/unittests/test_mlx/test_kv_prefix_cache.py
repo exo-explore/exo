@@ -11,6 +11,7 @@ from mlx_lm.sample_utils import make_sampler
 from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.worker.engines.mlx.cache import (
+    MAX_CHAIN_DEPTH,
     KVPrefixCache,
     cache_length,
     encode_prompt,
@@ -104,6 +105,127 @@ class TestKVPrefix:
         cache = KVPrefixCache(None)
         cache.clear()
         assert len(cache.prompts) == 0
+
+
+def _kv_with_offset(offset: int) -> list[KVCache]:
+    kv = KVCache()
+    kv.offset = offset
+    return [kv]
+
+
+def _fake_model() -> Model:
+    from types import SimpleNamespace
+
+    return cast(Model, SimpleNamespace(layers=[None]))
+
+
+class TestChainDepthCap:
+    """Chained incremental extensions of one entry accumulate numerical drift
+    in the cached KV; the cap forces a clean full prefill at MAX_CHAIN_DEPTH."""
+
+    def _cache_with_entry(self, prompt_len: int = 100, depth: int = 0) -> KVPrefixCache:
+        cache = KVPrefixCache(None)
+        cache.add_kv_cache(
+            mx.array(list(range(prompt_len))), _kv_with_offset(prompt_len - 2)
+        )
+        cache.chain_depths[0] = depth
+        return cache
+
+    def test_add_entry_starts_at_depth_zero(self):
+        cache = self._cache_with_entry()
+        assert cache.chain_depths == [0]
+
+    def test_deep_extension_increments_depth(self):
+        cache = self._cache_with_entry(prompt_len=100)
+        cache.update_kv_cache(
+            0, mx.array(list(range(150))), _kv_with_offset(148), None, restore_pos=98
+        )
+        assert cache.chain_depths == [1]
+        cache.update_kv_cache(
+            0, mx.array(list(range(200))), _kv_with_offset(198), None, restore_pos=148
+        )
+        assert cache.chain_depths == [2]
+
+    def test_shallow_rebuild_resets_depth(self):
+        cache = self._cache_with_entry(prompt_len=200, depth=2)
+        # Rebuild keeping only a shallow shared prefix (< _DEEP_REUSE_RATIO).
+        cache.update_kv_cache(
+            0, mx.array(list(range(300))), _kv_with_offset(298), None, restore_pos=50
+        )
+        assert cache.chain_depths == [0]
+
+    def test_same_length_resave_keeps_depth(self):
+        cache = self._cache_with_entry(prompt_len=100, depth=1)
+        cache.update_kv_cache(
+            0, mx.array(list(range(100))), _kv_with_offset(98), None, restore_pos=98
+        )
+        assert cache.chain_depths == [1]
+
+    def test_shrink_update_resets_depth(self):
+        # A shrinking rewrite replaces the tail with fresh single-pass content;
+        # the previous tail's chain depth must not carry over.
+        cache = self._cache_with_entry(prompt_len=200, depth=MAX_CHAIN_DEPTH)
+        cache.update_kv_cache(
+            0, mx.array(list(range(100))), _kv_with_offset(98), None, restore_pos=98
+        )
+        assert cache.chain_depths == [0]
+
+    def test_deep_extension_at_exact_ratio_boundary(self):
+        # restore_pos == _DEEP_REUSE_RATIO * old_len must count as deep (>=,
+        # not >): 80 == 0.8 * 100.
+        cache = self._cache_with_entry(prompt_len=100)
+        cache.update_kv_cache(
+            0, mx.array(list(range(150))), _kv_with_offset(148), None, restore_pos=80
+        )
+        assert cache.chain_depths == [1]
+
+    def test_deep_reuse_skipped_at_max_chain_depth(self):
+        cache = self._cache_with_entry(prompt_len=100, depth=MAX_CHAIN_DEPTH)
+        query = mx.array(list(range(120)))
+        _, remaining, matched_index, is_exact = cache.get_kv_cache(_fake_model(), query)
+        assert matched_index is None
+        assert not is_exact
+        assert len(remaining) == 120
+
+    def test_deep_reuse_allowed_below_max_chain_depth(self):
+        cache = self._cache_with_entry(prompt_len=100, depth=MAX_CHAIN_DEPTH - 1)
+        query = mx.array(list(range(120)))
+        _, remaining, matched_index, _ = cache.get_kv_cache(_fake_model(), query)
+        assert matched_index == 0
+        # The restore target is clamped to the entry's cached length (98), so
+        # exactly the last 120 - 98 = 22 query tokens remain to prefill.
+        assert len(remaining) == 22
+
+    def test_deep_reuse_skipped_at_exact_ratio_boundary(self):
+        # A shared prefix of exactly _DEEP_REUSE_RATIO * len(cached_prompt)
+        # tokens (80 == 0.8 * 100) counts as deep reuse (>=, not >) and is
+        # skipped at MAX_CHAIN_DEPTH.
+        cache = self._cache_with_entry(prompt_len=100, depth=MAX_CHAIN_DEPTH)
+        query = mx.array(list(range(80)) + [999] * 40)
+        _, remaining, matched_index, _ = cache.get_kv_cache(_fake_model(), query)
+        assert matched_index is None
+        assert len(remaining) == 120
+
+    def test_shallow_borrow_allowed_at_max_chain_depth(self):
+        cache = self._cache_with_entry(prompt_len=100, depth=MAX_CHAIN_DEPTH)
+        # Query shares only the first 50 tokens — well under the deep-reuse
+        # ratio, so borrowing the shared prefix stays allowed.
+        query = mx.array(list(range(50)) + [999] * 70)
+        _, remaining, matched_index, _ = cache.get_kv_cache(_fake_model(), query)
+        assert matched_index == 0
+        assert len(remaining) == 70
+
+    def test_eviction_keeps_depths_aligned(self):
+        cache = KVPrefixCache(None)
+        with patch.object(
+            KVPrefixCache, "get_memory_used_percentage", side_effect=[0.0, 1.0, 0.0]
+        ):
+            cache.add_kv_cache(mx.array([1, 2, 3]), _kv_with_offset(3))
+            cache.add_kv_cache(mx.array([4, 5, 6]), _kv_with_offset(3))
+            cache.chain_depths[0] = 2
+            cache._evict_if_needed()
+        assert len(cache.prompts) == 1
+        assert cache.chain_depths == [0]
 
 
 def _load_gpt_oss() -> tuple[Model, object]:

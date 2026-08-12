@@ -47,6 +47,19 @@ _MEMORY_THRESHOLD = float(
     os.environ.get("EXO_MEMORY_THRESHOLD", _default_memory_threshold())
 )
 
+# An entry whose tail has been built by MAX_CHAIN_DEPTH successive incremental
+# extensions (a tool loop extends the same entry on every iteration) is not
+# offered for further deep reuse — the chained partial prefills accumulate
+# numerical drift in the cached KV that can flip borderline token decisions
+# (observed: the model emitting its end-of-turn token in the middle of a tool
+# call at chain depth >= 2). Forcing a full re-prefill every MAX_CHAIN_DEPTH-th
+# extension resets the entry to a single-pass KV state. Shallow reuse (borrowing
+# only the shared prompt prefix, e.g. the system/tools block) is unaffected:
+# that region was written once by the entry's first prefill and never rewritten
+# by extensions.
+MAX_CHAIN_DEPTH = int(os.environ.get("EXO_KV_MAX_CHAIN_DEPTH", 2))
+_DEEP_REUSE_RATIO = 0.8
+
 
 class CacheSnapshot:
     """Snapshot of states at a known token position."""
@@ -237,6 +250,8 @@ class KVPrefixCache:
         self._media_regions: list[list["MediaRegion"]] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self.prefill_tps: list[float] = []
+        # Successive deep incremental extensions applied to each entry's tail.
+        self.chain_depths: list[int] = []
         self._access_counter: int = 0
         self._group = group
 
@@ -248,6 +263,7 @@ class KVPrefixCache:
         self._media_regions.clear()
         self._last_used.clear()
         self.prefill_tps.clear()
+        self.chain_depths.clear()
 
     def add_kv_cache(
         self,
@@ -264,6 +280,7 @@ class KVPrefixCache:
         self._snapshots.append(ssm_snapshots)
         self._media_regions.append(media_regions or [])
         self.prefill_tps.append(prefill_tps)
+        self.chain_depths.append(0)
         self._access_counter += 1
         self._last_used.append(self._access_counter)
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
@@ -285,6 +302,21 @@ class KVPrefixCache:
             merged = [s for s in old_snapshots if s.token_count <= restore_pos]
         if snapshots:
             merged.extend(snapshots)
+
+        # Track how many successive deep extensions built this entry's tail.
+        # Growing the entry while keeping most of its previous content is a
+        # deep extension; any other rewrite (shallow-prefix rebuild, shrink)
+        # replaces the tail with fresh single-pass content and resets the
+        # depth; an exact re-save of the same prompt preserves it.
+        old_len = len(self.prompts[index])
+        deep_growth = (
+            len(prompt_tokens) > old_len > 0
+            and restore_pos >= _DEEP_REUSE_RATIO * old_len
+        )
+        if len(prompt_tokens) != old_len:
+            self.chain_depths[index] = (
+                self.chain_depths[index] + 1 if deep_growth else 0
+            )
 
         self.prompts[index] = prompt_tokens
         self.caches[index] = deepcopy(cache)
@@ -350,6 +382,19 @@ class KVPrefixCache:
                     self._media_regions[i],
                     query_regions,
                 )
+            if (
+                length > 0
+                and self.chain_depths[i] >= MAX_CHAIN_DEPTH
+                and length >= _DEEP_REUSE_RATIO * len(cached_prompt)
+            ):
+                # This entry's tail carries MAX_CHAIN_DEPTH chained partial
+                # prefills — skip it for deep reuse so the caller re-prefills
+                # from scratch and the subsequent save resets the chain.
+                logger.info(
+                    f"KV cache entry {i} at chain depth {self.chain_depths[i]} — "
+                    f"skipping deep reuse ({length}/{len(cached_prompt)} tokens) to force a clean prefill"
+                )
+                continue
             if length >= max_length - 1:
                 best_index, best_length = i, length
                 is_exact = True
@@ -445,6 +490,7 @@ class KVPrefixCache:
             self._media_regions.pop(lru_index)
             self._last_used.pop(lru_index)
             self.prefill_tps.pop(lru_index)
+            self.chain_depths.pop(lru_index)
 
             evicted_any = True
             logger.info(

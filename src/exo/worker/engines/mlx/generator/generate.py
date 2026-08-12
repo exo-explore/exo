@@ -543,7 +543,8 @@ def mlx_generate(
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
-    # TODO: Randomise task seed and set in taskparams, instead of hard coding as 42.
+    # The master draws a random seed for normal requests; bench runs leave it
+    # unset and fall back to a fixed seed so their results stay reproducible.
     seed = task.seed or 42
     mx.random.seed(seed)
 

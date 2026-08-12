@@ -195,10 +195,16 @@ async def generate_ollama_chat_stream(
                 continue
 
             case ErrorChunk():
+                # Ollama's response shape has no error field, so failures are
+                # reported through message.content — which many clients render
+                # unconditionally. Never echo chunk.error_message here: it can
+                # carry raw generation text (partial tool-call markup, document
+                # content). The detail is already in the server logs.
                 error_response = OllamaChatResponse(
                     model=str(chunk.model),
                     message=OllamaMessage(
-                        role="assistant", content=chunk.error_message
+                        role="assistant",
+                        content="Internal server error",
                     ),
                     done=True,
                     done_reason="error",

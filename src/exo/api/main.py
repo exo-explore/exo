@@ -868,6 +868,13 @@ class API:
         self, task_params: TextGenerationTaskParams
     ) -> TextGeneration:
         task_params = task_params.with_card_sampling_defaults()
+        if task_params.seed is None and not task_params.bench:
+            # Draw the seed once on the master so every rank samples identically.
+            # Runners fall back to a fixed seed when the task carries none, which
+            # makes a retry of a failed generation replay the exact same failure.
+            task_params = task_params.model_copy(
+                update={"seed": random.randint(0, 2**31 - 1)}
+            )
         images = task_params.images
         if not images:
             command = TextGeneration(task_params=task_params)
