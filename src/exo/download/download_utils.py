@@ -171,7 +171,27 @@ def is_read_only_model_dir(model_dir: Path) -> bool:
     return any(model_dir.is_relative_to(d) for d in EXO_MODELS_READ_ONLY_DIRS)
 
 
+def validate_model_path_contained(model_id: ModelId, root: Path) -> None:
+    """Raise ``ValueError`` if a model id's filesystem path escapes ``root``.
+
+    ``ModelId.normalize()`` neutralizes ``/`` but leaves bare ``.`` / ``..``
+    components intact, so a path derived from it can resolve to the root
+    itself or its parent. Containment must be checked before any filesystem
+    use (issue #2267).
+    """
+    resolved_target = (root / model_id.normalize()).resolve()
+    resolved_root = root.resolve()
+    if (
+        not resolved_target.is_relative_to(resolved_root)
+        or resolved_target == resolved_root
+    ):
+        raise ValueError(
+            f"Model id '{model_id}' resolves outside {resolved_root}: {resolved_target}"
+        )
+
+
 def build_model_path(model_id: ModelId) -> Path:
+    validate_model_path_contained(model_id, EXO_DEFAULT_MODELS_DIR)
     found = resolve_existing_model(model_id)
     if found is not None:
         return found
@@ -234,7 +254,9 @@ async def resolve_model_dir(model_id: ModelId) -> Path:
 
 async def ensure_cache_dir(model_id: ModelId) -> Path:
     """Return the cache directory for a model's metadata, creating it if needed."""
-    target = EXO_DEFAULT_MODELS_DIR / "caches" / model_id.normalize()
+    cache_dir = EXO_DEFAULT_MODELS_DIR / "caches"
+    validate_model_path_contained(model_id, cache_dir)
+    target = cache_dir / model_id.normalize()
     await aios.makedirs(target, exist_ok=True)
     return target
 
@@ -244,15 +266,19 @@ async def delete_model(model_id: ModelId) -> bool:
     normalized = model_id.normalize()
     deleted = False
     for models_dir in EXO_MODELS_DIRS:
+        validate_model_path_contained(model_id, models_dir)
         model_dir = models_dir / normalized
         if await aios.path.exists(model_dir):
             await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
             deleted = True
 
     # Clear cache from default dir
-    cache_dir = EXO_DEFAULT_MODELS_DIR / "caches" / normalized
-    if await aios.path.exists(cache_dir):
-        await asyncio.to_thread(shutil.rmtree, cache_dir, ignore_errors=False)
+    cache_dir = EXO_DEFAULT_MODELS_DIR / "caches"
+    validate_model_path_contained(model_id, cache_dir)
+    if await aios.path.exists(cache_dir / normalized):
+        await asyncio.to_thread(
+            shutil.rmtree, cache_dir / normalized, ignore_errors=False
+        )
 
     return deleted
 

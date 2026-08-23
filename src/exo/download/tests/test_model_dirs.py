@@ -2,7 +2,7 @@
 
 import json
 import shutil
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,7 +12,9 @@ import pytest
 
 from exo.download.download_utils import (
     InsufficientDiskSpaceError,
+    build_model_path,
     delete_model,
+    ensure_cache_dir,
     is_read_only_model_dir,
     resolve_existing_model,
     select_download_dir,
@@ -295,3 +297,103 @@ class TestDeleteModel:
     ) -> None:
         result = await delete_model(MODEL_ID)
         assert result is False
+
+    async def test_rejects_parent_traversal(
+        self, dirs: tuple[Path, Path, Path], tmp_path: Path
+    ) -> None:
+        _, _, _ = dirs
+        # Sibling of every models dir: the parent that a ".." id would delete.
+        victim = tmp_path / "keep.txt"
+        victim.write_text("must survive")
+
+        with pytest.raises(ValueError):
+            await delete_model(ModelId(".."))
+
+        assert victim.exists()
+
+    async def test_rejects_dot_model_id(self, dirs: tuple[Path, Path, Path]) -> None:
+        w1, _, _ = dirs
+        marker = w1 / "keep.txt"
+        await aios.makedirs(w1, exist_ok=True)
+        async with aiofiles.open(marker, "w") as f:
+            await f.write("data")
+
+        with pytest.raises(ValueError):
+            await delete_model(ModelId("."))
+
+        assert await aios.path.exists(marker)
+
+
+# ---------------------------------------------------------------------------
+# build_model_path / ensure_cache_dir containment
+# ---------------------------------------------------------------------------
+
+
+class TestModelPathContainment:
+    @pytest.fixture
+    def isolated_dirs(self, tmp_path: Path) -> Iterator[tuple[Path, Path]]:
+        """Default + writable model roots that never touch the machine's real ones."""
+        default = tmp_path / "default"
+        writable = tmp_path / "writable"
+        with (
+            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", default),
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (writable,)),
+            patch("exo.download.download_utils.EXO_MODELS_READ_ONLY_DIRS", ()),
+        ):
+            yield default, writable
+
+    def test_build_model_path_rejects_parent_traversal(
+        self, isolated_dirs: tuple[Path, Path]
+    ) -> None:
+        with pytest.raises(ValueError):
+            build_model_path(ModelId(".."))
+
+    def test_build_model_path_rejects_root_id(
+        self, isolated_dirs: tuple[Path, Path]
+    ) -> None:
+        with pytest.raises(ValueError):
+            build_model_path(ModelId("."))
+
+    def test_build_model_path_allows_normalized_id(
+        self, isolated_dirs: tuple[Path, Path]
+    ) -> None:
+        default, _ = isolated_dirs
+        assert build_model_path(MODEL_ID) == default / NORMALIZED
+
+    def test_build_model_path_finds_existing_complete_model(
+        self, isolated_dirs: tuple[Path, Path]
+    ) -> None:
+        _, writable = isolated_dirs
+        # Traversal ids are rejected before the existing-model lookup runs;
+        # legitimate ids still resolve to a pre-existing complete model.
+        _create_complete_model(writable / NORMALIZED)
+        assert build_model_path(MODEL_ID) == writable / NORMALIZED
+
+    def test_build_model_path_rejects_traversal_with_existing_models(
+        self, isolated_dirs: tuple[Path, Path]
+    ) -> None:
+        _, writable = isolated_dirs
+        # Regression: the lookup must not return a traversal-resolved path
+        # (e.g. the parent of the models root) just because it "looks complete".
+        _create_complete_model(writable / NORMALIZED)
+        with pytest.raises(ValueError):
+            build_model_path(ModelId(".."))
+        with pytest.raises(ValueError):
+            build_model_path(ModelId("."))
+
+    async def test_ensure_cache_dir_rejects_parent_traversal(
+        self, isolated_dirs: tuple[Path, Path]
+    ) -> None:
+        default, _ = isolated_dirs
+        with pytest.raises(ValueError):
+            await ensure_cache_dir(ModelId(".."))
+        # Validation happens before makedirs: no stray cache dir may be created.
+        assert not (default / "caches").exists()
+
+    async def test_ensure_cache_dir_allows_normalized_id(
+        self, isolated_dirs: tuple[Path, Path]
+    ) -> None:
+        default, _ = isolated_dirs
+        target = await ensure_cache_dir(MODEL_ID)
+        assert target == default / "caches" / NORMALIZED
+        assert target.exists()

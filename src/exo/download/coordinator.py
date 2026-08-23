@@ -331,7 +331,13 @@ class DownloadCoordinator:
 
         # Delete from disk
         logger.info(f"Deleting model files for {model_id}")
-        deleted = await delete_model(model_id)
+        try:
+            deleted = await delete_model(model_id)
+        except (ValueError, OSError) as e:
+            # Invalid model ids (e.g. path traversal) are refused before any
+            # rmtree; keep the command loop alive (issue #2267).
+            logger.warning(f"Refusing to delete {model_id}: {e}")
+            return
 
         if deleted:
             logger.info(f"Successfully deleted model {model_id}")
