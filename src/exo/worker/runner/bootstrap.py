@@ -6,6 +6,7 @@ from typing import Self, cast
 
 import loguru
 
+from exo.shared.types.backends import Backend
 from exo.shared.types.events import Event
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
@@ -13,6 +14,26 @@ from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.engines.base import Builder
 
 logger: "loguru.Logger" = loguru.logger
+
+
+def apply_shard_backend(backend: Backend | None) -> None:
+    """Set the MLX default device for the shard's assigned backend.
+
+    Backends that do not map to an MLX device (or an unassigned backend)
+    leave the engine default untouched.
+    """
+    import mlx.core as mx
+
+    match backend:
+        case Backend.MlxMetal | Backend.MlxCuda:
+            device = mx.Device(mx.gpu)
+        case Backend.MlxCpu:
+            device = mx.Device(mx.cpu)
+        case _:
+            return
+
+    mx.set_default_device(device)
+    logger.info(f"Set MLX default device to {device} for backend {backend.value}")
 
 
 @dataclass(frozen=True)
@@ -61,6 +82,8 @@ def entrypoint(
     # Import main after setting global logger - this lets us just import logger from this module
     try:
         event_sender_downcast: MpSender[Event] = cast(MpSender[Event], event_sender)
+
+        apply_shard_backend(bound_instance.bound_shard.backend)
 
         from exo.worker.runner.runner import Runner
 
