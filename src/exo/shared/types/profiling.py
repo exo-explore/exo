@@ -1,4 +1,5 @@
 import shutil
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, Self
@@ -38,6 +39,66 @@ class MemoryUsage(FrozenModel):
             swap_total=sm.total,
             swap_available=sm.free,
         )
+
+    @classmethod
+    def from_cuda(cls, *, override_memory: int | None) -> Self | None:
+        """Report a CUDA GPU's VRAM as the node's memory.
+
+        On a discrete NVIDIA GPU the memory that actually bounds MLX inference is
+        the GPU's VRAM, not system RAM (unlike Apple Silicon's unified memory).
+        Returns None when no GPU/VRAM can be queried so the caller can fall back
+        to :meth:`from_psutil`.
+        """
+        vram = _query_cuda_vram_bytes()
+        if vram is None:
+            return None
+        total_vram, free_vram = vram
+        sm = psutil.swap_memory()
+        return cls.from_bytes(
+            ram_total=total_vram,
+            ram_available=free_vram if override_memory is None else override_memory,
+            swap_total=sm.total,
+            swap_available=sm.free,
+        )
+
+
+def _query_cuda_vram_bytes() -> tuple[int, int] | None:
+    """Total and free VRAM in bytes for the first CUDA GPU via ``nvidia-smi``.
+
+    Returns None if ``nvidia-smi`` is absent or its output cannot be parsed.
+    """
+    nvidia_smi = shutil.which("nvidia-smi")
+    if nvidia_smi is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [
+                nvidia_smi,
+                "--query-gpu=memory.total,memory.free",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+
+    lines = completed.stdout.strip().splitlines()
+    if not lines:
+        return None
+    fields = lines[0].split(",")
+    if len(fields) != 2:
+        return None
+    try:
+        total_mebibytes = int(fields[0].strip())
+        free_mebibytes = int(fields[1].strip())
+    except ValueError:
+        return None
+
+    mebibyte = 1024 * 1024
+    return total_mebibytes * mebibyte, free_mebibytes * mebibyte
 
 
 class DiskUsage(FrozenModel):

@@ -399,6 +399,24 @@ GatheredInfo = (
 )
 
 
+def _mlx_uses_cuda_gpu() -> bool:
+    """True when MLX's default device is a (CUDA) GPU on a non-Darwin host.
+
+    Used to decide whether to report GPU VRAM instead of system RAM as the
+    node's memory. On Apple Silicon the GPU path is handled by macmon, and on a
+    Linux CPU (mlx-cpu) build the default device is the CPU, so both correctly
+    fall through to psutil system RAM.
+    """
+    if IS_DARWIN:
+        return False
+    try:
+        import mlx.core as mx
+
+        return "gpu" in str(mx.default_device()).lower()
+    except Exception:
+        return False
+
+
 @dataclass
 class InfoGatherer:
     info_sender: Sender[GatheredInfo]
@@ -518,11 +536,17 @@ class InfoGatherer:
             if override_memory_env
             else None
         )
+        report_vram = _mlx_uses_cuda_gpu()
+        if report_vram:
+            logger.info("CUDA MLX backend detected; reporting GPU VRAM as node memory")
         while True:
             try:
-                await self.info_sender.send(
-                    MemoryUsage.from_psutil(override_memory=override_memory)
-                )
+                usage: MemoryUsage | None = None
+                if report_vram:
+                    usage = MemoryUsage.from_cuda(override_memory=override_memory)
+                if usage is None:
+                    usage = MemoryUsage.from_psutil(override_memory=override_memory)
+                await self.info_sender.send(usage)
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering memory usage")
             await anyio.sleep(memory_poll_rate)
