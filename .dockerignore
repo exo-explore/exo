@@ -1,0 +1,26 @@
+# Version control / VCS
+.git
+.gitignore
+
+# Virtual environments, caches, build products
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.ruff_cache
+*.whl
+rust/target
+target
+
+# Dashboard build artifacts / deps
+dashboard/node_modules
+dashboard/build
+node_modules
+
+# Transient/dev artifacts
+tmp
+bench/vendor
+*.log
+.env
