@@ -277,6 +277,22 @@
 
   // ── Steps 1-5 animation state: cinematic SVG story ──
   const SIMULATED_STUDIO_GB = 256; // simulated Mac Studio memory
+
+  // User device info from topology — uses /node_id to find our own node
+  const userDeviceInfo = $derived.by(() => {
+    if (!data || Object.keys(data.nodes).length === 0) {
+      return { name: "MacBook Pro", memoryGB: 36, deviceType: "macbook pro" };
+    }
+    const ourNode = localNodeId ? data.nodes[localNodeId] : undefined;
+    const node = ourNode ?? Object.values(data.nodes)[0];
+    const totalMem =
+      node.macmon_info?.memory?.ram_total ?? node.system_info?.memory ?? 0;
+    const memGB = Math.round(totalMem / (1024 * 1024 * 1024));
+    const name = node.friendly_name || "Your Mac";
+    const modelId = (node.system_info?.model_id || "macbook pro").toLowerCase();
+    return { name, memoryGB: memGB || 36, deviceType: modelId };
+  });
+
   const onboardingCombinedGB = $derived(
     userDeviceInfo.memoryGB + SIMULATED_STUDIO_GB,
   );
@@ -302,21 +318,6 @@
       deduped.push(m);
     }
     return deduped.slice(0, 3);
-  });
-
-  // User device info from topology — uses /node_id to find our own node
-  const userDeviceInfo = $derived.by(() => {
-    if (!data || Object.keys(data.nodes).length === 0) {
-      return { name: "MacBook Pro", memoryGB: 36, deviceType: "macbook pro" };
-    }
-    const ourNode = localNodeId ? data.nodes[localNodeId] : undefined;
-    const node = ourNode ?? Object.values(data.nodes)[0];
-    const totalMem =
-      node.macmon_info?.memory?.ram_total ?? node.system_info?.memory ?? 0;
-    const memGB = Math.round(totalMem / (1024 * 1024 * 1024));
-    const name = node.friendly_name || "Your Mac";
-    const modelId = (node.system_info?.model_id || "macbook pro").toLowerCase();
-    return { name, memoryGB: memGB || 36, deviceType: modelId };
   });
 
   let showContinueButton = $state(false);
@@ -3825,7 +3826,7 @@
 />
 
 <div
-  class="relative h-screen w-full flex flex-col bg-exo-dark-gray overflow-hidden"
+  class="relative h-screen w-full flex flex-col bg-exo-black overflow-hidden"
 >
   <!-- Scanline overlay -->
   <!-- Scanline overlay -->
@@ -4733,11 +4734,11 @@
   {/if}
 
   <!-- Main Content -->
-  <main class="flex-1 flex overflow-hidden relative">
+  <main id="main-content" class="flex-1 flex overflow-hidden relative">
     <!-- Left: Conversation History Sidebar (hidden in topology-only mode, welcome state, or when toggled off) - Desktop only -->
     {#if !topologyOnlyEnabled && sidebarVisible}
       <div
-        class="hidden md:block w-80 flex-shrink-0 border-r border-exo-yellow/10"
+        class="hidden md:block w-80 flex-shrink-0 border-r border-white/[0.06] bg-exo-dark-gray/45"
         role="complementary"
         aria-label="Conversation history"
       >
@@ -4880,10 +4881,11 @@
         out:fade={{ duration: 200 }}
       >
         <!-- Center: MAIN TOPOLOGY DISPLAY -->
-        <div class="flex-1 flex flex-col min-h-0 min-w-0 py-4">
+        <div class="flex-1 flex flex-col min-h-0 min-w-0 py-3 md:py-4">
           <!-- Topology Container - Takes most of the space -->
-          <div
-            class="flex-1 relative bg-exo-dark-gray/40 mx-4 mb-4 rounded-lg overflow-hidden"
+          <section
+            class="exo-panel flex-1 relative mx-3 mb-2 overflow-hidden rounded-2xl md:mx-4"
+            aria-label="Cluster topology"
           >
             <!-- The main topology graph - full container -->
             <TopologyGraph
@@ -4893,21 +4895,42 @@
               onNodeClick={togglePreviewNodeFilter}
             />
 
+            <div
+              class="pointer-events-none absolute left-4 top-4 z-10 rounded-xl border border-white/[0.07] bg-exo-black/60 px-3 py-2 backdrop-blur-md"
+            >
+              <div class="exo-eyebrow text-white/45">Cluster map</div>
+              <div class="mt-1 flex items-center gap-2 text-xs text-white/70">
+                <span
+                  class="h-1.5 w-1.5 rounded-full {update && isConnected()
+                    ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]'
+                    : 'bg-amber-300'}"
+                ></span>
+                <span
+                  >{update && isConnected()
+                    ? `${Object.keys(data?.nodes ?? {}).length} nodes online`
+                    : "Awaiting telemetry"}</span
+                >
+              </div>
+            </div>
+
             <!-- Initial loading state before first data fetch -->
             {#if !update}
               <div
-                class="absolute inset-0 flex items-center justify-center bg-exo-dark-gray/80"
+                class="absolute inset-0 flex items-center justify-center bg-exo-black/55 backdrop-blur-[2px]"
                 in:fade={{ duration: 200 }}
                 out:fade={{ duration: 300 }}
               >
-                <div class="text-center">
+                <div
+                  class="rounded-2xl border border-white/[0.07] bg-exo-dark-gray/80 px-8 py-6 text-center shadow-2xl backdrop-blur-xl"
+                >
                   <div
-                    class="w-8 h-8 border-2 border-exo-yellow/30 border-t-exo-yellow rounded-full animate-spin mx-auto mb-4"
+                    class="w-7 h-7 border-2 border-exo-yellow/20 border-t-exo-yellow rounded-full animate-spin mx-auto mb-4"
                   ></div>
-                  <p
-                    class="text-xs font-mono text-white/40 tracking-wider uppercase"
-                  >
-                    Connecting to cluster&hellip;
+                  <p class="text-sm font-medium text-white/75">
+                    Connecting to your cluster
+                  </p>
+                  <p class="mt-1 text-xs text-white/35">
+                    Waiting for the EXO backend to respond&hellip;
                   </p>
                 </div>
               </div>
@@ -5022,16 +5045,24 @@
                 </svg>
               </button>
             {/if}
-          </div>
+          </section>
 
           <!-- Chat Input - Below topology, never overlaps -->
-          <div class="px-4 pt-4 pb-6 flex-shrink-0">
+          <div class="px-3 pt-3 pb-4 flex-shrink-0 md:px-4">
             <div class="max-w-3xl mx-auto">
               {#if instanceCount === 0}
-                <div class="text-center mb-4">
-                  <p class="text-sm text-white/50 font-sans">
-                    Select a model to get started.
+                <div
+                  class="mb-3 flex items-center justify-center gap-2 text-center"
+                >
+                  <span
+                    class="h-px w-8 bg-gradient-to-r from-transparent to-white/10"
+                  ></span>
+                  <p class="text-xs text-white/40">
+                    Choose a model, then start a private local conversation
                   </p>
+                  <span
+                    class="h-px w-8 bg-gradient-to-l from-transparent to-white/10"
+                  ></span>
                 </div>
               {/if}
               <ChatForm
@@ -5069,7 +5100,7 @@
 
         <!-- Right Sidebar: Instance Controls (wider on welcome page for better visibility) - Desktop only -->
         <aside
-          class="hidden md:flex w-80 border-l border-exo-yellow/10 bg-exo-dark-gray flex-col flex-shrink-0"
+          class="hidden md:flex w-80 border-l border-white/[0.06] bg-exo-dark-gray/55 backdrop-blur-xl flex-col flex-shrink-0"
           aria-label="Instance controls"
         >
           {@render rightSidebarContent()}

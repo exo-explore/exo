@@ -264,10 +264,10 @@
 
 {#snippet sidebarContent()}
   <!-- Header -->
-  <div class="p-4">
+  <div class="px-4 pb-2 pt-4">
     <button
       onclick={handleNewChat}
-      class="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-transparent border border-exo-yellow/30 text-exo-yellow text-xs font-mono tracking-wider uppercase hover:border-exo-yellow/50 transition-all cursor-pointer"
+      class="w-full flex items-center justify-center gap-2 rounded-xl border border-exo-yellow/25 bg-exo-yellow/[0.07] py-2.5 px-4 text-exo-yellow text-xs font-mono font-semibold tracking-wider uppercase transition-all hover:border-exo-yellow/45 hover:bg-exo-yellow/[0.11] cursor-pointer"
     >
       <svg
         class="w-4 h-4"
@@ -306,7 +306,7 @@
         type="text"
         bind:value={searchQuery}
         placeholder="Search conversations..."
-        class="w-full bg-exo-black/40 border border-exo-medium-gray/30 rounded px-3 py-2 pl-9 text-xs text-white/90 placeholder:text-white/40 focus:outline-none focus:border-exo-yellow/30"
+        class="w-full rounded-xl border border-white/[0.07] bg-exo-black/35 px-3 py-2.5 pl-9 text-xs text-white/90 placeholder:text-white/35 transition-colors focus:border-exo-yellow/30"
       />
     </div>
   </div>
@@ -336,7 +336,6 @@
                   bind:value={editingName}
                   onkeydown={handleEditKeydown}
                   class="w-full bg-exo-black/60 border border-exo-yellow/30 rounded px-2 py-1.5 text-xs text-exo-light-gray focus:outline-none focus:border-exo-yellow/50 mb-2"
-                  autofocus
                 />
                 <div class="flex gap-2">
                   <button
@@ -473,10 +472,10 @@
       </div>
     {:else}
       <div
-        class="flex flex-col items-center justify-center h-full p-4 text-center"
+        class="flex h-full flex-col items-center justify-center p-6 text-center"
       >
         <div
-          class="w-12 h-12 border border-exo-yellow/20 rounded-full flex items-center justify-center mb-3"
+          class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-exo-yellow/15 bg-exo-yellow/[0.045] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
         >
           <svg
             class="w-6 h-6 text-exo-yellow/40"
@@ -493,11 +492,11 @@
           </svg>
         </div>
         <p
-          class="text-xs text-white/70 font-mono tracking-wider uppercase mb-1"
+          class="mb-1 text-xs font-mono font-semibold tracking-wider text-white/70 uppercase"
         >
           {searchQuery ? "NO RESULTS" : "NO CONVERSATIONS"}
         </p>
-        <p class="text-sm text-white/50">
+        <p class="max-w-44 text-sm leading-relaxed text-white/35">
           {searchQuery ? "Try a different search" : "Start a new chat to begin"}
         </p>
       </div>
@@ -505,7 +504,7 @@
   </div>
 
   <!-- Footer -->
-  <div class="p-3 border-t border-exo-yellow/10">
+  <div class="p-3 border-t border-white/[0.06]">
     {#if showDeleteAllConfirm}
       <div class="bg-red-500/10 border border-red-500/30 rounded p-2 mb-2">
         <p class="text-xs text-red-400 text-center mb-2">
@@ -613,7 +612,7 @@
     ></button>
     <!-- Drawer panel -->
     <aside
-      class="fixed left-0 top-0 bottom-0 w-72 bg-exo-dark-gray border-r border-exo-yellow/10 z-50 flex flex-col md:hidden"
+      class="fixed left-0 top-0 bottom-0 w-72 bg-exo-dark-gray/95 backdrop-blur-xl border-r border-white/[0.07] z-50 flex flex-col md:hidden"
     >
       {@render sidebarContent()}
     </aside>
@@ -621,7 +620,7 @@
 {:else}
   <!-- Desktop sidebar -->
   <aside
-    class="flex flex-col h-full bg-exo-dark-gray border-r border-exo-yellow/10 {className}"
+    class="flex flex-col h-full bg-exo-dark-gray/55 backdrop-blur-xl border-r border-white/[0.06] {className}"
   >
     {@render sidebarContent()}
   </aside>

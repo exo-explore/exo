@@ -222,8 +222,8 @@
               fill="none"
               stroke="currentColor"
               stroke-width="1.5"
-              title="Supports Thinking"
             >
+              <title>Supports Thinking</title>
               <path
                 d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7zM9 20h6M10 22h4"
                 stroke-linecap="round"
@@ -237,8 +237,8 @@
               fill="none"
               stroke="currentColor"
               stroke-width="1.5"
-              title="Supports code generation"
             >
+              <title>Supports code generation</title>
               <path
                 d="M16 18l6-6-6-6M8 6l-6 6 6 6"
                 stroke-linecap="round"
@@ -252,8 +252,8 @@
               fill="none"
               stroke="currentColor"
               stroke-width="1.5"
-              title="Supports image input"
             >
+              <title>Supports image input</title>
               <path
                 d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
                 stroke-linecap="round"
@@ -268,8 +268,8 @@
               fill="none"
               stroke="currentColor"
               stroke-width="1.5"
-              title="Supports image generation"
             >
+              <title>Supports image generation</title>
               <rect
                 x="3"
                 y="3"
@@ -294,8 +294,8 @@
               fill="none"
               stroke="currentColor"
               stroke-width="1.5"
-              title="Supports image editing"
             >
+              <title>Supports image editing</title>
               <path
                 d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
                 stroke-linecap="round"

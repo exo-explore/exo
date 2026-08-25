@@ -149,16 +149,6 @@
 
   const perNode = $derived(downloadStatus?.perNode ?? []);
 
-  function toggleNodeDetails(nodeId: string): void {
-    const next = new Set(expandedNodes);
-    if (next.has(nodeId)) {
-      next.delete(nodeId);
-    } else {
-      next.add(nodeId);
-    }
-    expandedNodes = next;
-  }
-
   // Use actual storage_size_megabytes from API if available, otherwise fall back to estimate
   const estimatedMemory = $derived(
     model.storage_size_megabytes
@@ -687,7 +677,15 @@
             {@const allConnections =
               isDebugMode && usedNodes.length > 1
                 ? (() => {
-                    const conns: Array = [];
+                    const conns: Array<{
+                      ip: string;
+                      iface: string | null;
+                      from: string;
+                      to: string;
+                      midX: number;
+                      midY: number;
+                      arrow: string;
+                    }> = [];
                     for (let i = 0; i < usedNodes.length; i++) {
                       for (let j = i + 1; j < usedNodes.length; j++) {
                         const n1 = usedNodes[i];

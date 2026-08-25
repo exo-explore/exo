@@ -37,6 +37,8 @@
     downloadProgress = null,
   }: Props = $props();
 
+  let mobileNavOpen = $state(false);
+
   function handleHome(): void {
     if (onHome) {
       onHome();
@@ -68,7 +70,7 @@
 </script>
 
 <header
-  class="relative z-20 flex items-center justify-center px-4 md:px-6 pt-4 md:pt-8 pb-3 md:pb-4 bg-exo-dark-gray"
+  class="relative z-20 flex h-[72px] items-center justify-center border-b border-white/[0.07] bg-exo-black/75 px-4 backdrop-blur-xl md:px-6"
 >
   <!-- Left: Sidebar Toggle (desktop) or Mobile Sidebar Toggle (mobile) -->
   <div
@@ -77,7 +79,7 @@
     <!-- Mobile sidebar toggle -->
     <button
       onclick={handleToggleMobileMenu}
-      class="p-2 rounded border border-exo-light-gray/30 hover:border-exo-yellow/50 hover:bg-exo-medium-gray/30 transition-colors cursor-pointer md:hidden"
+      class="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/[0.025] transition-all hover:border-exo-yellow/35 hover:bg-exo-yellow/[0.06] cursor-pointer md:hidden"
       title={mobileMenuOpen ? "Hide sidebar" : "Show sidebar"}
       aria-label={mobileMenuOpen
         ? "Hide conversation sidebar"
@@ -111,7 +113,7 @@
     <!-- Desktop sidebar toggle -->
     <button
       onclick={handleToggleSidebar}
-      class="p-2 rounded border border-exo-light-gray/30 hover:border-exo-yellow/50 hover:bg-exo-medium-gray/30 transition-colors cursor-pointer hidden md:block"
+      class="h-10 w-10 rounded-xl border border-white/10 bg-white/[0.025] transition-all hover:border-exo-yellow/35 hover:bg-exo-yellow/[0.06] cursor-pointer hidden md:grid place-items-center"
       title={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
       aria-label={sidebarVisible
         ? "Hide conversation sidebar"
@@ -147,7 +149,7 @@
   <!-- Center: Logo (clickable to go home) -->
   <button
     onclick={handleHome}
-    class="bg-transparent border-none outline-none focus:outline-none transition-opacity duration-200 hover:opacity-90 {showHome
+    class="group flex items-center gap-3 rounded-xl bg-transparent border-none px-2 py-1 transition-opacity duration-200 hover:opacity-90 {showHome
       ? 'cursor-pointer'
       : 'cursor-default'}"
     title={showHome ? "Go to home" : ""}
@@ -156,20 +158,28 @@
     <img
       src="/exo-logo.png"
       alt="EXO"
-      class="h-12 md:h-18 drop-shadow-[0_0_4px_rgba(255,215,0,0.3)]"
+      class="h-9 md:h-11 drop-shadow-[0_0_12px_rgba(255,215,0,0.22)]"
     />
+    <span class="hidden lg:block border-l border-white/10 pl-3 text-left">
+      <span
+        class="block text-[10px] font-mono font-semibold tracking-[0.18em] text-white/55 uppercase"
+        >Distributed AI</span
+      >
+      <span class="mt-0.5 block text-[10px] text-white/30">Cluster control</span
+      >
+    </span>
   </button>
 
   <!-- Right: Home + Downloads + Mobile Right Toggle -->
   <nav
-    class="absolute right-4 md:right-6 top-1/2 -translate-y-1/2 flex items-center gap-2 md:gap-4"
+    class="absolute right-4 md:right-6 top-1/2 -translate-y-1/2 flex items-center gap-1 rounded-xl border border-white/[0.06] bg-white/[0.025] p-1"
     aria-label="Main navigation"
   >
     <!-- Mobile right sidebar toggle (instances/models) - only show when not in chat mode -->
     {#if showMobileRightToggle}
       <button
         onclick={handleToggleMobileRight}
-        class="p-2 rounded border border-exo-light-gray/30 hover:border-exo-yellow/50 hover:bg-exo-medium-gray/30 transition-colors cursor-pointer md:hidden"
+        class="grid h-9 w-9 place-items-center rounded-lg text-white/65 transition-colors hover:bg-white/[0.06] hover:text-exo-yellow cursor-pointer md:hidden"
         title={mobileRightOpen ? "Hide instances" : "Show instances"}
         aria-label={mobileRightOpen
           ? "Hide instances panel"
@@ -204,7 +214,7 @@
     {#if showHome}
       <button
         onclick={handleHome}
-        class="flex text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase items-center gap-2 cursor-pointer"
+        class="hidden h-9 items-center gap-2 rounded-lg px-2.5 text-xs font-medium text-white/65 transition-colors hover:bg-white/[0.06] hover:text-exo-yellow cursor-pointer sm:flex"
         title="Back to topology view"
       >
         <svg
@@ -225,7 +235,7 @@
     {/if}
     <a
       href="/#/downloads"
-      class="text-xs md:text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-1.5 md:gap-2 cursor-pointer"
+      class="hidden h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-white/65 transition-colors hover:bg-white/[0.06] hover:text-exo-yellow cursor-pointer sm:flex md:gap-2"
       title="View downloads overview"
     >
       {#if downloadProgress}
@@ -281,7 +291,7 @@
     </a>
     <a
       href="/#/integrations"
-      class="text-xs md:text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-1.5 md:gap-2 cursor-pointer"
+      class="hidden h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-white/65 transition-colors hover:bg-white/[0.06] hover:text-exo-yellow cursor-pointer sm:flex md:gap-2"
       title="Integration configs for external tools"
     >
       <svg
@@ -303,7 +313,7 @@
     {#if showAdvanced}
       <a
         href="/#/advanced"
-        class="text-xs md:text-sm text-white/70 hover:text-exo-yellow transition-colors tracking-wider uppercase flex items-center gap-1.5 md:gap-2 cursor-pointer"
+        class="hidden h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-white/65 transition-colors hover:bg-white/[0.06] hover:text-exo-yellow cursor-pointer sm:flex md:gap-2"
         title="Advanced cluster settings"
       >
         <svg
@@ -323,5 +333,55 @@
         <span class="hidden sm:inline">Advanced</span>
       </a>
     {/if}
+
+    <div class="relative sm:hidden">
+      <button
+        type="button"
+        class="grid h-9 w-9 place-items-center rounded-lg text-white/65 transition-colors hover:bg-white/[0.06] hover:text-exo-yellow cursor-pointer"
+        onclick={() => (mobileNavOpen = !mobileNavOpen)}
+        aria-label="Open navigation menu"
+        aria-expanded={mobileNavOpen}
+      >
+        <svg
+          class="h-4 w-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+        >
+          <circle cx="12" cy="5" r="1" fill="currentColor" />
+          <circle cx="12" cy="12" r="1" fill="currentColor" />
+          <circle cx="12" cy="19" r="1" fill="currentColor" />
+        </svg>
+      </button>
+
+      {#if mobileNavOpen}
+        <div
+          class="absolute right-0 top-12 z-50 w-48 overflow-hidden rounded-xl border border-white/10 bg-exo-dark-gray/95 p-1.5 shadow-2xl backdrop-blur-xl"
+        >
+          <a
+            href="/#/downloads"
+            onclick={() => (mobileNavOpen = false)}
+            class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs text-white/70 transition-colors hover:bg-white/[0.06] hover:text-exo-yellow"
+            >Downloads</a
+          >
+          <a
+            href="/#/integrations"
+            onclick={() => (mobileNavOpen = false)}
+            class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs text-white/70 transition-colors hover:bg-white/[0.06] hover:text-exo-yellow"
+            >Integrations</a
+          >
+          {#if showAdvanced}
+            <a
+              href="/#/advanced"
+              onclick={() => (mobileNavOpen = false)}
+              class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs text-white/70 transition-colors hover:bg-white/[0.06] hover:text-exo-yellow"
+              >Advanced</a
+            >
+          {/if}
+        </div>
+      {/if}
+    </div>
   </nav>
 </header>

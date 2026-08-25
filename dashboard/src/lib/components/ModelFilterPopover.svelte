@@ -76,7 +76,9 @@
   class="filter-popover absolute right-0 top-full mt-2 w-64 bg-exo-dark-gray border border-exo-yellow/10 rounded-lg shadow-xl z-20"
   transition:fly={{ y: -10, duration: 200, easing: cubicOut }}
   onclick={(e) => e.stopPropagation()}
+  onkeydown={(e) => e.stopPropagation()}
   role="dialog"
+  tabindex="-1"
   aria-label="Filter options"
 >
   <div class="p-3 space-y-4">
