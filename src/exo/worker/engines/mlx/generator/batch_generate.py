@@ -34,6 +34,7 @@ from exo.worker.engines.mlx.cache import (
 )
 from exo.worker.engines.mlx.constants import DEFAULT_TOP_LOGPROBS, MAX_TOKENS
 from exo.worker.engines.mlx.generator.generate import (
+    set_pipeline_prefill,
     ban_token_ids,
     eos_ids_from_tokenizer,
     extract_top_logprobs,
@@ -298,6 +299,13 @@ class ExoBatchGenerator:
 
         max_tokens = task_params.max_output_tokens or MAX_TOKENS
 
+        # The decode restart feeds last_tokens[-2:] through generate_step,
+        # which internally prefills those 2 tokens through the pipeline layers.
+        # Set is_prefill=True so PipelineLastLayer uses the same no-all_gather
+        # path as the original prefill — all_gather during this internal
+        # prefill produces different bf16 reduction orders vs the prefill's
+        # is_prefill=True path, corrupting hybrid (SSM) models at long prompts.
+        set_pipeline_prefill(self.model, is_prefill=True)
         uids = self._mlx_gen.insert(
             prompts=[cast(list[int], last_tokens.tolist())],
             max_tokens=[max_tokens],
@@ -305,6 +313,7 @@ class ExoBatchGenerator:
             samplers=[sampler],
             logits_processors=[logits_processors],
         )
+        set_pipeline_prefill(self.model, is_prefill=False)
 
         assert len(uids) == 1
 

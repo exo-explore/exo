@@ -259,12 +259,17 @@ def pipeline_parallel_prefill(
     finally:
         clear_prefill_sends()
 
-    # Post-loop: process remaining 1 token + add +1 entry to match stream_generate.
-    for _ in range(2):
-        with mx.stream(generation_stream):
-            model(prompt[-1:][None], cache=_prompt_cache)
-            quantize_cache_fn(_prompt_cache)
-        flush_prefill_sends()
+    # Post-loop: process the final prompt token EXACTLY ONCE so every prompt
+    # token passes through the SSM/conv state once (hybrid models have no way
+    # to un-advance recurrent state; processing it twice permanently corrupts
+    # it, and the snapshots[-2] restore in prefill() then rolls back to a
+    # stale state). Then emit a final progress callback so the SSM snapshot is
+    # taken at the true post-prompt state — matching single-node semantics.
+    with mx.stream(generation_stream):
+        model(prompt[-1:][None], cache=_prompt_cache)
+        quantize_cache_fn(_prompt_cache)
+    flush_prefill_sends()
+    prompt_progress_callback(total, total)
 
     assert _prompt_cache is not None
     with mx.stream(generation_stream):
@@ -372,9 +377,10 @@ def prefill(
     set_pipeline_queue_sends(model, queue_sends=False)
     set_pipeline_prefill(model, is_prefill=False)
 
-    # stream_generate added 1 extra generated token to the cache, so we should trim it.
-    # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
-    pre_gen = snapshots[-2] if has_ssm else None
+    # snapshots[-1]: last per-chunk snapshot = state after prompt[:-2] (correct
+    # restore point for the [-2:] decode restart). Original [-2] rolled back to
+    # a mid-prompt chunk for single-chunk prefills, garbling hybrid SSM decode.
+    pre_gen = snapshots[-1] if has_ssm and snapshots else None
     for i, c in enumerate(cache):
         non_trimmable = is_non_trimmable_cache_entry(c)
         if has_ssm and non_trimmable:
