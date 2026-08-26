@@ -709,35 +709,63 @@ async def _download_file(
         if (await aios.path.exists(partial_path))
         else None
     )
+    if resume_byte_pos is not None and resume_byte_pos > length:
+        logger.warning(
+            f"Ignoring oversized partial download for {path}: "
+            f"local={resume_byte_pos}, remote={length}"
+        )
+        resume_byte_pos = None
+        on_progress(0, length, False)
+
     if resume_byte_pos != length:
         url = urljoin(f"{get_hf_endpoint()}/{model_id}/resolve/{revision}/", path)
         headers = await get_download_headers()
-        if resume_byte_pos:
-            headers["Range"] = f"bytes={resume_byte_pos}-"
-        n_read = resume_byte_pos or 0
-        async with (
-            create_http_session(timeout_profile="long") as session,
-            session.get(url, headers=headers) as r,
-        ):
-            if r.status == 404:
-                raise FileNotFoundError(f"File not found: {url}")
-            if r.status in [401, 403]:
-                msg = await _build_auth_error_message(r.status, model_id)
-                raise HuggingFaceAuthenticationError(msg)
-            if r.status == 429:
-                raise HuggingFaceRateLimitError(
-                    f"HuggingFace rate limit hit downloading {model_id}/{path}",
-                    retry_after=_parse_retry_after(r.headers),
-                )
-            assert r.status in [200, 206], (
-                f"Failed to download {path} from {url}: {r.status}"
-            )
-            async with aiofiles.open(
-                partial_path, "ab" if resume_byte_pos else "wb"
-            ) as f:
-                while chunk := await r.content.read(8 * 1024 * 1024):
-                    n_read = n_read + (await f.write(chunk))
-                    on_progress(n_read, length, False)
+        async with create_http_session(timeout_profile="long") as session:
+            while True:
+                request_headers = headers.copy()
+                if resume_byte_pos:
+                    request_headers["Range"] = f"bytes={resume_byte_pos}-"
+                n_read = resume_byte_pos or 0
+
+                async with session.get(url, headers=request_headers) as r:
+                    if r.status == 416 and resume_byte_pos:
+                        logger.warning(
+                            f"Server rejected resume range for {path} at "
+                            f"byte {resume_byte_pos}; restarting cleanly"
+                        )
+                        resume_byte_pos = None
+                        on_progress(0, length, False)
+                        continue
+                    if r.status == 404:
+                        raise FileNotFoundError(f"File not found: {url}")
+                    if r.status in [401, 403]:
+                        msg = await _build_auth_error_message(r.status, model_id)
+                        raise HuggingFaceAuthenticationError(msg)
+                    if r.status == 429:
+                        raise HuggingFaceRateLimitError(
+                            f"HuggingFace rate limit hit downloading {model_id}/{path}",
+                            retry_after=_parse_retry_after(r.headers),
+                        )
+                    assert r.status in [200, 206], (
+                        f"Failed to download {path} from {url}: {r.status}"
+                    )
+
+                    if resume_byte_pos and r.status == 200:
+                        logger.warning(
+                            f"Server ignored resume range for {path}; "
+                            "replacing the partial file with the full response"
+                        )
+                        resume_byte_pos = None
+                        n_read = 0
+                        on_progress(0, length, False)
+
+                    async with aiofiles.open(
+                        partial_path, "ab" if resume_byte_pos else "wb"
+                    ) as f:
+                        while chunk := await r.content.read(8 * 1024 * 1024):
+                            n_read = n_read + (await f.write(chunk))
+                            on_progress(n_read, length, False)
+                break
 
     final_hash = await calc_hash(
         partial_path, hash_type="sha256" if len(remote_hash) == 64 else "sha1"
