@@ -471,6 +471,11 @@ def tensor_auto_parallel(
     segments: int = 1
 
     def _all_to_sharded(path: str, weight: mx.array):
+        if path.endswith("codebook"):
+            # Vector-quantized experts: the [K, d] codebook is a shared
+            # lookup table, not a weight slice — replicate it. The codes and
+            # scales alongside it shard fine on the default axes.
+            return None
         if path.endswith("bias"):
             logger.info(f"Sharding bias for {path} - all to sharded")
             return weight.ndim - 1, segments
@@ -485,6 +490,9 @@ def tensor_auto_parallel(
     n = group.size()
 
     def _sharded_to_all(path: str, weight: mx.array):
+        if path.endswith("codebook"):
+            # Replicate the lookup table (see _all_to_sharded).
+            return None
         if path.endswith("bias"):
             logger.info(f"Sharding bias for {path} - sharded to all")
             weight /= n
