@@ -19,16 +19,16 @@ uv run exo
 uv run exo -v   # or -vv for more verbose
 
 # Run tests (excludes slow tests by default)
-uv run pytest
+uv run pytest --import-mode=importlib
 
 # Run all tests including slow tests
-uv run pytest -m ""
+uv run pytest --import-mode=importlib -m ""
 
 # Run a specific test file
-uv run pytest src/exo/shared/tests/test_election.py
+uv run pytest --import-mode=importlib src/exo/shared/tests/test_election.py
 
 # Run a specific test function
-uv run pytest src/exo/shared/tests/test_election.py::test_function_name
+uv run pytest --import-mode=importlib src/exo/shared/tests/test_election.py::test_function_name
 
 # Type checking (strict mode)
 uv run basedpyright
@@ -55,12 +55,12 @@ uv run ruff check
 nix fmt
 
 # 4. Tests - MUST pass
-uv run pytest
+uv run pytest --import-mode=importlib
 ```
 
 Run all checks in sequence:
 ```bash
-uv run basedpyright && uv run ruff check && nix fmt && uv run pytest
+uv run basedpyright && uv run ruff check && nix fmt && uv run pytest --import-mode=importlib
 ```
 
 If `nix fmt` changes any files, stage them before committing. The CI runs `nix flake check` which verifies formatting, linting, and runs Rust tests.
@@ -119,6 +119,10 @@ From .cursorrules:
 ## Testing
 
 Tests use pytest-asyncio with `asyncio_mode = "auto"`. Tests are in `tests/` subdirectories alongside the code they test. The `EXO_TESTS=1` env var is set during tests.
+
+**Important:** Always pass `--import-mode=importlib` to pytest. Without it, pytest's default package discovery produces a namespace collision between the top-level `tests/` directory and `tests/` subdirectories inside `src/` packages (which have `__init__.py`), causing collection errors.
+
+**`NetworkingHandle.new()` signature:** `new(identity: str, namespace: str, listen_port: int, discovery_service_port: int)`. The `namespace` argument was added after the initial API; tests must supply all four positional arguments.
 
 ## Dashboard UI Testing & Screenshots
 
