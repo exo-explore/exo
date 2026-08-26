@@ -793,29 +793,22 @@ def mlx_force_oom(size: int = 200000) -> None:
     mx.eval(f)
 
 
-def set_wired_limit_for_model(model_size: Memory):
-    """
-    A context manager to temporarily change the wired limit.
-
-    Note, the wired limit should not be changed during an async eval.  If an
-    async eval could be running pass in the streams to synchronize with prior
-    to exiting the context manager.
-    """
-    if not mx.metal.is_available():
-        return
-
-    max_rec_size = Memory.from_bytes(
-        int(mx.device_info()["max_recommended_working_set_size"])
-    )
-    if model_size > 0.9 * max_rec_size:
-        logger.warning(
-            f"Generating with a model that requires {model_size.in_float_mb:.1f} MB "
-            f"which is close to the maximum recommended size of {max_rec_size.in_float_mb:.1f} "
-            "MB. This can be slow. See the documentation for possible work-arounds: "
-            "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
+def set_wired_limit_for_model(model_size: Memory) -> None:
+    if mx.metal.is_available():
+        max_rec_size = Memory.from_bytes(
+            int(mx.device_info()["max_recommended_working_set_size"])
         )
-    mx.set_wired_limit(max_rec_size.in_bytes)
-    logger.info(f"Wired limit set to {max_rec_size}.")
+        if model_size > 0.9 * max_rec_size:
+            logger.warning(
+                f"Generating with a model that requires {model_size.in_float_mb:.1f} MB "
+                f"which is close to the maximum recommended size of {max_rec_size.in_float_mb:.1f} "
+                "MB. This can be slow. See the documentation for possible work-arounds: "
+                "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
+            )
+        mx.set_wired_limit(max_rec_size.in_bytes)
+        logger.info(f"Wired limit set to {max_rec_size}.")
+    elif hasattr(mx, "cuda") and mx.cuda.is_available():
+        logger.info("CUDA backend active — skipping Metal wired limit.")
 
 
 def mlx_cleanup(
