@@ -309,7 +309,7 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
         List of EOS token IDs, or None if the model uses standard tokenizer config
     """
     model_id_lower = model_id.lower()
-    if "kimi-k2" in model_id_lower:
+    if "kimi-k2" in model_id_lower or "kimi-linear" in model_id_lower:
         return [163586]
     elif "glm-5" in model_id_lower:
         # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
@@ -324,6 +324,8 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
         or "qwen-3.5" in model_id_lower
         or "qwen3.6" in model_id_lower
         or "qwen-3.6" in model_id_lower
+        or "qwen3.8" in model_id_lower
+        or "qwen-3.8" in model_id_lower
     ):
         # For Qwen3.5 / Qwen3.6: 248046 (<|im_end|>), 248044 (<|endoftext|>)
         return [248046, 248044]
@@ -350,6 +352,14 @@ def load_tokenizer_for_model_id(
     """
     model_id_lower = model_id.lower()
     eos_token_ids = get_eos_token_ids_for_model(model_id)
+
+    # Models that ship custom code (e.g. modeling_*.py for kimi_linear) require
+    # trust_remote_code regardless of what the generated model card says.
+    if not trust_remote_code and any(model_path.glob("modeling_*.py")):
+        trust_remote_code = True
+        logger.info(
+            f"{model_id}: custom modeling code detected, enabling trust_remote_code"
+        )
 
     # Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
     if "kimi-k2" in model_id_lower:
