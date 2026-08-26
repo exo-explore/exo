@@ -2064,9 +2064,13 @@ class API:
     async def delete_download(
         self, node_id: NodeId, model_id: ModelId
     ) -> DeleteDownloadResponse:
+        # Reject ids that resolve outside a model directory; containment is
+        # also enforced in delete_model() before any rmtree (issue #2267).
+        if model_id.normalize() in (".", ".."):
+            raise HTTPException(status_code=400, detail=f"Invalid model id: {model_id}")
         command = DeleteDownload(
             target_node_id=node_id,
-            model_id=ModelId(model_id),
+            model_id=model_id,
         )
         await self._send_download(command)
         return DeleteDownloadResponse(command_id=command.command_id)
