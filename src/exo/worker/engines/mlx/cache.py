@@ -401,28 +401,57 @@ class KVPrefixCache:
         cached_regions: list["MediaRegion"],
         query_regions: list["MediaRegion"],
     ) -> int:
-        if not cached_regions:
-            return match_length
+        """Keep a media prefix only when both sides positively identify it.
 
-        query_by_start: dict[int, "MediaRegion"] = {
-            r.start_pos: r for r in query_regions
-        }
+        Empty region lists on both sides represent an ordinary text-only lookup.
+        If either side reports media inside the matched prefix, every region must
+        have exactly one positional twin with the same non-empty hash and span.
+        """
+        cached_by_start: dict[int, list["MediaRegion"]] = {}
+        query_by_start: dict[int, list["MediaRegion"]] = {}
+        for region in cached_regions:
+            cached_by_start.setdefault(region.start_pos, []).append(region)
+        for region in query_regions:
+            query_by_start.setdefault(region.start_pos, []).append(region)
 
-        for cached_r in cached_regions:
-            if cached_r.start_pos >= match_length:
+        region_starts = sorted(cached_by_start.keys() | query_by_start.keys())
+        for start_pos in region_starts:
+            if start_pos >= match_length:
                 break
-            query_r = query_by_start.get(cached_r.start_pos)
-            if query_r is None:
-                continue
-            if query_r.content_hash != cached_r.content_hash:
-                logger.info(
-                    f"Media region mismatch at pos {cached_r.start_pos}: "
-                    f"cached={cached_r.content_hash[:12]}... "
-                    f"query={query_r.content_hash[:12]}... — "
-                    f"truncating match from {match_length} to {cached_r.start_pos}"
+
+            cached_at_start = cached_by_start.get(start_pos, [])
+            query_at_start = query_by_start.get(start_pos, [])
+            if len(cached_at_start) != 1 or len(query_at_start) != 1:
+                reason = (
+                    f"region count mismatch (cached={len(cached_at_start)}, "
+                    f"query={len(query_at_start)})"
                 )
-                match_length = cached_r.start_pos
-                break
+            else:
+                cached_region = cached_at_start[0]
+                query_region = query_at_start[0]
+                if not cached_region.content_hash or not query_region.content_hash:
+                    reason = "empty content hash"
+                elif cached_region.end_pos != query_region.end_pos:
+                    reason = (
+                        f"span mismatch (cached_end={cached_region.end_pos}, "
+                        f"query_end={query_region.end_pos})"
+                    )
+                elif cached_region.content_hash != query_region.content_hash:
+                    reason = (
+                        "content hash mismatch "
+                        f"(cached={cached_region.content_hash[:12]}..., "
+                        f"query={query_region.content_hash[:12]}...)"
+                    )
+                else:
+                    continue
+
+            logger.info(
+                f"Media region could not be positively validated at pos {start_pos}: "
+                f"{reason} — "
+                f"truncating match from {match_length} to {start_pos}"
+            )
+            match_length = start_pos
+            break
 
         return match_length
 
