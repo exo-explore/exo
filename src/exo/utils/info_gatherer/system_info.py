@@ -1,4 +1,5 @@
 import platform
+import re
 import socket
 import sys
 from subprocess import CalledProcessError
@@ -7,6 +8,25 @@ import psutil
 from anyio import run_process
 
 from exo.shared.types.profiling import InterfaceType, NetworkInterfaceInfo
+
+
+def _linux_interface_types() -> dict[str, InterfaceType]:
+    """Infer interface types from names on Linux (no networksetup)."""
+    types: dict[str, InterfaceType] = {}
+    for iface, addrs in psutil.net_if_addrs().items():
+        if iface == "lo" or iface.startswith("docker") or iface.startswith("br-"):
+            continue
+        if iface.startswith("wl"):
+            types[iface] = "wifi"
+        elif re.match(r"enp\d+s\d+f\d+np\d+", iface):
+            types[iface] = "ethernet"
+        elif iface.startswith("en"):
+            types[iface] = "maybe_ethernet"
+        elif iface.startswith("tb"):
+            types[iface] = "thunderbolt"
+        else:
+            types[iface] = "unknown"
+    return types
 
 
 def get_os_version() -> str:
@@ -59,7 +79,7 @@ async def get_friendly_name() -> str:
 async def _get_interface_types_from_networksetup() -> dict[str, InterfaceType]:
     """Parse networksetup -listallhardwareports to get interface types."""
     if sys.platform != "darwin":
-        return {}
+        return _linux_interface_types()
 
     try:
         result = await run_process(["networksetup", "-listallhardwareports"])
