@@ -505,9 +505,9 @@ def test_tensor_rdma_backend_connectivity_matrix(
     idx_b = node_to_idx[node_b]
     idx_c = node_to_idx[node_c]
 
-    assert matrix[idx_a][idx_b] == "rdma_en3"
-    assert matrix[idx_b][idx_c] == "rdma_en4"
-    assert matrix[idx_c][idx_a] == "rdma_en5"
+    assert matrix[idx_a][idx_b] == ["rdma_en3"]
+    assert matrix[idx_b][idx_c] == ["rdma_en4"]
+    assert matrix[idx_c][idx_a] == ["rdma_en5"]
 
     # Verify coordinators are set for all nodes
     assert len(instance.jaccl_coordinators) == 3
@@ -1056,3 +1056,185 @@ def test_mlx_jaccl_rejects_cuda_only_cycle(model_card: ModelCard):
             node_backends,
             node_rdma_ctl=node_rdma_ctl,
         )
+
+
+def _build_two_node_bonded_rdma_topology(
+    links_per_pair: int = 2,
+) -> tuple[Topology, NodeId, NodeId, dict[NodeId, NodeNetworkInfo]]:
+    """Two-node topology with multiple parallel RDMA links between the pair.
+
+    Each direction gets ``links_per_pair`` RDMA edges using distinct interfaces
+    (rdma_en3, rdma_en4, ...). This mirrors two Macs connected by more than one
+    Thunderbolt cable.
+    """
+    topology = Topology()
+    node_a = NodeId()
+    node_b = NodeId()
+
+    ethernet_interface = NetworkInterfaceInfo(name="en0", ip_address="10.0.0.1")
+    ethernet_conn = SocketConnection(
+        sink_multiaddr=Multiaddr(address="/ip4/10.0.0.1/tcp/8000")
+    )
+    node_network = {
+        node_a: NodeNetworkInfo(interfaces=[ethernet_interface]),
+        node_b: NodeNetworkInfo(interfaces=[ethernet_interface]),
+    }
+
+    for n in (node_a, node_b):
+        topology.add_node(n)
+
+    # Parallel RDMA links in both directions, each on its own interface.
+    for offset in range(links_per_pair):
+        iface = 3 + offset  # rdma_en3, rdma_en4, ...
+        topology.add_connection(
+            Connection(source=node_a, sink=node_b, edge=create_rdma_connection(iface))
+        )
+        topology.add_connection(
+            Connection(source=node_b, sink=node_a, edge=create_rdma_connection(iface))
+        )
+
+    topology.add_connection(Connection(source=node_a, sink=node_b, edge=ethernet_conn))
+    topology.add_connection(Connection(source=node_b, sink=node_a, edge=ethernet_conn))
+
+    return topology, node_a, node_b, node_network
+
+
+def test_jaccl_devices_matrix_bonds_parallel_rdma_links(model_card: ModelCard):
+    """Multiple Thunderbolt links between a pair should be emitted as a list so the
+    JACCL ring backend can stripe across them, rather than picking one and discarding
+    the rest."""
+    # arrange
+    model_card = model_card.model_copy(
+        update={"n_layers": 12, "storage_size": Memory.from_bytes(1500)}
+    )
+    topology, node_a, node_b, node_network = _build_two_node_bonded_rdma_topology(
+        links_per_pair=2
+    )
+    node_memory = {
+        node_a: create_node_memory(1000),
+        node_b: create_node_memory(1000),
+    }
+    node_rdma_ctl = {
+        node_a: NodeRdmaCtlStatus(enabled=True),
+        node_b: NodeRdmaCtlStatus(enabled=True),
+    }
+
+    cic = PlaceInstance(
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxJaccl,
+        command_id=CommandId(),
+        model_card=model_card,
+        min_nodes=1,
+    )
+
+    placements = place_instance(
+        cic,
+        topology,
+        {},
+        node_memory,
+        node_network,
+        _metal_only(node_memory),
+        node_rdma_ctl=node_rdma_ctl,
+    )
+
+    assert len(placements) == 1
+    instance = next(iter(placements.values()))
+    assert isinstance(instance, MlxJacclInstance)
+
+    matrix = instance.jaccl_devices
+    assert len(matrix) == 2
+    assert matrix[0][0] is None
+    assert matrix[1][1] is None
+    # Both parallel interfaces survive in the cell. Order is not guaranteed (the
+    # topology graph returns edges in reverse insertion order), so compare as sets.
+    assert set(matrix[0][1]) == {"rdma_en3", "rdma_en4"} and len(matrix[0][1]) == 2
+    assert set(matrix[1][0]) == {"rdma_en3", "rdma_en4"} and len(matrix[1][0]) == 2
+
+
+def test_jaccl_devices_matrix_normalises_asymmetric_link_counts(model_card: ModelCard):
+    """When one pair has more parallel links than another, the matrix is normalised
+    down to the minimum count so the JACCL ring validator (which requires every ring
+    edge to carry the same number of connections) accepts it."""
+    # arrange: three nodes where the A<->B pair has 2 links but B<->C and A<->C have 1
+    model_card = model_card.model_copy(
+        update={"n_layers": 12, "storage_size": Memory.from_bytes(1500)}
+    )
+    topology = Topology()
+    node_a, node_b, node_c = NodeId(), NodeId(), NodeId()
+
+    ethernet_interface = NetworkInterfaceInfo(name="en0", ip_address="10.0.0.1")
+    ethernet_conn = SocketConnection(
+        sink_multiaddr=Multiaddr(address="/ip4/10.0.0.1/tcp/8000")
+    )
+    node_network = {
+        n: NodeNetworkInfo(interfaces=[ethernet_interface])
+        for n in (node_a, node_b, node_c)
+    }
+    for n in (node_a, node_b, node_c):
+        topology.add_node(n)
+
+    # A<->B gets two parallel links; the other two pairs get one each.
+    for iface in (3, 4):
+        topology.add_connection(
+            Connection(source=node_a, sink=node_b, edge=create_rdma_connection(iface))
+        )
+        topology.add_connection(
+            Connection(source=node_b, sink=node_a, edge=create_rdma_connection(iface))
+        )
+    for src, sink, iface in [
+        (node_b, node_c, 5),
+        (node_c, node_b, 5),
+        (node_a, node_c, 6),
+        (node_c, node_a, 6),
+    ]:
+        topology.add_connection(
+            Connection(source=src, sink=sink, edge=create_rdma_connection(iface))
+        )
+    for src, sink in [
+        (node_a, node_b),
+        (node_b, node_a),
+        (node_b, node_c),
+        (node_c, node_b),
+        (node_a, node_c),
+        (node_c, node_a),
+    ]:
+        topology.add_connection(Connection(source=src, sink=sink, edge=ethernet_conn))
+
+    node_memory = {n: create_node_memory(1000) for n in (node_a, node_b, node_c)}
+    node_rdma_ctl = {
+        n: NodeRdmaCtlStatus(enabled=True) for n in (node_a, node_b, node_c)
+    }
+
+    cic = PlaceInstance(
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxJaccl,
+        command_id=CommandId(),
+        model_card=model_card,
+        min_nodes=1,
+    )
+
+    placements = place_instance(
+        cic,
+        topology,
+        {},
+        node_memory,
+        node_network,
+        _metal_only(node_memory),
+        node_rdma_ctl=node_rdma_ctl,
+    )
+
+    instance = next(iter(placements.values()))
+    assert isinstance(instance, MlxJacclInstance)
+    matrix = instance.jaccl_devices
+
+    # place_instance selects the smallest sufficient cycle, so the matrix may be
+    # 2x2 (one pair) rather than the full 3x3. Either way, every off-diagonal cell
+    # must be normalised to a uniform length (the ring validator requires this).
+    n = len(matrix)
+    off_diag_lengths = {len(matrix[i][j]) for i in range(n) for j in range(n) if i != j}
+    assert len(off_diag_lengths) == 1, (
+        f"ring edges must carry a uniform connection count, got {off_diag_lengths}"
+    )
+    # The only single-link pairs are count 1; the A<->B pair (2 physical links) must
+    # have been trimmed down to that minimum, not left at 2.
+    assert off_diag_lengths == {1}

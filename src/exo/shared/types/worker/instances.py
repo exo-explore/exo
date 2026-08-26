@@ -31,7 +31,10 @@ class MlxRingInstance(BaseInstance):
 
 
 class MlxJacclInstance(BaseInstance):
-    jaccl_devices: list[list[str | None]]
+    # Each cell is the list of RDMA interface names from this device to another
+    # (multiple when parallel Thunderbolt links are bonded), or None on the
+    # diagonal. The JACCL backend accepts either a single name or a list per cell.
+    jaccl_devices: list[list[list[str] | None]]
     jaccl_coordinators: dict[NodeId, str]
 
 
