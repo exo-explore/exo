@@ -561,6 +561,7 @@ class AppStore {
   selectedPreviewModelId = $state<string | null>(null);
   isLoadingPreviews = $state(false);
   previewNodeFilter = $state<Set<string>>(new Set());
+  previewMaxContextLength = $state<number | null>(null);
   lastUpdate = $state<number | null>(null);
   nodeIdentities = $state<Record<string, RawNodeIdentity>>({});
   thunderboltBridgeCycles = $state<string[][]>([]);
@@ -1385,6 +1386,9 @@ class AppStore {
           url += `&node_ids=${encodeURIComponent(nodeId)}`;
         }
       }
+      if (this.previewMaxContextLength != null) {
+        url += `&max_context_length=${this.previewMaxContextLength}`;
+      }
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(
@@ -1426,6 +1430,8 @@ class AppStore {
   }
 
   selectPreviewModel(modelId: string | null) {
+    // A cap chosen for the previous model may not be valid for the new one.
+    this.previewMaxContextLength = null;
     if (modelId) {
       this.startPreviewsPolling(modelId);
     } else {
@@ -1458,6 +1464,17 @@ class AppStore {
   clearPreviewNodeFilter() {
     this.previewNodeFilter = new Set();
     // Re-fetch with no filter if we have a selected model
+    if (this.selectedPreviewModelId) {
+      this.fetchPlacementPreviews(this.selectedPreviewModelId, false);
+    }
+  }
+
+  /**
+   * Set the max context length cap for placement previews and re-fetch.
+   * Pass null to fall back to the model's native context length.
+   */
+  setPreviewMaxContextLength(maxContextLength: number | null) {
+    this.previewMaxContextLength = maxContextLength;
     if (this.selectedPreviewModelId) {
       this.fetchPlacementPreviews(this.selectedPreviewModelId, false);
     }
@@ -3551,6 +3568,9 @@ export const togglePreviewNodeFilter = (nodeId: string) =>
   appStore.togglePreviewNodeFilter(nodeId);
 export const clearPreviewNodeFilter = () => appStore.clearPreviewNodeFilter();
 export const previewNodeFilter = () => appStore.previewNodeFilter;
+export const setPreviewMaxContextLength = (maxContextLength: number | null) =>
+  appStore.setPreviewMaxContextLength(maxContextLength);
+export const previewMaxContextLength = () => appStore.previewMaxContextLength;
 export const deleteMessage = (messageId: string) =>
   appStore.deleteMessage(messageId);
 export const editMessage = (messageId: string, newContent: string) =>
