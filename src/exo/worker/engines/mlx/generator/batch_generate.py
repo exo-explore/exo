@@ -26,6 +26,10 @@ from exo.api.types import (
 from exo.shared.types.memory import Memory
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
+from exo.worker.engines.mlx.auto_parallel import (
+    PipelineLastLayer,
+    set_pipeline_token_relay,
+)
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
@@ -48,6 +52,7 @@ from exo.worker.engines.mlx.patches.opt_batch_gen import (
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     fix_unmatched_think_end_tokens,
+    mx_ranks_agree_on_value,
     system_prompt_token_count,
 )
 from exo.worker.engines.mlx.vision import (
@@ -100,6 +105,7 @@ class ExoBatchGenerator:
 
     _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
+    _supports_token_relay: bool = field(init=False)
 
     def __post_init__(self) -> None:
         self._mlx_gen = MlxBatchGenerator(
@@ -108,6 +114,9 @@ class ExoBatchGenerator:
             prefill_step_size=4096,
         )
         self._step_count = 0
+        self._supports_token_relay = self.group is not None and any(
+            isinstance(layer, PipelineLastLayer) for layer in self.model.layers
+        )
 
     @property
     def has_work(self) -> bool:
@@ -170,7 +179,18 @@ class ExoBatchGenerator:
                 )
             )
             prefix_hit_length = len(all_prompt_tokens) - len(remaining_tokens)
-            if prefix_hit_length > 0:
+            if not mx_ranks_agree_on_value(prefix_hit_length, self.group):
+                # Divergent restore positions would make ranks prefill
+                # different token counts and deadlock the pipeline.
+                logger.warning(
+                    "KV prefix cache hit lengths diverge across pipeline ranks; "
+                    "discarding the hit to keep prefill in lockstep"
+                )
+                cache = make_kv_cache(self.model)
+                prefix_hit_length = 0
+                matched_index = None
+                is_exact_hit = False
+            elif prefix_hit_length > 0:
                 logger.info(
                     f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens "
                     f"cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
@@ -331,12 +351,22 @@ class ExoBatchGenerator:
             return []
 
         gb = self._mlx_gen._generation_batch
-        set_needs_topk(
-            gb,
-            any(t.task_params.logprobs for t in self._active_tasks.values()),
+        needs_logprobs = any(
+            t.task_params.logprobs for t in self._active_tasks.values()
+        )
+        set_needs_topk(gb, needs_logprobs)
+        # Token relay needs every rank's logits path untouched only on the last
+        # rank; requests that ask for logprobs need real logits on rank 0, so
+        # fall back to the legacy all_gather decode for those. The flag is
+        # reset after the step so prefill and warmup always use legacy paths.
+        set_pipeline_token_relay(
+            self.model, self._supports_token_relay and not needs_logprobs
         )
         _step_tic = time.perf_counter()
-        _, responses = self._mlx_gen.next()
+        try:
+            _, responses = self._mlx_gen.next()
+        finally:
+            set_pipeline_token_relay(self.model, False)
         _next_elapsed = time.perf_counter() - _step_tic
 
         topk = take_ready_topk(gb)

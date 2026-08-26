@@ -4,6 +4,11 @@ from typing import cast
 import mlx.core as mx
 from mlx_lm.generate import GenerationBatch
 
+from exo.worker.engines.mlx.auto_parallel import (
+    get_active_relay_context,
+    relay_sampled_tokens,
+)
+
 _PRECOMPUTE_TOP_K = 20
 
 
@@ -86,6 +91,12 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
         sampled = mx.concatenate(all_samples, axis=0)
     else:
         sampled = self.fallback_sampler(logprobs)
+
+    relay_context = get_active_relay_context(self.model)
+    if relay_context is not None:
+        # Token-relay decode: only the last pipeline rank sampled from real
+        # logits; circulate its token ids so every rank stays in lockstep.
+        sampled = relay_sampled_tokens(sampled, relay_context)
 
     self._next_tokens = sampled
     self._next_logprobs = logprobs

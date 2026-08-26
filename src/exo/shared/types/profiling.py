@@ -73,6 +73,9 @@ class NetworkInterfaceInfo(FrozenModel):
     name: str
     ip_address: str
     interface_type: InterfaceType = "unknown"
+    # Negotiated link speed in megabits per second (None when the OS cannot
+    # report it, e.g. Wi-Fi on some platforms or virtual interfaces).
+    link_speed_megabits: int | None = None
 
 
 class NodeIdentity(FrozenModel):

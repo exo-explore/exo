@@ -1,8 +1,10 @@
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator
+from dataclasses import dataclass
 from functools import partial
 from inspect import signature
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast, final
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -67,6 +69,50 @@ from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
     from mlx_lm.models.cache import Cache
+
+
+@final
+class PipelineDecodeTimings:
+    """Accumulates per-token pipeline communication timings during decode.
+
+    Timings are collected inside ``PipelineFirstLayer`` / ``PipelineLastLayer``
+    and logged as a rolling summary every ``log_every`` decode steps, so a
+    ``-vv`` run attributes per-token latency to recv / send / gather phases.
+    """
+
+    def __init__(self, log_every: int = 64) -> None:
+        self.log_every = log_every
+        self.recv_seconds = 0.0
+        self.send_seconds = 0.0
+        self.gather_seconds = 0.0
+        self.steps = 0
+
+    def record_recv(self, seconds: float) -> None:
+        self.recv_seconds += seconds
+
+    def record_send(self, seconds: float) -> None:
+        self.send_seconds += seconds
+
+    def record_gather_and_advance(self, seconds: float) -> None:
+        """The gather (or relay) phase runs once per decode step, so it also
+        advances the step counter and emits the periodic summary."""
+        self.gather_seconds += seconds
+        self.steps += 1
+        if self.steps % self.log_every == 0:
+            per_step_ms = 1000.0 / self.log_every
+            logger.debug(
+                "pipeline decode comm (avg over "
+                f"{self.log_every} tokens): "
+                f"recv={self.recv_seconds * per_step_ms:.2f}ms "
+                f"send={self.send_seconds * per_step_ms:.2f}ms "
+                f"gather={self.gather_seconds * per_step_ms:.2f}ms"
+            )
+            self.recv_seconds = 0.0
+            self.send_seconds = 0.0
+            self.gather_seconds = 0.0
+
+
+decode_timings = PipelineDecodeTimings()
 
 
 _pending_prefill_sends: list[tuple[mx.array, int, mx.distributed.Group]] = []
@@ -134,8 +180,11 @@ class PipelineFirstLayer(CustomMlxLayer):
             # We want to avoid GPU timeout errors by evalling the distributed operation
             # so that it stays on CPU, which does not have a timeout.
             mx.eval(x)
+            recv_start = time.perf_counter()
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
             mx.eval(x)
+            if not self.is_prefill:
+                decode_timings.record_recv(time.perf_counter() - recv_start)
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -154,6 +203,7 @@ class PipelineLastLayer(CustomMlxLayer):
         self.original_layer_signature = signature(self.original_layer.__call__)
         self.is_prefill: bool = False
         self.queue_sends: bool = False
+        self.token_relay: bool = False
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         cache = self.original_layer_signature.bind_partial(
@@ -167,6 +217,7 @@ class PipelineLastLayer(CustomMlxLayer):
         mx.eval(output)
 
         if self.r != self.s - 1:
+            send_start = time.perf_counter()
             if self.queue_sends:
                 _pending_prefill_sends.append(
                     (output, (self.r + 1) % self.s, self.group)
@@ -184,12 +235,21 @@ class PipelineLastLayer(CustomMlxLayer):
             mx.eval(output)
             if cache is not None and hasattr(_cache, "keys"):  # type: ignore
                 mx.eval(_cache.keys)  # type: ignore
+            if not self.is_prefill:
+                decode_timings.record_send(time.perf_counter() - send_start)
 
-        if not self.is_prefill:
+        if not self.is_prefill and not self.token_relay:
+            # Legacy lockstep decode: every rank gathers the last stage's
+            # activation so all ranks compute identical logits and sample the
+            # same token. With token relay enabled the last rank samples alone
+            # and circulates only the token id (see relay_sampled_tokens), so
+            # this full-hidden-state collective is skipped.
+            gather_start = time.perf_counter()
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
             mx.eval(output)
+            decode_timings.record_gather_and_advance(time.perf_counter() - gather_start)
 
         return output
 
@@ -204,6 +264,74 @@ def set_pipeline_queue_sends(model: nn.Module, queue_sends: bool) -> None:
     for layer in model.layers:  # type: ignore
         if isinstance(layer, PipelineLastLayer):
             layer.queue_sends = queue_sends
+
+
+def set_pipeline_token_relay(model: nn.Module, token_relay: bool) -> None:
+    """Toggle token-relay decode for a pipeline-parallel model.
+
+    When enabled, decode skips the per-token all_gather of the final hidden
+    state: only the last pipeline rank computes final norm / lm_head and
+    samples, and the sampled token ids are circulated with
+    ``relay_sampled_tokens``. Must only be enabled while every rank agrees to
+    call ``relay_sampled_tokens`` after each decode step, otherwise ranks
+    deadlock or diverge.
+    """
+    for layer in model.layers:  # type: ignore
+        if isinstance(layer, PipelineLastLayer):
+            layer.token_relay = token_relay
+
+
+@final
+@dataclass(frozen=True)
+class PipelineRelayContext:
+    """Rank/group facts needed to relay sampled tokens between pipeline ranks."""
+
+    group: mx.distributed.Group
+    device_rank: int
+    world_size: int
+
+    @property
+    def is_last_rank(self) -> bool:
+        return self.device_rank == self.world_size - 1
+
+
+def get_active_relay_context(model: nn.Module) -> PipelineRelayContext | None:
+    """Return the relay context when token-relay decode is currently enabled.
+
+    Returns None for non-pipeline models and for pipeline models with the
+    legacy all_gather decode active.
+    """
+    layers = cast(list[object], getattr(model, "layers", []))
+    for layer in layers:
+        if isinstance(layer, PipelineLastLayer):
+            if not layer.token_relay or layer.is_prefill:
+                return None
+            return PipelineRelayContext(
+                group=layer.group, device_rank=layer.r, world_size=layer.s
+            )
+    return None
+
+
+def relay_sampled_tokens(
+    sampled: mx.array, relay_context: PipelineRelayContext
+) -> mx.array:
+    """Circulate the last rank's sampled token ids to every pipeline rank.
+
+    All ranks contribute a same-shape int32 vector (only the last rank's
+    values are meaningful) and take the last rank's slice from the gathered
+    result. This replaces the per-token all_gather of the full hidden state
+    with a collective over ``batch_size`` token ids.
+    """
+    gather_start = time.perf_counter()
+    contribution = sampled.astype(mx.int32)
+    mx.eval(contribution)
+    gathered = mx.distributed.all_gather(contribution, group=relay_context.group)
+    mx.eval(gathered)
+    batch_size = contribution.shape[0]
+    last_rank_offset = (relay_context.world_size - 1) * batch_size
+    relayed = gathered[last_rank_offset : last_rank_offset + batch_size]
+    decode_timings.record_gather_and_advance(time.perf_counter() - gather_start)
+    return relayed
 
 
 def get_inner_model(model: nn.Module) -> nn.Module:
@@ -407,6 +535,15 @@ def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
         **kwargs: object,
     ) -> mx.array:
         logits: mx.array = original_call(self, *args, **kwargs)  # type: ignore
+
+        relay_context = get_active_relay_context(cast(nn.Module, self))
+        if relay_context is not None and not relay_context.is_last_rank:
+            # Token-relay decode: this rank's final hidden state is not the
+            # last pipeline stage's, so its logits are meaningless. Returning
+            # a detached zeros array drops the final norm / lm_head from the
+            # lazy graph entirely — they are never computed on this rank.
+            logits = mx.zeros_like(logits)
+
         cache = call_signature.bind_partial(self, *args, **kwargs).arguments.get(
             "cache", None
         )

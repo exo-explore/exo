@@ -12,7 +12,10 @@ from exo.worker.engines.mlx.auto_parallel import (
     CustomMlxLayer,
     PipelineFirstLayer,
     PipelineLastLayer,
+    get_active_relay_context,
     patch_pipeline_model,
+    relay_sampled_tokens,
+    set_pipeline_token_relay,
 )
 from exo.worker.tests.unittests.test_mlx.conftest import MockLayer
 
@@ -64,6 +67,114 @@ def run_pipeline_device(
         result_queue.put((rank, success, result))  # pyright: ignore[reportAny]
     except Exception as e:
         result_queue.put((rank, False, str(e)))  # pyright: ignore[reportAny]
+
+
+def run_token_relay_device(
+    rank: int,
+    world_size: int,
+    hostfile_path: str,
+    result_queue: Any,  # pyright: ignore[reportAny]
+) -> None:
+    import os
+
+    os.environ["MLX_HOSTFILE"] = hostfile_path
+    os.environ["MLX_RANK"] = str(rank)
+
+    class MockLayerInner(mlx_nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+
+        def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
+            return x * 2
+
+    class MockModel(mlx_nn.Module):
+        def __init__(self, layers: list[mlx_nn.Module]) -> None:
+            super().__init__()
+            self.layers = layers
+
+        def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
+            for layer in self.layers:
+                x = layer(x, *args, **kwargs)
+            return x
+
+    try:
+        group = mx.distributed.init(backend="ring", strict=True)
+
+        mock = MockLayerInner()
+        first = PipelineFirstLayer(mock, r=rank, group=group)
+        composed = PipelineLastLayer(first, r=rank, s=world_size, group=group)
+
+        inner_model = MockModel([composed])
+        model = patch_pipeline_model(inner_model, group)
+        set_pipeline_token_relay(model, True)
+
+        x = mx.ones((1, 4))
+        logits = model(x)
+        mx.eval(logits)
+
+        # Non-last ranks return detached zeros; the last rank returns the
+        # real final activation (ones doubled once per pipeline stage, so the
+        # sum over the 4 elements is (1 << world_size) * 4).
+        local_sum = float(logits.sum().item())
+        expected_token = (1 << world_size) * 4
+        expected_sum = 0.0 if rank != world_size - 1 else float(expected_token)
+        local_correct = abs(local_sum - expected_sum) < 1e-6
+
+        # Every rank contributes a locally sampled token; after the relay all
+        # ranks must hold the last rank's token.
+        locally_sampled = mx.array([int(local_sum)])
+        relay_context = get_active_relay_context(model)
+        assert relay_context is not None
+        relayed = relay_sampled_tokens(locally_sampled, relay_context)
+        relay_correct = int(relayed.item()) == expected_token
+
+        result_queue.put((rank, local_correct and relay_correct, None))  # pyright: ignore[reportAny]
+    except Exception as e:
+        result_queue.put((rank, False, str(e)))  # pyright: ignore[reportAny]
+
+
+def test_token_relay_decode_circulates_last_rank_token() -> None:
+    ctx = mp.get_context("spawn")
+
+    world_size = 2
+    base_port = 29600
+
+    hosts = [f"127.0.0.1:{base_port + i}" for i in range(world_size)]
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(hosts, f)
+        hostfile_path = f.name
+
+    try:
+        result_queue: Any = ctx.Queue()
+
+        processes: list[Any] = []
+        for rank in range(world_size):
+            p = ctx.Process(
+                target=run_token_relay_device,
+                args=(rank, world_size, hostfile_path, result_queue),
+            )
+            p.start()
+            processes.append(p)
+
+        for p in processes:  # pyright: ignore[reportAny]
+            p.join(timeout=10)  # pyright: ignore[reportAny]
+
+        results: dict[int, bool] = {}
+        errors: dict[int, str] = {}
+        while not result_queue.empty():  # pyright: ignore[reportAny]
+            rank, success, error = result_queue.get()  # pyright: ignore[reportAny]
+            results[rank] = success
+            if error is not None:
+                errors[rank] = error
+
+        assert len(results) == world_size, (
+            f"Expected {world_size} results, got {len(results)}. Errors: {errors}"
+        )
+        for rank in range(world_size):
+            assert results[rank], f"Device {rank} failed: {errors.get(rank)}"
+    finally:
+        os.unlink(hostfile_path)
 
 
 def test_single_wrapper_delegates_attributes() -> None:

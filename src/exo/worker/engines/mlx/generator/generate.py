@@ -61,6 +61,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
     mx_barrier,
+    mx_ranks_agree_on_value,
     system_prompt_token_count,
 )
 from exo.worker.engines.mlx.vision import (
@@ -591,7 +592,19 @@ def mlx_generate(
             )
         )
         prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
-        if prefix_hit_length > 0:
+        if not mx_ranks_agree_on_value(prefix_hit_length, group):
+            # Divergent restore positions would make ranks prefill different
+            # token counts and deadlock the pipeline.
+            logger.warning(
+                "KV prefix cache hit lengths diverge across pipeline ranks; "
+                "discarding the hit to keep prefill in lockstep"
+            )
+            caches = make_kv_cache(model=model)
+            prompt_tokens = all_prompt_tokens
+            prefix_hit_length = 0
+            matched_index = None
+            is_exact_hit = False
+        elif prefix_hit_length > 0:
             logger.info(
                 f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
             )

@@ -840,6 +840,27 @@ def mx_any(bool_: bool, group: mx.distributed.Group | None) -> bool:
     return num_true.item() > 0
 
 
+def mx_ranks_agree_on_value(value: int, group: mx.distributed.Group | None) -> bool:
+    """True when every rank in the group holds the same value.
+
+    Used to keep per-rank KV prefix cache decisions consistent: pipeline
+    shards of hybrid SSM/attention models can restore different prefix
+    lengths (SSM shards need state snapshots, attention-only shards do not),
+    and ranks prefilling different token counts deadlock the pipeline's
+    send/recv chain.
+    """
+    if group is None:
+        return True
+    gathered = mx.distributed.all_gather(
+        mx.array([value], dtype=mx.int32),
+        group=group,
+        stream=mx.default_stream(mx.Device(mx.cpu)),
+    )
+    mx.eval(gathered)
+    values = cast(list[int], gathered.tolist())
+    return min(values) == max(values)
+
+
 def mx_barrier(group: mx.distributed.Group | None):
     if group is None:
         return
