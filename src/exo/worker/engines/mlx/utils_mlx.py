@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Generator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -295,7 +296,138 @@ def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerW
     )
 
 
-def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
+@dataclass(frozen=True)
+class LocalModelMetadata:
+    """Security-neutral model metadata read from an already-downloaded snapshot."""
+
+    config_loaded: bool
+    outer_model_type: str | None
+    outer_architectures: tuple[str, ...]
+    text_model_type: str | None
+    text_architectures: tuple[str, ...]
+    eos_token_ids: tuple[int, ...]
+    uses_kimi_slow_tokenizer: bool
+
+    @property
+    def is_kimi(self) -> bool:
+        model_types = (self.outer_model_type, self.text_model_type)
+        if any(
+            model_type and model_type.startswith("kimi_") for model_type in model_types
+        ):
+            return True
+        return any(
+            architecture.startswith("Kimi")
+            for architecture in (
+                *self.outer_architectures,
+                *self.text_architectures,
+            )
+        )
+
+
+def _read_local_json_object(path: Path) -> dict[str, Any] | None:
+    try:
+        value: object = json.loads(  # pyright: ignore[reportAny]
+            path.read_text(encoding="utf-8")
+        )
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    return cast(dict[str, Any], value)
+
+
+def _metadata_string(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _metadata_strings(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if not isinstance(value, list):
+        return ()
+    items = cast(list[object], value)
+    return tuple(item for item in items if isinstance(item, str) and item)
+
+
+def _metadata_token_ids(value: object) -> tuple[int, ...]:
+    values: list[object] = (
+        cast(list[object], value) if isinstance(value, list) else [value]
+    )
+    result: list[int] = []
+    for item in values:
+        if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+            continue
+        if item not in result:
+            result.append(item)
+    return tuple(result)
+
+
+def resolve_local_model_metadata(model_path: Path) -> LocalModelMetadata:
+    """Resolve architecture and stop-token metadata without network or remote code."""
+    config = _read_local_json_object(model_path / "config.json")
+    if config is None:
+        return LocalModelMetadata(False, None, (), None, (), (), False)
+
+    text_value = config.get("text_config")
+    text_config = (
+        cast(dict[str, Any], text_value) if isinstance(text_value, dict) else {}
+    )
+    generation_config = _read_local_json_object(model_path / "generation_config.json")
+    tokenizer_config = (
+        _read_local_json_object(model_path / "tokenizer_config.json") or {}
+    )
+
+    eos_token_ids: list[int] = []
+    for source in (generation_config or {}, config, text_config):
+        for token_id in _metadata_token_ids(source.get("eos_token_id")):
+            if token_id not in eos_token_ids:
+                eos_token_ids.append(token_id)
+
+    outer_model_type = _metadata_string(config.get("model_type"))
+    text_model_type = _metadata_string(text_config.get("model_type"))
+    outer_architectures = _metadata_strings(config.get("architectures"))
+    text_architectures = _metadata_strings(text_config.get("architectures"))
+
+    auto_map_value = tokenizer_config.get("auto_map")
+    auto_map = (
+        cast(dict[str, Any], auto_map_value) if isinstance(auto_map_value, dict) else {}
+    )
+    auto_tokenizer = auto_map.get("AutoTokenizer")
+    slow_tokenizer_reference: str | None = None
+    if isinstance(auto_tokenizer, list) and auto_tokenizer:
+        slow_tokenizer_reference = _metadata_string(
+            cast(list[object], auto_tokenizer)[0]
+        )
+    uses_kimi_slow_tokenizer = (
+        _metadata_string(tokenizer_config.get("tokenizer_class")) == "TikTokenTokenizer"
+        and slow_tokenizer_reference == "tokenization_kimi.TikTokenTokenizer"
+    )
+
+    model_types = (outer_model_type, text_model_type)
+    architectures = (*outer_architectures, *text_architectures)
+    if any(
+        model_type in {"gemma3", "gemma3n", "gemma4"} for model_type in model_types
+    ) or any(
+        architecture.startswith(("Gemma3", "Gemma4")) for architecture in architectures
+    ):
+        for token_id in (1, 106, 50):
+            if token_id not in eos_token_ids:
+                eos_token_ids.append(token_id)
+
+    return LocalModelMetadata(
+        True,
+        outer_model_type,
+        outer_architectures,
+        text_model_type,
+        text_architectures,
+        tuple(eos_token_ids),
+        uses_kimi_slow_tokenizer,
+    )
+
+
+def get_eos_token_ids_for_model(
+    model_id: ModelId, model_path: Path | None = None
+) -> list[int] | None:
     """
     Get the EOS token IDs for a model based on its ID.
 
@@ -308,6 +440,14 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     Returns:
         List of EOS token IDs, or None if the model uses standard tokenizer config
     """
+    if model_path is not None:
+        metadata = resolve_local_model_metadata(model_path)
+        if metadata.config_loaded:
+            return list(metadata.eos_token_ids) or None
+        if (model_path / "config.json").exists():
+            return None
+
+    # Backwards compatibility for callers that do not have a local snapshot yet.
     model_id_lower = model_id.lower()
     if "kimi-k2" in model_id_lower:
         return [163586]
@@ -348,11 +488,25 @@ def load_tokenizer_for_model_id(
     Returns:
         TokenizerWrapper instance configured for the model
     """
+    metadata = resolve_local_model_metadata(model_path)
     model_id_lower = model_id.lower()
-    eos_token_ids = get_eos_token_ids_for_model(model_id)
+    eos_token_ids = get_eos_token_ids_for_model(model_id, model_path)
+
+    is_kimi = (
+        metadata.is_kimi
+        if metadata.config_loaded
+        else (not (model_path / "config.json").exists() and "kimi-k2" in model_id_lower)
+    )
 
     # Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
-    if "kimi-k2" in model_id_lower:
+    # Newer Kimi snapshots removed the slow tokenizer, so use the regular fast
+    # tokenizer path when the file is absent instead of failing on read_text().
+    if (
+        trust_remote_code
+        and is_kimi
+        and metadata.uses_kimi_slow_tokenizer
+        and (model_path / "tokenization_kimi.py").is_file()
+    ):
         import importlib.util
         import types
 

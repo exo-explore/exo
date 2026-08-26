@@ -24,6 +24,8 @@ from exo.worker.engines.mlx.utils_mlx import (
 
 # Files needed for tokenizer functionality
 TOKENIZER_FILE_PATTERNS = [
+    "config.json",  # Architecture/family metadata used by tokenizer resolution
+    "generation_config.json",  # Model-specific stop-token metadata
     "tokenizer.json",
     "tokenizer_config.json",
     "special_tokens_map.json",
