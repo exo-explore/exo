@@ -296,31 +296,47 @@ def get_shard_assignments(
 def get_mlx_jaccl_devices_matrix(
     selected_cycle: list[NodeId],
     cycle_digraph: Topology,
-) -> list[list[str | None]]:
+) -> list[list[list[str]]]:
     """Build connectivity matrix mapping device i to device j via RDMA interface names.
 
-    The matrix element [i][j] contains the interface name on device i that connects
-    to device j, or None if no connection exists or no interface name is found.
-    Diagonal elements are always None.
+    The matrix element [i][j] contains the interface names on device i that
+    connect to device j, one per physical link (e.g. one per Thunderbolt
+    cable). Diagonal elements are always empty.
+
+    Element k of [i][j] and element k of [j][i] are the two endpoints of the
+    same physical link. The jaccl backend pairs queue pairs between ranks by
+    index, so both cells must enumerate links in the same order; deriving both
+    directions from a single enumeration guarantees this even when more than
+    one link connects the same pair of nodes.
     """
     num_nodes = len(selected_cycle)
-    matrix: list[list[str | None]] = [
-        [None for _ in range(num_nodes)] for _ in range(num_nodes)
+    matrix: list[list[list[str]]] = [
+        [[] for _ in range(num_nodes)] for _ in range(num_nodes)
     ]
 
     for i, node_i in enumerate(selected_cycle):
-        for j, node_j in enumerate(selected_cycle):
-            if i == j:
-                continue
+        for j in range(i + 1, num_nodes):
+            node_j = selected_cycle[j]
 
+            # Each directed edge carries the interface names of both
+            # endpoints, so edges from either direction describe the same
+            # physical link and can be merged into one set of endpoint pairs.
+            links: set[tuple[str, str]] = set()
             for conn in cycle_digraph.get_all_connections_between(node_i, node_j):
                 if isinstance(conn, RDMAConnection):
-                    matrix[i][j] = conn.source_rdma_iface
-                    break
-            else:
+                    links.add((conn.source_rdma_iface, conn.sink_rdma_iface))
+            for conn in cycle_digraph.get_all_connections_between(node_j, node_i):
+                if isinstance(conn, RDMAConnection):
+                    links.add((conn.sink_rdma_iface, conn.source_rdma_iface))
+
+            if not links:
                 raise ValueError(
                     "Current jaccl backend requires all-to-all RDMA connections"
                 )
+
+            ordered_links = sorted(links)
+            matrix[i][j] = [iface_i for iface_i, _ in ordered_links]
+            matrix[j][i] = [iface_j for _, iface_j in ordered_links]
 
     return matrix
 

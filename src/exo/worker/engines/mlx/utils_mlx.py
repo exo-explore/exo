@@ -122,9 +122,7 @@ def mlx_distributed_init(
             case MlxJacclInstance(
                 jaccl_devices=jaccl_devices, jaccl_coordinators=jaccl_coordinators
             ):
-                assert all(
-                    jaccl_devices[i][i] is None for i in range(len(jaccl_devices))
-                )
+                assert all(jaccl_devices[i][i] == [] for i in range(len(jaccl_devices)))
                 # Use RDMA connectivity matrix
                 jaccl_devices_json = json.dumps(jaccl_devices)
 
@@ -140,6 +138,22 @@ def mlx_distributed_init(
                 os.environ["MLX_IBV_DEVICES"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
+
+                # The default jaccl mesh backend only ever uses the first link
+                # between two ranks; the ring backend stripes traffic across
+                # every link. Prefer the ring whenever any pair of ranks has
+                # more than one physical link so the extra bandwidth is used.
+                max_links = max(
+                    (len(cell) for row in jaccl_devices for cell in row),
+                    default=0,
+                )
+                if max_links > 1:
+                    os.environ["MLX_JACCL_RING"] = "1"
+                    logger.info(
+                        f"rank {rank} MLX_JACCL_RING=1 "
+                        f"(up to {max_links} links per peer)"
+                    )
+
                 group = mx.distributed.init(backend="jaccl", strict=True)
 
         logger.info(f"Rank {rank} mlx distributed initialization complete")
