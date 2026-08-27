@@ -180,3 +180,104 @@ class TestClaudeMessagesRequestValidation:
                     "max_tokens": 100,
                 }
             )
+
+
+class TestSystemRoleMessages:
+    """Tests for system-role entries sent inside `messages` (issue #2193).
+
+    The official Anthropic API keeps the system prompt in the top-level
+    `system` field, but real-world clients (notably Claude Code pointed at
+    exo via ANTHROPIC_BASE_URL) also send system-role messages inside
+    `messages`; those must be accepted and folded into the system prompt.
+    """
+
+    def test_system_role_message_passes_validation(self):
+        request = ClaudeMessagesRequest.model_validate(
+            {
+                "model": "claude-3-opus",
+                "max_tokens": 32,
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {"role": "system", "content": "be brief"},
+                ],
+            }
+        )
+
+        assert request.messages[1].role == "system"
+
+    async def test_system_role_message_becomes_instructions(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(role="system", content="You are a pirate."),
+                ClaudeMessage(role="user", content="Hello"),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.instructions == "You are a pirate."
+        assert isinstance(params.input, list)
+        assert [message.role for message in params.input] == ["user"]
+
+    async def test_system_role_messages_merge_with_top_level_system(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            system="Top-level system prompt.",
+            messages=[
+                ClaudeMessage(role="system", content="In-band system prompt."),
+                ClaudeMessage(role="user", content="Hello"),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert (
+            params.instructions == "Top-level system prompt.\n\nIn-band system prompt."
+        )
+        assert isinstance(params.input, list)
+        assert [message.role for message in params.input] == ["user"]
+
+    async def test_system_role_message_with_text_blocks(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="system",
+                    content=[
+                        ClaudeTextBlock(text="Be brief."),
+                        ClaudeTextBlock(text=" Be kind."),
+                    ],
+                ),
+                ClaudeMessage(role="user", content="Hello"),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.instructions == "Be brief. Be kind."
+
+    async def test_conversation_order_preserved_without_system_entries(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(role="user", content="One"),
+                ClaudeMessage(role="system", content="Rules"),
+                ClaudeMessage(role="assistant", content="Two"),
+                ClaudeMessage(role="user", content="Three"),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert isinstance(params.input, list)
+        assert [message.role for message in params.input] == [
+            "user",
+            "assistant",
+            "user",
+        ]
+        assert [str(message.content) for message in params.input] == [
+            "One",
+            "Two",
+            "Three",
+        ]
