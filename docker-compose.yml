@@ -1,0 +1,19 @@
+services:
+  exo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: exo:cuda13
+    network_mode: host
+    gpus: all
+    volumes:
+      # Exo data directory (includes models subdirectory)
+      - ~/.local/share/exo:/root/.local/share/exo
+      # Exo cache (logs, temporary files)
+      - ~/.cache/exo:/root/.cache/exo
+      # Exo config (keypair, settings)
+      - ~/.config/exo:/root/.config/exo
+      # HuggingFace cache (model downloads)
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    stdin_open: true
+    tty: true
