@@ -1,5 +1,5 @@
 import pytest
-from anyio import create_task_group, fail_after, move_on_after
+from anyio import create_task_group, fail_after, move_on_after, sleep
 
 from exo.routing.connection_message import ConnectionMessage
 from exo.shared.election import Election, ElectionMessage, ElectionResult
@@ -189,14 +189,19 @@ async def test_ignores_older_messages() -> None:
                 if first.clock == 2:
                     break
 
-            # Older message (clock=1) must be ignored (no second broadcast)
+            # An older message (clock=1) must not start a new round, but the
+            # sender must be told the current clock so it can rejoin (#2197)
             await em_in_tx.send(em(clock=1, seniority=999, node_id="B"))
 
-            got_second = False
+            reply = await em_out_rx.receive()
+            assert reply.clock == 2, "Reply must carry the current clock"
+            assert election.clock == 2, "An older message must not change the clock"
+
+            got_more = False
             with move_on_after(0.05):
                 _ = await em_out_rx.receive()
-                got_second = True
-            assert not got_second, "Should not receive a broadcast for an older round"
+                got_more = True
+            assert not got_more, "An older round must not trigger a new campaign"
 
             em_in_tx.close()
             cm_tx.close()
@@ -402,3 +407,182 @@ async def test_tie_breaker_prefers_node_with_more_commands_seen() -> None:
             em_in_tx.close()
             cm_tx.close()
             co_tx.close()
+
+
+@pytest.mark.anyio
+async def test_equal_clock_candidacy_without_active_campaign_starts_a_round() -> None:
+    """
+    Regression test for the "dead round" (issue #2197, part 2).
+
+    A candidacy arriving with a clock equal to ours while no campaign is
+    running used to be appended to a candidate list that nothing would ever
+    evaluate. It must instead trigger a round that resolves deterministically.
+    """
+    em_out_tx, _em_out_rx = channel[ElectionMessage]()
+    em_in_tx, em_in_rx = channel[ElectionMessage]()
+    er_tx, er_rx = channel[ElectionResult]()
+    cm_tx, cm_rx = channel[ConnectionMessage]()
+    co_tx, co_rx = channel[ForwarderCommand]()
+
+    election = Election(
+        node_id=NodeId("B"),
+        election_message_receiver=em_in_rx,
+        election_message_sender=em_out_tx,
+        election_result_sender=er_tx,
+        connection_message_receiver=cm_rx,
+        command_receiver=co_rx,
+        is_candidate=True,
+    )
+
+    async with create_task_group() as tg:
+        with fail_after(2):
+            tg.start_soon(election.run)
+
+            # The initial campaign resolves instantly with ourselves as master
+            first = await er_rx.receive()
+            assert first.session_id.master_node_id == NodeId("B")
+
+            # Equal-clock candidacy (clock 0) from a clearly better candidate,
+            # while no campaign is active anymore
+            await em_in_tx.send(em(clock=0, seniority=50, node_id="A"))
+
+            result = await er_rx.receive()
+            assert result.session_id.master_node_id == NodeId("A")
+
+            em_in_tx.close()
+            cm_tx.close()
+            co_tx.close()
+
+
+@pytest.mark.anyio
+async def test_stale_message_gets_current_status_reply() -> None:
+    """
+    Regression test for the wedged restarted master (issue #2197, part 1).
+
+    A message below our clock (e.g. a restarted master campaigning from
+    clock 0) used to be dropped silently, leaving the sender unaware of the
+    cluster clock. We must reply with our current status instead.
+    """
+    em_out_tx, em_out_rx = channel[ElectionMessage]()
+    em_in_tx, em_in_rx = channel[ElectionMessage]()
+    er_tx, er_rx = channel[ElectionResult]()
+    cm_tx, cm_rx = channel[ConnectionMessage]()
+    co_tx, co_rx = channel[ForwarderCommand]()
+
+    election = Election(
+        node_id=NodeId("B"),
+        election_message_receiver=em_in_rx,
+        election_message_sender=em_out_tx,
+        election_result_sender=er_tx,
+        connection_message_receiver=cm_rx,
+        command_receiver=co_rx,
+        is_candidate=True,
+    )
+
+    async with create_task_group() as tg:
+        with fail_after(2):
+            tg.start_soon(election.run)
+
+            # Establish a round at clock 5 and wait for it to resolve
+            await em_in_tx.send(em(clock=5, seniority=0, node_id="A"))
+            while True:
+                result = await er_rx.receive()
+                if result.won_clock == 5:
+                    break
+
+            # Drain campaign broadcasts already emitted
+            em_out_rx.collect()
+
+            # A restarted node campaigns from clock 1, below the cluster clock
+            await em_in_tx.send(em(clock=1, seniority=0, node_id="R"))
+
+            reply = await em_out_rx.receive()
+            assert reply.clock == 5
+            assert reply.proposed_session.master_node_id == NodeId("B")
+
+            em_in_tx.close()
+            cm_tx.close()
+            co_tx.close()
+
+
+@pytest.mark.anyio
+async def test_restarted_master_rejoins_cluster_deterministically() -> None:
+    """
+    End-to-end regression for issue #2197: a node that restarts (losing its
+    election clock) while the cluster is at a higher clock must converge on
+    the same session as the surviving cluster, without relying on a
+    connection event.
+    """
+    a_em_out_tx, a_em_out_rx = channel[ElectionMessage]()
+    a_em_in_tx, a_em_in_rx = channel[ElectionMessage]()
+    a_er_tx, a_er_rx = channel[ElectionResult]()
+    _a_cm_tx, a_cm_rx = channel[ConnectionMessage]()
+    _a_co_tx, a_co_rx = channel[ForwarderCommand]()
+
+    r_em_out_tx, r_em_out_rx = channel[ElectionMessage]()
+    r_em_in_tx, r_em_in_rx = channel[ElectionMessage]()
+    r_er_tx, r_er_rx = channel[ElectionResult]()
+    _r_cm_tx, r_cm_rx = channel[ConnectionMessage]()
+    _r_co_tx, r_co_rx = channel[ForwarderCommand]()
+
+    survivor = Election(
+        node_id=NodeId("A"),
+        election_message_receiver=a_em_in_rx,
+        election_message_sender=a_em_out_tx,
+        election_result_sender=a_er_tx,
+        connection_message_receiver=a_cm_rx,
+        command_receiver=a_co_rx,
+        is_candidate=True,
+    )
+    restarted = Election(
+        node_id=NodeId("R"),
+        election_message_receiver=r_em_in_rx,
+        election_message_sender=r_em_out_tx,
+        election_result_sender=r_er_tx,
+        connection_message_receiver=r_cm_rx,
+        command_receiver=r_co_rx,
+        is_candidate=True,
+    )
+
+    async with create_task_group() as tg:
+        with fail_after(5):
+            tg.start_soon(survivor.run)
+
+            # Advance the surviving cluster to clock 5
+            await a_em_in_tx.send(em(clock=5, seniority=0, node_id="X"))
+            while True:
+                result = await a_er_rx.receive()
+                if result.won_clock == 5:
+                    break
+            a_em_out_rx.collect()
+
+            # Wire both nodes together, then boot the "restarted" node,
+            # which starts over from clock 0
+            async def forward_a_to_r() -> None:
+                with a_em_out_rx as messages:
+                    async for message in messages:
+                        await r_em_in_tx.send(message)
+
+            async def forward_r_to_a() -> None:
+                with r_em_out_rx as messages:
+                    async for message in messages:
+                        await a_em_in_tx.send(message)
+
+            tg.start_soon(forward_a_to_r)
+            tg.start_soon(forward_r_to_a)
+            tg.start_soon(restarted.run)
+
+            # The restarted node must deterministically reach the cluster
+            # clock (who wins the round depends on seniority tie-breaking,
+            # which is not what this regression is about)
+            while True:
+                result = await r_er_rx.receive()
+                if result.won_clock == 5:
+                    break
+            assert restarted.clock == 5
+
+            # ... and both nodes must converge on a single session
+            while restarted.current_session != survivor.current_session:
+                await sleep(0.05)
+
+            tg.cancel_scope.cancel()

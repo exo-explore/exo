@@ -81,7 +81,19 @@ class Election:
         self._candidates: list[ElectionMessage] = []
         self._campaign_cancel_scope: CancelScope | None = None
         self._campaign_done: Event | None = None
+        self._campaigns_started = 0
+        self._campaigns_finished = 0
         self._tg = TaskGroup()
+
+    @property
+    def _campaign_active(self) -> bool:
+        return self._campaigns_finished < self._campaigns_started
+
+    def _start_campaign(
+        self, candidates: list[ElectionMessage], campaign_timeout: float
+    ) -> None:
+        self._campaigns_started += 1
+        self._tg.start_soon(self._campaign, candidates, campaign_timeout)
 
     async def run(self):
         logger.info("Starting Election")
@@ -95,6 +107,7 @@ class Election:
                 candidates: list[ElectionMessage] = []
                 logger.debug("Starting initial campaign")
                 self._candidates = candidates
+                self._campaigns_started += 1
                 await self._campaign(candidates, campaign_timeout=0.0)
                 logger.debug("Initial campaign finished")
         finally:
@@ -143,18 +156,28 @@ class Election:
                     self._candidates = candidates
                     logger.debug(f"New candidates: {self._candidates}")
                     logger.debug("Starting new campaign")
-                    self._tg.start_soon(
-                        self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT
-                    )
+                    self._start_campaign(candidates, DEFAULT_ELECTION_TIMEOUT)
                     logger.debug("Campaign started")
                     continue
-                # Dismiss old messages
+                # Reply to stale messages with our status so that a node
+                # campaigning below the cluster clock (e.g. a restarted
+                # master starting over from clock 0) deterministically
+                # learns the current clock and rejoins the election.
                 if message.clock < self.clock:
-                    logger.debug(f"Dropping old message: {message}")
+                    logger.debug(f"Replying to stale message: {message}")
+                    await self._em_sender.send(self._election_status())
                     continue
                 logger.debug(f"Election added candidate {message}")
                 # Now we are processing this rounds messages - including the message that triggered this round.
                 self._candidates.append(message)
+                # An equal-clock candidacy with no campaign running would
+                # otherwise sit in a candidate list that nothing evaluates;
+                # start a campaign so the round deterministically resolves.
+                if not self._campaign_active:
+                    logger.debug(
+                        "Equal-clock candidacy with no active campaign; starting one"
+                    )
+                    self._start_campaign(self._candidates, DEFAULT_ELECTION_TIMEOUT)
 
     async def _connection_receiver(self) -> None:
         with self._cm_receiver as connection_messages:
@@ -173,9 +196,7 @@ class Election:
                 candidates: list[ElectionMessage] = []
                 self._candidates = candidates
                 logger.debug("Starting new campaign")
-                self._tg.start_soon(
-                    self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT
-                )
+                self._start_campaign(candidates, DEFAULT_ELECTION_TIMEOUT)
                 logger.debug("Campaign started")
                 logger.debug("Connection message added")
 
@@ -245,6 +266,7 @@ class Election:
             logger.debug(f"Election {clock} cancelled")
         finally:
             logger.debug(f"Election {clock} finally")
+            self._campaigns_finished += 1
             if self._campaign_cancel_scope is scope:
                 self._campaign_cancel_scope = None
             logger.debug("Setting done event")
