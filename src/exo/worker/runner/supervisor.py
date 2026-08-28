@@ -351,7 +351,7 @@ class RunnerSupervisor:
             # this is the happy path shutdown - we don't need to spam log with it
             await self._check_runner()
         finally:
-            for tid in self.pending:
+            for tid in list(self.pending):
                 self.pending[tid].set()
 
     async def _watch_runner(self) -> None:
@@ -405,7 +405,7 @@ class RunnerSupervisor:
             for d in self._runner_stdio_handler.diagnostics.diagnostics()
             if not isinstance(d, RunnerUnknown)
         ]
-        for task in self.in_progress.values():
+        for task in list(self.in_progress.values()):
             if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
                 with anyio.CancelScope(shield=True):
                     await self._event_sender.send(
