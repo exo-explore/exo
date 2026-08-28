@@ -355,7 +355,7 @@ class API:
         self.app.delete("/v1/instance-links/{link_id}")(self.delete_instance_link)
         self.app.get("/v1/feature-flags")(self.get_feature_flags)
         self.app.get("/models")(self.get_models)
-        self.app.get("/v1/models")(self.get_models)
+        self.app.get("/v1/models")(self.get_v1_models)
         self.app.post("/models/add")(self.add_custom_model)
         self.app.delete("/models/custom/{model_id:path}")(self.delete_custom_model)
         self.app.get("/models/search")(self.search_models)
@@ -1782,6 +1782,19 @@ class API:
             total_available += memory.ram_available
 
         return total_available
+
+    async def get_v1_models(
+        self, status: str | None = Query(default="downloaded")
+    ) -> ModelList:
+        """OpenAI-compatible model list, used by external clients/agents.
+
+        Defaults to only models already downloaded to this cluster, so
+        agents aren't advertised models that don't exist yet on disk and
+        would 404 on first use. Pass ?status=all to see every known model
+        card (matches the dashboard's own /models browser, which lists
+        everything by default so users can find models to download).
+        """
+        return await self.get_models(status=status)
 
     async def get_models(self, status: str | None = Query(default=None)) -> ModelList:
         """Returns list of available models, optionally filtered by being downloaded."""
