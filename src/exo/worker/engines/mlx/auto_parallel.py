@@ -243,6 +243,25 @@ def get_layers(inner_model_instance: nn.Module) -> list[_LayerCallable]:
     return layers
 
 
+# When a pipeline shard contains no full-attention layer (possible for small
+# shards of hybrid models such as Qwen3.5, whose full-attention layers occur
+# every 4th layer), fa_idx falls on an SSM cache entry. create_attention_mask
+# then calls ArraysCache.make_mask with return_array/window_size keyword
+# arguments that its signature rejects, crashing the runner with a TypeError.
+# The resulting mask is unused on all-linear shards, so ignoring the keyword
+# arguments is safe.
+_original_arrays_cache_make_mask = ArraysCache.make_mask
+
+
+def _keyword_tolerant_arrays_cache_make_mask(
+    self: ArraysCache, sequence_length: int, **_ignored: object
+) -> object:
+    return _original_arrays_cache_make_mask(self, sequence_length)
+
+
+ArraysCache.make_mask = _keyword_tolerant_arrays_cache_make_mask  # type: ignore[method-assign,assignment]
+
+
 def _patch_hybrid_cache(
     model: Qwen3_5TextModel | Qwen3NextModel | NemotronHModel,
     fa_idx: int,
