@@ -178,7 +178,7 @@ async def claude_request_to_text_generation(
         reasoning_content = "".join(thinking_parts) if thinking_parts else None
 
         # Build InputMessage from text content
-        if msg.role in ("user", "assistant"):
+        if msg.role in ("user", "assistant", "system"):
             input_messages.append(
                 InputMessage(role=msg.role, content=InputMessageContent(content))
             )
