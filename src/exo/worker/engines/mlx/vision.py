@@ -309,8 +309,17 @@ class VisionEncoder:
                     break
 
         if projector_cls is not None:
+            text_config_dict = dict(config.get("text_config", {}))  # type: ignore
+            if not text_config_dict:
+                # Some vision repos (e.g. exolabs/Kimi-K2.6-vision) embed
+                # text_hidden_size inside vision_config instead of a top-level
+                # text_config block.  Fall back to that so the projector output
+                # dim is correct.
+                text_hidden_size = vision_cfg.get("text_hidden_size")  # type: ignore
+                if text_hidden_size:
+                    text_config_dict = {"hidden_size": int(text_hidden_size)}
             text_config = config_mod.TextConfig(  # type: ignore
-                **_filter_config(config_mod.TextConfig, config.get("text_config", {}))  # type: ignore
+                **_filter_config(config_mod.TextConfig, text_config_dict)  # type: ignore
             )
             extra = {
                 k: v
@@ -342,7 +351,11 @@ class VisionEncoder:
             repo = str(self._model_path)
         try:
             image_proc = load_image_processor(repo)
-        except ValueError:
+        except (ValueError, KeyError):
+            # KeyError: vision-only repos (e.g. exolabs/Kimi-K2.6-vision) have
+            # a custom config.json without 'model_type', causing mlx_vlm's
+            # load_image_processor to throw KeyError.  Fall through to the
+            # module-based loader below.
             image_proc = None
         if image_proc is None:
             image_proc = self._load_image_processor_from_module(repo)
