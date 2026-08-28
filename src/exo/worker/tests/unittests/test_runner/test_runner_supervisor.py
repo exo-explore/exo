@@ -1,9 +1,11 @@
+from pathlib import Path
 from typing import cast
 
 import anyio
 import pytest
 
 from exo.shared.models.model_cards import ModelId
+from exo.shared.telemetry import TelemetryService
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
@@ -36,7 +38,9 @@ class _DeadProcess:
 
 
 @pytest.mark.anyio
-async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> None:
+async def test_check_runner_emits_error_chunk_for_inflight_text_generation(
+    tmp_path: Path,
+) -> None:
     event_sender, event_receiver = channel[Event]()
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
@@ -50,8 +54,13 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     )
 
     proc = cast(AsyncProcess, cast(object, _DeadProcess()))
+    telemetry = TelemetryService.dummy()
     handler = await RunnerStdioHandler.create(
-        stdout_rx=proc.stdout, stderr_rx=proc.stderr
+        bound_instance=bound_instance,
+        stdout_rx=proc.stdout,
+        stderr_rx=proc.stderr,
+        telemetry_sink=telemetry.sink(),
+        runner_log_dir=tmp_path,
     )
     supervisor = RunnerSupervisor(
         shard_metadata=bound_instance.bound_shard,
