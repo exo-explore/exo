@@ -26,10 +26,10 @@ CARDS_DIR = (
 MAX_WORKERS = 5
 
 
-def fetch_kv_heads(model_id: str) -> int | None:
+def etch_kv_heads(model_id: str) -> int | None:
     """Fetch num_key_value_heads from HuggingFace config.json."""
     url = f"https://huggingface.co/{model_id}/raw/main/config.json"
-    try:
+    try:f
         with urllib.request.urlopen(url, timeout=15) as resp:
             config = json.loads(resp.read())
     except Exception as e:

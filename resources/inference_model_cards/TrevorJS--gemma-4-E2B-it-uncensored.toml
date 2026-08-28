@@ -1,12 +1,12 @@
-model_id = "mlx-community/gemma-4-e2b-it-4bit"
+model_id = "TrevorJS/gemma-4-E2B-it-uncensored"
 n_layers = 35
 hidden_size = 1536
 num_key_value_heads = 1
 supports_tensor = true
 tasks = ["TextGeneration"]
-family = "gemma"
+family = "gemma4"
 quantization = "4bit"
-base_model = "Gemma 4 E2B"
+base_model = "TrevorJS/gemma-4-E2B-it-uncensored"
 capabilities = ["text", "vision"]
 
 context_length = 131072
@@ -14,8 +14,9 @@ backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
 in_bytes = 3580765126
 
-# Source: https://ai.google.dev/gemma/docs/core/model_card_4
-# Source: https://huggingface.co/google/gemma-4-e2b-it/blob/main/generation_config.json
+[vision]
+image_token_id = 262148
+
 [sampling_defaults]
 temperature = 1.0
 top_p = 0.95
