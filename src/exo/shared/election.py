@@ -16,6 +16,11 @@ from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 
 DEFAULT_ELECTION_TIMEOUT = 3.0
+# After a connection-triggered campaign, further connection messages are
+# absorbed for this long and coalesced into at most one follow-up round.
+# Drains libp2p topology-formation bursts so a burst triggers a bounded
+# number of re-elections instead of one per message.
+_CONNECTION_ELECTION_COOLDOWN = 25.0
 
 
 class ElectionMessage(FrozenModel):
@@ -166,18 +171,36 @@ class Election:
                 logger.debug(
                     f"Connection messages received: {first} followed by {rest}"
                 )
-                logger.debug(f"Current clock: {self.clock}")
-                # These messages are strictly peer to peer
-                self.clock += 1
-                logger.debug(f"New clock: {self.clock}")
-                candidates: list[ElectionMessage] = []
-                self._candidates = candidates
-                logger.debug("Starting new campaign")
-                self._tg.start_soon(
-                    self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT
-                )
-                logger.debug("Campaign started")
-                logger.debug("Connection message added")
+                while True:
+                    logger.debug(f"Current clock: {self.clock}")
+                    # These messages are strictly peer to peer
+                    self.clock += 1
+                    logger.debug(f"New clock: {self.clock}")
+                    candidates: list[ElectionMessage] = []
+                    self._candidates = candidates
+                    logger.debug("Starting new campaign")
+                    self._tg.start_soon(
+                        self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT
+                    )
+                    logger.debug("Campaign started")
+
+                    # Cooldown: absorb the connection-message burst that
+                    # accompanies topology formation instead of campaigning
+                    # once per message. Anything that arrived during the
+                    # window (another join, the master disconnecting) is
+                    # coalesced into one follow-up round for the settled
+                    # topology. A closed channel ends iteration immediately,
+                    # so shutdown is not delayed by the cooldown.
+                    absorbed = 0
+                    with anyio.move_on_after(_CONNECTION_ELECTION_COOLDOWN):
+                        async for _ in connection_messages:
+                            absorbed += 1
+                    if absorbed == 0:
+                        break
+                    logger.debug(
+                        f"Absorbed {absorbed} connection messages during cooldown, "
+                        "starting follow-up election round"
+                    )
 
     async def _command_counter(self) -> None:
         with self._co_receiver as commands:

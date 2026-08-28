@@ -126,12 +126,11 @@ def event_apply(event: Event, state: State) -> State:
 
 
 def apply(state: State, event: IndexedEvent) -> State:
-    # Just to test that events are only applied in correct order
     if state.last_event_applied_idx != event.idx - 1:
         logger.warning(
-            f"Expected event {state.last_event_applied_idx + 1} but received {event.idx}"
+            f"Expected event {state.last_event_applied_idx + 1} but received {event.idx} — skipping"
         )
-    assert state.last_event_applied_idx == event.idx - 1
+        return state
     new_state: State = event_apply(event.event, state)
     return new_state.model_copy(update={"last_event_applied_idx": event.idx})
 
@@ -398,10 +397,14 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 event.node_id: new_identity,
             }
         case NodeNetworkInterfaces():
-            update["node_network"] = {
+            new_node_network: dict[NodeId, NodeNetworkInfo] = {
                 **state.node_network,
                 event.node_id: NodeNetworkInfo(interfaces=info.ifaces),
             }
+            update["node_network"] = new_node_network
+            update["thunderbolt_bridge_cycles"] = topology.get_thunderbolt_bridge_cycles(
+                state.node_thunderbolt_bridge, new_node_network
+            )
         case MacThunderboltIdentifiers():
             update["node_thunderbolt"] = {
                 **state.node_thunderbolt,
@@ -434,6 +437,9 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 )
             ]
             topology.replace_all_out_rdma_connections(event.node_id, as_rdma_conns)
+            update["thunderbolt_bridge_cycles"] = topology.get_thunderbolt_bridge_cycles(
+                state.node_thunderbolt_bridge, state.node_network
+            )
         case ThunderboltBridgeInfo():
             new_tb_bridge: dict[NodeId, ThunderboltBridgeStatus] = {
                 **state.node_thunderbolt_bridge,
