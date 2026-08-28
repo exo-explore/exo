@@ -1,22 +1,22 @@
-model_id = "mlx-community/gemma-4-26b-a4b-it-bf16"
-n_layers = 30
-hidden_size = 2816
+model_id = "mlx-community/gemma-4-12B-it-8bit"
+n_layers = 48
+hidden_size = 3840
 num_key_value_heads = 8
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "gemma"
-quantization = "bf16"
-base_model = "Gemma 4 26B A4B"
+quantization = "8bit"
+base_model = "Gemma 4 12B"
 capabilities = ["text", "vision"]
 
-context_length = 262144
+context_length = 131072
 backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 recommended = true
 [storage_size]
-in_bytes = 51611872412
+in_bytes = 12748570647
 
 # Source: https://ai.google.dev/gemma/docs/core/model_card_4
-# Source: https://huggingface.co/google/gemma-4-26b-a4b-it/blob/main/generation_config.json
+# Source: https://huggingface.co/mlx-community/gemma-4-12B-it-8bit
 [sampling_defaults]
 temperature = 1.0
 top_p = 0.95

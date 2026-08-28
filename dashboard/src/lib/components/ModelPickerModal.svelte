@@ -22,6 +22,7 @@
     is_custom?: boolean;
     tasks?: string[];
     hugging_face_id?: string;
+    recommended?: boolean;
   }
 
   interface ModelGroup {
@@ -110,7 +111,7 @@
 
   // Local state
   let searchQuery = $state("");
-  let selectedFamily = $state<string | null>(null);
+  let selectedFamily = $state<string | null>("recommended");
   let expandedGroups = $state<Set<string>>(new Set());
   let showFilters = $state(false);
   let filters = $state<FilterState>({
@@ -210,6 +211,9 @@
       manualModelId = "";
       addModelError = null;
       justAddedModelId = null;
+      if (selectedFamily === "recommended" && !hasRecommended) {
+        selectedFamily = null;
+      }
       if (justAddedTimer) {
         clearTimeout(justAddedTimer);
         justAddedTimer = null;
@@ -242,6 +246,7 @@
       selectedFamily === "huggingface" ||
       selectedFamily === "recents" ||
       selectedFamily === "favorites" ||
+      selectedFamily === "recommended" ||
       query.length < 2 ||
       !noLocalResults
     ) {
@@ -477,7 +482,20 @@
     let result: ModelGroup[] = [...groupedModels];
 
     // Filter by family
-    if (selectedFamily === "favorites") {
+    if (selectedFamily === "recommended") {
+      result = result
+        .map((g) => {
+          const variants = g.variants.filter((v) => v.recommended);
+          if (variants.length === 0) return null;
+          return {
+            ...g,
+            variants,
+            smallestVariant: variants[0],
+            hasMultipleVariants: variants.length > 1,
+          };
+        })
+        .filter((g): g is ModelGroup => g !== null);
+    } else if (selectedFamily === "favorites") {
       result = result.filter((g) => favorites.has(g.id));
     } else if (
       selectedFamily &&
@@ -567,6 +585,10 @@
   // Check if any favorites exist
   const hasFavorites = $derived(favorites.size > 0);
 
+  const hasRecommended = $derived(
+    groupedModels.some((g) => g.variants.some((v) => v.recommended)),
+  );
+
   // Timestamp lookup for recent models
   const recentTimestamps = $derived(
     new Map(getRecentEntries().map((e) => [e.modelId, e.launchedAt])),
@@ -609,8 +631,9 @@
     );
   });
 
-  // Split filtered groups into recommended (fits_now) and others for visual separation
-  const recommendedGroups = $derived(
+  // Split filtered groups into ones that fit now and others, for visual
+  // separation (distinct from the curated "Recommended" tab).
+  const fitsGroups = $derived(
     filteredGroups.filter((g) =>
       g.variants.some((v) => getModelFitStatus(v.id) === "fits_now"),
     ),
@@ -783,6 +806,7 @@
       <FamilySidebar
         families={uniqueFamilies}
         {selectedFamily}
+        {hasRecommended}
         {hasFavorites}
         hasRecents={hasRecentsTab}
         onSelect={(family) => (selectedFamily = family)}
@@ -958,8 +982,8 @@
             {/if}
           </div>
         {:else}
-          <!-- Recommended for your cluster -->
-          {#if recommendedGroups.length > 0 && otherGroups.length > 0 && !searchQuery.trim()}
+          <!-- Fits in available memory -->
+          {#if fitsGroups.length > 0 && otherGroups.length > 0 && !searchQuery.trim()}
             <div
               class="sticky top-0 z-10 flex items-center gap-2 px-3 py-2 bg-green-950/60 border-b border-green-500/20 backdrop-blur-sm"
             >
@@ -978,14 +1002,11 @@
               </svg>
               <span
                 class="text-xs font-mono text-green-400 tracking-wider uppercase"
-                >Recommended for your cluster</span
-              >
-              <span class="text-xs font-mono text-green-400/50"
-                >— fits in available memory</span
+                >Fits in available memory</span
               >
             </div>
           {/if}
-          {#each recommendedGroups as group}
+          {#each fitsGroups as group}
             <ModelPickerGroup
               {group}
               isExpanded={expandedGroups.has(group.id)}
@@ -1004,7 +1025,7 @@
             />
           {/each}
           <!-- Other models -->
-          {#if otherGroups.length > 0 && recommendedGroups.length > 0 && !searchQuery.trim()}
+          {#if otherGroups.length > 0 && fitsGroups.length > 0 && !searchQuery.trim()}
             <div
               class="sticky top-0 z-10 flex items-center gap-2 px-3 py-2 bg-exo-dark-gray/80 border-y border-exo-medium-gray/20 backdrop-blur-sm"
             >

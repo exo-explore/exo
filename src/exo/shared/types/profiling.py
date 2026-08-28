@@ -39,6 +39,20 @@ class MemoryUsage(FrozenModel):
             swap_available=sm.free,
         )
 
+    @classmethod
+    def from_gpu_memory(
+        cls, *, gpu_total: int, gpu_free: int, override_memory: int | None
+    ) -> Self:
+        """Report GPU VRAM as the node's RAM (discrete GPUs like B300, where
+        host RAM misleads). Swap stays host-level — GPUs have none."""
+        sm = psutil.swap_memory()
+        return cls.from_bytes(
+            ram_total=gpu_total,
+            ram_available=gpu_free if override_memory is None else override_memory,
+            swap_total=sm.total,
+            swap_available=sm.free,
+        )
+
 
 class DiskUsage(FrozenModel):
     """Disk space usage for the models directory."""

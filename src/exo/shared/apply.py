@@ -61,7 +61,9 @@ from exo.utils.info_gatherer.info_gatherer import (
     NodeConfig,
     NodeDiskUsage,
     NodeNetworkInterfaces,
+    NvmlMetrics,
     RdmaCtlStatus,
+    SpbmMetrics,
     StaticNodeInformation,
     ThunderboltBridgeInfo,
 )
@@ -368,6 +370,29 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 event.node_id: info.system_profile,
             }
             update["node_memory"] = {**state.node_memory, event.node_id: info.memory}
+        case NvmlMetrics():
+            existing = state.node_system.get(event.node_id, info.system_profile)
+            nvml_update: dict[str, float] = {
+                "gpu_usage": info.system_profile.gpu_usage,
+                "temp": info.system_profile.temp,
+            }
+            if info.provides_sys_power:
+                nvml_update["sys_power"] = info.system_profile.sys_power
+            update["node_system"] = {
+                **state.node_system,
+                event.node_id: existing.model_copy(update=nvml_update),
+            }
+        case SpbmMetrics():
+            existing = state.node_system.get(event.node_id, info.system_profile)
+            update["node_system"] = {
+                **state.node_system,
+                event.node_id: existing.model_copy(
+                    update={
+                        "sys_power": info.system_profile.sys_power,
+                        "temp": info.system_profile.temp,
+                    }
+                ),
+            }
         case MemoryUsage():
             update["node_memory"] = {**state.node_memory, event.node_id: info}
         case NodeDiskUsage():

@@ -4,6 +4,7 @@
   type FamilySidebarProps = {
     families: string[];
     selectedFamily: string | null;
+    hasRecommended: boolean;
     hasFavorites: boolean;
     hasRecents: boolean;
     onSelect: (family: string | null) => void;
@@ -12,6 +13,7 @@
   let {
     families,
     selectedFamily,
+    hasRecommended,
     hasFavorites,
     hasRecents,
     onSelect,
@@ -19,6 +21,7 @@
 
   // Family display names
   const familyNames: Record<string, string> = {
+    recommended: "Recommended",
     favorites: "Favorites",
     recents: "Recent",
     huggingface: "Hub",
@@ -45,6 +48,31 @@
 <div
   class="flex flex-col gap-1 py-2 px-1 border-r border-exo-yellow/10 bg-exo-medium-gray/30 min-w-[80px] sm:min-w-[72px] overflow-y-auto scrollbar-hide"
 >
+  <!-- Recommended (curated set) -->
+  {#if hasRecommended}
+    <button
+      type="button"
+      onclick={() => onSelect("recommended")}
+      class="group flex flex-col items-center justify-center p-2 rounded transition-all duration-200 cursor-pointer {selectedFamily ===
+      'recommended'
+        ? 'bg-exo-yellow/20 border-l-2 border-exo-yellow'
+        : 'hover:bg-white/5 border-l-2 border-transparent'}"
+      title="Recommended models"
+    >
+      <FamilyLogos
+        family="recommended"
+        class={selectedFamily === "recommended"
+          ? "text-exo-yellow"
+          : "text-white/50 group-hover:text-exo-yellow/70"}
+      />
+      <span
+        class="text-[11px] font-mono mt-0.5 {selectedFamily === 'recommended'
+          ? 'text-exo-yellow'
+          : 'text-white/40 group-hover:text-white/60'}">Rec'd</span
+      >
+    </button>
+  {/if}
+
   <!-- All models (no filter) -->
   <button
     type="button"

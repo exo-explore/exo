@@ -32,6 +32,8 @@ from exo.utils.pydantic_ext import TaggedModel
 from exo.utils.task_group import TaskGroup
 
 from .macmon import MacmonMetrics
+from .nvml import NvmlMetrics, gather_gpu_memory, gather_nvidia_metrics, has_nvml
+from .spbm import SpbmMetrics, gather_spbm_metrics, has_spbm
 from .system_info import (
     get_friendly_name,
     get_model_and_chip,
@@ -356,7 +358,7 @@ async def _gather_iface_map() -> dict[str, str] | None:
 
 def _has_nvml_cuda() -> bool:
     try:
-        import pynvml as nvml  # pyright: ignore[reportMissingModuleSource]
+        import pynvml as nvml
     except ImportError:
         return False
     try:
@@ -385,6 +387,8 @@ class NodeBackends(TaggedModel):
 
 GatheredInfo = (
     MacmonMetrics
+    | NvmlMetrics
+    | SpbmMetrics
     | MemoryUsage
     | NodeNetworkInterfaces
     | MacThunderboltIdentifiers
@@ -450,6 +454,12 @@ class InfoGatherer:
                 tg.start_soon(self._monitor_rdma_ctl_status, 10)
             if not IS_DARWIN:
                 tg.start_soon(self._monitor_memory_usage, 1)
+
+                spbm_available = await has_spbm()
+                if spbm_available:
+                    tg.start_soon(self._monitor_spbm_metrics, 0.5)
+                if has_nvml():
+                    tg.start_soon(self._monitor_nvml_metrics, 1, not spbm_available)
             tg.start_soon(self._watch_system_info, 10)
             tg.start_soon(self._monitor_misc, 60)
             tg.start_soon(self._monitor_static_info, 60)
@@ -520,9 +530,17 @@ class InfoGatherer:
         )
         while True:
             try:
-                await self.info_sender.send(
-                    MemoryUsage.from_psutil(override_memory=override_memory)
-                )
+                gpu_memory = gather_gpu_memory()
+                if gpu_memory is not None:
+                    gpu_total, gpu_free = gpu_memory
+                    usage = MemoryUsage.from_gpu_memory(
+                        gpu_total=gpu_total,
+                        gpu_free=gpu_free,
+                        override_memory=override_memory,
+                    )
+                else:
+                    usage = MemoryUsage.from_psutil(override_memory=override_memory)
+                await self.info_sender.send(usage)
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering memory usage")
             await anyio.sleep(memory_poll_rate)
@@ -570,6 +588,28 @@ class InfoGatherer:
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering disk usage")
             await anyio.sleep(disk_poll_interval)
+
+    async def _monitor_nvml_metrics(
+        self, nvml_poll_rate: float, provides_sys_power: bool
+    ):
+        while True:
+            try:
+                metrics = gather_nvidia_metrics(provides_sys_power=provides_sys_power)
+                if metrics is not None:
+                    await self.info_sender.send(metrics)
+            except Exception as e:
+                logger.opt(exception=e).warning("Error gathering NVML metrics")
+            await anyio.sleep(nvml_poll_rate)
+
+    async def _monitor_spbm_metrics(self, spbm_poll_rate: float):
+        while True:
+            try:
+                metrics = await gather_spbm_metrics()
+                if metrics is not None:
+                    await self.info_sender.send(metrics)
+            except Exception as e:
+                logger.opt(exception=e).warning("Error gathering spbm metrics")
+            await anyio.sleep(spbm_poll_rate)
 
     async def _monitor_macmon(self, macmon_interval: float):
         if (
