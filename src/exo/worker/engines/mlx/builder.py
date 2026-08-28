@@ -38,11 +38,13 @@ class MlxBuilder(Builder):
     tokenizer: TokenizerWrapper | None = None
     group: mx.distributed.Group | None = None
     vision_processor: VisionProcessor | None = None
+    max_context_length: int | None = None
 
     def connect(self, bound_instance: BoundInstance) -> None:
         self.group = initialize_mlx(bound_instance)
 
     def load(self, bound_instance: BoundInstance) -> Generator[ModelLoadingResponse]:
+        self.max_context_length = bound_instance.bound_shard.max_context_length
         (
             self.inference_model,
             self.tokenizer,
@@ -80,7 +82,7 @@ class MlxBuilder(Builder):
                 self.tokenizer.tool_parser,  # type: ignore
             )
 
-        kv_prefix_cache = KVPrefixCache(self.group)
+        kv_prefix_cache = KVPrefixCache(self.group, max_kv_size=self.max_context_length)
 
         device_rank = 0 if self.group is None else self.group.rank()
         if os.environ.get("EXO_NO_BATCH"):
@@ -96,6 +98,7 @@ class MlxBuilder(Builder):
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
                 vision_processor=vision_processor,
+                max_context_length=self.max_context_length,
             )
         else:
             logger.info("using BatchGenerator")
@@ -110,4 +113,5 @@ class MlxBuilder(Builder):
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
                 vision_processor=vision_processor,
+                max_context_length=self.max_context_length,
             )

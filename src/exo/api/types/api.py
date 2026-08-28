@@ -271,6 +271,8 @@ class PlaceInstanceParams(BaseModel):
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
+    # None means "use the model's native context_length".
+    max_context_length: int | None = None
 
 
 class CreateInstanceParams(BaseModel):

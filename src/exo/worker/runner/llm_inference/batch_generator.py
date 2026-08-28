@@ -98,6 +98,7 @@ class SequentialGenerator(Engine):
     cancel_receiver: MpReceiver[TaskId]
     event_sender: MpSender[Event]
     vision_processor: VisionProcessor | None = None
+    max_context_length: int | None = None
     check_for_cancel_every: int = 50
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
@@ -295,6 +296,7 @@ class SequentialGenerator(Engine):
             on_generation_token=on_generation_token,
             group=self.group,
             vision_processor=self.vision_processor,
+            max_context_length=self.max_context_length,
         )
 
     def close(self) -> None:
@@ -307,6 +309,7 @@ class SequentialGenerator(Engine):
             group=self.group,
             kv_prefix_cache=self.kv_prefix_cache,
             request=request,
+            max_context_length=self.max_context_length,
         )
         write_cache_to_wire(
             wfile,
@@ -330,6 +333,7 @@ class BatchGenerator(Engine):
     event_sender: MpSender[Event]
     check_for_cancel_every: int = 50
     vision_processor: VisionProcessor | None = None
+    max_context_length: int | None = None
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -353,6 +357,7 @@ class BatchGenerator(Engine):
             group=self.group,
             kv_prefix_cache=self.kv_prefix_cache,
             vision_processor=self.vision_processor,
+            max_context_length=self.max_context_length,
         )
 
     def warmup(self):
@@ -562,6 +567,7 @@ class BatchGenerator(Engine):
             group=self.group,
             kv_prefix_cache=self.kv_prefix_cache,
             request=request,
+            max_context_length=self.max_context_length,
         )
         write_cache_to_wire(
             wfile,
