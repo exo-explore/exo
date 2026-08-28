@@ -22,7 +22,7 @@ from mlx_lm.models.deepseek_v4 import (
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
-from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
+from exo.worker.engines.mlx.constants import KV_CACHE_BITS, KV_CACHE_GROUP_SIZE
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.runner.bootstrap import logger
 
@@ -573,7 +573,7 @@ def make_kv_cache(
         else:
             logger.info("Using quantized KV cache")
             return [
-                QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
+                QuantizedKVCache(group_size=KV_CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
                 for _ in model.layers
             ]
     else:
