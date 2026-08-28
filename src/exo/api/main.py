@@ -297,6 +297,21 @@ class API:
 
     def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):
         logger.info("Resetting API State")
+        # Close active generation streams gracefully instead of orphaning them.
+        # Without this, clients hang on keep-alives forever — the sender objects
+        # remain alive (referenced by active async generators) but are unreachable
+        # from the new empty dict, so receivers never get an end-of-stream signal.
+        # Uses the same sender.close() pattern as _close_streams_for_instance.
+        for sender in self._text_generation_queues.values():
+            try:
+                sender.close()
+            except Exception:
+                pass
+        for sender in self._image_generation_queues.values():
+            try:
+                sender.close()
+            except Exception:
+                pass
         self._event_log.close()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
         self.state = State()

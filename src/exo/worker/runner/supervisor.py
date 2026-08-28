@@ -199,6 +199,15 @@ class RunnerSupervisor:
         default_factory=anyio.CancelScope, init=False
     )
 
+    def rewire_event_sender(self, event_sender: Sender[Event]) -> None:
+        """Replace the event sender after event-router recreation (new master session).
+
+        Keeps loaded model runner processes alive across election transitions:
+        the runner's mp pipes are session-independent, only this event sender
+        pointed at the old (now closed) event router.
+        """
+        self._event_sender = event_sender
+
     @classmethod
     async def create(
         cls,

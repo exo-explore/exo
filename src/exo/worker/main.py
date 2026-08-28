@@ -105,6 +105,7 @@ class Worker:
         info_send, info_recv = channel[GatheredInfo]()
         info_gatherer: InfoGatherer = InfoGatherer(info_send)
 
+        router_died = False
         try:
             async with self._tg as tg:
                 tg.start_soon(info_gatherer.run)
@@ -114,16 +115,21 @@ class Worker:
                 tg.start_soon(self._poll_connection_updates)
                 tg.start_soon(self._reconcile_custom_cards)
         except* (EventRouterBrokenResourceError, EventRouterClosedResourceError):
-            # Event router has been closed (try-star syntax handles error groups)
-            pass
+            # Event router has been closed (try-star syntax handles error groups).
+            # This happens on every new-master election transition (the router is
+            # recreated with a new session). Model runner processes are independent
+            # of the session — keep them alive so loaded models survive elections.
+            # The caller (main.py) restarts this worker and transfers self.runners.
+            router_died = True
         finally:
             # Actual shutdown code - waits for all tasks to complete before executing.
             logger.info("Stopping Worker")
             self.event_sender.close()
             self.command_sender.close()
             self.download_command_sender.close()
-            for runner in self.runners.values():
-                runner.shutdown()
+            if not router_died:
+                for runner in self.runners.values():
+                    runner.shutdown()
             self._stopped.set()
 
     async def _forward_info(self, recv: Receiver[GatheredInfo]):

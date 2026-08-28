@@ -255,6 +255,25 @@ class Node:
                         self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
                         await self.worker.shutdown()
+                        # PATCH: preserve loaded model runners across the election
+                        # transition. The old code started a fresh Worker with no
+                        # runners, which evicted every loaded model on both nodes
+                        # whenever the master changed (startup elections made
+                        # 2-node placement effectively impossible).
+                        preserved_runners = getattr(
+                            self.worker, "runners", None
+                        ) or {}
+                        # Only preserve runners whose instance still exists in the
+                        # worker's last-known state — runners for deleted instances
+                        # were (or will be) shut down and must not be resurrected.
+                        old_instances = getattr(self.worker, "state", None)
+                        if old_instances is not None and preserved_runners:
+                            preserved_runners = {
+                                rid: sup
+                                for rid, sup in preserved_runners.items()
+                                if sup.bound_instance.instance.instance_id
+                                in old_instances.instances
+                            }
                         # TODO: add profiling etc to resource monitor
                         self.worker = Worker(
                             self.node_id,
@@ -266,6 +285,15 @@ class Node:
                             ),
                             api_port=self._api_port,
                         )
+                        if preserved_runners:
+                            self.worker.runners = preserved_runners
+                            new_sender = self.event_router.sender()
+                            for supervisor in preserved_runners.values():
+                                supervisor.rewire_event_sender(new_sender.clone())
+                            logger.info(
+                                f"Preserved {len(preserved_runners)} runner(s) "
+                                "across master transition"
+                            )
                         self._tg.start_soon(self.worker.run)
                     if self.api:
                         self.api.reset(result.won_clock, self.event_router.receiver())
