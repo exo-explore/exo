@@ -89,6 +89,7 @@ from exo.api.types import (
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
+    PromoteMasterResponse,
     StartDownloadParams,
     StartDownloadResponse,
     ToolCall,
@@ -167,6 +168,7 @@ from exo.shared.types.commands import (
     ImageEdits,
     ImageGeneration,
     PlaceInstance,
+    PromoteMaster,
     SendInputChunk,
     SetInstanceLink,
     StartDownload,
@@ -348,6 +350,7 @@ class API:
         self.app.get("/instance/previews")(self.get_placement_previews)
         self.app.get("/instance/await", response_model=None)(self.await_instance)
         self.app.get("/instance/{instance_id}")(self.get_instance)
+        self.app.post("/master/promote/{node_id}")(self.promote_master)
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
         self.app.get("/v1/instance-links")(self.list_instance_links)
         self.app.post("/v1/instance-links")(self.create_instance_link)
@@ -690,6 +693,32 @@ class API:
             message="Command received.",
             command_id=command.command_id,
             instance_id=instance_id,
+        )
+
+    async def promote_master(self, node_id: NodeId) -> PromoteMasterResponse:
+        """Force node_id to win the next master election.
+
+        Every node in the cluster tears down and recreates its worker
+        (and download coordinator) when the master changes (see
+        exo.main._elect_loop), so this is only allowed while the cluster is
+        idle -- promoting mid-serving would restart every running instance.
+        """
+        if node_id not in set(self.state.topology.list_nodes()):
+            raise HTTPException(status_code=404, detail="Node not found")
+        if self.state.instances:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot promote master while instances are running "
+                "-- every node's worker restarts when master changes. "
+                "Eject running models first.",
+            )
+
+        command = PromoteMaster(target_node_id=node_id)
+        await self._send(command)
+        return PromoteMasterResponse(
+            message="Command received.",
+            command_id=command.command_id,
+            target_node_id=node_id,
         )
 
     async def get_feature_flags(self) -> dict[str, bool]:

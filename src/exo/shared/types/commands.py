@@ -100,6 +100,16 @@ class DeleteInstanceLink(BaseCommand):
     link_id: InstanceLinkId
 
 
+class PromoteMaster(BaseCommand):
+    """Force target_node_id to win the next master election.
+
+    Delivered to every node (topics.COMMANDS is broadcast) -- only the node
+    whose own id matches target_node_id acts on it.
+    """
+
+    target_node_id: NodeId
+
+
 DownloadCommand = StartDownload | DeleteDownload | CancelDownload
 
 
@@ -119,6 +129,7 @@ Command = (
     | DeleteCustomModelCard
     | SetInstanceLink
     | DeleteInstanceLink
+    | PromoteMaster
 )
 
 

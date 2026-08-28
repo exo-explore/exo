@@ -28,6 +28,7 @@ from exo.shared.types.commands import (
     ImageEdits,
     ImageGeneration,
     PlaceInstance,
+    PromoteMaster,
     RequestEventLog,
     SendInputChunk,
     SetInstanceLink,
@@ -179,6 +180,11 @@ class Master:
                     instance_task_counts: dict[InstanceId, int] = {}
                     match command:
                         case TestCommand():
+                            pass
+                        case PromoteMaster():
+                            # Handled by exo.shared.election.Election, which
+                            # subscribes to the same topics.COMMANDS topic --
+                            # nothing for Master to do here.
                             pass
                         case TextGeneration():
                             # set-difference => prefill-only nodes

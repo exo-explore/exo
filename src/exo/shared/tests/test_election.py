@@ -2,8 +2,13 @@ import pytest
 from anyio import create_task_group, fail_after, move_on_after
 
 from exo.routing.connection_message import ConnectionMessage
-from exo.shared.election import Election, ElectionMessage, ElectionResult
-from exo.shared.types.commands import ForwarderCommand, TestCommand
+from exo.shared.election import (
+    FORCE_MASTER_SENIORITY,
+    Election,
+    ElectionMessage,
+    ElectionResult,
+)
+from exo.shared.types.commands import ForwarderCommand, PromoteMaster, TestCommand
 from exo.shared.types.common import NodeId, SessionId, SystemId
 from exo.utils.channels import channel
 
@@ -398,6 +403,202 @@ async def test_tie_breaker_prefers_node_with_more_commands_seen() -> None:
                 if result.session_id.master_node_id == me:
                     assert result.session_id.election_clock in (0, 1)
                     break
+
+            em_in_tx.close()
+            cm_tx.close()
+            co_tx.close()
+
+
+@pytest.mark.anyio
+async def test_promote_master_command_forces_target_node_to_win() -> None:
+    """
+    A peer wins a round first (so we are not master). A PromoteMaster
+    command targeting us should then force a new round that we win, by
+    boosting our own seniority the same way --force-master does at startup.
+    """
+    em_out_tx, _em_out_rx = channel[ElectionMessage]()
+    em_in_tx, em_in_rx = channel[ElectionMessage]()
+    er_tx, er_rx = channel[ElectionResult]()
+    cm_tx, cm_rx = channel[ConnectionMessage]()
+    co_tx, co_rx = channel[ForwarderCommand]()
+
+    me = NodeId("ME")
+    election = Election(
+        node_id=me,
+        election_message_receiver=em_in_rx,
+        election_message_sender=em_out_tx,
+        election_result_sender=er_tx,
+        connection_message_receiver=cm_rx,
+        command_receiver=co_rx,
+        is_candidate=True,
+    )
+
+    async with create_task_group() as tg:
+        with fail_after(2):
+            tg.start_soon(election.run)
+
+            # A peer with higher seniority wins round clock=1.
+            await em_in_tx.send(em(clock=1, seniority=10, node_id="PEER"))
+            while True:
+                result = await er_rx.receive()
+                if result.session_id.election_clock == 1:
+                    break
+            assert result.session_id.master_node_id == NodeId("PEER")
+            assert election.seniority == 0
+
+            # Now force-promote us.
+            await co_tx.send(
+                ForwarderCommand(
+                    origin=SystemId("SOMEONE"),
+                    command=PromoteMaster(target_node_id=me),
+                )
+            )
+
+            # We should win the next round despite the peer's earlier win.
+            while True:
+                result = await er_rx.receive()
+                if result.session_id.master_node_id == me:
+                    break
+
+            assert election.seniority == FORCE_MASTER_SENIORITY
+
+            em_in_tx.close()
+            cm_tx.close()
+            co_tx.close()
+
+
+@pytest.mark.anyio
+async def test_promote_master_command_for_other_node_is_ignored() -> None:
+    """A PromoteMaster targeting a different node must not boost our own
+    seniority or trigger an extra round on our side."""
+    em_out_tx, _em_out_rx = channel[ElectionMessage]()
+    em_in_tx, em_in_rx = channel[ElectionMessage]()
+    er_tx, er_rx = channel[ElectionResult]()
+    cm_tx, cm_rx = channel[ConnectionMessage]()
+    co_tx, co_rx = channel[ForwarderCommand]()
+
+    election = Election(
+        node_id=NodeId("ME"),
+        election_message_receiver=em_in_rx,
+        election_message_sender=em_out_tx,
+        election_result_sender=er_tx,
+        connection_message_receiver=cm_rx,
+        command_receiver=co_rx,
+        is_candidate=True,
+    )
+
+    async with create_task_group() as tg:
+        with fail_after(2):
+            tg.start_soon(election.run)
+
+            # Consume the initial self-election result from boot (this
+            # naturally bumps seniority to 1 -- a solo node always wins its
+            # own bootstrap round against itself).
+            _ = await er_rx.receive()
+            seniority_after_boot = election.seniority
+
+            await co_tx.send(
+                ForwarderCommand(
+                    origin=SystemId("SOMEONE"),
+                    command=PromoteMaster(target_node_id=NodeId("SOMEONE_ELSE")),
+                )
+            )
+
+            # Give any (incorrect) campaign a moment to resolve, then check
+            # no election crowned us and our seniority wasn't force-boosted.
+            with move_on_after(0.3):
+                while True:
+                    result = await er_rx.receive()
+                    assert result.session_id.master_node_id != NodeId("ME")
+
+            assert election.seniority == seniority_after_boot
+
+            em_in_tx.close()
+            cm_tx.close()
+            co_tx.close()
+
+
+@pytest.mark.anyio
+async def test_second_promote_still_wins_over_previously_promoted_master() -> None:
+    """
+    Regression test for a tie: boosting seniority to a fixed constant on
+    every PromoteMaster meant a *second* promotion tied the first on
+    seniority and fell to the commands_seen tiebreak, which favours
+    whichever node has been master longer -- silently no-opping the second
+    promotion. Seniority must instead be strictly higher than any previously
+    observed value so repeated promotions keep working.
+    """
+    em_out_tx, em_out_rx = channel[ElectionMessage]()
+    em_in_tx, em_in_rx = channel[ElectionMessage]()
+    er_tx, er_rx = channel[ElectionResult]()
+    cm_tx, cm_rx = channel[ConnectionMessage]()
+    co_tx, co_rx = channel[ForwarderCommand]()
+
+    me = NodeId("ME")
+    election = Election(
+        node_id=me,
+        election_message_receiver=em_in_rx,
+        election_message_sender=em_out_tx,
+        election_result_sender=er_tx,
+        connection_message_receiver=cm_rx,
+        command_receiver=co_rx,
+        is_candidate=True,
+    )
+
+    async with create_task_group() as tg:
+        with fail_after(2):
+            tg.start_soon(election.run)
+
+            # A peer was already force-promoted earlier: it wins round 1 at
+            # the same fixed seniority --force-master/PromoteMaster uses,
+            # with a head start on commands_seen (as a long-standing master
+            # naturally accumulates).
+            await em_in_tx.send(
+                em(
+                    clock=1,
+                    seniority=FORCE_MASTER_SENIORITY,
+                    node_id="PEER",
+                    commands_seen=5,
+                )
+            )
+            while True:
+                result = await er_rx.receive()
+                if result.session_id.election_clock == 1:
+                    break
+            assert result.session_id.master_node_id == NodeId("PEER")
+
+            # Now promote us. Wait for our own round-2 broadcast so we know
+            # _force_promote has reset the candidate list before the peer's
+            # competing round-2 message arrives.
+            await co_tx.send(
+                ForwarderCommand(
+                    origin=SystemId("SOMEONE"),
+                    command=PromoteMaster(target_node_id=me),
+                )
+            )
+            while True:
+                got = await em_out_rx.receive()
+                if got.clock == 2 and got.proposed_session.master_node_id == me:
+                    break
+
+            # The incumbent rejoins the new round at the same fixed
+            # seniority it was promoted with, and with a higher
+            # commands_seen than we have (we've only seen the one
+            # PromoteMaster command so far).
+            await em_in_tx.send(
+                em(
+                    clock=2,
+                    seniority=FORCE_MASTER_SENIORITY,
+                    node_id="PEER",
+                    commands_seen=5,
+                )
+            )
+
+            while True:
+                result = await er_rx.receive()
+                if result.session_id.election_clock == 2:
+                    break
+            assert result.session_id.master_node_id == me
 
             em_in_tx.close()
             cm_tx.close()
