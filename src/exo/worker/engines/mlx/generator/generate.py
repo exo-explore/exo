@@ -56,6 +56,7 @@ from exo.worker.engines.mlx.constants import (
     MAX_TOKENS,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
+from exo.worker.engines.mlx.generator.stop_sequences import scan_stop_sequences
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -624,7 +625,6 @@ def mlx_generate(
         if task.stop is not None
         else []
     )
-    max_stop_len = max((len(s) for s in stop_sequences), default=0)
 
     maybe_vision_ctx = (
         patch_embed_tokens(
@@ -710,7 +710,9 @@ def mlx_generate(
     last_token = prompt_tokens[-2:]
 
     max_tokens = task.max_output_tokens or MAX_TOKENS
-    accumulated_text = ""
+    # Text decoded but not yet emitted because it could be the start of a stop
+    # sequence spanning multiple tokens. See scan_stop_sequences.
+    pending_stop_text = ""
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
     usage: Usage | None = None
@@ -733,26 +735,26 @@ def mlx_generate(
         start=1,
     ):
         generated_text_parts.append(out.text)
-        accumulated_text += out.text
 
-        # Check for stop sequences
-        text = out.text
-        finish_reason: FinishReason | None = cast(
-            FinishReason | None, out.finish_reason
+        # Check for stop sequences, holding back any trailing partial match so a
+        # multi-token stop sequence never leaks its leading bytes into output.
+        model_finish_reason = cast(FinishReason | None, out.finish_reason)
+        pending_stop_text += out.text
+        text, matched_stop_sequence, pending_stop_text = scan_stop_sequences(
+            pending_stop_text, stop_sequences
         )
-        stop_matched = False
 
-        if stop_sequences:
-            for stop_seq in stop_sequences:
-                if stop_seq in accumulated_text:
-                    # Trim text to just before the stop sequence
-                    stop_index = accumulated_text.find(stop_seq)
-                    text_before_stop = accumulated_text[:stop_index]
-                    chunk_start = len(accumulated_text) - len(out.text)
-                    text = text_before_stop[chunk_start:]
-                    finish_reason = "stop"
-                    stop_matched = True
-                    break
+        finish_reason: FinishReason | None
+        if matched_stop_sequence is not None:
+            finish_reason = "stop"
+        elif model_finish_reason is not None:
+            # Natural EOS / length limit: flush any held-back text — it is real
+            # output that merely looked like the start of a stop sequence.
+            text += pending_stop_text
+            pending_stop_text = ""
+            finish_reason = model_finish_reason
+        else:
+            finish_reason = None
 
         is_done = finish_reason is not None
 
@@ -765,7 +767,9 @@ def mlx_generate(
                 generation_tokens=int(out.generation_tokens),
                 peak_memory_usage=Memory.from_gb(out.peak_memory),
             )
-            if not stop_matched and out.finish_reason not in get_args(FinishReason):
+            if matched_stop_sequence is None and out.finish_reason not in get_args(
+                FinishReason
+            ):
                 logger.warning(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
                 )
@@ -816,12 +820,9 @@ def mlx_generate(
             finish_reason=finish_reason,
             stats=stats,
             usage=usage,
+            matched_stop_sequence=matched_stop_sequence,
         )
 
         if is_done:
             mx_barrier(group)
             break
-
-        # Limit accumulated_text to what's needed for stop sequence detection
-        if max_stop_len > 0 and len(accumulated_text) > max_stop_len:
-            accumulated_text = accumulated_text[-max_stop_len:]
