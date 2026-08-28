@@ -521,7 +521,7 @@ class InfoGatherer:
         while True:
             try:
                 await self.info_sender.send(
-                    MemoryUsage.from_psutil(override_memory=override_memory)
+                    MemoryUsage.from_system(override_memory=override_memory)
                 )
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering memory usage")

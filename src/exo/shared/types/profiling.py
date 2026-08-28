@@ -3,11 +3,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, Self
 
-import psutil
-
 from exo.shared.types.memory import Memory
 from exo.shared.types.thunderbolt import ThunderboltIdentifier
 from exo.utils.pydantic_ext import FrozenModel
+from exo.utils.virtual_memory import swap_memory_statistics, virtual_memory_statistics
 
 
 class MemoryUsage(FrozenModel):
@@ -28,15 +27,17 @@ class MemoryUsage(FrozenModel):
         )
 
     @classmethod
-    def from_psutil(cls, *, override_memory: int | None) -> Self:
-        vm = psutil.virtual_memory()
-        sm = psutil.swap_memory()
+    def from_system(cls, *, override_memory: int | None) -> Self:
+        virtual_memory = virtual_memory_statistics()
+        swap_memory = swap_memory_statistics()
 
         return cls.from_bytes(
-            ram_total=vm.total,
-            ram_available=vm.available if override_memory is None else override_memory,
-            swap_total=sm.total,
-            swap_available=sm.free,
+            ram_total=virtual_memory.total_bytes,
+            ram_available=virtual_memory.available_bytes
+            if override_memory is None
+            else override_memory,
+            swap_total=swap_memory.total_bytes,
+            swap_available=swap_memory.free_bytes,
         )
 
 
