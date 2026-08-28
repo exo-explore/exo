@@ -150,6 +150,15 @@ class ChatCompletionChoice(BaseModel):
     finish_reason: FinishReason | None = None
 
 
+class GenerationStats(BaseModel):
+    prompt_tps: float
+    generation_tps: float
+    prompt_tokens: int
+    generation_tokens: int
+    peak_memory_usage: Memory
+    prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
+
+
 class ChatCompletionResponse(BaseModel):
     id: str
     object: Literal["chat.completion"] = "chat.completion"
@@ -158,15 +167,7 @@ class ChatCompletionResponse(BaseModel):
     choices: list[ChatCompletionChoice | StreamingChoiceResponse]
     usage: Usage | None = None
     service_tier: str | None = None
-
-
-class GenerationStats(BaseModel):
-    prompt_tps: float
-    generation_tps: float
-    prompt_tokens: int
-    generation_tokens: int
-    peak_memory_usage: Memory
-    prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
+    generation_stats: GenerationStats | None = None
 
 
 class ImageGenerationStats(BaseModel):
@@ -212,7 +213,6 @@ class PowerUsage(BaseModel, frozen=True):
 
 
 class BenchChatCompletionResponse(ChatCompletionResponse):
-    generation_stats: GenerationStats | None = None
     power_usage: PowerUsage | None = None
 
 

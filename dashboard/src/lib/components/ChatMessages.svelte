@@ -133,6 +133,17 @@
     });
   }
 
+  function formatBytes(bytes: number): string {
+    if (!bytes || bytes <= 0) return "0B";
+    const units = ["B", "KB", "MB", "GB"];
+    const i = Math.min(
+      Math.floor(Math.log(bytes) / Math.log(1024)),
+      units.length - 1,
+    );
+    const val = bytes / Math.pow(1024, i);
+    return `${val.toFixed(val >= 10 ? 0 : 1)}${units[i]}`;
+  }
+
   function getAttachmentIcon(attachment: MessageAttachment): string {
     switch (attachment.type) {
       case "image":
@@ -286,7 +297,12 @@
               >{formatTimestamp(message.timestamp)}</span
             >
             {#if message.ttftMs || message.tps}
-              <span class="text-xs text-exo-light-gray/80 font-mono ml-2">
+              <span
+                class="text-xs text-exo-light-gray/80 font-mono ml-2"
+                title={message.prefixCacheHit
+                  ? `Prefix cache: ${message.prefixCacheHit}`
+                  : undefined}
+              >
                 {#if message.ttftMs}<span class="text-exo-light-gray/50"
                     >TTFT</span
                   >
@@ -295,7 +311,22 @@
                   )}ms{/if}{#if message.ttftMs && message.tps}<span
                     class="text-exo-light-gray/30 mx-1">•</span
                   >{/if}{#if message.tps}{message.tps.toFixed(1)}
-                  <span class="text-exo-light-gray/50">tok/s</span>{/if}
+                  <span class="text-exo-light-gray/50">tok/s</span
+                  >{/if}{#if message.promptTps}<span
+                    class="text-exo-light-gray/30 mx-1">•</span
+                  ><span class="text-exo-light-gray/50">prompt</span>
+                  {message.promptTps.toFixed(1)}<span
+                    class="text-exo-light-gray/50">tok/s</span
+                  >{/if}{#if message.peakMemoryBytes}<span
+                    class="text-exo-light-gray/30 mx-1">•</span
+                  ><span class="text-exo-light-gray/50">peak</span>
+                  {formatBytes(
+                    message.peakMemoryBytes,
+                  )}{/if}{#if message.prefixCacheHit === "exact" || message.prefixCacheHit === "partial"}<span
+                    class="text-exo-light-gray/30 mx-1">•</span
+                  ><span class="text-exo-yellow/70"
+                    >cache {message.prefixCacheHit}</span
+                  >{/if}
               </span>
             {/if}
           </div>
