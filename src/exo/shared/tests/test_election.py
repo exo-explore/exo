@@ -320,6 +320,9 @@ async def test_connection_message_triggers_new_round_broadcast() -> None:
         connection_message_receiver=cm_rx,
         command_receiver=co_rx,
         is_candidate=True,
+        # No post-campaign cooldown so the receiver returns to its loop and
+        # shuts down promptly when the channels close.
+        connection_election_cooldown=0.0,
     )
 
     async with create_task_group() as tg:

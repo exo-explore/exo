@@ -16,6 +16,10 @@ from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 
 DEFAULT_ELECTION_TIMEOUT = 3.0
+# How long _connection_receiver waits after a campaign before accepting the next
+# connection-triggered re-election. Drains zenoh topology-formation bursts so
+# each distinct topology change triggers exactly one re-election.
+_CONNECTION_ELECTION_COOLDOWN = 25.0
 
 
 class ElectionMessage(FrozenModel):
@@ -57,11 +61,13 @@ class Election:
         command_receiver: Receiver[ForwarderCommand],
         is_candidate: bool = True,
         seniority: int = 0,
+        connection_election_cooldown: float = _CONNECTION_ELECTION_COOLDOWN,
     ):
         # If we aren't a candidate, simply don't increment seniority.
         # For reference: This node can be elected master if all nodes are not master candidates
         # Any master candidate will automatically win out over this node.
         self.seniority = seniority if is_candidate else -1
+        self._connection_election_cooldown = connection_election_cooldown
         self.clock = 0
         self.node_id = node_id
         self.commands_seen = 0
@@ -178,6 +184,14 @@ class Election:
                 )
                 logger.debug("Campaign started")
                 logger.debug("Connection message added")
+
+                # Cooldown: wait for the campaign to complete, then drain any
+                # connection events that arrived during topology formation.
+                # This prevents zenoh gossip/reconnect bursts from causing
+                # perpetual re-elections once the cluster is stable.
+                await anyio.sleep(self._connection_election_cooldown)
+                connection_messages.collect()
+                logger.info("Connection election cooldown complete")
 
     async def _command_counter(self) -> None:
         with self._co_receiver as commands:
