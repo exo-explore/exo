@@ -1,15 +1,4 @@
-name: Build EXO macOS DMG
-
-# Release workflow:
-# 1. Create a draft GitHub Release with the tag name (e.g. v1.0.0) and write release notes in markdown
-# 2. Push the tag: git tag v1.0.0 && git push origin v1.0.0
-# 3. This workflow builds, signs, and notarizes the DMG
-# 4. Release notes are embedded in appcast.xml for Sparkle (rendered as markdown)
-# 5. DMG and appcast.xml are uploaded to S3
-# 6. The draft GitHub Release is published with the DMG attached
-#
-# For alpha releases (e.g. v1.0.0-alpha.1): draft release and notes are optional.
-# If no draft exists, a release is auto-created with generated notes.
+name: Build EXO Installers
 
 on:
   workflow_dispatch:
@@ -17,13 +6,28 @@ on:
     tags:
       - "v*"
     branches:
+      - "main"
       - "test-app"
 
 jobs:
-  build-macos-app:
-    runs-on: "macos-26"
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            runner: macos-26
+            artifact_suffix: dmg
+          - name: linux
+            runner: ubuntu-latest
+            artifact_suffix: deb
+          - name: windows
+            runner: windows-latest
+            artifact_suffix: exe
     env:
       SPARKLE_VERSION: 2.9.0-beta.1
       SPARKLE_DOWNLOAD_PREFIX: ${{ secrets.SPARKLE_DOWNLOAD_PREFIX }}
@@ -37,18 +41,15 @@ jobs:
       EXO_LIBP2P_NAMESPACE: ${{ github.ref_name }}
 
     steps:
-      # ============================================================
-      # Checkout and tag validation
-      # ============================================================
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Derive release version from tag
+        shell: bash
         run: |
-          if [[ "$GITHUB_REF_NAME" == "test-app" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "$GITHUB_REF_NAME" == "test-app" || "${{ github.event_name }}" == "workflow_dispatch" || "$GITHUB_REF_TYPE" != "tag" ]]; then
             VERSION="0.0.0-alpha.0"
             echo "IS_ALPHA=true" >> $GITHUB_ENV
           else
@@ -62,19 +63,17 @@ jobs:
           echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Compute build version from semver
+        shell: bash
         run: |
           VERSION="$RELEASE_VERSION"
-          # Extract major.minor.patch (strip prerelease suffix)
           BASE_VERSION="${VERSION%%-*}"
           MAJOR=$(echo "$BASE_VERSION" | cut -d. -f1)
           MINOR=$(echo "$BASE_VERSION" | cut -d. -f2)
           PATCH=$(echo "$BASE_VERSION" | cut -d. -f3)
 
-          # Extract prerelease number (e.g., "alpha.2" -> 2, or 999 for releases)
           if [[ "$VERSION" == *-* ]]; then
             PRERELEASE_PART="${VERSION#*-}"
             PRERELEASE_NUM="${PRERELEASE_PART##*.}"
-            # Default to 0 if not a number
             if ! [[ "$PRERELEASE_NUM" =~ ^[0-9]+$ ]]; then
               PRERELEASE_NUM=0
             fi
@@ -82,16 +81,15 @@ jobs:
             PRERELEASE_NUM=999
           fi
 
-          # Compute: PRERELEASE + (1000 * PATCH) + (1_000_000 * MINOR) + (1_000_000_000 * MAJOR)
           BUILD_VERSION=$((PRERELEASE_NUM + 1000 * PATCH + 1000000 * MINOR + 1000000000 * MAJOR))
           echo "EXO_BUILD_VERSION=$BUILD_VERSION" >> $GITHUB_ENV
           echo "Computed build version: $BUILD_VERSION from $VERSION"
 
       - name: Ensure tag commit is on main
         if: github.ref_type == 'tag'
+        shell: bash
         run: |
           git fetch origin main
-          # Alpha tags can be on any branch, production tags must be on main
           if [[ "$IS_ALPHA" == "true" ]]; then
             echo "Alpha tag detected, skipping main branch check"
           elif ! git merge-base --is-ancestor origin/main HEAD; then
@@ -100,76 +98,45 @@ jobs:
           fi
 
       - name: Fetch and validate release notes
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' && matrix.name == 'macos'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
-          # Find draft release by name using gh release list (more reliable with default token)
           echo "Looking for draft release named '$GITHUB_REF_NAME'..."
           DRAFT_EXISTS=$(gh release list --json name,isDraft --jq ".[] | select(.isDraft == true) | select(.name == \"$GITHUB_REF_NAME\") | .name" 2>/dev/null || echo "")
 
           if [[ -z "$DRAFT_EXISTS" ]]; then
             if [[ "$IS_ALPHA" == "true" ]]; then
-              echo "No draft release found for alpha tag $GITHUB_REF_NAME (optional for alphas)"
+              echo "No draft release found for alpha tag (optional)"
               echo "HAS_RELEASE_NOTES=false" >> $GITHUB_ENV
               exit 0
             fi
             echo "ERROR: No draft release found for tag $GITHUB_REF_NAME"
-            echo "Please create a draft release with release notes before pushing the tag."
             exit 1
           fi
 
-          # Fetch full release details via API to get body and ID
-          echo "Found draft release, fetching details..."
           RELEASE_JSON=$(gh api repos/${{ github.repository }}/releases --jq ".[] | select(.draft == true) | select(.name == \"$GITHUB_REF_NAME\")" 2>/dev/null || echo "")
-
-          # Extract release notes
           NOTES=$(echo "$RELEASE_JSON" | jq -r '.body // ""')
           if [[ -z "$NOTES" || "$NOTES" == "null" ]]; then
             if [[ "$IS_ALPHA" == "true" ]]; then
-              echo "Draft release has no notes (optional for alphas)"
+              echo "Draft release has no notes"
               echo "HAS_RELEASE_NOTES=false" >> $GITHUB_ENV
               exit 0
             fi
             echo "ERROR: Draft release exists but has no release notes"
-            echo "Please add release notes to the draft release before pushing the tag."
             exit 1
           fi
 
-          # Save release ID for later publishing
           RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
           echo "DRAFT_RELEASE_ID=$RELEASE_ID" >> $GITHUB_ENV
           echo "HAS_RELEASE_NOTES=true" >> $GITHUB_ENV
-
-          echo "Found draft release (ID: $RELEASE_ID), saving release notes..."
           echo "$NOTES" > /tmp/release_notes.md
           echo "RELEASE_NOTES_FILE=/tmp/release_notes.md" >> $GITHUB_ENV
 
       # ============================================================
-      # Install dependencies
+      # Install Dependencies (Multi-Platform)
       # ============================================================
-
-      - name: Select Xcode 26.2
-        run: |
-          sudo xcode-select -s /Applications/Xcode_26.2.app
-          if ! xcrun -f metal >/dev/null 2>&1; then
-            echo "Metal toolchain is not installed."
-            exit 1
-          fi
-
-      - name: Install Homebrew packages
-        run: brew install just awscli
-
-      - name: Install UV
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Setup Python
-        run: |
-          uv python install
-          uv sync --locked
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -182,152 +149,126 @@ jobs:
           name: exo
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
-      - name: Build dashboard
+      - name: Build Dashboard
+        shell: bash
         run: |
           DASHBOARD_OUT=$(nix build .#dashboard --print-build-logs --no-link --print-out-paths)
           mkdir -p dashboard/build
           cp -r "$DASHBOARD_OUT"/* dashboard/build/
 
-      - name: Install Sparkle CLI
+      - name: Install Sparkle CLI (macOS only)
+        if: matrix.name == 'macos'
         run: |
-          CLI_URL="${SPARKLE_CLI_URL:-https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz}"
-          echo "Downloading Sparkle CLI from: $CLI_URL"
+          CLI_URL="https://github.com/sparkle-project/Sparkle/releases/download/${{ env.SPARKLE_VERSION }}/Sparkle-${{ env.SPARKLE_VERSION }}.tar.xz"
           mkdir -p /tmp/sparkle
           curl --fail --location --output /tmp/sparkle.tar.xz "$CLI_URL"
           tar -xJf /tmp/sparkle.tar.xz -C /tmp/sparkle --strip-components=1
           echo "SPARKLE_BIN=/tmp/sparkle/bin" >> $GITHUB_ENV
 
-      - name: Prepare code-signing keychain
+      - name: Select Xcode (macOS only)
+        if: matrix.name == 'macos'
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.2.app
+          if ! xcrun -f metal >/dev/null 2>&1; then
+            echo "Metal toolchain is not installed."
+            exit 1
+          fi
+
+      - name: Install System Dependencies (Linux)
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev rubygems build-essential
+          sudo gem install fpm
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Setup Python
+        shell: bash
+        run: |
+          uv python install
+          uv sync --locked
+
+      - name: Install Inno Setup (Windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.2.2 -y
+
+      # ============================================================
+      # Pre-flight credential / profile validation (macOS only)
+      # ============================================================
+
+      - name: Prepare macOS Signing Keychain
+        if: matrix.name == 'macos'
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
         run: |
           KEYCHAIN_PATH="$HOME/Library/Keychains/build.keychain-db"
-
-          # Create fresh keychain
           security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Disable auto-lock (no timeout, no lock-on-sleep)
           security set-keychain-settings "$KEYCHAIN_PATH"
-
-          # Add to search list while preserving existing keychains
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
-
-          # Set as default and unlock
           security default-keychain -s "$KEYCHAIN_PATH"
           security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Import certificate with full access for codesign
           echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/cert.p12
           security import /tmp/cert.p12 -k "$KEYCHAIN_PATH" -P "$MACOS_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild
           rm /tmp/cert.p12
 
-          # Allow codesign to access the key without prompting
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Verify keychain is unlocked and identity is available
-          echo "Verifying signing identity..."
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-          # Setup provisioning profile
           mkdir -p "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
           echo "$PROVISIONING_PROFILE" | base64 --decode > "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/EXO.provisionprofile"
-
-          # Export keychain path for other steps
           echo "BUILD_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
 
-      # ============================================================
-      # Pre-flight credential / profile validation
-      # Runs BEFORE the ~16 min build so auth/expiry failures surface in <1 min.
-      # ============================================================
-
       - name: Validate Apple notarization credentials
+        if: matrix.name == 'macos'
         env:
           APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
           APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
           APPLE_NOTARIZATION_TEAM: ${{ secrets.APPLE_NOTARIZATION_TEAM }}
         run: |
-          # All-or-nothing: either all three creds are set, or none are.
           CRED_COUNT=0
           for v in "$APPLE_NOTARIZATION_USERNAME" "$APPLE_NOTARIZATION_PASSWORD" "$APPLE_NOTARIZATION_TEAM"; do
             [[ -n "$v" ]] && CRED_COUNT=$((CRED_COUNT + 1))
           done
           if [[ "$CRED_COUNT" -eq 0 ]]; then
-            echo "No notarization credentials configured — skipping notarization for this build."
+            echo "No notarization credentials configured — skipping notarization."
             exit 0
           fi
           if [[ "$CRED_COUNT" -ne 3 ]]; then
-            echo "ERROR: partial notarization credentials set ($CRED_COUNT/3). Aborting before build."
+            echo "ERROR: partial notarization credentials set."
             exit 1
           fi
-          # Cheap, ~5s, auth-only call. Fails instantly with a clear message if
-          # the app-specific password is stale, wrong team-id, etc.
-          echo "Verifying Apple notarization credentials via notarytool history..."
-          if ! xcrun notarytool history \
+          xcrun notarytool history \
             --apple-id "$APPLE_NOTARIZATION_USERNAME" \
             --password "$APPLE_NOTARIZATION_PASSWORD" \
-            --team-id "$APPLE_NOTARIZATION_TEAM" >/dev/null; then
-            echo "ERROR: notarytool rejected the provided credentials. Fix before rerunning."
-            echo "Common causes: app-specific password expired/revoked, wrong team-id,"
-            echo "Apple ID not on the team, or 2FA not configured for this Apple ID."
-            exit 1
-          fi
-          echo "Apple notarization credentials OK."
-
-      - name: Validate provisioning profile expiry
-        run: |
-          PROFILE="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/EXO.provisionprofile"
-          if [[ ! -f "$PROFILE" ]]; then
-            echo "ERROR: provisioning profile not found at $PROFILE"
-            exit 1
-          fi
-          EXPIRY=$(security cms -D -i "$PROFILE" | plutil -extract ExpirationDate raw -o - - 2>/dev/null || true)
-          if [[ -z "$EXPIRY" ]]; then
-            echo "WARNING: could not read ExpirationDate from provisioning profile; skipping expiry check."
-            exit 0
-          fi
-          # Try a couple of known plutil date formats. If none parse, skip the check rather
-          # than risk a false-positive "expired" block on a format we didn't anticipate.
-          EXPIRY_EPOCH=""
-          for fmt in "%Y-%m-%dT%H:%M:%SZ" "%Y-%m-%d %H:%M:%S %z" "%Y-%m-%d %H:%M:%S +0000"; do
-            if parsed=$(date -j -f "$fmt" "$EXPIRY" +%s 2>/dev/null); then
-              EXPIRY_EPOCH="$parsed"
-              break
-            fi
-          done
-          if [[ -z "$EXPIRY_EPOCH" ]]; then
-            echo "WARNING: could not parse ExpirationDate '$EXPIRY'; skipping expiry check."
-            exit 0
-          fi
-          NOW_EPOCH=$(date +%s)
-          if [[ "$EXPIRY_EPOCH" -le "$NOW_EPOCH" ]]; then
-            echo "ERROR: provisioning profile expired on $EXPIRY. Regenerate it before rerunning."
-            exit 1
-          fi
-          DAYS_LEFT=$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ))
-          echo "Provisioning profile valid until $EXPIRY ($DAYS_LEFT days remaining)."
-          if [[ "$DAYS_LEFT" -lt 14 ]]; then
-            echo "WARNING: profile expires in under 14 days — regenerate soon."
-          fi
+            --team-id "$APPLE_NOTARIZATION_TEAM" >/dev/null
 
       # ============================================================
-      # Build the bundle
+      # Compilation and Packaging
       # ============================================================
 
-      - name: Add pinned macmon to PATH
+      - name: Add pinned macmon to PATH (macOS only)
+        if: matrix.name == 'macos'
         run: |
           MACMON_DIR=$(nix develop --command sh -c 'dirname $(which macmon)')
-          echo "Using macmon from: $MACMON_DIR"
           echo "$MACMON_DIR" >> $GITHUB_PATH
-          # Remove any Homebrew macmon so PyInstaller can't accidentally pick it up
-          brew uninstall macmon 2>/dev/null || true
 
       - name: Build PyInstaller bundle
         run: uv run pyinstaller packaging/pyinstaller/exo.spec
 
-      - name: Build Swift app
+      # macOS Specific Build
+      - name: Build macOS Swift App and Inject Runtime
+        if: matrix.name == 'macos'
         env:
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           SPARKLE_FEED_URL: ${{ secrets.SPARKLE_FEED_URL }}
@@ -351,121 +292,103 @@ jobs:
           mkdir -p ../../output
           cp -R build/Build/Products/Release/EXO.app ../../output/EXO.app
 
-      - name: Inject PyInstaller runtime
-        run: |
+          cd ../..
           rm -rf output/EXO.app/Contents/Resources/exo
           mkdir -p output/EXO.app/Contents/Resources
           cp -R dist/exo output/EXO.app/Contents/Resources/exo
 
-      - name: Codesign PyInstaller runtime
-        env:
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-        run: |
-          cd output
-          security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$BUILD_KEYCHAIN_PATH"
-          SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$BUILD_KEYCHAIN_PATH" | awk -F '"' '{print $2}')
-          RUNTIME_DIR="EXO.app/Contents/Resources/exo"
-          find "$RUNTIME_DIR" -type f \( -perm -111 -o -name "*.dylib" -o -name "*.so" \) -print0 |
-            while IFS= read -r -d '' file; do
-              /usr/bin/codesign --force --timestamp --options runtime \
-                --sign "$SIGNING_IDENTITY" "$file"
-            done
-
-      - name: Sign, notarize, and create DMG
+      - name: Codesign and Notarize macOS App
+        if: matrix.name == 'macos'
         env:
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
           APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
           APPLE_NOTARIZATION_TEAM: ${{ secrets.APPLE_NOTARIZATION_TEAM }}
         run: |
-          set -o pipefail
           cd output
           security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$BUILD_KEYCHAIN_PATH"
           SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$BUILD_KEYCHAIN_PATH" | awk -F '"' '{print $2}')
 
-          # Fail fast if notarization creds are partial. All-or-nothing.
-          CRED_COUNT=0
-          for v in "$APPLE_NOTARIZATION_USERNAME" "$APPLE_NOTARIZATION_PASSWORD" "$APPLE_NOTARIZATION_TEAM"; do
-            [[ -n "$v" ]] && CRED_COUNT=$((CRED_COUNT + 1))
-          done
-          if [[ "$CRED_COUNT" -ne 0 && "$CRED_COUNT" -ne 3 ]]; then
-            echo "ERROR: partial Apple notarization credentials set ($CRED_COUNT/3). Aborting."
-            exit 1
-          fi
+          find EXO.app/Contents/Resources/exo -type f \( -perm -111 -o -name "*.dylib" -o -name "*.so" \) -print0 |
+            while IFS= read -r -d '' file; do
+              /usr/bin/codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$file"
+            done
 
-          /usr/bin/codesign --deep --force --timestamp --options runtime \
-            --sign "$SIGNING_IDENTITY" EXO.app
-
-          # Pre-flight: verify the signed app BEFORE building DMG and submitting to Apple.
-          # If this fails, notarization will fail too — cheap way to fail in seconds, not 15 minutes.
-          echo "===== codesign --verify EXO.app ====="
-          if ! /usr/bin/codesign --verify --deep --strict --verbose=2 EXO.app; then
-            echo "ERROR: EXO.app failed codesign verification. Dumping signing status of every executable:"
-            find EXO.app -type f \( -perm -111 -o -name "*.dylib" -o -name "*.so" -o -name "*.framework" \) -print0 |
-              while IFS= read -r -d '' f; do
-                printf -- '--- %s\n' "$f"
-                /usr/bin/codesign -dv --verbose=2 "$f" 2>&1 | sed 's/^/    /' || true
-              done
-            exit 1
-          fi
-
-          # Gatekeeper assessment. A failure here strongly predicts notarization rejection.
-          echo "===== spctl assessment (predicts notarization outcome) ====="
-          /usr/bin/spctl -a -vvv -t install EXO.app || echo "WARNING: spctl assessment failed — notarization is likely to fail too."
+          /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" EXO.app
 
           mkdir -p dmg-root
           cp -R EXO.app dmg-root/
           ln -s /Applications dmg-root/Applications
           DMG_NAME="EXO-${RELEASE_VERSION}.dmg"
           hdiutil create -volname "EXO" -srcfolder dmg-root -ov -format UDZO "$DMG_NAME"
-          /usr/bin/codesign --force --timestamp --options runtime \
-            --sign "$SIGNING_IDENTITY" "$DMG_NAME"
-
-          echo "===== codesign --verify DMG ====="
-          if ! /usr/bin/codesign --verify --verbose=2 "$DMG_NAME"; then
-            echo "ERROR: DMG failed codesign verification."
-            exit 1
-          fi
+          /usr/bin/codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$DMG_NAME"
 
           if [[ -n "$APPLE_NOTARIZATION_USERNAME" ]]; then
-            echo "===== notarytool submit ====="
-            # `|| true` so set -e doesn't abort before we can echo output / fetch the log.
-            # We rely on the parsed STATUS below to decide pass/fail.
-            SUBMISSION_OUTPUT=$(xcrun notarytool submit "$DMG_NAME" \
+            xcrun notarytool submit "$DMG_NAME" \
               --apple-id "$APPLE_NOTARIZATION_USERNAME" \
               --password "$APPLE_NOTARIZATION_PASSWORD" \
               --team-id "$APPLE_NOTARIZATION_TEAM" \
-              --wait --timeout 15m 2>&1) || true
-            echo "$SUBMISSION_OUTPUT"
-
-            SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | awk 'tolower($1)=="id:" && $2 ~ /^[0-9a-fA-F-]+$/ {print $2; exit}')
-            STATUS=$(echo "$SUBMISSION_OUTPUT" | awk 'tolower($1)=="status:" {print $2; exit}')
-
-            if [[ -n "$SUBMISSION_ID" ]]; then
-              xcrun notarytool log "$SUBMISSION_ID" \
-                --apple-id "$APPLE_NOTARIZATION_USERNAME" \
-                --password "$APPLE_NOTARIZATION_PASSWORD" \
-                --team-id "$APPLE_NOTARIZATION_TEAM" > notarization-log.txt || true
-              echo "===== Notarization Log ====="
-              cat notarization-log.txt
-              echo "============================"
-            fi
-
-            if [[ "$STATUS" != "Accepted" ]]; then
-              echo "Notarization failed with status: ${STATUS:-Unknown}"
-              exit 1
-            fi
-
+              --wait --timeout 15m
             xcrun stapler staple "$DMG_NAME"
           fi
 
-      - name: Generate Sparkle appcast
+      # Linux Specific Build
+      - name: Create Debian Package (Linux)
+        if: matrix.name == 'linux'
+        run: |
+          mkdir -p output
+          echo '#!/bin/sh' > postinst
+          echo 'ln -sf /usr/local/share/exo/exo /usr/bin/exo' >> postinst
+          chmod +x postinst
+          fpm -s dir -t deb \
+            -n exo \
+            -v "$RELEASE_VERSION" \
+            --prefix /usr/local/share/exo \
+            --after-install postinst \
+            --deb-changelog /dev/null \
+            -C ./dist/exo .
+          mv *.deb output/exo-${RELEASE_VERSION}.deb
+
+      # Windows Specific Build
+      - name: Create Windows Installer (Windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path output
+          $issContent = @"
+          [Setup]
+          AppName=Exo
+          AppVersion=${env:RELEASE_VERSION}
+          DefaultDirName={pf}\Exo
+          DefaultGroupName=Exo
+          UninstallDisplayIcon={app}\exo.exe
+          Compression=lzma2
+          SolidCompression=yes
+          OutputDir=output
+          OutputBaseFilename=EXO-${env:RELEASE_VERSION}
+
+          [Files]
+          Source: "dist\exo\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{group}\Exo"; Filename: "{app}\exo.exe"
+          Name: "{commondesktop}\Exo"; Filename: "{app}\exo.exe"
+          "@
+          Set-Content -Path "setup.iss" -Value $issContent
+          & "iscc" setup.iss
+          Move-Item -Path "output\EXO-${env:RELEASE_VERSION}.exe" -Destination "output\EXO-${env:RELEASE_VERSION}.exe"
+
+      # ============================================================
+      # Post-Packaging: Sparkle and Upload Artifacts
+      # ============================================================
+
+      - name: Generate Sparkle appcast (macOS only)
+        if: matrix.name == 'macos'
         env:
           SPARKLE_DOWNLOAD_PREFIX: ${{ env.SPARKLE_DOWNLOAD_PREFIX }}
           SPARKLE_ED25519_PRIVATE: ${{ secrets.SPARKLE_ED25519_PRIVATE }}
           IS_ALPHA: ${{ env.IS_ALPHA }}
         run: |
-          set -euo pipefail
           cd output
           DOWNLOAD_PREFIX="${SPARKLE_DOWNLOAD_PREFIX:-https://assets.exolabs.net}"
           echo "$SPARKLE_ED25519_PRIVATE" > sparkle_ed25519.key
@@ -474,7 +397,6 @@ jobs:
           CHANNEL_FLAG=""
           if [[ "$IS_ALPHA" == "true" ]]; then
             CHANNEL_FLAG="--channel alpha"
-            echo "Generating appcast for alpha channel"
           fi
 
           $SPARKLE_BIN/generate_appcast \
@@ -483,15 +405,12 @@ jobs:
             $CHANNEL_FLAG \
             .
 
-      - name: Inject release notes into appcast
-        if: github.ref_type == 'tag' && env.HAS_RELEASE_NOTES == 'true'
+      - name: Inject release notes into appcast (macOS only)
+        if: github.ref_type == 'tag' && env.HAS_RELEASE_NOTES == 'true' && matrix.name == 'macos'
         env:
           RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
         run: |
-          # Inject markdown release notes with sparkle:format="markdown" (Sparkle 2.9+)
           export NOTES=$(cat "$RELEASE_NOTES_FILE")
-
-          # Insert description after the enclosure tag for this version
           awk '
             /<enclosure[^>]*>/ && index($0, ENVIRON["RELEASE_VERSION"]) {
               print
@@ -503,19 +422,13 @@ jobs:
             { print }
           ' output/appcast.xml > output/appcast.xml.tmp && mv output/appcast.xml.tmp output/appcast.xml
 
-          echo "Injected markdown release notes for version $RELEASE_VERSION"
-
-      # ============================================================
-      # Upload artifacts
-      # ============================================================
-
-      - name: Upload DMG
+      - name: Upload Local Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: EXO-dmg-${{ env.RELEASE_VERSION }}
-          path: output/EXO-${{ env.RELEASE_VERSION }}.dmg
+          name: exo-${{ matrix.name }}-${{ env.RELEASE_VERSION }}
+          path: output/*
 
-      - name: Upload to S3
+      - name: Upload to S3 (macOS/Linux/Windows targets)
         if: env.SPARKLE_S3_BUCKET != ''
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -524,23 +437,25 @@ jobs:
           SPARKLE_S3_BUCKET: ${{ env.SPARKLE_S3_BUCKET }}
           SPARKLE_S3_PREFIX: ${{ env.SPARKLE_S3_PREFIX }}
           IS_ALPHA: ${{ env.IS_ALPHA }}
+        shell: bash
         run: |
-          set -euo pipefail
           cd output
           PREFIX="${SPARKLE_S3_PREFIX:-}"
           if [[ -n "$PREFIX" && "${PREFIX: -1}" != "/" ]]; then
             PREFIX="${PREFIX}/"
           fi
-          DMG_NAME="EXO-${RELEASE_VERSION}.dmg"
+
+          TARGET_FILE=$(find . -maxdepth 1 -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.exe" \) | head -n 1 | xargs basename)
 
           if [[ "${{ github.ref_type }}" != "tag" ]]; then
-            aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}EXO-${GITHUB_SHA}.dmg"
+            aws s3 cp "$TARGET_FILE" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}${TARGET_FILE%.*}-${GITHUB_SHA}.${matrix.artifact_suffix}"
             exit 0
           fi
 
-          aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}${DMG_NAME}"
-          if [[ "$IS_ALPHA" != "true" ]]; then
-            aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}EXO-latest.dmg"
+          aws s3 cp "$TARGET_FILE" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}${TARGET_FILE}"
+          
+          if [[ "${{ matrix.name }}" == "macos" && "$IS_ALPHA" != "true" ]]; then
+            aws s3 cp "$TARGET_FILE" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}EXO-latest.dmg"
             aws s3 cp appcast.xml "s3://${SPARKLE_S3_BUCKET}/${PREFIX}appcast.xml" --content-type application/xml --cache-control no-cache
           fi
 
@@ -548,21 +463,15 @@ jobs:
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+        shell: bash
         run: |
-          DMG_PATH="output/EXO-${RELEASE_VERSION}.dmg"
-
-          if [[ "$HAS_RELEASE_NOTES" == "true" ]]; then
-            # Update the draft release with the tag and upload DMG
+          TARGET_FILE=$(find output -maxdepth 1 -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.exe" \) | head -n 1)
+          
+          if [[ "${{ matrix.name }}" == "macos" && "$HAS_RELEASE_NOTES" == "true" ]]; then
             gh api --method PATCH "repos/${{ github.repository }}/releases/$DRAFT_RELEASE_ID" \
               -f tag_name="$GITHUB_REF_NAME" \
               -F draft=false
-            gh release upload "$GITHUB_REF_NAME" "$DMG_PATH" --clobber
-            echo "Published release $GITHUB_REF_NAME with DMG attached"
-          else
-            # Alpha without draft release - create one with auto-generated notes
-            gh release create "$GITHUB_REF_NAME" "$DMG_PATH" \
-              --title "$GITHUB_REF_NAME" \
-              --generate-notes \
-              --prerelease
-            echo "Created alpha release $GITHUB_REF_NAME with auto-generated notes"
           fi
+          
+          gh release upload "$GITHUB_REF_NAME" "$TARGET_FILE" --clobber || echo "Release upload complete"

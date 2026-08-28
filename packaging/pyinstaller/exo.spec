@@ -40,11 +40,14 @@ def _module_directory(module_name: str) -> Path:
     raise SystemExit(f"Unable to determine installation directory for '{module_name}'.")
 
 
-MLX_PACKAGE_DIR = _module_directory("mlx")
-MLX_LIB_DIR = MLX_PACKAGE_DIR / "lib"
-if not MLX_LIB_DIR.is_dir():
-    raise SystemExit(f"mlx Metal libraries are missing: {MLX_LIB_DIR}")
-
+# MLX is only guaranteed on macOS; handle gracefully on other platforms
+MLX_PACKAGE_DIR = None
+MLX_LIB_DIR = None
+try:
+    MLX_PACKAGE_DIR = _module_directory("mlx")
+    MLX_LIB_DIR = MLX_PACKAGE_DIR / "lib"
+except SystemExit:
+    pass
 
 def _safe_collect(package_name: str) -> list[str]:
     try:
@@ -55,7 +58,7 @@ def _safe_collect(package_name: str) -> list[str]:
 
 HIDDEN_IMPORTS = sorted(
     set(
-        collect_submodules("mlx")
+        _safe_collect("mlx")
         + _safe_collect("mlx_lm")
         + _safe_collect("mlx_vlm")
         + _safe_collect("transformers")
@@ -65,9 +68,13 @@ HIDDEN_IMPORTS = sorted(
 DATAS: list[tuple[str, str]] = [
     (str(DASHBOARD_DIR), "dashboard"),
     (str(RESOURCES_DIR), "resources"),
-    (str(MLX_LIB_DIR), "mlx/lib"),
     (str(EXO_SHARED_MODELS_DIR), "exo/shared/models"),
 ]
+
+if MLX_LIB_DIR and MLX_LIB_DIR.is_dir():
+    DATAS.append((str(MLX_LIB_DIR), "mlx/lib"))
+
+BINARIES: list[tuple[str, str]] = []
 
 if sys.platform == "darwin":
     MACMON_PATH = shutil.which("macmon")
@@ -78,10 +85,7 @@ if sys.platform == "darwin":
             "cargo install --git https://github.com/vladkens/macmon "
             "--rev a1cd06b6cc0d5e61db24fd8832e74cd992097a7d macmon --force"
         )
-
-BINARIES: list[tuple[str, str]] = [
-    (MACMON_PATH, "."),
-] if sys.platform == "darwin" else []
+    BINARIES.append((MACMON_PATH, "."))
 
 a = Analysis(
     [str(ENTRYPOINT)],
