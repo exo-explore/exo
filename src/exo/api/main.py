@@ -240,6 +240,7 @@ class API:
         self,
         node_id: NodeId,
         *,
+        host: str,
         port: int,
         event_receiver: Receiver[IndexedEvent],
         command_sender: Sender[ForwarderCommand],
@@ -256,6 +257,7 @@ class API:
         self.election_receiver = election_receiver
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
+        self.host = host
         self.port = port
         self._sent_image_hashes: set[str] = set()
 
@@ -1939,7 +1941,7 @@ class API:
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
-        cfg.bind = [f"0.0.0.0:{self.port}"]
+        cfg.bind = [f"{self.host}:{self.port}"]
         # nb: shared.logging needs updating if any of this changes
         cfg.accesslog = None
         cfg.errorlog = "-"

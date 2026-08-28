@@ -1,7 +1,6 @@
 import os
 import shutil
 import sys
-import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from subprocess import CalledProcessError
@@ -13,7 +12,8 @@ from anyio.streams.buffered import BufferedByteReceiveStream
 from loguru import logger
 from pydantic import ValidationError
 
-from exo.shared.constants import EXO_CONFIG_FILE, EXO_DEFAULT_MODELS_DIR
+from exo.shared.config import NodeConfig
+from exo.shared.constants import EXO_DEFAULT_MODELS_DIR
 from exo.shared.types.backends import Backend
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
@@ -290,24 +290,6 @@ class ThunderboltBridgeInfo(TaggedModel):
         except Exception as e:
             logger.opt(exception=e).warning("Failed to gather Thunderbolt Bridge info")
             return None
-
-
-class NodeConfig(TaggedModel):
-    """Node configuration from EXO_CONFIG_FILE, reloaded from the file only at startup. Other changes should come in through the API and propagate from there"""
-
-    @classmethod
-    async def gather(cls) -> Self | None:
-        cfg_file = anyio.Path(EXO_CONFIG_FILE)
-        await cfg_file.parent.mkdir(parents=True, exist_ok=True)
-        await cfg_file.touch(exist_ok=True)
-        async with await cfg_file.open("rb") as f:
-            try:
-                contents = (await f.read()).decode("utf-8")
-                data = tomllib.loads(contents)
-                return cls.model_validate(data)
-            except (tomllib.TOMLDecodeError, UnicodeDecodeError, ValidationError):
-                logger.warning("Invalid config file, skipping...")
-                return None
 
 
 class MiscData(TaggedModel):
