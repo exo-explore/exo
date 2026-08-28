@@ -229,6 +229,47 @@ def has_non_kv_caches(cache: KVCacheType) -> bool:
     return any(is_non_trimmable_cache_entry(c) for c in cache)
 
 
+# Max snapshots retained per cache entry. Each CacheSnapshot pins detached GPU
+# copies of every non-trimmable (SSM/ArraysCache, RotatingKVCache) layer, so
+# retaining one per ~4096-token prefill chunk makes snapshot memory grow linearly
+# with context — the dominant residual cost when a single entry is grown to long
+# contexts on hybrid models (~56 MB/snapshot on Qwen3.5-122B, so a full 256K
+# context = 64 snapshots ≈ 3.6 GB). A sliding window of the most-recent N caps
+# this at N×per-snapshot (~0.9 GB here) while preserving the restore points
+# in-place grows actually use (they always extend from the tip).
+_MAX_RETAINED_SNAPSHOTS = 16
+
+
+def _bounded_snapshots(snapshots: list[CacheSnapshot]) -> list[CacheSnapshot]:
+    """Deduplicate snapshots by token position and bound the retained count.
+
+    Returned list is sorted ascending by ``token_count``.
+    """
+    # Deduplicate by position, keeping the most-recently-appended snapshot per
+    # position. Repeated in-place grows re-snapshot positions the kept old
+    # snapshots already cover, which would otherwise grow `_snapshots`
+    # unbounded even at constant context.
+    # TODO: keying on token_count alone is safe only while a position uniquely
+    # identifies the prefix within an entry (grows are strict prefix-extensions).
+    # If edit-and-regenerate, sliding-window/prefix trimming, cross-entry
+    # snapshot sharing, per-request adapter/LoRA swap, or branchy decoding
+    # (beam/parallel/speculative) is added, enrich the key to
+    # (token_count, prefix_hash[, media/adapter id]) — else a stale snapshot
+    # could be restored for a different prefix (silent wrong output).
+    by_position: dict[int, CacheSnapshot] = {}
+    for snapshot in snapshots:
+        by_position[snapshot.token_count] = snapshot
+    deduped = [by_position[pos] for pos in sorted(by_position)]
+
+    # Sliding window: keep only the most-recent N positions. In-place grows
+    # always extend from the tip, so the newest snapshots are the ones future
+    # grows restore from — dropping the oldest is never incorrect: a later hit on
+    # a prefix older than the window finds no snapshot <= target, so get_kv_cache
+    # returns a fresh cache (matched_index=None) and the request takes a full cold
+    # prefill — correct, just slower than a partial-hit reuse for that one request.
+    return deduped[-_MAX_RETAINED_SNAPSHOTS:]
+
+
 class KVPrefixCache:
     def __init__(self, group: mx.distributed.Group | None):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
@@ -261,7 +302,9 @@ class KVPrefixCache:
         self._evict_if_needed()
         self.prompts.append(prompt_tokens)
         self.caches.append(deepcopy(cache))
-        self._snapshots.append(ssm_snapshots)
+        self._snapshots.append(
+            _bounded_snapshots(ssm_snapshots) if ssm_snapshots else None
+        )
         self._media_regions.append(media_regions or [])
         self.prefill_tps.append(prefill_tps)
         self._access_counter += 1
@@ -288,7 +331,7 @@ class KVPrefixCache:
 
         self.prompts[index] = prompt_tokens
         self.caches[index] = deepcopy(cache)
-        self._snapshots[index] = merged or None
+        self._snapshots[index] = _bounded_snapshots(merged) or None
         self._media_regions[index] = media_regions or []
         self.prefill_tps[index] = prefill_tps
         self._access_counter += 1
