@@ -14,8 +14,8 @@ import pytest
 from mlx.utils import tree_flatten, tree_unflatten
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+import exo.shared.config as config
 from exo.download.download_utils import resolve_existing_model
-from exo.shared.constants import EXO_MODELS_DIRS, EXO_MODELS_READ_ONLY_DIRS
 from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import (
     InputMessage,
@@ -106,6 +106,11 @@ def _reduce_config(cfg: dict[str, Any]) -> dict[str, Any]:
 # ── Helpers ───────────────────────────────────────────────────────────────── #
 
 
+def _search_dirs():
+    m = config.bootstrap().models_dirs
+    return (*m.models_read_only_dirs, *m.models_dirs)
+
+
 def _find_snapshot(hub_name: str) -> Path | None:
     """Locate a model directory under exo's models dirs.
 
@@ -117,7 +122,7 @@ def _find_snapshot(hub_name: str) -> Path | None:
     if found is not None:
         return found
     normalized = model_id.normalize()
-    for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
+    for search_dir in _search_dirs():
         candidate = search_dir / normalized
         if candidate.is_dir():
             return candidate

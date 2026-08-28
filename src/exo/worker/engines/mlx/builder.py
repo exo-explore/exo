@@ -1,11 +1,11 @@
 import contextlib
-import os
 from collections.abc import Generator
 from dataclasses import dataclass
 
 import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+import exo.shared.config as config
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import Event
 from exo.shared.types.tasks import TaskId
@@ -83,9 +83,9 @@ class MlxBuilder(Builder):
         kv_prefix_cache = KVPrefixCache(self.group)
 
         device_rank = 0 if self.group is None else self.group.rank()
-        if os.environ.get("EXO_NO_BATCH"):
-            logger.info("using SequentialGenerator (batching disabled)")
-            return SequentialGenerator(
+        if config.app().continuous_batching_enabled:
+            logger.info("using BatchGenerator")
+            return BatchGenerator(
                 model=self.inference_model,
                 tokenizer=self.tokenizer,
                 group=self.group,
@@ -98,8 +98,8 @@ class MlxBuilder(Builder):
                 vision_processor=vision_processor,
             )
         else:
-            logger.info("using BatchGenerator")
-            return BatchGenerator(
+            logger.info("using SequentialGenerator (batching disabled)")
+            return SequentialGenerator(
                 model=self.inference_model,
                 tokenizer=self.tokenizer,
                 group=self.group,

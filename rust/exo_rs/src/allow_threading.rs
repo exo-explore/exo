@@ -1,4 +1,4 @@
-//! SEE: https://pyo3.rs/v0.26.0/async-await.html#detaching-from-the-interpreter-across-await
+//! SEE: https://pyo3.rs/v0.28.3/async-await#detaching-from-the-interpreter-across-await
 //!
 
 use pin_project::pin_project;
@@ -9,7 +9,7 @@ use std::{
     task::{Context, Poll},
 };
 
-/// SEE: https://pyo3.rs/v0.26.0/async-await.html#detaching-from-the-interpreter-across-await
+/// SEE: https://pyo3.rs/v0.28.3/async-await#detaching-from-the-interpreter-across-await
 #[pin_project]
 #[repr(transparent)]
 pub(crate) struct AllowThreads<F>(#[pin] F);

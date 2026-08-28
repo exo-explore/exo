@@ -58,7 +58,6 @@ from exo.utils.info_gatherer.info_gatherer import (
     MemoryUsage,
     MiscData,
     NodeBackends,
-    NodeConfig,
     NodeDiskUsage,
     NodeNetworkInterfaces,
     RdmaCtlStatus,
@@ -372,8 +371,6 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             update["node_memory"] = {**state.node_memory, event.node_id: info}
         case NodeDiskUsage():
             update["node_disk"] = {**state.node_disk, event.node_id: info.disk_usage}
-        case NodeConfig():
-            pass
         case MiscData():
             current_identity = state.node_identities.get(event.node_id, NodeIdentity())
             new_identity = current_identity.model_copy(

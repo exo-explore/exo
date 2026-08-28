@@ -23,6 +23,7 @@ from hypercorn.typing import ASGIFramework
 from hypercorn.utils import LifespanTimeoutError, ShutdownError
 from loguru import logger
 
+import exo.shared.config as config
 from exo.api.adapters.chat_completions import (
     chat_request_to_text_generation,
     collect_chat_response,
@@ -128,12 +129,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
-    ENABLE_DISAGGREGATION,
-    EXO_CACHE_HOME,
-    EXO_EVENT_LOG_DIR,
-    EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
-    EXO_TRACING_CACHE_DIR,
 )
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
@@ -207,9 +203,6 @@ from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
 
-_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
-ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
-
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
     return f"image/{image_format or 'png'}"
@@ -225,12 +218,12 @@ def _ensure_seed(params: AdvancedImageParams | None) -> AdvancedImageParams:
 
 
 def _require_disaggregation_enabled() -> None:
-    if not ENABLE_DISAGGREGATION:
+    if not config.app().disaggregation_enabled:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(
                 "Prefill/decode disaggregation is disabled. "
-                "Set ENABLE_DISAGGREGATION=true to enable."
+                "Run with --enable-disaggregation or EXO_DISAGGREGATION_ENABLED=true to enable."
             ),
         )
 
@@ -248,7 +241,8 @@ class API:
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
-        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
+        self._api_event_log_dir = config.bootstrap().event_log_dir / "api"
+        self._event_log = DiskEventLog(self._api_event_log_dir)
         self._system_id = SystemId()
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
@@ -258,6 +252,10 @@ class API:
         self.last_completed_election: int = 0
         self.port = port
         self._sent_image_hashes: set[str] = set()
+        self._tracing_cache_dir = config.bootstrap().tracing_cache_dir
+        self._onboarding_complete_file = (
+            config.bootstrap().exo_home.cache / "onboarding_complete"
+        )
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -292,13 +290,13 @@ class API:
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
         ] = {}
-        self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
+        self._image_store = ImageStore(config.bootstrap().image_cache_dir)
         self._tg: TaskGroup = TaskGroup()
 
     def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):
         logger.info("Resetting API State")
         self._event_log.close()
-        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
+        self._event_log = DiskEventLog(self._api_event_log_dir)
         self.state = State()
         self._system_id = SystemId()
         self._text_generation_queues = {}
@@ -693,10 +691,10 @@ class API:
         )
 
     async def get_feature_flags(self) -> dict[str, bool]:
-        return {"disaggregation": ENABLE_DISAGGREGATION}
+        return {"disaggregation": config.app().disaggregation_enabled}
 
     async def list_instance_links(self) -> list[InstanceLink]:
-        if not ENABLE_DISAGGREGATION:
+        if not config.app().disaggregation_enabled:
             return []
         return list(self.state.instance_links.values())
 
@@ -2020,7 +2018,7 @@ class API:
             )
             for t in event.traces
         ]
-        output_path = EXO_TRACING_CACHE_DIR / f"trace_{event.task_id}.json"
+        output_path = self._tracing_cache_dir / f"trace_{event.task_id}.json"
         export_trace(traces, output_path)
         logger.debug(f"Saved merged trace to {output_path}")
 
@@ -2082,10 +2080,9 @@ class API:
         await self._send_download(command)
         return CancelDownloadResponse(command_id=command.command_id)
 
-    @staticmethod
-    def _get_trace_path(task_id: str) -> Path:
-        trace_path = EXO_TRACING_CACHE_DIR / f"trace_{task_id}.json"
-        if not trace_path.resolve().is_relative_to(EXO_TRACING_CACHE_DIR.resolve()):
+    def _get_trace_path(self, task_id: str) -> Path:
+        trace_path = self._tracing_cache_dir / f"trace_{task_id}.json"
+        if not trace_path.resolve().is_relative_to(self._tracing_cache_dir.resolve()):
             raise HTTPException(status_code=400, detail=f"Invalid task ID: {task_id}")
         return trace_path
 
@@ -2093,7 +2090,7 @@ class API:
         traces: list[TraceListItem] = []
 
         for trace_file in sorted(
-            EXO_TRACING_CACHE_DIR.glob("trace_*.json"),
+            self._tracing_cache_dir.glob("trace_*.json"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         ):
@@ -2199,9 +2196,9 @@ class API:
         return DeleteTracesResponse(deleted=deleted, not_found=not_found)
 
     async def get_onboarding(self) -> JSONResponse:
-        return JSONResponse({"completed": ONBOARDING_COMPLETE_FILE.exists()})
+        return JSONResponse({"completed": self._onboarding_complete_file.exists()})
 
     async def complete_onboarding(self) -> JSONResponse:
-        ONBOARDING_COMPLETE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        ONBOARDING_COMPLETE_FILE.write_text("true")
+        self._onboarding_complete_file.parent.mkdir(parents=True, exist_ok=True)
+        self._onboarding_complete_file.write_text("true")
         return JSONResponse({"completed": True})

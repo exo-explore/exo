@@ -7,7 +7,7 @@ from typing import BinaryIO
 
 from anyio import ClosedResourceError, EndOfStream
 
-from exo.shared.constants import ENABLE_DISAGGREGATION
+import exo.shared.config as config
 from exo.shared.types.chunks import Chunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
@@ -126,7 +126,7 @@ class Runner:
         self.update_status(RunnerIdle())
 
     def _start_prefill_server(self) -> int | None:
-        if not ENABLE_DISAGGREGATION:
+        if not config.app().disaggregation_enabled:
             return None
         if self.device_rank != 0:
             return None

@@ -15,8 +15,8 @@ cd dashboard && npm install && npm run build && cd ..
 # Run exo (starts both master and worker with API at http://localhost:52415)
 uv run exo
 
-# Run with verbose logging
-uv run exo -v   # or -vv for more verbose
+# Run with debug logging
+uv run exo --verbosity=debug   # or: uv run exo -v debug
 
 # Run tests (excludes slow tests by default)
 uv run pytest

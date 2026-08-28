@@ -14,7 +14,7 @@ from anyio import (
 )
 from loguru import logger
 
-from exo.shared.constants import EXO_RUNNER_STDERR_LOG, EXO_RUNNER_STDOUT_LOG
+import exo.shared.config as config
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -76,9 +76,16 @@ class RunnerStdioHandler:
         *,
         stdout_rx: Receiver[bytes],
         stderr_rx: Receiver[bytes],
-        stdout_log_path: PathLike[str] = EXO_RUNNER_STDOUT_LOG,
-        stderr_log_path: PathLike[str] = EXO_RUNNER_STDERR_LOG,
+        stdout_log_path: PathLike[str] | None = None,
+        stderr_log_path: PathLike[str] | None = None,
     ) -> Self:
+        stdout_log_path = (
+            stdout_log_path or config.bootstrap().log_files.exo_runner_stdout_log
+        )
+        stderr_log_path = (
+            stderr_log_path or config.bootstrap().log_files.exo_runner_stderr_log
+        )
+
         # these are append only logs used to gather data for log template mining
         #
         # TODO: in the future use [Drain3](https://github.com/logpai/Drain3)
@@ -218,6 +225,7 @@ class RunnerSupervisor:
                 ev_send,
                 task_recv,
                 cancel_recv,
+                (config.bootstrap(), config.app()),
                 logger,
             ),
             daemon=True,

@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import anyio
 from loguru import logger
 
+import exo.shared.config as config
 from exo.master.placement import (
     add_instance_to_placements,
     cancel_unnecessary_downloads,
@@ -16,7 +17,6 @@ from exo.routing.event_router import (
     EventRouterClosedResourceError,
 )
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
     AddCustomModelCard,
     CreateInstance,
@@ -143,7 +143,8 @@ class Master:
         self.event_sender = event_sender
         self._system_id = SystemId()
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
-        self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
+        self._master_event_log_dir = config.bootstrap().event_log_dir / "master"
+        self._event_log = DiskEventLog(self._master_event_log_dir)
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
 
@@ -288,7 +289,7 @@ class Master:
 
                             self.command_task_mapping[command.command_id] = task_id
 
-                            if EXO_TRACING_ENABLED:
+                            if config.app().tracing_enabled:
                                 selected_instance = self.state.instances.get(
                                     selected_instance_id
                                 )
@@ -344,7 +345,7 @@ class Master:
 
                             self.command_task_mapping[command.command_id] = task_id
 
-                            if EXO_TRACING_ENABLED:
+                            if config.app().tracing_enabled:
                                 selected_instance = self.state.instances.get(
                                     selected_instance_id
                                 )

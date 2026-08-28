@@ -34,7 +34,7 @@ jobs:
       SPARKLE_S3_PREFIX: ${{ secrets.SPARKLE_S3_PREFIX }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
       EXO_BUILD_NUMBER: ${{ github.run_number }}
-      EXO_LIBP2P_NAMESPACE: ${{ github.ref_name }}
+      EXO_NAMESPACE: ${{ github.ref_name }}
 
     steps:
       # ============================================================

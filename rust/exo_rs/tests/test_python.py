@@ -1,9 +1,12 @@
 import asyncio
+from multiprocessing.context import SpawnProcess
 import os
+import multiprocessing as mp
 
 import pytest
 from _pytest.capture import CaptureFixture
 from exo_rs import (
+    CliArgs,
     NetworkingHandle,
     Pidfile,
     FromSwarm,
@@ -13,7 +16,7 @@ from exo_rs import (
 @pytest.mark.asyncio
 async def test_sleep_on_multiple_items() -> None:
     print("PYTHON: starting handle")
-    h = NetworkingHandle.new(os.urandom(16).hex().lstrip("0"), 52414, 52413)
+    h = NetworkingHandle.new(os.urandom(16).hex().lstrip("0"), "default", 52414, 52413)
     print("PYTHON: handle started")
 
     rt = asyncio.create_task(_await_recv(h))
@@ -25,13 +28,6 @@ async def test_sleep_on_multiple_items() -> None:
         await h.gossipsub_publish("topic", b"somehting or other")
 
 
-def test_pidfile(capsys: CaptureFixture[str]):
-    with capsys.disabled():
-        print("\nbefore python")
-        scoped_lock_file()
-        print("after python")
-
-
 async def _await_recv(h: NetworkingHandle):
     while True:
         event = await h.recv()
@@ -40,10 +36,21 @@ async def _await_recv(h: NetworkingHandle):
                 print(f"PYTHON: connection update: {c}")
             case FromSwarm.Message() as m:
                 print(f"PYTHON: message: {m}")
+            case _:
+                raise Exception("logical error")
 
 
-def scoped_lock_file():
-    a = Pidfile("/tmp/lock.pid", 0o0600)
+def test_pickling(capsys: CaptureFixture[str]):
+    with capsys.disabled():
+        p = mp.get_context("spawn").Process(
+            target=run_mp, args=(CliArgs.parse_from(["exo"]),)
+        )
+        p.start()
+        p.join()
+
+
+def run_mp(args: CliArgs):
+    print("it got here")
 
 
 if __name__ == "__main__":
