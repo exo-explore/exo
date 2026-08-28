@@ -198,6 +198,7 @@ class RunnerSupervisor:
     _cancel_watch_runner: anyio.CancelScope = field(
         default_factory=anyio.CancelScope, init=False
     )
+    _stopped: anyio.Event = field(default_factory=anyio.Event, init=False)
 
     @classmethod
     async def create(
@@ -206,13 +207,14 @@ class RunnerSupervisor:
         bound_instance: BoundInstance,
         event_sender: Sender[Event],
         initialize_timeout: float = 400,
+        target: Callable[..., object] = entrypoint,
     ) -> Self:
         ev_send, ev_recv = mp_channel[Event | RunnerTerminationError]()
         task_sender, task_recv = mp_channel[Task]()
         cancel_sender, cancel_recv = mp_channel[TaskId]()
 
         runner_process = AsyncProcess(
-            target=entrypoint,
+            target=target,
             args=(
                 bound_instance,
                 ev_send,
@@ -266,14 +268,24 @@ class RunnerSupervisor:
             with contextlib.suppress(ClosedResourceError):
                 self._cancel_sender.close()
 
-            with anyio.CancelScope(shield=True):
-                await self.runner_process.stop()
-                logger.info(
-                    f"Runner process successfully terminated: {self.runner_process.exitcode}"
-                )
+            try:
+                with anyio.CancelScope(shield=True):
+                    await self.runner_process.stop()
+                    logger.info(
+                        f"Runner process successfully terminated: {self.runner_process.exitcode}"
+                    )
+            finally:
+                self._stopped.set()
 
     def shutdown(self):
         self._tg.cancel_tasks()
+
+    async def wait_stopped(self) -> None:
+        """Wait until run() has fully finished, including the OS process
+        actually exiting. Used to make sure a runner's resources (e.g. an
+        RDMA queue pair) are released before a replacement is created for
+        the same slot."""
+        await self._stopped.wait()
 
     async def start_task(self, task: Task):
         if task.task_id in self.pending:

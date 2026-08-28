@@ -475,6 +475,10 @@ class Master:
             for instance_id, instance in self.state.instances.items():
                 for node_id in instance.shard_assignments.node_to_runner:
                     if node_id not in connected_node_ids:
+                        logger.warning(
+                            f"Deleting instance {instance_id}: node {node_id} "
+                            "is no longer in topology"
+                        )
                         await self.event_sender.send(
                             InstanceDeleted(instance_id=instance_id)
                         )

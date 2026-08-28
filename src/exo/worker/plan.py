@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, ModelId, NodeId
+from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import (
     CancelTask,
     ConnectToGroup,
@@ -42,6 +43,34 @@ from exo.shared.types.worker.runners import (
 )
 from exo.utils.keyed_backoff import KeyedBackoff
 from exo.worker.runner.supervisor import RunnerSupervisor
+
+
+def instance_to_reset_backoff(
+    event: Event,
+    runners: Mapping[RunnerId, RunnerSupervisor],
+) -> InstanceId | None:
+    """Return the instance whose retry backoff should be cleared, if this
+    event shows our local runner reached a fully-serving state.
+
+    The backoff must reset on success, not just on InstanceDeleted --
+    otherwise a node dragged into repeated restarts by a *sibling* runner's
+    failure (see _kill_runner) silently burns its own retry budget for a
+    fault that was never its own, and can eventually request deletion of an
+    instance that this node was serving just fine.
+
+    Reset happens at RunnerReady/RunnerRunning rather than earlier states
+    (e.g. RunnerConnected) so a rank that connects but keeps crashing later
+    (bad weights, OOM during load) still trips the retry-exhaustion circuit
+    breaker instead of looping forever.
+    """
+    if not isinstance(event, RunnerStatusUpdated):
+        return None
+    if not isinstance(event.runner_status, (RunnerReady, RunnerRunning)):
+        return None
+    runner = runners.get(event.runner_id)
+    if runner is None:
+        return None
+    return runner.bound_instance.instance.instance_id
 
 
 def plan(
