@@ -42,7 +42,6 @@ from exo.shared.types.profiling import (
 )
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
-from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import (
@@ -65,18 +64,6 @@ from exo.utils.info_gatherer.info_gatherer import (
     StaticNodeInformation,
     ThunderboltBridgeInfo,
 )
-
-
-def _is_rdma_ctl_enabled(
-    node_id: NodeId, node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus]
-) -> bool:
-    """A node is RDMA-capable only if rdma_ctl status has been observed as enabled.
-
-    Missing entries default to ``False`` — if we have not yet observed (or the node
-    cannot run) ``rdma_ctl``, it must not participate in an RDMA-backed instance.
-    """
-    status = node_rdma_ctl.get(node_id)
-    return status is not None and status.enabled
 
 
 def event_apply(event: Event, state: State) -> State:
@@ -408,59 +395,26 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 event.node_id: NodeThunderboltInfo(interfaces=info.idents),
             }
         case MacThunderboltConnections():
-            conn_map = {
-                tb_ident.domain_uuid: (nid, tb_ident.rdma_interface)
-                for nid in state.node_thunderbolt
-                for tb_ident in state.node_thunderbolt[nid].interfaces
+            update["node_thunderbolt_connections"] = {
+                **state.node_thunderbolt_connections,
+                event.node_id: info,
             }
-            source_is_rdma_enabled = _is_rdma_ctl_enabled(
-                event.node_id, state.node_rdma_ctl
-            )
-            as_rdma_conns = [
-                Connection(
-                    source=event.node_id,
-                    sink=conn_map[tb_conn.sink_uuid][0],
-                    edge=RDMAConnection(
-                        source_rdma_iface=conn_map[tb_conn.source_uuid][1],
-                        sink_rdma_iface=conn_map[tb_conn.sink_uuid][1],
-                    ),
-                )
-                for tb_conn in info.conns
-                if tb_conn.source_uuid in conn_map
-                if tb_conn.sink_uuid in conn_map
-                if source_is_rdma_enabled
-                and _is_rdma_ctl_enabled(
-                    conn_map[tb_conn.sink_uuid][0], state.node_rdma_ctl
-                )
-            ]
-            topology.replace_all_out_rdma_connections(event.node_id, as_rdma_conns)
         case ThunderboltBridgeInfo():
             new_tb_bridge: dict[NodeId, ThunderboltBridgeStatus] = {
                 **state.node_thunderbolt_bridge,
                 event.node_id: info.status,
             }
             update["node_thunderbolt_bridge"] = new_tb_bridge
-            # Only recompute cycles if the enabled status changed
-            old_status = state.node_thunderbolt_bridge.get(event.node_id)
-            old_enabled = old_status.enabled if old_status else False
-            new_enabled = info.status.enabled
-            if old_enabled != new_enabled:
-                update["thunderbolt_bridge_cycles"] = (
-                    topology.get_thunderbolt_bridge_cycles(
-                        new_tb_bridge, state.node_network
-                    )
+            update["thunderbolt_bridge_cycles"] = (
+                topology.get_thunderbolt_bridge_cycles(
+                    new_tb_bridge, state.node_network
                 )
+            )
         case RdmaCtlStatus():
             update["node_rdma_ctl"] = {
                 **state.node_rdma_ctl,
                 event.node_id: NodeRdmaCtlStatus(enabled=info.enabled),
             }
-            # If RDMA just got disabled on this node, drop any RDMA edges touching it
-            # so placement / topology consumers cannot pick a disabled node for an
-            # RDMA-backed instance. (Edges will repopulate on the next
-            # MacThunderboltConnections poll once both endpoints are enabled again.)
-            if not info.enabled:
-                topology.remove_all_rdma_connections_touching(event.node_id)
         case NodeBackends():
             update["node_backends"] = {
                 **state.node_backends,
@@ -471,16 +425,48 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
 
 
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:
-    topology = copy.deepcopy(state.topology)
-    topology.add_connection(event.conn)
-    return state.model_copy(update={"topology": topology})
+    source_connections = state.node_socket_connections.get(event.conn.source, {})
+    sink_connections = source_connections.get(event.conn.sink, [])
+
+    update = {
+        "node_socket_connections": {
+            **state.node_socket_connections,
+            event.conn.source: {
+                **source_connections,
+                event.conn.sink: sink_connections
+                if event.conn.edge in sink_connections
+                else [*sink_connections, event.conn.edge],
+            },
+        }
+    }
+    return state.model_copy(update=update)
 
 
 def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> State:
-    topology = copy.deepcopy(state.topology)
-    topology.remove_connection(event.conn)
-    # TODO: Clean up removing the reverse connection
-    return state.model_copy(update={"topology": topology})
+    inner_update = {
+        sink: final_edges
+        for sink, edges in state.node_socket_connections.get(
+            event.conn.source, {}
+        ).items()
+        if (
+            final_edges := [
+                edge
+                for edge in edges
+                if (edge != event.conn.edge or sink != event.conn.sink)
+            ]
+        )
+    }
+    update = {
+        "node_socket_connections": {
+            source: maps
+            for source, maps in {
+                **state.node_socket_connections,
+                event.conn.source: inner_update,
+            }.items()
+            if maps
+        }
+    }
+    return state.model_copy(update=update)
 
 
 def apply_custom_model_card_added(event: CustomModelCardAdded, state: State) -> State:

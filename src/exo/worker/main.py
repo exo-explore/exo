@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import anyio
 from anyio import fail_after, to_thread
+from exo_rs import LVAggregator, SessionHandle
 from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
@@ -53,7 +54,7 @@ from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import InstanceId
 from exo.shared.types.worker.runners import RunnerId
-from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.channels import Receiver, Sender
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
@@ -73,6 +74,7 @@ class Worker:
         # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
+        session_handle: SessionHandle,
         api_port: int,
     ):
         self.node_id: NodeId = node_id
@@ -98,17 +100,17 @@ class Worker:
             base=0.5, cap=10.0
         )
         self._stopped: anyio.Event = anyio.Event()
+        self._sh: SessionHandle = session_handle
+        self.aggregator: LVAggregator = session_handle.last_value_aggregator("metrics")
 
     async def run(self):
         logger.info("Starting Worker")
 
-        info_send, info_recv = channel[GatheredInfo]()
-        info_gatherer: InfoGatherer = InfoGatherer(info_send)
+        info_gatherer: InfoGatherer = InfoGatherer(self._sh, self.node_id)
 
         try:
             async with self._tg as tg:
                 tg.start_soon(info_gatherer.run)
-                tg.start_soon(self._forward_info, info_recv)
                 tg.start_soon(self.plan_step)
                 tg.start_soon(self._event_applier)
                 tg.start_soon(self._poll_connection_updates)
@@ -388,14 +390,13 @@ class Worker:
 
     async def _poll_connection_updates(self):
         while True:
-            edges = set(
-                conn.edge for conn in self.state.topology.out_edges(self.node_id)
-            )
+            state = self.state.with_aggregator(self.aggregator)
+            edges = set(conn.edge for conn in state.topology.out_edges(self.node_id))
             conns: defaultdict[NodeId, set[str]] = defaultdict(set)
             async for ip, nid in check_reachable(
-                self.state.topology,
+                state.topology,
                 self.node_id,
-                self.state.node_network,
+                state.node_network,
                 api_port=self.api_port,
             ):
                 if ip in conns[nid]:
@@ -416,7 +417,7 @@ class Worker:
                         )
                     )
 
-            for conn in self.state.topology.out_edges(self.node_id):
+            for conn in state.topology.out_edges(self.node_id):
                 if not isinstance(conn.edge, SocketConnection):
                     continue
                 # ignore mDNS discovered connections

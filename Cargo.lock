@@ -1007,6 +1007,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "zenoh",
+ "zenoh-ext",
 ]
 
 [[package]]
@@ -1841,6 +1842,12 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
  "spin 0.9.8",
 ]
+
+[[package]]
+name = "leb128"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cc46bac87ef8093eed6f272babb833b6443374399985ac8ed28471ee0918545"
 
 [[package]]
 name = "leb128fmt"
@@ -5228,6 +5235,25 @@ dependencies = [
  "rand_chacha 0.3.1",
  "sha3",
  "zenoh-result",
+]
+
+[[package]]
+name = "zenoh-ext"
+version = "1.9.0"
+source = "git+https://github.com/evanev7/zenoh.git?branch=exo#aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+dependencies = [
+ "async-trait",
+ "bincode",
+ "flume",
+ "futures",
+ "leb128",
+ "serde",
+ "tokio",
+ "tracing",
+ "uhlc",
+ "zenoh",
+ "zenoh-macros",
+ "zenoh-util",
 ]
 
 [[package]]

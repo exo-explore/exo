@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 import anyio
+from exo_rs import LVAggregator
 from loguru import logger
 
 from exo.master.placement import (
@@ -130,6 +131,7 @@ class Master:
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
         download_command_sender: Sender[ForwarderDownloadCommand],
+        aggregator: LVAggregator,
     ):
         self.node_id = node_id
         self.session_id = session_id
@@ -146,6 +148,7 @@ class Master:
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
+        self.aggregator: LVAggregator = aggregator
 
     async def run(self):
         logger.info("Starting Master")
@@ -225,7 +228,8 @@ class Master:
                             params = command.task_params.model_copy(
                                 update={
                                     "prefill_endpoint": _prefill_endpoint_for(
-                                        self.state, decode_instance_id
+                                        self.state.with_aggregator(self.aggregator),
+                                        decode_instance_id,
                                     ),
                                 }
                             )
@@ -369,15 +373,16 @@ class Master:
                                 )
                             generated_events.extend(transition_events)
                         case PlaceInstance():
+                            state = self.state.with_aggregator(self.aggregator)
                             placement = place_instance(
                                 command,
-                                self.state.topology,
-                                self.state.instances,
-                                self.state.node_memory,
-                                self.state.node_network,
-                                self.state.node_backends,
-                                download_status=self.state.downloads,
-                                node_rdma_ctl=self.state.node_rdma_ctl,
+                                state.topology,
+                                state.instances,
+                                state.node_memory,
+                                state.node_network,
+                                state.node_backends,
+                                download_status=state.downloads,
+                                node_rdma_ctl=state.node_rdma_ctl,
                             )
                             transition_events = get_transition_events(
                                 self.state.instances, placement, self.state.tasks
@@ -471,7 +476,9 @@ class Master:
     async def _plan(self) -> None:
         while True:
             # kill broken instances
-            connected_node_ids = set(self.state.topology.list_nodes())
+            connected_node_ids = set(
+                self.state.with_aggregator(self.aggregator).topology.list_nodes()
+            )
             for instance_id, instance in self.state.instances.items():
                 for node_id in instance.shard_assignments.node_to_runner:
                     if node_id not in connected_node_ids:
@@ -481,7 +488,9 @@ class Master:
                         break
 
             # time out dead nodes
-            for node_id, time in self.state.last_seen.items():
+            for node_id, time in self.state.with_aggregator(
+                self.aggregator
+            ).last_seen.items():
                 now = datetime.now(tz=timezone.utc)
                 if now - time > timedelta(seconds=30):
                     logger.info(f"Manually removing node {node_id} due to inactivity")

@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import anyio
 from anyio import BrokenResourceError, ClosedResourceError
+from exo_rs import SessionHandle
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -246,6 +247,7 @@ class API:
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
+        session_handle: SessionHandle,
     ) -> None:
         self.state = State()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
@@ -258,6 +260,7 @@ class API:
         self.last_completed_election: int = 0
         self.port = port
         self._sent_image_hashes: set[str] = set()
+        self.aggregator = session_handle.last_value_aggregator("metrics")
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -409,10 +412,12 @@ class API:
         self.app.post("/onboarding")(self.complete_onboarding)
 
     def get_state(self, path: str = ""):
+        state = self.state.with_aggregator(self.aggregator)
+
         if path == "":
-            return self.state
+            return state
         try:
-            x = self.state.model_dump(by_alias=True)
+            x: Any = state.model_dump(by_alias=True)
             for attr in path.split("/"):
                 if attr != "":
                     if isinstance(x, dict):
@@ -476,6 +481,7 @@ class API:
         model_card = await ModelCard.load(model_id)
 
         try:
+            state = self.state.with_aggregator(self.aggregator)
             placements = get_instance_placements(
                 PlaceInstance(
                     model_card=model_card,
@@ -483,13 +489,13 @@ class API:
                     instance_meta=instance_meta,
                     min_nodes=min_nodes,
                 ),
-                node_memory=self.state.node_memory,
-                node_network=self.state.node_network,
-                node_backends=self.state.node_backends,
-                topology=self.state.topology,
-                current_instances=self.state.instances,
-                download_status=self.state.downloads,
-                node_rdma_ctl=self.state.node_rdma_ctl,
+                node_memory=state.node_memory,
+                node_network=state.node_network,
+                node_backends=state.node_backends,
+                topology=state.topology,
+                current_instances=state.instances,
+                download_status=state.downloads,
+                node_rdma_ctl=state.node_rdma_ctl,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -514,8 +520,9 @@ class API:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
         required_nodes = set(node_ids) if node_ids else None
+        state = self.state.with_aggregator(self.aggregator)
 
-        if len(list(self.state.topology.list_nodes())) == 0:
+        if len(list(state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
         try:
@@ -530,9 +537,7 @@ class API:
                 instance_combinations.extend(
                     [
                         (sharding, instance_meta, i)
-                        for i in range(
-                            1, len(list(self.state.topology.list_nodes())) + 1
-                        )
+                        for i in range(1, len(list(state.topology.list_nodes())) + 1)
                     ]
                 )
         # TODO: PDD
@@ -547,14 +552,14 @@ class API:
                         instance_meta=instance_meta,
                         min_nodes=min_nodes,
                     ),
-                    node_memory=self.state.node_memory,
-                    node_network=self.state.node_network,
-                    node_backends=self.state.node_backends,
-                    topology=self.state.topology,
-                    current_instances=self.state.instances,
+                    node_memory=state.node_memory,
+                    node_network=state.node_network,
+                    node_backends=state.node_backends,
+                    topology=state.topology,
+                    current_instances=state.instances,
                     required_nodes=required_nodes,
-                    download_status=self.state.downloads,
-                    node_rdma_ctl=self.state.node_rdma_ctl,
+                    download_status=state.downloads,
+                    node_rdma_ctl=state.node_rdma_ctl,
                 )
             except ValueError as exc:
                 if (model_card.model_id, sharding, instance_meta, 0) not in seen:
@@ -791,7 +796,11 @@ class API:
     async def _collect_text_generation_with_stats(
         self, command_id: CommandId
     ) -> BenchChatCompletionResponse:
-        sampler = PowerSampler(get_node_system=lambda: self.state.node_system)
+        sampler = PowerSampler(
+            get_node_system=lambda: self.state.with_aggregator(
+                self.aggregator
+            ).node_system
+        )
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         model: ModelId | None = None
@@ -1314,7 +1323,11 @@ class API:
         num_images: int,
         response_format: str,
     ) -> BenchImageGenerationResponse:
-        sampler = PowerSampler(get_node_system=lambda: self.state.node_system)
+        sampler = PowerSampler(
+            get_node_system=lambda: self.state.with_aggregator(
+                self.aggregator
+            ).node_system
+        )
         images: list[ImageData] = []
         stats: ImageGenerationStats | None = None
         async with anyio.create_task_group() as tg:
@@ -1778,7 +1791,7 @@ class API:
         """Calculate total available memory across all nodes in bytes."""
         total_available = Memory()
 
-        for memory in self.state.node_memory.values():
+        for memory in self.state.with_aggregator(self.aggregator).node_memory.values():
             total_available += memory.ram_available
 
         return total_available

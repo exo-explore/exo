@@ -10,11 +10,13 @@ from typing import Self, cast
 import anyio
 from anyio import fail_after, open_process, to_thread
 from anyio.streams.buffered import BufferedByteReceiveStream
+from exo_rs import LVPublisher, SessionHandle
 from loguru import logger
 from pydantic import ValidationError
 
 from exo.shared.constants import EXO_CONFIG_FILE, EXO_DEFAULT_MODELS_DIR
 from exo.shared.types.backends import Backend
+from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     DiskUsage,
@@ -27,7 +29,6 @@ from exo.shared.types.thunderbolt import (
     ThunderboltConnectivity,
     ThunderboltIdentifier,
 )
-from exo.utils.channels import Sender
 from exo.utils.pydantic_ext import TaggedModel
 from exo.utils.task_group import TaskGroup
 
@@ -401,9 +402,41 @@ GatheredInfo = (
 
 @dataclass
 class InfoGatherer:
-    info_sender: Sender[GatheredInfo]
+    session_handle: SessionHandle
+    node_id: NodeId
+    info_senders: dict[str, LVPublisher] = field(init=False, default_factory=dict)
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
     _psutil_enabled: bool = field(init=False, default=False)
+
+    async def send(self, info: GatheredInfo):
+        if (tag := info.tag()) not in self.info_senders:
+            self.info_senders[tag] = self.session_handle.last_value_publisher(
+                f"metrics/{self.node_id}/{tag}"
+            )
+        await self.info_senders[tag].put(info.model_dump_json())
+
+    async def run(self):
+        async with self._tg as tg:
+            if IS_DARWIN:
+                tg.start_soon(self._monitor_macmon, 1)
+                tg.start_soon(self._monitor_system_profiler_thunderbolt_data, 5)
+                tg.start_soon(self._monitor_thunderbolt_bridge_status, 10)
+                tg.start_soon(self._monitor_rdma_ctl_status, 10)
+            if not IS_DARWIN:
+                tg.start_soon(self._monitor_memory_usage, 1)
+            tg.start_soon(self._watch_system_info, 10)
+            tg.start_soon(self._monitor_misc, 60)
+            tg.start_soon(self._monitor_static_info, 60)
+            tg.start_soon(self._monitor_disk_usage, 30)
+
+            nc = await NodeConfig.gather()
+            if nc is not None:
+                await self.send(nc)
+
+            await self.send(await NodeBackends.gather())
+
+    def shutdown(self):
+        self._tg.cancel_tasks()
 
     async def _can_read_macmon_metrics(self, macmon_path: str) -> bool:
         try:
@@ -441,34 +474,11 @@ class InfoGatherer:
 
         return True
 
-    async def run(self):
-        async with self._tg as tg:
-            if IS_DARWIN:
-                tg.start_soon(self._monitor_macmon, 1)
-                tg.start_soon(self._monitor_system_profiler_thunderbolt_data, 5)
-                tg.start_soon(self._monitor_thunderbolt_bridge_status, 10)
-                tg.start_soon(self._monitor_rdma_ctl_status, 10)
-            if not IS_DARWIN:
-                tg.start_soon(self._monitor_memory_usage, 1)
-            tg.start_soon(self._watch_system_info, 10)
-            tg.start_soon(self._monitor_misc, 60)
-            tg.start_soon(self._monitor_static_info, 60)
-            tg.start_soon(self._monitor_disk_usage, 30)
-
-            nc = await NodeConfig.gather()
-            if nc is not None:
-                await self.info_sender.send(nc)
-
-            await self.info_sender.send(await NodeBackends.gather())
-
-    def shutdown(self):
-        self._tg.cancel_tasks()
-
     async def _monitor_static_info(self, static_info_poll_interval: float):
         while True:
             try:
                 with fail_after(30):
-                    await self.info_sender.send(await StaticNodeInformation.gather())
+                    await self.send(await StaticNodeInformation.gather())
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering static node info")
             await anyio.sleep(static_info_poll_interval)
@@ -477,7 +487,7 @@ class InfoGatherer:
         while True:
             try:
                 with fail_after(10):
-                    await self.info_sender.send(await MiscData.gather())
+                    await self.send(await MiscData.gather())
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering misc data")
             await anyio.sleep(misc_poll_interval)
@@ -498,12 +508,10 @@ class InfoGatherer:
                     idents = [
                         it for i in data if (it := i.ident(iface_map)) is not None
                     ]
-                    await self.info_sender.send(
-                        MacThunderboltIdentifiers(idents=idents)
-                    )
+                    await self.send(MacThunderboltIdentifiers(idents=idents))
 
                     conns = [it for i in data if (it := i.conn()) is not None]
-                    await self.info_sender.send(MacThunderboltConnections(conns=conns))
+                    await self.send(MacThunderboltConnections(conns=conns))
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering Thunderbolt data")
             await anyio.sleep(system_profiler_interval)
@@ -520,7 +528,7 @@ class InfoGatherer:
         )
         while True:
             try:
-                await self.info_sender.send(
+                await self.send(
                     MemoryUsage.from_psutil(override_memory=override_memory)
                 )
             except Exception as e:
@@ -532,7 +540,7 @@ class InfoGatherer:
             try:
                 with fail_after(10):
                     nics = await get_network_interfaces()
-                    await self.info_sender.send(NodeNetworkInterfaces(ifaces=nics))
+                    await self.send(NodeNetworkInterfaces(ifaces=nics))
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering network interfaces")
             await anyio.sleep(interface_watcher_interval)
@@ -545,7 +553,7 @@ class InfoGatherer:
                 with fail_after(30):
                     curr = await ThunderboltBridgeInfo.gather()
                     if curr is not None:
-                        await self.info_sender.send(curr)
+                        await self.send(curr)
             except Exception as e:
                 logger.opt(exception=e).warning(
                     "Error gathering Thunderbolt Bridge status"
@@ -557,7 +565,7 @@ class InfoGatherer:
             try:
                 curr = await RdmaCtlStatus.gather()
                 if curr is not None:
-                    await self.info_sender.send(curr)
+                    await self.send(curr)
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering RDMA ctl status")
             await anyio.sleep(rdma_ctl_poll_interval)
@@ -566,7 +574,7 @@ class InfoGatherer:
         while True:
             try:
                 with fail_after(5):
-                    await self.info_sender.send(await NodeDiskUsage.gather())
+                    await self.send(await NodeDiskUsage.gather())
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering disk usage")
             await anyio.sleep(disk_poll_interval)
@@ -611,7 +619,7 @@ class InfoGatherer:
                             )
                             text = data.decode("utf-8", errors="replace").strip()
                             metrics = MacmonMetrics.from_raw_json(text)
-                        await self.info_sender.send(metrics)
+                        await self.send(metrics)
             except TimeoutError:
                 logger.warning(
                     f"MacMon produced no output for {read_timeout}s, restarting"

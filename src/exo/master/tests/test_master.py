@@ -47,6 +47,11 @@ from exo.utils.channels import channel
 from exo.utils.info_gatherer.info_gatherer import NodeBackends
 
 
+class MockAggregator:
+    def dump(self) -> dict[str, str]:
+        return {}
+
+
 @pytest.mark.asyncio
 async def test_master():
     node_id = get_node_zid()
@@ -94,6 +99,7 @@ async def test_master():
         local_event_receiver=le_receiver,
         command_receiver=co_receiver,
         download_command_sender=fcds,
+        aggregator=MockAggregator(),  # pyright: ignore[reportArgumentType]
     )
     logger.info("run the master")
     async with anyio.create_task_group() as tg:

@@ -2,14 +2,19 @@
 # ruff: noqa: E501, F401, F403, F405
 
 import builtins
+import collections.abc
 import os
 import pathlib
 import typing
 __all__ = [
     "FromSwarm",
+    "LVAggregator",
+    "LVPublisher",
+    "LVSubscriber",
     "NetworkingHandle",
     "Pidfile",
     "PidfileError",
+    "SessionHandle",
 ]
 
 class FromSwarm:
@@ -30,6 +35,18 @@ class FromSwarm:
         def __new__(cls, topic: builtins.str, data: bytes) -> FromSwarm.Message: ...
     
     ...
+
+@typing.final
+class LVAggregator:
+    def dump(self) -> builtins.dict[builtins.str, builtins.str]: ...
+
+@typing.final
+class LVPublisher:
+    def put(self, data: builtins.str) -> collections.abc.Awaitable[None]: ...
+
+@typing.final
+class LVSubscriber:
+    def recv(self) -> collections.abc.Awaitable[tuple[str, str] | None]: ...
 
 @typing.final
 class NetworkingHandle:
@@ -110,4 +127,12 @@ class Pidfile:
 class PidfileError(builtins.Exception):
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
+
+@typing.final
+class SessionHandle:
+    @staticmethod
+    def new(identity: builtins.str, namespace: builtins.str, listen_port: builtins.int, discovery_service_port: builtins.int) -> tuple[SessionHandle, NetworkingHandle]: ...
+    def last_value_aggregator(self, prefix: builtins.str) -> LVAggregator: ...
+    def last_value_subscriber(self, kexpr: builtins.str) -> LVSubscriber: ...
+    def last_value_publisher(self, kexpr: builtins.str) -> LVPublisher: ...
 
