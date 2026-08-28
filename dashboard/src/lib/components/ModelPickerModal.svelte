@@ -22,6 +22,7 @@
     is_custom?: boolean;
     tasks?: string[];
     hugging_face_id?: string;
+    native_mtp?: { default_k: number; max_k: number } | null;
   }
 
   interface ModelGroup {

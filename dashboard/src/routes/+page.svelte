@@ -783,6 +783,7 @@
       quantization?: string;
       base_model?: string;
       capabilities?: string[];
+      native_mtp?: { default_k: number; max_k: number } | null;
     }>
   >([]);
   type ModelMemoryFitStatus =

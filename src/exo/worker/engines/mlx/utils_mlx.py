@@ -27,7 +27,7 @@ from mlx_lm.models.cache import KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.models.model_cards import ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 
 try:
@@ -160,6 +160,45 @@ def initialize_mlx(
     return mlx_distributed_init(bound_instance)
 
 
+def _native_mtp_loader_eligible(target_card: ModelCard, model_path: Path) -> bool:
+    """Decide whether ``load_mlx_items`` should dispatch the native MTP loader.
+
+    Three conditions, all required:
+
+    1. The card declares ``native_mtp`` (the operator opted in).
+    2. The on-disk checkpoint actually exposes recoverable MTP weights
+       (probe at :mod:`exo.worker.engines.mlx.mtp_probe` returns
+       ``is_recoverable=True``). MTPLX sidecar layout, original-HF
+       embedded layout, and oMLX embedded layout all qualify.
+    3. (Implicit at the call site) The placement is single-node --
+       ``load_mlx_items`` only calls this from the ``group is None``
+       branch. Native MTP is structurally single-node-only: the verify
+       forward through a TP-sharded target would amortise K+1 tokens
+       over K+1 compute units, eating the MTP speedup.
+
+    Returns ``False`` -- and the caller falls back to the stock loader --
+    when any condition fails. The fallback is conservative: operators who
+    declared ``native_mtp`` on a card whose weights happen to be
+    unrecoverable get a quiet downgrade instead of a hard load failure.
+    """
+    if target_card.native_mtp is None:
+        return False
+    # Local import to avoid pulling the probe (and safetensors) into the
+    # module-import path on workers that never load Qwen3.5/3.6.
+    from exo.worker.engines.mlx.mtp_probe import probe_mtp_weights
+
+    probe = probe_mtp_weights(model_path)
+    if not probe.is_recoverable:
+        logger.warning(
+            f"Card {target_card.model_id} declares native_mtp but the "
+            f"on-disk checkpoint at {model_path} has no recoverable MTP "
+            f"weights (probe verdict: format={probe.mtp_format}, "
+            f"count={probe.mtp_count}). Falling back to stock loader."
+        )
+        return False
+    return True
+
+
 def load_mlx_items(
     bound_instance: BoundInstance,
     group: mx.distributed.Group | None,
@@ -170,9 +209,27 @@ def load_mlx_items(
 
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
-        model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
+        target_card = bound_instance.bound_shard.model_card
+        model_path = build_model_path(target_card.model_id)
         start_time = time.perf_counter()
-        model, _ = load_model(model_path, lazy=True, strict=False)
+        # Native MTP path: only when (a) the card declares it AND (b) the
+        # placement is single-node (this branch) AND (c) the on-disk
+        # checkpoint actually exposes recoverable MTP weights. The vendored
+        # loader builds an MTP-aware model that the generator dispatches a
+        # native draft+verify loop against. Otherwise fall back to the
+        # stock load path unchanged.
+        if _native_mtp_loader_eligible(target_card, model_path):
+            from exo.worker.engines.mlx.vendor.qwen3_5_mtp_loader import (
+                load_mtp_model,
+            )
+
+            logger.info(
+                f"Loading {target_card.model_id} via native MTP loader "
+                f"(native_mtp=True, world_size=1, MTP weights recoverable)"
+            )
+            model, _ = load_mtp_model(model_path, lazy=True, strict=True)
+        else:
+            model, _ = load_model(model_path, lazy=True, strict=False)
         # Eval layers one by one for progress reporting
         try:
             inner = get_inner_model(model)

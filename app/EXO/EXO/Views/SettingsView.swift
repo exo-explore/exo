@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var pendingEnableImageModels = false
     @State private var pendingOfflineMode = false
     @State private var pendingFastSynchEnabled = false
+    @State private var pendingNativeMTPEnabled = true
     @State private var pendingDefaultModelsDir: String = ""
     @State private var pendingAdditionalModelsDirs: String = ""
     @State private var pendingReadOnlyModelsDirs: String = ""
@@ -54,6 +55,7 @@ struct SettingsView: View {
             pendingEnableImageModels = controller.enableImageModels
             pendingOfflineMode = controller.offlineMode
             pendingFastSynchEnabled = controller.fastSynchEnabled
+            pendingNativeMTPEnabled = controller.nativeMTPEnabled
             pendingDefaultModelsDir = controller.defaultModelsDir
             pendingAdditionalModelsDirs = controller.additionalModelsDirs
             pendingReadOnlyModelsDirs = controller.readOnlyModelsDirs
@@ -129,6 +131,15 @@ struct SettingsView: View {
                 Text("Allow text-to-image and image-to-image models in the model picker.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            Section {
+                Toggle("Use Native MTP", isOn: $pendingNativeMTPEnabled)
+                Text(
+                    "Enable native multi-token-prediction speculative decoding for supported model checkpoints. On by default."
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
             }
 
             Section {
@@ -607,6 +618,7 @@ struct SettingsView: View {
 
     private var hasModelChanges: Bool {
         pendingEnableImageModels != controller.enableImageModels
+            || pendingNativeMTPEnabled != controller.nativeMTPEnabled
     }
 
     private var hasAdvancedChanges: Bool {
@@ -630,6 +642,7 @@ struct SettingsView: View {
 
     private func applyModelSettings() {
         controller.enableImageModels = pendingEnableImageModels
+        controller.nativeMTPEnabled = pendingNativeMTPEnabled
         restartIfRunning()
     }
 

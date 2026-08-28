@@ -7,6 +7,9 @@ from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
 from mlx_lm.generate import (
+    GenerationResponse as MlxGenerationResponse,
+)
+from mlx_lm.generate import (
     maybe_quantize_kv_cache,
     stream_generate,
 )
@@ -55,7 +58,15 @@ from exo.worker.engines.mlx.constants import (
     KV_GROUP_SIZE,
     MAX_TOKENS,
 )
+from exo.worker.engines.mlx.generator.native_mtp_drafter import (
+    NativeMTPDrafter,
+    is_native_mtp_dispatchable,
+)
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
+from exo.worker.engines.mlx.native_mtp_config import (
+    native_mtp_enabled_from_env,
+    resolve_native_mtp_num_draft_tokens,
+)
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -540,6 +551,8 @@ def mlx_generate(
     distributed_prompt_progress_callback: Callable[[], None] | None = None,
     on_generation_token: Callable[[], None] | None = None,
     vision_processor: VisionProcessor | None = None,
+    native_mtp_default_k: int | None = None,
+    native_mtp_max_k: int | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -717,8 +730,59 @@ def mlx_generate(
     logger.info("Starting decode")
     mx_barrier(group)
 
-    for completion_tokens, out in enumerate(
-        stream_generate(
+    # Native MTP dispatch: when the target loaded as a vendored MTP-aware
+    # model (single-node, env-enabled), draft+verify through its own MTP
+    # head. ``NativeMTPDrafter.stream`` is a drop-in for ``stream_generate``
+    # -- it yields the same ``GenerationResponse`` objects, primes its own
+    # MTP cache from the full prompt, and consumes the KV cache that
+    # ``prefill`` already aligned to ``prompt_tokens[:-2]`` (the 2-token
+    # ``last_token`` tail is the decode seed for both paths).
+    native_mtp_active = (
+        group is None
+        and native_mtp_enabled_from_env()
+        and is_native_mtp_dispatchable(model)
+    )
+    native_mtp_drafter: NativeMTPDrafter | None = None
+    native_k: int | None = None
+    if native_mtp_active:
+        native_k, native_k_clamped = resolve_native_mtp_num_draft_tokens(
+            request_num_draft_tokens=None,
+            configured_num_draft_tokens=None,
+            card_default_k=native_mtp_default_k
+            if native_mtp_default_k is not None
+            else 1,
+            card_max_k=native_mtp_max_k if native_mtp_max_k is not None else 1,
+        )
+        if native_k_clamped:
+            logger.info(f"native MTP K clamped to {native_k}")
+        full_context_tokens = [
+            int(t) for t in cast(list[int], all_prompt_tokens.tolist())
+        ]
+        logger.info(f"native MTP dispatch: K={native_k}, single-node")
+        native_mtp_drafter = NativeMTPDrafter(k=native_k)
+        token_stream: Generator[MlxGenerationResponse] = native_mtp_drafter.stream(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=last_token,
+            context_tokens=full_context_tokens,
+            prompt_cache=caches,
+            max_tokens=max_tokens,
+            sampler=sampler,
+            logits_processors=logits_processors,
+            prefill_step_size=1,
+            # Lossless speculative sampling: thread the raw sampling params so
+            # the drafter can reconstruct the request's distribution (the
+            # ``sampler`` callable alone is not enough -- it only yields a
+            # token, not the per-step distribution the accept test needs).
+            # Defaults mirror the ``make_sampler`` call above so MTP-on and
+            # MTP-off sample from the same distribution.
+            temperature=task.temperature if task.temperature is not None else 0.7,
+            top_p=task.top_p if task.top_p is not None else 1.0,
+            top_k=task.top_k if task.top_k is not None else 0,
+            min_p=task.min_p if task.min_p is not None else 0.05,
+        )
+    else:
+        token_stream = stream_generate(
             model=model,
             tokenizer=tokenizer,
             prompt=last_token,
@@ -729,9 +793,9 @@ def mlx_generate(
             prefill_step_size=1,
             kv_group_size=KV_GROUP_SIZE,
             kv_bits=KV_BITS,
-        ),
-        start=1,
-    ):
+        )
+
+    for completion_tokens, out in enumerate(token_stream, start=1):
         generated_text_parts.append(out.text)
         accumulated_text += out.text
 
@@ -758,12 +822,27 @@ def mlx_generate(
 
         stats: GenerationStats | None = None
         if is_done:
+            native_mtp_metrics = (
+                native_mtp_drafter.metrics()
+                if native_mtp_drafter is not None and native_k is not None
+                else {}
+            )
             stats = GenerationStats(
                 prompt_tps=float(prefill_tps or out.prompt_tps),
                 generation_tps=float(out.generation_tps),
                 prompt_tokens=int(prefill_tokens + out.prompt_tokens),
                 generation_tokens=int(out.generation_tokens),
                 peak_memory_usage=Memory.from_gb(out.peak_memory),
+                accepted_draft_tokens=native_mtp_metrics.get(
+                    "accepted_draft_tokens", 0
+                ),
+                proposed_draft_tokens=native_mtp_metrics.get(
+                    "proposed_draft_tokens", 0
+                ),
+                spec_decode_rounds=native_mtp_metrics.get("spec_decode_rounds", 0),
+                num_draft_tokens=native_k if native_mtp_drafter is not None else None,
+                draft_mode="model" if native_mtp_drafter is not None else "none",
+                drafter_kind="native_mtp" if native_mtp_drafter is not None else None,
             )
             if not stop_matched and out.finish_reason not in get_args(FinishReason):
                 logger.warning(

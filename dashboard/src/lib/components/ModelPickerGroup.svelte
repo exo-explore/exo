@@ -9,6 +9,7 @@
     capabilities?: string[];
     family?: string;
     is_custom?: boolean;
+    native_mtp?: { default_k: number; max_k: number } | null;
   }
 
   interface ModelGroup {
@@ -126,6 +127,11 @@
         return "text-red-400/70";
     }
   }
+
+  // Whether any variant in this group ships native MTP (informational badge).
+  const hasNativeMtp = $derived(
+    group.variants.some((v) => v.native_mtp != null),
+  );
 
   // Check if this group's model is currently selected (for single-variant groups)
   const isMainSelected = $derived(
@@ -309,6 +315,15 @@
             </svg>
           {/if}
         {/each}
+        <!-- Native MTP badge (tiny, informational) -->
+        {#if hasNativeMtp}
+          <span
+            class="px-1 text-[9px] leading-[1.1] font-mono rounded-sm bg-emerald-500/15 text-emerald-300 flex-shrink-0"
+            title="Native MTP speculative decoding built into this checkpoint"
+          >
+            MTP
+          </span>
+        {/if}
       </div>
     </div>
 
@@ -522,6 +537,16 @@
           >
             {variant.quantization || "default"}
           </span>
+
+          <!-- Native MTP badge (tiny, informational) -->
+          {#if variant.native_mtp}
+            <span
+              class="px-1 text-[9px] leading-[1.1] font-mono rounded-sm bg-emerald-500/15 text-emerald-300 flex-shrink-0"
+              title={`Native MTP speculative decoding (default K${variant.native_mtp.default_k}, max K${variant.native_mtp.max_k})`}
+            >
+              MTP
+            </span>
+          {/if}
 
           <!-- Size -->
           <span

@@ -8,6 +8,7 @@ private let hfEndpointKey = "EXOHFEndpoint"
 private let enableImageModelsKey = "EXOEnableImageModels"
 private let offlineModeKey = "EXOOfflineMode"
 private let fastSynchEnabledKey = "EXOFastSynchEnabled"
+private let nativeMTPEnabledKey = "EXONativeMTPEnabled"
 private let onboardingCompletedKey = "EXOOnboardingCompleted"
 private let defaultModelsDirKey = "EXODefaultModelsDir"
 private let additionalModelsDirsKey = "EXOAdditionalModelsDirs"
@@ -107,6 +108,17 @@ final class ExoProcessController: ObservableObject {
     {
         didSet {
             UserDefaults.standard.set(fastSynchEnabled, forKey: fastSynchEnabledKey)
+        }
+    }
+    @Published var nativeMTPEnabled: Bool = {
+        if UserDefaults.standard.object(forKey: nativeMTPEnabledKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: nativeMTPEnabledKey)
+    }()
+    {
+        didSet {
+            UserDefaults.standard.set(nativeMTPEnabled, forKey: nativeMTPEnabledKey)
         }
     }
     @Published var defaultModelsDir: String = {
@@ -366,6 +378,7 @@ final class ExoProcessController: ObservableObject {
             environment["EXO_OFFLINE"] = "true"
         }
         environment["EXO_FAST_SYNCH"] = fastSynchEnabled ? "true" : "false"
+        environment["EXO_NATIVE_MTP_ENABLED"] = nativeMTPEnabled ? "1" : "0"
 
         var paths: [String] = []
         if let existing = environment["PATH"], !existing.isEmpty {

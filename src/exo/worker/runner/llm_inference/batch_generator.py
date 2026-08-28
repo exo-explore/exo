@@ -99,6 +99,12 @@ class SequentialGenerator(Engine):
     event_sender: MpSender[Event]
     vision_processor: VisionProcessor | None = None
     check_for_cancel_every: int = 50
+    # Native-MTP K bounds from the model card (``NativeMTPConfig``). Set by
+    # the builder only when the target loaded as a vendored MTP-aware model;
+    # ``None`` on every other model. ``mlx_generate`` resolves the per-request
+    # K from these.
+    native_mtp_default_k: int | None = None
+    native_mtp_max_k: int | None = None
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -295,6 +301,8 @@ class SequentialGenerator(Engine):
             on_generation_token=on_generation_token,
             group=self.group,
             vision_processor=self.vision_processor,
+            native_mtp_default_k=self.native_mtp_default_k,
+            native_mtp_max_k=self.native_mtp_max_k,
         )
 
     def close(self) -> None:
