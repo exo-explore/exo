@@ -24,6 +24,7 @@ from pydantic import (
     TypeAdapter,
 )
 
+from exo.download import llmman
 from exo.download.huggingface_utils import (
     filter_repo_objects,
     get_allow_patterns,
@@ -865,6 +866,48 @@ async def get_downloaded_size(path: Path) -> int:
     return 0
 
 
+async def download_shard_from_oci(
+    shard: ShardMetadata,
+    on_progress: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
+    skip_download: bool = False,
+) -> tuple[Path, RepoDownloadProgress]:
+    """Acquire a CNCF ModelPack artifact through a running `llmman serve`.
+
+    The daemon owns the registry work and reports aggregate byte progress,
+    which is mapped onto the same RepoDownloadProgress the HuggingFace path
+    emits so the cluster UI is unchanged.
+    """
+    model_id = shard.model_card.model_id
+
+    def progress(status: str, completed: int, total: int) -> None:
+        logger.debug(f"llmman: {status} ({completed}/{total})")
+
+    if skip_download:
+        # Report on what is already in llmman's store without pulling.
+        path = Path(llmman.resolve(llmman.strip_scheme(model_id)))
+    else:
+        path = Path(
+            await asyncio.to_thread(llmman.resolve_model, model_id, progress)
+        )
+
+    complete = RepoDownloadProgress(
+        repo_id=str(model_id),
+        repo_revision="main",
+        shard=shard,
+        completed_files=1,
+        total_files=1,
+        downloaded=Memory.from_bytes(0),
+        downloaded_this_session=Memory.from_bytes(0),
+        total=Memory.from_bytes(0),
+        overall_speed=0.0,
+        overall_eta=timedelta(0),
+        status="complete",
+        file_progress={},
+    )
+    await on_progress(shard, complete)
+    return path, complete
+
+
 async def download_shard(
     shard: ShardMetadata,
     on_progress: Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]],
@@ -879,6 +922,13 @@ async def download_shard(
 
     model_id = shard.model_card.model_id
     revision = "main"
+
+    if llmman.is_oci_ref(model_id):
+        # A CNCF ModelPack artifact is pulled as a whole through an llmman
+        # daemon, so there is no per-file list to walk: the daemon reports
+        # aggregate progress and the extracted directory is returned ready to
+        # load. allow_patterns has no counterpart for an image pulled whole.
+        return await download_shard_from_oci(shard, on_progress, skip_download)
 
     if not allow_patterns:
         allow_patterns = await resolve_allow_patterns(shard)
