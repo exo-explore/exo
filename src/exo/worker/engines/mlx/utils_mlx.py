@@ -855,8 +855,15 @@ def _parse_kimi_tool_calls(text: str):
 
     # kimi has a fixed function naming scheme, with a json formatted arg
     #   functions.multiply:0<|tool_call_argument_begin|>{"a": 2, "b": 3}
+    # Some clients sanitise ids to [A-Za-z0-9_-] before echoing them back in
+    # the conversation history (functions_multiply_0), and the model then
+    # imitates that form on its next call. Accept both separators, and always
+    # return the canonical id so the client is handed the form the model was
+    # trained on. The trailing separator+digits is unambiguous even when the
+    # function name itself contains underscores.
     _func_name_regex = re.compile(
-        r"^\s*((?:functions\.)?(.+?):\d+)\s*<\|tool_call_argument_begin\|>", re.DOTALL
+        r"^\s*(?:functions[._])?(?P<name>.+?)[:_](?P<idx>\d+)\s*<\|tool_call_argument_begin\|>",
+        re.DOTALL,
     )
     _func_arg_regex = re.compile(r"<\|tool_call_argument_begin\|>\s*(.*)\s*", re.DOTALL)
     _tool_call_split_regex = re.compile(
@@ -867,8 +874,8 @@ def _parse_kimi_tool_calls(text: str):
         func_name_match = _func_name_regex.search(text)
         if func_name_match is None:
             raise ValueError("No tool call found.")
-        tool_call_id = func_name_match.group(1)  # e.g. "functions.get_weather:0"
-        func_name = func_name_match.group(2)  # e.g. "get_weather"
+        func_name = func_name_match.group("name")  # e.g. "get_weather"
+        tool_call_id = f"functions.{func_name}:{func_name_match.group('idx')}"
 
         func_args_match = _func_arg_regex.search(text)
         if func_args_match is None:
