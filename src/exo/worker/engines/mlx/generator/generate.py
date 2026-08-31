@@ -42,12 +42,11 @@ from exo.worker.engines.mlx.auto_parallel import (
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
-    copy_snapshot_entry,
     encode_prompt,
     has_non_kv_caches,
-    is_non_trimmable_cache_entry,
     make_kv_cache,
     snapshot_ssm_states,
+    trim_cache,
 )
 from exo.worker.engines.mlx.constants import (
     DEFAULT_TOP_LOGPROBS,
@@ -375,16 +374,9 @@ def prefill(
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
     pre_gen = snapshots[-2] if has_ssm else None
-    for i, c in enumerate(cache):
-        non_trimmable = is_non_trimmable_cache_entry(c)
-        if has_ssm and non_trimmable:
-            assert pre_gen is not None
-            restored = copy_snapshot_entry(pre_gen.states[i])
-            if restored is not None:
-                cache[i] = restored  # type: ignore
-        else:
-            assert not non_trimmable
-            c.trim(2)
+    if has_ssm:
+        assert pre_gen is not None
+    trim_cache(cache, 2, pre_gen)
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
