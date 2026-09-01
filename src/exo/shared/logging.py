@@ -1,14 +1,20 @@
 import logging
 import sys
-from collections.abc import Iterator
 from pathlib import Path
+from typing import Protocol
 
 import zstandard
 from hypercorn import Config
 from hypercorn.logging import Logger as HypercornLogger
 from loguru import logger
 
+
+class _TellableFile(Protocol):
+    def tell(self) -> int: ...
+
+
 _MAX_LOG_ARCHIVES = 5
+_ROTATION_MAX_BYTES = 200 * 1024 * 1024  # 200 MB
 
 
 def _zstd_compress(filepath: str) -> None:
@@ -20,10 +26,30 @@ def _zstd_compress(filepath: str) -> None:
     source.unlink()
 
 
-def _once_then_never() -> Iterator[bool]:
-    yield True
-    while True:
-        yield False
+def _rotation_policy(max_bytes: int):
+    """Rotate once on process start (fresh log per run), then rotate again
+    whenever the file crosses ``max_bytes``.
+
+    A previous version used a generator that returned True exactly once
+    and False forever after. loguru calls the rotation callable on every
+    message, so that rotated on startup as intended but then silently
+    disabled every later rotation for the rest of the process's life,
+    letting the log file grow unbounded even though retention and
+    compression were configured as if ongoing rotation was happening.
+    """
+    started = False
+
+    def _should_rotate(message: str, file: _TellableFile) -> bool:
+        nonlocal started
+        if not started:
+            started = True
+            return True
+        try:
+            return file.tell() + len(message) > max_bytes
+        except OSError:
+            return False
+
+    return _should_rotate
 
 
 class InterceptLogger(HypercornLogger):
@@ -73,14 +99,13 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
             enqueue=True,
         )
     if log_file:
-        rotate_once = _once_then_never()
         logger.add(
             log_file,
             format="[ {time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} ] {message}",
             level="DEBUG" if verbosity > 0 else "INFO",
             colorize=False,
             enqueue=True,
-            rotation=lambda _, __: next(rotate_once),
+            rotation=_rotation_policy(_ROTATION_MAX_BYTES),
             retention=_MAX_LOG_ARCHIVES,
             compression=_zstd_compress,
         )
