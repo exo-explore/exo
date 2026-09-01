@@ -388,6 +388,20 @@ def pipeline_auto_parallel(
 
     _set_layers(model, layers)
 
+    # Pipeline sharding swaps in a slice of the layer stack after the model was
+    # already constructed. Any index a model derived from the *full* stack in
+    # __init__ -- which cache entry holds the first full-attention layer, which
+    # holds the first recurrent layer -- now addresses the wrong entry, so the
+    # model builds its masks from the wrong cache. Nothing raises: generation
+    # keeps running and quietly produces wrong output.
+    #
+    # The isinstance branches above repair this for four model types by name.
+    # Any other hybrid stack silently keeps its stale indices, so give models a
+    # supported way to re-derive their own state from the sharded layer list.
+    resync = getattr(inner_model_instance, "resync_sharded_layers", None)
+    if callable(resync):
+        resync()
+
     assert isinstance(layers, list), (
         "Expected a list of layers after auto-parallel initialisation"
     )
