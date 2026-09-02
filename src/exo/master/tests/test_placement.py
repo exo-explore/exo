@@ -193,6 +193,174 @@ def test_get_instance_placements_create_instance(
     assert shards_sorted[-1].end_layer == total_layers
 
 
+def _create_two_node_ring() -> tuple[Topology, NodeId, NodeId]:
+    node_a = NodeId()
+    node_b = NodeId()
+    topology = Topology()
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_connection(
+        Connection(source=node_a, sink=node_b, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_b, sink=node_a, edge=create_socket_connection(2))
+    )
+    return topology, node_a, node_b
+
+
+def test_pipeline_placement_uses_manual_per_node_layer_allocation(
+    model_card: ModelCard,
+) -> None:
+    topology, node_a, node_b = _create_two_node_ring()
+    node_memory = {
+        node_a: create_node_memory(300),
+        node_b: create_node_memory(900),
+    }
+    node_network = {
+        node_a: create_node_network(),
+        node_b: create_node_network(),
+    }
+    command = place_instance_command(
+        model_card.model_copy(update={"storage_size": Memory.from_bytes(1000)})
+    ).model_copy(
+        update={
+            "min_nodes": 2,
+            "node_layers": {node_a: 2, node_b: 8},
+        }
+    )
+
+    placements = place_instance(
+        command,
+        topology,
+        {},
+        node_memory,
+        node_network,
+        _metal_only(node_memory),
+    )
+
+    instance = next(iter(placements.values()))
+    runner_a = instance.shard_assignments.node_to_runner[node_a]
+    runner_b = instance.shard_assignments.node_to_runner[node_b]
+    shard_a = instance.shard_assignments.runner_to_shard[runner_a]
+    shard_b = instance.shard_assignments.runner_to_shard[runner_b]
+    assert shard_a.end_layer - shard_a.start_layer == 2
+    assert shard_b.end_layer - shard_b.start_layer == 8
+
+
+def test_manual_layer_allocation_rejects_non_pipeline_sharding(
+    model_card: ModelCard,
+) -> None:
+    topology, node_a, node_b = _create_two_node_ring()
+    node_memory = {
+        node_a: create_node_memory(500),
+        node_b: create_node_memory(500),
+    }
+    node_network = {
+        node_a: create_node_network(),
+        node_b: create_node_network(),
+    }
+    command = place_instance_command(
+        model_card.model_copy(update={"storage_size": Memory.from_bytes(1000)})
+    ).model_copy(
+        update={
+            "sharding": Sharding.Tensor,
+            "node_layers": {node_a: 5, node_b: 5},
+        }
+    )
+
+    with pytest.raises(ValueError, match="requires Pipeline sharding"):
+        place_instance(
+            command,
+            topology,
+            {},
+            node_memory,
+            node_network,
+            _metal_only(node_memory),
+        )
+
+
+def test_manual_layer_allocation_requires_matching_cycle(
+    model_card: ModelCard,
+) -> None:
+    topology, node_a, node_b = _create_two_node_ring()
+    node_memory = {
+        node_a: create_node_memory(500),
+        node_b: create_node_memory(500),
+    }
+    node_network = {
+        node_a: create_node_network(),
+        node_b: create_node_network(),
+    }
+    unknown_node = NodeId()
+    command = place_instance_command(
+        model_card.model_copy(update={"storage_size": Memory.from_bytes(1000)})
+    ).model_copy(update={"node_layers": {node_a: 5, unknown_node: 5}})
+
+    with pytest.raises(ValueError, match="No connected cycle exactly matches"):
+        place_instance(
+            command,
+            topology,
+            {},
+            node_memory,
+            node_network,
+            _metal_only(node_memory),
+        )
+
+
+def test_manual_layer_allocation_rejects_wrong_layer_sum(
+    model_card: ModelCard,
+) -> None:
+    topology, node_a, node_b = _create_two_node_ring()
+    node_memory = {
+        node_a: create_node_memory(500),
+        node_b: create_node_memory(500),
+    }
+    node_network = {
+        node_a: create_node_network(),
+        node_b: create_node_network(),
+    }
+    command = place_instance_command(
+        model_card.model_copy(update={"storage_size": Memory.from_bytes(1000)})
+    ).model_copy(update={"node_layers": {node_a: 3, node_b: 4}})
+
+    with pytest.raises(ValueError, match="must sum to 10 layers"):
+        place_instance(
+            command,
+            topology,
+            {},
+            node_memory,
+            node_network,
+            _metal_only(node_memory),
+        )
+
+
+def test_manual_layer_allocation_rejects_insufficient_memory(
+    model_card: ModelCard,
+) -> None:
+    topology, node_a, node_b = _create_two_node_ring()
+    node_memory = {
+        node_a: create_node_memory(300),
+        node_b: create_node_memory(900),
+    }
+    node_network = {
+        node_a: create_node_network(),
+        node_b: create_node_network(),
+    }
+    command = place_instance_command(
+        model_card.model_copy(update={"storage_size": Memory.from_bytes(1000)})
+    ).model_copy(update={"node_layers": {node_a: 8, node_b: 2}})
+
+    with pytest.raises(ValueError, match="insufficient memory"):
+        place_instance(
+            command,
+            topology,
+            {},
+            node_memory,
+            node_network,
+            _metal_only(node_memory),
+        )
+
+
 def test_get_instance_placements_one_node_exact_fit() -> None:
     topology = Topology()
     node_id = NodeId()

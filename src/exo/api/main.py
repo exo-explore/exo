@@ -432,6 +432,7 @@ class API:
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
+            node_layers=payload.node_layers,
         )
         await self._send(command)
 
