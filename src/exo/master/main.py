@@ -79,6 +79,12 @@ from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
 
 
+def orphaned_download_node_ids(state: State) -> set[NodeId]:
+    """Return download owners that are no longer members of the topology."""
+    connected_node_ids = set(state.topology.list_nodes())
+    return set(state.downloads).difference(connected_node_ids)
+
+
 def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
     decode = state.instances.get(decode_instance_id)
     if decode is None:
@@ -470,6 +476,12 @@ class Master:
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
         while True:
+            # Garbage-collect downloads left behind by node IDs that disappeared
+            # before the master observed a last-seen timeout for them.
+            for node_id in orphaned_download_node_ids(self.state):
+                logger.info(f"Removing downloads belonging to retired node {node_id}")
+                await self.event_sender.send(NodeTimedOut(node_id=node_id))
+
             # kill broken instances
             connected_node_ids = set(self.state.topology.list_nodes())
             for instance_id, instance in self.state.instances.items():
