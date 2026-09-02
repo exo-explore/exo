@@ -42,6 +42,7 @@ class ModelListModel(BaseModel):
     tags: list[str] = Field(default=[])
     storage_size_megabytes: int = Field(default=0)
     supports_tensor: bool = Field(default=False)
+    supports_ring: bool = Field(default=False)
     tasks: list[str] = Field(default=[])
     is_custom: bool = Field(default=False)
     family: str = Field(default="")

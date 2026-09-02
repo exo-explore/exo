@@ -45,6 +45,7 @@ from exo.worker.engines.mlx.patches.opt_batch_gen import (
     set_needs_topk,
     take_ready_topk,
 )
+from exo.worker.engines.mlx.ring_attention import uses_ring_sequence_parallel_prefill
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     fix_unmatched_think_end_tokens,
@@ -206,6 +207,9 @@ class ExoBatchGenerator:
         use_remote = (
             uncached_count > REMOTE_PREFILL_MIN_TOKENS
             and task_params.prefill_endpoint is not None
+            and not uses_ring_sequence_parallel_prefill(
+                self.model, len(prompt_tokens) - 1, self.group
+            )
         )
 
         _prefill_tps: float = 0.0
@@ -279,7 +283,13 @@ class ExoBatchGenerator:
                 prefill_tps=_prefill_tps,
             )
 
-        last_tokens = prompt_tokens[-2:]
+        last_tokens = (
+            prompt_tokens[-1:]
+            if uses_ring_sequence_parallel_prefill(
+                self.model, len(prompt_tokens) - 1, self.group
+            )
+            else prompt_tokens[-2:]
+        )
 
         logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
             make_logits_processors(

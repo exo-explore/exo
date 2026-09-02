@@ -501,7 +501,9 @@ def add_common_instance_args(ap: argparse.ArgumentParser) -> None:
         "--instance-meta", choices=["ring", "jaccl", "both"], default="both"
     )
     ap.add_argument(
-        "--sharding", choices=["pipeline", "tensor", "both"], default="both"
+        "--sharding",
+        choices=["pipeline", "tensor", "ring", "both"],
+        default="both",
     )
     ap.add_argument(
         "--skip-pipeline-jaccl",

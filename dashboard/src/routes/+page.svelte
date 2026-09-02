@@ -783,6 +783,7 @@
       quantization?: string;
       base_model?: string;
       capabilities?: string[];
+      supports_ring?: boolean;
     }>
   >([]);
   type ModelMemoryFitStatus =
@@ -885,14 +886,14 @@
     sendMessage(content, files, thinkingEnabled());
   }
 
-  let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
+  let selectedSharding = $state<"Pipeline" | "Tensor" | "Ring">("Pipeline");
   type InstanceMeta = "MlxRing" | "MlxJaccl";
 
   // Launch defaults persistence
   const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults-v2";
   interface LaunchDefaults {
     modelId: string | null;
-    sharding: "Pipeline" | "Tensor";
+    sharding: "Pipeline" | "Tensor" | "Ring";
     instanceType: InstanceMeta;
     minNodes: number;
   }
@@ -932,7 +933,9 @@
     // Apply sharding and instance type unconditionally
     selectedSharding = defaults.sharding;
     selectedInstanceType =
-      defaults.instanceType === "MlxRing" ? "MlxRing" : "MlxJaccl";
+      defaults.sharding === "Ring" || defaults.instanceType === "MlxRing"
+        ? "MlxRing"
+        : "MlxJaccl";
 
     // Apply minNodes if valid (between 1 and maxNodes)
     if (
@@ -954,6 +957,20 @@
   }
 
   let selectedInstanceType = $state<InstanceMeta>("MlxRing");
+
+  const selectedModelSupportsRing = $derived(
+    models.find(
+      (model) =>
+        model.id === selectedModelId ||
+        model.hugging_face_id === selectedModelId,
+    )?.supports_ring === true,
+  );
+
+  $effect(() => {
+    if (selectedSharding === "Ring" && !selectedModelSupportsRing) {
+      selectedSharding = "Pipeline";
+    }
+  });
   let selectedMinNodes = $state<number>(1);
   let minNodesInitialized = $state(false);
   let launchingModelId = $state<string | null>(null);
@@ -2043,7 +2060,7 @@
     return inst.shardAssignments?.modelId || "Unknown Model";
   }
 
-  // Get instance details: type (MLX Ring/IBV), sharding (Pipeline/Tensor), and node names
+  // Get instance details: type (MLX Ring/IBV), sharding strategy, and node names
   function getInstanceInfo(instanceWrapped: unknown): {
     instanceType: string;
     sharding: string;
@@ -2082,6 +2099,7 @@
       const [shardTag] = getTagged(firstShardWrapped);
       if (shardTag === "PipelineShardMetadata") sharding = "Pipeline";
       else if (shardTag === "TensorShardMetadata") sharding = "Tensor";
+      else if (shardTag === "RingShardMetadata") sharding = "Ring";
       else if (shardTag === "PrefillDecodeShardMetadata")
         sharding = "Prefill/Decode";
     }
@@ -2193,7 +2211,7 @@
 
   function getOrderedRunnerNodes(
     instance: Record<string, unknown>,
-    shardType: "Pipeline" | "Tensor",
+    shardType: "Pipeline" | "Tensor" | "Ring",
   ) {
     const runnerToShard =
       (
@@ -5772,6 +5790,37 @@
                         </span>
                         Tensor
                       </button>
+                      <button
+                        disabled={!selectedModelSupportsRing}
+                        title={selectedModelSupportsRing
+                          ? "Sequence-parallel Ring Attention"
+                          : "Ring Attention is not verified for this model"}
+                        onclick={() => {
+                          if (!selectedModelSupportsRing) return;
+                          selectedSharding = "Ring";
+                          selectedInstanceType = "MlxRing";
+                          saveLaunchDefaults();
+                        }}
+                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
+                        'Ring'
+                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                          : selectedModelSupportsRing
+                            ? 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'
+                            : 'bg-transparent text-white/30 border-exo-medium-gray/30 cursor-not-allowed'}"
+                      >
+                        <span
+                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedSharding ===
+                          'Ring'
+                            ? 'border-exo-yellow'
+                            : 'border-exo-medium-gray'}"
+                        >
+                          {#if selectedSharding === "Ring"}
+                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                            ></span>
+                          {/if}
+                        </span>
+                        Ring Attention
+                      </button>
                     </div>
                   </div>
 
@@ -5807,6 +5856,9 @@
                       <button
                         onclick={() => {
                           selectedInstanceType = "MlxJaccl";
+                          if (selectedSharding === "Ring") {
+                            selectedSharding = "Pipeline";
+                          }
                           saveLaunchDefaults();
                         }}
                         class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===

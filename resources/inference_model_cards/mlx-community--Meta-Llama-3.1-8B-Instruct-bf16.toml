@@ -3,6 +3,7 @@ n_layers = 32
 hidden_size = 4096
 num_key_value_heads = 8
 supports_tensor = true
+supports_ring = true
 tasks = ["TextGeneration"]
 family = "llama"
 quantization = "bf16"

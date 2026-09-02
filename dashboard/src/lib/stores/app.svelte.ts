@@ -173,7 +173,7 @@ export interface ModelDownloadStatus {
 // Placement preview from the API
 export interface PlacementPreview {
   model_id: string;
-  sharding: "Pipeline" | "Tensor";
+  sharding: "Pipeline" | "Tensor" | "Ring";
   instance_meta: "MlxRing" | "MlxJaccl";
   instance: unknown | null;
   memory_delta_by_node: Record<string, number> | null;

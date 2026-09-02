@@ -55,6 +55,7 @@ from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import (
     CfgShardMetadata,
     PipelineShardMetadata,
+    RingShardMetadata,
     ShardMetadata,
     TensorShardMetadata,
 )
@@ -64,6 +65,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.ring_attention import ring_auto_parallel
 from exo.worker.engines.mlx.types import Model
 from exo.worker.runner.bootstrap import logger
 
@@ -268,6 +270,11 @@ def shard_and_load(
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = yield from pipeline_auto_parallel(model, group, shard_metadata)
             mx.eval(model.parameters())
+        case RingShardMetadata():
+            logger.info(f"loading model from {model_path} with ring attention")
+            model = yield from ring_auto_parallel(
+                model, group, sequence_block_size=shard_metadata.sequence_block_size
+            )
         case CfgShardMetadata():
             raise ValueError(
                 "CfgShardMetadata is not supported for text model loading - "

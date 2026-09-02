@@ -22,7 +22,7 @@
       }>;
     } | null;
     nodes?: Record<string, NodeInfo>;
-    sharding?: "Pipeline" | "Tensor";
+    sharding?: "Pipeline" | "Tensor" | "Ring";
     runtime?: "MlxRing" | "MlxJaccl";
     onLaunch?: () => void;
     tags?: string[];

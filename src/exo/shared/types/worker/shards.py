@@ -10,6 +10,7 @@ from exo.utils.pydantic_ext import TaggedModel
 class Sharding(str, Enum):
     Tensor = "Tensor"
     Pipeline = "Pipeline"
+    Ring = "Ring"
 
 
 class BaseShardMetadata(TaggedModel):
@@ -79,6 +80,19 @@ class TensorShardMetadata(BaseShardMetadata):
     pass
 
 
+@final
+class RingShardMetadata(BaseShardMetadata):
+    """Ring-attention shard metadata.
+
+    Unlike pipeline (layer-split) or tensor (weight-split), ring attention
+    replicates all layers on every device but partitions the **sequence**
+    dimension. Each device holds a contiguous block of the input sequence
+    and KV blocks rotate around the ring during attention computation.
+    """
+
+    sequence_block_size: int = Field(default=512, ge=1)
+
+
 ShardMetadata: TypeAlias = (
-    PipelineShardMetadata | CfgShardMetadata | TensorShardMetadata
+    PipelineShardMetadata | CfgShardMetadata | TensorShardMetadata | RingShardMetadata
 )

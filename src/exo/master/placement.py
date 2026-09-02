@@ -4,7 +4,9 @@ from typing import Sequence
 
 from exo.master.placement_utils import (
     Cycle,
+    estimate_ring_node_memory,
     filter_cycles_by_memory,
+    filter_cycles_by_replicated_memory,
     get_mlx_jaccl_coordinators,
     get_mlx_jaccl_devices_matrix,
     get_mlx_ring_hosts_by_node,
@@ -114,6 +116,18 @@ def place_instance(
     download_status: Mapping[NodeId, Sequence[DownloadProgress]] | None = None,
     node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] | None = None,
 ) -> dict[InstanceId, Instance]:
+    if (
+        command.sharding is Sharding.Ring
+        and command.instance_meta is not InstanceMeta.MlxRing
+    ):
+        raise ValueError("Ring attention requires the MlxRing transport")
+    if command.sharding is Sharding.Ring and command.min_nodes < 2:
+        raise ValueError("Ring attention requires at least two nodes")
+    if command.sharding is Sharding.Ring and not command.model_card.supports_ring:
+        raise ValueError(
+            f"Model does not declare Ring attention support: {command.model_card.model_id}"
+        )
+
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
 
@@ -124,9 +138,18 @@ def place_instance(
             for cycle in candidate_cycles
             if required_nodes.issubset(cycle.node_ids)
         ]
-    cycles_with_sufficient_memory = filter_cycles_by_memory(
-        candidate_cycles, node_memory, command.model_card.storage_size
-    )
+    if command.sharding is Sharding.Ring:
+        # Every ring rank replicates the weights and must also hold the
+        # long-context prefill working set, not just the model file.
+        cycles_with_sufficient_memory = filter_cycles_by_replicated_memory(
+            candidate_cycles,
+            node_memory,
+            estimate_ring_node_memory(command.model_card),
+        )
+    else:
+        cycles_with_sufficient_memory = filter_cycles_by_memory(
+            candidate_cycles, node_memory, command.model_card.storage_size
+        )
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError("No cycles found with sufficient memory")
 

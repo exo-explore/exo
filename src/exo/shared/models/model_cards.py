@@ -160,6 +160,7 @@ class ModelCard(FrozenModel):
     n_layers: PositiveInt
     hidden_size: PositiveInt
     supports_tensor: bool
+    supports_ring: bool = False
     num_key_value_heads: PositiveInt | None = None
     tasks: list[ModelTask]
     components: list[ComponentInfo] | None = None
@@ -250,6 +251,7 @@ class ModelCard(FrozenModel):
             n_layers=num_layers,
             hidden_size=config_data.hidden_size or 0,
             supports_tensor=config_data.supports_tensor,
+            supports_ring=config_data.supports_ring,
             num_key_value_heads=config_data.num_key_value_heads,
             context_length=config_data.max_position_embeddings,
             tasks=[ModelTask.TextGeneration],
@@ -300,6 +302,14 @@ class ConfigData(BaseModel):
             ["Step3p5ForCausalLM"],
             ["NemotronHForCausalLM"],
             ["Gemma4ForConditionalGeneration"],
+        ]
+
+    @property
+    def supports_ring(self) -> bool:
+        """Whether the model uses an attention implementation verified for Ring."""
+        return self.architectures in [
+            ["LlamaForCausalLM"],
+            ["Qwen3ForCausalLM"],
         ]
 
     @model_validator(mode="before")

@@ -12,6 +12,7 @@ from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
     CfgShardMetadata,
     PipelineShardMetadata,
+    RingShardMetadata,
     Sharding,
     ShardMetadata,
     TensorShardMetadata,
@@ -35,6 +36,65 @@ def filter_cycles_by_memory(
         if total_mem >= required_memory:
             filtered_cycles.append(cycle)
     return filtered_cycles
+
+
+def filter_cycles_by_replicated_memory(
+    cycles: list[Cycle],
+    node_memory: Mapping[NodeId, MemoryUsage],
+    required_memory: Memory,
+) -> list[Cycle]:
+    """Keep cycles where every node can hold a fully replicated model."""
+    return [
+        cycle
+        for cycle in cycles
+        if all(
+            node_id in node_memory
+            and node_memory[node_id].ram_available >= required_memory
+            for node_id in cycle.node_ids
+        )
+    ]
+
+
+# K and V cache entries are stored unquantized at 2 bytes each during Ring
+# prefill; the working-set multiplier covers transient attention buffers and
+# allocator caching observed in practice (Metal peaked at ~3x the steady KV
+# size, CUDA at ~5x, for the same prefill).
+_KV_CACHE_BYTES_PER_ELEMENT = 2
+_RING_KV_WORKING_SET_MULTIPLIER = 4
+# Upper bound on head_dim across the verified Ring model families (Llama,
+# Qwen3), used when the card does not pin the exact geometry.
+_RING_HEAD_DIM_BOUND = 128
+# Ring exists for long-context prefill; admit against at least this context
+# even if requests may be shorter, and no more than this even for cards that
+# advertise 128K+ so admission stays achievable.
+_RING_ADMISSION_CONTEXT_TOKENS = 16384
+
+
+def estimate_ring_node_memory(model_card: ModelCard) -> Memory:
+    """Per-node memory a Ring rank needs: replicated weights plus the working
+    set of a long-context prefill (full KV cache and attention transients).
+
+    Weight-only admission demonstrably over-admits: a 4 GB-VRAM rank passed
+    the old check for a model whose 16K prefill peaks well past 4 GB.
+    """
+    admission_context = (
+        min(model_card.context_length, _RING_ADMISSION_CONTEXT_TOKENS)
+        if model_card.context_length > 0
+        else _RING_ADMISSION_CONTEXT_TOKENS
+    )
+    if model_card.num_key_value_heads is not None:
+        kv_width = model_card.num_key_value_heads * _RING_HEAD_DIM_BOUND
+    else:
+        kv_width = model_card.hidden_size
+    kv_cache_bytes = (
+        2  # keys and values
+        * _KV_CACHE_BYTES_PER_ELEMENT
+        * model_card.n_layers
+        * kv_width
+        * admission_context
+    )
+    working_set = Memory.from_bytes(kv_cache_bytes * _RING_KV_WORKING_SET_MULTIPLIER)
+    return model_card.storage_size + working_set
 
 
 def get_smallest_cycles(
@@ -291,6 +351,11 @@ def get_shard_assignments(
                 model_card=model_card,
                 cycle=cycle,
             )
+        case Sharding.Ring:
+            return get_shard_assignments_for_ring_attention(
+                model_card=model_card,
+                cycle=cycle,
+            )
 
 
 def get_mlx_jaccl_devices_matrix(
@@ -459,3 +524,30 @@ def get_mlx_jaccl_coordinators(
         n: f"{get_ip_for_node(n)}:{coordinator_port}"
         for n in cycle_digraph.list_nodes()
     }
+
+
+def get_shard_assignments_for_ring_attention(
+    model_card: ModelCard,
+    cycle: Cycle,
+) -> ShardAssignments:
+    total_layers = model_card.n_layers
+    world_size = len(cycle)
+    runner_to_shard: dict[RunnerId, ShardMetadata] = {}
+    node_to_runner: dict[NodeId, RunnerId] = {}
+    for i, node_id in enumerate(cycle):
+        shard = RingShardMetadata(
+            model_card=model_card,
+            device_rank=i,
+            world_size=world_size,
+            start_layer=0,
+            end_layer=total_layers,
+            n_layers=total_layers,
+        )
+        runner_id = RunnerId()
+        runner_to_shard[runner_id] = shard
+        node_to_runner[node_id] = runner_id
+    return ShardAssignments(
+        model_id=model_card.model_id,
+        runner_to_shard=runner_to_shard,
+        node_to_runner=node_to_runner,
+    )

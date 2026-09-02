@@ -1,6 +1,7 @@
 import contextlib
 import functools
 import math
+import os
 import time
 import uuid
 from typing import Callable, Generator, cast, get_args
@@ -31,6 +32,7 @@ from exo.shared.types.text_generation import (
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
+from exo.utils.stall_watchdog import StallWatchdog
 from exo.worker.engines.mlx.auto_parallel import (
     PipelineFirstLayer,
     PipelineLastLayer,
@@ -56,6 +58,12 @@ from exo.worker.engines.mlx.constants import (
     MAX_TOKENS,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
+from exo.worker.engines.mlx.ring_attention import (
+    ring_prefill_block_size,
+    set_ring_prefill,
+    uses_ring_sequence_parallel_prefill,
+    validate_ring_cache,
+)
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -324,17 +332,49 @@ def prefill(
             distributed_prompt_progress_callback()
         progress_callback(processed, total)
 
+    is_ring_prefill = uses_ring_sequence_parallel_prefill(model, num_tokens, group)
+    if is_ring_prefill:
+        validate_ring_cache(cache)
     set_pipeline_prefill(model, is_prefill=True)
-
-    mx_barrier(group)
-    logger.info("Starting prefill")
+    set_ring_prefill(model, is_prefill=is_ring_prefill)
 
     is_pipeline = _has_pipeline_communication_layer(model)
 
     prefill_step_size = 4096
 
     try:
-        if is_pipeline and num_tokens >= prefill_step_size:
+        mx_barrier(group)
+        logger.info("Starting prefill")
+
+        if is_ring_prefill:
+            assert group is not None
+            rank = group.rank()
+            world_size = group.size()
+            max_chunk_size = world_size * ring_prefill_block_size(model)
+            chunk_ranges = list(range(0, num_tokens, max_chunk_size))
+            if len(chunk_ranges) > 1 and num_tokens - chunk_ranges[-1] < world_size:
+                chunk_ranges.pop()
+
+            stall_timeout_seconds = float(
+                os.environ.get("EXO_PREFILL_STALL_TIMEOUT", "300")
+            )
+            combined_progress_callback(0, num_tokens)
+            with StallWatchdog(
+                stall_timeout_seconds, f"Ring prefill ({num_tokens} tokens)"
+            ) as stall_watchdog:
+                for chunk_start in chunk_ranges:
+                    chunk_end = min(chunk_start + max_chunk_size, num_tokens)
+                    if chunk_start == chunk_ranges[-1]:
+                        chunk_end = num_tokens
+                    chunk_size = chunk_end - chunk_start
+                    start = chunk_start + (chunk_size * rank) // world_size
+                    end = chunk_start + (chunk_size * (rank + 1)) // world_size
+                    with mx.stream(generation_stream):
+                        model(prompt_tokens[start:end][None], cache=cache)
+                        mx.eval([c.state for c in cache])  # type: ignore
+                    stall_watchdog.kick()
+                    combined_progress_callback(chunk_end, num_tokens)
+        elif is_pipeline and num_tokens >= prefill_step_size:
             set_pipeline_queue_sends(model, queue_sends=True)
             assert group is not None, "Pipeline prefill requires a distributed group"
             pipeline_parallel_prefill(
@@ -364,27 +404,25 @@ def prefill(
                 prompt_progress_callback=combined_progress_callback,
             ):
                 break  # Stop after first iteration - cache is now filled
-    except PrefillCancelled:
+    finally:
         set_pipeline_queue_sends(model, queue_sends=False)
         set_pipeline_prefill(model, is_prefill=False)
-        raise
+        set_ring_prefill(model, is_prefill=False)
 
-    set_pipeline_queue_sends(model, queue_sends=False)
-    set_pipeline_prefill(model, is_prefill=False)
-
-    # stream_generate added 1 extra generated token to the cache, so we should trim it.
-    # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
-    pre_gen = snapshots[-2] if has_ssm else None
-    for i, c in enumerate(cache):
-        non_trimmable = is_non_trimmable_cache_entry(c)
-        if has_ssm and non_trimmable:
-            assert pre_gen is not None
-            restored = copy_snapshot_entry(pre_gen.states[i])
-            if restored is not None:
-                cache[i] = restored  # type: ignore
-        else:
-            assert not non_trimmable
-            c.trim(2)
+    if not is_ring_prefill:
+        # stream_generate added 1 extra generated token to the cache, so we should trim it.
+        # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
+        pre_gen = snapshots[-2] if has_ssm else None
+        for i, c in enumerate(cache):
+            non_trimmable = is_non_trimmable_cache_entry(c)
+            if has_ssm and non_trimmable:
+                assert pre_gen is not None
+                restored = copy_snapshot_entry(pre_gen.states[i])
+                if restored is not None:
+                    cache[i] = restored  # type: ignore
+            else:
+                assert not non_trimmable
+                c.trim(2)
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
@@ -640,6 +678,9 @@ def mlx_generate(
     use_remote = (
         len(prompt_tokens) > REMOTE_PREFILL_MIN_TOKENS
         and task.prefill_endpoint is not None
+        and not uses_ring_sequence_parallel_prefill(
+            model, len(prompt_tokens) - 1, group
+        )
     )
     remote_prefilled = False
     prefill_tps = 0.0
@@ -707,7 +748,11 @@ def mlx_generate(
             )
 
     # stream_generate starts from the last token
-    last_token = prompt_tokens[-2:]
+    last_token = (
+        prompt_tokens[-1:]
+        if uses_ring_sequence_parallel_prefill(model, len(prompt_tokens) - 1, group)
+        else prompt_tokens[-2:]
+    )
 
     max_tokens = task.max_output_tokens or MAX_TOKENS
     accumulated_text = ""

@@ -545,6 +545,13 @@ The `exo-bench` tool measures model prefill and token generation speed across di
 - Nodes should be running with `uv run exo` before benchmarking
 - The tool uses the `/bench/chat/completions` endpoint
 
+For Ring Attention on Metal, start every node with MLX's low-latency CPU/GPU
+synchronization enabled:
+
+```bash
+MLX_METAL_FAST_SYNCH=1 uv run exo
+```
+
 **Basic usage:**
 
 ```bash
@@ -561,7 +568,7 @@ uv run bench/exo_bench.py \
 - `--tg`: Generation lengths (comma-separated integers)
 - `--max-nodes`: Limit placements to N nodes (default: 4)
 - `--instance-meta`: Filter by `ring`, `jaccl`, or `both` (default: both)
-- `--sharding`: Filter by `pipeline`, `tensor`, or `both` (default: both)
+- `--sharding`: Filter by `pipeline`, `tensor`, `ring`, or `both` (default: both; `both` retains the pipeline/tensor comparison)
 - `--repeat`: Number of repetitions per configuration (default: 1)
 - `--warmup`: Warmup runs per placement (default: 0)
 - `--json-out`: Output file for results (default: bench/results.json)
@@ -578,6 +585,29 @@ uv run bench/exo_bench.py \
   --repeat 3 \
   --json-out my-results.json
 ```
+
+To compare Ring Attention against replicated pipeline prefill on the same
+Ring-compatible model and node count, run both placements with identical prompt
+lengths, generation lengths, repetitions, and warmups:
+
+```bash
+uv run bench/exo_bench.py \
+  --model Llama-3.2-1B-Instruct-4bit \
+  --pp 4096,16384,65536 --tg 128,128,128 \
+  --min-nodes 2 --max-nodes 2 --instance-meta ring \
+  --sharding ring --warmup 1 --repeat 3 \
+  --json-out bench/ring-attention.json
+
+uv run bench/exo_bench.py \
+  --model Llama-3.2-1B-Instruct-4bit \
+  --pp 4096,16384,65536 --tg 128,128,128 \
+  --min-nodes 2 --max-nodes 2 --instance-meta ring \
+  --sharding pipeline --warmup 1 --repeat 3 \
+  --json-out bench/replicated-pipeline.json
+```
+
+Use `prompt_tps` as the primary Ring prefill metric. Keep prefix caching disabled
+(the default), and record node hardware and network topology alongside results.
 
 The tool outputs performance metrics including prompt tokens per second (prompt_tps), generation tokens per second (generation_tps), and peak memory usage for each configuration.
 
