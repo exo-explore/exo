@@ -981,6 +981,48 @@ def test_placement_rejects_when_model_backends_disjoint_from_engine(
         )
 
 
+def test_placement_prefers_accelerator_over_cpu_with_more_memory(
+    model_card: ModelCard,
+):
+    topology = Topology()
+    gpu_node = NodeId()
+    cpu_node = NodeId()
+    topology.add_node(gpu_node)
+    topology.add_node(cpu_node)
+    node_memory = {
+        gpu_node: create_node_memory(1000),
+        cpu_node: create_node_memory(2000),
+    }
+    node_network = {
+        gpu_node: create_node_network(),
+        cpu_node: create_node_network(),
+    }
+    node_backends = {
+        gpu_node: [Backend.MlxCuda],
+        cpu_node: [Backend.MlxCpu],
+    }
+    command = place_instance_command(
+        model_card.model_copy(
+            update={
+                "backends": [Backend.MlxCuda, Backend.MlxCpu],
+                "storage_size": Memory.from_bytes(500),
+            }
+        )
+    )
+
+    placements = place_instance(
+        command,
+        topology,
+        {},
+        node_memory,
+        node_network,
+        node_backends,
+    )
+
+    instance = next(iter(placements.values()))
+    assert set(instance.shard_assignments.node_to_runner) == {gpu_node}
+
+
 def test_placement_rejects_when_only_some_nodes_support_backend(
     model_card: ModelCard,
 ):
