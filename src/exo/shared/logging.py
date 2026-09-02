@@ -56,6 +56,10 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
     # replace all stdlib loggers with _InterceptHandlers that log to loguru
     logging.basicConfig(handlers=[_InterceptHandler()], level=0)
 
+    # diagnose=False everywhere: loguru's variable inspection calls repr() on
+    # every local in the traceback, and repr of MLX device objects can crash
+    # the process mid-log (observed as an opaque SIGSEGV replacing the actual
+    # runner exception on the CUDA backend).
     if verbosity == 0:
         logger.add(
             sys.__stderr__,  # type: ignore
@@ -63,6 +67,7 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
             level="INFO",
             colorize=True,
             enqueue=True,
+            diagnose=False,
         )
     else:
         logger.add(
@@ -71,6 +76,7 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
             level="DEBUG",
             colorize=True,
             enqueue=True,
+            diagnose=False,
         )
     if log_file:
         rotate_once = _once_then_never()
@@ -80,6 +86,7 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
             level="DEBUG" if verbosity > 0 else "INFO",
             colorize=False,
             enqueue=True,
+            diagnose=False,
             rotation=lambda _, __: next(rotate_once),
             retention=_MAX_LOG_ARCHIVES,
             compression=_zstd_compress,
