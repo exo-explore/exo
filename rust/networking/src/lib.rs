@@ -32,6 +32,21 @@ pub fn cfg(identity: &str, listen_port: u16) -> Result<zenoh::Config> {
     cfg.insert_json5("scouting/multicast/enabled", "false")?;
     cfg.insert_json5("scouting/multicast/autoconnect", "[]")?;
     cfg.insert_json5("scouting/gossip/multihop", "true")?;
+    // Multicast discovery is unreliable on some hosts (see discovery.rs). Allow
+    // an explicit peer list so a cluster can be formed without it. Comma
+    // separated host:port pairs, e.g. "10.0.0.2:52414,10.0.0.3:52414".
+    if let Ok(peers) = std::env::var("EXO_ZENOH_CONNECT") {
+        let eps: Vec<String> = peers
+            .split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(|p| format!("\"tcp/{p}\""))
+            .collect();
+        if !eps.is_empty() {
+            log::info!("connecting to configured peers: {eps:?}");
+            cfg.insert_json5("connect/endpoints", &format!("[{}]", eps.join(",")))?;
+        }
+    }
     cfg.insert_json5("adminspace/enabled", "true")?;
     //cfg.insert_json5("transport/link/tx/batch_size", "9216")?;
     cfg.insert_json5("transport/link/rx/buffer_size", "16777216")?;
@@ -94,9 +109,16 @@ pub async fn open(
                 continue;
             };
 
-            runtime
-                .connect_peer(&discovered.zid.into(), &[locator])
-                .await;
+            // connect_peer can block for a long time (or indefinitely) when a
+            // peer is unreachable or its handshake stalls. Awaiting it here
+            // stops this task from returning to Discovery::next(), which is the
+            // only thing that drives announce() - so a single slow peer
+            // silences discovery for the whole node. Connect off-task instead.
+            let rt = runtime.clone();
+            let zid = discovered.zid;
+            tokio::task::spawn(async move {
+                rt.connect_peer(&zid.into(), &[locator]).await;
+            });
         }
     })));
     Ok(Session { z, _jh })

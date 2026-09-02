@@ -17,6 +17,8 @@ use zenoh::config::ZenohId;
 
 const GROUP: Ipv6Addr = Ipv6Addr::new(0xff12, 0, 0, 0, 0, 0, 0xe0a1, 0xde89);
 const MAGIC: [u8; 3] = *b"EXO";
+/// Per-interface cap on a single announcement send.
+const SEND_TIMEOUT: Duration = Duration::from_millis(50);
 
 pub struct Discovery {
     sock: Arc<UdpSocket>,
@@ -69,23 +71,31 @@ impl Discovery {
                             continue;
                         }
 
-                        match sock.join_multicast_v6(&GROUP, *iface_idx) {
-                            Ok(()) => ifaces.lock().push(SocketAddrV6::new(
-                                GROUP,
-                                discovery_port,
-                                0,
-                                *iface_idx,
-                            )),
-                            Err(e) if e.kind() != io::ErrorKind::AddrInUse => {
-                                // skip AddrInUse - just means we've already joined the mv6
+                        // AddrInUse means this socket already holds a
+                        // membership for the group. On macOS that is returned
+                        // for every interface after the first successful join,
+                        // so treating it as a failure drops all but one
+                        // interface from the announce list.
+                        let joined = match sock.join_multicast_v6(&GROUP, *iface_idx) {
+                            Ok(()) => true,
+                            Err(e) if e.kind() == io::ErrorKind::AddrInUse => true,
+                            Err(e) => {
                                 if let Some(iface) = update.interfaces.get(&iface_idx) {
                                     warn!(
                                         "failed to join multicast v6 for interface {}: {e}",
                                         iface.name
                                     )
                                 }
+                                false
                             }
-                            _ => {}
+                        };
+                        if joined {
+                            ifaces.lock().push(SocketAddrV6::new(
+                                GROUP,
+                                discovery_port,
+                                0,
+                                *iface_idx,
+                            ));
                         }
                     }
                     for iface_idx in update.diff.removed {
@@ -249,15 +259,32 @@ impl Discovery {
 
         let addrs = self.ifaces.lock().clone();
         debug!("announcing Hello({nonce:?}) to {addrs:?}");
+        let sref = socket2::SockRef::from(&*self.sock);
         // rev so .remove() doesn't break things
         for (i, addr) in addrs.into_iter().enumerate().rev() {
-            match self.sock.send_to(&buf, addr).await {
-                Ok(bytes) => trace!("sent {bytes} to {addr}"),
-                Err(e) if e.kind() == io::ErrorKind::HostUnreachable => {
+            // A scope id in the destination is not sufficient to select the
+            // egress interface for IPv6 multicast; IPV6_MULTICAST_IF must be
+            // set per send, otherwise every datagram leaves via the default
+            // multicast interface regardless of the address it was sent to.
+            if let Err(e) = sref.set_multicast_if_v6(addr.scope_id()) {
+                debug!("could not set multicast egress iface {}: {e}", addr.scope_id());
+                continue;
+            }
+            // Bound each send. Awaiting send_to unbounded lets a single
+            // interface whose transmit queue never drains (a tunnel with no
+            // reader, e.g. utun*) block this task forever - and because next()
+            // is the only driver of announce() AND of recv_from, that silences
+            // discovery for the whole node permanently. Announcements are
+            // periodic and idempotent, so skipping a congested interface for
+            // this tick is the correct trade.
+            match tokio::time::timeout(SEND_TIMEOUT, self.sock.send_to(&buf, addr)).await {
+                Ok(Ok(bytes)) => trace!("sent {bytes} to {addr}"),
+                Ok(Err(e)) if e.kind() == io::ErrorKind::HostUnreachable => {
                     debug!("disabling discovery address {addr}: {e}");
                     _ = self.ifaces.lock().swap_remove(i);
                 }
-                Err(e) => debug!("failed to reach {addr}: {e}"),
+                Ok(Err(e)) => debug!("failed to reach {addr}: {e}"),
+                Err(_elapsed) => trace!("timed out sending to {addr}; skipped this tick"),
             }
         }
         Ok(())

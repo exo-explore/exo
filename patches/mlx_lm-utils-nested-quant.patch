@@ -1,0 +1,135 @@
+--- a/mlx_lm/utils.py
++++ b/mlx_lm/utils.py
+@@ -8,6 +8,7 @@
+ import os
+ import resource
+ import shutil
++import struct
+ from pathlib import Path
+ from textwrap import dedent
+ from typing import (
+@@ -277,8 +278,83 @@
+             config["eos_token_id"] = eos_token_id
+ 
+     return config
++
++
++def _load_safetensors_with_e8m0(path: str) -> Dict[str, mx.array]:
++    with open(path, "rb") as f:
++        header_len = struct.unpack("<Q", f.read(8))[0]
++        header_bytes = f.read(header_len)
++        data_offset = 8 + header_len
++        header = json.loads(header_bytes)
++
++        e8m0_tensors: Dict[str, mx.array] = {}
++        remaining_header = {}
++        for name, meta in header.items():
++            if name == "__metadata__":
++                remaining_header[name] = meta
++                continue
++            if isinstance(meta, dict) and meta.get("dtype") == "F8_E8M0":
++                start, end = meta["data_offsets"]
++                f.seek(data_offset + start)
++                raw = f.read(end - start)
++                arr = mx.array(memoryview(raw), dtype=mx.uint8).reshape(meta["shape"])
++                e8m0_tensors[name] = arr
++            else:
++                remaining_header[name] = meta
++
++    if not e8m0_tensors:
++        # Shouldn't reach here if caller filtered correctly, but fall back anyway.
++        return dict(mx.load(path))
+ 
++    # Write a scratch safetensors without the F8_E8M0 entries so mx.load works.
++    import tempfile
+ 
++    with tempfile.NamedTemporaryFile(
++        prefix="mlx_lm_e8m0_", suffix=".safetensors", delete=False
++    ) as tmp:
++        scratch = Path(tmp.name)
++
++    try:
++        # Reassemble the remaining tensors into a new safetensors file.
++        # We only need their bytes; recompute tight offsets starting from 0.
++        new_header = {}
++        if "__metadata__" in remaining_header:
++            new_header["__metadata__"] = remaining_header["__metadata__"]
++        running = 0
++        payloads = []
++        with open(path, "rb") as src:
++            for name, meta in remaining_header.items():
++                if name == "__metadata__":
++                    continue
++                start, end = meta["data_offsets"]
++                src.seek(data_offset + start)
++                blob = src.read(end - start)
++                payloads.append(blob)
++                new_meta = dict(meta)
++                new_meta["data_offsets"] = [running, running + len(blob)]
++                new_header[name] = new_meta
++                running += len(blob)
++
++        new_header_bytes = json.dumps(
++            new_header, separators=(",", ":")
++        ).encode("utf-8")
++        with open(scratch, "wb") as out:
++            out.write(struct.pack("<Q", len(new_header_bytes)))
++            out.write(new_header_bytes)
++            for blob in payloads:
++                out.write(blob)
++
++        merged = dict(mx.load(str(scratch)))
++    finally:
++        try:
++            scratch.unlink()
++        except OSError:
++            pass
++
++    merged.update(e8m0_tensors)
++    return merged
++
++
+ def load_model(
+     model_path: Path,
+     lazy: bool = False,
+@@ -320,7 +396,12 @@
+ 
+     weights = {}
+     for wf in weight_files:
+-        weights.update(mx.load(wf))
++        try:
++            weights.update(mx.load(wf))
++        except RuntimeError as e:
++            if "F8_E8M0" not in str(e):
++                raise
++            weights.update(_load_safetensors_with_e8m0(wf))
+ 
+     if (model_file := config.get("model_file")) is not None:
+         spec = importlib.util.spec_from_file_location(
+@@ -347,12 +428,22 @@
+ 
+     def _quantize(quantization):
+         def class_predicate(p, m):
+-            # Handle custom per layer quantizations
+-            if p in config["quantization"]:
+-                return config["quantization"][p]
++            # EXO-NESTED-QUANT: glm5_next nests f_a_proj/f_b_proj under
++            # forget_gate. while the checkpoint keys them un-nested.
++            candidates = [p]
++            if ".forget_gate." in p:
++                candidates.append(p.replace(".forget_gate.", "."))
++            # Checkpoints quantised from the upstream-HF layout key their
++            # per-module overrides as "model.layers.N...." while the bridge's
++            # module path is "language_model.model.layers.N....".
++            if p.startswith("language_model."):
++                candidates.append(p[len("language_model.") :])
++            for c in candidates:
++                if c in config["quantization"]:
++                    return config["quantization"][c]
+             if not hasattr(m, "to_quantized"):
+                 return False
+-            return f"{p}.scales" in weights
++            return any(f"{c}.scales" in weights for c in candidates)
+ 
+         nn.quantize(
+             model,

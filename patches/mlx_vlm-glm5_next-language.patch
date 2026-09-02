@@ -1,0 +1,55 @@
+--- a/mlx_vlm/models/glm5_next/language.py
++++ b/mlx_vlm/models/glm5_next/language.py
+@@ -362,6 +362,12 @@
+             and getattr(cache, "_pool", None) is not None
+             and getattr(cache, "_no_pad", False)
+             and cache._pool[0].shape[0] == B
++            # EXO rewinds the KV cache after prefill (generate.py c.trim(2)) and
++            # on prefix-cache reuse (cache.py trim), but the DSA indexer's _pool
++            # is not carried along. A stale pool makes k_full[:, s0:] slice to
++            # zero width and mx.argmax then raises. Only rebuild incrementally
++            # when the pool is exactly one step behind the current length.
++            and cache._pool[3] == T - 1
+         ):
+             ck, ci, cv, t_prev = cache._pool
+             n_stable = t_prev // self.index_kpool
+@@ -633,8 +639,22 @@
+             Glm5NextDecoderLayer(config, idx) for idx in range(config.num_hidden_layers)
+         ]
+         self.norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+-        self.ssm_idx = next((i for i, l in enumerate(self.layers) if l.is_linear), 0)
+-        self.fa_idx = next((i for i, l in enumerate(self.layers) if not l.is_linear), 0)
++        # ssm_idx/fa_idx must be resolved against the CURRENT layer list.
++        # EXO's pipeline sharding replaces self.layers with a slice after
++        # __init__, so indices cached here address the wrong entry of the
++        # per-shard cache: create_ssm_mask() then receives a full-attention
++        # cache (and fa_cache a recurrent one). The model still runs, but the
++        # masks are wrong and generation is numerically garbage. The old
++        # next(..., 0) default also silently returned 0 for a shard with no
++        # layer of that type; None lets __call__ skip that mask instead.
++
++    @property
++    def ssm_idx(self):
++        return next((i for i, l in enumerate(self.layers) if l.is_linear), None)
++
++    @property
++    def fa_idx(self):
++        return next((i for i, l in enumerate(self.layers) if not l.is_linear), None)
+ 
+     def __call__(
+         self,
+@@ -647,11 +667,12 @@
+         if cache is None:
+             cache = [None] * len(self.layers)
+ 
+-        fa_cache = cache[self.fa_idx]
++        fa_idx, ssm_idx = self.fa_idx, self.ssm_idx
++        fa_cache = None if fa_idx is None else cache[fa_idx]
+         fa_mask = create_attention_mask(
+             h, fa_cache[0] if fa_cache else None, return_array=True
+         )
+-        ssm_mask = create_ssm_mask(h, cache[self.ssm_idx])
++        ssm_mask = None if ssm_idx is None else create_ssm_mask(h, cache[ssm_idx])
+ 
+         h = mx.broadcast_to(
+             h[:, :, None, :], (h.shape[0], h.shape[1], self.hc_mult, h.shape[2])

@@ -487,7 +487,14 @@ class InfoGatherer:
     ):
         while True:
             try:
-                with fail_after(30):
+                # `system_profiler SPThunderboltDataType` walks every Thunderbolt
+                # controller and is far slower than 30s on machines with many
+                # ports - measured at ~106s on a Mac Studio with six. When it
+                # times out, no MacThunderboltIdentifiers/Connections are ever
+                # published, so the master finds no RDMA-connected cycles and
+                # every MlxJaccl placement is rejected. Allow enough headroom
+                # that the probe can actually finish.
+                with fail_after(240):
                     iface_map = await _gather_iface_map()
                     if iface_map is None:
                         raise ValueError("Failed to gather interface map")
