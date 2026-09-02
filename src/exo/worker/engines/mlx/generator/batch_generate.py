@@ -90,6 +90,34 @@ class _EngineTask:
     last_gen_token_time: float | None = None
 
 
+class UnsupportedRequestError(ValueError):
+    """The request asks for something this runner cannot serve.
+
+    Raised for request-level problems, such as image input on an instance that
+    has no vision processor. Only this request fails; the runner stays up and
+    the client gets an error instead of a silently wrong answer.
+    """
+
+
+def check_vision_support(
+    task_params: TextGenerationTaskParams,
+    vision_processor: VisionProcessor | None,
+) -> None:
+    """Refuse image input when nothing can process it.
+
+    The vision processor is None when the model has none, or when loading it
+    failed and load_mlx_items disabled vision for this runner. Dropping the
+    images would leave a bare image placeholder in the prompt, and the model
+    would answer confidently about an image it never saw.
+    """
+    if task_params.images and vision_processor is None:
+        raise UnsupportedRequestError(
+            f"{len(task_params.images)} image(s) were provided, but this model "
+            "instance has no vision processor loaded; image input is not "
+            "supported here."
+        )
+
+
 @dataclass(eq=False)
 class ExoBatchGenerator:
     model: Model
@@ -134,6 +162,8 @@ class ExoBatchGenerator:
         vision: VisionResult | None = None
         media_regions: list[MediaRegion] = []
 
+        check_vision_support(task_params, self.vision_processor)
+
         if self.vision_processor is not None:
             try:
                 vision = prepare_vision(
@@ -145,7 +175,13 @@ class ExoBatchGenerator:
                     model_id=task_params.model,
                     task_params=task_params,
                 )
-            except Exception:
+            except Exception as e:
+                if task_params.images:
+                    # The user sent images; answering without them is wrong,
+                    # not a fallback.
+                    raise UnsupportedRequestError(
+                        f"Vision processing failed for this request: {e}"
+                    ) from e
                 logger.opt(exception=True).warning(
                     "Vision processing failed, falling back to text-only"
                 )
