@@ -34,6 +34,10 @@ _TERMINATE_GRACE_SECONDS = 5.0
 _TERMINATE_RETRY_GRACE_SECONDS = 2.0
 _TERMINATE_ATTEMPTS = 10
 _KILL_GRACE_SECONDS = 2.0
+# A child stuck in an uninterruptible kernel wait ignores SIGKILL until the wait
+# returns, which may be never. Give up after this many attempts rather than
+# holding the owner's shutdown open indefinitely.
+_KILL_ATTEMPTS = 5
 
 
 @final
@@ -232,15 +236,23 @@ class AsyncProcess:
                     return
 
             logger.critical("Child process didn't respond to SIGTERM, killing")
-            j = 0
-            while True:
+            for attempt in range(1, _KILL_ATTEMPTS + 1):
                 process.kill()
                 with move_on_after(_KILL_GRACE_SECONDS):
                     await self.wait()
-                j += 1
                 if self.exitcode is not None or not process.is_alive():
-                    break
-            logger.warning(f"That took {j} attempts :(")
+                    logger.warning(f"That took {attempt} attempts :(")
+                    return
+
+            # SIGKILL cannot be delivered to a process blocked in an
+            # uninterruptible kernel wait (ps state "U"); looping forever here
+            # kept the owner's shutdown -- and everything awaiting it -- stuck
+            # until the daemon was restarted by hand. Leave the child to the
+            # kernel and let the owner carry on.
+            logger.critical(
+                f"Child process {self._pid} ignored SIGKILL {_KILL_ATTEMPTS} times "
+                "(uninterruptible wait); giving up and leaving it orphaned"
+            )
 
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
