@@ -46,6 +46,20 @@ def _default_memory_threshold() -> float:
 _MEMORY_THRESHOLD = float(
     os.environ.get("EXO_MEMORY_THRESHOLD", _default_memory_threshold())
 )
+# Prefill needs temporary activation memory in addition to the persistent KV cache.
+# Keep a configurable reserve before starting it instead of waiting for an OOM.
+_PREFILL_MEMORY_THRESHOLD = float(
+    os.environ.get(
+        "EXO_PREFILL_MEMORY_THRESHOLD",
+        max(0.0, _MEMORY_THRESHOLD - 0.10),
+    )
+)
+
+if not 0.0 <= _PREFILL_MEMORY_THRESHOLD <= _MEMORY_THRESHOLD:
+    raise ValueError(
+        "EXO_PREFILL_MEMORY_THRESHOLD must be between 0 and "
+        f"EXO_MEMORY_THRESHOLD ({_MEMORY_THRESHOLD})"
+    )
 
 
 class CacheSnapshot:
@@ -428,15 +442,22 @@ class KVPrefixCache:
 
     def _evict_if_needed(self):
         """Evict least recently used entries while memory usage is high."""
+        self._evict_until_below(_MEMORY_THRESHOLD, reason="memory usage")
+
+    def evict_for_prefill(self) -> None:
+        """Reserve activation headroom by evicting cached prefixes before prefill."""
+        self._evict_until_below(
+            _PREFILL_MEMORY_THRESHOLD,
+            reason="prefill activation headroom",
+        )
+
+    def _evict_until_below(self, threshold: float, *, reason: str) -> None:
         if len(self.caches) == 0:
             return
 
         evicted_any = False
         # Evict LRU entries until below threshold
-        while (
-            len(self.caches) > 0
-            and self.get_memory_used_percentage() > _MEMORY_THRESHOLD
-        ):
+        while len(self.caches) > 0 and self.get_memory_used_percentage() > threshold:
             lru_index = self._last_used.index(min(self._last_used))
             evicted_tokens = len(self.prompts[lru_index])
             self.prompts.pop(lru_index)
@@ -448,7 +469,8 @@ class KVPrefixCache:
 
             evicted_any = True
             logger.info(
-                f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
+                f"KV cache evicted LRU entry ({evicted_tokens} tokens) "
+                f"for {reason} (target={threshold:.0%})"
             )
 
         if evicted_any:

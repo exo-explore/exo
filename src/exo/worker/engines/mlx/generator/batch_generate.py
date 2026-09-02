@@ -169,6 +169,12 @@ class ExoBatchGenerator:
                     self.model, all_prompt_tokens, media_regions=media_regions
                 )
             )
+            # Prefix entries are persistent allocations. Reclaim enough of them
+            # for prefill's temporary activations. This runs after the lookup so a
+            # usable hit is never evicted before it is found: the returned cache is
+            # a deep copy, and the matched entry is now the most recently used, so
+            # LRU eviction reaches for the other entries first.
+            self.kv_prefix_cache.evict_for_prefill()
             prefix_hit_length = len(all_prompt_tokens) - len(remaining_tokens)
             if prefix_hit_length > 0:
                 logger.info(
