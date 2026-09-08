@@ -1,8 +1,10 @@
 import pytest
 
 from exo.master.placement_utils import (
+    allocate_layers_by_bandwidth,
     allocate_layers_proportionally,
     filter_cycles_by_memory,
+    find_ip_prioritised,
     get_mlx_jaccl_coordinators,
     get_shard_assignments,
     get_shard_assignments_for_pipeline_parallel,
@@ -17,6 +19,7 @@ from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
+from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import (
     NetworkInterfaceInfo,
     NodeNetworkInfo,
@@ -689,3 +692,416 @@ class TestCfgParallelPlacement:
         # First shard starts at 0, last shard ends at 57
         assert layer_ranges[0][0] == 0
         assert layer_ranges[-1][1] == 57
+
+
+def test_get_shard_assignments_bandwidth_aware():
+    """Test bandwidth-aware shard assignment gives more layers to faster nodes."""
+    # arrange
+    node_a_id = NodeId()
+    node_b_id = NodeId()
+    node_c_id = NodeId()
+
+    # Nodes with plenty of RAM (no memory constraint)
+    node_a_mem = create_node_memory(1024 * 1024 * 1024)
+    node_b_mem = create_node_memory(1024 * 1024 * 1024)
+    node_c_mem = create_node_memory(1024 * 1024 * 1024)
+
+    node_memory = {
+        node_a_id: node_a_mem,
+        node_b_id: node_b_mem,
+        node_c_id: node_c_mem,
+    }
+
+    # Bandwidths: A=400 GB/s (fastest), B=200 GB/s, C=100 GB/s (slowest)
+    node_bandwidth = {
+        node_a_id: 400_000_000_000,
+        node_b_id: 200_000_000_000,
+        node_c_id: 100_000_000_000,
+    }
+
+    topology = Topology()
+    topology.add_node(node_a_id)
+    topology.add_node(node_b_id)
+    topology.add_node(node_c_id)
+
+    topology.add_connection(
+        Connection(source=node_a_id, sink=node_b_id, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_b_id, sink=node_c_id, edge=create_socket_connection(2))
+    )
+    topology.add_connection(
+        Connection(source=node_c_id, sink=node_a_id, edge=create_socket_connection(3))
+    )
+    topology.add_connection(
+        Connection(source=node_b_id, sink=node_a_id, edge=create_socket_connection(4))
+    )
+    topology.add_connection(
+        Connection(source=node_c_id, sink=node_b_id, edge=create_socket_connection(5))
+    )
+    topology.add_connection(
+        Connection(source=node_a_id, sink=node_c_id, edge=create_socket_connection(6))
+    )
+
+    model_card = ModelCard(
+        model_id=ModelId("test-model"),
+        n_layers=30,
+        storage_size=Memory.from_kb(300),  # 10KB per layer
+        hidden_size=1000,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+        backends=[Backend.MlxMetal],
+    )
+
+    cycles = topology.get_cycles()
+    selected_cycle = next(cycle for cycle in cycles if len(cycle) == 3)
+
+    # act
+    shard_assignments = get_shard_assignments(
+        model_card, selected_cycle, Sharding.Pipeline, node_memory, node_bandwidth
+    )
+
+    # assert
+    runner_id_a = shard_assignments.node_to_runner[node_a_id]
+    runner_id_b = shard_assignments.node_to_runner[node_b_id]
+    runner_id_c = shard_assignments.node_to_runner[node_c_id]
+
+    layers_a = (
+        shard_assignments.runner_to_shard[runner_id_a].end_layer
+        - shard_assignments.runner_to_shard[runner_id_a].start_layer
+    )
+    layers_b = (
+        shard_assignments.runner_to_shard[runner_id_b].end_layer
+        - shard_assignments.runner_to_shard[runner_id_b].start_layer
+    )
+    layers_c = (
+        shard_assignments.runner_to_shard[runner_id_c].end_layer
+        - shard_assignments.runner_to_shard[runner_id_c].start_layer
+    )
+
+    # Total layers preserved
+    assert layers_a + layers_b + layers_c == 30
+
+    # Bandwidth-proportional assignment with 400:200:100 GB/s (4:2:1 ratio):
+    # targets over all 30 layers are A=17.14, B=8.57, C=4.29, and layers go to
+    # the node furthest below its target until they run out: A=17, B=9, C=4.
+    # This distributes work across all nodes while favouring faster ones,
+    # minimising total pipeline time (dominated by the slowest stage).
+    assert layers_a == 17
+    assert layers_b == 9
+    assert layers_c == 4
+
+
+def test_get_shard_assignments_falls_back_without_bandwidth():
+    """Test that without bandwidth data, assignment falls back to RAM-proportional."""
+    # arrange
+    node_a_id = NodeId()
+    node_b_id = NodeId()
+
+    node_a_mem = create_node_memory(500 * 1024)  # 500KB
+    node_b_mem = create_node_memory(1000 * 1024)  # 1000KB
+
+    node_memory = {
+        node_a_id: node_a_mem,
+        node_b_id: node_b_mem,
+    }
+
+    topology = Topology()
+    topology.add_node(node_a_id)
+    topology.add_node(node_b_id)
+
+    topology.add_connection(
+        Connection(source=node_a_id, sink=node_b_id, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_b_id, sink=node_a_id, edge=create_socket_connection(2))
+    )
+
+    model_card = ModelCard(
+        model_id=ModelId("test-model"),
+        n_layers=12,
+        storage_size=Memory.from_kb(100),
+        hidden_size=1000,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+        backends=[Backend.MlxMetal],
+    )
+
+    cycles = topology.get_cycles()
+    selected_cycle = next(cycle for cycle in cycles if len(cycle) == 2)
+
+    # act - no bandwidth data
+    shard_assignments = get_shard_assignments(
+        model_card, selected_cycle, Sharding.Pipeline, node_memory
+    )
+
+    # assert - RAM-proportional assignment (500KB:1000KB = 1:2 ratio)
+    runner_id_a = shard_assignments.node_to_runner[node_a_id]
+    runner_id_b = shard_assignments.node_to_runner[node_b_id]
+
+    layers_a = (
+        shard_assignments.runner_to_shard[runner_id_a].end_layer
+        - shard_assignments.runner_to_shard[runner_id_a].start_layer
+    )
+    layers_b = (
+        shard_assignments.runner_to_shard[runner_id_b].end_layer
+        - shard_assignments.runner_to_shard[runner_id_b].start_layer
+    )
+
+    assert layers_a + layers_b == 12
+    assert layers_a == 4
+    assert layers_b == 8
+
+
+def test_get_shard_assignments_bandwidth_aware_respects_ram_capacity():
+    """A fast node with little RAM must be capped and the excess redistributed."""
+    # arrange
+    node_a_id = NodeId()
+    node_b_id = NodeId()
+
+    # A is 4x faster but can only hold 3 of the 10 layers (100 bytes each)
+    node_a_mem = create_node_memory(300)
+    node_b_mem = create_node_memory(10_000)
+
+    node_memory = {
+        node_a_id: node_a_mem,
+        node_b_id: node_b_mem,
+    }
+
+    node_bandwidth = {
+        node_a_id: 400_000_000_000,
+        node_b_id: 100_000_000_000,
+    }
+
+    topology = Topology()
+    topology.add_node(node_a_id)
+    topology.add_node(node_b_id)
+
+    topology.add_connection(
+        Connection(source=node_a_id, sink=node_b_id, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=node_b_id, sink=node_a_id, edge=create_socket_connection(2))
+    )
+
+    model_card = ModelCard(
+        model_id=ModelId("test-model"),
+        n_layers=10,
+        storage_size=Memory.from_bytes(1000),  # 100 bytes per layer
+        hidden_size=1000,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+        backends=[Backend.MlxMetal],
+    )
+
+    cycles = topology.get_cycles()
+    selected_cycle = next(cycle for cycle in cycles if len(cycle) == 2)
+
+    # act
+    shard_assignments = get_shard_assignments(
+        model_card, selected_cycle, Sharding.Pipeline, node_memory, node_bandwidth
+    )
+
+    # assert
+    runner_id_a = shard_assignments.node_to_runner[node_a_id]
+    runner_id_b = shard_assignments.node_to_runner[node_b_id]
+
+    layers_a = (
+        shard_assignments.runner_to_shard[runner_id_a].end_layer
+        - shard_assignments.runner_to_shard[runner_id_a].start_layer
+    )
+    layers_b = (
+        shard_assignments.runner_to_shard[runner_id_b].end_layer
+        - shard_assignments.runner_to_shard[runner_id_b].start_layer
+    )
+
+    # Bandwidth alone would give A 8 of 10 layers, but A's RAM fits only 3;
+    # the remainder must flow to B rather than exceeding A's capacity.
+    assert layers_a + layers_b == 10
+    assert layers_a == 3
+    assert layers_b == 7
+
+
+class TestAllocateLayersByBandwidth:
+    def test_proportional_to_bandwidth(self):
+        # 400:200:100 GB/s over 30 layers -> targets 17.14 / 8.57 / 4.29
+        assert allocate_layers_by_bandwidth(
+            30, [400.0, 200.0, 100.0], [30, 30, 30]
+        ) == [
+            17,
+            9,
+            4,
+        ]
+
+    def test_every_node_gets_at_least_one_layer(self):
+        # A node with no layers would still sit in the ring paying the hop cost.
+        result = allocate_layers_by_bandwidth(10, [1000.0, 1.0, 1.0], [10, 10, 10])
+        assert min(result) >= 1
+        assert sum(result) == 10
+
+    def test_fewer_remaining_layers_than_nodes(self):
+        # Regression: reserving one layer per node used to leave fewer layers than
+        # nodes for the proportional step, which raised ValueError.
+        assert (
+            sum(allocate_layers_by_bandwidth(4, [100.0, 100.0, 100.0], [4, 4, 4])) == 4
+        )
+
+    def test_spills_onto_slower_nodes_when_capacity_runs_out(self):
+        # Regression: redistributing a single layer across three equal-bandwidth
+        # nodes rounded every share to zero and looped forever.
+        result = allocate_layers_by_bandwidth(9, [2.0, 1.0, 1.0, 1.0], [2, 5, 5, 5])
+        assert result[0] == 2  # capped by capacity, not by bandwidth
+        assert sum(result) == 9
+
+    def test_capacity_is_never_exceeded(self):
+        result = allocate_layers_by_bandwidth(12, [800.0, 100.0, 100.0], [4, 6, 6])
+        assert result[0] <= 4
+        assert sum(result) == 12
+
+    def test_raises_when_cluster_cannot_hold_model(self):
+        with pytest.raises(ValueError, match="memory capacity"):
+            allocate_layers_by_bandwidth(30, [400.0, 200.0, 100.0], [3, 3, 3])
+
+    def test_fewer_layers_than_nodes_raises(self):
+        with pytest.raises(ValueError, match="at least 1 layer per node"):
+            allocate_layers_by_bandwidth(2, [1.0, 1.0, 1.0], [5, 5, 5])
+
+    def test_empty_node_list_raises(self):
+        with pytest.raises(ValueError, match="empty node list"):
+            allocate_layers_by_bandwidth(10, [], [])
+
+    def test_zero_total_bandwidth_raises(self):
+        with pytest.raises(ValueError, match="bandwidth is 0"):
+            allocate_layers_by_bandwidth(10, [0.0, 0.0], [10, 10])
+
+
+def _socket_edge(ip_address: str, latency_ms: float | None = None) -> SocketConnection:
+    return SocketConnection(
+        sink_multiaddr=Multiaddr(address=f"/ip4/{ip_address}/tcp/1234"),
+        latency_ms=latency_ms,
+    )
+
+
+def _two_node_topology_with_edges(
+    node_a: NodeId, node_b: NodeId, edges: list[SocketConnection]
+) -> Topology:
+    topology = Topology()
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    for edge in edges:
+        topology.add_connection(Connection(source=node_a, sink=node_b, edge=edge))
+    return topology
+
+
+def test_find_ip_prioritised_ring_prefers_measured_low_latency():
+    """A link with low measured latency wins even over a thunderbolt-labelled one."""
+    node_a = NodeId()
+    node_b = NodeId()
+    topology = _two_node_topology_with_edges(
+        node_a,
+        node_b,
+        [
+            _socket_edge("100.64.0.2", latency_ms=55.0),
+            _socket_edge("192.168.4.2", latency_ms=0.8),
+        ],
+    )
+    node_network = {
+        node_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="utun3", ip_address="100.64.0.2", interface_type="unknown"
+                ),
+                NetworkInterfaceInfo(
+                    name="bridge0",
+                    ip_address="192.168.4.2",
+                    interface_type="thunderbolt",
+                ),
+            ]
+        )
+    }
+
+    ip = find_ip_prioritised(node_a, node_b, topology, node_network, ring=True)
+
+    assert ip == "192.168.4.2"
+
+
+def test_find_ip_prioritised_ring_latency_beats_interface_label():
+    """Measured latency outranks the interface-type heuristic entirely."""
+    node_a = NodeId()
+    node_b = NodeId()
+    topology = _two_node_topology_with_edges(
+        node_a,
+        node_b,
+        [
+            _socket_edge("192.168.4.2", latency_ms=55.0),
+            _socket_edge("10.0.0.2", latency_ms=1.2),
+        ],
+    )
+    node_network = {
+        node_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="bridge0",
+                    ip_address="192.168.4.2",
+                    interface_type="thunderbolt",
+                ),
+                NetworkInterfaceInfo(
+                    name="en0", ip_address="10.0.0.2", interface_type="wifi"
+                ),
+            ]
+        )
+    }
+
+    ip = find_ip_prioritised(node_a, node_b, topology, node_network, ring=True)
+
+    assert ip == "10.0.0.2"
+
+
+def test_find_ip_prioritised_ring_falls_back_to_interface_type():
+    """Without measurements, thunderbolt-labelled links keep their priority."""
+    node_a = NodeId()
+    node_b = NodeId()
+    topology = _two_node_topology_with_edges(
+        node_a,
+        node_b,
+        [
+            _socket_edge("10.0.0.2"),
+            _socket_edge("192.168.4.2"),
+        ],
+    )
+    node_network = {
+        node_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en0", ip_address="10.0.0.2", interface_type="wifi"
+                ),
+                NetworkInterfaceInfo(
+                    name="bridge0",
+                    ip_address="192.168.4.2",
+                    interface_type="thunderbolt",
+                ),
+            ]
+        )
+    }
+
+    ip = find_ip_prioritised(node_a, node_b, topology, node_network, ring=True)
+
+    assert ip == "192.168.4.2"
+
+
+def test_find_ip_prioritised_measured_link_beats_unmeasured():
+    node_a = NodeId()
+    node_b = NodeId()
+    topology = _two_node_topology_with_edges(
+        node_a,
+        node_b,
+        [
+            _socket_edge("10.0.0.2", latency_ms=40.0),
+            _socket_edge("192.168.4.2"),
+        ],
+    )
+    node_network = {node_b: NodeNetworkInfo()}
+
+    ip = find_ip_prioritised(node_a, node_b, topology, node_network, ring=True)
+
+    assert ip == "10.0.0.2"

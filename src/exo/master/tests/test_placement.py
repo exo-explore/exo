@@ -26,6 +26,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import (
     NetworkInterfaceInfo,
+    NodeBandwidth,
     NodeNetworkInfo,
     NodeRdmaCtlStatus,
 )
@@ -960,6 +961,245 @@ def test_placement_does_not_prefer_cycle_with_failed_download(
     assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
     # node_a should win on RAM tiebreaker since failed download scores 0.0
     assert assigned_nodes == {node_a}
+
+
+def test_placement_prefers_cycle_with_lower_measured_ring_latency(
+    model_card: ModelCard,
+) -> None:
+    topology = Topology()
+    fast_a, fast_b, slow_a, slow_b = (NodeId() for _ in range(4))
+
+    connections = [
+        (fast_a, fast_b, 1, 0.5),
+        (fast_b, fast_a, 2, 0.5),
+        (slow_a, slow_b, 3, 50.0),
+        (slow_b, slow_a, 4, 50.0),
+    ]
+    for source, sink, ip_suffix, latency_ms in connections:
+        topology.add_connection(
+            Connection(
+                source=source,
+                sink=sink,
+                edge=create_socket_connection(ip_suffix).model_copy(
+                    update={"latency_ms": latency_ms}
+                ),
+            )
+        )
+
+    node_memory = {
+        node_id: create_node_memory(1000)
+        for node_id in (fast_a, fast_b, slow_a, slow_b)
+    }
+    node_network = {
+        fast_a: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="bridge0",
+                    ip_address="169.254.0.2",
+                    interface_type="wifi",
+                )
+            ]
+        ),
+        fast_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="bridge0",
+                    ip_address="169.254.0.1",
+                    interface_type="wifi",
+                )
+            ]
+        ),
+        slow_a: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en0",
+                    ip_address="169.254.0.4",
+                    interface_type="thunderbolt",
+                )
+            ]
+        ),
+        slow_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en0",
+                    ip_address="169.254.0.3",
+                    interface_type="thunderbolt",
+                )
+            ]
+        ),
+    }
+    node_bandwidth = {
+        node_id: NodeBandwidth(memory_bandwidth=1000) for node_id in node_memory
+    }
+
+    placements = place_instance(
+        place_instance_command(
+            model_card.model_copy(update={"storage_size": Memory.from_bytes(1000)})
+        ).model_copy(update={"min_nodes": 2}),
+        topology,
+        {},
+        node_memory,
+        node_network,
+        _metal_only(node_memory),
+        node_bandwidth=node_bandwidth,
+    )
+
+    instance = next(iter(placements.values()))
+    assert set(instance.shard_assignments.node_to_runner) == {fast_a, fast_b}
+
+
+def test_placement_prefers_cycle_with_more_memory_bandwidth_than_download_progress(
+    model_card: ModelCard,
+) -> None:
+    topology = Topology()
+    slow_node = NodeId()
+    fast_node = NodeId()
+    topology.add_node(slow_node)
+    topology.add_node(fast_node)
+
+    node_memory = {
+        slow_node: create_node_memory(1000),
+        fast_node: create_node_memory(1000),
+    }
+    node_network = {
+        slow_node: create_node_network(),
+        fast_node: create_node_network(),
+    }
+    model_card = model_card.model_copy(update={"storage_size": Memory.from_bytes(500)})
+    download_status = {
+        slow_node: [
+            DownloadCompleted(
+                node_id=slow_node,
+                shard_metadata=_make_shard_metadata(model_card),
+                total=model_card.storage_size,
+            )
+        ]
+    }
+
+    placements = place_instance(
+        place_instance_command(model_card),
+        topology,
+        {},
+        node_memory,
+        node_network,
+        _metal_only(node_memory),
+        download_status=download_status,
+        node_bandwidth={
+            slow_node: NodeBandwidth(memory_bandwidth=1000),
+            fast_node: NodeBandwidth(memory_bandwidth=2000),
+        },
+    )
+
+    instance = next(iter(placements.values()))
+    assert set(instance.shard_assignments.node_to_runner) == {fast_node}
+
+
+def test_placement_compares_profiled_cycles_with_different_node_counts(
+    model_card: ModelCard,
+) -> None:
+    topology = Topology()
+    node_a, node_b, fast_low_memory_node = (NodeId() for _ in range(3))
+
+    for source, sink, ip_suffix in [
+        (node_a, node_b, 1),
+        (node_b, node_a, 2),
+        (node_b, fast_low_memory_node, 3),
+        (fast_low_memory_node, node_a, 4),
+        (fast_low_memory_node, node_b, 5),
+        (node_a, fast_low_memory_node, 6),
+    ]:
+        topology.add_connection(
+            Connection(
+                source=source,
+                sink=sink,
+                edge=create_socket_connection(ip_suffix).model_copy(
+                    update={"latency_ms": 0.1}
+                ),
+            )
+        )
+
+    node_memory = {
+        node_a: create_node_memory(500),
+        node_b: create_node_memory(500),
+        fast_low_memory_node: create_node_memory(200),
+    }
+    node_bandwidth = {
+        node_a: NodeBandwidth(memory_bandwidth=100),
+        node_b: NodeBandwidth(memory_bandwidth=100),
+        fast_low_memory_node: NodeBandwidth(memory_bandwidth=10_000),
+    }
+
+    placements = place_instance(
+        place_instance_command(
+            model_card.model_copy(
+                update={"n_layers": 10, "storage_size": Memory.from_bytes(1000)}
+            )
+        ).model_copy(update={"min_nodes": 2}),
+        topology,
+        {},
+        node_memory,
+        {node_id: create_node_network() for node_id in node_memory},
+        _metal_only(node_memory),
+        node_bandwidth=node_bandwidth,
+    )
+
+    instance = next(iter(placements.values()))
+    assert set(instance.shard_assignments.node_to_runner) == set(node_memory)
+
+
+def test_placement_scores_capacity_adjusted_layer_allocation(
+    model_card: ModelCard,
+) -> None:
+    topology = Topology()
+    constrained_fast, constrained_slow, balanced_a, balanced_b = (
+        NodeId() for _ in range(4)
+    )
+
+    for source, sink, ip_suffix in [
+        (constrained_fast, constrained_slow, 1),
+        (constrained_slow, constrained_fast, 2),
+        (balanced_a, balanced_b, 3),
+        (balanced_b, balanced_a, 4),
+    ]:
+        topology.add_connection(
+            Connection(
+                source=source,
+                sink=sink,
+                edge=create_socket_connection(ip_suffix).model_copy(
+                    update={"latency_ms": 0.1}
+                ),
+            )
+        )
+
+    node_memory = {
+        constrained_fast: create_node_memory(100),
+        constrained_slow: create_node_memory(900),
+        balanced_a: create_node_memory(500),
+        balanced_b: create_node_memory(500),
+    }
+    node_bandwidth = {
+        constrained_fast: NodeBandwidth(memory_bandwidth=10_000),
+        constrained_slow: NodeBandwidth(memory_bandwidth=100),
+        balanced_a: NodeBandwidth(memory_bandwidth=150),
+        balanced_b: NodeBandwidth(memory_bandwidth=150),
+    }
+
+    placements = place_instance(
+        place_instance_command(
+            model_card.model_copy(
+                update={"n_layers": 10, "storage_size": Memory.from_bytes(1000)}
+            )
+        ).model_copy(update={"min_nodes": 2}),
+        topology,
+        {},
+        node_memory,
+        {node_id: create_node_network() for node_id in node_memory},
+        _metal_only(node_memory),
+        node_bandwidth=node_bandwidth,
+    )
+
+    instance = next(iter(placements.values()))
+    assert set(instance.shard_assignments.node_to_runner) == {balanced_a, balanced_b}
 
 
 def test_placement_rejects_when_model_backends_disjoint_from_engine(

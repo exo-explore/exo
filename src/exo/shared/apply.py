@@ -34,6 +34,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
+    NodeBandwidth,
     NodeIdentity,
     NodeNetworkInfo,
     NodeRdmaCtlStatus,
@@ -60,6 +61,7 @@ from exo.utils.info_gatherer.info_gatherer import (
     NodeBackends,
     NodeConfig,
     NodeDiskUsage,
+    NodeMemoryBandwidth,
     NodeNetworkInterfaces,
     RdmaCtlStatus,
     StaticNodeInformation,
@@ -320,6 +322,11 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     node_rdma_ctl = {
         key: value for key, value in state.node_rdma_ctl.items() if key != event.node_id
     }
+    node_bandwidth = {
+        key: value
+        for key, value in state.node_bandwidth.items()
+        if key != event.node_id
+    }
     # Only recompute cycles if the leaving node had TB bridge enabled
     leaving_node_status = state.node_thunderbolt_bridge.get(event.node_id)
     leaving_node_had_tb_enabled = (
@@ -342,6 +349,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
             "node_thunderbolt": node_thunderbolt,
             "node_thunderbolt_bridge": node_thunderbolt_bridge,
             "node_rdma_ctl": node_rdma_ctl,
+            "node_bandwidth": node_bandwidth,
             "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
         }
     )
@@ -465,6 +473,11 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             update["node_backends"] = {
                 **state.node_backends,
                 event.node_id: info.backends,
+            }
+        case NodeMemoryBandwidth():
+            update["node_bandwidth"] = {
+                **state.node_bandwidth,
+                event.node_id: NodeBandwidth(memory_bandwidth=info.memory_bandwidth),
             }
 
     return state.model_copy(update=update)

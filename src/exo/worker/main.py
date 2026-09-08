@@ -55,7 +55,10 @@ from exo.shared.types.worker.instances import InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
-from exo.utils.info_gatherer.net_profile import check_reachable
+from exo.utils.info_gatherer.net_profile import (
+    check_reachable,
+    latency_changed_materially,
+)
 from exo.utils.keyed_backoff import KeyedBackoff
 from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
@@ -388,11 +391,13 @@ class Worker:
 
     async def _poll_connection_updates(self):
         while True:
-            edges = set(
-                conn.edge for conn in self.state.topology.out_edges(self.node_id)
-            )
+            existing_edges: dict[SocketConnection, Connection] = {
+                conn.edge: conn
+                for conn in self.state.topology.out_edges(self.node_id)
+                if isinstance(conn.edge, SocketConnection)
+            }
             conns: defaultdict[NodeId, set[str]] = defaultdict(set)
-            async for ip, nid in check_reachable(
+            async for ip, nid, latency_ms in check_reachable(
                 self.state.topology,
                 self.node_id,
                 self.state.node_network,
@@ -407,9 +412,23 @@ class Worker:
                     if "." in ip
                     # nonsense multiaddr
                     else Multiaddr(address=f"/ip6/{ip}/tcp/{self.api_port}"),
+                    latency_ms=latency_ms,
                 )
-                if edge not in edges:
+                old_conn = existing_edges.get(edge)
+                if old_conn is None:
                     logger.debug(f"ping discovered {edge=}")
+                    await self.event_sender.send(
+                        TopologyEdgeCreated(
+                            conn=Connection(source=self.node_id, sink=nid, edge=edge)
+                        )
+                    )
+                elif isinstance(
+                    old_conn.edge, SocketConnection
+                ) and latency_changed_materially(old_conn.edge.latency_ms, latency_ms):
+                    logger.debug(
+                        f"latency changed {old_conn.edge.latency_ms}ms -> {latency_ms}ms for {edge=}"
+                    )
+                    await self.event_sender.send(TopologyEdgeDeleted(conn=old_conn))
                     await self.event_sender.send(
                         TopologyEdgeCreated(
                             conn=Connection(source=self.node_id, sink=nid, edge=edge)

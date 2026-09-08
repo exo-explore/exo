@@ -109,3 +109,12 @@ class ThunderboltBridgeStatus(FrozenModel):
     enabled: bool
     exists: bool
     service_name: str | None = None
+
+
+class NodeBandwidth(FrozenModel):
+    """Memory bandwidth information for a node.
+
+    Only present in state for nodes whose bandwidth was successfully profiled.
+    """
+
+    memory_bandwidth: int

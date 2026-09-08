@@ -38,6 +38,7 @@ from .system_info import (
     get_network_interfaces,
     get_os_build_version,
     get_os_version,
+    profile_memory_bandwidth,
 )
 
 IS_DARWIN = sys.platform == "darwin"
@@ -334,6 +335,38 @@ class NodeDiskUsage(TaggedModel):
         )
 
 
+class NodeMemoryBandwidth(TaggedModel):
+    """Memory bandwidth information gathered once at startup.
+
+    Bandwidth is sampled only once because:
+    - Apple Silicon has hardware-fixed bandwidth (not dynamic like CPU/GPU frequency)
+    - Profiling requires large GPU allocations (~4GB) which is risky during operation
+    - Unlike memory/disk usage, bandwidth doesn't change at runtime
+    """
+
+    memory_bandwidth: int
+
+    @classmethod
+    async def gather(cls) -> Self | None:
+        """Profile memory bandwidth with retries. Returns None if all attempts fail."""
+        for attempt in range(1, 6):
+            try:
+                bandwidth: int = await to_thread.run_sync(profile_memory_bandwidth)
+                logger.info("Memory bandwidth: {:.1f} GB/s", bandwidth / 1e9)
+                return cls(memory_bandwidth=bandwidth)
+            except Exception as e:
+                if attempt < 5:
+                    logger.warning(
+                        f"Memory bandwidth profiling attempt {attempt} failed: {e}"
+                    )
+                    await anyio.sleep(1)
+                else:
+                    logger.error(
+                        f"Memory bandwidth profiling failed after 5 attempts: {e}"
+                    )
+        return None
+
+
 async def _gather_iface_map() -> dict[str, str] | None:
     proc = await anyio.run_process(
         ["networksetup", "-listallhardwareports"], check=False
@@ -396,6 +429,7 @@ GatheredInfo = (
     | StaticNodeInformation
     | NodeDiskUsage
     | NodeBackends
+    | NodeMemoryBandwidth
 )
 
 
@@ -459,7 +493,17 @@ class InfoGatherer:
             if nc is not None:
                 await self.info_sender.send(nc)
 
+            # Gather memory bandwidth once at startup (macOS only), concurrently
+            # so its retries never delay the rest of the startup gathering
+            if IS_DARWIN:
+                tg.start_soon(self._gather_memory_bandwidth)
+
             await self.info_sender.send(await NodeBackends.gather())
+
+    async def _gather_memory_bandwidth(self):
+        bandwidth = await NodeMemoryBandwidth.gather()
+        if bandwidth is not None:
+            await self.info_sender.send(bandwidth)
 
     def shutdown(self):
         self._tg.cancel_tasks()

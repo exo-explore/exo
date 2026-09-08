@@ -6,7 +6,7 @@ from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.profiling import InterfaceType, MemoryUsage, NodeNetworkInfo
 from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
@@ -93,19 +93,13 @@ def _compute_total_memory(
     return total_memory
 
 
-def _allocate_and_validate_layers(
+def _validate_layer_allocations(
     node_ids: list[NodeId],
     node_memory: Mapping[NodeId, MemoryUsage],
-    total_memory: Memory,
+    layer_allocations: list[int],
     model_card: ModelCard,
-) -> list[int]:
-    layer_allocations = allocate_layers_proportionally(
-        total_layers=model_card.n_layers,
-        memory_fractions=[
-            node_memory[node_id].ram_available / total_memory for node_id in node_ids
-        ],
-    )
-
+) -> None:
+    """Reject an allocation that does not fit in a node's available memory."""
     total_storage = model_card.storage_size
     total_layers = model_card.n_layers
     for i, node_id in enumerate(node_ids):
@@ -119,28 +113,142 @@ def _allocate_and_validate_layers(
                 f"but only has {available_memory.in_gb:.2f} GB available"
             )
 
+
+def _allocate_layers(
+    node_ids: list[NodeId],
+    node_memory: Mapping[NodeId, MemoryUsage],
+    model_card: ModelCard,
+    node_bandwidth: Mapping[NodeId, int] | None,
+) -> list[int]:
+    """Split the model's layers across nodes, by bandwidth where it is known.
+
+    Falls back to RAM-proportional allocation when any node is missing bandwidth
+    data, so a cluster that has not finished profiling still places instances.
+    Both paths are validated against the same memory constraint.
+    """
+    if node_bandwidth is not None and all(
+        node_id in node_bandwidth for node_id in node_ids
+    ):
+        logger.info("Using bandwidth-aware shard assignment")
+        layer_allocations = allocate_layers_by_bandwidth(
+            total_layers=model_card.n_layers,
+            bandwidths=[float(node_bandwidth[node_id]) for node_id in node_ids],
+            layer_capacities=_layer_capacities(node_ids, node_memory, model_card),
+        )
+    else:
+        if node_bandwidth:
+            logger.info(
+                "Bandwidth data missing for some nodes, "
+                "falling back to RAM-proportional assignment"
+            )
+        total_memory = _compute_total_memory(node_ids, node_memory)
+        layer_allocations = allocate_layers_proportionally(
+            total_layers=model_card.n_layers,
+            memory_fractions=[
+                node_memory[node_id].ram_available / total_memory
+                for node_id in node_ids
+            ],
+        )
+
+    _validate_layer_allocations(node_ids, node_memory, layer_allocations, model_card)
     return layer_allocations
+
+
+def _layer_capacities(
+    node_ids: list[NodeId],
+    node_memory: Mapping[NodeId, MemoryUsage],
+    model_card: ModelCard,
+) -> list[int]:
+    """Maximum layers each node can hold, using the same arithmetic as validation.
+
+    ``_validate_layer_allocations`` rejects a node when
+    ``storage_size * layers // n_layers > ram_available``, so the capacity is the
+    largest layer count that keeps that expression within budget. Deriving both
+    from the same equation means an allocation that respects these capacities
+    always passes validation.
+    """
+    storage_bytes = model_card.storage_size.in_bytes
+    if storage_bytes <= 0:
+        return [model_card.n_layers for _ in node_ids]
+
+    return [
+        (node_memory[node_id].ram_available.in_bytes * model_card.n_layers)
+        // storage_bytes
+        for node_id in node_ids
+    ]
+
+
+def allocate_layers_by_bandwidth(
+    total_layers: int,
+    bandwidths: list[float],
+    layer_capacities: list[int],
+) -> list[int]:
+    """Distribute layers proportionally to memory bandwidth, capped by capacity.
+
+    Layers are handed out one at a time to whichever node is furthest below its
+    bandwidth-proportional target and still has room, so a node that runs out of
+    memory spills onto the next-fastest node instead of stalling the allocation.
+
+    Every node receives at least one layer: a node in the cycle with no layers
+    would still sit in the ring and pay the hop cost without doing any work.
+    """
+    n = len(bandwidths)
+    if n == 0:
+        raise ValueError("Cannot allocate layers to an empty node list")
+    if total_layers < n:
+        raise ValueError(
+            f"Cannot distribute {total_layers} layers across {n} nodes "
+            "(need at least 1 layer per node)"
+        )
+
+    total_bandwidth = sum(bandwidths)
+    if total_bandwidth <= 0:
+        raise ValueError("Cannot allocate layers: total memory bandwidth is 0")
+
+    targets = [total_layers * bandwidth / total_bandwidth for bandwidth in bandwidths]
+
+    # One layer per node up front, then the rest by largest shortfall against target.
+    result = [1] * n
+    for _ in range(total_layers - n):
+        candidates = [i for i in range(n) if result[i] < layer_capacities[i]]
+        if not candidates:
+            raise ValueError(
+                f"Cannot allocate {total_layers} layers across {n} nodes: "
+                "every node is at its memory capacity"
+            )
+        # Highest bandwidth wins ties so the faster node absorbs the odd layer.
+        result[
+            max(candidates, key=lambda i: (targets[i] - result[i], bandwidths[i]))
+        ] += 1
+
+    return result
 
 
 def get_shard_assignments_for_pipeline_parallel(
     model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_bandwidth: Mapping[NodeId, int] | None = None,
 ) -> ShardAssignments:
     """Create shard assignments for pipeline parallel execution."""
     world_size = len(cycle)
     use_cfg_parallel = model_card.uses_cfg and world_size >= 2 and world_size % 2 == 0
 
     if use_cfg_parallel:
-        return _get_shard_assignments_for_cfg_parallel(model_card, cycle, node_memory)
+        return _get_shard_assignments_for_cfg_parallel(
+            model_card, cycle, node_memory, node_bandwidth
+        )
     else:
-        return _get_shard_assignments_for_pure_pipeline(model_card, cycle, node_memory)
+        return _get_shard_assignments_for_pure_pipeline(
+            model_card, cycle, node_memory, node_bandwidth
+        )
 
 
 def _get_shard_assignments_for_cfg_parallel(
     model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_bandwidth: Mapping[NodeId, int] | None = None,
 ) -> ShardAssignments:
     """Create shard assignments for CFG parallel execution.
 
@@ -157,9 +265,8 @@ def _get_shard_assignments_for_cfg_parallel(
 
     # Allocate layers for one pipeline group (both groups run the same layers)
     pipeline_node_ids = cycle.node_ids[:pipeline_world_size]
-    pipeline_memory = _compute_total_memory(pipeline_node_ids, node_memory)
-    layer_allocations = _allocate_and_validate_layers(
-        pipeline_node_ids, node_memory, pipeline_memory, model_card
+    layer_allocations = _allocate_layers(
+        pipeline_node_ids, node_memory, model_card, node_bandwidth
     )
 
     # Ring topology: group 0 ascending [0,1,2,...], group 1 descending [...,2,1,0]
@@ -204,13 +311,12 @@ def _get_shard_assignments_for_pure_pipeline(
     model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_bandwidth: Mapping[NodeId, int] | None = None,
 ) -> ShardAssignments:
     """Create shard assignments for pure pipeline execution."""
     _validate_cycle(cycle)
-    total_memory = _compute_total_memory(cycle.node_ids, node_memory)
-
-    layer_allocations = _allocate_and_validate_layers(
-        cycle.node_ids, node_memory, total_memory, model_card
+    layer_allocations = _allocate_layers(
+        cycle.node_ids, node_memory, model_card, node_bandwidth
     )
 
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
@@ -278,6 +384,7 @@ def get_shard_assignments(
     cycle: Cycle,
     sharding: Sharding,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_bandwidth: Mapping[NodeId, int] | None = None,
 ) -> ShardAssignments:
     match sharding:
         case Sharding.Pipeline:
@@ -285,6 +392,7 @@ def get_shard_assignments(
                 model_card=model_card,
                 cycle=cycle,
                 node_memory=node_memory,
+                node_bandwidth=node_bandwidth,
             )
         case Sharding.Tensor:
             return get_shard_assignments_for_tensor_parallel(
@@ -329,11 +437,11 @@ def _find_connection_ip(
     node_i: NodeId,
     node_j: NodeId,
     cycle_digraph: Topology,
-) -> Generator[str, None, None]:
-    """Find all IP addresses that connect node i to node j."""
+) -> Generator[SocketConnection, None, None]:
+    """Find all socket connections from node i to node j."""
     for connection in cycle_digraph.get_all_connections_between(node_i, node_j):
         if isinstance(connection, SocketConnection):
-            yield connection.sink_multiaddr.ip_address
+            yield connection
 
 
 def find_ip_prioritised(
@@ -345,18 +453,37 @@ def find_ip_prioritised(
 ) -> str | None:
     """Find an IP address between nodes with prioritization.
 
-    Priority: ethernet > wifi > unknown > thunderbolt
+    Ring connections prefer the lowest measured probe latency, falling back to
+    interface type (thunderbolt first) when latency is unmeasured. RDMA
+    coordinator selection prefers ethernet.
     """
-    ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
-    if not ips:
+    connections = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
+    if not connections:
         return None
+    # Deduplicate in first-seen order: `min` breaks ties on iteration order, and
+    # unmeasured links all tie at infinity, so a set here would make the choice
+    # vary with hash seed between master restarts.
+    candidate_ips = list(
+        dict.fromkeys(
+            connection.sink_multiaddr.ip_address for connection in connections
+        )
+    )
+    latency_by_ip: dict[str, float] = {}
+    for connection in connections:
+        ip_address = connection.sink_multiaddr.ip_address
+        if connection.latency_ms is None:
+            continue
+        known = latency_by_ip.get(ip_address)
+        if known is None or connection.latency_ms < known:
+            latency_by_ip[ip_address] = connection.latency_ms
+
     other_network = node_network.get(other_node_id, NodeNetworkInfo())
     ip_to_type = {
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
 
-    # Ring should prioritise fastest connection. As a best-effort, we prioritise TB.
-    # TODO: Profile and get actual connection speeds.
+    # Ring should prioritise the fastest connection: measured latency first,
+    # then interface type as a tie-break / fallback for unmeasured links.
     if ring:
         priority = {
             "thunderbolt": 0,
@@ -365,17 +492,117 @@ def find_ip_prioritised(
             "wifi": 3,
             "unknown": 4,
         }
+        return min(
+            candidate_ips,
+            key=lambda ip: (
+                latency_by_ip.get(ip, float("inf")),
+                priority.get(ip_to_type.get(ip, "unknown"), 2),
+            ),
+        )
 
     # RDMA prefers ethernet coordinator
-    else:
-        priority = {
-            "ethernet": 0,
-            "wifi": 1,
-            "unknown": 2,
-            "maybe_ethernet": 3,
-            "thunderbolt": 4,
-        }
-    return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
+    priority = {
+        "ethernet": 0,
+        "wifi": 1,
+        "unknown": 2,
+        "maybe_ethernet": 3,
+        "thunderbolt": 4,
+    }
+    return min(
+        candidate_ips,
+        key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2),
+    )
+
+
+# Fallback per-hop cost when a reachability probe has not measured the selected
+# link yet. The ordering mirrors the ring priority in find_ip_prioritised.
+LINK_SECONDS_BY_INTERFACE: dict[InterfaceType, float] = {
+    "thunderbolt": 0.0005,
+    "maybe_ethernet": 0.0010,
+    "ethernet": 0.0015,
+    "wifi": 0.0050,
+    "unknown": 0.0080,
+}
+
+
+def _hop_seconds(
+    node_id: NodeId,
+    other_node_id: NodeId,
+    topology: Topology,
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+) -> float:
+    """Measured RTT for the selected ring link, or its interface fallback."""
+    ip = find_ip_prioritised(node_id, other_node_id, topology, node_network, ring=True)
+    if ip is None:
+        return LINK_SECONDS_BY_INTERFACE["unknown"]
+
+    measured_latency_ms = [
+        connection.latency_ms
+        for connection in _find_connection_ip(node_id, other_node_id, topology)
+        if connection.sink_multiaddr.ip_address == ip
+        and connection.latency_ms is not None
+    ]
+    if measured_latency_ms:
+        return min(measured_latency_ms) / 1000
+
+    other_network = node_network.get(other_node_id, NodeNetworkInfo())
+    for interface in other_network.interfaces:
+        if interface.ip_address == ip:
+            return LINK_SECONDS_BY_INTERFACE[interface.interface_type]
+    return LINK_SECONDS_BY_INTERFACE["unknown"]
+
+
+def estimate_token_seconds(
+    cycle: Cycle,
+    model_card: ModelCard,
+    topology: Topology,
+    node_memory: Mapping[NodeId, MemoryUsage],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+    node_bandwidth: Mapping[NodeId, int],
+) -> float:
+    """Estimate the time to produce one token on this cycle.
+
+    This is the objective from issue #957: the time for one token is the sum over
+    devices of the compute time ``C_i = M * (N_i / N) / B_i`` plus the latency
+    ``L_i`` of the hop to the next device.
+
+    The compute term uses the capacity-aware layer allocation that will actually
+    be assigned. This matters when a fast node cannot hold its proportional
+    share and layers spill onto slower nodes.
+
+    Hop latency uses the reachability probe's measured RTT when available and
+    falls back to the selected interface type while measurements are pending.
+    The caller only compares cycles with bandwidth measurements for every node.
+    ``M`` is taken as the model's storage size, which overstates bytes read per
+    token for MoE models by a constant factor that does not affect the ranking.
+    """
+    node_ids = cycle.node_ids
+
+    layer_allocations = _allocate_layers(
+        node_ids, node_memory, model_card, node_bandwidth
+    )
+    compute_seconds = sum(
+        model_card.storage_size.in_bytes
+        * layer_count
+        / model_card.n_layers
+        / node_bandwidth[node_id]
+        for node_id, layer_count in zip(node_ids, layer_allocations, strict=True)
+    )
+
+    # A single node still runs the ring backend, but talks to nobody.
+    hop_seconds = 0.0
+    if len(node_ids) > 1:
+        hop_seconds = sum(
+            _hop_seconds(
+                node_id,
+                node_ids[(rank + 1) % len(node_ids)],
+                topology,
+                node_network,
+            )
+            for rank, node_id in enumerate(node_ids)
+        )
+
+    return compute_seconds + hop_seconds
 
 
 def get_mlx_ring_hosts_by_node(

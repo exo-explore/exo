@@ -4,6 +4,7 @@ from typing import Sequence
 
 from exo.master.placement_utils import (
     Cycle,
+    estimate_token_seconds,
     filter_cycles_by_memory,
     get_mlx_jaccl_coordinators,
     get_mlx_jaccl_devices_matrix,
@@ -29,7 +30,12 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo, NodeRdmaCtlStatus
+from exo.shared.types.profiling import (
+    MemoryUsage,
+    NodeBandwidth,
+    NodeNetworkInfo,
+    NodeRdmaCtlStatus,
+)
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -45,6 +51,7 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
+from exo.shared.types.worker.runners import ShardAssignments
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.ports import random_ephemeral_port
 
@@ -103,77 +110,65 @@ def _cycle_download_score(
     )
 
 
-def place_instance(
+def _filter_cycles_for_sharding(
     command: PlaceInstance,
-    topology: Topology,
-    current_instances: Mapping[InstanceId, Instance],
-    node_memory: Mapping[NodeId, MemoryUsage],
-    node_network: Mapping[NodeId, NodeNetworkInfo],
-    node_backends: Mapping[NodeId, list[Backend]],
-    required_nodes: set[NodeId] | None = None,
-    download_status: Mapping[NodeId, Sequence[DownloadProgress]] | None = None,
-    node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] | None = None,
-) -> dict[InstanceId, Instance]:
-    cycles = topology.get_cycles()
-    candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
+    cycles: list[Cycle],
+) -> list[Cycle]:
+    """Keep cycles whose width is compatible with the requested sharding.
 
-    # Filter to cycles containing all required nodes (subset matching)
-    if required_nodes:
-        candidate_cycles = [
-            cycle
-            for cycle in candidate_cycles
-            if required_nodes.issubset(cycle.node_ids)
-        ]
-    cycles_with_sufficient_memory = filter_cycles_by_memory(
-        candidate_cycles, node_memory, command.model_card.storage_size
-    )
-    if len(cycles_with_sufficient_memory) == 0:
-        raise ValueError("No cycles found with sufficient memory")
+    Raises if the model cannot be sharded this way at all, or if no candidate
+    cycle has a compatible width.
+    """
+    model_card = command.model_card
 
     if command.sharding == Sharding.Tensor:
-        if not command.model_card.supports_tensor:
+        if not model_card.supports_tensor:
             raise ValueError(
-                f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_card.model_id}"
+                f"Requested Tensor sharding but this model does not support tensor parallelism: {model_card.model_id}"
             )
         # TODO: the condition here for tensor parallel is not correct, but it works good enough for now.
         # DeepSeek V4 is MQA (num_key_value_heads=1) but its sharding strategy
         # head-parallelises wq_b/wo_a and shards MoE experts instead of splitting
         # KV heads, so the kv-head divisibility check doesn't apply.
-        is_deepseek_v4 = command.model_card.base_model.startswith("DeepSeek V4")
-        kv_heads = command.model_card.num_key_value_heads
-        cycles_with_sufficient_memory = [
+        is_deepseek_v4 = model_card.base_model.startswith("DeepSeek V4")
+        kv_heads = model_card.num_key_value_heads
+        compatible_cycles = [
             cycle
-            for cycle in cycles_with_sufficient_memory
-            if command.model_card.hidden_size % len(cycle) == 0
+            for cycle in cycles
+            if model_card.hidden_size % len(cycle) == 0
             and (is_deepseek_v4 or kv_heads is None or kv_heads % len(cycle) == 0)
         ]
-        if not cycles_with_sufficient_memory:
+        if not compatible_cycles:
             raise ValueError(
                 f"No tensor sharding found for model with "
-                f"hidden_size={command.model_card.hidden_size}"
+                f"hidden_size={model_card.hidden_size}"
                 f"{f', num_key_value_heads={kv_heads}' if kv_heads is not None else ''}"
                 f" across candidate cycles"
             )
-    if command.sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
-        "mlx-community/DeepSeek-V3.1-8bit"
-    ):
-        raise ValueError(
-            "Pipeline parallelism is not supported for DeepSeek V3.1 (8-bit)"
-        )
-    if (
-        command.sharding == Sharding.Pipeline
-        and command.model_card.base_model.startswith("Gemma 4")
-    ):
-        cycles_with_sufficient_memory = [
-            cycle for cycle in cycles_with_sufficient_memory if len(cycle) == 1
-        ]
-        if not cycles_with_sufficient_memory:
+        return compatible_cycles
+
+    if command.sharding == Sharding.Pipeline:
+        if model_card.model_id == ModelId("mlx-community/DeepSeek-V3.1-8bit"):
             raise ValueError(
-                "Pipeline parallelism is not supported for Gemma 4; use tensor parallelism instead."
+                "Pipeline parallelism is not supported for DeepSeek V3.1 (8-bit)"
             )
+        if model_card.base_model.startswith("Gemma 4"):
+            single_node_cycles = [cycle for cycle in cycles if len(cycle) == 1]
+            if not single_node_cycles:
+                raise ValueError(
+                    "Pipeline parallelism is not supported for Gemma 4; use tensor parallelism instead."
+                )
+            return single_node_cycles
 
-    smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
+    return cycles
 
+
+def _filter_cycles_by_backends(
+    command: PlaceInstance,
+    cycles: list[Cycle],
+    node_backends: Mapping[NodeId, list[Backend]],
+) -> list[Cycle]:
+    """Keep cycles where every node supports a backend the engine and model share."""
     required_backends = set(INSTANCE_META_BACKENDS[command.instance_meta]) & set(
         command.model_card.backends
     )
@@ -184,82 +179,139 @@ def place_instance(
             f"{command.instance_meta.value} which requires "
             f"{sorted(b.value for b in INSTANCE_META_BACKENDS[command.instance_meta])}"
         )
-    smallest_cycles = [
+
+    supported_cycles = [
         cycle
-        for cycle in smallest_cycles
+        for cycle in cycles
         if all(
             set(node_backends.get(node_id, [])) & required_backends for node_id in cycle
         )
     ]
-    if not smallest_cycles:
+    if not supported_cycles:
         raise ValueError(
             f"No cycle where every node supports a backend in "
             f"{sorted(b.value for b in required_backends)} for {command.model_card.model_id}"
         )
+    return supported_cycles
 
-    rdma_ctl_status = node_rdma_ctl or {}
 
-    def _all_rdma_ctl_enabled(cycle: Cycle) -> bool:
+def _filter_cycles_by_rdma(
+    cycles: list[Cycle],
+    topology: Topology,
+    node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus],
+) -> list[Cycle]:
+    """Keep cycles that are fully RDMA-connected and have rdma_ctl enabled everywhere."""
+
+    def all_rdma_ctl_enabled(cycle: Cycle) -> bool:
         return all(
-            ((status := rdma_ctl_status.get(node_id)) is not None and status.enabled)
+            ((status := node_rdma_ctl.get(node_id)) is not None and status.enabled)
             for node_id in cycle
         )
 
-    smallest_rdma_cycles = [
+    rdma_cycles = [
         cycle
-        for cycle in smallest_cycles
-        if topology.is_rdma_cycle(cycle) and _all_rdma_ctl_enabled(cycle)
+        for cycle in cycles
+        if topology.is_rdma_cycle(cycle) and all_rdma_ctl_enabled(cycle)
     ]
+    if not rdma_cycles:
+        raise ValueError(
+            "Requested RDMA (MlxJaccl) but no RDMA-connected cycles available"
+        )
+    return rdma_cycles
 
-    if command.instance_meta == InstanceMeta.MlxJaccl:
-        if not smallest_rdma_cycles:
-            raise ValueError(
-                "Requested RDMA (MlxJaccl) but no RDMA-connected cycles available"
+
+def _select_cycle(
+    command: PlaceInstance,
+    cycles: list[Cycle],
+    topology: Topology,
+    node_memory: Mapping[NodeId, MemoryUsage],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+    node_bandwidth: Mapping[NodeId, int],
+    download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+) -> Cycle:
+    """Choose which of the remaining candidate cycles to place the instance on.
+
+    Fully profiled MLX ring pipeline cycles are ranked by estimated steady-state
+    token time. Operational preferences only break ties. Before profiling has
+    produced a complete candidate, retain the existing smallest-cycle behavior.
+    """
+    profiled_cycles = (
+        [
+            cycle
+            for cycle in cycles
+            if all(node_bandwidth.get(node_id, 0) > 0 for node_id in cycle)
+        ]
+        if command.sharding == Sharding.Pipeline
+        and command.instance_meta == InstanceMeta.MlxRing
+        and not command.model_card.uses_cfg
+        else []
+    )
+    cycle_estimates: list[tuple[Cycle, float]] = []
+    for cycle in profiled_cycles:
+        try:
+            estimate = estimate_token_seconds(
+                cycle,
+                command.model_card,
+                topology,
+                node_memory,
+                node_network,
+                node_bandwidth,
             )
-        smallest_cycles = smallest_rdma_cycles
+        except ValueError:
+            # Total RAM can be sufficient while an individual node cannot hold
+            # the mandatory one-layer minimum. Such a cycle is not placeable.
+            continue
+        cycle_estimates.append((cycle, estimate))
 
-    cycles_with_leaf_nodes: list[Cycle] = [
+    if cycle_estimates:
+
+        def performance_score(
+            cycle_and_estimate: tuple[Cycle, float],
+        ) -> tuple[float, bool, float, Memory]:
+            cycle, estimate = cycle_and_estimate
+            return (
+                -estimate,
+                any(topology.node_is_leaf(node_id) for node_id in cycle),
+                _cycle_download_score(
+                    cycle, command.model_card.model_id, download_status
+                ),
+                sum(
+                    (node_memory[node_id].ram_available for node_id in cycle),
+                    start=Memory(),
+                ),
+            )
+
+        return max(cycle_estimates, key=performance_score)[0]
+
+    cycles = get_smallest_cycles(cycles)
+    cycles_with_leaf_nodes = [
         cycle
-        for cycle in smallest_cycles
+        for cycle in cycles
         if any(topology.node_is_leaf(node_id) for node_id in cycle)
     ]
+    candidate_cycles = cycles_with_leaf_nodes or cycles
 
-    resolved_download_status = download_status or {}
-    candidate_cycles = (
-        cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles
-    )
-
-    selected_cycle = max(
-        candidate_cycles,
-        key=lambda cycle: (
-            _cycle_download_score(
-                cycle, command.model_card.model_id, resolved_download_status
-            ),
+    def cycle_score(cycle: Cycle) -> tuple[float, Memory]:
+        return (
+            _cycle_download_score(cycle, command.model_card.model_id, download_status),
             sum(
                 (node_memory[node_id].ram_available for node_id in cycle),
                 start=Memory(),
             ),
-        ),
-    )
-
-    # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
-    if len(selected_cycle) == 1:
-        command = command.model_copy(
-            update={
-                "instance_meta": InstanceMeta.MlxRing,
-                "sharding": Sharding.Pipeline,
-            }
         )
 
-    shard_assignments = get_shard_assignments(
-        command.model_card, selected_cycle, command.sharding, node_memory
-    )
+    return max(candidate_cycles, key=cycle_score)
 
-    cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)
 
-    instance_id = InstanceId()
-    target_instances = dict(deepcopy(current_instances))
-
+def _build_instance(
+    command: PlaceInstance,
+    instance_id: InstanceId,
+    selected_cycle: Cycle,
+    cycle_digraph: Topology,
+    shard_assignments: ShardAssignments,
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+) -> Instance:
+    """Construct the engine-specific instance for an already-selected cycle."""
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
             # TODO(evan): shard assignments should contain information about ranks, this is ugly
@@ -287,7 +339,7 @@ def place_instance(
                 cycle_digraph=cycle_digraph,
                 node_network=node_network,
             )
-            target_instances[instance_id] = MlxJacclInstance(
+            return MlxJacclInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
                 jaccl_devices=mlx_jaccl_devices,
@@ -301,12 +353,91 @@ def place_instance(
                 ephemeral_port=ephemeral_port,
                 node_network=node_network,
             )
-            target_instances[instance_id] = MlxRingInstance(
+            return MlxRingInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
                 hosts_by_node=hosts_by_node,
                 ephemeral_port=ephemeral_port,
             )
+
+
+def place_instance(
+    command: PlaceInstance,
+    topology: Topology,
+    current_instances: Mapping[InstanceId, Instance],
+    node_memory: Mapping[NodeId, MemoryUsage],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+    node_backends: Mapping[NodeId, list[Backend]],
+    required_nodes: set[NodeId] | None = None,
+    download_status: Mapping[NodeId, Sequence[DownloadProgress]] | None = None,
+    node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] | None = None,
+    node_bandwidth: Mapping[NodeId, NodeBandwidth] | None = None,
+) -> dict[InstanceId, Instance]:
+    cycles = [
+        cycle for cycle in topology.get_cycles() if len(cycle) >= command.min_nodes
+    ]
+
+    # Filter to cycles containing all required nodes (subset matching)
+    if required_nodes:
+        cycles = [cycle for cycle in cycles if required_nodes.issubset(cycle.node_ids)]
+
+    cycles = filter_cycles_by_memory(
+        cycles, node_memory, command.model_card.storage_size
+    )
+    if not cycles:
+        raise ValueError("No cycles found with sufficient memory")
+
+    cycles = _filter_cycles_for_sharding(command, cycles)
+    cycles = _filter_cycles_by_backends(command, cycles, node_backends)
+
+    if command.instance_meta == InstanceMeta.MlxJaccl:
+        cycles = _filter_cycles_by_rdma(cycles, topology, node_rdma_ctl or {})
+
+    memory_bandwidth_by_node = (
+        {
+            node_id: bandwidth.memory_bandwidth
+            for node_id, bandwidth in node_bandwidth.items()
+        }
+        if node_bandwidth
+        else {}
+    )
+    selected_cycle = _select_cycle(
+        command,
+        cycles,
+        topology,
+        node_memory,
+        node_network,
+        memory_bandwidth_by_node,
+        download_status or {},
+    )
+
+    # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
+    if len(selected_cycle) == 1:
+        command = command.model_copy(
+            update={
+                "instance_meta": InstanceMeta.MlxRing,
+                "sharding": Sharding.Pipeline,
+            }
+        )
+
+    shard_assignments = get_shard_assignments(
+        command.model_card,
+        selected_cycle,
+        command.sharding,
+        node_memory,
+        memory_bandwidth_by_node or None,
+    )
+
+    instance_id = InstanceId()
+    target_instances = dict(deepcopy(current_instances))
+    target_instances[instance_id] = _build_instance(
+        command,
+        instance_id,
+        selected_cycle,
+        topology.get_subgraph_from_nodes(selected_cycle.node_ids),
+        shard_assignments,
+        node_network,
+    )
 
     return target_instances
 
