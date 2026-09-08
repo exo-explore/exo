@@ -1056,3 +1056,43 @@ def test_mlx_jaccl_rejects_cuda_only_cycle(model_card: ModelCard):
             node_backends,
             node_rdma_ctl=node_rdma_ctl,
         )
+
+
+def test_place_instance_rejects_wifi_only_tensor_parallel(model_card: ModelCard):
+    node_a = NodeId()
+    node_b = NodeId()
+    wifi_ip = "192.168.1.10"
+    wifi = SocketConnection(
+        sink_multiaddr=Multiaddr(address=f"/ip4/{wifi_ip}/tcp/8000")
+    )
+    topology = Topology()
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_connection(Connection(source=node_a, sink=node_b, edge=wifi))
+    topology.add_connection(Connection(source=node_b, sink=node_a, edge=wifi))
+
+    node_memory = {
+        node_a: create_node_memory(500),
+        node_b: create_node_memory(500),
+    }
+    wifi_iface = NetworkInterfaceInfo(
+        name="Wi-Fi", ip_address=wifi_ip, interface_type="wifi"
+    )
+    node_network = {
+        node_a: NodeNetworkInfo(interfaces=[wifi_iface]),
+        node_b: NodeNetworkInfo(interfaces=[wifi_iface]),
+    }
+    cic = PlaceInstance(
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxRing,
+        command_id=CommandId(),
+        model_card=model_card.model_copy(
+            update={"n_layers": 12, "storage_size": Memory.from_bytes(800)}
+        ),
+        min_nodes=1,
+    )
+
+    with pytest.raises(ValueError, match="Wi-Fi"):
+        place_instance(
+            cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
+        )

@@ -1,5 +1,4 @@
 import os
-import resource
 import traceback
 from dataclasses import dataclass
 from typing import Self, cast
@@ -10,6 +9,7 @@ from exo.shared.types.events import Event
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.utils.rlimits import raise_nofile_limit
 from exo.worker.engines.base import Builder
 
 logger: "loguru.Logger" = loguru.logger
@@ -47,8 +47,7 @@ def entrypoint(
     global logger
     logger = _logger
 
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
+    raise_nofile_limit(2048)
 
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
     if fast_synch_override == "false":

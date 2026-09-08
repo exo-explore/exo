@@ -394,6 +394,16 @@ class API:
         self.app.get("/ollama/api/ps")(self.ollama_ps)
         self.app.get("/ollama/api/version")(self.ollama_version)
 
+        # PAIR/Ollama-style root paths so existing clients can point at exo
+        # without the /ollama prefix (OpenAI /v1/chat/completions is already here).
+        self.app.head("/api/version")(self.ollama_version)
+        self.app.get("/api/version")(self.ollama_version)
+        self.app.post("/api/chat", response_model=None)(self.ollama_chat)
+        self.app.post("/api/generate", response_model=None)(self.ollama_generate)
+        self.app.get("/api/tags")(self.ollama_tags)
+        self.app.post("/api/show")(self.ollama_show)
+        self.app.get("/api/ps")(self.ollama_ps)
+
         self.app.get("/state")(self.get_state)
         self.app.get("/state/{path:path}")(self.get_state)
         self.app.get("/events")(self.stream_events)

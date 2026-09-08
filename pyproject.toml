@@ -26,7 +26,7 @@ dependencies = [
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
   "transformers>=5.6.2",
-  "python-daemon>=3.1.2",
+  "python-daemon>=3.1.2; sys_platform != 'win32'",
 ]
 
 [project.scripts]
@@ -51,15 +51,22 @@ mlx = [
   "mlx==0.32.0",
   "mlx-lm",
   "mlx-vlm>=0.3.11",
-  "mflux==0.17.5",
+  "mflux==0.17.5; sys_platform != 'win32'",
   "torch==2.10.0; sys_platform == 'darwin'",
   "torch==2.10.0; sys_platform == 'linux'",
+  "torch==2.10.0; sys_platform == 'win32'",
   "torchaudio==2.10.0; sys_platform == 'darwin'",
   "torchaudio==2.10.0; sys_platform == 'linux'",
+  "torchaudio==2.10.0; sys_platform == 'win32'",
   "torchvision==0.25.0; sys_platform == 'darwin'",
   "torchvision==0.25.0; sys_platform == 'linux'",
+  "torchvision==0.25.0; sys_platform == 'win32'",
 ]
-mlx-cpu = ["exo[mlx]", "mlx-cpu==0.31.2; sys_platform == 'linux'"]
+mlx-cpu = [
+  "exo[mlx]",
+  "mlx-cpu==0.31.2; sys_platform == 'linux'",
+  "mlx-cpu==0.32.0; sys_platform == 'win32'",
+]
 mlx-cuda12 = [
   "exo[mlx]",
   "mlx-cuda-12==0.32.0; sys_platform == 'linux'",
@@ -185,7 +192,11 @@ root = "tools/src"
 [tool.uv]
 required-version = ">=0.8.6"
 prerelease = "allow"
-environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
+environments = [
+  "sys_platform == 'darwin'",
+  "sys_platform == 'linux'",
+  "sys_platform == 'win32'",
+]
 override-dependencies = ["opencv-python; python_version < '0'"]
 conflicts = [
   [

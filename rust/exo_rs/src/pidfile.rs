@@ -1,13 +1,104 @@
-use pidfile_rs::{Pidfile, PidfileError};
 use pyo3::exceptions::PyException;
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use pyo3::{Bound, PyErr, PyResult, Python, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::fs;
-use std::fs::Permissions;
-use std::os::fd::{AsRawFd, RawFd};
-use std::os::unix::prelude::PermissionsExt;
 use std::path::PathBuf;
+
+#[cfg(unix)]
+use pidfile_rs::{Pidfile, PidfileError};
+#[cfg(unix)]
+use std::fs::Permissions;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::unix::prelude::PermissionsExt;
+
+#[cfg(windows)]
+mod win {
+    use std::fs::{File, OpenOptions};
+    use std::io::{self, Seek, SeekFrom, Write};
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::path::{Path, PathBuf};
+
+    /// ERROR_SHARING_VIOLATION — another process already holds the pidfile.
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+    #[derive(Debug)]
+    pub enum PidfileError {
+        Io(io::Error),
+        AlreadyRunning { pid: Option<u32> },
+    }
+
+    impl std::fmt::Display for PidfileError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Io(err) => write!(f, "{err}"),
+                Self::AlreadyRunning { pid: Some(pid) } => {
+                    write!(f, "daemon already running with PID {pid}")
+                }
+                Self::AlreadyRunning { pid: None } => {
+                    write!(f, "daemon already running")
+                }
+            }
+        }
+    }
+
+    pub struct Pidfile {
+        file: Option<File>,
+        path: PathBuf,
+    }
+
+    impl Pidfile {
+        pub fn new(path: &Path) -> Result<Self, PidfileError> {
+            let file = OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .share_mode(FILE_SHARE_READ)
+                .open(path)
+                .map_err(|err| map_open_error(path, err))?;
+            Ok(Self {
+                file: Some(file),
+                path: path.to_path_buf(),
+            })
+        }
+
+        pub fn write(&mut self) -> Result<(), PidfileError> {
+            let file = self.file.as_mut().ok_or_else(|| {
+                PidfileError::Io(io::Error::other("pidfile already closed"))
+            })?;
+            file.set_len(0).map_err(PidfileError::Io)?;
+            file.seek(SeekFrom::Start(0)).map_err(PidfileError::Io)?;
+            file.write_all(std::process::id().to_string().as_bytes())
+                .map_err(PidfileError::Io)?;
+            file.flush().map_err(PidfileError::Io)?;
+            Ok(())
+        }
+    }
+
+    impl Drop for Pidfile {
+        fn drop(&mut self) {
+            drop(self.file.take());
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    fn map_open_error(path: &Path, err: io::Error) -> PidfileError {
+        if err.raw_os_error() == Some(ERROR_SHARING_VIOLATION) {
+            let pid = std::fs::read_to_string(path)
+                .ok()
+                .and_then(|contents| contents.trim().parse().ok());
+            PidfileError::AlreadyRunning { pid }
+        } else {
+            PidfileError::Io(err)
+        }
+    }
+}
+
+#[cfg(windows)]
+use win::{Pidfile, PidfileError};
 
 #[gen_stub_pyclass]
 #[pyclass(frozen, extends=PyException, name="PidfileError")]
@@ -40,7 +131,8 @@ impl PyPidfileError {
 /// An instance of `Pidfile` can be used to manage a PID file: create it,
 /// lock it, detect already running daemons. It is backed by [`pidfile`]
 /// functions of `libbsd`/`libutil` which use `flopen` to lock the PID
-/// file.
+/// file on Unix. On Windows it uses an exclusive write handle with
+/// `FILE_SHARE_READ` so a second process cannot take over the lock.
 ///
 /// When a PID file is created, the process ID of the current process is
 /// *not* written there, making it possible to lock the PID file before
@@ -89,8 +181,14 @@ impl PyPidfile {
                 .map_err(|e| PyPidfileError(PidfileError::Io(e)).into_pyerr(py))?;
         }
 
+        #[cfg(unix)]
         let pidfile = Pidfile::new(&path, Permissions::from_mode(mode))
             .map_err(|e| PyPidfileError(e).into_pyerr(py))?;
+        #[cfg(windows)]
+        let pidfile = {
+            let _ = mode;
+            Pidfile::new(&path).map_err(|e| PyPidfileError(e).into_pyerr(py))?
+        };
         Ok(Self(Some(pidfile)))
     }
 
@@ -110,8 +208,18 @@ impl PyPidfile {
     /// raw file descriptor to the caller, and the file descriptor is only
     /// guaranteed to be valid while the original object has not yet been
     /// destroyed.
-    fn as_raw_fd(&self) -> RawFd {
-        self.get().as_raw_fd()
+    ///
+    /// On Windows this always returns `-1`; daemonization is not supported.
+    fn as_raw_fd(&self) -> i32 {
+        #[cfg(unix)]
+        {
+            self.get().as_raw_fd()
+        }
+        #[cfg(windows)]
+        {
+            let _ = self.get();
+            -1
+        }
     }
 
     /// Closes the PID file and releases associated resources.

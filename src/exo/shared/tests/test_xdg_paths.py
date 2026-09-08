@@ -97,6 +97,48 @@ def test_macos_uses_traditional_paths():
         assert home / ".exo" == constants.EXO_CACHE_HOME
 
 
+def test_windows_uses_localappdata():
+    """Windows stores config/data/cache under %LOCALAPPDATA%\\exo, like PAIR."""
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k != "EXO_HOME"
+    }
+    env["LOCALAPPDATA"] = r"C:\Users\test\AppData\Local"
+    with (
+        mock.patch.dict(os.environ, env, clear=True),
+        mock.patch.object(sys, "platform", "win32"),
+    ):
+        import importlib
+
+        import exo.shared.constants as constants
+
+        importlib.reload(constants)
+
+        root = Path(env["LOCALAPPDATA"]) / "exo"
+        assert root == constants.EXO_CONFIG_HOME
+        assert root == constants.EXO_DATA_HOME
+        assert root == constants.EXO_CACHE_HOME
+
+
+def test_exo_home_accepts_absolute_path():
+    """EXO_HOME may be an absolute directory, not only a name under $HOME."""
+    absolute = Path(r"C:\exo-data") if os.name == "nt" else Path("/tmp/exo-data")
+    with mock.patch.dict(
+        os.environ,
+        {"EXO_HOME": str(absolute)},
+        clear=False,
+    ):
+        import importlib
+
+        import exo.shared.constants as constants
+
+        importlib.reload(constants)
+
+        assert absolute == constants.EXO_CONFIG_HOME
+        assert absolute == constants.EXO_DATA_HOME
+
+
 def test_models_in_data_dir():
     """Test that default models directory is in the data directory."""
     # Clear EXO_MODELS_DIRS to test default behavior
@@ -179,8 +221,8 @@ def test_overlap_between_dirs_and_read_only_dirs():
         for k, v in os.environ.items()
         if k not in ("EXO_MODELS_DIRS", "EXO_MODELS_READ_ONLY_DIRS", "EXO_HOME")
     }
-    env["EXO_MODELS_DIRS"] = "/tmp/shared:/tmp/writable-only"
-    env["EXO_MODELS_READ_ONLY_DIRS"] = "/tmp/shared:/tmp/ro-only"
+    env["EXO_MODELS_DIRS"] = os.pathsep.join(["/tmp/shared", "/tmp/writable-only"])
+    env["EXO_MODELS_READ_ONLY_DIRS"] = os.pathsep.join(["/tmp/shared", "/tmp/ro-only"])
     with mock.patch.dict(os.environ, env, clear=True):
         import importlib
 

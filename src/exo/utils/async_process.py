@@ -7,8 +7,7 @@ import os
 import sys
 from collections.abc import Callable, Iterable, Mapping
 from multiprocessing.process import BaseProcess
-from multiprocessing.resource_sharer import DupFd
-from typing import final
+from typing import Protocol, final
 
 from anyio import (
     TASK_STATUS_IGNORED,
@@ -34,6 +33,39 @@ _TERMINATE_GRACE_SECONDS = 5.0
 _TERMINATE_RETRY_GRACE_SECONDS = 2.0
 _TERMINATE_ATTEMPTS = 10
 _KILL_GRACE_SECONDS = 2.0
+
+
+class _DetachableWriteFd(Protocol):
+    def detach(self) -> int: ...
+
+
+def _share_write_fd(fd: int) -> _DetachableWriteFd:
+    """Wrap a pipe write-end so it can be unpickled in a spawned child."""
+    if sys.platform == "win32":
+        import msvcrt
+        import _winapi
+        from multiprocessing.reduction import DupHandle
+
+        return _WinSharedWriteFd(
+            DupHandle(msvcrt.get_osfhandle(fd), _winapi.DUPLICATE_SAME_ACCESS)
+        )
+
+    from multiprocessing.resource_sharer import DupFd
+
+    return DupFd(fd)
+
+
+class _WinSharedWriteFd:
+    """Convert a Windows DupHandle back into a Python file descriptor."""
+
+    def __init__(self, handle: object) -> None:
+        self._handle = handle
+
+    def detach(self) -> int:
+        import msvcrt
+
+        raw_handle = self._handle.detach()  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+        return msvcrt.open_osfhandle(raw_handle, 0)
 
 
 @final
@@ -91,8 +123,8 @@ class AsyncProcess:
                     target=_run_with_captured_stdio,
                     name=self._name,
                     args=(
-                        DupFd(stdout_write_fd),
-                        DupFd(stderr_write_fd),
+                        _share_write_fd(stdout_write_fd),
+                        _share_write_fd(stderr_write_fd),
                         self._target,
                         *self._args,
                     ),
@@ -245,8 +277,8 @@ class AsyncProcess:
 
 # Spawn-mode multiprocessing requires a module-level target that can be pickled.
 def _run_with_captured_stdio(
-    stdout: DupFd,
-    stderr: DupFd,
+    stdout: _DetachableWriteFd,
+    stderr: _DetachableWriteFd,
     target: Callable[..., object] | None,
     *target_args: object,
     **target_kwargs: object,
@@ -270,8 +302,13 @@ def _run_with_captured_stdio(
 async def _drain_fd(fd: int, tx: Sender[bytes]) -> None:
     try:
         while True:
-            await wait_readable(fd)
-            chunk = os.read(fd, _READ_CHUNK_SIZE)
+            if sys.platform == "win32":
+                # anyio.wait_readable only supports sockets on Windows; pipes
+                # have to be read from a worker thread.
+                chunk = await to_thread.run_sync(os.read, fd, _READ_CHUNK_SIZE)
+            else:
+                await wait_readable(fd)
+                chunk = os.read(fd, _READ_CHUNK_SIZE)
             if not chunk:
                 return
             await tx.send(chunk)

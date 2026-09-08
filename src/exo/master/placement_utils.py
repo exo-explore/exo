@@ -44,6 +44,48 @@ def get_smallest_cycles(
     return [cycle for cycle in cycles if len(cycle) == min_nodes]
 
 
+def _hop_has_non_wifi_link(
+    node_i: NodeId,
+    node_j: NodeId,
+    topology: Topology,
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+) -> bool:
+    """True if i→j has RDMA or a socket whose sink IP is not classified as Wi-Fi."""
+    connections = list(topology.get_all_connections_between(node_i, node_j))
+    if not connections:
+        return False
+    ip_to_type = {
+        iface.ip_address: iface.interface_type
+        for iface in node_network.get(node_j, NodeNetworkInfo()).interfaces
+    }
+    for connection in connections:
+        if isinstance(connection, RDMAConnection):
+            return True
+        if isinstance(connection, SocketConnection):
+            iface_type = ip_to_type.get(
+                connection.sink_multiaddr.ip_address, "unknown"
+            )
+            if iface_type != "wifi":
+                return True
+    return False
+
+
+def cycle_allows_tensor_parallel(
+    cycle: Cycle,
+    topology: Topology,
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+) -> bool:
+    """Tensor-parallel shards need a wired path; Wi-Fi-only hops are rejected."""
+    nodes = list(cycle)
+    if len(nodes) <= 1:
+        return True
+    for i, node_id in enumerate(nodes):
+        nxt = nodes[(i + 1) % len(nodes)]
+        if not _hop_has_non_wifi_link(node_id, nxt, topology, node_network):
+            return False
+    return True
+
+
 def allocate_layers_proportionally(
     total_layers: int,
     memory_fractions: list[float],
@@ -345,7 +387,7 @@ def find_ip_prioritised(
 ) -> str | None:
     """Find an IP address between nodes with prioritization.
 
-    Priority: ethernet > wifi > unknown > thunderbolt
+    Priority: thunderbolt/ethernet (ring) or ethernet (RDMA) first; Wi-Fi last.
     """
     ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
     if not ips:
@@ -360,22 +402,22 @@ def find_ip_prioritised(
     if ring:
         priority = {
             "thunderbolt": 0,
-            "maybe_ethernet": 1,
-            "ethernet": 2,
-            "wifi": 3,
-            "unknown": 4,
+            "ethernet": 1,
+            "maybe_ethernet": 2,
+            "unknown": 3,
+            "wifi": 4,
         }
 
-    # RDMA prefers ethernet coordinator
+    # RDMA prefers ethernet coordinator; never prefer Wi-Fi over unknown/wired.
     else:
         priority = {
             "ethernet": 0,
-            "wifi": 1,
-            "unknown": 2,
-            "maybe_ethernet": 3,
-            "thunderbolt": 4,
+            "maybe_ethernet": 1,
+            "thunderbolt": 2,
+            "unknown": 3,
+            "wifi": 4,
         }
-    return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
+    return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 3))
 
 
 def get_mlx_ring_hosts_by_node(

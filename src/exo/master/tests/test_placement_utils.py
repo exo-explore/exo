@@ -2,7 +2,9 @@ import pytest
 
 from exo.master.placement_utils import (
     allocate_layers_proportionally,
+    cycle_allows_tensor_parallel,
     filter_cycles_by_memory,
+    find_ip_prioritised,
     get_mlx_jaccl_coordinators,
     get_shard_assignments,
     get_shard_assignments_for_pipeline_parallel,
@@ -17,11 +19,12 @@ from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
+from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import (
     NetworkInterfaceInfo,
     NodeNetworkInfo,
 )
-from exo.shared.types.topology import Connection, SocketConnection
+from exo.shared.types.topology import Connection, Cycle, SocketConnection
 from exo.shared.types.worker.shards import (
     CfgShardMetadata,
     PipelineShardMetadata,
@@ -689,3 +692,95 @@ class TestCfgParallelPlacement:
         # First shard starts at 0, last shard ends at 57
         assert layer_ranges[0][0] == 0
         assert layer_ranges[-1][1] == 57
+
+
+def test_cycle_allows_tensor_parallel_rejects_wifi_only_hops():
+    node_a = NodeId()
+    node_b = NodeId()
+    wifi_ip = "192.168.1.2"
+    eth_ip = "10.0.0.2"
+    topology = Topology()
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_connection(
+        Connection(
+            source=node_a,
+            sink=node_b,
+            edge=SocketConnection(
+                sink_multiaddr=Multiaddr(address=f"/ip4/{wifi_ip}/tcp/8000")
+            ),
+        )
+    )
+    topology.add_connection(
+        Connection(
+            source=node_b,
+            sink=node_a,
+            edge=SocketConnection(
+                sink_multiaddr=Multiaddr(address=f"/ip4/{wifi_ip}/tcp/8000")
+            ),
+        )
+    )
+    wifi_network = {
+        node_a: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="Wi-Fi", ip_address=wifi_ip, interface_type="wifi"
+                )
+            ]
+        ),
+        node_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="Wi-Fi", ip_address=wifi_ip, interface_type="wifi"
+                )
+            ]
+        ),
+    }
+    cycle = Cycle(node_ids=[node_a, node_b])
+    assert cycle_allows_tensor_parallel(cycle, topology, wifi_network) is False
+
+    mixed_topology = Topology()
+    mixed_topology.add_node(node_a)
+    mixed_topology.add_node(node_b)
+    for src, dst, ip in (
+        (node_a, node_b, wifi_ip),
+        (node_b, node_a, wifi_ip),
+        (node_a, node_b, eth_ip),
+        (node_b, node_a, eth_ip),
+    ):
+        mixed_topology.add_connection(
+            Connection(
+                source=src,
+                sink=dst,
+                edge=SocketConnection(
+                    sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/8000")
+                ),
+            )
+        )
+    mixed_network = {
+        node_a: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="Wi-Fi", ip_address=wifi_ip, interface_type="wifi"
+                ),
+                NetworkInterfaceInfo(
+                    name="Ethernet", ip_address=eth_ip, interface_type="ethernet"
+                ),
+            ]
+        ),
+        node_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="Wi-Fi", ip_address=wifi_ip, interface_type="wifi"
+                ),
+                NetworkInterfaceInfo(
+                    name="Ethernet", ip_address=eth_ip, interface_type="ethernet"
+                ),
+            ]
+        ),
+    }
+    assert cycle_allows_tensor_parallel(cycle, mixed_topology, mixed_network) is True
+    assert (
+        find_ip_prioritised(node_a, node_b, mixed_topology, mixed_network, ring=True)
+        == eth_ip
+    )

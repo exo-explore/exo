@@ -8,10 +8,21 @@ _EXO_HOME_ENV = os.environ.get("EXO_HOME", None)
 
 
 def _get_xdg_dir(env_var: str, fallback: str) -> Path:
-    """Get XDG directory, prioritising EXO_HOME environment variable if its set. On non-Linux platforms, default to ~/.exo."""
+    """Get XDG directory, prioritising EXO_HOME if set.
+
+    On Windows the default is ``%LOCALAPPDATA%\\exo`` (same layout NVIDIA PAIR
+    uses for app data). On other non-Linux platforms, default to ``~/.exo``.
+    """
 
     if _EXO_HOME_ENV is not None:
-        return Path.home() / _EXO_HOME_ENV
+        override = Path(_EXO_HOME_ENV).expanduser()
+        return override if override.is_absolute() else Path.home() / override
+
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "exo"
+        return Path.home() / "AppData" / "Local" / "exo"
 
     if sys.platform != "linux":
         return Path.home() / ".exo"
@@ -35,17 +46,17 @@ EXO_DEFAULT_MODELS_DIR = (
 )
 
 
-def _parse_colon_dirs(env_var: str) -> tuple[Path, ...]:
+def _parse_path_list(env_var: str) -> tuple[Path, ...]:
     raw = os.environ.get(env_var, None)
     if raw is None:
         return ()
-    return tuple(Path(p).expanduser() for p in raw.split(":") if p)
+    return tuple(Path(p).expanduser() for p in raw.split(os.pathsep) if p)
 
 
-# Read-only model directories (colon-separated). Never written to or deleted from.
-_EXO_MODELS_READ_ONLY_DIRS_ENV = _parse_colon_dirs("EXO_MODELS_READ_ONLY_DIRS")
-# Writable model directories (colon-separated). Default dir is always prepended.
-_EXO_MODELS_DIRS_ENV = _parse_colon_dirs("EXO_MODELS_DIRS")
+# Read-only model directories (os.pathsep-separated). Never written to or deleted from.
+_EXO_MODELS_READ_ONLY_DIRS_ENV = _parse_path_list("EXO_MODELS_READ_ONLY_DIRS")
+# Writable model directories (os.pathsep-separated). Default dir is always prepended.
+_EXO_MODELS_DIRS_ENV = _parse_path_list("EXO_MODELS_DIRS")
 
 # If a directory appears in both lists, treat it as read-only.
 _read_only_set = frozenset(_EXO_MODELS_READ_ONLY_DIRS_ENV)

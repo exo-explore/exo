@@ -4,6 +4,7 @@ from typing import Sequence
 
 from exo.master.placement_utils import (
     Cycle,
+    cycle_allows_tensor_parallel,
     filter_cycles_by_memory,
     get_mlx_jaccl_coordinators,
     get_mlx_jaccl_devices_matrix,
@@ -154,6 +155,17 @@ def place_instance(
                 f"{f', num_key_value_heads={kv_heads}' if kv_heads is not None else ''}"
                 f" across candidate cycles"
             )
+        wired_or_local = [
+            cycle
+            for cycle in cycles_with_sufficient_memory
+            if cycle_allows_tensor_parallel(cycle, topology, node_network)
+        ]
+        if not wired_or_local:
+            raise ValueError(
+                "No tensor sharding cycle on a wired (ethernet/thunderbolt/RDMA) path; "
+                "Wi-Fi links cannot run tensor parallel"
+            )
+        cycles_with_sufficient_memory = wired_or_local
     if command.sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
         "mlx-community/DeepSeek-V3.1-8bit"
     ):

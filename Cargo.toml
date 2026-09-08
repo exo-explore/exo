@@ -52,6 +52,7 @@ zenoh = "=1.9.0"
 zenoh-plugin-storage-manager = { version = "=1.9.0", default-features = false }
 zenoh-plugin-trait = "=1.9.0"
 netwatcher = "0.6.0"
+mdns-sd = "0.13"
 bytemuck = "1.25.0"
 blake3 = "1.8.5"
 smol = "2.0.2"

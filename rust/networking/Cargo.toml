@@ -7,6 +7,7 @@ edition.workspace = true
 async-stream.workspace = true
 futures-lite.workspace = true
 netwatcher = { workspace = true, features = ["tokio"] }
+mdns-sd.workspace = true
 parking_lot.workspace = true
 tokio = { workspace = true, features = ["full"] }
 zenoh = { workspace = true, features = ["internal", "plugins", "unstable"] }
