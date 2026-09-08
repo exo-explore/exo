@@ -329,11 +329,11 @@ def _find_connection_ip(
     node_i: NodeId,
     node_j: NodeId,
     cycle_digraph: Topology,
-) -> Generator[str, None, None]:
-    """Find all IP addresses that connect node i to node j."""
+) -> Generator[SocketConnection, None, None]:
+    """Find all socket connections from node i to node j."""
     for connection in cycle_digraph.get_all_connections_between(node_i, node_j):
         if isinstance(connection, SocketConnection):
-            yield connection.sink_multiaddr.ip_address
+            yield connection
 
 
 def find_ip_prioritised(
@@ -345,18 +345,37 @@ def find_ip_prioritised(
 ) -> str | None:
     """Find an IP address between nodes with prioritization.
 
-    Priority: ethernet > wifi > unknown > thunderbolt
+    Ring connections prefer the lowest measured probe latency, falling back to
+    interface type (thunderbolt first) when latency is unmeasured. RDMA
+    coordinator selection prefers ethernet.
     """
-    ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
-    if not ips:
+    connections = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
+    if not connections:
         return None
+    # Deduplicate in first-seen order: `min` breaks ties on iteration order, and
+    # unmeasured links all tie at infinity, so a set here would make the choice
+    # vary with hash seed between master restarts.
+    candidate_ips = list(
+        dict.fromkeys(
+            connection.sink_multiaddr.ip_address for connection in connections
+        )
+    )
+    latency_by_ip: dict[str, float] = {}
+    for connection in connections:
+        ip_address = connection.sink_multiaddr.ip_address
+        if connection.latency_ms is None:
+            continue
+        known = latency_by_ip.get(ip_address)
+        if known is None or connection.latency_ms < known:
+            latency_by_ip[ip_address] = connection.latency_ms
+
     other_network = node_network.get(other_node_id, NodeNetworkInfo())
     ip_to_type = {
         iface.ip_address: iface.interface_type for iface in other_network.interfaces
     }
 
-    # Ring should prioritise fastest connection. As a best-effort, we prioritise TB.
-    # TODO: Profile and get actual connection speeds.
+    # Ring should prioritise the fastest connection: measured latency first,
+    # then interface type as a tie-break / fallback for unmeasured links.
     if ring:
         priority = {
             "thunderbolt": 0,
@@ -365,17 +384,26 @@ def find_ip_prioritised(
             "wifi": 3,
             "unknown": 4,
         }
+        return min(
+            candidate_ips,
+            key=lambda ip: (
+                latency_by_ip.get(ip, float("inf")),
+                priority.get(ip_to_type.get(ip, "unknown"), 2),
+            ),
+        )
 
     # RDMA prefers ethernet coordinator
-    else:
-        priority = {
-            "ethernet": 0,
-            "wifi": 1,
-            "unknown": 2,
-            "maybe_ethernet": 3,
-            "thunderbolt": 4,
-        }
-    return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
+    priority = {
+        "ethernet": 0,
+        "wifi": 1,
+        "unknown": 2,
+        "maybe_ethernet": 3,
+        "thunderbolt": 4,
+    }
+    return min(
+        candidate_ips,
+        key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2),
+    )
 
 
 def get_mlx_ring_hosts_by_node(
