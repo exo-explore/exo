@@ -20,7 +20,7 @@ from mlx_vlm.prompt_utils import get_message_json
 from mlx_vlm.utils import load_image_processor
 from PIL import Image
 from safetensors import safe_open
-from transformers import AutoImageProcessor
+from transformers import AutoConfig, AutoImageProcessor, PreTrainedConfig
 
 from exo.download.download_utils import build_model_path
 from exo.shared.models.model_cards import VisionCardConfig
@@ -349,8 +349,13 @@ class VisionEncoder:
         if image_proc is not None:
             self._processor = image_proc
         else:
+            load_config = cast(
+                Callable[..., PreTrainedConfig], AutoConfig.from_pretrained
+            )
             self._processor = AutoImageProcessor.from_pretrained(  # type: ignore
-                repo, trust_remote_code=True
+                repo,
+                config=load_config(repo, trust_remote_code=True),
+                trust_remote_code=True,
             )
         if processor_repo:
             self._merge_kernel_size = vision_cfg.get("merge_kernel_size", [2, 2])  # type: ignore
