@@ -1,0 +1,29 @@
+model_id = "mlx-community/Qwen3-4B-4bit"
+n_layers = 36
+hidden_size = 2560
+num_key_value_heads = 8
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "4bit"
+base_model = "Qwen3 4B"
+capabilities = ["text", "thinking", "thinking_toggle"]
+
+context_length = 40960
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+[storage_size]
+in_bytes = 2278972183
+
+# Source: https://huggingface.co/Qwen/Qwen3-4B#best-practices
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+
+# Source: https://huggingface.co/Qwen/Qwen3-4B#best-practices
+[sampling_defaults.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
