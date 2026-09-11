@@ -245,6 +245,10 @@ async def delete_model(model_id: ModelId) -> bool:
     deleted = False
     for models_dir in EXO_MODELS_DIRS:
         model_dir = models_dir / normalized
+        # Defence in depth for the one destructive path: never rmtree
+        # anything that isn't strictly inside the models directory.
+        if not model_dir.resolve().is_relative_to(models_dir.resolve()):
+            raise ValueError(f"Refusing to delete outside models dir: {model_dir}")
         if await aios.path.exists(model_dir):
             await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
             deleted = True

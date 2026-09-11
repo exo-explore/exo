@@ -30,6 +30,18 @@ class SystemId(Id):
 
 
 class ModelId(Id):
+    def __new__(cls, value: str | None = None) -> Self:
+        instance = super().__new__(cls, value)
+        # A model id becomes a directory name via normalize(), so a segment
+        # of "." or ".." would resolve outside the models directory.
+        if (
+            any(segment in ("", ".", "..") for segment in instance.split("/"))
+            or "\\" in instance
+            or "\x00" in instance
+        ):
+            raise ValueError(f"Invalid model id: {instance!r}")
+        return instance
+
     def normalize(self) -> str:
         return self.replace("/", "--")
 
