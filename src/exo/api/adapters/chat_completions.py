@@ -1,10 +1,14 @@
 """OpenAI Chat Completions API adapter for converting requests/responses."""
 
+import asyncio
 import base64
+import ipaddress
 import re
+import socket
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from typing import Any
+from urllib.parse import urlparse
 
 from exo.api.types import (
     ChatCompletionChoice,
@@ -46,12 +50,62 @@ def extract_base64_from_data_url(data_url: str) -> Base64Image:
     return Base64Image(data_url)
 
 
+async def _resolve_host(host: str) -> Sequence[str]:
+    infos = await asyncio.get_running_loop().getaddrinfo(
+        host, None, type=socket.SOCK_STREAM
+    )
+    return [str(info[4][0]) for info in infos]
+
+
+def _is_public_address(address: str) -> bool:
+    ip = ipaddress.ip_address(address)
+    return ip.is_global and not (
+        ip.is_multicast or ip.is_link_local or ip.is_loopback or ip.is_unspecified
+    )
+
+
+async def validate_image_url(
+    url: str,
+    resolve: Callable[[str], Awaitable[Sequence[str]]] = _resolve_host,
+) -> None:
+    """Refuse image URLs that would make this node fetch from itself, the
+    LAN, or a cloud metadata endpoint on a caller's behalf (SSRF).
+
+    The API listens on the LAN with no authentication, so an image_url in a
+    chat request is attacker-controlled. Hostnames are resolved here so a
+    name pointing at a private address is caught as well as a literal one.
+    `resolve` is injectable so this stays testable without DNS.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported image URL scheme: {parsed.scheme!r}")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("Image URL has no host")
+    try:
+        addresses: Sequence[str] = [str(ipaddress.ip_address(host))]
+    except ValueError:
+        addresses = await resolve(host)
+    if not addresses:
+        raise ValueError(f"Image URL host {host!r} did not resolve")
+    for address in addresses:
+        if not _is_public_address(address):
+            raise ValueError(
+                f"Refusing to fetch image from non-public address {address} ({host})"
+            )
+
+
 async def fetch_image_url(url: str) -> Base64Image:
+    await validate_image_url(url)
     headers = {"User-Agent": "exo/1.0"}
     async with (
         create_http_session(timeout_profile="short") as session,
-        session.get(url, headers=headers) as resp,
+        # Redirects are not followed: a public URL could otherwise bounce
+        # the request to an address validate_image_url just rejected.
+        session.get(url, headers=headers, allow_redirects=False) as resp,
     ):
+        if 300 <= resp.status < 400:
+            raise ValueError(f"Image URL redirected (HTTP {resp.status}); not followed")
         resp.raise_for_status()
         data = await resp.read()
         return Base64Image(base64.b64encode(data).decode("ascii"))
