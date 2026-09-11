@@ -1,7 +1,9 @@
 import platform
 import socket
 import sys
+from collections.abc import Mapping
 from subprocess import CalledProcessError
+from typing import Protocol
 
 import psutil
 from anyio import run_process
@@ -90,6 +92,114 @@ async def _get_interface_types_from_networksetup() -> dict[str, InterfaceType]:
     return types
 
 
+class _HasSpeed(Protocol):
+    """The one field we need from psutil's per-interface stats - narrowed to
+    a Protocol so the parsing logic below can be tested without going
+    through psutil at all. Read-only to match psutil's NamedTuple result."""
+
+    @property
+    def speed(self) -> int: ...
+
+
+def _active_speeds_from_stats(stats: Mapping[str, _HasSpeed]) -> dict[str, int]:
+    """Currently negotiated link speed per interface, in Mbps.
+
+    Pure function over psutil's stats (injected rather than fetched here)
+    so it's testable without a live network stack. psutil reports 0 when
+    the OS doesn't expose a speed for that interface - common for Wi-Fi,
+    especially on macOS - and we treat that the same as not knowing it.
+    """
+    return {iface: stat.speed for iface, stat in stats.items() if stat.speed > 0}
+
+
+def _get_active_speeds_mbps() -> dict[str, int]:
+    try:
+        stats = psutil.net_if_stats()
+    except OSError:
+        return {}
+    return _active_speeds_from_stats(stats)
+
+
+# Media type name (as ifconfig prints it, case-insensitive) -> its
+# theoretical maximum speed, in Mbps. Deliberately conservative: an
+# unrecognised media type is dropped rather than guessed at.
+_MEDIA_SPEED_MBPS: dict[str, int] = {
+    "10baset/utp": 10,
+    "10baset": 10,
+    "100basetx": 100,
+    "100baset4": 100,
+    "1000baset": 1000,
+    "1000basetx": 1000,
+    "1000basesx": 1000,
+    "2500baset": 2500,
+    "5000baset": 5000,
+    "10gbase-t": 10_000,
+    "25gbase-t": 25_000,
+    "40gbase-t": 40_000,
+}
+
+
+def _parse_supported_media_mbps(ifconfig_verbose_output: str) -> dict[str, int]:
+    """Parse the "supported media" block `ifconfig -v` prints per wired
+    interface into the fastest media type each interface's hardware can
+    negotiate, in Mbps.
+
+    Unverified against real macOS output - built from the documented BSD
+    ifconfig format, not a live capture - so treat this as a best-effort
+    starting point rather than a guarantee, and adjust the parsing if it
+    turns out not to match. An interface with no recognised media type
+    (Wi-Fi, virtual interfaces, or a format this doesn't expect) is simply
+    absent from the result rather than reported as zero.
+    """
+    speeds: dict[str, int] = {}
+    current_iface: str | None = None
+    in_supported_media = False
+
+    for raw_line in ifconfig_verbose_output.splitlines():
+        if raw_line and not raw_line[0].isspace():
+            current_iface = raw_line.split(":", 1)[0].strip()
+            in_supported_media = False
+            continue
+
+        line = raw_line.strip()
+        if not current_iface:
+            continue
+
+        if line == "supported media:":
+            in_supported_media = True
+            continue
+        if not in_supported_media:
+            continue
+        if not line.startswith("media "):
+            # A differently-indented line ends the block (e.g. the next
+            # interface's first attribute line, on some ifconfig versions).
+            in_supported_media = False
+            continue
+
+        media_type = line.split()[1].lower()
+        mbps = _MEDIA_SPEED_MBPS.get(media_type)
+        if mbps is not None:
+            speeds[current_iface] = max(speeds.get(current_iface, 0), mbps)
+
+    return speeds
+
+
+async def _get_supported_speeds_mbps() -> dict[str, int]:
+    """Maximum speed each wired interface's hardware supports, in Mbps.
+
+    macOS-only and best-effort - see `_parse_supported_media_mbps`.
+    """
+    if sys.platform != "darwin":
+        return {}
+
+    try:
+        result = await run_process(["ifconfig", "-v"])
+    except CalledProcessError:
+        return {}
+
+    return _parse_supported_media_mbps(result.stdout.decode(errors="replace"))
+
+
 async def get_network_interfaces() -> list[NetworkInterfaceInfo]:
     """
     Retrieves detailed network interface information on macOS.
@@ -99,6 +209,8 @@ async def get_network_interfaces() -> list[NetworkInterfaceInfo]:
     """
     interfaces_info: list[NetworkInterfaceInfo] = []
     interface_types = await _get_interface_types_from_networksetup()
+    active_speeds = _get_active_speeds_mbps()
+    supported_speeds = await _get_supported_speeds_mbps()
 
     for iface, services in psutil.net_if_addrs().items():
         for service in services:
@@ -109,6 +221,8 @@ async def get_network_interfaces() -> list[NetworkInterfaceInfo]:
                             name=iface,
                             ip_address=service.address,
                             interface_type=interface_types.get(iface, "unknown"),
+                            active_speed_mbps=active_speeds.get(iface),
+                            supported_speed_mbps=supported_speeds.get(iface),
                         )
                     )
                 case _:
