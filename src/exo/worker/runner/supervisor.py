@@ -405,7 +405,11 @@ class RunnerSupervisor:
             for d in self._runner_stdio_handler.diagnostics.diagnostics()
             if not isinstance(d, RunnerUnknown)
         ]
-        for task in self.in_progress.values():
+        # Each send awaits, and _forward_events may pop tasks that complete meanwhile,
+        # so iterate a snapshot and skip anything that finished while we were sending.
+        for task_id, task in list(self.in_progress.items()):
+            if task_id not in self.in_progress:
+                continue
             if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
                 with anyio.CancelScope(shield=True):
                     await self._event_sender.send(

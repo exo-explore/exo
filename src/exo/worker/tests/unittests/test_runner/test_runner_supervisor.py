@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import cast
 
 import anyio
@@ -16,7 +17,7 @@ from exo.shared.types.text_generation import (
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerFailed, RunnerId
 from exo.utils.async_process import AsyncProcess
-from exo.utils.channels import channel, mp_channel
+from exo.utils.channels import Sender, channel, mp_channel
 from exo.worker.runner.bootstrap import RunnerTerminationError
 from exo.worker.runner.supervisor import RunnerStdioHandler, RunnerSupervisor
 from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance
@@ -89,6 +90,86 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     assert isinstance(got_chunk.chunk, ErrorChunk)
     assert "Runner shutdown before completing command" in got_chunk.chunk.error_message
 
+    assert isinstance(got_status, RunnerStatusUpdated)
+    assert isinstance(got_status.runner_status, RunnerFailed)
+
+    event_sender.close()
+    with anyio.move_on_after(0.1):
+        await event_receiver.aclose()
+
+
+class _HookedEventSender:
+    """Runs a hook before forwarding each event, standing in for
+    _forward_events mutating in_progress while a send is in flight."""
+
+    def __init__(self, inner: Sender[Event]) -> None:
+        self.inner = inner
+        self.on_send: Callable[[], object] = lambda: None
+
+    async def send(self, event: Event) -> None:
+        self.on_send()
+        await self.inner.send(event)
+
+
+def _text_generation(bound_instance: BoundInstance, name: str) -> TextGeneration:
+    return TextGeneration(
+        task_id=TaskId(f"task-{name}"),
+        instance_id=bound_instance.instance.instance_id,
+        command_id=CommandId(f"cmd-{name}"),
+        task_params=TextGenerationTaskParams(
+            model=bound_instance.bound_shard.model_card.model_id,
+            input=[InputMessage(role="user", content=InputMessageContent("hi"))],
+            stream=True,
+        ),
+    )
+
+
+@pytest.mark.anyio
+async def test_check_runner_survives_task_completing_during_error_fanout() -> None:
+    event_sender, event_receiver = channel[Event]()
+    task_sender, _ = mp_channel[Task]()
+    cancel_sender, _ = mp_channel[TaskId]()
+    _, ev_recv = mp_channel[Event | RunnerTerminationError]()
+
+    bound_instance: BoundInstance = get_bound_mlx_ring_instance(
+        instance_id=InstanceId("instance-a"),
+        model_id=ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit"),
+        runner_id=RunnerId("runner-a"),
+        node_id=NodeId("node-a"),
+    )
+
+    proc = cast(AsyncProcess, cast(object, _DeadProcess()))
+    handler = await RunnerStdioHandler.create(
+        stdout_rx=proc.stdout, stderr_rx=proc.stderr
+    )
+    hooked_sender = _HookedEventSender(event_sender)
+    supervisor = RunnerSupervisor(
+        shard_metadata=bound_instance.bound_shard,
+        bound_instance=bound_instance,
+        runner_process=proc,
+        _runner_stdio_handler=handler,
+        initialize_timeout=400,
+        _ev_recv=ev_recv,
+        _task_sender=task_sender,
+        _event_sender=cast(Sender[Event], cast(object, hooked_sender)),
+        _cancel_sender=cancel_sender,
+    )
+
+    first = _text_generation(bound_instance, "a")
+    second = _text_generation(bound_instance, "b")
+    supervisor.in_progress[first.task_id] = first
+    supervisor.in_progress[second.task_id] = second
+    supervisor.shutdown = lambda: None
+    # the second task completes while the first task's ErrorChunk is being sent
+    hooked_sender.on_send = lambda: supervisor.in_progress.pop(second.task_id, None)
+
+    await supervisor._check_runner(RuntimeError("boom"))  # pyright: ignore[reportPrivateUsage]
+
+    got_chunk = await event_receiver.receive()
+    got_status = await event_receiver.receive()
+
+    assert isinstance(got_chunk, ChunkGenerated)
+    assert got_chunk.command_id == first.command_id
     assert isinstance(got_status, RunnerStatusUpdated)
     assert isinstance(got_status.runner_status, RunnerFailed)
 
