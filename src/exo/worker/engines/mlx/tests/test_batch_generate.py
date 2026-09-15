@@ -24,8 +24,11 @@ from transformers import AutoTokenizer
 
 # Import batch_generate to activate the right-padding BatchKVCache patch
 import exo.worker.engines.mlx.generator.batch_generate  # noqa: F401
-from exo.worker.engines.mlx.cache import encode_prompt, make_kv_cache
-from exo.worker.engines.mlx.generator.generate import prefill
+from exo.shared.types.common import ModelId
+from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
+from exo.worker.engines.mlx.cache import KVPrefixCache, encode_prompt, make_kv_cache
+from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
+from exo.worker.engines.mlx.generator.generate import PrefillCancelled, prefill
 from exo.worker.engines.mlx.types import Model
 
 NUM_STEPS = 20
@@ -161,6 +164,28 @@ def _make_tokenizer() -> TokenizerWrapper:
     return TokenizerWrapper(hf_tokenizer)
 
 
+class _TinyTokenizer:
+    """Self-contained tokenizer for scheduler tests."""
+
+    eos_token_id = 255
+    chat_template = None
+    clean_up_tokenization_spaces = False
+
+    def get_vocab(self) -> dict[str, int]:
+        return {chr(i): i for i in range(256)}
+
+    def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+        del add_special_tokens
+        return [(ord(char) % 254) + 1 for char in text]
+
+    def decode(self, tokens: list[int]) -> str:
+        return "".join(chr(97 + token % 26) for token in tokens)
+
+
+def _make_tiny_tokenizer() -> TokenizerWrapper:
+    return TokenizerWrapper(_TinyTokenizer(), eos_token_ids=[255])
+
+
 @pytest.mark.slow
 def test_batch_b2_llama() -> None:
     """Llama-style model (KVCache only) must produce bit-exact logits in B=2.
@@ -266,3 +291,126 @@ def test_batch_b2_qwen35_moe() -> None:
         f"Qwen3.5 MoE B=2 token mismatches: {mismatches}/{NUM_STEPS * 2}"
     )
     assert max_diff < 0.002, f"Qwen3.5 MoE B=2 max logit diff: {max_diff}"
+
+
+def test_new_prompt_prefill_does_not_block_active_decode() -> None:
+    """A newly admitted prompt must be prefilled incrementally.
+
+    The first request is already in the generation batch when the second one
+    arrives. One scheduler step must therefore emit another token for the
+    first request while advancing only one chunk of the second prompt.
+    """
+    from mlx_lm.models.llama import Model as LlamaModel
+    from mlx_lm.models.llama import ModelArgs
+
+    mx.random.seed(42)
+    model = LlamaModel(
+        ModelArgs(
+            model_type="llama",
+            hidden_size=64,
+            num_hidden_layers=2,
+            intermediate_size=128,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            rms_norm_eps=1e-6,
+            vocab_size=256,
+            rope_theta=10000.0,
+            tie_word_embeddings=True,
+        )
+    )
+    _init_random(model)
+    tokenizer = _make_tiny_tokenizer()
+    generator = ExoBatchGenerator(
+        model=cast(Model, model),
+        tokenizer=tokenizer,
+        group=None,
+        kv_prefix_cache=KVPrefixCache(None),
+        interleaved_prefill_step_size=4,
+    )
+
+    def task(prompt: str) -> TextGenerationTaskParams:
+        return TextGenerationTaskParams(
+            model=ModelId("test/llama"),
+            input=[InputMessage(role="user", content=prompt)],
+            max_output_tokens=128,
+            bench=True,
+            use_prefix_cache=True,
+        )
+
+    first_uid = generator.submit(task("Decode continuously."), "Decode continuously.")
+    warmup_results = generator.step()
+    for _ in range(3):
+        if warmup_results:
+            break
+        warmup_results = generator.step()
+    assert first_uid in {uid for uid, _ in warmup_results}
+
+    progress: list[tuple[int, int]] = []
+    second_prompt = "A deliberately uncached prompt. " * 10
+    second_uid = generator.submit(
+        task(second_prompt),
+        second_prompt,
+        on_prefill_progress=lambda processed, total: progress.append(
+            (processed, total)
+        ),
+    )
+    waiting_progress: list[tuple[int, int]] = []
+    waiting_prompt = "A second queued prefill. " * 10
+    waiting_uid = generator.submit(
+        task(waiting_prompt),
+        waiting_prompt,
+        on_prefill_progress=lambda processed, total: waiting_progress.append(
+            (processed, total)
+        ),
+    )
+
+    # Regression guard: submit used to synchronously prefill the entire second
+    # prompt before returning, stalling every active decoding request.
+    assert progress == []
+
+    results = generator.step()
+    result_uids = {uid for uid, _ in results}
+    assert first_uid in result_uids
+    assert second_uid not in result_uids
+    assert len(progress) == 1
+    assert 0 < progress[0][0] < progress[0][1]
+    assert waiting_progress == []
+
+    for _ in range(128):
+        results = generator.step()
+        if second_uid in {uid for uid, _ in results}:
+            break
+    else:
+        pytest.fail("incrementally prefilled request never reached decode")
+
+    assert len(progress) > 1
+    assert progress[-1][0] == progress[-1][1]
+    assert progress == sorted(progress)
+    assert waiting_progress
+    generator.cancel([waiting_uid])
+    assert generator.kv_prefix_cache is not None
+    assert len(generator.kv_prefix_cache.prompts) >= 2
+
+    cached_uid = generator.submit(task(second_prompt), second_prompt)
+    assert generator._active_tasks[cached_uid].prefix_cache_hit == "exact"
+    for _ in range(4):
+        results = generator.step()
+        if cached_uid in {uid for uid, _ in results}:
+            break
+    else:
+        pytest.fail("exact prefix-cache hit never reached decode")
+
+    def cancel_during_prefill() -> None:
+        raise PrefillCancelled()
+
+    third_prompt = "Cancel this incremental prefill. " * 20
+    third_uid = generator.submit(
+        task(third_prompt),
+        third_prompt,
+        distributed_prompt_progress_callback=cancel_during_prefill,
+    )
+    generator.step()
+    assert third_uid not in generator._active_tasks
+    assert generator._mlx_gen.extract_cache([third_uid]) == {}
+
+    generator.close()

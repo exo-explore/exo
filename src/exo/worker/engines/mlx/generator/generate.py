@@ -154,7 +154,7 @@ class PrefillCancelled(BaseException):
     """Raised when prefill is cancelled via the progress callback."""
 
 
-def _has_pipeline_communication_layer(model: Model):
+def has_pipeline_communication_layer(model: Model) -> bool:
     for layer in model.layers:
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
             return True
@@ -329,7 +329,7 @@ def prefill(
     mx_barrier(group)
     logger.info("Starting prefill")
 
-    is_pipeline = _has_pipeline_communication_layer(model)
+    is_pipeline = has_pipeline_communication_layer(model)
 
     prefill_step_size = 4096
 
