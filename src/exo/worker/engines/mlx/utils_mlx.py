@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Generator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -885,10 +886,39 @@ def _parse_kimi_tool_calls(text: str):
         return [_parse_single_tool(text)]
 
 
-def mx_all_gather_tasks(
+@dataclass(frozen=True)
+class TaskGather:
+    """A task agreement whose first collective (the per-rank task counts) has
+    been queued but not read yet; see ``start_task_gather``."""
+
+    tasks: list[TextGeneration]
+    counts: mx.array
+
+
+def start_task_gather(
     tasks: list[TextGeneration],
     group: mx.distributed.Group | None,
+) -> TaskGather:
+    """Queue the all-gather of this rank's task count without waiting for it.
+
+    Collectives run on MLX's CPU stream in submission order, so a gather queued
+    between two decode steps sits behind the in-flight token's all-reduces;
+    reading it right away (``.tolist()``) holds the host until that token's GPU
+    work ends. Reading it on the next step instead (``finish_task_gather``)
+    costs nothing: by then the step has already waited for that token.
+    """
+    counts = mx.distributed.all_gather(mx.array([len(tasks)]), group=group)
+    mx.async_eval(counts)
+    return TaskGather(tasks=list(tasks), counts=counts)
+
+
+def finish_task_gather(
+    gather: TaskGather,
+    group: mx.distributed.Group | None,
 ) -> tuple[list[TextGeneration], list[TextGeneration]]:
+    """Wait for the counts, gather the task ids if any rank has tasks, and
+    return (tasks every rank has, sorted by id; this rank's other tasks)."""
+
     def encode_task_id(task_id: TaskId) -> list[int]:
         utf8_task_id = task_id.encode()
         return [
@@ -902,11 +932,9 @@ def mx_all_gather_tasks(
 
     uuid_byte_length = 36
 
+    tasks = gather.tasks
     n_tasks = len(tasks)
-    all_counts = cast(
-        list[int],
-        mx.distributed.all_gather(mx.array([n_tasks]), group=group).tolist(),
-    )
+    all_counts = cast(list[int], gather.counts.tolist())
     max_tasks = max(all_counts)
     world_size: int = 1 if group is None else group.size()
 
@@ -936,3 +964,10 @@ def mx_all_gather_tasks(
     agreed = [local_tasks[tid] for tid in sorted(agreed_ids)]
     different = [task for task in tasks if task.task_id not in agreed_ids]
     return agreed, different
+
+
+def mx_all_gather_tasks(
+    tasks: list[TextGeneration],
+    group: mx.distributed.Group | None,
+) -> tuple[list[TextGeneration], list[TextGeneration]]:
+    return finish_task_gather(start_task_gather(tasks, group), group)
