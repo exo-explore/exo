@@ -70,6 +70,7 @@ mlx-cuda13 = [
   "mlx-cuda-13==0.32.0; sys_platform == 'linux'",
   "nvidia-ml-py>=13.595.45",
 ]
+tinygrad = ["tinygrad>=0.10.3"]
 
 ###
 # workspace configuration
@@ -164,6 +165,10 @@ stubPath = ".typings"
 
 [[tool.basedpyright.executionEnvironments]]
 root = "src/exo/worker/engines/image"
+reportMissingModuleSource = false
+
+[[tool.basedpyright.executionEnvironments]]
+root = "src/exo/backends"
 reportMissingModuleSource = false
 
 [[tool.basedpyright.executionEnvironments]]

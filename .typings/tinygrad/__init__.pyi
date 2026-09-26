@@ -1,7 +1,9 @@
-"""Type stub for the optional tinygrad package.
+"""Type stub for the optional tinygrad package."""
 
-The exo adapter assigns ``Device.DEFAULT`` and does not call tensor APIs.
-"""
+from tinygrad.dtype import DType, dtypes
+from tinygrad.tensor import Tensor
 
 class Device:
     DEFAULT: str
+
+__all__ = ["Device", "DType", "Tensor", "dtypes"]

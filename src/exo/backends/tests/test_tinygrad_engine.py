@@ -14,6 +14,7 @@ from exo.backends.tinygrad_engine import (
     backends_from_declared_devices,
     tinygrad_device_name_for_backend,
 )
+from exo.backends.tinygrad_weights import TinygradWeightError
 from exo.master.placement import INSTANCE_META_BACKENDS
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.backends import Backend
@@ -95,16 +96,16 @@ def test_engine_operations_are_unimplemented(monkeypatch: pytest.MonkeyPatch) ->
     )
     engine = TinygradEngine(device_name="CUDA")
     assert isinstance(engine, Engine)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(TinygradWeightError):
         engine.allocate_weights(_bound_instance())
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(TinygradWeightError):
         engine.load_model(_bound_instance())
     with pytest.raises(NotImplementedError):
         engine.warmup()
     with pytest.raises(NotImplementedError):
         engine.step()
-    with pytest.raises(NotImplementedError):
-        engine.close()
+    engine.close()
+    assert engine.loaded_shard is None
 
 
 def test_registry_routes_tinygrad_instances(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -126,9 +127,8 @@ def test_registry_routes_tinygrad_instances(monkeypatch: pytest.MonkeyPatch) -> 
     assert isinstance(builder, TinygradBuilder)
     assert isinstance(builder, Builder)
     assert builder.device_name == "AMD"
-    with pytest.raises(NotImplementedError):
-        builder.connect(bound_instance)
-    with pytest.raises(NotImplementedError):
+    builder.connect(bound_instance)
+    with pytest.raises(TinygradWeightError):
         builder.build()
 
 
