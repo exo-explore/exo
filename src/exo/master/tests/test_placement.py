@@ -48,6 +48,7 @@ from exo.shared.types.worker.instances import (
     InstanceMeta,
     MlxJacclInstance,
     MlxRingInstance,
+    TinygradInstance,
 )
 from exo.shared.types.worker.runners import ShardAssignments
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
@@ -1055,4 +1056,110 @@ def test_mlx_jaccl_rejects_cuda_only_cycle(model_card: ModelCard):
             node_network,
             node_backends,
             node_rdma_ctl=node_rdma_ctl,
+        )
+
+
+def _tinygrad_model_card() -> ModelCard:
+    return ModelCard(
+        model_id=ModelId("tinygrad-model"),
+        storage_size=Memory.from_kb(1000),
+        n_layers=10,
+        hidden_size=1000,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+        backends=[Backend.TinygradAmd, Backend.TinygradCuda, Backend.TinygradCpu],
+    )
+
+
+def test_tinygrad_single_node_keeps_tinygrad_instance() -> None:
+    topology = Topology()
+    node_id = NodeId()
+    topology.add_node(node_id)
+    node_memory = {node_id: create_node_memory(1000 * 1024)}
+    node_network = {node_id: create_node_network()}
+    command = PlaceInstance(
+        command_id=CommandId(),
+        model_card=_tinygrad_model_card(),
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.Tinygrad,
+        min_nodes=1,
+    )
+    placements = place_instance(
+        command,
+        topology,
+        {},
+        node_memory,
+        node_network,
+        {node_id: [Backend.TinygradAmd, Backend.TinygradCpu]},
+    )
+
+    assert len(placements) == 1
+    instance = next(iter(placements.values()))
+    assert isinstance(instance, TinygradInstance)
+    assert instance.device_backend_by_node == {node_id: Backend.TinygradAmd}
+    shard = next(iter(instance.shard_assignments.runner_to_shard.values()))
+    assert shard.end_layer - shard.start_layer == 10
+
+
+def test_tinygrad_placement_uses_each_nodes_advertised_backend() -> None:
+    topology = Topology()
+    node_amd = NodeId()
+    node_cuda = NodeId()
+    topology.add_node(node_amd)
+    topology.add_node(node_cuda)
+    ethernet = create_socket_connection(1)
+    topology.add_connection(Connection(source=node_amd, sink=node_cuda, edge=ethernet))
+    topology.add_connection(Connection(source=node_cuda, sink=node_amd, edge=ethernet))
+    node_memory = {
+        node_amd: create_node_memory(1000 * 1024),
+        node_cuda: create_node_memory(1000 * 1024),
+    }
+    node_network = {
+        node_amd: create_node_network(),
+        node_cuda: create_node_network(),
+    }
+    command = PlaceInstance(
+        command_id=CommandId(),
+        model_card=_tinygrad_model_card(),
+        sharding=Sharding.Pipeline,
+        instance_meta=InstanceMeta.Tinygrad,
+        min_nodes=2,
+    )
+    placements = place_instance(
+        command,
+        topology,
+        {},
+        node_memory,
+        node_network,
+        {
+            node_amd: [Backend.MlxMetal, Backend.TinygradAmd],
+            node_cuda: [Backend.TinygradCuda, Backend.TinygradAmd],
+        },
+    )
+
+    instance = next(iter(placements.values()))
+    assert isinstance(instance, TinygradInstance)
+    assert instance.device_backend_by_node[node_amd] == Backend.TinygradAmd
+    assert instance.device_backend_by_node[node_cuda] == Backend.TinygradCuda
+
+
+def test_tinygrad_placement_rejects_mlx_only_nodes() -> None:
+    topology = Topology()
+    node_id = NodeId()
+    topology.add_node(node_id)
+    command = PlaceInstance(
+        command_id=CommandId(),
+        model_card=_tinygrad_model_card(),
+        sharding=Sharding.Pipeline,
+        instance_meta=InstanceMeta.Tinygrad,
+        min_nodes=1,
+    )
+    with pytest.raises(ValueError, match="No cycle where every node supports"):
+        place_instance(
+            command,
+            topology,
+            {},
+            {node_id: create_node_memory(1000 * 1024)},
+            {node_id: create_node_network()},
+            {node_id: [Backend.MlxMetal]},
         )

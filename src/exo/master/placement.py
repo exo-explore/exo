@@ -44,6 +44,7 @@ from exo.shared.types.worker.instances import (
     InstanceMeta,
     MlxJacclInstance,
     MlxRingInstance,
+    TinygradInstance,
 )
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.ports import random_ephemeral_port
@@ -51,6 +52,12 @@ from exo.utils.ports import random_ephemeral_port
 INSTANCE_META_BACKENDS: dict[InstanceMeta, list[Backend]] = {
     InstanceMeta.MlxRing: [Backend.MlxMetal, Backend.MlxCuda, Backend.MlxCpu],
     InstanceMeta.MlxJaccl: [Backend.MlxMetal],
+    InstanceMeta.Tinygrad: [
+        Backend.TinygradAmd,
+        Backend.TinygradMetal,
+        Backend.TinygradCuda,
+        Backend.TinygradCpu,
+    ],
 }
 
 
@@ -242,14 +249,22 @@ def place_instance(
         ),
     )
 
-    # Single-node: force Pipeline/Ring (Tensor and Jaccl require multi-node)
-    if len(selected_cycle) == 1:
+    # Tensor and Jaccl require multiple nodes, so a single node uses pipeline
+    # ring. A tinygrad placement keeps its own instance meta and uses pipeline
+    # sharding on one node.
+    if len(selected_cycle) == 1 and command.instance_meta != InstanceMeta.Tinygrad:
         command = command.model_copy(
             update={
                 "instance_meta": InstanceMeta.MlxRing,
                 "sharding": Sharding.Pipeline,
             }
         )
+    elif (
+        len(selected_cycle) == 1
+        and command.instance_meta == InstanceMeta.Tinygrad
+        and command.sharding != Sharding.Pipeline
+    ):
+        command = command.model_copy(update={"sharding": Sharding.Pipeline})
 
     shard_assignments = get_shard_assignments(
         command.model_card, selected_cycle, command.sharding, node_memory
@@ -307,8 +322,44 @@ def place_instance(
                 hosts_by_node=hosts_by_node,
                 ephemeral_port=ephemeral_port,
             )
+        case InstanceMeta.Tinygrad:
+            device_backend_by_node = {
+                node_id: _select_tinygrad_backend(
+                    node_id, node_backends, required_backends
+                )
+                for node_id in selected_cycle
+            }
+            target_instances[instance_id] = TinygradInstance(
+                instance_id=instance_id,
+                shard_assignments=shard_assignments,
+                device_backend_by_node=device_backend_by_node,
+            )
 
     return target_instances
+
+
+def _select_tinygrad_backend(
+    node_id: NodeId,
+    node_backends: Mapping[NodeId, list[Backend]],
+    required_backends: set[Backend],
+) -> Backend:
+    """Pick the tinygrad backend advertised by ``node_id``.
+
+    The first advertised backend that the model and the tinygrad instance
+    meta both accept wins. The operating system is not consulted.
+
+    Raises:
+        ValueError: The master command handler and the placement HTTP
+            endpoint surface this when a node has no remaining tinygrad
+            backend. The cycle filter should have removed that node already.
+    """
+    for backend in node_backends.get(node_id, []):
+        if backend in required_backends:
+            return backend
+    raise ValueError(
+        f"Node {node_id} has no tinygrad backend in "
+        f"{sorted(backend.value for backend in required_backends)}"
+    )
 
 
 def delete_instance(

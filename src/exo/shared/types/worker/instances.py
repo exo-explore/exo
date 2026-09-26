@@ -3,6 +3,7 @@ from enum import Enum
 from pydantic import model_validator
 
 from exo.shared.models.model_cards import ModelTask
+from exo.shared.types.backends import Backend
 from exo.shared.types.common import Host, Id, NodeId
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments, ShardMetadata
 from exo.utils.pydantic_ext import FrozenModel, TaggedModel
@@ -15,6 +16,7 @@ class InstanceId(Id):
 class InstanceMeta(str, Enum):
     MlxRing = "MlxRing"
     MlxJaccl = "MlxJaccl"
+    Tinygrad = "Tinygrad"
 
 
 class BaseInstance(TaggedModel):
@@ -35,8 +37,33 @@ class MlxJacclInstance(BaseInstance):
     jaccl_coordinators: dict[NodeId, str]
 
 
+class TinygradInstance(BaseInstance):
+    """Placement executed by the tinygrad adapter.
+
+    ``device_backend_by_node`` records the backend selected for each node.
+    The runner turns that backend into a tinygrad device name at startup.
+    """
+
+    device_backend_by_node: dict[NodeId, Backend]
+
+    def backend_for_node(self, node_id: NodeId) -> Backend:
+        """Return the tinygrad backend selected for ``node_id``.
+
+        Raises:
+            ValueError: The runner entrypoint handles this by publishing
+                ``RunnerTerminationError`` when the placement omitted the
+                node that is starting the runner.
+        """
+        try:
+            return self.device_backend_by_node[node_id]
+        except KeyError as error:
+            raise ValueError(
+                f"Tinygrad instance {self.instance_id} has no backend for node {node_id}"
+            ) from error
+
+
 # TODO: Single node instance
-Instance = MlxRingInstance | MlxJacclInstance
+Instance = MlxRingInstance | MlxJacclInstance | TinygradInstance
 
 
 class BoundInstance(FrozenModel):

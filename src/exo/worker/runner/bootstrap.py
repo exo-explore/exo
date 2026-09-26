@@ -62,28 +62,15 @@ def entrypoint(
     try:
         event_sender_downcast: MpSender[Event] = cast(MpSender[Event], event_sender)
 
+        from exo.backends.registry import resolve_builder
         from exo.worker.runner.runner import Runner
 
-        builder: Builder
-        if bound_instance.is_image_model:
-            from exo.worker.engines.image.builder import MfluxBuilder
-
-            builder = MfluxBuilder(
-                event_sender_downcast, cancel_receiver, bound_instance.bound_shard
-            )
-        else:
-            from exo.worker.engines.mlx.patches import apply_mlx_patches
-
-            apply_mlx_patches()
-
-            from exo.worker.engines.mlx.builder import MlxBuilder
-
-            # evil sharing of the event sender
-            builder = MlxBuilder(
-                model_id=bound_instance.bound_shard.model_card.model_id,
-                event_sender=event_sender_downcast,
-                cancel_receiver=cancel_receiver,
-            )
+        # evil sharing of the event sender
+        builder: Builder = resolve_builder(
+            bound_instance,
+            event_sender_downcast,
+            cancel_receiver,
+        )
 
         runner = Runner(bound_instance, builder, event_sender_downcast, task_receiver)
         runner.main()

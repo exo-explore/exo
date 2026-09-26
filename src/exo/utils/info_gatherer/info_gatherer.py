@@ -374,12 +374,28 @@ class NodeBackends(TaggedModel):
 
     @classmethod
     async def gather(cls) -> Self:
+        """Collect backends this node can run.
+
+        ``EXO_TINYGRAD_DEVICES`` is a comma-separated list of tinygrad device
+        names (``AMD``, ``METAL``, ``CUDA``, ``CPU``). The operating system is
+        not used to choose those names.
+
+        Raises:
+            TinygradDeviceSelectionError: A declared device name is unknown.
+                ``InfoGatherer.run`` does not catch it, so node startup fails
+                instead of advertising an accelerator tinygrad will reject.
+        """
         backends: list[Backend] = [Backend.MlxCpu]
         if IS_DARWIN:
             backends.append(Backend.MlxMetal)
         if await to_thread.run_sync(_has_nvml_cuda):
             backends.append(Backend.MlxCuda)
             backends.append(Backend.Vllm)
+        declared_devices = os.environ.get("EXO_TINYGRAD_DEVICES", "")
+        if declared_devices:
+            from exo.backends.tinygrad_engine import backends_from_declared_devices
+
+            backends.extend(backends_from_declared_devices(declared_devices.split(",")))
         return cls(backends=backends)
 
 
