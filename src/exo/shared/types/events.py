@@ -8,6 +8,7 @@ from exo.shared.topology import Connection
 from exo.shared.types.chunks import Chunk, InputImageChunk
 from exo.shared.types.common import CommandId, Id, ModelId, NodeId, SessionId, SystemId
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
+from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -186,6 +187,17 @@ class GlobalForwarderEvent(FrozenModel):
     origin: NodeId
     session: SessionId
     event: Event
+
+
+class StateSnapshot(FrozenModel):
+    """The master's state, sent to a node too far behind to replay the events it missed.
+
+    ``state.last_event_applied_idx`` is the index of the last event it includes.
+    """
+
+    session: SessionId
+    requester: SystemId
+    state: State
 
 
 class LocalForwarderEvent(FrozenModel):

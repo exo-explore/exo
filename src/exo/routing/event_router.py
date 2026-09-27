@@ -14,6 +14,7 @@ from exo.shared.types.events import (
     GlobalForwarderEvent,
     IndexedEvent,
     LocalForwarderEvent,
+    StateSnapshot,
 )
 from exo.utils import channels
 from exo.utils.channels import Receiver, Sender, channel
@@ -45,8 +46,9 @@ class EventRouter:
     command_sender: Sender[ForwarderCommand]
     external_inbound: Receiver[GlobalForwarderEvent]
     external_outbound: Sender[LocalForwarderEvent]
+    snapshot_inbound: Receiver[StateSnapshot]
     _system_id: SystemId = field(init=False, default_factory=SystemId)
-    internal_outbound: list[Sender[IndexedEvent]] = field(
+    internal_outbound: list[Sender[IndexedEvent | StateSnapshot]] = field(
         init=False, default_factory=list
     )
     event_buffer: OrderedBuffer[Event] = field(
@@ -63,9 +65,14 @@ class EventRouter:
     _nack_cap_seconds: float = field(init=False, default=10.0)
 
     async def run(self):
+        # Events and snapshots are handled by one loop so consumers always get a
+        # snapshot before the events that follow it.
+        inbound_send, inbound_recv = channel[GlobalForwarderEvent | StateSnapshot]()
         try:
             async with self._tg as tg:
-                tg.start_soon(self._run_ext_in)
+                tg.start_soon(_forward, self.external_inbound, inbound_send.clone())
+                tg.start_soon(_forward, self.snapshot_inbound, inbound_send)
+                tg.start_soon(self._run_ext_in, inbound_recv)
                 tg.start_soon(self._simple_retry)
         finally:
             self.external_outbound.close()
@@ -90,9 +97,11 @@ class EventRouter:
             self._tg.queue(self._ingest, SystemId(), recv)
         return send
 
-    def receiver(self) -> Receiver[IndexedEvent]:
+    def receiver(self) -> Receiver[IndexedEvent | StateSnapshot]:
         assert not self._tg.is_running()
-        send, recv = channel[IndexedEvent](error_override_config=_ERROR_CFG)
+        send, recv = channel[IndexedEvent | StateSnapshot](
+            error_override_config=_ERROR_CFG
+        )
         self.internal_outbound.append(send)
         return recv
 
@@ -113,43 +122,69 @@ class EventRouter:
                 await self.external_outbound.send(f_ev)
                 self.out_for_delivery[event.event_id] = (anyio.current_time(), f_ev)
 
-    async def _run_ext_in(self):
+    async def _run_ext_in(
+        self, inbound: Receiver[GlobalForwarderEvent | StateSnapshot]
+    ):
         buf = OrderedBuffer[Event]()
-        with self.external_inbound as events:
-            async for event in events:
-                if event.session != self.session_id:
+        with inbound as messages:
+            async for message in messages:
+                if message.session != self.session_id:
                     continue
-                if event.origin != self.session_id.master_node_id:
-                    continue
+                match message:
+                    case StateSnapshot():
+                        if message.requester != self._system_id:
+                            continue
+                        snapshot_idx = message.state.last_event_applied_idx
+                        if snapshot_idx < buf.next_idx_to_release:
+                            # We already have everything it covers
+                            continue
+                        logger.info(
+                            f"Catching up from a state snapshot at event {snapshot_idx}"
+                        )
+                        buf.skip_to(snapshot_idx + 1)
+                        await self._deliver(message)
+                        drained = buf.drain_indexed()
+                        self._caught_up()
+                    case GlobalForwarderEvent():
+                        if message.origin != self.session_id.master_node_id:
+                            continue
 
-                buf.ingest(event.origin_idx, event.event)
-                event_id = event.event.event_id
-                if event_id in self.out_for_delivery:
-                    self.out_for_delivery.pop(event_id)
+                        buf.ingest(message.origin_idx, message.event)
+                        event_id = message.event.event_id
+                        if event_id in self.out_for_delivery:
+                            self.out_for_delivery.pop(event_id)
 
-                drained = buf.drain_indexed()
-                if drained:
-                    self._nack_attempts = 0
-                    if self._nack_cancel_scope:
-                        self._nack_cancel_scope.cancel()
+                        drained = buf.drain_indexed()
+                        if drained:
+                            self._caught_up()
 
-                if not drained and (
-                    self._nack_cancel_scope is None
-                    or self._nack_cancel_scope.cancel_called
-                ):
-                    # Request the next index.
-                    self._tg.start_soon(self._nack_request, buf.next_idx_to_release)
-                    continue
+                        if not drained and (
+                            self._nack_cancel_scope is None
+                            or self._nack_cancel_scope.cancel_called
+                        ):
+                            # Request the next index.
+                            self._tg.start_soon(
+                                self._nack_request, buf.next_idx_to_release
+                            )
+                            continue
 
                 for idx, event in drained:
-                    to_clear = set[int]()
-                    for i, sender in enumerate(self.internal_outbound):
-                        try:
-                            await sender.send(IndexedEvent(idx=idx, event=event))
-                        except (ClosedResourceError, BrokenResourceError):
-                            to_clear.add(i)
-                    for i in sorted(to_clear, reverse=True):
-                        self.internal_outbound.pop(i)
+                    await self._deliver(IndexedEvent(idx=idx, event=event))
+
+    def _caught_up(self) -> None:
+        self._nack_attempts = 0
+        if self._nack_cancel_scope:
+            self._nack_cancel_scope.cancel()
+
+    async def _deliver(self, item: IndexedEvent | StateSnapshot) -> None:
+        to_clear = set[int]()
+        for i, sender in enumerate(self.internal_outbound):
+            try:
+                await sender.send(item)
+            except (ClosedResourceError, BrokenResourceError):
+                to_clear.add(i)
+        for i in sorted(to_clear, reverse=True):
+            self.internal_outbound.pop(i)
 
     async def _nack_request(self, since_idx: int) -> None:
         # We request all events after (and including) the missing index.
@@ -179,3 +214,11 @@ class EventRouter:
             finally:
                 if self._nack_cancel_scope is scope:
                     self._nack_cancel_scope = None
+
+
+async def _forward[T: GlobalForwarderEvent | StateSnapshot](
+    source: Receiver[T], sink: Sender[GlobalForwarderEvent | StateSnapshot]
+) -> None:
+    with source as items, sink:
+        async for item in items:
+            await sink.send(item)

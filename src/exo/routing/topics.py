@@ -7,6 +7,7 @@ from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.events import (
     GlobalForwarderEvent,
     LocalForwarderEvent,
+    StateSnapshot,
 )
 from exo.utils.pydantic_ext import FrozenModel
 
@@ -39,6 +40,7 @@ class TypedTopic[T: FrozenModel]:
 
 GLOBAL_EVENTS = TypedTopic("global_events", PublishPolicy.Always, GlobalForwarderEvent)
 LOCAL_EVENTS = TypedTopic("local_events", PublishPolicy.Always, LocalForwarderEvent)
+STATE_SNAPSHOTS = TypedTopic("state_snapshots", PublishPolicy.Always, StateSnapshot)
 COMMANDS = TypedTopic("commands", PublishPolicy.Always, ForwarderCommand)
 ELECTION_MESSAGES = TypedTopic(
     "election_messages", PublishPolicy.Always, ElectionMessage

@@ -30,6 +30,7 @@ from exo.shared.types.events import (
     InstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
+    StateSnapshot,
     TaskCreated,
     TaskStatusUpdated,
     TopologyEdgeCreated,
@@ -67,7 +68,7 @@ class Worker:
         self,
         node_id: NodeId,
         *,
-        event_receiver: Receiver[IndexedEvent],
+        event_receiver: Receiver[IndexedEvent | StateSnapshot],
         event_sender: Sender[Event],
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands
@@ -139,10 +140,13 @@ class Worker:
 
     async def _event_applier(self):
         with self.event_receiver as events:
-            async for event in events:
+            async for update in events:
+                if isinstance(update, StateSnapshot):
+                    self.state = update.state
+                    continue
                 # 2. for each event, apply it to the state
-                self.state = apply(self.state, event=event)
-                event = event.event
+                self.state = apply(self.state, event=update)
+                event = update.event
 
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)

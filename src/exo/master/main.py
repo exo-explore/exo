@@ -1,4 +1,6 @@
+from collections import deque
 from datetime import datetime, timedelta, timezone
+from itertools import islice
 
 import anyio
 from loguru import logger
@@ -16,7 +18,7 @@ from exo.routing.event_router import (
     EventRouterClosedResourceError,
 )
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
+from exo.shared.constants import EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
     AddCustomModelCard,
     CreateInstance,
@@ -50,6 +52,7 @@ from exo.shared.types.events import (
     LocalForwarderEvent,
     NodeGatheredInfo,
     NodeTimedOut,
+    StateSnapshot,
     TaskCreated,
     TaskDeleted,
     TaskStatusUpdated,
@@ -74,9 +77,14 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender
-from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
+
+# Recent events kept for nodes that missed a few. A node further behind than this
+# is sent a snapshot of the current state instead of the whole history.
+REPLAYABLE_EVENTS = 10_000
+# Events replayed per RequestEventLog; the requester asks again for the rest.
+REPLAY_BATCH_SIZE = 1000
 
 
 def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
@@ -129,6 +137,7 @@ class Master:
         event_sender: Sender[Event],
         local_event_receiver: Receiver[LocalForwarderEvent],
         global_event_sender: Sender[GlobalForwarderEvent],
+        snapshot_sender: Sender[StateSnapshot],
         download_command_sender: Sender[ForwarderDownloadCommand],
     ):
         self.node_id = node_id
@@ -139,11 +148,12 @@ class Master:
         self.command_receiver = command_receiver
         self.local_event_receiver = local_event_receiver
         self.global_event_sender = global_event_sender
+        self.snapshot_sender = snapshot_sender
         self.download_command_sender = download_command_sender
         self.event_sender = event_sender
         self._system_id = SystemId()
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
-        self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
+        self._recent_events: deque[Event] = deque(maxlen=REPLAYABLE_EVENTS)
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
 
@@ -159,8 +169,8 @@ class Master:
             # Event router has been closed (try-star syntax handles error groups)
             pass
         finally:
-            self._event_log.close()
             self.global_event_sender.close()
+            self.snapshot_sender.close()
             self.local_event_receiver.close()
             self.command_receiver.close()
 
@@ -452,16 +462,9 @@ class Master:
                                 InstanceLinkDeleted(link_id=command.link_id)
                             )
                         case RequestEventLog():
-                            # We should just be able to send everything, since other buffers will ignore old messages
-                            # rate limit to 1000 at a time
-                            end = min(command.since_idx + 1000, len(self._event_log))
-                            for i, event in enumerate(
-                                self._event_log.read_range(command.since_idx, end),
-                                start=command.since_idx,
-                            ):
-                                await self._send_indexed_event(
-                                    IndexedEvent(idx=i, event=event)
-                                )
+                            await self._serve_event_log_request(
+                                command.since_idx, forwarder_command.origin
+                            )
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except Exception as e:
@@ -515,11 +518,36 @@ class Master:
                             update={"when": str(datetime.now(tz=timezone.utc))}
                         )
 
-                    indexed = IndexedEvent(event=event, idx=len(self._event_log))
+                    indexed = IndexedEvent(
+                        event=event, idx=self.state.last_event_applied_idx + 1
+                    )
                     self.state = apply(self.state, indexed)
 
-                    self._event_log.append(event)
+                    self._recent_events.append(event)
                     await self._send_indexed_event(indexed)
+
+    async def _serve_event_log_request(self, since_idx: int, requester: SystemId):
+        next_idx = self.state.last_event_applied_idx + 1
+        oldest_idx = next_idx - len(self._recent_events)
+        if since_idx < oldest_idx:
+            logger.info(
+                f"Sending a state snapshot at event {next_idx - 1} to a node "
+                f"that asked for events from {since_idx}"
+            )
+            await self.snapshot_sender.send(
+                StateSnapshot(
+                    session=self.session_id, requester=requester, state=self.state
+                )
+            )
+            return
+        # Copy before sending: new events evict old ones from the deque while we await.
+        end = min(since_idx + REPLAY_BATCH_SIZE, next_idx)
+        events = list(
+            islice(self._recent_events, since_idx - oldest_idx, end - oldest_idx)
+        )
+        # Other nodes ignore events they already have
+        for idx, event in enumerate(events, start=since_idx):
+            await self._send_indexed_event(IndexedEvent(idx=idx, event=event))
 
     # This function is re-entrant, take care!
     async def _send_indexed_event(self, event: IndexedEvent):

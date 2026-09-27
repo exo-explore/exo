@@ -180,6 +180,7 @@ from exo.shared.types.events import (
     Event,
     IndexedEvent,
     InstanceDeleted,
+    StateSnapshot,
     TracesMerged,
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
@@ -241,7 +242,7 @@ class API:
         node_id: NodeId,
         *,
         port: int,
-        event_receiver: Receiver[IndexedEvent],
+        event_receiver: Receiver[IndexedEvent | StateSnapshot],
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
@@ -295,7 +296,9 @@ class API:
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
 
-    def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):
+    def reset(
+        self, result_clock: int, event_receiver: Receiver[IndexedEvent | StateSnapshot]
+    ):
         logger.info("Resetting API State")
         self._event_log.close()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
@@ -1969,6 +1972,9 @@ class API:
     async def _apply_state(self):
         with self.event_receiver as events:
             async for i_event in events:
+                if isinstance(i_event, StateSnapshot):
+                    self._apply_snapshot(i_event)
+                    continue
                 self._event_log.append(i_event.event)
                 self.state = apply(self.state, i_event)
                 event = i_event.event
@@ -1994,6 +2000,23 @@ class API:
                     self._close_streams_for_instance(event.instance_id)
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
+
+    def _apply_snapshot(self, snapshot: StateSnapshot) -> None:
+        self.state = snapshot.state
+        # Output for in-flight requests may have been in the events we skipped
+        in_flight = [
+            *self._text_generation_queues.values(),
+            *self._image_generation_queues.values(),
+        ]
+        if in_flight:
+            logger.warning(
+                f"Ending {len(in_flight)} in-flight request(s) that may have missed "
+                "output while this node caught up from a state snapshot"
+            )
+        for sender in in_flight:
+            sender.close()
+        self._text_generation_queues.clear()
+        self._image_generation_queues.clear()
 
     def _close_streams_for_instance(self, instance_id: InstanceId) -> None:
         """Close any active generation streams for commands running on the given instance."""
