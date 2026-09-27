@@ -24,6 +24,8 @@ Interface map
     ``submit``              enqueue one ``GenerationTask`` (unimplemented)
     ``step``                run one tensor generation step (unimplemented)
     ``serve_prefill``       serve a disaggregated prefill request (unimplemented)
+    ``memory_usage``        report ``MemoryUsage`` for this device
+    ``pin_assigned_layers`` drop any other layers before a load
     ``close``               drop the loaded shard and its cache
 
 ``exo.shared.types.backends.Backend`` (placement registry)
@@ -37,6 +39,7 @@ Device names are an explicit input. The host operating system is not read.
 
 from __future__ import annotations
 
+import gc
 from collections.abc import Generator, Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -46,6 +49,7 @@ from exo.shared.types.backends import Backend
 from exo.shared.types.chunks import Chunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import Event
+from exo.shared.types.profiling import MemoryUsage
 from exo.shared.types.tasks import GenerationTask, TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
@@ -213,6 +217,45 @@ class TinygradEngine(Engine):
     def __post_init__(self) -> None:
         assign_tinygrad_default_device(self.device_name)
 
+    def memory_usage(self) -> MemoryUsage:
+        """Return this device's capacity in the placement ``MemoryUsage`` shape.
+
+        The query does not open the device or copy weights. ``METAL`` and
+        ``CPU`` report unified memory through psutil. ``AMD`` and ``CUDA``
+        report free accelerator memory. ``InfoGatherer`` publishes the same
+        value before this engine exists, and the master weights shards with
+        ``ram_available``.
+        """
+        from exo.backends.tinygrad_memory import memory_usage_for_device
+
+        return memory_usage_for_device(self.device_name)
+
+    def pin_assigned_layers(
+        self, bound_instance: BoundInstance
+    ) -> PipelineShardMetadata:
+        """Drop every realized tensor that is not the commanded layer interval.
+
+        Args:
+            bound_instance: Placement whose pipeline shard carries
+                ``start_layer`` and ``end_layer``.
+
+        Returns:
+            The pipeline shard load will realize. Only that half-open interval
+            is allowed onto the device.
+
+        Raises:
+            TinygradWeightError: The runner entrypoint handles this when the
+                placement is not a pipeline shard.
+        """
+        shard = _pipeline_shard(bound_instance)
+        self._release_loaded_graph()
+        return shard
+
+    def _release_loaded_graph(self) -> None:
+        self.loaded_shard = None
+        self.key_value_cache = None
+        gc.collect()
+
     def allocate_weights(self, bound_instance: BoundInstance) -> None:
         """Sum the safetensors bytes this shard will realize.
 
@@ -272,12 +315,14 @@ class TinygradEngine(Engine):
             assemble_loaded_shard,
         )
         from exo.backends.tinygrad_weights import (
+            TinygradWeightError,
             iter_realized_parameter_groups,
             load_architecture,
             model_directory_for_shard,
         )
+        from exo.download.huggingface_utils import extract_layer_num
 
-        shard = _pipeline_shard(bound_instance)
+        shard = self.pin_assigned_layers(bound_instance)
         architecture = load_architecture(model_directory_for_shard(shard))
         total_layers = shard.end_layer - shard.start_layer
         collected: dict[str, Tensor] = {}
@@ -285,12 +330,28 @@ class TinygradEngine(Engine):
         for group in iter_realized_parameter_groups(shard):
             for tensor_name, tensor in group.parameters:
                 collected[tensor_name] = tensor
+            if group.layer_index is not None and not (
+                shard.start_layer <= group.layer_index < shard.end_layer
+            ):
+                raise TinygradWeightError(
+                    f"Layer {group.layer_index} is outside "
+                    f"[{shard.start_layer}, {shard.end_layer})"
+                )
             if group.layer_index is None:
                 continue
             layers_loaded += 1
             yield ModelLoadingResponse(layers_loaded=layers_loaded, total=total_layers)
         if total_layers == 0:
             yield ModelLoadingResponse(layers_loaded=0, total=0)
+        for tensor_name in collected:
+            layer_index = extract_layer_num(tensor_name)
+            if layer_index is not None and not (
+                shard.start_layer <= layer_index < shard.end_layer
+            ):
+                raise TinygradWeightError(
+                    f"Realized tensor {tensor_name} is outside "
+                    f"[{shard.start_layer}, {shard.end_layer})"
+                )
         self.loaded_shard = assemble_loaded_shard(collected, architecture, shard)
         self.key_value_cache = LocalKeyValueCache(len(self.loaded_shard.layers))
 
@@ -430,8 +491,7 @@ class TinygradEngine(Engine):
         Returns:
             None. Device buffers become unreachable for collection.
         """
-        self.loaded_shard = None
-        self.key_value_cache = None
+        self._release_loaded_graph()
         self.parameter_byte_count = None
 
 

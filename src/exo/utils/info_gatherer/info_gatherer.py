@@ -43,6 +43,36 @@ from .system_info import (
 IS_DARWIN = sys.platform == "darwin"
 
 
+def current_memory_usage() -> MemoryUsage:
+    """Return the memory sample the gatherer publishes for this node.
+
+    A declared tinygrad device replaces the psutil sample with that device's
+    capacity. The first name in ``EXO_TINYGRAD_DEVICES`` is the device
+    placement will weight. ``OVERRIDE_MEMORY_MB`` is applied inside the
+    device probe, matching the MLX psutil path.
+    """
+    declared_devices = os.environ.get("EXO_TINYGRAD_DEVICES", "")
+    if declared_devices.strip():
+        from exo.backends.tinygrad_engine import (
+            backends_from_declared_devices,
+            tinygrad_device_name_for_backend,
+        )
+        from exo.backends.tinygrad_memory import memory_usage_for_device
+
+        backends = backends_from_declared_devices(declared_devices.split(","))
+        if backends:
+            return memory_usage_for_device(
+                tinygrad_device_name_for_backend(backends[0])
+            )
+    override_memory_env = os.getenv("OVERRIDE_MEMORY_MB")
+    override_memory = (
+        Memory.from_mb(int(override_memory_env)).in_bytes
+        if override_memory_env
+        else None
+    )
+    return MemoryUsage.from_psutil(override_memory=override_memory)
+
+
 async def _get_thunderbolt_devices() -> set[str] | None:
     """Get Thunderbolt interface device names (e.g., en2, en3) from hardware ports.
 
@@ -459,12 +489,16 @@ class InfoGatherer:
 
     async def run(self):
         async with self._tg as tg:
+            uses_tinygrad_device = (
+                os.environ.get("EXO_TINYGRAD_DEVICES", "").strip() != ""
+            )
             if IS_DARWIN:
-                tg.start_soon(self._monitor_macmon, 1)
+                if not uses_tinygrad_device:
+                    tg.start_soon(self._monitor_macmon, 1)
                 tg.start_soon(self._monitor_system_profiler_thunderbolt_data, 5)
                 tg.start_soon(self._monitor_thunderbolt_bridge_status, 10)
                 tg.start_soon(self._monitor_rdma_ctl_status, 10)
-            if not IS_DARWIN:
+            if uses_tinygrad_device or not IS_DARWIN:
                 tg.start_soon(self._monitor_memory_usage, 1)
             tg.start_soon(self._watch_system_info, 10)
             tg.start_soon(self._monitor_misc, 60)
@@ -528,17 +562,9 @@ class InfoGatherer:
         if self._psutil_enabled:
             return
         self._psutil_enabled = True
-        override_memory_env = os.getenv("OVERRIDE_MEMORY_MB")
-        override_memory: int | None = (
-            Memory.from_mb(int(override_memory_env)).in_bytes
-            if override_memory_env
-            else None
-        )
         while True:
             try:
-                await self.info_sender.send(
-                    MemoryUsage.from_psutil(override_memory=override_memory)
-                )
+                await self.info_sender.send(current_memory_usage())
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering memory usage")
             await anyio.sleep(memory_poll_rate)

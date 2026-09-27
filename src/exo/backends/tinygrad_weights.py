@@ -7,6 +7,7 @@ only from ``TinygradEngine.allocate_weights`` and ``TinygradEngine.load_model``.
 
 from __future__ import annotations
 
+import gc
 import json
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -490,6 +491,8 @@ def iter_realized_parameter_groups(
                     f"{relative_file} is missing selected tensor {tensor_name}"
                 )
             lazy_parameters[tensor_name] = tensor
+        del loaded
+        gc.collect()
 
     def realize(tensor: Tensor) -> Tensor:
         return tensor.to(Device.DEFAULT).contiguous().realize()
@@ -515,6 +518,7 @@ def iter_realized_parameter_groups(
             (tensor_name, realize(lazy_parameters.pop(tensor_name)))
             for tensor_name in layer_names
         )
+        gc.collect()
         yield RealizedParameterGroup(
             layer_index=layer_index, parameters=layer_parameters
         )
