@@ -89,6 +89,11 @@ class LocalKeyValueCache:
         self._keys[layer_offset] = keys
         self._values[layer_offset] = values
 
+    def clear(self) -> None:
+        """Drop every cached key and value so the next prompt starts empty."""
+        self._keys = [None] * len(self._keys)
+        self._values = [None] * len(self._values)
+
 
 def _layer_candidates(layer_index: int, suffix: str) -> tuple[str, str]:
     return (

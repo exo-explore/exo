@@ -4,6 +4,8 @@ Safetensors and GGUF headers are read before any weight bytes are copied.
 Unassigned tensors never become ``Tensor`` values. GGUF dequantization uses
 ``tinygrad.llm.gguf.ggml_data_to_tensor`` on the selected byte range only.
 ``gguf_load`` is not used, because it copies the whole file onto the device.
+Tokenizer token, merge, and token-type arrays are kept from the header so a
+full shard can encode prompts without a separate tokenizer package.
 """
 
 from __future__ import annotations
@@ -216,6 +218,19 @@ class GgufTensorRecord:
         return ggml_payload_byte_count(self.element_count, self.ggml_type)
 
 
+_TOKENIZER_STRING_ARRAYS = frozenset({"tokenizer.ggml.tokens", "tokenizer.ggml.merges"})
+_TOKENIZER_INTEGER_ARRAY = "tokenizer.ggml.token_type"
+
+
+@final
+@dataclass(frozen=True)
+class _RetainedGgufArray:
+    key: str
+    strings: tuple[str, ...] | None
+    integers: tuple[int, ...] | None
+    item_count: int
+
+
 @final
 @dataclass(frozen=True)
 class GgufCheckpoint:
@@ -226,6 +241,9 @@ class GgufCheckpoint:
     architecture_name: str
     scalars: tuple[tuple[str, GgufScalar], ...]
     tokenizer_token_count: int | None
+    tokenizer_tokens: tuple[str, ...]
+    tokenizer_merges: tuple[str, ...]
+    tokenizer_token_types: tuple[int, ...]
     tensors: tuple[GgufTensorRecord, ...]
 
     def scalar(self, key: str) -> GgufScalar | None:
@@ -327,6 +345,9 @@ def read_gguf_checkpoint(directory: Path) -> GgufCheckpoint:
     tensors: list[GgufTensorRecord] = []
     for header in headers:
         tensors.extend(header.tensors)
+    tokenizer_tokens, tokenizer_merges, tokenizer_token_types = _tokenizer_arrays(
+        primary.retained_arrays
+    )
     return GgufCheckpoint(
         file_type=primary.file_type,
         file_type_name=_GGUF_FILE_TYPE_NAMES.get(primary.file_type)
@@ -335,6 +356,9 @@ def read_gguf_checkpoint(directory: Path) -> GgufCheckpoint:
         architecture_name=architecture_name,
         scalars=primary.scalars,
         tokenizer_token_count=primary.tokenizer_token_count,
+        tokenizer_tokens=tokenizer_tokens,
+        tokenizer_merges=tokenizer_merges,
+        tokenizer_token_types=tokenizer_token_types,
         tensors=tuple(tensors),
     )
 
@@ -689,6 +713,7 @@ class _GgufFile:
     architecture_name: str | None
     scalars: tuple[tuple[str, GgufScalar], ...]
     tokenizer_token_count: int | None
+    retained_arrays: tuple[_RetainedGgufArray, ...]
     tensors: tuple[GgufTensorRecord, ...]
 
 
@@ -706,15 +731,19 @@ def _read_gguf_file(path: Path) -> _GgufFile:
         if tensor_count < 0 or metadata_count < 0:
             raise TinygradWeightError(f"{path} has a negative GGUF count")
         scalars: list[tuple[str, GgufScalar]] = []
+        retained_arrays: list[_RetainedGgufArray] = []
         tokenizer_token_count: int | None = None
         alignment = _GGUF_DEFAULT_ALIGNMENT
         for _ in range(metadata_count):
             key = _read_string(cursor)
             value_type = _read_int32(cursor)
             if value_type == 9:
-                token_count = _skip_array(cursor, key)
-                if token_count is not None:
-                    tokenizer_token_count = token_count
+                retained = _read_metadata_array(cursor, key)
+                if retained is None:
+                    continue
+                retained_arrays.append(retained)
+                if key == "tokenizer.ggml.tokens":
+                    tokenizer_token_count = retained.item_count
                 continue
             value = _read_scalar(cursor, value_type)
             scalars.append((key, value))
@@ -749,6 +778,7 @@ def _read_gguf_file(path: Path) -> _GgufFile:
         architecture_name=architecture_name,
         scalars=tuple(scalars),
         tokenizer_token_count=tokenizer_token_count,
+        retained_arrays=tuple(retained_arrays),
         tensors=located,
     )
 
@@ -836,18 +866,48 @@ def _read_scalar(cursor: _GgufCursor, value_type: int) -> GgufScalar:
     raise TinygradWeightError(f"Unsupported GGUF value type {value_type}")
 
 
-def _skip_array(cursor: _GgufCursor, key: str) -> int | None:
+def _tokenizer_arrays(
+    retained_arrays: tuple[_RetainedGgufArray, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[int, ...]]:
+    tokens: tuple[str, ...] = ()
+    merges: tuple[str, ...] = ()
+    token_types: tuple[int, ...] = ()
+    for retained in retained_arrays:
+        if retained.key == "tokenizer.ggml.tokens" and retained.strings is not None:
+            tokens = retained.strings
+        elif retained.key == "tokenizer.ggml.merges" and retained.strings is not None:
+            merges = retained.strings
+        elif (
+            retained.key == "tokenizer.ggml.token_type"
+            and retained.integers is not None
+        ):
+            token_types = retained.integers
+    return tokens, merges, token_types
+
+
+def _read_metadata_array(cursor: _GgufCursor, key: str) -> _RetainedGgufArray | None:
     item_type = _read_int32(cursor)
     count = _read_uint64(cursor)
     if count > _MAX_GGUF_ARRAY_COUNT:
         raise TinygradWeightError(f"GGUF array {key} exceeds the header limit")
+    retain_strings = key in _TOKENIZER_STRING_ARRAYS and item_type == 8
+    retain_integers = key == _TOKENIZER_INTEGER_ARRAY and item_type != 9
+    strings: list[str] = []
+    integers: list[int] = []
     for _ in range(count):
         if item_type == 9:
-            _ = _skip_array(cursor, key)
-        else:
-            _ = _read_scalar(cursor, item_type)
-    if key == "tokenizer.ggml.tokens" and item_type == 8:
-        return count
+            _ = _read_metadata_array(cursor, key)
+            continue
+        value = _read_scalar(cursor, item_type)
+        if retain_strings and isinstance(value, str):
+            strings.append(value)
+            continue
+        if retain_integers and isinstance(value, int) and not isinstance(value, bool):
+            integers.append(value)
+    if retain_strings:
+        return _RetainedGgufArray(key, tuple(strings), None, count)
+    if retain_integers:
+        return _RetainedGgufArray(key, None, tuple(integers), count)
     return None
 
 

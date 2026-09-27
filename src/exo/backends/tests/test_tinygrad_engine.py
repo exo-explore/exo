@@ -1,4 +1,5 @@
 import sys
+from io import BytesIO
 from types import ModuleType
 
 import pytest
@@ -32,6 +33,7 @@ from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.utils.channels import MpReceiver, MpSender, MpState
 from exo.utils.info_gatherer.info_gatherer import NodeBackends
+from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.base import Builder, Engine
 
 
@@ -89,7 +91,9 @@ def _keep_device_name(device_name: TinygradDeviceName) -> TinygradDeviceName:
     return device_name
 
 
-def test_engine_operations_are_unimplemented(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_engine_generation_requires_a_loaded_shard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         "exo.backends.tinygrad_engine.assign_tinygrad_default_device",
         _keep_device_name,
@@ -100,10 +104,12 @@ def test_engine_operations_are_unimplemented(monkeypatch: pytest.MonkeyPatch) ->
         engine.allocate_weights(_bound_instance())
     with pytest.raises(TinygradWeightError):
         engine.load_model(_bound_instance())
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(TinygradWeightError):
         engine.warmup()
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(TinygradWeightError):
         engine.step()
+    with pytest.raises(NotImplementedError):
+        engine.serve_prefill(PrefillRequest(), BytesIO())
     engine.close()
     assert engine.loaded_shard is None
 

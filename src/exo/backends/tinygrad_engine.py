@@ -2,8 +2,9 @@
 
 This module is a drop-in ``Engine`` / ``Builder`` pair. It loads one pipeline
 shard with ``tinygrad.nn.state`` and runs the assigned Llama, Qwen2, or Qwen3
-layers. Exo still owns tokenization, sampling, and the network hop. ``warmup``,
-``submit``, ``step``, and ``serve_prefill`` stay unimplemented.
+layers. A shard that holds every layer tokenizes GGUF metadata, samples, and
+yields token chunks. Exo still owns the network hop. ``serve_prefill`` stays
+unimplemented.
 
 Interface map
 -------------
@@ -20,9 +21,9 @@ Interface map
     ``embed_token_ids``     embed int32 token ids on the first rank
     ``forward_hidden_state`` run the assigned layers and append the local cache
     ``project_logits``      final norm and language-model head on the last rank
-    ``warmup``              compile a throwaway forward pass (unimplemented)
-    ``submit``              enqueue one ``GenerationTask`` (unimplemented)
-    ``step``                run one tensor generation step (unimplemented)
+    ``warmup``              compile a throwaway forward pass on a full shard
+    ``submit``              enqueue one ``TextGeneration``
+    ``step``                prefill or decode one token on a full shard
     ``serve_prefill``       serve a disaggregated prefill request (unimplemented)
     ``memory_usage``        report ``MemoryUsage`` for this device
     ``pin_assigned_layers`` drop any other layers before a load
@@ -39,18 +40,29 @@ Device names are an explicit input. The host operating system is not read.
 
 from __future__ import annotations
 
+import ctypes
 import gc
-from collections.abc import Generator, Iterable, Mapping
+import secrets
+import time
+from collections import deque
+from collections.abc import Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, BinaryIO, Literal, NoReturn, final, override
+from typing import TYPE_CHECKING, BinaryIO, Literal, NoReturn, Protocol, final, override
 
 from exo.shared.types.backends import Backend
-from exo.shared.types.chunks import Chunk
+from exo.shared.types.chunks import Chunk, TokenChunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import Event
 from exo.shared.types.profiling import MemoryUsage
-from exo.shared.types.tasks import GenerationTask, TaskId
+from exo.shared.types.tasks import (
+    CANCEL_ALL_TASKS,
+    GenerationTask,
+    ImageEdits,
+    ImageGeneration,
+    TaskId,
+    TextGeneration,
+)
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
     CancelledResponse,
@@ -67,8 +79,16 @@ if TYPE_CHECKING:
 
     from exo.backends.tinygrad_hidden_state import HiddenStateBuffer, TokenIdBuffer
     from exo.backends.tinygrad_llama import LoadedShard, LocalKeyValueCache
+    from exo.backends.tinygrad_tokenizer import GgufTokenizer
 
 type TinygradDeviceName = Literal["AMD", "METAL", "CUDA", "CPU"]
+
+
+class TaskCancellationReceiver(Protocol):
+    """Source of task ids the runner has asked this engine to cancel."""
+
+    def collect(self) -> list[TaskId]: ...
+
 
 TINYGRAD_DEVICE_NAME_BY_BACKEND: Mapping[Backend, TinygradDeviceName] = (
     MappingProxyType(
@@ -174,17 +194,79 @@ def assign_tinygrad_default_device(
     return device_name
 
 
+def _last_logit_row(logits: Tensor) -> list[float]:
+    """Copy the last vocabulary row of ``logits`` to host floats.
+
+    Raises:
+        TinygradWeightError: The runner entrypoint handles a logit tensor
+            whose rank is not 2 or 3.
+    """
+    from tinygrad import dtypes
+
+    from exo.backends.tinygrad_weights import TinygradWeightError
+
+    shape = tuple(int(dimension) for dimension in logits.shape)
+    if len(shape) == 3:
+        sequence = shape[1]
+        vocabulary = shape[2]
+        row = logits.shrink(
+            ((0, 1), (sequence - 1, sequence), (0, vocabulary))
+        ).reshape(vocabulary)
+    elif len(shape) == 2:
+        sequence = shape[0]
+        vocabulary = shape[1]
+        row = logits.shrink(((sequence - 1, sequence), (0, vocabulary))).reshape(
+            vocabulary
+        )
+    else:
+        raise TinygradWeightError(
+            f"Logits have shape {shape}, expected a sequence and vocabulary"
+        )
+    payload = (
+        row.float()
+        .contiguous()
+        .realize()
+        .bitcast(dtypes.uint8)
+        .contiguous()
+        .realize()
+        .numpy()
+        .tobytes()
+    )
+    if len(payload) % 4 != 0:
+        raise TinygradWeightError("Logit byte length is not a multiple of 4")
+    values: list[float] = []
+    for offset in range(0, len(payload), 4):
+        values.append(
+            float(ctypes.c_float.from_buffer_copy(payload[offset : offset + 4]).value)
+        )
+    return values
+
+
 def _unimplemented(operation: str) -> NoReturn:
     """Raise the stub error for an operation the runner will call.
 
     Raises:
-        NotImplementedError: Tensor logic is not implemented. The runner
-            entrypoint handles this by publishing ``RunnerTerminationError``.
+        NotImplementedError: Disaggregated prefill is not implemented. The
+            runner entrypoint handles this by publishing
+            ``RunnerTerminationError``.
     """
-    raise NotImplementedError(
-        f"Tinygrad {operation} is not implemented. "
-        "Tensor execution is intentionally left for a later change."
-    )
+    raise NotImplementedError(f"Tinygrad {operation} is not implemented")
+
+
+@final
+@dataclass
+class _ActiveGeneration:
+    """One text request whose prompt is already encoded."""
+
+    task: TextGeneration
+    prompt_token_ids: tuple[int, ...]
+    generated_token_ids: list[int]
+    generated_text: str
+    seed: int
+    max_completion_tokens: int
+    stop_strings: tuple[str, ...]
+    started_at: float
+    prefill_seconds: float
 
 
 def _pipeline_shard(bound_instance: BoundInstance) -> PipelineShardMetadata:
@@ -212,7 +294,12 @@ class TinygradEngine(Engine):
     parameter_byte_count: int | None = field(init=False, default=None)
     loaded_shard: LoadedShard | None = field(init=False, default=None)
     key_value_cache: LocalKeyValueCache | None = field(init=False, default=None)
+    model_id: ModelId | None = field(init=False, default=None)
+    gguf_tokenizer: GgufTokenizer | None = field(init=False, default=None)
+    cancel_receiver: TaskCancellationReceiver | None = field(init=False, default=None)
     _cancelled_tasks: set[TaskId] = field(init=False, default_factory=set)
+    _pending_tasks: deque[TextGeneration] = field(init=False, default_factory=deque)
+    _active_generation: _ActiveGeneration | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         assign_tinygrad_default_device(self.device_name)
@@ -254,6 +341,7 @@ class TinygradEngine(Engine):
     def _release_loaded_graph(self) -> None:
         self.loaded_shard = None
         self.key_value_cache = None
+        self._active_generation = None
         gc.collect()
 
     def allocate_weights(self, bound_instance: BoundInstance) -> None:
@@ -312,12 +400,15 @@ class TinygradEngine(Engine):
         """
         from exo.backends.tinygrad_checkpoint import (
             assert_assigned_tensor_shapes,
+            directory_has_gguf,
             load_checkpoint_architecture,
+            read_gguf_checkpoint,
         )
         from exo.backends.tinygrad_llama import (
             LocalKeyValueCache,
             assemble_loaded_shard,
         )
+        from exo.backends.tinygrad_tokenizer import gguf_tokenizer_from_checkpoint
         from exo.backends.tinygrad_weights import (
             TinygradWeightError,
             iter_realized_parameter_groups,
@@ -326,7 +417,14 @@ class TinygradEngine(Engine):
         from exo.download.huggingface_utils import extract_layer_num
 
         shard = self.pin_assigned_layers(bound_instance)
-        architecture = load_checkpoint_architecture(model_directory_for_shard(shard))
+        directory = model_directory_for_shard(shard)
+        self.model_id = shard.model_card.model_id
+        self.gguf_tokenizer = None
+        if directory_has_gguf(directory):
+            self.gguf_tokenizer = gguf_tokenizer_from_checkpoint(
+                read_gguf_checkpoint(directory)
+            )
+        architecture = load_checkpoint_architecture(directory)
         total_layers = shard.end_layer - shard.start_layer
         collected: dict[str, Tensor] = {}
         layers_loaded = 0
@@ -441,38 +539,96 @@ class TinygradEngine(Engine):
 
     @override
     def warmup(self) -> None:
-        """Compile and run a throwaway forward pass on the selected device.
+        """Compile and run a throwaway forward pass, then drop its cache.
 
         Returns:
-            None.
+            None. The key-value cache is empty when this returns.
+
+        Raises:
+            TinygradShardRoleError: The runner entrypoint handles a shard
+                that does not contain every layer.
+            TinygradWeightError: The runner entrypoint handles a missing
+                tokenizer or a forward that runs before the shard is loaded.
         """
-        _unimplemented("warmup")
+        self._require_full_shard()
+        tokenizer = self._require_tokenizer()
+        token_id = tokenizer.bos_token_id if tokenizer.bos_token_id is not None else 0
+        if token_id < 0 or token_id >= len(tokenizer.tokens):
+            token_id = 0
+        _ = self._realize_logits((token_id,))
+        self._require_key_value_cache().clear()
 
     @override
     def submit(self, task: GenerationTask) -> None:
-        """Enqueue one generation request.
+        """Enqueue one text generation request.
 
         Args:
-            task: A ``TextGeneration``, ``ImageGeneration``, or ``ImageEdits``
-                task. The task id is the key later yielded by ``step``.
+            task: A ``TextGeneration`` task. Image tasks are rejected.
 
         Returns:
             None. The task is retained until ``step`` finishes or cancels it.
+
+        Raises:
+            TinygradModelSupportError: The runner entrypoint handles an image
+                task or a text task that carries images.
         """
-        _unimplemented(f"submit for {task.task_id}")
+        from exo.backends.tinygrad_weights import TinygradModelSupportError
+
+        if isinstance(task, (ImageGeneration, ImageEdits)):
+            raise TinygradModelSupportError(
+                "Tinygrad generation serves text GGUF models"
+            )
+        if task.task_params.images:
+            raise TinygradModelSupportError(
+                "Tinygrad generation does not accept image inputs"
+            )
+        self._cancelled_tasks.discard(CANCEL_ALL_TASKS)
+        self._pending_tasks.append(task)
 
     @override
     def step(
         self,
     ) -> Iterable[tuple[TaskId, Chunk | CancelledResponse | FinishedResponse]]:
-        """Run one tensor generation step for the queued tasks.
+        """Prefill a queued prompt or decode one more token.
 
         Returns:
-            Zero or more ``(task_id, payload)`` pairs. ``payload`` is a
-            ``Chunk`` (token, tool call, image, or error), a
-            ``CancelledResponse``, or a ``FinishedResponse``.
+            A token chunk, and a ``FinishedResponse`` when that token ends
+            the request. A cancelled task yields ``CancelledResponse``.
+
+        Raises:
+            TinygradShardRoleError: The runner entrypoint handles a shard
+                that does not contain every layer.
+            TinygradWeightError: The runner entrypoint handles a missing
+                tokenizer or an empty encoding.
         """
-        _unimplemented("step")
+        self._require_full_shard()
+        self._collect_cancellations()
+        output: list[tuple[TaskId, Chunk | CancelledResponse | FinishedResponse]] = []
+        kept: deque[TextGeneration] = deque()
+        for task in self._pending_tasks:
+            if self.should_cancel(task.task_id):
+                output.append((task.task_id, CancelledResponse()))
+                continue
+            kept.append(task)
+        self._pending_tasks = kept
+        active = self._active_generation
+        if active is not None and self.should_cancel(active.task.task_id):
+            output.append((active.task.task_id, CancelledResponse()))
+            self._drop_active_generation()
+            return output
+        if self._active_generation is None:
+            if not self._pending_tasks:
+                return output
+            self._active_generation = self._start_generation(
+                self._pending_tasks.popleft()
+            )
+        active = self._active_generation
+        chunk, finished = self._advance_generation(active)
+        output.append((active.task.task_id, chunk))
+        if finished:
+            output.append((active.task.task_id, FinishedResponse()))
+            self._drop_active_generation()
+        return output
 
     @override
     def serve_prefill(self, request: PrefillRequest, wfile: BinaryIO) -> None:
@@ -488,6 +644,180 @@ class TinygradEngine(Engine):
         """
         _unimplemented(f"serve_prefill for {request.request_id} via {wfile!r}")
 
+    def _require_full_shard(self) -> LoadedShard:
+        from exo.backends.tinygrad_weights import TinygradShardRoleError
+
+        loaded_shard = self._require_loaded_shard()
+        if not loaded_shard.is_first_layer or not loaded_shard.is_last_layer:
+            raise TinygradShardRoleError(
+                "Tinygrad generation serves a shard that contains every layer"
+            )
+        return loaded_shard
+
+    def _require_tokenizer(self) -> GgufTokenizer:
+        from exo.backends.tinygrad_weights import TinygradWeightError
+
+        tokenizer = self.gguf_tokenizer
+        if tokenizer is None:
+            raise TinygradWeightError(
+                "GGUF tokenizer is missing, so this checkpoint cannot be served"
+            )
+        return tokenizer
+
+    def _require_model_id(self) -> ModelId:
+        from exo.backends.tinygrad_weights import TinygradWeightError
+
+        model_id = self.model_id
+        if model_id is None:
+            raise TinygradWeightError(
+                "Tinygrad generation was called before the model was loaded"
+            )
+        return model_id
+
+    def _collect_cancellations(self) -> None:
+        receiver = self.cancel_receiver
+        if receiver is None:
+            return
+        for task_id in receiver.collect():
+            self._cancelled_tasks.add(task_id)
+
+    def _start_generation(self, task: TextGeneration) -> _ActiveGeneration:
+        from exo.backends.tinygrad_generate import (
+            completion_token_limit,
+            normalize_stop_strings,
+        )
+        from exo.backends.tinygrad_tokenizer import encode_chat
+        from exo.backends.tinygrad_weights import TinygradWeightError
+
+        tokenizer = self._require_tokenizer()
+        messages = [
+            (message.role, str(message.content)) for message in task.task_params.input
+        ]
+        instructions = task.task_params.instructions
+        token_ids = encode_chat(
+            tokenizer,
+            messages,
+            None if instructions is None else str(instructions),
+        )
+        if not token_ids:
+            raise TinygradWeightError("GGUF chat encoding produced no tokens")
+        seed = task.task_params.seed
+        if seed is None:
+            seed = secrets.randbits(32)
+        return _ActiveGeneration(
+            task=task,
+            prompt_token_ids=token_ids,
+            generated_token_ids=[],
+            generated_text="",
+            seed=seed,
+            max_completion_tokens=completion_token_limit(
+                task.task_params.max_output_tokens
+            ),
+            stop_strings=normalize_stop_strings(task.task_params.stop),
+            started_at=time.perf_counter(),
+            prefill_seconds=0.0,
+        )
+
+    def _advance_generation(self, active: _ActiveGeneration) -> tuple[TokenChunk, bool]:
+        from exo.backends.tinygrad_generate import (
+            generation_stats,
+            generation_usage,
+            sample_token_id,
+            visible_completion_piece,
+        )
+        from exo.backends.tinygrad_tokenizer import incremental_token_text
+
+        tokenizer = self._require_tokenizer()
+        if not active.generated_token_ids:
+            logits = self._realize_logits(active.prompt_token_ids)
+            active.prefill_seconds = time.perf_counter() - active.started_at
+            previous_ids: tuple[int, ...] = ()
+        else:
+            logits = self._realize_logits((active.generated_token_ids[-1],))
+            previous_ids = tuple(active.generated_token_ids)
+        token_id = sample_token_id(
+            logits,
+            temperature=active.task.task_params.temperature,
+            top_k=active.task.task_params.top_k,
+            top_p=active.task.task_params.top_p,
+            seed=active.seed,
+            draw_index=len(active.generated_token_ids),
+        )
+        piece = incremental_token_text(tokenizer, previous_ids, token_id)
+        piece, stop = visible_completion_piece(
+            active.generated_text, piece, active.stop_strings
+        )
+        active.generated_token_ids.append(token_id)
+        active.generated_text += piece
+        finish_reason: Literal["stop", "length"] | None = None
+        if tokenizer.eos_token_id is not None and token_id == tokenizer.eos_token_id:
+            finish_reason = "stop"
+            piece = ""
+        elif stop is not None:
+            finish_reason = "stop"
+        elif len(active.generated_token_ids) >= active.max_completion_tokens:
+            finish_reason = "length"
+        usage = None
+        stats = None
+        if finish_reason is not None:
+            prompt_tokens = len(active.prompt_token_ids)
+            completion_tokens = len(active.generated_token_ids)
+            usage = generation_usage(prompt_tokens, completion_tokens)
+            stats = generation_stats(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                prefill_seconds=active.prefill_seconds,
+                generation_seconds=max(
+                    time.perf_counter() - active.started_at - active.prefill_seconds,
+                    0.0,
+                ),
+                parameter_byte_count=self.parameter_byte_count,
+            )
+        chunk = TokenChunk(
+            model=self._require_model_id(),
+            text=piece,
+            token_id=token_id,
+            usage=usage,
+            finish_reason=finish_reason,
+            stats=stats,
+        )
+        return chunk, finish_reason is not None
+
+    def _realize_logits(self, token_ids: Sequence[int]) -> list[float]:
+        from exo.backends.tinygrad_hidden_state import (
+            TokenIdBuffer,
+            token_ids_to_tensor,
+        )
+        from exo.backends.tinygrad_llama import (
+            embed_token_tensor,
+            forward_loaded_shard,
+            project_logits_tensor,
+        )
+        from exo.backends.tinygrad_weights import TinygradWeightError
+
+        if not token_ids:
+            raise TinygradWeightError(
+                "Tinygrad generation received an empty token sequence"
+            )
+        shard = self._require_full_shard()
+        cache = self._require_key_value_cache()
+        packed = b"".join(
+            token_id.to_bytes(4, "little", signed=True) for token_id in token_ids
+        )
+        hidden = embed_token_tensor(
+            shard,
+            token_ids_to_tensor(TokenIdBuffer(shape=(1, len(token_ids)), data=packed)),
+        )
+        hidden = forward_loaded_shard(shard, cache, hidden)
+        logits = project_logits_tensor(shard, hidden)
+        return _last_logit_row(logits)
+
+    def _drop_active_generation(self) -> None:
+        self._active_generation = None
+        cache = self.key_value_cache
+        if cache is not None:
+            cache.clear()
+
     @override
     def close(self) -> None:
         """Drop the loaded shard and its on-device cache.
@@ -497,6 +827,10 @@ class TinygradEngine(Engine):
         """
         self._release_loaded_graph()
         self.parameter_byte_count = None
+        self.gguf_tokenizer = None
+        self._pending_tasks.clear()
+        self._active_generation = None
+        self._cancelled_tasks.clear()
 
 
 @final
@@ -570,6 +904,9 @@ class TinygradBuilder(Builder):
             raise TinygradWeightError(
                 f"Tinygrad build for {self.model_id} was called before load finished"
             )
+        engine.cancel_receiver = self.cancel_receiver
+        if engine.model_id is None:
+            engine.model_id = self.model_id
         return engine
 
     @override
