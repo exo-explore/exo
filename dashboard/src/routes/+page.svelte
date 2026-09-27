@@ -69,6 +69,7 @@
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
   import { addToast, dismissByMessage } from "$lib/stores/toast.svelte";
+  import { readApiErrorMessage } from "$lib/utils/api_errors";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
   import DeviceIcon from "$lib/components/DeviceIcon.svelte";
   import { fade, fly, slide } from "svelte/transition";
@@ -708,7 +709,7 @@
         `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${sharding}&instance_meta=${instanceType}&min_nodes=1`,
       );
       if (!placementResponse.ok) {
-        const errorText = await placementResponse.text();
+        const errorText = await readApiErrorMessage(placementResponse);
         onboardingError = `Failed to get placement: ${errorText}`;
         onboardingStep = 6;
         return;
@@ -720,7 +721,7 @@
         body: JSON.stringify({ instance: instanceData }),
       });
       if (!response.ok) {
-        const errorText = await response.text();
+        const errorText = await readApiErrorMessage(response);
         onboardingError = `Failed to launch: ${errorText}`;
         onboardingStep = 6;
         return;
@@ -1451,7 +1452,7 @@
       }
 
       if (!response.ok) {
-        const errorText = await response.text();
+        const errorText = await readApiErrorMessage(response);
         console.error("Failed to launch instance:", errorText);
         addToast({
           type: "error",
@@ -2782,7 +2783,7 @@
       if (!res.ok) {
         addToast({
           type: "error",
-          message: `Failed to get placements: ${await res.text()}`,
+          message: `Failed to get placements: ${await readApiErrorMessage(res)}`,
         });
         chatLaunchState = "idle";
         return;
@@ -2807,7 +2808,7 @@
       if (!launchRes.ok) {
         addToast({
           type: "error",
-          message: `Failed to launch: ${await launchRes.text()}`,
+          message: `Failed to launch: ${await readApiErrorMessage(launchRes)}`,
         });
         chatLaunchState = "idle";
         return;
@@ -2922,7 +2923,7 @@
       if (!res.ok) {
         addToast({
           type: "error",
-          message: `Failed to get placements: ${await res.text()}`,
+          message: `Failed to get placements: ${await readApiErrorMessage(res)}`,
         });
         chatLaunchState = "idle";
         return;
@@ -2943,7 +2944,7 @@
       if (!launchRes.ok) {
         addToast({
           type: "error",
-          message: `Failed to launch: ${await launchRes.text()}`,
+          message: `Failed to launch: ${await readApiErrorMessage(launchRes)}`,
         });
         chatLaunchState = "idle";
         return;
