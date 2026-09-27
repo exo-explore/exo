@@ -2,11 +2,11 @@ use std::{
     io,
     net::{Ipv6Addr, SocketAddr, SocketAddrV6},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use bytemuck::{Pod, Zeroable};
-use log::{debug, trace, warn};
+use log::{debug, info, trace, warn};
 use netwatcher::WatchHandle;
 use parking_lot::Mutex;
 use tokio::{
@@ -17,6 +17,8 @@ use zenoh::config::ZenohId;
 
 const GROUP: Ipv6Addr = Ipv6Addr::new(0xff12, 0, 0, 0, 0, 0, 0xe0a1, 0xde89);
 const MAGIC: [u8; 3] = *b"EXO";
+/// How often to repeat the warning while no Hello can be sent at all.
+const BLOCKED_WARNING_INTERVAL: Duration = Duration::from_secs(60);
 
 pub struct Discovery {
     sock: Arc<UdpSocket>,
@@ -27,6 +29,8 @@ pub struct Discovery {
     listen_port: u16,
     zid: ZenohId,
     tick: Interval,
+    /// When we last warned that no Hello could be sent; `None` while sending works.
+    blocked_since_warning: Mutex<Option<Instant>>,
     _sync: Mutex<WatchHandle>,
 }
 
@@ -113,6 +117,7 @@ impl Discovery {
             listen_port,
             zid,
             tick: interval(Duration::from_secs(1)),
+            blocked_since_warning: Mutex::new(None),
             _sync,
         })
     }
@@ -249,18 +254,61 @@ impl Discovery {
 
         let addrs = self.ifaces.lock().clone();
         debug!("announcing Hello({nonce:?}) to {addrs:?}");
-        // rev so .remove() doesn't break things
-        for (i, addr) in addrs.into_iter().enumerate().rev() {
-            match self.sock.send_to(&buf, addr).await {
-                Ok(bytes) => trace!("sent {bytes} to {addr}"),
-                Err(e) if e.kind() == io::ErrorKind::HostUnreachable => {
-                    debug!("disabling discovery address {addr}: {e}");
-                    _ = self.ifaces.lock().swap_remove(i);
+        match send_to_all(&self.sock, &buf, &addrs).await {
+            Ok(()) => {
+                if self.blocked_since_warning.lock().take().is_some() {
+                    info!("peer discovery can send again");
                 }
-                Err(e) => debug!("failed to reach {addr}: {e}"),
+            }
+            Err(e) => {
+                let warning_due = {
+                    let mut last_warning = self.blocked_since_warning.lock();
+                    let due =
+                        last_warning.is_none_or(|at| at.elapsed() >= BLOCKED_WARNING_INTERVAL);
+                    if due {
+                        *last_warning = Some(Instant::now());
+                    }
+                    due
+                };
+                if warning_due {
+                    warn!(
+                        "peer discovery could not send on any network interface ({e}), so other \
+                         nodes cannot find this one. On macOS this usually means Local Network \
+                         access is blocked for this process: allow it in System Settings > \
+                         Privacy & Security > Local Network. Background services started \
+                         outside a login session can be denied without a prompt. Retrying \
+                         every second."
+                    );
+                }
             }
         }
         Ok(())
+    }
+}
+
+/// Send `buf` to every address, returning an error only if nothing could be sent.
+///
+/// Failed addresses are not dropped: macOS returns EHOSTUNREACH while Local Network access
+/// is denied or its prompt is still pending, and an interface may simply not have a route
+/// yet. Retrying on the next tick lets discovery recover on its own once sending works.
+async fn send_to_all(sock: &UdpSocket, buf: &[u8], addrs: &[SocketAddrV6]) -> io::Result<()> {
+    let mut last_err = None;
+    let mut sent_any = false;
+    for addr in addrs {
+        match sock.send_to(buf, addr).await {
+            Ok(bytes) => {
+                sent_any = true;
+                trace!("sent {bytes} to {addr}");
+            }
+            Err(e) => {
+                debug!("failed to reach {addr}: {e}");
+                last_err = Some(e);
+            }
+        }
+    }
+    match last_err {
+        Some(e) if !sent_any => Err(e),
+        _ => Ok(()),
     }
 }
 
@@ -337,3 +385,55 @@ impl Message for WhatsUp {
     const KIND: Kind = Kind::WhatsUp;
 }
 impl_alloc!(WhatsUp);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An address no packet can be sent to: the discovery group on an interface index that
+    /// doesn't exist.
+    fn unsendable() -> SocketAddrV6 {
+        SocketAddrV6::new(GROUP, 9, 0, u32::MAX)
+    }
+
+    /// A UDP socket on the IPv6 loopback, or `None` where there isn't one (some sandboxes).
+    async fn local_socket() -> Option<(UdpSocket, SocketAddrV6)> {
+        let sock = UdpSocket::bind("[::1]:0").await.ok()?;
+        match sock.local_addr().ok()? {
+            SocketAddr::V6(addr) => Some((sock, addr)),
+            SocketAddr::V4(_) => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn errors_when_nothing_can_be_sent() {
+        let Some((sender, _)) = local_socket().await else {
+            eprintln!("skipping: no IPv6 loopback");
+            return;
+        };
+        assert!(
+            send_to_all(&sender, b"hello", &[unsendable()])
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn one_working_address_is_enough() {
+        let (Some((sender, _)), Some((receiver, receiver_addr))) =
+            (local_socket().await, local_socket().await)
+        else {
+            eprintln!("skipping: no IPv6 loopback");
+            return;
+        };
+        let addrs = [unsendable(), receiver_addr];
+
+        send_to_all(&sender, b"hello", &addrs)
+            .await
+            .expect("send succeeds on the working address");
+
+        let mut buf = [0u8; 5];
+        let (len, _) = receiver.recv_from(&mut buf).await.expect("recv");
+        assert_eq!(&buf[..len], b"hello");
+    }
+}
