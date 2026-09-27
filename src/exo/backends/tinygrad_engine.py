@@ -34,6 +34,9 @@ Interface map
     ``TinygradMetal``       ``Device.DEFAULT = "METAL"`` (Apple Silicon)
     ``TinygradCuda``        ``Device.DEFAULT = "CUDA"`` (NVIDIA)
     ``TinygradCpu``         ``Device.DEFAULT = "CPU"``
+    ``WinAMD``              Windows join identity, same device as ``AMD``
+    ``WinCUDA``             Windows join identity, same device as ``CUDA``
+    ``WinCPU``              Windows join identity, same device as ``CPU``
 
 Device names are an explicit input. The host operating system is not read.
 """
@@ -101,8 +104,19 @@ TINYGRAD_DEVICE_NAME_BY_BACKEND: Mapping[Backend, TinygradDeviceName] = (
             Backend.TinygradMetal: "METAL",
             Backend.TinygradCuda: "CUDA",
             Backend.TinygradCpu: "CPU",
+            Backend.WinAMD: "AMD",
+            Backend.WinCUDA: "CUDA",
+            Backend.WinCPU: "CPU",
         }
     )
+)
+
+_WINDOWS_BACKEND_BY_DEVICE_NAME: Mapping[str, Backend] = MappingProxyType(
+    {
+        "AMD": Backend.WinAMD,
+        "CUDA": Backend.WinCUDA,
+        "CPU": Backend.WinCPU,
+    }
 )
 
 
@@ -147,8 +161,10 @@ def backends_from_declared_devices(device_names: Iterable[str]) -> list[Backend]
     """
     backends: list[Backend] = []
     backend_by_device_name = {
-        device_name: backend
-        for backend, device_name in TINYGRAD_DEVICE_NAME_BY_BACKEND.items()
+        "AMD": Backend.TinygradAmd,
+        "METAL": Backend.TinygradMetal,
+        "CUDA": Backend.TinygradCuda,
+        "CPU": Backend.TinygradCpu,
     }
     for device_name in device_names:
         stripped_name = device_name.strip()
@@ -162,6 +178,78 @@ def backends_from_declared_devices(device_names: Iterable[str]) -> list[Backend]
             )
         backends.append(backend)
     return backends
+
+
+def windows_backends_from_declared_devices(
+    device_names: Iterable[str],
+) -> list[Backend]:
+    """Map explicit device names to Windows join identities.
+
+    ``AMD`` is ``WinAMD``, ``CUDA`` is ``WinCUDA``, and ``CPU`` is ``WinCPU``.
+    ``METAL`` is rejected because a Windows node does not join as an Apple
+    Silicon backend.
+
+    Raises:
+        TinygradDeviceSelectionError: A name is not ``AMD``, ``CUDA``, or
+            ``CPU``. ``NodeBackends.gather`` lets this propagate so startup
+            fails instead of advertising ``MlxCpu``.
+    """
+    backends: list[Backend] = []
+    for device_name in device_names:
+        stripped_name = device_name.strip()
+        if stripped_name == "":
+            continue
+        backend = _WINDOWS_BACKEND_BY_DEVICE_NAME.get(stripped_name)
+        if backend is None:
+            raise TinygradDeviceSelectionError(
+                f"Unknown Windows device {stripped_name!r}. "
+                "Expected one of AMD, CUDA, CPU."
+            )
+        backends.append(backend)
+    return backends
+
+
+def windows_backend_for_adapter_name(adapter_name: str) -> Backend | None:
+    """Return the Windows join identity for one display-adapter name.
+
+    NVIDIA and AMD names map to ``WinCUDA`` and ``WinAMD``. Any other adapter,
+    including a basic display driver, returns ``None`` so the caller can fall
+    through to ``WinCPU``.
+    """
+    lowered_name = adapter_name.lower()
+    if any(token in lowered_name for token in ("nvidia", "geforce", "quadro")):
+        return Backend.WinCUDA
+    if any(token in lowered_name for token in ("amd", "radeon")):
+        return Backend.WinAMD
+    return None
+
+
+def windows_join_backends(
+    *,
+    declared_device_names: Sequence[str],
+    adapter_names: Sequence[str],
+    has_nvidia_gpu: bool,
+) -> list[Backend]:
+    """Choose the backends a Windows node advertises when it joins.
+
+    An explicit ``EXO_TINYGRAD_DEVICES`` list wins. Otherwise each AMD or
+    NVIDIA adapter is advertised, and ``has_nvidia_gpu`` adds ``WinCUDA`` when
+    the adapter name was unreadable. A machine with no accelerator joins as
+    ``WinCPU`` alone. ``MlxCpu`` is never returned.
+    """
+    declared_backends = windows_backends_from_declared_devices(declared_device_names)
+    if declared_backends:
+        return declared_backends
+    discovered: list[Backend] = []
+    for adapter_name in adapter_names:
+        identity = windows_backend_for_adapter_name(adapter_name)
+        if identity is not None and identity not in discovered:
+            discovered.append(identity)
+    if has_nvidia_gpu and Backend.WinCUDA not in discovered:
+        discovered.append(Backend.WinCUDA)
+    if not discovered:
+        return [Backend.WinCPU]
+    return discovered
 
 
 def assign_tinygrad_default_device(

@@ -58,6 +58,9 @@ INSTANCE_META_BACKENDS: dict[InstanceMeta, list[Backend]] = {
         Backend.TinygradMetal,
         Backend.TinygradCuda,
         Backend.TinygradCpu,
+        Backend.WinAMD,
+        Backend.WinCUDA,
+        Backend.WinCPU,
     ],
 }
 

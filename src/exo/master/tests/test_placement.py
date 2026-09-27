@@ -1143,6 +1143,102 @@ def test_tinygrad_placement_uses_each_nodes_advertised_backend() -> None:
     assert instance.device_backend_by_node[node_cuda] == Backend.TinygradCuda
 
 
+def test_mlx_ring_rejects_a_windows_node() -> None:
+    topology = Topology()
+    mac_node = NodeId()
+    windows_node = NodeId()
+    topology.add_node(mac_node)
+    topology.add_node(windows_node)
+    ethernet = create_socket_connection(1)
+    topology.add_connection(
+        Connection(source=mac_node, sink=windows_node, edge=ethernet)
+    )
+    topology.add_connection(
+        Connection(source=windows_node, sink=mac_node, edge=ethernet)
+    )
+    model_card = _tinygrad_model_card().model_copy(
+        update={"backends": [Backend.MlxMetal, Backend.MlxCuda, Backend.MlxCpu]}
+    )
+    command = PlaceInstance(
+        command_id=CommandId(),
+        model_card=model_card,
+        sharding=Sharding.Pipeline,
+        instance_meta=InstanceMeta.MlxRing,
+        min_nodes=2,
+    )
+    with pytest.raises(ValueError, match="No cycle where every node supports"):
+        place_instance(
+            command,
+            topology,
+            {},
+            {
+                mac_node: create_node_memory(1000 * 1024),
+                windows_node: create_node_memory(1000 * 1024),
+            },
+            {
+                mac_node: create_node_network(),
+                windows_node: create_node_network(),
+            },
+            {
+                mac_node: [Backend.MlxMetal, Backend.MlxCpu],
+                windows_node: [Backend.WinAMD],
+            },
+        )
+
+
+def test_tinygrad_placement_keeps_the_windows_join_identity() -> None:
+    topology = Topology()
+    mac_node = NodeId()
+    windows_node = NodeId()
+    topology.add_node(mac_node)
+    topology.add_node(windows_node)
+    ethernet = create_socket_connection(1)
+    topology.add_connection(
+        Connection(source=mac_node, sink=windows_node, edge=ethernet)
+    )
+    topology.add_connection(
+        Connection(source=windows_node, sink=mac_node, edge=ethernet)
+    )
+    model_card = _tinygrad_model_card().model_copy(
+        update={
+            "backends": [
+                Backend.TinygradMetal,
+                Backend.WinAMD,
+                Backend.WinCUDA,
+                Backend.WinCPU,
+            ]
+        }
+    )
+    command = PlaceInstance(
+        command_id=CommandId(),
+        model_card=model_card,
+        sharding=Sharding.Pipeline,
+        instance_meta=InstanceMeta.Tinygrad,
+        min_nodes=2,
+    )
+    placements = place_instance(
+        command,
+        topology,
+        {},
+        {
+            mac_node: create_node_memory(1000 * 1024),
+            windows_node: create_node_memory(1000 * 1024),
+        },
+        {
+            mac_node: create_node_network(),
+            windows_node: create_node_network(),
+        },
+        {
+            mac_node: [Backend.MlxMetal, Backend.TinygradMetal],
+            windows_node: [Backend.WinAMD],
+        },
+    )
+    instance = next(iter(placements.values()))
+    assert isinstance(instance, TinygradInstance)
+    assert instance.device_backend_by_node[mac_node] == Backend.TinygradMetal
+    assert instance.device_backend_by_node[windows_node] == Backend.WinAMD
+
+
 def test_tinygrad_placement_rejects_mlx_only_nodes() -> None:
     topology = Topology()
     node_id = NodeId()

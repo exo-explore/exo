@@ -14,6 +14,7 @@ from exo.backends.tinygrad_engine import (
     assign_tinygrad_default_device,
     backends_from_declared_devices,
     tinygrad_device_name_for_backend,
+    windows_join_backends,
 )
 from exo.backends.tinygrad_weights import TinygradWeightError
 from exo.master.placement import INSTANCE_META_BACKENDS
@@ -45,6 +46,9 @@ def test_device_map_covers_the_placement_registry() -> None:
     assert tinygrad_device_name_for_backend(Backend.TinygradMetal) == "METAL"
     assert tinygrad_device_name_for_backend(Backend.TinygradCuda) == "CUDA"
     assert tinygrad_device_name_for_backend(Backend.TinygradCpu) == "CPU"
+    assert tinygrad_device_name_for_backend(Backend.WinAMD) == "AMD"
+    assert tinygrad_device_name_for_backend(Backend.WinCUDA) == "CUDA"
+    assert tinygrad_device_name_for_backend(Backend.WinCPU) == "CPU"
 
 
 def test_non_tinygrad_backend_is_rejected() -> None:
@@ -136,6 +140,82 @@ def test_registry_routes_tinygrad_instances(monkeypatch: pytest.MonkeyPatch) -> 
     builder.connect(bound_instance)
     with pytest.raises(TinygradWeightError):
         builder.build()
+
+
+def test_windows_join_backends_never_advertise_mlx_cpu() -> None:
+    assert windows_join_backends(
+        declared_device_names=["AMD"],
+        adapter_names=["NVIDIA GeForce"],
+        has_nvidia_gpu=True,
+    ) == [Backend.WinAMD]
+    assert windows_join_backends(
+        declared_device_names=[],
+        adapter_names=["AMD Radeon RX 9700 XT", "NVIDIA GeForce RTX 4090"],
+        has_nvidia_gpu=False,
+    ) == [Backend.WinAMD, Backend.WinCUDA]
+    assert windows_join_backends(
+        declared_device_names=[],
+        adapter_names=["Microsoft Basic Display Adapter"],
+        has_nvidia_gpu=True,
+    ) == [Backend.WinCUDA]
+    assert windows_join_backends(
+        declared_device_names=[" CPU "],
+        adapter_names=[],
+        has_nvidia_gpu=False,
+    ) == [Backend.WinCPU]
+    assert windows_join_backends(
+        declared_device_names=[],
+        adapter_names=[],
+        has_nvidia_gpu=False,
+    ) == [Backend.WinCPU]
+    with pytest.raises(TinygradDeviceSelectionError, match="METAL"):
+        windows_join_backends(
+            declared_device_names=["METAL"],
+            adapter_names=[],
+            has_nvidia_gpu=False,
+        )
+
+
+async def test_windows_node_joins_as_win_amd(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delenv("EXO_TINYGRAD_DEVICES", raising=False)
+    monkeypatch.setattr(
+        "exo.utils.info_gatherer.info_gatherer._windows_adapter_names",
+        lambda: ["AMD Radeon RX 9700 XT"],
+    )
+    monkeypatch.setattr(
+        "exo.utils.info_gatherer.info_gatherer._has_nvml_cuda",
+        lambda: False,
+    )
+    gathered = await NodeBackends.gather()
+    assert gathered.backends == [Backend.WinAMD]
+    assert Backend.MlxCpu not in gathered.backends
+
+
+async def test_windows_node_joins_as_win_cuda_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("EXO_TINYGRAD_DEVICES", "CUDA")
+    gathered = await NodeBackends.gather()
+    assert gathered.backends == [Backend.WinCUDA]
+
+
+async def test_windows_node_without_an_accelerator_joins_as_win_cpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delenv("EXO_TINYGRAD_DEVICES", raising=False)
+    monkeypatch.setattr(
+        "exo.utils.info_gatherer.info_gatherer._windows_adapter_names",
+        lambda: ["Microsoft Basic Display Adapter"],
+    )
+    monkeypatch.setattr(
+        "exo.utils.info_gatherer.info_gatherer._has_nvml_cuda",
+        lambda: False,
+    )
+    gathered = await NodeBackends.gather()
+    assert gathered.backends == [Backend.WinCPU]
 
 
 async def test_node_backends_include_declared_tinygrad_devices(

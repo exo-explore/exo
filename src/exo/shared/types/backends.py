@@ -10,3 +10,7 @@ class Backend(str, Enum):
     TinygradMetal = "TinygradMetal"
     TinygradCuda = "TinygradCuda"
     TinygradCpu = "TinygradCpu"
+    # Windows join identities. These are not MLX backends.
+    WinAMD = "WinAMD"
+    WinCUDA = "WinCUDA"
+    WinCPU = "WinCPU"

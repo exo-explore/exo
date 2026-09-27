@@ -1,5 +1,6 @@
 import os
 import shutil
+import subprocess
 import sys
 import tomllib
 from collections.abc import Sequence
@@ -399,6 +400,65 @@ def _has_nvml_cuda() -> bool:
         return False
 
 
+def _windows_adapter_names() -> list[str]:
+    """Return display-adapter names reported by Windows Management Instrumentation.
+
+    ``OSError`` and ``subprocess.TimeoutExpired`` are handled here and become
+    an empty list. ``collect_windows_join_backends`` then advertises ``WinCPU``
+    when no NVIDIA device is visible either, instead of advertising ``MlxCpu``.
+    """
+    if sys.platform != "win32":
+        return []
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-CimInstance Win32_VideoController | "
+                "Select-Object -ExpandProperty Name",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if completed.returncode != 0:
+        return []
+    return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+
+
+def collect_windows_join_backends() -> list[Backend]:
+    """Read this Windows machine and return its join identities.
+
+    ``EXO_TINYGRAD_DEVICES`` selects ``WinAMD``, ``WinCUDA``, or ``WinCPU``.
+    Without that variable, adapter names and NVML choose the same identities.
+    A Windows node never receives ``MlxCpu``.
+
+    Raises:
+        TinygradDeviceSelectionError: A declared device name is not ``AMD``,
+            ``CUDA``, or ``CPU``. ``InfoGatherer.run`` does not catch it, so
+            node startup fails instead of advertising ``MlxCpu``.
+    """
+    from exo.backends.tinygrad_engine import windows_join_backends
+
+    declared_devices = os.environ.get("EXO_TINYGRAD_DEVICES", "")
+    declared_names = declared_devices.split(",") if declared_devices.strip() else []
+    adapter_names: list[str] = []
+    has_nvidia_gpu = False
+    if not any(name.strip() for name in declared_names):
+        adapter_names = _windows_adapter_names()
+        has_nvidia_gpu = _has_nvml_cuda()
+    return windows_join_backends(
+        declared_device_names=declared_names,
+        adapter_names=adapter_names,
+        has_nvidia_gpu=has_nvidia_gpu,
+    )
+
+
 class NodeBackends(TaggedModel):
     backends: list[Backend]
 
@@ -406,15 +466,19 @@ class NodeBackends(TaggedModel):
     async def gather(cls) -> Self:
         """Collect backends this node can run.
 
-        ``EXO_TINYGRAD_DEVICES`` is a comma-separated list of tinygrad device
-        names (``AMD``, ``METAL``, ``CUDA``, ``CPU``). The operating system is
-        not used to choose those names.
+        On Windows the result is only ``WinAMD``, ``WinCUDA``, and ``WinCPU``.
+        ``EXO_TINYGRAD_DEVICES`` may list ``AMD``, ``CUDA``, or ``CPU``. On
+        every other platform the node starts from ``MlxCpu``, adds ``MlxMetal``
+        on Darwin and ``MlxCuda`` when NVML sees a GPU, then appends tinygrad
+        identities from ``EXO_TINYGRAD_DEVICES``.
 
         Raises:
             TinygradDeviceSelectionError: A declared device name is unknown.
                 ``InfoGatherer.run`` does not catch it, so node startup fails
-                instead of advertising an accelerator tinygrad will reject.
+                instead of advertising an accelerator the engine will reject.
         """
+        if sys.platform == "win32":
+            return cls(backends=collect_windows_join_backends())
         backends: list[Backend] = [Backend.MlxCpu]
         if IS_DARWIN:
             backends.append(Backend.MlxMetal)
@@ -450,6 +514,7 @@ class InfoGatherer:
     info_sender: Sender[GatheredInfo]
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
     _psutil_enabled: bool = field(init=False, default=False)
+    _windows_join_backend: Backend | None = field(init=False, default=None)
 
     async def _can_read_macmon_metrics(self, macmon_path: str) -> bool:
         try:
@@ -488,6 +553,11 @@ class InfoGatherer:
         return True
 
     async def run(self):
+        windows_backends = (
+            collect_windows_join_backends() if sys.platform == "win32" else None
+        )
+        if windows_backends is not None:
+            self._windows_join_backend = windows_backends[0]
         async with self._tg as tg:
             uses_tinygrad_device = (
                 os.environ.get("EXO_TINYGRAD_DEVICES", "").strip() != ""
@@ -509,7 +579,10 @@ class InfoGatherer:
             if nc is not None:
                 await self.info_sender.send(nc)
 
-            await self.info_sender.send(await NodeBackends.gather())
+            if windows_backends is not None:
+                await self.info_sender.send(NodeBackends(backends=windows_backends))
+            else:
+                await self.info_sender.send(await NodeBackends.gather())
 
     def shutdown(self):
         self._tg.cancel_tasks()
@@ -564,10 +637,24 @@ class InfoGatherer:
         self._psutil_enabled = True
         while True:
             try:
-                await self.info_sender.send(current_memory_usage())
+                await self.info_sender.send(self._memory_sample())
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering memory usage")
             await anyio.sleep(memory_poll_rate)
+
+    def _memory_sample(self) -> MemoryUsage:
+        """Return the memory sample for this node's join identity.
+
+        A Windows node weights the device behind ``WinAMD``, ``WinCUDA``, or
+        ``WinCPU``. Other nodes keep ``current_memory_usage``.
+        """
+        join_backend = self._windows_join_backend
+        if join_backend is None:
+            return current_memory_usage()
+        from exo.backends.tinygrad_engine import tinygrad_device_name_for_backend
+        from exo.backends.tinygrad_memory import memory_usage_for_device
+
+        return memory_usage_for_device(tinygrad_device_name_for_backend(join_backend))
 
     async def _watch_system_info(self, interface_watcher_interval: float):
         while True:
