@@ -431,6 +431,15 @@ def _windows_adapter_names() -> list[str]:
     return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
 
 
+def windows_device_probe() -> tuple[list[str], bool]:
+    """Return display-adapter names and whether NVML sees an NVIDIA GPU.
+
+    The launcher lists every detected device. A previously set
+    ``EXO_TINYGRAD_DEVICES`` does not hide adapters.
+    """
+    return _windows_adapter_names(), _has_nvml_cuda()
+
+
 def collect_windows_join_backends() -> list[Backend]:
     """Read this Windows machine and return its join identities.
 

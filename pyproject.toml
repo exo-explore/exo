@@ -31,6 +31,7 @@ dependencies = [
 
 [project.scripts]
 exo = "exo.main:main"
+exo-windows = "exo.windows.launcher:main"
 
 # dependencies only required for development
 [dependency-groups]

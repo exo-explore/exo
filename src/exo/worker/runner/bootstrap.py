@@ -1,5 +1,5 @@
 import os
-import resource
+import sys
 import traceback
 from dataclasses import dataclass
 from typing import Self, cast
@@ -37,6 +37,20 @@ class RunnerTerminationError:
         return f"{self.exception_type}: {self.exception_message}\n{self.traceback}"
 
 
+def _raise_file_descriptor_limit() -> None:
+    """Raise the open-file limit on Unix.
+
+    Windows has no ``resource`` module, so a runner started from the Windows
+    launcher skips this and continues.
+    """
+    if sys.platform == "win32":
+        return
+    import resource
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
+
+
 def entrypoint(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event | RunnerTerminationError],
@@ -47,8 +61,7 @@ def entrypoint(
     global logger
     logger = _logger
 
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
+    _raise_file_descriptor_limit()
 
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
     if fast_synch_override == "false":
