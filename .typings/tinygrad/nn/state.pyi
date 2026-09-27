@@ -3,6 +3,9 @@ from pathlib import Path
 from tinygrad.tensor import Tensor
 
 def safe_load(fn: Tensor | str | Path) -> dict[str, Tensor]: ...
+def safe_load_metadata(
+    fn: Tensor | str | Path,
+) -> tuple[Tensor, int, dict[str, object]]: ...
 def safe_save(
     tensors: dict[str, Tensor],
     fn: str,

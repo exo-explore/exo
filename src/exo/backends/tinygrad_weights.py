@@ -1,13 +1,12 @@
-"""Select and realize one pipeline shard of a Hugging Face checkpoint.
+"""Select and realize one pipeline shard of a Hugging Face or GGUF checkpoint.
 
-Key filtering and byte accounting are pure. Reading safetensors headers and
-calling ``tinygrad.nn.state.safe_load`` are the file effects, and they run
+Key filtering and byte accounting are pure. Reading safetensors or GGUF
+headers and realizing the assigned tensors are the file effects, and they run
 only from ``TinygradEngine.allocate_weights`` and ``TinygradEngine.load_model``.
 """
 
 from __future__ import annotations
 
-import gc
 import json
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -324,7 +323,7 @@ def load_architecture(model_directory: Path) -> TransformerArchitecture:
     return architecture
 
 
-def _read_safetensors_header(path: Path) -> dict[str, SafetensorTensorRecord]:
+def read_safetensors_header(path: Path) -> dict[str, SafetensorTensorRecord]:
     with path.open("rb") as handle:
         length_bytes = handle.read(8)
         if len(length_bytes) != 8:
@@ -384,7 +383,7 @@ def checkpoint_tensor_entries(model_directory: Path) -> dict[str, SafetensorEntr
                     raise TinygradWeightError(
                         f"Indexed checkpoint file {tensor_path} is missing"
                     )
-                header = _read_safetensors_header(tensor_path)
+                header = read_safetensors_header(tensor_path)
                 headers[relative_file] = header
             record = header.get(tensor_name)
             if record is None:
@@ -408,7 +407,7 @@ def checkpoint_tensor_entries(model_directory: Path) -> dict[str, SafetensorEntr
         )
     collected: dict[str, SafetensorEntry] = {}
     for tensor_path in tensor_paths:
-        for tensor_name, record in _read_safetensors_header(tensor_path).items():
+        for tensor_name, record in read_safetensors_header(tensor_path).items():
             collected[tensor_name] = SafetensorEntry(
                 relative_file=tensor_path.name,
                 byte_count=record_byte_count(record),
@@ -417,20 +416,17 @@ def checkpoint_tensor_entries(model_directory: Path) -> dict[str, SafetensorEntr
 
 
 def shard_parameter_byte_count(shard: PipelineShardMetadata) -> int:
-    """Sum selected parameter bytes from safetensors headers.
+    """Sum the bytes this shard will place on the device, from headers only.
 
-    This does not copy weights onto the device. ``TinygradEngine.allocate_weights``
-    is the caller. ``TinygradWeightError`` and ``TinygradModelSupportError`` are
-    handled by the runner entrypoint as a runner termination.
+    Safetensors contribute their serialized size. GGUF contributes the float16
+    size of the selected tensors, which is what dequantization realizes.
+    ``TinygradEngine.allocate_weights`` is the caller. ``TinygradWeightError``
+    and ``TinygradModelSupportError`` are handled by the runner entrypoint as
+    a runner termination.
     """
-    directory = model_directory_for_shard(shard)
-    architecture = load_architecture(directory)
-    entries = checkpoint_tensor_entries(directory)
-    return selected_parameter_byte_count(
-        entries,
-        shard,
-        embeddings_are_tied=architecture.tie_word_embeddings,
-    )
+    from exo.backends.tinygrad_checkpoint import selected_checkpoint_byte_count
+
+    return selected_checkpoint_byte_count(shard)
 
 
 @final
@@ -451,9 +447,8 @@ def iter_realized_parameter_groups(
     """Lazily load the checkpoint and realize one decoder layer at a time.
 
     Unselected keys are dropped before ``realize``, so device memory holds the
-    shard rather than the whole file. A mixed safetensors file may still be
-    memory-mapped by tinygrad. ``Device.DEFAULT`` is already selected by the
-    engine, and realized weights are moved there.
+    shard rather than the whole file. GGUF payloads are read only for the
+    assigned names. ``Device.DEFAULT`` is already selected by the engine.
 
     Yields:
         The non-layer parameters first, then one group per decoder layer.
@@ -462,67 +457,8 @@ def iter_realized_parameter_groups(
         TinygradWeightError: The runner entrypoint handles a missing tensor
             or a checkpoint that cannot be read.
         TinygradModelSupportError: The runner entrypoint handles an
-            unsupported ``config.json``.
+            unsupported architecture.
     """
-    from tinygrad import Device
-    from tinygrad.nn.state import safe_load
+    from exo.backends.tinygrad_checkpoint import iter_checkpoint_parameter_groups
 
-    directory = model_directory_for_shard(shard)
-    architecture = load_architecture(directory)
-    entries = checkpoint_tensor_entries(directory)
-    selected = select_shard_tensor_names(
-        tuple(entries),
-        shard,
-        embeddings_are_tied=architecture.tie_word_embeddings,
-    )
-    names_by_file: dict[str, list[str]] = {}
-    for tensor_name in selected:
-        names_by_file.setdefault(entries[tensor_name].relative_file, []).append(
-            tensor_name
-        )
-
-    lazy_parameters: dict[str, Tensor] = {}
-    for relative_file, tensor_names in names_by_file.items():
-        loaded = safe_load(str(directory / relative_file))
-        for tensor_name in tensor_names:
-            tensor = loaded.get(tensor_name)
-            if tensor is None:
-                raise TinygradWeightError(
-                    f"{relative_file} is missing selected tensor {tensor_name}"
-                )
-            lazy_parameters[tensor_name] = tensor
-        del loaded
-        gc.collect()
-
-    def realize(tensor: Tensor) -> Tensor:
-        return tensor.to(Device.DEFAULT).contiguous().realize()
-
-    non_layer_names = [
-        tensor_name
-        for tensor_name in tuple(lazy_parameters)
-        if extract_layer_num(tensor_name) is None
-    ]
-    non_layer_parameters = tuple(
-        (tensor_name, realize(lazy_parameters.pop(tensor_name)))
-        for tensor_name in non_layer_names
-    )
-    yield RealizedParameterGroup(layer_index=None, parameters=non_layer_parameters)
-
-    for layer_index in range(shard.start_layer, shard.end_layer):
-        layer_names = [
-            tensor_name
-            for tensor_name in tuple(lazy_parameters)
-            if extract_layer_num(tensor_name) == layer_index
-        ]
-        layer_parameters = tuple(
-            (tensor_name, realize(lazy_parameters.pop(tensor_name)))
-            for tensor_name in layer_names
-        )
-        gc.collect()
-        yield RealizedParameterGroup(
-            layer_index=layer_index, parameters=layer_parameters
-        )
-
-    if lazy_parameters:
-        leftover = ", ".join(sorted(lazy_parameters))
-        raise TinygradWeightError(f"Selected tensors were not realized: {leftover}")
+    yield from iter_checkpoint_parameter_groups(shard)

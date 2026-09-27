@@ -16,7 +16,7 @@ Interface map
 
 ``exo.worker.engines.base.Engine`` (runner loop)
     ``allocate_weights``    sum selected safetensors bytes, without a device copy
-    ``load_model``          realize this shard's weights on ``Device.DEFAULT``
+    ``load_model``          realize this shard's safetensors or GGUF weights
     ``embed_token_ids``     embed int32 token ids on the first rank
     ``forward_hidden_state`` run the assigned layers and append the local cache
     ``project_logits``      final norm and language-model head on the last rank
@@ -310,6 +310,10 @@ class TinygradEngine(Engine):
             TinygradModelSupportError: The runner entrypoint handles an
                 unsupported model.
         """
+        from exo.backends.tinygrad_checkpoint import (
+            assert_assigned_tensor_shapes,
+            load_checkpoint_architecture,
+        )
         from exo.backends.tinygrad_llama import (
             LocalKeyValueCache,
             assemble_loaded_shard,
@@ -317,13 +321,12 @@ class TinygradEngine(Engine):
         from exo.backends.tinygrad_weights import (
             TinygradWeightError,
             iter_realized_parameter_groups,
-            load_architecture,
             model_directory_for_shard,
         )
         from exo.download.huggingface_utils import extract_layer_num
 
         shard = self.pin_assigned_layers(bound_instance)
-        architecture = load_architecture(model_directory_for_shard(shard))
+        architecture = load_checkpoint_architecture(model_directory_for_shard(shard))
         total_layers = shard.end_layer - shard.start_layer
         collected: dict[str, Tensor] = {}
         layers_loaded = 0
@@ -352,6 +355,7 @@ class TinygradEngine(Engine):
                     f"Realized tensor {tensor_name} is outside "
                     f"[{shard.start_layer}, {shard.end_layer})"
                 )
+        assert_assigned_tensor_shapes(collected, architecture, shard)
         self.loaded_shard = assemble_loaded_shard(collected, architecture, shard)
         self.key_value_cache = LocalKeyValueCache(len(self.loaded_shard.layers))
 
