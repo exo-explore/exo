@@ -378,6 +378,55 @@ def find_ip_prioritised(
     return min(ips, key=lambda ip: priority.get(ip_to_type.get(ip, "unknown"), 2))
 
 
+def get_tinygrad_pipeline_hosts_by_node(
+    selected_cycle: Cycle,
+    cycle_digraph: Topology,
+    ephemeral_port: int,
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+) -> dict[NodeId, list[Host]]:
+    """Generate per-node host lists for a tinygrad pipeline chain.
+
+    The list is indexed by device rank. This node binds ``0.0.0.0`` on the
+    shared ephemeral port. The previous and next ranks are the reachable
+    neighbor addresses. Every other rank is the ``198.51.100.1:0``
+    placeholder. Rank 0 has no predecessor and the last rank has no
+    successor, so the chain does not wrap.
+
+    Raises:
+        ValueError: ``place_instance`` propagates this to the master command
+            handler when two neighbouring ranks have no socket path.
+    """
+    world_size = len(selected_cycle)
+    if world_size == 0:
+        return {}
+
+    hosts_by_node: dict[NodeId, list[Host]] = {}
+    node_ids = list(selected_cycle.node_ids)
+    for rank, node_id in enumerate(node_ids):
+        hosts_for_node: list[Host] = []
+        for other_rank, other_node_id in enumerate(node_ids):
+            if other_rank == rank:
+                hosts_for_node.append(Host(ip="0.0.0.0", port=ephemeral_port))
+                continue
+            if other_rank not in {rank - 1, rank + 1}:
+                hosts_for_node.append(Host(ip="198.51.100.1", port=0))
+                continue
+            connection_ip = find_ip_prioritised(
+                node_id,
+                other_node_id,
+                cycle_digraph,
+                node_network,
+                ring=True,
+            )
+            if connection_ip is None:
+                raise ValueError(
+                    "Tinygrad pipeline requires connectivity between neighbouring nodes"
+                )
+            hosts_for_node.append(Host(ip=connection_ip, port=ephemeral_port))
+        hosts_by_node[node_id] = hosts_for_node
+    return hosts_by_node
+
+
 def get_mlx_ring_hosts_by_node(
     selected_cycle: Cycle,
     cycle_digraph: Topology,

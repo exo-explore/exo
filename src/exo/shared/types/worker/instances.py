@@ -1,6 +1,6 @@
 from enum import Enum
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.backends import Backend
@@ -42,9 +42,13 @@ class TinygradInstance(BaseInstance):
 
     ``device_backend_by_node`` records the backend selected for each node.
     The runner turns that backend into a tinygrad device name at startup.
+    ``hosts_by_node`` is indexed by pipeline rank. A single-node instance
+    leaves the map empty and does not open a socket.
     """
 
     device_backend_by_node: dict[NodeId, Backend]
+    hosts_by_node: dict[NodeId, list[Host]] = Field(default_factory=dict)
+    ephemeral_port: int = 0
 
     def backend_for_node(self, node_id: NodeId) -> Backend:
         """Return the tinygrad backend selected for ``node_id``.

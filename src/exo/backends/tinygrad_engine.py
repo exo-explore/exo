@@ -2,9 +2,9 @@
 
 This module is a drop-in ``Engine`` / ``Builder`` pair. It loads one pipeline
 shard with ``tinygrad.nn.state`` and runs the assigned Llama, Qwen2, or Qwen3
-layers. A shard that holds every layer tokenizes GGUF metadata, samples, and
-yields token chunks. Exo still owns the network hop. ``serve_prefill`` stays
-unimplemented.
+layers. A single-node shard tokenizes GGUF metadata, samples, and yields
+token chunks. A multi-node shard passes hidden states to the next rank and
+returns the sampled token to rank 0. ``serve_prefill`` stays unimplemented.
 
 Interface map
 -------------
@@ -21,9 +21,9 @@ Interface map
     ``embed_token_ids``     embed int32 token ids on the first rank
     ``forward_hidden_state`` run the assigned layers and append the local cache
     ``project_logits``      final norm and language-model head on the last rank
-    ``warmup``              compile a throwaway forward pass on a full shard
+    ``warmup``              compile a throwaway forward pass on this rank
     ``submit``              enqueue one ``TextGeneration``
-    ``step``                prefill or decode one token on a full shard
+    ``step``                prefill or decode one token, hopping when sharded
     ``serve_prefill``       serve a disaggregated prefill request (unimplemented)
     ``memory_usage``        report ``MemoryUsage`` for this device
     ``pin_assigned_layers`` drop any other layers before a load
@@ -79,6 +79,10 @@ if TYPE_CHECKING:
 
     from exo.backends.tinygrad_hidden_state import HiddenStateBuffer, TokenIdBuffer
     from exo.backends.tinygrad_llama import LoadedShard, LocalKeyValueCache
+    from exo.backends.tinygrad_pipeline import (
+        PipelineTokenResult,
+        PipelineTransport,
+    )
     from exo.backends.tinygrad_tokenizer import GgufTokenizer
 
 type TinygradDeviceName = Literal["AMD", "METAL", "CUDA", "CPU"]
@@ -297,6 +301,10 @@ class TinygradEngine(Engine):
     model_id: ModelId | None = field(init=False, default=None)
     gguf_tokenizer: GgufTokenizer | None = field(init=False, default=None)
     cancel_receiver: TaskCancellationReceiver | None = field(init=False, default=None)
+    pipeline_transport: PipelineTransport | None = field(init=False, default=None)
+    _pipeline_shard_metadata: PipelineShardMetadata | None = field(
+        init=False, default=None
+    )
     _cancelled_tasks: set[TaskId] = field(init=False, default_factory=set)
     _pending_tasks: deque[TextGeneration] = field(init=False, default_factory=deque)
     _active_generation: _ActiveGeneration | None = field(init=False, default=None)
@@ -342,6 +350,7 @@ class TinygradEngine(Engine):
         self.loaded_shard = None
         self.key_value_cache = None
         self._active_generation = None
+        self._pipeline_shard_metadata = None
         gc.collect()
 
     def allocate_weights(self, bound_instance: BoundInstance) -> None:
@@ -456,6 +465,7 @@ class TinygradEngine(Engine):
         assert_assigned_tensor_shapes(collected, architecture, shard)
         self.loaded_shard = assemble_loaded_shard(collected, architecture, shard)
         self.key_value_cache = LocalKeyValueCache(len(self.loaded_shard.layers))
+        self._pipeline_shard_metadata = shard
 
     def _require_loaded_shard(self) -> LoadedShard:
         from exo.backends.tinygrad_weights import TinygradWeightError
@@ -541,21 +551,38 @@ class TinygradEngine(Engine):
     def warmup(self) -> None:
         """Compile and run a throwaway forward pass, then drop its cache.
 
+        A multi-rank shard warms only the layers it owns. Nothing is sent to
+        the next rank.
+
         Returns:
             None. The key-value cache is empty when this returns.
 
         Raises:
-            TinygradShardRoleError: The runner entrypoint handles a shard
-                that does not contain every layer.
+            TinygradShardRoleError: The runner entrypoint handles a one-node
+                shard that does not contain every layer, or a multi-rank shard
+                that is both the first and last layer.
             TinygradWeightError: The runner entrypoint handles a missing
                 tokenizer or a forward that runs before the shard is loaded.
         """
-        self._require_full_shard()
-        tokenizer = self._require_tokenizer()
-        token_id = tokenizer.bos_token_id if tokenizer.bos_token_id is not None else 0
-        if token_id < 0 or token_id >= len(tokenizer.tokens):
-            token_id = 0
-        _ = self._realize_logits((token_id,))
+        shard = self._require_pipeline_shard()
+        if shard.world_size == 1:
+            self._require_full_shard()
+            _ = self._realize_logits((self._warmup_token_id(),))
+            self._require_key_value_cache().clear()
+            return
+        loaded = self._require_loaded_shard()
+        if loaded.is_first_layer and loaded.is_last_layer:
+            from exo.backends.tinygrad_weights import TinygradShardRoleError
+
+            raise TinygradShardRoleError(
+                "A multi-rank tinygrad pipeline shard cannot contain every layer"
+            )
+        if loaded.is_first_layer:
+            _ = self._hidden_state_from_token_ids((self._warmup_token_id(),))
+        else:
+            hidden_state = self.forward_hidden_state(self._warmup_hidden_state())
+            if loaded.is_last_layer:
+                _ = self.project_logits(hidden_state)
         self._require_key_value_cache().clear()
 
     @override
@@ -596,11 +623,16 @@ class TinygradEngine(Engine):
             the request. A cancelled task yields ``CancelledResponse``.
 
         Raises:
-            TinygradShardRoleError: The runner entrypoint handles a shard
-                that does not contain every layer.
+            TinygradShardRoleError: The runner entrypoint handles a one-node
+                shard that does not contain every layer.
             TinygradWeightError: The runner entrypoint handles a missing
                 tokenizer or an empty encoding.
+            TinygradPipelineError: The runner entrypoint handles a multi-rank
+                shard whose peer cannot be reached.
         """
+        shard = self._require_pipeline_shard()
+        if shard.world_size > 1:
+            return self._step_pipeline()
         self._require_full_shard()
         self._collect_cancellations()
         output: list[tuple[TaskId, Chunk | CancelledResponse | FinishedResponse]] = []
@@ -719,22 +751,13 @@ class TinygradEngine(Engine):
         )
 
     def _advance_generation(self, active: _ActiveGeneration) -> tuple[TokenChunk, bool]:
-        from exo.backends.tinygrad_generate import (
-            generation_stats,
-            generation_usage,
-            sample_token_id,
-            visible_completion_piece,
-        )
-        from exo.backends.tinygrad_tokenizer import incremental_token_text
+        from exo.backends.tinygrad_generate import sample_token_id
 
-        tokenizer = self._require_tokenizer()
         if not active.generated_token_ids:
             logits = self._realize_logits(active.prompt_token_ids)
             active.prefill_seconds = time.perf_counter() - active.started_at
-            previous_ids: tuple[int, ...] = ()
         else:
             logits = self._realize_logits((active.generated_token_ids[-1],))
-            previous_ids = tuple(active.generated_token_ids)
         token_id = sample_token_id(
             logits,
             temperature=active.task.task_params.temperature,
@@ -743,29 +766,176 @@ class TinygradEngine(Engine):
             seed=active.seed,
             draw_index=len(active.generated_token_ids),
         )
+        piece, finish_reason = self._accept_sampled_token(active, token_id)
+        return self._token_chunk(active, token_id, piece, finish_reason)
+
+    def _step_pipeline(
+        self,
+    ) -> list[tuple[TaskId, Chunk | CancelledResponse | FinishedResponse]]:
+        from exo.backends.tinygrad_weights import TinygradShardRoleError
+
+        loaded = self._require_loaded_shard()
+        if loaded.is_first_layer and loaded.is_last_layer:
+            raise TinygradShardRoleError(
+                "A multi-rank tinygrad pipeline shard cannot contain every layer"
+            )
+        transport = self._require_pipeline_transport()
+        self._collect_cancellations()
+        output: list[tuple[TaskId, Chunk | CancelledResponse | FinishedResponse]] = []
+        kept: deque[TextGeneration] = deque()
+        for task in self._pending_tasks:
+            if self.should_cancel(task.task_id):
+                transport.signal_cancellation(task.task_id)
+                output.append((task.task_id, CancelledResponse()))
+                continue
+            kept.append(task)
+        self._pending_tasks = kept
+        active = self._active_generation
+        if active is not None and self.should_cancel(active.task.task_id):
+            transport.signal_cancellation(active.task.task_id)
+            output.append((active.task.task_id, CancelledResponse()))
+            self._drop_active_generation()
+            return output
+        if self._active_generation is None:
+            if not self._pending_tasks:
+                return output
+            self._active_generation = self._start_generation(
+                self._pending_tasks.popleft()
+            )
+        active = self._active_generation
+        task_id = active.task.task_id
+        if loaded.is_first_layer:
+            hidden_state = self._hidden_state_for_active(active)
+            transport.send_hidden_state(task_id, hidden_state)
+            result = transport.receive_token_result(task_id)
+            if result is None:
+                output.append((task_id, CancelledResponse()))
+                self._drop_active_generation()
+                return output
+            chunk, finished = self._chunk_from_remote_token(active, result)
+            output.append((task_id, chunk))
+        else:
+            hidden_state = transport.receive_hidden_state(task_id)
+            if hidden_state is None:
+                output.append((task_id, CancelledResponse()))
+                self._drop_active_generation()
+                return output
+            hidden_state = self.forward_hidden_state(hidden_state)
+            if loaded.is_last_layer:
+                result = self._sample_pipeline_token(active, hidden_state)
+                transport.send_token_result(task_id, result)
+                finished = result.finish_reason is not None
+            else:
+                transport.send_hidden_state(task_id, hidden_state)
+                forwarded = transport.receive_token_result(task_id)
+                if forwarded is None:
+                    output.append((task_id, CancelledResponse()))
+                    self._drop_active_generation()
+                    return output
+                transport.send_token_result(task_id, forwarded)
+                finished = forwarded.finish_reason is not None
+        if finished:
+            output.append((task_id, FinishedResponse()))
+            self._drop_active_generation()
+        return output
+
+    def _hidden_state_for_active(self, active: _ActiveGeneration) -> HiddenStateBuffer:
+        if not active.generated_token_ids:
+            return self._hidden_state_from_token_ids(active.prompt_token_ids)
+        return self._hidden_state_from_token_ids((active.generated_token_ids[-1],))
+
+    def _sample_pipeline_token(
+        self, active: _ActiveGeneration, hidden_state: HiddenStateBuffer
+    ) -> PipelineTokenResult:
+        from exo.backends.tinygrad_generate import sample_token_id
+        from exo.backends.tinygrad_pipeline import PipelineTokenResult
+
+        if not active.generated_token_ids:
+            active.prefill_seconds = time.perf_counter() - active.started_at
+        token_id = sample_token_id(
+            self._logits_from_hidden_state(hidden_state),
+            temperature=active.task.task_params.temperature,
+            top_k=active.task.task_params.top_k,
+            top_p=active.task.task_params.top_p,
+            seed=active.seed,
+            draw_index=len(active.generated_token_ids),
+        )
+        piece, finish_reason = self._accept_sampled_token(active, token_id)
+        return PipelineTokenResult(
+            token_id=token_id,
+            text=piece,
+            finish_reason=finish_reason,
+            prompt_token_count=len(active.prompt_token_ids),
+            completion_token_count=len(active.generated_token_ids),
+        )
+
+    def _chunk_from_remote_token(
+        self, active: _ActiveGeneration, result: PipelineTokenResult
+    ) -> tuple[TokenChunk, bool]:
+        if not active.generated_token_ids:
+            active.prefill_seconds = time.perf_counter() - active.started_at
+        active.generated_token_ids.append(result.token_id)
+        active.generated_text += result.text
+        return self._token_chunk(
+            active,
+            result.token_id,
+            result.text,
+            result.finish_reason,
+            prompt_tokens=result.prompt_token_count,
+            completion_tokens=result.completion_token_count,
+        )
+
+    def _accept_sampled_token(
+        self, active: _ActiveGeneration, token_id: int
+    ) -> tuple[str, Literal["stop", "length"] | None]:
+        from exo.backends.tinygrad_generate import visible_completion_piece
+        from exo.backends.tinygrad_tokenizer import incremental_token_text
+
+        tokenizer = self._require_tokenizer()
+        if not active.generated_token_ids:
+            previous_ids: tuple[int, ...] = ()
+        else:
+            previous_ids = tuple(active.generated_token_ids)
         piece = incremental_token_text(tokenizer, previous_ids, token_id)
         piece, stop = visible_completion_piece(
             active.generated_text, piece, active.stop_strings
         )
         active.generated_token_ids.append(token_id)
         active.generated_text += piece
-        finish_reason: Literal["stop", "length"] | None = None
         if tokenizer.eos_token_id is not None and token_id == tokenizer.eos_token_id:
-            finish_reason = "stop"
-            piece = ""
-        elif stop is not None:
-            finish_reason = "stop"
-        elif len(active.generated_token_ids) >= active.max_completion_tokens:
-            finish_reason = "length"
+            return "", "stop"
+        if stop is not None:
+            return piece, "stop"
+        if len(active.generated_token_ids) >= active.max_completion_tokens:
+            return piece, "length"
+        return piece, None
+
+    def _token_chunk(
+        self,
+        active: _ActiveGeneration,
+        token_id: int,
+        piece: str,
+        finish_reason: Literal["stop", "length"] | None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+    ) -> tuple[TokenChunk, bool]:
+        from exo.backends.tinygrad_generate import generation_stats, generation_usage
+
         usage = None
         stats = None
         if finish_reason is not None:
-            prompt_tokens = len(active.prompt_token_ids)
-            completion_tokens = len(active.generated_token_ids)
-            usage = generation_usage(prompt_tokens, completion_tokens)
+            resolved_prompt = (
+                len(active.prompt_token_ids) if prompt_tokens is None else prompt_tokens
+            )
+            resolved_completion = (
+                len(active.generated_token_ids)
+                if completion_tokens is None
+                else completion_tokens
+            )
+            usage = generation_usage(resolved_prompt, resolved_completion)
             stats = generation_stats(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
+                prompt_tokens=resolved_prompt,
+                completion_tokens=resolved_completion,
                 prefill_seconds=active.prefill_seconds,
                 generation_seconds=max(
                     time.perf_counter() - active.started_at - active.prefill_seconds,
@@ -782,6 +952,85 @@ class TinygradEngine(Engine):
             stats=stats,
         )
         return chunk, finish_reason is not None
+
+    def _require_pipeline_shard(self) -> PipelineShardMetadata:
+        from exo.backends.tinygrad_weights import TinygradWeightError
+
+        shard = self._pipeline_shard_metadata
+        if shard is None:
+            raise TinygradWeightError(
+                "Tinygrad generation was called before the model was loaded"
+            )
+        return shard
+
+    def _require_pipeline_transport(self) -> PipelineTransport:
+        from exo.backends.tinygrad_pipeline import TinygradPipelineError
+
+        transport = self.pipeline_transport
+        if transport is None:
+            raise TinygradPipelineError("Tinygrad pipeline generation has no transport")
+        transport.cancellation_probe = self._pipeline_cancellation_requested
+        return transport
+
+    def _pipeline_cancellation_requested(self) -> bool:
+        self._collect_cancellations()
+        if CANCEL_ALL_TASKS in self._cancelled_tasks:
+            return True
+        active = self._active_generation
+        return active is not None and self.should_cancel(active.task.task_id)
+
+    def _warmup_token_id(self) -> int:
+        tokenizer = self._require_tokenizer()
+        token_id = tokenizer.bos_token_id if tokenizer.bos_token_id is not None else 0
+        if token_id < 0 or token_id >= len(tokenizer.tokens):
+            return 0
+        return token_id
+
+    def _warmup_hidden_state(self) -> HiddenStateBuffer:
+        from exo.backends.tinygrad_hidden_state import HiddenStateBuffer
+
+        hidden_size = self._require_loaded_shard().architecture.hidden_size
+        return HiddenStateBuffer(
+            dtype="float16",
+            shape=(1, 1, hidden_size),
+            data=b"\x00" * (2 * hidden_size),
+        )
+
+    def _hidden_state_from_token_ids(
+        self, token_ids: Sequence[int]
+    ) -> HiddenStateBuffer:
+        from exo.backends.tinygrad_hidden_state import (
+            TokenIdBuffer,
+            tensor_to_hidden_state,
+            token_ids_to_tensor,
+        )
+        from exo.backends.tinygrad_llama import embed_token_tensor, forward_loaded_shard
+        from exo.backends.tinygrad_weights import TinygradWeightError
+
+        if not token_ids:
+            raise TinygradWeightError(
+                "Tinygrad generation received an empty token sequence"
+            )
+        shard = self._require_loaded_shard()
+        packed = b"".join(
+            token_id.to_bytes(4, "little", signed=True) for token_id in token_ids
+        )
+        hidden = embed_token_tensor(
+            shard,
+            token_ids_to_tensor(TokenIdBuffer(shape=(1, len(token_ids)), data=packed)),
+        )
+        return tensor_to_hidden_state(
+            forward_loaded_shard(shard, self._require_key_value_cache(), hidden)
+        )
+
+    def _logits_from_hidden_state(self, hidden_state: HiddenStateBuffer) -> list[float]:
+        from exo.backends.tinygrad_hidden_state import hidden_state_to_tensor
+        from exo.backends.tinygrad_llama import project_logits_tensor
+
+        logits = project_logits_tensor(
+            self._require_loaded_shard(), hidden_state_to_tensor(hidden_state)
+        )
+        return _last_logit_row(logits)
 
     def _realize_logits(self, token_ids: Sequence[int]) -> list[float]:
         from exo.backends.tinygrad_hidden_state import (
@@ -831,6 +1080,10 @@ class TinygradEngine(Engine):
         self._pending_tasks.clear()
         self._active_generation = None
         self._cancelled_tasks.clear()
+        transport = self.pipeline_transport
+        self.pipeline_transport = None
+        if transport is not None:
+            transport.close()
 
 
 @final
@@ -839,8 +1092,9 @@ class TinygradBuilder(Builder):
     """Build a ``TinygradEngine`` for one bound runner.
 
     Construction assigns ``Device.DEFAULT`` before ``connect`` or ``load``
-    run, using the device name the placement selected for this node. Exo owns
-    the network, so ``connect`` does not open a transport.
+    run, using the device name the placement selected for this node.
+    ``connect`` handshakes with the neighbouring ranks when the shard is one
+    stage of a multi-node pipeline. A single-node shard does not open a socket.
     """
 
     device_name: TinygradDeviceName
@@ -848,21 +1102,50 @@ class TinygradBuilder(Builder):
     event_sender: MpSender[Event]
     cancel_receiver: MpReceiver[TaskId]
     _engine: TinygradEngine | None = field(init=False, default=None)
+    _pipeline_transport: PipelineTransport | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         assign_tinygrad_default_device(self.device_name)
 
     @override
     def connect(self, bound_instance: BoundInstance) -> None:
-        """Accept the placement. The network hop stays outside this adapter.
+        """Handshake with the next and previous ranks when the pipeline is split.
 
         Args:
             bound_instance: This runner's instance, node, and shard.
 
         Returns:
-            None.
+            None. A one-node shard returns without opening a socket.
+
+        Raises:
+            TinygradPipelineError: The runner entrypoint handles a neighbour
+                that does not complete the handshake.
+            TinygradWeightError: The runner entrypoint handles a placement
+                that is not a tinygrad pipeline shard.
         """
-        _ = bound_instance.instance.instance_id
+        from exo.backends.tinygrad_pipeline import (
+            TcpPipelineTransport,
+            TinygradPipelineError,
+        )
+        from exo.backends.tinygrad_weights import TinygradWeightError
+        from exo.shared.types.worker.instances import TinygradInstance
+
+        instance = bound_instance.instance
+        if not isinstance(instance, TinygradInstance):
+            raise TinygradWeightError(
+                "Tinygrad connect received a placement that is not tinygrad"
+            )
+        shard = _pipeline_shard(bound_instance)
+        if shard.world_size == 1:
+            return
+        hosts = instance.hosts_by_node.get(bound_instance.bound_node_id)
+        if hosts is None:
+            raise TinygradPipelineError(
+                f"Tinygrad pipeline rank {shard.device_rank} has no peer addresses"
+            )
+        transport = TcpPipelineTransport(device_rank=shard.device_rank, hosts=hosts)
+        transport.open()
+        self._pipeline_transport = transport
 
     @override
     def load(self, bound_instance: BoundInstance) -> Generator[ModelLoadingResponse]:
@@ -882,6 +1165,10 @@ class TinygradBuilder(Builder):
                 finish.
         """
         engine = TinygradEngine(device_name=self.device_name)
+        transport = self._pipeline_transport
+        self._pipeline_transport = None
+        if transport is not None:
+            engine.pipeline_transport = transport
         engine.allocate_weights(bound_instance)
         yield from engine.iter_load_model(bound_instance)
         self._engine = engine
@@ -920,3 +1207,8 @@ class TinygradBuilder(Builder):
         self._engine = None
         if engine is not None:
             engine.close()
+            return
+        transport = self._pipeline_transport
+        self._pipeline_transport = None
+        if transport is not None:
+            transport.close()

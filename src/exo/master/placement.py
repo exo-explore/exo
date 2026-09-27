@@ -10,6 +10,7 @@ from exo.master.placement_utils import (
     get_mlx_ring_hosts_by_node,
     get_shard_assignments,
     get_smallest_cycles,
+    get_tinygrad_pipeline_hosts_by_node,
 )
 from exo.shared.models.model_cards import ModelId
 from exo.shared.topology import Topology
@@ -121,6 +122,14 @@ def place_instance(
     download_status: Mapping[NodeId, Sequence[DownloadProgress]] | None = None,
     node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] | None = None,
 ) -> dict[InstanceId, Instance]:
+    # Tensor parallel is not implemented for tinygrad. Rewrite before the
+    # tensor divisibility filter so a multi-node cycle still places layers.
+    if (
+        command.instance_meta == InstanceMeta.Tinygrad
+        and command.sharding != Sharding.Pipeline
+    ):
+        command = command.model_copy(update={"sharding": Sharding.Pipeline})
+
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
 
@@ -250,8 +259,7 @@ def place_instance(
     )
 
     # Tensor and Jaccl require multiple nodes, so a single node uses pipeline
-    # ring. A tinygrad placement keeps its own instance meta and uses pipeline
-    # sharding on one node.
+    # ring. Tinygrad sharding was already forced to pipeline above.
     if len(selected_cycle) == 1 and command.instance_meta != InstanceMeta.Tinygrad:
         command = command.model_copy(
             update={
@@ -259,12 +267,6 @@ def place_instance(
                 "sharding": Sharding.Pipeline,
             }
         )
-    elif (
-        len(selected_cycle) == 1
-        and command.instance_meta == InstanceMeta.Tinygrad
-        and command.sharding != Sharding.Pipeline
-    ):
-        command = command.model_copy(update={"sharding": Sharding.Pipeline})
 
     shard_assignments = get_shard_assignments(
         command.model_card, selected_cycle, command.sharding, node_memory
@@ -329,10 +331,19 @@ def place_instance(
                 )
                 for node_id in selected_cycle
             }
+            ephemeral_port = random_ephemeral_port()
+            hosts_by_node = get_tinygrad_pipeline_hosts_by_node(
+                selected_cycle=selected_cycle,
+                cycle_digraph=cycle_digraph,
+                ephemeral_port=ephemeral_port,
+                node_network=node_network,
+            )
             target_instances[instance_id] = TinygradInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
                 device_backend_by_node=device_backend_by_node,
+                hosts_by_node=hosts_by_node,
+                ephemeral_port=ephemeral_port,
             )
 
     return target_instances
