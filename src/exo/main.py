@@ -1,7 +1,6 @@
 import argparse
 import multiprocessing as mp
 import os
-import resource
 import signal
 import sys
 from dataclasses import dataclass, field
@@ -9,7 +8,6 @@ from typing import Self
 
 import anyio
 from anyio.lowlevel import checkpoint as anyio_checkpoint
-from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
 from exo_rs import Pidfile, PidfileError
 from loguru import logger
 from pydantic import PositiveInt
@@ -288,6 +286,8 @@ def main():
 
     try:
         if args.legacy_daemon:
+            from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
+
             # keep stdio backed by explicit /dev/null streams. multiprocessing spawn expects
             # valid stdio FDs; letting DaemonContext close/reopen them can break runner startup.
             for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
@@ -329,10 +329,23 @@ def main():
         pidfile.close()
 
 
-def main_inner(args: "Args"):
+def raise_file_descriptor_limit() -> None:
+    """Raise the open-file limit on Unix.
+
+    Windows has no ``resource`` module, so this returns without a change.
+    The Windows launcher can still start ``exo``.
+    """
+    if sys.platform == "win32":
+        return
+    import resource
+
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+
+
+def main_inner(args: "Args"):
+    raise_file_descriptor_limit()
 
     mp.set_start_method("spawn", force=True)
 

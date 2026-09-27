@@ -50,6 +50,7 @@ from exo.shared.types.worker.instances import (
     BoundInstance,
     MlxJacclInstance,
     MlxRingInstance,
+    TinygradInstance,
 )
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import (
@@ -90,8 +91,13 @@ class HostList(RootModel[list[str]]):
 def mlx_distributed_init(
     bound_instance: BoundInstance,
 ) -> mx.distributed.Group:
-    """
-    Initialize MLX distributed.
+    """Initialize MLX distributed.
+
+    Raises:
+        ValueError: ``bound_instance`` is a tinygrad placement. The runner
+            registry is expected to start those with ``TinygradBuilder``.
+            If this function is reached anyway, the runner entrypoint handles
+            the error by publishing ``RunnerTerminationError``.
     """
     rank = bound_instance.bound_shard.device_rank
     logger.info(f"Starting initialization for rank {rank}")
@@ -141,6 +147,10 @@ def mlx_distributed_init(
                 os.environ["MLX_RANK"] = str(rank)
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
                 group = mx.distributed.init(backend="jaccl", strict=True)
+            case TinygradInstance():
+                raise ValueError(
+                    "Tinygrad instances are started by TinygradBuilder, not MLX"
+                )
 
         logger.info(f"Rank {rank} mlx distributed initialization complete")
 
