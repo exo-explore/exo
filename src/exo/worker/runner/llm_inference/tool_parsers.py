@@ -105,9 +105,18 @@ def _coerce_tool_arg_with_schema(value: Any, schema: dict[str, Any]) -> Any:  # 
         if isinstance(value, float) and value.is_integer():
             return int(value)
         if isinstance(value, str):
+            stripped = value.strip()
             try:
-                return int(value.strip())
+                return int(stripped)
             except ValueError:
+                try:
+                    num = float(stripped)
+                except ValueError:
+                    return value
+                # "1.0" is a whole number written as a decimal. int() rejects
+                # it, but the float branch above already turns 1.0 into 1.
+                if math.isfinite(num) and num.is_integer():
+                    return int(num)
                 return value
         return value
 
