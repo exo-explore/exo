@@ -24,6 +24,14 @@ const MAGIC: [u8; 3] = *b"EXO";
 const RECENT_NONCES: usize = 8;
 /// How often to repeat the warning while no Hello can be sent at all.
 const BLOCKED_WARNING_INTERVAL: Duration = Duration::from_secs(60);
+/// A pause this long (the process was suspended, the machine slept, or the runtime was
+/// starved) may have let peers expire their sessions with us while we still hold ours.
+const STALL_THRESHOLD: Duration = Duration::from_secs(5);
+/// After such a pause we neither answer nor dial peers for this long (zenoh's lease is 10s),
+/// so the stale sessions are closed before new links are made. zenoh adds a new link to a
+/// peer's existing session instead of starting a new one, and when the peer had already
+/// dropped that session it never receives our declarations again: a one-way split.
+const STALL_HOLD_OFF: Duration = Duration::from_secs(12);
 
 pub struct Discovery {
     sock: Arc<UdpSocket>,
@@ -36,6 +44,7 @@ pub struct Discovery {
     tick: Interval,
     /// When we last warned that no Hello could be sent; `None` while sending works.
     blocked_since_warning: Mutex<Option<Instant>>,
+    stall_guard: StallGuard,
     _sync: Mutex<WatchHandle>,
 }
 
@@ -128,6 +137,7 @@ impl Discovery {
                 tick
             },
             blocked_since_warning: Mutex::new(None),
+            stall_guard: StallGuard::default(),
             _sync,
         })
     }
@@ -136,7 +146,16 @@ impl Discovery {
         let mut buf = [0u8; Hello::buf_size() + WhatsUp::buf_size() + 1];
         loop {
             tokio::select! {
-                _ = self.tick.tick() => {
+                // The tick first: after a stall it tells us so before any queued message is handled
+                biased;
+                scheduled = self.tick.tick() => {
+                    let late = scheduled.elapsed();
+                    if self.stall_guard.on_tick(late, Instant::now()) {
+                        warn!(
+                            "this node was unresponsive for {late:.0?}; ignoring peers for \
+                             {STALL_HOLD_OFF:?} so stale sessions close before reconnecting"
+                        );
+                    }
                     self.announce().await?;
                 }
                 res = self.sock.recv_from(&mut buf) => {
@@ -150,11 +169,15 @@ impl Discovery {
     }
 
     async fn respond(
-        &self,
+        &mut self,
         bytes_read: usize,
         addr: SocketAddr,
         buf: &[u8],
     ) -> io::Result<Option<Discovered>> {
+        if self.stall_guard.holding_off(Instant::now()) {
+            trace!("dropped: holding off after a stall");
+            return Ok(None);
+        }
         trace!(
             "raw recv: {bytes_read} bytes from {addr}: {:02x?}",
             &buf[..bytes_read]
@@ -286,6 +309,35 @@ impl Discovery {
     }
 }
 
+/// Ignores peers for a while after this process stalled (see `STALL_HOLD_OFF`).
+#[derive(Debug, Default)]
+struct StallGuard {
+    held_off_until: Option<Instant>,
+}
+
+impl StallGuard {
+    /// Called on every tick with how late it fired. Returns whether that was a stall.
+    fn on_tick(&mut self, late: Duration, now: Instant) -> bool {
+        if late < STALL_THRESHOLD {
+            return false;
+        }
+        self.held_off_until = Some(now + STALL_HOLD_OFF);
+        true
+    }
+
+    fn holding_off(&mut self, now: Instant) -> bool {
+        match self.held_off_until {
+            Some(until) if now < until => true,
+            Some(_) => {
+                info!("resuming peer discovery");
+                self.held_off_until = None;
+                false
+            }
+            None => false,
+        }
+    }
+}
+
 /// Send `buf` to every address, returning an error only if nothing could be sent.
 ///
 /// Failed addresses are not dropped: macOS returns EHOSTUNREACH while Local Network access
@@ -406,6 +458,34 @@ impl_alloc!(WhatsUp);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_late_tick_holds_off_peers_for_a_while() {
+        let mut guard = StallGuard::default();
+        let start = Instant::now();
+        assert!(!guard.on_tick(Duration::from_millis(1500), start));
+        assert!(!guard.holding_off(start));
+
+        assert!(guard.on_tick(Duration::from_secs(30), start));
+        assert!(guard.holding_off(start));
+        assert!(guard.holding_off(start + STALL_HOLD_OFF.saturating_sub(Duration::from_millis(1))));
+        assert!(!guard.holding_off(start + STALL_HOLD_OFF));
+        assert!(!guard.holding_off(start + STALL_HOLD_OFF * 2));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stall_shows_up_as_a_late_tick() {
+        let mut tick = interval(Duration::from_secs(1));
+        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        tick.tick().await;
+        // Nothing polls the interval for 30s, as when the process is suspended
+        tokio::time::advance(Duration::from_secs(30)).await;
+        let late = tick.tick().await.elapsed();
+        assert!(late >= STALL_THRESHOLD, "{late:?}");
+        // The next tick is on time again
+        let next_late = tick.tick().await.elapsed();
+        assert!(next_late < STALL_THRESHOLD, "{next_late:?}");
+    }
 
     #[test]
     fn remembers_only_the_most_recent_nonces() {
