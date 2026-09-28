@@ -2492,6 +2492,10 @@
   // ── Instance status transition toasts ──
   // Track previous statuses so we can detect meaningful transitions and fire toasts.
   let previousInstanceStatuses: Record<string, string> = {};
+  // Instances whose failure was already announced. The worker retries a failed
+  // runner several times, so the status flips in and out of FAILED; announce it
+  // once, until the model is ready to serve or the instance is gone.
+  const announcedFailures = new Set<string>();
 
   $effect(() => {
     const currentStatuses: Record<string, string> = {};
@@ -2537,8 +2541,17 @@
           addToast({ type: "success", message: `Model ready: ${shortName}` });
         }
 
+        if (currentStatus === "READY" || currentStatus === "RUNNING") {
+          announcedFailures.delete(id);
+        }
+
         // Any -> Failed
-        if (prevStatus !== "FAILED" && currentStatus === "FAILED") {
+        if (
+          prevStatus !== "FAILED" &&
+          currentStatus === "FAILED" &&
+          !announcedFailures.has(id)
+        ) {
+          announcedFailures.add(id);
           // Only the first reason; the instance card shows the rest
           const reason = failureReasons[id]?.split("\n")[0];
           addToast({
@@ -2556,6 +2569,9 @@
       }
     }
 
+    for (const id of announcedFailures) {
+      if (!(id in currentStatuses)) announcedFailures.delete(id);
+    }
     previousInstanceStatuses = currentStatuses;
   });
 
