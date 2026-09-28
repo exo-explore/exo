@@ -1,5 +1,6 @@
 import hashlib
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import datetime, timezone
 
 import anyio
@@ -14,9 +15,10 @@ from exo.routing.event_router import (
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
-from exo.shared.models.model_cards import ModelId, card_cache
+from exo.shared.models.model_cards import ModelCard, ModelId, card_cache
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
+    AddCustomModelCard,
     DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
@@ -60,6 +62,11 @@ from exo.utils.keyed_backoff import KeyedBackoff
 from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
 from exo.worker.runner.supervisor import RunnerSupervisor
+
+# How often the custom model cards saved on this node are synced with the cluster state,
+# and how often the ones the cluster doesn't know yet are announced to the master.
+CUSTOM_CARD_SYNC_INTERVAL = 1.0
+CUSTOM_CARD_ANNOUNCE_INTERVAL = 10.0
 
 
 class Worker:
@@ -178,17 +185,37 @@ class Worker:
                             ] = img
 
     async def _reconcile_custom_cards(self) -> None:
-        while True:
-            await anyio.sleep(1)
-            target = dict(self.state.custom_model_cards)
-            for model_id, card in target.items():
-                if card_cache.get(model_id) == card:
-                    continue
-                await card_cache.save(card)
+        """Keep the custom model cards saved on this node in sync with the cluster.
 
-            for card in await card_cache.list_all():
-                if card.model_id not in target:
-                    await card_cache.pop(card.model_id)
+        The cluster state starts empty whenever a new master takes over (for example after
+        the whole cluster restarts), so the cards saved on the nodes are the only lasting
+        copy. Cards this node has saved are announced until the cluster knows them, and a
+        saved card is only deleted after it was in the state and then removed from it: a
+        state that is empty or still catching up never deletes anything.
+        """
+        unannounced = {card.model_id: card for card in await card_cache.list_custom()}
+        synced: Mapping[ModelId, ModelCard] = {}
+        next_announcement = 0.0
+        while True:
+            await anyio.sleep(CUSTOM_CARD_SYNC_INTERVAL)
+            target = self.state.custom_model_cards
+            for model_id, card in target.items():
+                unannounced.pop(model_id, None)
+                if synced.get(model_id) != card:
+                    await card_cache.save(card)
+            for model_id in synced.keys() - target.keys():
+                await card_cache.pop(model_id)
+            synced = target
+
+            if unannounced and anyio.current_time() >= next_announcement:
+                next_announcement = anyio.current_time() + CUSTOM_CARD_ANNOUNCE_INTERVAL
+                for card in unannounced.values():
+                    await self.command_sender.send(
+                        ForwarderCommand(
+                            origin=self._system_id,
+                            command=AddCustomModelCard(model_card=card),
+                        )
+                    )
 
     async def plan_step(self):
         while True:
