@@ -84,6 +84,11 @@ class TopicRouter[T: FrozenModel]:
         self.senders -= to_clear
 
     async def publish_bytes(self, data: bytes):
+        # Every node receives every message on a topic, including topics nothing on this node
+        # reads (only the master reads local events, one per generated token). Parsing those
+        # took about half of a follower's time under load, so skip messages nobody will get.
+        if not self.senders:
+            return
         await self.publish(self.topic.deserialize(data))
 
     def new_sender(self) -> Sender[T]:
