@@ -135,7 +135,8 @@ async def test_cancelling_a_task_the_runner_has_not_picked_up_waits_for_it() -> 
         async with anyio.create_task_group() as tg:
             tg.start_soon(sup.run)
             await anyio.sleep(0.1)
-            await sup.start_task(task)
+            with anyio.fail_after(2):
+                await sup.start_task(task)
 
             # The runner ignores cancellations for tasks it doesn't know yet
             with anyio.fail_after(2):
@@ -157,9 +158,28 @@ async def test_cancelling_an_acknowledged_task_is_sent_straight_away() -> None:
         async with anyio.create_task_group() as tg:
             tg.start_soon(sup.run)
             await anyio.sleep(0.1)
-            await sup.start_task(task)
+            with anyio.fail_after(2):
+                await sup.start_task(task)
             sup.pending.pop(task.task_id).set()
 
             await sup.cancel_task(task.task_id)
             assert cancels_sent(sup) == [task.task_id]
             sup.shutdown()
+
+
+@pytest.mark.anyio
+async def test_cancelling_a_task_the_runner_never_received() -> None:
+    async with supervisor() as (sup, _):
+        task = generation()
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(sup.run)
+            await anyio.sleep(0.1)
+            sup.shutdown()
+            await anyio.sleep(0.2)
+
+        # The supervisor has stopped, so this task can't be sent...
+        with anyio.fail_after(2):
+            await sup.start_task(task)
+        # ...and cancelling it doesn't try to wait for an acknowledgement
+        with anyio.fail_after(2):
+            await sup.cancel_task(task.task_id)
