@@ -142,15 +142,19 @@ struct EXOApp: App {
         return NSImage(cgImage: rendered, size: image.size)
     }
 
-    /// Registers a new install as a login item once. Later launches leave the
-    /// login item alone so that turning it off (in Settings or in System
-    /// Settings → Login Items) sticks.
+    /// Registers a new install as a login item, retrying on later launches
+    /// until it succeeds. Upgrades, and launches after that, leave the login
+    /// item alone so that turning it off (in Settings or in System Settings →
+    /// Login Items) sticks.
     private func applyLaunchAtLoginDefault() {
         let preferences = StartupPreferences()
-        if preferences.shouldRegisterLaunchAtLoginOnStartup {
-            LaunchAtLoginHelper.enable()
+        let isTranslocated = StartupPreferences.isTranslocated(
+            bundlePath: Bundle.main.bundlePath)
+        guard preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: isTranslocated)
+        else { return }
+        if LaunchAtLoginHelper.enable() {
+            preferences.markLaunchAtLoginDefaultApplied()
         }
-        preferences.markLaunchAtLoginDefaultApplied()
     }
 
 }
@@ -163,38 +167,39 @@ enum LaunchAtLoginHelper {
         SMAppService.mainApp.status
     }
 
-    /// Registers or unregisters EXO as a login item and returns the resulting
-    /// status, which may differ from what was asked for if macOS refused.
-    @discardableResult
-    static func setEnabled(_ enabled: Bool) -> SMAppService.Status {
+    /// Registers or unregisters EXO as a login item, throwing macOS's error if
+    /// it refuses.
+    static func setEnabled(_ enabled: Bool) throws {
+        let status = SMAppService.mainApp.status
         if enabled {
-            enable()
-        } else {
-            disable()
-        }
-        return status
-    }
-
-    /// Registers EXO to launch at login
-    static func enable() {
-        guard SMAppService.mainApp.status != .enabled else { return }
-        do {
+            guard status != .enabled else { return }
             try SMAppService.mainApp.register()
             logger.info("Registered EXO for launch at login")
+        } else {
+            guard status == .enabled || status == .requiresApproval else { return }
+            try SMAppService.mainApp.unregister()
+            logger.info("Unregistered EXO from launch at login")
+        }
+    }
+
+    /// Registers EXO to launch at login. Returns whether it is registered.
+    @discardableResult
+    static func enable() -> Bool {
+        do {
+            try setEnabled(true)
+            return true
         } catch {
             logger.error(
                 "Failed to register EXO for launch at login: \(error.localizedDescription, privacy: .public)"
             )
+            return false
         }
     }
 
     /// Unregisters EXO from launching at login
     static func disable() {
-        let status = SMAppService.mainApp.status
-        guard status == .enabled || status == .requiresApproval else { return }
         do {
-            try SMAppService.mainApp.unregister()
-            logger.info("Unregistered EXO from launch at login")
+            try setEnabled(false)
         } catch {
             logger.error(
                 "Failed to unregister EXO from launch at login: \(error.localizedDescription, privacy: .public)"

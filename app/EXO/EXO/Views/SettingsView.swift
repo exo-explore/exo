@@ -23,6 +23,7 @@ struct SettingsView: View {
     @State private var pendingCustomEnvironmentVariables: [CustomEnvironmentVariable] = []
     @State private var needsRestart = false
     @State private var launchAtLoginStatus: SMAppService.Status = .notRegistered
+    @State private var launchAtLoginError: String?
     @AppStorage(StartupPreferences.openDashboardOnStartupKey)
     private var openDashboardOnStartup = StartupPreferences.openDashboardOnStartupDefault
     @State private var uninstallInProgress = false
@@ -51,6 +52,12 @@ struct SettingsView: View {
                 }
         }
         .frame(width: 640, height: 560)
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+        ) { _ in
+            // Pick up changes made in System Settings → Login Items.
+            launchAtLoginStatus = LaunchAtLoginHelper.status
+        }
         .onAppear {
             pendingNamespace = controller.customNamespace
             pendingHFToken = controller.hfToken
@@ -122,11 +129,19 @@ struct SettingsView: View {
             }
 
             Section("Startup") {
+                Text("These apply immediately, without Save & Restart.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
                 Toggle("Launch at login", isOn: launchAtLoginBinding)
                 Text("Start EXO automatically when you log in to this Mac.")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                if launchAtLoginStatus == .requiresApproval {
+                if let launchAtLoginError {
+                    Text(launchAtLoginError)
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                } else if launchAtLoginStatus == .requiresApproval {
                     HStack {
                         Text("Allow EXO in System Settings → General → Login Items.")
                             .font(.caption)
@@ -156,7 +171,17 @@ struct SettingsView: View {
                 launchAtLoginStatus == .enabled || launchAtLoginStatus == .requiresApproval
             },
             set: { enabled in
-                launchAtLoginStatus = LaunchAtLoginHelper.setEnabled(enabled)
+                // The user has decided, so startup no longer changes it.
+                StartupPreferences().markLaunchAtLoginDefaultApplied()
+                do {
+                    try LaunchAtLoginHelper.setEnabled(enabled)
+                    launchAtLoginError = nil
+                } catch {
+                    launchAtLoginError =
+                        "Couldn't \(enabled ? "turn on" : "turn off") launch at login: "
+                        + error.localizedDescription
+                }
+                launchAtLoginStatus = LaunchAtLoginHelper.status
             }
         )
     }
@@ -592,6 +617,7 @@ struct SettingsView: View {
 
                 DispatchQueue.main.async {
                     LaunchAtLoginHelper.disable()
+                    StartupPreferences().resetForUninstall()
                     self.moveAppToTrash()
 
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
