@@ -36,9 +36,11 @@ class NetworkingHandle:
     @staticmethod
     def new(identity: builtins.str, namespace: builtins.str, listen_port: builtins.int, discovery_service_port: builtins.int) -> NetworkingHandle: ...
     def recv(self) -> typing.Awaitable[FromSwarm]: ...
-    async def gossipsub_subscribe(self, topic: builtins.str) -> builtins.bool:
+    async def gossipsub_subscribe(self, topic: builtins.str, high_priority: builtins.bool = False) -> builtins.bool:
         r"""
         Subscribe to a `GossipSub` topic.
+        
+        With `high_priority`, messages on this topic are sent ahead of normal traffic.
         
         Returns `True` if the subscription worked. Returns `False` if we were already subscribed.
         """

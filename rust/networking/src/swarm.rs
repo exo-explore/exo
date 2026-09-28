@@ -12,7 +12,7 @@ use zenoh::handlers::FifoChannelHandler;
 use zenoh::liveliness::LivelinessToken;
 use zenoh::pubsub::Publisher;
 use zenoh::pubsub::Subscriber;
-use zenoh::qos::CongestionControl;
+use zenoh::qos::{CongestionControl, Priority};
 use zenoh::sample::Sample;
 use zenoh::sample::SampleKind;
 
@@ -24,6 +24,8 @@ pub enum ToSwarm {
     },
     Subscribe {
         topic: String,
+        /// Send ahead of normal-priority traffic.
+        high_priority: bool,
         result_sender: oneshot::Sender<Result<bool>>,
     },
     Publish {
@@ -141,6 +143,7 @@ async fn on_message(
         }
         ToSwarm::Subscribe {
             topic,
+            high_priority,
             result_sender,
         } => {
             assert!(topic.is_ascii());
@@ -149,9 +152,19 @@ async fn on_message(
                 return;
             }
 
+            // Drop rather than block when a peer's queue is full. With `Block`, one peer that
+            // stops reading (a stalled process, a sleeping laptop) blocks every put on the topic,
+            // and with it this whole loop, so no node receives anything from us. Receivers
+            // already drop messages they can't keep up with, and the protocols on top recover
+            // lost ones (event NACKs and resends, retried NACKs, repeated election rounds).
             let publisher_res = session
                 .declare_publisher(format!("topics/{topic}"))
-                .congestion_control(CongestionControl::Block)
+                .congestion_control(CongestionControl::Drop)
+                .priority(if high_priority {
+                    Priority::InteractiveHigh
+                } else {
+                    Priority::Data
+                })
                 .await;
             let publisher = match publisher_res {
                 Ok(p) => p,
