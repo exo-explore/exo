@@ -5,21 +5,49 @@ import os.log
 enum NetworkSetupHelper {
     private static let logger = Logger(subsystem: "io.exo.EXO", category: "NetworkSetup")
     private static let daemonLabel = "io.exo.networksetup"
-    private static let scriptDestination =
-        "/Library/Application Support/EXO/disable_bridge.sh"
+    static let supportDirectory = "/Library/Application Support/EXO"
+    static let scriptDestination = "\(supportDirectory)/disable_bridge.sh"
     // Legacy script path from older versions
     private static let legacyScriptDestination =
         "/Library/Application Support/EXO/disable_bridge_enable_dhcp.sh"
-    private static let plistDestination = "/Library/LaunchDaemons/io.exo.networksetup.plist"
+    static let plistDestination = "/Library/LaunchDaemons/io.exo.networksetup.plist"
     private static let requiredStartInterval: Int = 1786
 
-    private static let setupScript = """
+    static let setupScript = """
         #!/usr/bin/env bash
 
         set -euo pipefail
 
         # Wait for macOS to finish network setup after boot
         sleep 20
+
+        # The daemon is installed with EXO.app's path as its first argument. If
+        # the app has since been deleted (e.g. dragged to the Trash), stop
+        # changing the network and remove this daemon. Settings it already
+        # applied are left as they are; uninstall-exo.sh restores them.
+        EXO_APP_PATH="${1:-}"
+        VOLUMES="/Volumes"
+        exo_app_deleted() {
+          [[ -n "$EXO_APP_PATH" && ! -e "$EXO_APP_PATH" ]] || return 1
+          # If the folder that held the app is missing too, the disk it is on is
+          # most likely just not mounted (external disks mount at login, and can
+          # be unplugged), so the app may well still exist.
+          [[ -d "$(dirname "$EXO_APP_PATH")" ]] || return 1
+          # An unmounted disk can leave an empty /Volumes/<name> folder behind,
+          # so for an app on another disk also check that the disk is mounted.
+          if [[ "$EXO_APP_PATH" == "$VOLUMES"/*/* ]]; then
+            local volume="${EXO_APP_PATH#"$VOLUMES"/}"
+            volume="$VOLUMES/${volume%%/*}"
+            [[ "$(stat -f %d "$volume")" != "$(stat -f %d "$VOLUMES")" ]] || return 1
+          fi
+        }
+        if exo_app_deleted; then
+          echo "EXO.app not found at $EXO_APP_PATH; removing the \(daemonLabel) LaunchDaemon"
+          rm -f "\(plistDestination)" "\(scriptDestination)"
+          rmdir "\(supportDirectory)" 2>/dev/null || true
+          launchctl bootout system/\(daemonLabel) 2>/dev/null || true
+          exit 0
+        fi
 
         PREFS="/Library/Preferences/SystemConfiguration/preferences.plist"
 
@@ -78,12 +106,16 @@ enum NetworkSetupHelper {
                 return
             }
 
+            let isUpdate = hasInstalledComponents()
+
             // Show alert on main thread
             let shouldInstall = await MainActor.run {
                 let alert = NSAlert()
                 alert.messageText = "EXO Network Configuration"
                 alert.informativeText =
-                    "EXO needs to install a system service to configure local networking. This will disable Thunderbolt Bridge (preventing packet storms) and install a Network Location.\n\nYou will be prompted for your password."
+                    isUpdate
+                    ? "EXO needs to update its system service for local networking. It keeps Thunderbolt Bridge disabled as before, and now removes itself if EXO is deleted.\n\nYou will be prompted for your password."
+                    : "EXO needs to install a system service to configure local networking. This will disable Thunderbolt Bridge (preventing packet storms) and install a Network Location.\n\nYou will be prompted for your password."
                 alert.alertStyle = .informational
                 alert.addButton(withTitle: "Install")
                 alert.addButton(withTitle: "Not Now")
@@ -149,20 +181,70 @@ enum NetworkSetupHelper {
         else {
             return false
         }
-        if let programArgs = plist["ProgramArguments"] as? [String],
-            programArgs.contains(scriptDestination) == false
-        {
+        return installedDaemonMatches(
+            programArguments: plist["ProgramArguments"] as? [String],
+            appPath: currentAppPath(),
+            appExists: { manager.fileExists(atPath: $0) }
+        )
+    }
+
+    /// The path of the running EXO.app to hand to the daemon, or nil if it
+    /// isn't a stable location. A quarantined app opened straight from
+    /// Downloads or a disk image runs from a randomized App Translocation
+    /// path that disappears when the app quits, which would make the daemon
+    /// remove itself.
+    static func daemonAppPath(forBundlePath bundlePath: String) -> String? {
+        bundlePath.contains("/AppTranslocation/") ? nil : bundlePath
+    }
+
+    private static func currentAppPath() -> String? {
+        daemonAppPath(forBundlePath: Bundle.main.bundlePath)
+    }
+
+    /// The LaunchDaemon's ProgramArguments: the setup script, followed by the
+    /// app's path when it is known so the script can tell if the app is gone.
+    static func daemonProgramArguments(appPath: String?) -> [String] {
+        ["/bin/bash", scriptDestination] + (appPath.map { [$0] } ?? [])
+    }
+
+    /// Whether an installed daemon can be kept as it is. It must run the
+    /// current script. If it was given an app path, that path must be this
+    /// app or another copy that still exists, so switching between two copies
+    /// (e.g. a development build and /Applications) doesn't ask to reinstall
+    /// every time. A daemon without an app path is replaced so it can learn
+    /// where the app is, unless this app's own path isn't known (translocated).
+    static func installedDaemonMatches(
+        programArguments: [String]?,
+        appPath: String?,
+        appExists: (String) -> Bool
+    ) -> Bool {
+        guard let programArguments,
+            Array(programArguments.prefix(2)) == daemonProgramArguments(appPath: nil)
+        else {
             return false
         }
-        return true
+        guard let appPath else { return true }
+        guard programArguments.count == 3 else { return false }
+        let recordedAppPath = programArguments[2]
+        return recordedAppPath == appPath || appExists(recordedAppPath)
+    }
+
+    /// Escapes text for use inside a property list `<string>` element.
+    static func xmlEscaped(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
     }
 
     private static func installLaunchDaemon() throws {
-        let installerScript = makeInstallerScript()
+        let installerScript = makeInstallerScript(appPath: currentAppPath())
         try runShellAsAdmin(installerScript)
     }
 
-    private static func makeInstallerScript() -> String {
+    static func makeInstallerScript(appPath: String?) -> String {
         """
         set -euo pipefail
 
@@ -197,8 +279,7 @@ enum NetworkSetupHelper {
           <string>\(daemonLabel)</string>
           <key>ProgramArguments</key>
           <array>
-            <string>/bin/bash</string>
-            <string>\(scriptDestination)</string>
+        \(programArgumentsXML(appPath: appPath))
           </array>
           <key>StartInterval</key>
           <integer>\(requiredStartInterval)</integer>
@@ -216,6 +297,12 @@ enum NetworkSetupHelper {
         launchctl enable system/"$LABEL"
         launchctl kickstart -k system/"$LABEL"
         """
+    }
+
+    private static func programArgumentsXML(appPath: String?) -> String {
+        daemonProgramArguments(appPath: appPath)
+            .map { "    <string>\(xmlEscaped($0))</string>" }
+            .joined(separator: "\n")
     }
 
     private static func makeUninstallScript() -> String {
@@ -291,7 +378,7 @@ enum NetworkSetupHelper {
     /// Direct install without GUI (requires root).
     /// Returns true on success, false on failure.
     static func installDirectly() -> Bool {
-        let script = makeInstallerScript()
+        let script = makeInstallerScript(appPath: currentAppPath())
         return runShellDirectly(script)
     }
 
