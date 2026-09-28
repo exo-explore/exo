@@ -4,15 +4,19 @@ import Testing
 @testable import EXO
 
 /// Runs the LaunchDaemon's setup script in a scratch directory. Every system
-/// path in the script is redirected into that directory, and the commands it
-/// runs (sleep, launchctl, networksetup, ifconfig, PlistBuddy) are stubs that
-/// only record their arguments, so nothing on the machine is touched.
+/// path in the script (including /Volumes) is redirected into that directory,
+/// and the commands it runs (sleep, launchctl, networksetup, ifconfig,
+/// PlistBuddy) are stubs that only record their arguments, so nothing on the
+/// machine is touched.
 private final class DaemonSandbox {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("EXOTests-daemon-\(UUID().uuidString)", isDirectory: true)
     var plist: URL { root.appendingPathComponent("LaunchDaemons/io.exo.networksetup.plist") }
     var script: URL { root.appendingPathComponent("Application Support/EXO/disable_bridge.sh") }
     var app: URL { root.appendingPathComponent("Applications/EXO.app", isDirectory: true) }
+    /// Stands in for /Volumes. Folders created in it are plain directories on
+    /// the same disk, i.e. what an unmounted disk's leftover folder looks like.
+    var volumes: URL { root.appendingPathComponent("Volumes", isDirectory: true) }
     private var bin: URL { root.appendingPathComponent("bin", isDirectory: true) }
     private var callLog: URL { root.appendingPathComponent("calls.log") }
 
@@ -20,6 +24,7 @@ private final class DaemonSandbox {
         let fileManager = FileManager.default
         for directory in [
             bin, plist.deletingLastPathComponent(), script.deletingLastPathComponent(), app,
+            volumes,
         ] {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         }
@@ -36,13 +41,19 @@ private final class DaemonSandbox {
         let redirected = NetworkSetupHelper.setupScript
             .replacingOccurrences(of: NetworkSetupHelper.plistDestination, with: plist.path)
             .replacingOccurrences(
+                of: NetworkSetupHelper.supportDirectory,
+                with: script.deletingLastPathComponent().path
+            )
+            .replacingOccurrences(of: "VOLUMES=\"/Volumes\"", with: "VOLUMES=\"\(volumes.path)\"")
+            .replacingOccurrences(
                 of: "/Library/Preferences/SystemConfiguration/preferences.plist",
                 with: root.appendingPathComponent("preferences.plist").path
             )
             .replacingOccurrences(
                 of: "/usr/libexec/PlistBuddy", with: bin.appendingPathComponent("PlistBuddy").path)
         let outsideSandbox = redirected.replacingOccurrences(of: root.path, with: "")
-        guard !outsideSandbox.contains("/Library/"), !outsideSandbox.contains("/usr/libexec/")
+        guard !outsideSandbox.contains("/Library/"), !outsideSandbox.contains("/usr/libexec/"),
+            !redirected.contains("VOLUMES=\"/Volumes\"")
         else {
             throw SandboxError.scriptTouchesSystemPaths
         }
@@ -93,12 +104,40 @@ struct NetworkSetupHelperTests {
 
         #expect(!sandbox.exists(sandbox.plist))
         #expect(!sandbox.exists(sandbox.script))
+        #expect(!sandbox.exists(sandbox.script.deletingLastPathComponent()))
         #expect(sandbox.calls.contains("launchctl bootout system/io.exo.networksetup"))
         #expect(
             !sandbox.calls.contains {
                 $0.hasPrefix("networksetup") || $0.hasPrefix("ifconfig")
                     || $0.hasPrefix("PlistBuddy")
             })
+    }
+
+    @Test func daemonKeepsRunningWhenTheAppsDiskIsNotMounted() throws {
+        // External disks mount at login (or may be unplugged), so at boot the
+        // app's folder doesn't exist at all.
+        let sandbox = try DaemonSandbox()
+        let app = sandbox.volumes.appendingPathComponent("External/Applications/EXO.app").path
+
+        #expect(try sandbox.runDaemon(appPath: app) == 0)
+
+        #expect(sandbox.exists(sandbox.plist))
+        #expect(sandbox.calls.contains("networksetup -switchtolocation exo"))
+        #expect(!sandbox.calls.contains { $0.hasPrefix("launchctl") })
+    }
+
+    @Test func daemonKeepsRunningWhenAnUnmountedDiskLeftItsFolderBehind() throws {
+        // App at the root of a disk that isn't mounted, with an empty
+        // /Volumes/<name> folder left over from an earlier mount.
+        let sandbox = try DaemonSandbox()
+        let volume = sandbox.volumes.appendingPathComponent("External", isDirectory: true)
+        try FileManager.default.createDirectory(at: volume, withIntermediateDirectories: true)
+
+        #expect(try sandbox.runDaemon(appPath: volume.appendingPathComponent("EXO.app").path) == 0)
+
+        #expect(sandbox.exists(sandbox.plist))
+        #expect(sandbox.calls.contains("networksetup -switchtolocation exo"))
+        #expect(!sandbox.calls.contains { $0.hasPrefix("launchctl") })
     }
 
     @Test func daemonConfiguresTheNetworkWhileTheAppIsInstalled() throws {
@@ -145,34 +184,62 @@ struct NetworkSetupHelperTests {
                 == ["/bin/bash", NetworkSetupHelper.scriptDestination])
     }
 
-    @Test func installedDaemonIsReinstalledWhenTheAppMovedOrPredatesTheAppPath() {
+    @Test func installedDaemonForThisAppOrAnotherExistingCopyIsKept() {
         let installed = NetworkSetupHelper.daemonProgramArguments(appPath: "/Applications/EXO.app")
-        let legacy = ["/bin/bash", NetworkSetupHelper.scriptDestination]
+        let noOtherCopies: (String) -> Bool = { _ in false }
+        let applicationsCopyExists: (String) -> Bool = { $0 == "/Applications/EXO.app" }
 
         #expect(
             NetworkSetupHelper.installedDaemonMatches(
-                programArguments: installed, appPath: "/Applications/EXO.app"))
+                programArguments: installed, appPath: "/Applications/EXO.app",
+                appExists: noOtherCopies))
+        // A second copy (e.g. a development build) while /Applications/EXO.app
+        // is still there: no reinstall, so no password prompt on every switch.
+        #expect(
+            NetworkSetupHelper.installedDaemonMatches(
+                programArguments: installed, appPath: "/Users/someone/Build/EXO.app",
+                appExists: applicationsCopyExists))
+    }
+
+    @Test func installedDaemonIsReplacedWhenItsAppIsGoneOrItHasNoAppPath() {
+        let installed = NetworkSetupHelper.daemonProgramArguments(appPath: "/Applications/EXO.app")
+        let legacy = ["/bin/bash", NetworkSetupHelper.scriptDestination]
+        let nothingExists: (String) -> Bool = { _ in false }
+
+        // The app was moved: the recorded path no longer exists.
         #expect(
             !NetworkSetupHelper.installedDaemonMatches(
-                programArguments: installed, appPath: "/Users/someone/Applications/EXO.app"))
+                programArguments: installed, appPath: "/Users/someone/Applications/EXO.app",
+                appExists: nothingExists))
         #expect(
             !NetworkSetupHelper.installedDaemonMatches(
-                programArguments: legacy, appPath: "/Applications/EXO.app"))
+                programArguments: legacy, appPath: "/Applications/EXO.app",
+                appExists: nothingExists))
         #expect(
             !NetworkSetupHelper.installedDaemonMatches(
-                programArguments: nil, appPath: "/Applications/EXO.app"))
+                programArguments: nil, appPath: "/Applications/EXO.app",
+                appExists: nothingExists))
+        #expect(
+            !NetworkSetupHelper.installedDaemonMatches(
+                programArguments: ["/bin/bash", "/tmp/other.sh", "/Applications/EXO.app"],
+                appPath: "/Applications/EXO.app", appExists: nothingExists))
     }
 
     @Test func translocatedAppAcceptsAnyDaemonRunningTheCurrentScript() {
         let installed = NetworkSetupHelper.daemonProgramArguments(appPath: "/Applications/EXO.app")
         let legacy = ["/bin/bash", NetworkSetupHelper.scriptDestination]
+        let nothingExists: (String) -> Bool = { _ in false }
 
         #expect(
-            NetworkSetupHelper.installedDaemonMatches(programArguments: installed, appPath: nil))
-        #expect(NetworkSetupHelper.installedDaemonMatches(programArguments: legacy, appPath: nil))
+            NetworkSetupHelper.installedDaemonMatches(
+                programArguments: installed, appPath: nil, appExists: nothingExists))
+        #expect(
+            NetworkSetupHelper.installedDaemonMatches(
+                programArguments: legacy, appPath: nil, appExists: nothingExists))
         #expect(
             !NetworkSetupHelper.installedDaemonMatches(
-                programArguments: ["/bin/bash", "/tmp/other.sh"], appPath: nil))
+                programArguments: ["/bin/bash", "/tmp/other.sh"], appPath: nil,
+                appExists: nothingExists))
     }
 
     @Test func appPathIsEscapedForTheLaunchDaemonPlist() {

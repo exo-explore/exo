@@ -5,8 +5,8 @@ import os.log
 enum NetworkSetupHelper {
     private static let logger = Logger(subsystem: "io.exo.EXO", category: "NetworkSetup")
     private static let daemonLabel = "io.exo.networksetup"
-    static let scriptDestination =
-        "/Library/Application Support/EXO/disable_bridge.sh"
+    static let supportDirectory = "/Library/Application Support/EXO"
+    static let scriptDestination = "\(supportDirectory)/disable_bridge.sh"
     // Legacy script path from older versions
     private static let legacyScriptDestination =
         "/Library/Application Support/EXO/disable_bridge_enable_dhcp.sh"
@@ -26,10 +26,25 @@ enum NetworkSetupHelper {
         # changing the network and remove this daemon. Settings it already
         # applied are left as they are; uninstall-exo.sh restores them.
         EXO_APP_PATH="${1:-}"
-        if [[ -n "$EXO_APP_PATH" && ! -d "$EXO_APP_PATH" ]]; then
+        VOLUMES="/Volumes"
+        exo_app_deleted() {
+          [[ -n "$EXO_APP_PATH" && ! -e "$EXO_APP_PATH" ]] || return 1
+          # If the folder that held the app is missing too, the disk it is on is
+          # most likely just not mounted (external disks mount at login, and can
+          # be unplugged), so the app may well still exist.
+          [[ -d "$(dirname "$EXO_APP_PATH")" ]] || return 1
+          # An unmounted disk can leave an empty /Volumes/<name> folder behind,
+          # so for an app on another disk also check that the disk is mounted.
+          if [[ "$EXO_APP_PATH" == "$VOLUMES"/*/* ]]; then
+            local volume="${EXO_APP_PATH#"$VOLUMES"/}"
+            volume="$VOLUMES/${volume%%/*}"
+            [[ "$(stat -f %d "$volume")" != "$(stat -f %d "$VOLUMES")" ]] || return 1
+          fi
+        }
+        if exo_app_deleted; then
           echo "EXO.app not found at $EXO_APP_PATH; removing the \(daemonLabel) LaunchDaemon"
-          rm -f "\(plistDestination)" "$0"
-          rmdir "$(dirname "$0")" 2>/dev/null || true
+          rm -f "\(plistDestination)" "\(scriptDestination)"
+          rmdir "\(supportDirectory)" 2>/dev/null || true
           launchctl bootout system/\(daemonLabel) 2>/dev/null || true
           exit 0
         fi
@@ -91,12 +106,16 @@ enum NetworkSetupHelper {
                 return
             }
 
+            let isUpdate = hasInstalledComponents()
+
             // Show alert on main thread
             let shouldInstall = await MainActor.run {
                 let alert = NSAlert()
                 alert.messageText = "EXO Network Configuration"
                 alert.informativeText =
-                    "EXO needs to install a system service to configure local networking. This will disable Thunderbolt Bridge (preventing packet storms) and install a Network Location.\n\nYou will be prompted for your password."
+                    isUpdate
+                    ? "EXO needs to update its system service for local networking. It keeps Thunderbolt Bridge disabled as before, and now removes itself if EXO is deleted.\n\nYou will be prompted for your password."
+                    : "EXO needs to install a system service to configure local networking. This will disable Thunderbolt Bridge (preventing packet storms) and install a Network Location.\n\nYou will be prompted for your password."
                 alert.alertStyle = .informational
                 alert.addButton(withTitle: "Install")
                 alert.addButton(withTitle: "Not Now")
@@ -164,7 +183,8 @@ enum NetworkSetupHelper {
         }
         return installedDaemonMatches(
             programArguments: plist["ProgramArguments"] as? [String],
-            appPath: currentAppPath()
+            appPath: currentAppPath(),
+            appExists: { manager.fileExists(atPath: $0) }
         )
     }
 
@@ -187,16 +207,26 @@ enum NetworkSetupHelper {
         ["/bin/bash", scriptDestination] + (appPath.map { [$0] } ?? [])
     }
 
-    /// Whether an installed daemon's ProgramArguments are what this copy of
-    /// the app would install. When the app's path isn't known (translocated),
-    /// any daemon running the current script is accepted rather than asking
-    /// to reinstall on every launch.
-    static func installedDaemonMatches(programArguments: [String]?, appPath: String?) -> Bool {
-        guard let programArguments else { return false }
-        if let appPath {
-            return programArguments == daemonProgramArguments(appPath: appPath)
+    /// Whether an installed daemon can be kept as it is. It must run the
+    /// current script. If it was given an app path, that path must be this
+    /// app or another copy that still exists, so switching between two copies
+    /// (e.g. a development build and /Applications) doesn't ask to reinstall
+    /// every time. A daemon without an app path is replaced so it can learn
+    /// where the app is, unless this app's own path isn't known (translocated).
+    static func installedDaemonMatches(
+        programArguments: [String]?,
+        appPath: String?,
+        appExists: (String) -> Bool
+    ) -> Bool {
+        guard let programArguments,
+            Array(programArguments.prefix(2)) == daemonProgramArguments(appPath: nil)
+        else {
+            return false
         }
-        return Array(programArguments.prefix(2)) == daemonProgramArguments(appPath: nil)
+        guard let appPath else { return true }
+        guard programArguments.count == 3 else { return false }
+        let recordedAppPath = programArguments[2]
+        return recordedAppPath == appPath || appExists(recordedAppPath)
     }
 
     /// Escapes text for use inside a property list `<string>` element.
