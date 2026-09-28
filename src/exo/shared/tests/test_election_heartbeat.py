@@ -174,3 +174,30 @@ async def test_heartbeats_arriving_together_run_one_round() -> None:
         # Later triggers cancel earlier ones before they start: peers see a single round
         assert len(rounds) == 1
         assert rounds.pop() > 1
+
+
+async def test_follower_elects_again_when_its_master_goes_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("exo.shared.election.MASTER_SILENCE_TIMEOUT", 0.3)
+    async with running_election() as h:
+        await h.follow(em(clock=1, seniority=5, node_id="MASTER"))
+        # MASTER crashes: no more heartbeats. We run a new round without it and win.
+        result = await h.result_for(2)
+        assert result.session_id.master_node_id == ME
+        assert result.is_new_master is True
+
+
+async def test_master_heartbeats_keep_the_follower_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("exo.shared.election.MASTER_SILENCE_TIMEOUT", 0.3)
+    async with running_election() as h:
+        master = em(clock=1, seniority=5, node_id="MASTER")
+        await h.follow(master)
+        h.sent()
+        for _ in range(12):
+            await h.inbound.send(master.model_copy(update={"heartbeat": True}))
+            await anyio.sleep(0.05)
+        assert h.election.current_session == master.proposed_session
+        assert [m for m in h.sent() if not m.heartbeat] == []
