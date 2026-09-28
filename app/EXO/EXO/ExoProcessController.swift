@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import os.log
 
 private let customNamespaceKey = "EXOCustomNamespace"
 private let hfTokenKey = "EXOHFToken"
@@ -14,23 +15,10 @@ private let additionalModelsDirsKey = "EXOAdditionalModelsDirs"
 private let readOnlyModelsDirsKey = "EXOReadOnlyModelsDirs"
 private let customEnvironmentVariablesKey = "EXOCustomEnvironmentVariables"
 
-/// A user-defined environment variable that is injected into the exo child
-/// process at launch. Used as an escape hatch for env vars that don't have
-/// first-class typed UI in Settings.
-struct CustomEnvironmentVariable: Codable, Identifiable, Equatable {
-    var id: UUID
-    var key: String
-    var value: String
-
-    init(id: UUID = UUID(), key: String = "", value: String = "") {
-        self.id = id
-        self.key = key
-        self.value = value
-    }
-}
-
 @MainActor
 final class ExoProcessController: ObservableObject {
+    private static let logger = Logger(subsystem: "io.exo.EXO", category: "ExoProcess")
+
     enum Status: Equatable {
         case stopped
         case starting
@@ -406,11 +394,15 @@ final class ExoProcessController: ObservableObject {
 
         // Apply user-defined arbitrary environment variables last so that
         // power users can override any of the typed fields above when
-        // necessary. Empty keys are ignored.
-        for variable in customEnvironmentVariables {
-            let trimmedKey = variable.key.trimmingCharacters(in: .whitespaces)
-            guard !trimmedKey.isEmpty else { continue }
-            environment[trimmedKey] = variable.value
+        // necessary. Empty or invalid names (e.g. stored by an older version)
+        // are never passed to exo.
+        for variable in customEnvironmentVariables where variable.hasInvalidName {
+            Self.logger.warning(
+                "Not passing custom environment variable with invalid name \"\(variable.trimmedKey, privacy: .public)\" to exo"
+            )
+        }
+        for variable in CustomEnvironmentVariable.sanitized(customEnvironmentVariables) {
+            environment[variable.key] = variable.value
         }
 
         return environment
