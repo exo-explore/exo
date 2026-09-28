@@ -315,7 +315,7 @@ struct SettingsView: View {
                                 }
                                 .buttonStyle(.borderless)
                                 .help("Remove variable")
-                                if hasInvalidName(variable) {
+                                if variable.hasInvalidName {
                                     Image(systemName: "exclamationmark.triangle.fill")
                                         .foregroundColor(.orange)
                                         .help(
@@ -328,13 +328,10 @@ struct SettingsView: View {
                     }
                 }
 
-                if hasInvalidCustomEnvironmentVariableNames {
-                    Text(
-                        "Fix the highlighted variable names to save. "
-                            + "Names must match [A-Za-z_][A-Za-z0-9_]*."
-                    )
-                    .font(.caption)
-                    .foregroundColor(.orange)
+                if let invalidNamesHint {
+                    Text(invalidNamesHint)
+                        .font(.caption)
+                        .foregroundColor(.orange)
                 }
 
                 HStack {
@@ -355,7 +352,8 @@ struct SettingsView: View {
                     Button("Save & Restart") {
                         applyEnvironmentSettings()
                     }
-                    .disabled(!hasEnvironmentChanges || hasInvalidCustomEnvironmentVariableNames)
+                    .disabled(
+                        !hasEnvironmentChanges || !invalidCustomEnvironmentVariableNames.isEmpty)
                 }
             }
         }
@@ -641,8 +639,20 @@ struct SettingsView: View {
             || pendingCustomEnvironmentVariables != controller.customEnvironmentVariables
     }
 
-    private var hasInvalidCustomEnvironmentVariableNames: Bool {
-        pendingCustomEnvironmentVariables.contains(where: hasInvalidName)
+    private var invalidCustomEnvironmentVariableNames: [String] {
+        pendingCustomEnvironmentVariables.filter(\.hasInvalidName).map(\.trimmedKey)
+    }
+
+    /// Names the rows that block saving, since a variable saved by an older
+    /// version can block saving the unrelated fields in this tab too.
+    private var invalidNamesHint: String? {
+        let names = invalidCustomEnvironmentVariableNames
+        guard !names.isEmpty else { return nil }
+        let list = names.map { "\"\($0)\"" }.joined(separator: ", ")
+        let one = names.count == 1
+        return "Invalid variable name\(one ? "" : "s"): \(list). "
+            + "Fix or remove \(one ? "it" : "them") to save this tab. "
+            + "Names must match [A-Za-z_][A-Za-z0-9_]*."
     }
 
     private func applyGeneralSettings() {
@@ -684,15 +694,6 @@ struct SettingsView: View {
         controller.customEnvironmentVariables = sanitized
 
         restartIfRunning()
-    }
-
-    /// Whether a row has a name that isn't a valid environment variable name
-    /// (after trimming surrounding whitespace, as save does). Blank rows are
-    /// not flagged so that a freshly added row doesn't immediately look
-    /// broken; save drops them instead.
-    private func hasInvalidName(_ variable: CustomEnvironmentVariable) -> Bool {
-        let key = variable.key.trimmingCharacters(in: .whitespaces)
-        return !key.isEmpty && !CustomEnvironmentVariable.isValidName(key)
     }
 
     private func restartIfRunning() {

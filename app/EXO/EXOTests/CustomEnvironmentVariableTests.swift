@@ -97,6 +97,24 @@ struct CustomEnvironmentVariableTests {
         #expect(sanitized.map(\.id) == [variables[4].id, variables[5].id])
     }
 
+    @Test func sanitizedTrimsNewlinesFromPastedKeys() {
+        let variables = [CustomEnvironmentVariable(key: "PASTED\n", value: "x")]
+
+        #expect(CustomEnvironmentVariable.sanitized(variables).map(\.key) == ["PASTED"])
+    }
+
+    @Test func onlyFilledInInvalidNamesAreFlagged() {
+        let flagged = ["1FOO", "FOO BAR", "A=B", " FOO-BAR\n"]
+        let notFlagged = ["", "   ", "\n", "FOO", " FOO ", "FOO\n"]
+
+        for key in flagged {
+            #expect(CustomEnvironmentVariable(key: key).hasInvalidName, "\(key.debugDescription)")
+        }
+        for key in notFlagged {
+            #expect(!CustomEnvironmentVariable(key: key).hasInvalidName, "\(key.debugDescription)")
+        }
+    }
+
     @Test func sanitizedKeepsTheLastOccurrenceOfADuplicateKey() {
         let variables = [
             CustomEnvironmentVariable(key: "A", value: "first"),

@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import os.log
 
 private let customNamespaceKey = "EXOCustomNamespace"
 private let hfTokenKey = "EXOHFToken"
@@ -16,6 +17,8 @@ private let customEnvironmentVariablesKey = "EXOCustomEnvironmentVariables"
 
 @MainActor
 final class ExoProcessController: ObservableObject {
+    private static let logger = Logger(subsystem: "io.exo.EXO", category: "ExoProcess")
+
     enum Status: Equatable {
         case stopped
         case starting
@@ -393,6 +396,11 @@ final class ExoProcessController: ObservableObject {
         // power users can override any of the typed fields above when
         // necessary. Empty or invalid names (e.g. stored by an older version)
         // are never passed to exo.
+        for variable in customEnvironmentVariables where variable.hasInvalidName {
+            Self.logger.warning(
+                "Not passing custom environment variable with invalid name \"\(variable.trimmedKey, privacy: .public)\" to exo"
+            )
+        }
         for variable in CustomEnvironmentVariable.sanitized(customEnvironmentVariables) {
             environment[variable.key] = variable.value
         }
