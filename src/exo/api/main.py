@@ -2064,6 +2064,10 @@ class API:
     async def delete_download(
         self, node_id: NodeId, model_id: ModelId
     ) -> DeleteDownloadResponse:
+        try:
+            ModelId(model_id).normalize()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         command = DeleteDownload(
             target_node_id=node_id,
             model_id=ModelId(model_id),
