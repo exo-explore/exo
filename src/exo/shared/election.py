@@ -1,3 +1,4 @@
+import math
 from typing import Self
 
 import anyio
@@ -23,6 +24,11 @@ HEARTBEAT_INTERVAL = 5.0
 # election. zenoh liveliness usually reports a lost master sooner, but not always: when a node
 # crashes in a cluster of three or more, the others can keep seeing its token indefinitely.
 MASTER_SILENCE_TIMEOUT = 30.0
+# Elections started by a heartbeat or a silent master are retried with a growing gap, from the
+# first to the second value. They can't settle anything while a node hears a master that
+# doesn't hear it back, and every election pauses the whole cluster for a moment.
+RETRY_MIN_DELAY = 15.0
+RETRY_MAX_DELAY = 300.0
 
 
 class ElectionMessage(FrozenModel):
@@ -46,6 +52,14 @@ class ElectionMessage(FrozenModel):
                 self.proposed_session.master_node_id
                 < other.proposed_session.master_node_id
             )
+
+    def rank(self) -> tuple[int, int, NodeId]:
+        """How the proposed master compares to others in an election, whatever the round."""
+        return (
+            self.seniority,
+            self.commands_seen,
+            self.proposed_session.master_node_id,
+        )
 
 
 class ElectionResult(FrozenModel):
@@ -86,10 +100,13 @@ class Election:
         self._cm_receiver = connection_message_receiver
         self._co_receiver = command_receiver
 
-        # Seniority of the master we follow (ourselves included), as of its election
-        self._master_seniority = self.seniority
+        # The latest word from the master we follow: its winning message, then its heartbeats
+        self._master_status: ElectionMessage = self._election_status()
         # When we last heard from the master we follow (set when we start running)
         self._master_last_heard = 0.0
+        # When a heartbeat or a silent master may next start an election, and the gap after that
+        self._retry_at = -math.inf
+        self._retry_delay = RETRY_MIN_DELAY
 
         # Campaign state
         self._candidates: list[ElectionMessage] = []
@@ -151,7 +168,7 @@ class Election:
                 )
             elif (
                 silence := anyio.current_time() - self._master_last_heard
-            ) > MASTER_SILENCE_TIMEOUT:
+            ) > MASTER_SILENCE_TIMEOUT and self._may_retry():
                 logger.warning(
                     f"No heartbeat from master {self.current_session.master_node_id} "
                     f"for {silence:.0f}s; starting a new election"
@@ -169,12 +186,21 @@ class Election:
             # Our own master: nothing to decide, just keep up with its clock
             self.clock = max(self.clock, message.clock)
             self._master_last_heard = anyio.current_time()
+            self._master_status = message
             return
         if self._campaign_cancel_scope is not None:
             # A round is already running and will settle who is master
             return
-        if message.seniority < self._master_seniority:
-            # Our master outranks it; that master's heartbeat will bring it back
+        our_master = (
+            self._election_status()
+            if self.current_session.master_node_id == self.node_id
+            else self._master_status
+        )
+        if message.rank() < our_master.rank():
+            # Our master would win a new election anyway. The other master joins us once it
+            # hears our master's heartbeat; if it can't, a new election wouldn't reach it either.
+            return
+        if not self._may_retry():
             return
         # Two masters: this node's election missed the other one's messages. Run the
         # election again so every node settles on the same master.
@@ -186,6 +212,22 @@ class Election:
         candidates: list[ElectionMessage] = []
         self._candidates = candidates
         self._tg.start_soon(self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT)
+
+    def _may_retry(self) -> bool:
+        """Whether a heartbeat or a silent master may start an election now.
+
+        While such elections keep being needed, each one waits twice as long as the last (up
+        to RETRY_MAX_DELAY); after a quiet spell the wait starts over.
+        """
+        now = anyio.current_time()
+        if now < self._retry_at:
+            return False
+        if now - self._retry_at > RETRY_MAX_DELAY:
+            self._retry_delay = RETRY_MIN_DELAY
+        else:
+            self._retry_delay = min(self._retry_delay * 2, RETRY_MAX_DELAY)
+        self._retry_at = now + self._retry_delay
+        return True
 
     async def _election_receiver(self) -> None:
         # Heartbeats stop with the election message stream
@@ -304,12 +346,11 @@ class Election:
                     )
                     self.seniority = max(self.seniority, len(candidates))
                     logger.debug(f"New seniority: {self.seniority}")
-                    self._master_seniority = self.seniority
                 else:
                     logger.debug(
                         f"Node is not a candidate or seniority is not {self.seniority}"
                     )
-                    self._master_seniority = elected.seniority
+                self._master_status = elected
                 logger.debug(
                     f"Election finished, new SessionId({elected.proposed_session}) with queue {candidates}"
                 )
