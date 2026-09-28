@@ -48,7 +48,7 @@ struct EXOApp: App {
         _thunderboltBridgeService = StateObject(wrappedValue: thunderboltBridge)
         _settingsWindowController = StateObject(wrappedValue: SettingsWindowController())
         _bugReportWindowController = StateObject(wrappedValue: BugReportWindowController())
-        enableLaunchAtLoginIfNeeded()
+        applyLaunchAtLoginDefault()
         // Install LaunchDaemon to disable Thunderbolt Bridge on startup (prevents network loops)
         NetworkSetupHelper.promptAndInstallIfNeeded()
         // Check local network access periodically (warning disappears when user grants permission)
@@ -72,7 +72,7 @@ struct EXOApp: App {
         } label: {
             menuBarIcon
                 .onReceive(controller.$isFirstLaunchReady) { ready in
-                    if ready {
+                    if ready && StartupPreferences().openDashboardOnStartup {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                             self.firstLaunchPopout.onComplete = { [weak controller] in
                                 controller?.markOnboardingCompleted()
@@ -142,14 +142,15 @@ struct EXOApp: App {
         return NSImage(cgImage: rendered, size: image.size)
     }
 
-    private func enableLaunchAtLoginIfNeeded() {
-        guard SMAppService.mainApp.status != .enabled else { return }
-        do {
-            try SMAppService.mainApp.register()
-        } catch {
-            Logger().error(
-                "Failed to register EXO for launch at login: \(error.localizedDescription)")
+    /// Registers a new install as a login item once. Later launches leave the
+    /// login item alone so that turning it off (in Settings or in System
+    /// Settings → Login Items) sticks.
+    private func applyLaunchAtLoginDefault() {
+        let preferences = StartupPreferences()
+        if preferences.shouldRegisterLaunchAtLoginOnStartup {
+            LaunchAtLoginHelper.enable()
         }
+        preferences.markLaunchAtLoginDefaultApplied()
     }
 
 }
@@ -158,9 +159,39 @@ struct EXOApp: App {
 enum LaunchAtLoginHelper {
     private static let logger = Logger(subsystem: "io.exo.EXO", category: "LaunchAtLogin")
 
+    static var status: SMAppService.Status {
+        SMAppService.mainApp.status
+    }
+
+    /// Registers or unregisters EXO as a login item and returns the resulting
+    /// status, which may differ from what was asked for if macOS refused.
+    @discardableResult
+    static func setEnabled(_ enabled: Bool) -> SMAppService.Status {
+        if enabled {
+            enable()
+        } else {
+            disable()
+        }
+        return status
+    }
+
+    /// Registers EXO to launch at login
+    static func enable() {
+        guard SMAppService.mainApp.status != .enabled else { return }
+        do {
+            try SMAppService.mainApp.register()
+            logger.info("Registered EXO for launch at login")
+        } catch {
+            logger.error(
+                "Failed to register EXO for launch at login: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
     /// Unregisters EXO from launching at login
     static func disable() {
-        guard SMAppService.mainApp.status == .enabled else { return }
+        let status = SMAppService.mainApp.status
+        guard status == .enabled || status == .requiresApproval else { return }
         do {
             try SMAppService.mainApp.unregister()
             logger.info("Unregistered EXO from launch at login")
