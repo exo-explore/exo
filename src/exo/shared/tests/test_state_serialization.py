@@ -144,3 +144,24 @@ def test_state_snapshot_survives_the_wire() -> None:
     assert restored.requester == snapshot.requester
     assert restored.state.last_event_applied_idx == len(events) - 1
     assert restored.state.model_dump_json() == state.model_dump_json()
+
+
+def test_topology_serialization_ignores_edge_order() -> None:
+    """A topology restored from a snapshot and then updated can hold the same edges in a
+    different order than one built from events; both must serialize the same."""
+    node_a, node_b = NodeId("node-a"), NodeId("node-b")
+    edges = [
+        SocketConnection(sink_multiaddr=Multiaddr(address=f"/ip4/10.0.0.{i}/tcp/52415"))
+        for i in range(3)
+    ]
+    forward, backward = State(), State()
+    for edge in edges:
+        forward.topology.add_connection(
+            Connection(source=node_a, sink=node_b, edge=edge)
+        )
+    for edge in reversed(edges):
+        backward.topology.add_connection(
+            Connection(source=node_a, sink=node_b, edge=edge)
+        )
+
+    assert forward.model_dump_json() == backward.model_dump_json()
