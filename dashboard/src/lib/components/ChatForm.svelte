@@ -25,18 +25,13 @@
     modelTasks?: Record<string, string[]>;
     modelCapabilities?: Record<string, string[]>;
     onSend?: () => void;
-    onAutoSend: (
-      content: string,
-      files?: {
-        id: string;
-        name: string;
-        type: string;
-        textContent?: string;
-        preview?: string;
-      }[],
-    ) => void;
+    onAutoSend: (content: string, files?: ChatUploadedFile[]) => void;
     onOpenModelPicker?: () => void;
     modelDisplayOverride?: string;
+    /** The text in the input; bind it to keep a draft across remounts. */
+    message?: string;
+    /** Attached files; bind together with `message`. */
+    uploadedFiles?: ChatUploadedFile[];
   }
 
   let {
@@ -51,12 +46,12 @@
     onAutoSend,
     onOpenModelPicker,
     modelDisplayOverride,
+    message = $bindable(""),
+    uploadedFiles = $bindable([]),
   }: Props = $props();
 
-  let message = $state("");
   let textareaRef: HTMLTextAreaElement | undefined = $state();
   let fileInputRef: HTMLInputElement | undefined = $state();
-  let uploadedFiles = $state<ChatUploadedFile[]>([]);
   let isDragOver = $state(false);
   const thinkingEnabled = $derived(thinkingEnabledStore());
   let loading = $derived(isLoading());
@@ -225,6 +220,13 @@
     textareaRef.style.height = "auto";
     textareaRef.style.height = Math.min(textareaRef.scrollHeight, 150) + "px";
   }
+
+  // Keep the height right when the text is set from outside (e.g. a draft
+  // the parent puts back after a failed launch)
+  $effect(() => {
+    void message;
+    handleInput();
+  });
 
   function resetTextareaHeight() {
     if (textareaRef) {
