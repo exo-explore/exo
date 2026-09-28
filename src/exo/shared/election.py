@@ -16,6 +16,9 @@ from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 
 DEFAULT_ELECTION_TIMEOUT = 3.0
+# How often a master re-announces itself, so a node that ended up following a different
+# master (its election messages were delayed or dropped) finds out and re-runs the election
+HEARTBEAT_INTERVAL = 5.0
 
 
 class ElectionMessage(FrozenModel):
@@ -23,6 +26,8 @@ class ElectionMessage(FrozenModel):
     seniority: int
     proposed_session: SessionId
     commands_seen: int
+    # A master re-announcing itself between elections, not a vote in one
+    heartbeat: bool = False
 
     # Could eventually include a list of neighbour nodes for centrality
     def __lt__(self, other: Self) -> bool:
@@ -77,6 +82,9 @@ class Election:
         self._cm_receiver = connection_message_receiver
         self._co_receiver = command_receiver
 
+        # Seniority of the master we follow (ourselves included), as of its election
+        self._master_seniority = self.seniority
+
         # Campaign state
         self._candidates: list[ElectionMessage] = []
         self._campaign_cancel_scope: CancelScope | None = None
@@ -124,13 +132,56 @@ class Election:
     async def shutdown(self) -> None:
         self._tg.cancel_tasks()
 
+    async def _heartbeat(self) -> None:
+        while True:
+            await anyio.sleep(HEARTBEAT_INTERVAL)
+            if (
+                self.current_session.master_node_id == self.node_id
+                and self._campaign_cancel_scope is None
+            ):
+                await self._em_sender.send(
+                    self._election_status().model_copy(update={"heartbeat": True})
+                )
+
+    def _on_heartbeat(self, message: ElectionMessage) -> None:
+        if message.proposed_session == self.current_session:
+            # Our own master: nothing to decide, just keep up with its clock
+            self.clock = max(self.clock, message.clock)
+            return
+        if self._campaign_cancel_scope is not None:
+            # A round is already running and will settle who is master
+            return
+        if message.seniority < self._master_seniority:
+            # Our master outranks it; that master's heartbeat will bring it back
+            return
+        # Two masters: this node's election missed the other one's messages. Run the
+        # election again so every node settles on the same master.
+        logger.info(
+            f"Heard from master {message.proposed_session.master_node_id} while following "
+            f"{self.current_session.master_node_id}; starting a new election"
+        )
+        self.clock = max(self.clock, message.clock) + 1
+        candidates: list[ElectionMessage] = []
+        self._candidates = candidates
+        self._tg.start_soon(self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT)
+
     async def _election_receiver(self) -> None:
+        # Heartbeats stop with the election message stream
+        async with anyio.create_task_group() as heartbeats:
+            heartbeats.start_soon(self._heartbeat)
+            await self._receive_election_messages()
+            heartbeats.cancel_scope.cancel()
+
+    async def _receive_election_messages(self) -> None:
         with self._em_receiver as election_messages:
             async for message in election_messages:
                 logger.debug(f"Election message received: {message}")
                 if message.proposed_session.master_node_id == self.node_id:
                     logger.debug("Dropping message from ourselves")
                     # Drop messages from us (See exo.routing.router)
+                    continue
+                if message.heartbeat:
+                    self._on_heartbeat(message)
                     continue
                 # If a new round is starting, we participate
                 if message.clock > self.clock:
@@ -231,10 +282,12 @@ class Election:
                     )
                     self.seniority = max(self.seniority, len(candidates))
                     logger.debug(f"New seniority: {self.seniority}")
+                    self._master_seniority = self.seniority
                 else:
                     logger.debug(
                         f"Node is not a candidate or seniority is not {self.seniority}"
                     )
+                    self._master_seniority = elected.seniority
                 logger.debug(
                     f"Election finished, new SessionId({elected.proposed_session}) with queue {candidates}"
                 )
