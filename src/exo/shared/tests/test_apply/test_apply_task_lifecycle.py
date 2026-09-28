@@ -1,8 +1,15 @@
-"""Finished worker bookkeeping tasks leave the state; generation tasks wait for TaskDeleted."""
+"""Finished worker bookkeeping tasks, and those of a deleted instance, leave the state;
+generation tasks wait for TaskDeleted."""
 
 from exo.shared.apply import apply
 from exo.shared.types.common import CommandId, ModelId
-from exo.shared.types.events import Event, IndexedEvent, TaskCreated, TaskStatusUpdated
+from exo.shared.types.events import (
+    Event,
+    IndexedEvent,
+    InstanceDeleted,
+    TaskCreated,
+    TaskStatusUpdated,
+)
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     LoadModel,
@@ -78,3 +85,20 @@ def test_completed_generation_task_stays_until_its_request_finishes() -> None:
         TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete),
     )
     assert state.tasks[task.task_id].task_status == TaskStatus.Complete
+
+
+def test_deleting_an_instance_drops_its_bookkeeping_tasks() -> None:
+    failed_load = LoadModel(instance_id=INSTANCE, task_status=TaskStatus.Pending)
+    request = generation()
+    other = LoadModel(instance_id=InstanceId(), task_status=TaskStatus.Pending)
+    state = run(
+        created(failed_load),
+        TaskStatusUpdated(task_id=failed_load.task_id, task_status=TaskStatus.Failed),
+        created(request),
+        created(other),
+        InstanceDeleted(instance_id=INSTANCE),
+    )
+    assert failed_load.task_id not in state.tasks
+    # The API still needs the request's task to end its stream
+    assert request.task_id in state.tasks
+    assert other.task_id in state.tasks
