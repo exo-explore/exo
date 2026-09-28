@@ -41,7 +41,7 @@ JSON object describing topology, nodes, and instances.
 
 **GET** `/events`
 
-Returns the list of internal events recorded by the master (mainly for debugging and observability).
+Returns the most recent internal events this node has applied, up to 10,000 of them (mainly for debugging and observability). Every generated token is an event, so under load this covers the last few seconds to minutes.
 
 **Response:**
 Array of event objects.

@@ -3,16 +3,19 @@ import contextlib
 import hashlib
 import json
 import random
+import shutil
 import time
+from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from datetime import datetime, timezone
+from functools import partial
 from http import HTTPStatus
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import anyio
-from anyio import BrokenResourceError, ClosedResourceError
+from anyio import BrokenResourceError, ClosedResourceError, to_thread
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -203,11 +206,14 @@ from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
-from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
 
-_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
+# GET /events returns this many of the most recent events. Every event, including one per
+# generated token, used to be kept for the whole session, growing ~/.exo/event_log without bound.
+RECENT_EVENTS = 10_000
+# Where that log used to be written; removed when the API starts
+_OLD_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
 
 
@@ -248,7 +254,7 @@ class API:
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
-        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
+        self._recent_events: deque[Event] = deque(maxlen=RECENT_EVENTS)
         self._system_id = SystemId()
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
@@ -297,8 +303,7 @@ class API:
 
     def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):
         logger.info("Resetting API State")
-        self._event_log.close()
-        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
+        self._recent_events = deque(maxlen=RECENT_EVENTS)
         self.state = State()
         self._system_id = SystemId()
         self._text_generation_queues = {}
@@ -1022,7 +1027,8 @@ class API:
             yield "]"
 
         return StreamingResponse(
-            _generate_json_array(self._event_log.read_all()),
+            # A copy: events keep arriving while the response streams
+            _generate_json_array(list(self._recent_events)),
             media_type="application/json",
         )
 
@@ -1913,6 +1919,9 @@ class API:
         try:
             async with self._tg as tg:
                 logger.info("Starting API")
+                await to_thread.run_sync(
+                    partial(shutil.rmtree, _OLD_API_EVENT_LOG_DIR, ignore_errors=True)
+                )
                 tg.start_soon(self._apply_state)
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)
@@ -1928,7 +1937,6 @@ class API:
 
                         shutdown_ev.set()
         finally:
-            self._event_log.close()
             self.command_sender.close()
             self.event_receiver.close()
 
@@ -1969,7 +1977,7 @@ class API:
     async def _apply_state(self):
         with self.event_receiver as events:
             async for i_event in events:
-                self._event_log.append(i_event.event)
+                self._recent_events.append(i_event.event)
                 self.state = apply(self.state, i_event)
                 event = i_event.event
 
