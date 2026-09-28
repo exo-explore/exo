@@ -40,13 +40,14 @@ class RecordingRunner:
     bound_instance: BoundInstance
     status: RunnerStatus
     completed: set[TaskId] = field(default_factory=set)
-    in_progress: set[TaskId] = field(default_factory=set)
+    in_progress: dict[TaskId, Task] = field(default_factory=dict)
+    cancelled: set[TaskId] = field(default_factory=set)
     pending: dict[TaskId, object] = field(default_factory=dict)
     started: list[Task] = field(default_factory=list)
 
     async def start_task(self, task: Task) -> None:
         self.started.append(task)
-        self.in_progress.add(task.task_id)
+        self.in_progress[task.task_id] = task
 
 
 async def test_worker_does_not_reannounce_a_task_from_the_state() -> None:
