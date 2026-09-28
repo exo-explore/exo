@@ -1898,6 +1898,23 @@
     return reasons.size > 0 ? [...reasons].join("\n") : undefined;
   }
 
+  // One readable line from a failure message. A runner that raised is
+  // reported as "Terminated (exitcode=1\nRunner error: <error>\n<traceback>)"
+  // (worker/runner/supervisor.py), so prefer the error over the bare exit
+  // status. Diagnostics and one-line reasons are returned as they are.
+  function summarizeFailureReason(message: string): string {
+    const lines = message
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const first = lines[0] ?? message;
+    if (!first.startsWith("Terminated (")) return first;
+    const runnerError = lines.find((line) => line.startsWith("Runner error:"));
+    return runnerError
+      ? runnerError.slice("Runner error:".length).trim()
+      : first;
+  }
+
   function deriveInstanceStatus(instanceWrapped: unknown): {
     statusText: string;
     statusClass: string;
@@ -2552,8 +2569,9 @@
           !announcedFailures.has(id)
         ) {
           announcedFailures.add(id);
-          // Only the first reason; the instance card shows the rest
-          const reason = failureReasons[id]?.split("\n")[0];
+          // One readable line; the instance card's tooltip has the full text
+          const failure = failureReasons[id];
+          const reason = failure ? summarizeFailureReason(failure) : undefined;
           addToast({
             type: "error",
             message: reason
@@ -5632,7 +5650,9 @@
                               class="text-xs text-red-400/80 font-mono mt-1 break-words whitespace-pre-line line-clamp-3"
                               title={downloadInfo.errorMessage}
                             >
-                              {downloadInfo.errorMessage}
+                              {summarizeFailureReason(
+                                downloadInfo.errorMessage,
+                              )}
                             </div>
                           {/if}
                         {/if}
@@ -6776,7 +6796,9 @@
                                 class="text-xs text-red-400/80 font-mono mt-1 break-words whitespace-pre-line line-clamp-3"
                                 title={downloadInfo.errorMessage}
                               >
-                                {downloadInfo.errorMessage}
+                                {summarizeFailureReason(
+                                  downloadInfo.errorMessage,
+                                )}
                               </div>
                             {/if}
                           {/if}
