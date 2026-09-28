@@ -41,7 +41,14 @@ from exo.shared.types.profiling import (
     ThunderboltBridgeStatus,
 )
 from exo.shared.types.state import State
-from exo.shared.types.tasks import Task, TaskId, TaskStatus
+from exo.shared.types.tasks import (
+    ImageEdits,
+    ImageGeneration,
+    Task,
+    TaskId,
+    TaskStatus,
+    TextGeneration,
+)
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -185,6 +192,18 @@ def apply_task_status_updated(event: TaskStatusUpdated, state: State) -> State:
         # maybe should raise
         return state
 
+    task = state.tasks[event.task_id]
+    if event.task_status == TaskStatus.Complete and not isinstance(
+        task, (TextGeneration, ImageGeneration, ImageEdits)
+    ):
+        # A worker's own bookkeeping task (creating, loading or warming up a runner,
+        # cancelling a request...) is of no further use once it completes, and nothing
+        # else removes it. Generation tasks stay until their request is finished.
+        new_tasks: Mapping[TaskId, Task] = {
+            tid: t for tid, t in state.tasks.items() if tid != event.task_id
+        }
+        return state.model_copy(update={"tasks": new_tasks})
+
     update: dict[str, TaskStatus | None] = {
         "task_status": event.task_status,
     }
@@ -192,8 +211,8 @@ def apply_task_status_updated(event: TaskStatusUpdated, state: State) -> State:
         update["error_type"] = None
         update["error_message"] = None
 
-    updated_task = state.tasks[event.task_id].model_copy(update=update)
-    new_tasks: Mapping[TaskId, Task] = {**state.tasks, event.task_id: updated_task}
+    updated_task = task.model_copy(update=update)
+    new_tasks = {**state.tasks, event.task_id: updated_task}
     return state.model_copy(update={"tasks": new_tasks})
 
 
