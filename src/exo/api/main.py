@@ -427,6 +427,14 @@ class API:
             ) from e
 
     async def place_instance(self, payload: PlaceInstanceParams):
+        # Refuse, with the reason, a placement the cluster can't hold. The master would
+        # reject the command too, but only in its own log, so the caller never found out.
+        await self.get_placement(
+            payload.model_id,
+            payload.sharding,
+            payload.instance_meta,
+            payload.min_nodes,
+        )
         command = PlaceInstance(
             model_card=await ModelCard.load(payload.model_id),
             sharding=payload.sharding,
