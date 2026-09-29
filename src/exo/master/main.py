@@ -19,6 +19,7 @@ from exo.routing.event_router import (
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_TRACING_ENABLED
+from exo.shared.types.chunks import ImageChunk
 from exo.shared.types.commands import (
     AddCustomModelCard,
     CreateInstance,
@@ -40,6 +41,7 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
+    ChunkGenerated,
     CustomModelCardAdded,
     CustomModelCardDeleted,
     Event,
@@ -83,8 +85,21 @@ from exo.utils.task_group import TaskGroup
 # Recent events kept for nodes that missed a few. A node further behind than this
 # is sent a snapshot of the current state instead of the whole history.
 REPLAYABLE_EVENTS = 10_000
+# ...holding at most this much image data. Image chunks are the only large events, and a
+# few requests with large images would otherwise make the window hold gigabytes.
+REPLAYABLE_IMAGE_BYTES = 256 * 1024 * 1024
 # Events replayed per RequestEventLog; the requester asks again for the rest.
 REPLAY_BATCH_SIZE = 1000
+
+
+def _image_bytes(event: Event) -> int:
+    match event:
+        case InputChunkReceived(chunk=chunk):
+            return len(chunk.data)
+        case ChunkGenerated(chunk=ImageChunk() as chunk):
+            return len(chunk.data)
+        case _:
+            return 0
 
 
 def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
@@ -153,7 +168,10 @@ class Master:
         self.event_sender = event_sender
         self._system_id = SystemId()
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
-        self._recent_events: deque[Event] = deque(maxlen=REPLAYABLE_EVENTS)
+        self._recent_events: deque[Event] = deque()
+        self._recent_image_bytes = 0
+        self._replayable_events = REPLAYABLE_EVENTS
+        self._replayable_image_bytes = REPLAYABLE_IMAGE_BYTES
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
 
@@ -523,8 +541,17 @@ class Master:
                     )
                     self.state = apply(self.state, indexed)
 
-                    self._recent_events.append(event)
+                    self._remember(event)
                     await self._send_indexed_event(indexed)
+
+    def _remember(self, event: Event) -> None:
+        self._recent_events.append(event)
+        self._recent_image_bytes += _image_bytes(event)
+        while (
+            len(self._recent_events) > self._replayable_events
+            or self._recent_image_bytes > self._replayable_image_bytes
+        ):
+            self._recent_image_bytes -= _image_bytes(self._recent_events.popleft())
 
     async def _serve_event_log_request(self, since_idx: int, requester: SystemId):
         next_idx = self.state.last_event_applied_idx + 1

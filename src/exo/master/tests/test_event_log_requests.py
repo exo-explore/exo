@@ -10,15 +10,17 @@ import anyio
 
 from exo.master.main import Master
 from exo.routing.router import get_node_zid
+from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     ForwarderCommand,
     ForwarderDownloadCommand,
     RequestEventLog,
 )
-from exo.shared.types.common import SessionId, SystemId
+from exo.shared.types.common import CommandId, ModelId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
+    InputChunkReceived,
     LocalForwarderEvent,
     StateSnapshot,
     TestEvent,
@@ -47,7 +49,10 @@ class Harness:
 
 
 @asynccontextmanager
-async def running_master() -> AsyncIterator[Harness]:
+async def running_master(
+    events: list[Event] | None = None, image_bytes: int = 1 << 30
+) -> AsyncIterator[Harness]:
+    events = events if events is not None else [TestEvent() for _ in range(N_EVENTS)]
     node_id = get_node_zid()
     session = SessionId(master_node_id=node_id, election_clock=0)
     global_send, global_recv = channel[GlobalForwarderEvent]()
@@ -57,7 +62,10 @@ async def running_master() -> AsyncIterator[Harness]:
     event_send, _event_recv = channel[Event]()
     snapshot_send, snapshot_recv = channel[StateSnapshot]()
 
-    with patch("exo.master.main.REPLAYABLE_EVENTS", REPLAYABLE):
+    with (
+        patch("exo.master.main.REPLAYABLE_EVENTS", REPLAYABLE),
+        patch("exo.master.main.REPLAYABLE_IMAGE_BYTES", image_bytes),
+    ):
         master = Master(
             node_id,
             session,
@@ -71,14 +79,14 @@ async def running_master() -> AsyncIterator[Harness]:
     async with anyio.create_task_group() as tg:
         tg.start_soon(master.run)
         worker = SystemId()
-        for i in range(N_EVENTS):
+        for i, event in enumerate(events):
             await local_send.send(
                 LocalForwarderEvent(
-                    origin_idx=i, origin=worker, session=session, event=TestEvent()
+                    origin_idx=i, origin=worker, session=session, event=event
                 )
             )
         with anyio.fail_after(5):
-            while master.state.last_event_applied_idx < N_EVENTS - 1:
+            while master.state.last_event_applied_idx < len(events) - 1:
                 await anyio.sleep(0.01)
         global_recv.collect()  # drop the live broadcast of those events
 
@@ -132,3 +140,28 @@ async def test_request_from_the_future_is_ignored() -> None:
 
         assert harness.global_events.collect() == []
         assert harness.snapshots.collect() == []
+
+
+async def test_image_data_beyond_its_budget_is_not_kept_for_replay() -> None:
+    # Two 60-character image chunks, then plain events, with room for 100 characters
+    def image_chunk() -> InputChunkReceived:
+        command_id = CommandId()
+        return InputChunkReceived(
+            command_id=command_id,
+            chunk=InputImageChunk(
+                model=ModelId("test-model"),
+                command_id=command_id,
+                data="x" * 60,
+                chunk_index=0,
+                total_chunks=1,
+            ),
+        )
+
+    events: list[Event] = [image_chunk(), image_chunk(), TestEvent(), TestEvent()]
+    async with running_master(events, image_bytes=100) as harness:
+        await harness.request(since_idx=1, requester=SystemId())
+        assert [e.origin_idx for e in harness.global_events.collect()] == [1, 2, 3]
+
+        await harness.request(since_idx=0, requester=SystemId())
+        assert harness.global_events.collect() == []
+        assert len(harness.snapshots.collect()) == 1
