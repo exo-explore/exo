@@ -37,8 +37,22 @@ class Topology:
     _vertex_indices: dict[NodeId, int] = field(init=False, default_factory=dict)
 
     def to_snapshot(self) -> TopologySnapshot:
+        # Node and edge order depend on how the graph was built (from events, or restored
+        # from a state snapshot and then updated: the graph reuses a removed node's slot),
+        # so sort everything: equal topologies serialize equally.
+        connections = self.map_connections()
         return TopologySnapshot(
-            nodes=list(self.list_nodes()), connections=self.map_connections()
+            nodes=sorted(self.list_nodes()),
+            connections={
+                source: {
+                    sink: sorted(
+                        connections[source][sink],
+                        key=lambda edge: edge.model_dump_json(),
+                    )
+                    for sink in sorted(connections[source])
+                }
+                for source in sorted(connections)
+            },
         )
 
     @classmethod
@@ -301,11 +315,20 @@ class Topology:
             if isinstance(conn, RDMAConnection):
                 graph.add_edge(node_to_idx[source_id], node_to_idx[sink_id], conn)
 
-        return [
+        cycles = [
             [graph[idx] for idx in cycle]
             for cycle in rx.simple_cycles(graph)
             if len(cycle) >= 2
         ]
+        # Every node computes this in apply(), from a set and a graph whose order depends
+        # on the node's history, so every node must reach the same order: each cycle starts
+        # at its smallest node, and the cycles are sorted.
+        return sorted(_starting_at_smallest(cycle) for cycle in cycles)
+
+
+def _starting_at_smallest(cycle: list[NodeId]) -> list[NodeId]:
+    start = cycle.index(min(cycle))
+    return cycle[start:] + cycle[:start]
 
 
 def _get_ips_with_interface_type(

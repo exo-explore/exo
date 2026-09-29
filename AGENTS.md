@@ -88,6 +88,7 @@ The system uses event sourcing for state management:
 - `State` (src/exo/shared/types/state.py): Immutable state object
 - `apply()` (src/exo/shared/apply.py): Pure function that applies events to state
 - Master indexes events and broadcasts; workers apply indexed events
+- The master only keeps recent events. A node that falls further behind (e.g. a late joiner) gets a `StateSnapshot` instead of a replay, so never assume a node has seen every event since the session started
 
 ### Key Type Hierarchy
 - `src/exo/shared/types/`: Pydantic models for all shared types
