@@ -11,6 +11,7 @@ from exo.download.download_utils import is_read_only_model_dir, resolve_existing
 from exo.routing.event_router import (
     EventRouterBrokenResourceError,
     EventRouterClosedResourceError,
+    NodeEventReceiver,
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
@@ -25,7 +26,6 @@ from exo.shared.types.commands import (
 from exo.shared.types.common import CommandId, NodeId, SystemId
 from exo.shared.types.events import (
     Event,
-    IndexedEvent,
     InputChunkReceived,
     InstanceDeleted,
     NodeDownloadProgress,
@@ -68,7 +68,7 @@ class Worker:
         self,
         node_id: NodeId,
         *,
-        event_receiver: Receiver[IndexedEvent | StateSnapshot],
+        event_receiver: NodeEventReceiver,
         event_sender: Sender[Event],
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands

@@ -125,6 +125,7 @@ from exo.api.types.openai_responses import (
 )
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
+from exo.routing.event_router import NodeEventReceiver
 from exo.shared.apply import apply
 from exo.shared.constants import (
     DASHBOARD_DIR,
@@ -178,7 +179,6 @@ from exo.shared.types.common import CommandId, Id, NodeId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
-    IndexedEvent,
     InstanceDeleted,
     StateSnapshot,
     TracesMerged,
@@ -242,7 +242,7 @@ class API:
         node_id: NodeId,
         *,
         port: int,
-        event_receiver: Receiver[IndexedEvent | StateSnapshot],
+        event_receiver: NodeEventReceiver,
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
@@ -296,9 +296,7 @@ class API:
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
 
-    def reset(
-        self, result_clock: int, event_receiver: Receiver[IndexedEvent | StateSnapshot]
-    ):
+    def reset(self, result_clock: int, event_receiver: NodeEventReceiver):
         logger.info("Resetting API State")
         self._event_log.close()
         self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)

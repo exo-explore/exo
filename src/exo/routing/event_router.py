@@ -40,6 +40,11 @@ _ERROR_CFG = channels.ErrorOverride(
 )
 
 
+# What the worker and the API read: indexed events, plus a state snapshot whenever the node
+# catches up from one. A receiver of events alone (with no snapshots) is accepted too.
+type NodeEventReceiver = Receiver[IndexedEvent | StateSnapshot] | Receiver[IndexedEvent]
+
+
 @dataclass
 class EventRouter:
     session_id: SessionId
