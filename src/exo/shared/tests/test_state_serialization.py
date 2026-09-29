@@ -165,3 +165,25 @@ def test_topology_serialization_ignores_edge_order() -> None:
         )
 
     assert forward.model_dump_json() == backward.model_dump_json()
+
+
+def test_topology_serialization_ignores_node_order() -> None:
+    """The graph reuses a removed node's slot, so once a node leaves and another joins, a
+    topology restored from a snapshot lists its nodes and connections in a different order
+    than the master's; both must serialize the same."""
+    node_a, node_b, node_c, node_d, node_e = (
+        NodeId(f"node-{name}") for name in "abcde"
+    )
+    edge = SocketConnection(sink_multiaddr=Multiaddr(address="/ip4/10.0.0.1/tcp/52415"))
+    master = State()
+    for node in (node_a, node_b, node_c, node_d):
+        master.topology.add_node(node)
+    master.topology.add_connection(Connection(source=node_c, sink=node_d, edge=edge))
+    master.topology.remove_node(node_b)
+
+    restored = State.model_validate_json(master.model_dump_json())
+    for state in (master, restored):
+        state.topology.add_node(node_e)
+        state.topology.add_connection(Connection(source=node_e, sink=node_a, edge=edge))
+
+    assert master.model_dump_json() == restored.model_dump_json()

@@ -37,16 +37,21 @@ class Topology:
     _vertex_indices: dict[NodeId, int] = field(init=False, default_factory=dict)
 
     def to_snapshot(self) -> TopologySnapshot:
-        # Edge order depends on how the graph was built (from events, or restored from a
-        # state snapshot and then updated), so sort it: equal topologies serialize equally.
+        # Node and edge order depend on how the graph was built (from events, or restored
+        # from a state snapshot and then updated: the graph reuses a removed node's slot),
+        # so sort everything: equal topologies serialize equally.
+        connections = self.map_connections()
         return TopologySnapshot(
-            nodes=list(self.list_nodes()),
+            nodes=sorted(self.list_nodes()),
             connections={
                 source: {
-                    sink: sorted(edges, key=lambda edge: edge.model_dump_json())
-                    for sink, edges in sinks.items()
+                    sink: sorted(
+                        connections[source][sink],
+                        key=lambda edge: edge.model_dump_json(),
+                    )
+                    for sink in sorted(connections[source])
                 }
-                for source, sinks in self.map_connections().items()
+                for source in sorted(connections)
             },
         )
 
