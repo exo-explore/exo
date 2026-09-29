@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from exo.routing.topics import STATE_SNAPSHOTS
 from exo.shared.apply import apply
+from exo.shared.topology import Topology
 from exo.shared.types.common import CommandId, ModelId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     IndexedEvent,
@@ -15,7 +16,12 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
-from exo.shared.types.profiling import MemoryUsage, NetworkInterfaceInfo
+from exo.shared.types.profiling import (
+    MemoryUsage,
+    NetworkInterfaceInfo,
+    NodeNetworkInfo,
+    ThunderboltBridgeStatus,
+)
 from exo.shared.types.state import State
 from exo.shared.types.tasks import TaskId, TaskStatus, TextGeneration
 from exo.shared.types.text_generation import (
@@ -187,3 +193,51 @@ def test_topology_serialization_ignores_node_order() -> None:
         state.topology.add_connection(Connection(source=node_e, sink=node_a, edge=edge))
 
     assert master.model_dump_json() == restored.model_dump_json()
+
+
+def test_thunderbolt_bridge_cycles_ignore_graph_order() -> None:
+    """Every node computes the bridge cycles in apply(); nodes whose graphs hold the same
+    Thunderbolt ring in a different order must store the same cycles."""
+    nodes = [NodeId(f"node-{name}") for name in "abc"]
+    address = {node: f"169.254.0.{i}" for i, node in enumerate(nodes)}
+    network = {
+        node: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="bridge0",
+                    ip_address=address[node],
+                    interface_type="thunderbolt",
+                )
+            ]
+        )
+        for node in nodes
+    }
+    bridges = {
+        node: ThunderboltBridgeStatus(enabled=True, exists=True) for node in nodes
+    }
+
+    def ring(order: list[NodeId]) -> Topology:
+        topology = Topology()
+        for node in order:
+            topology.add_node(node)
+        for source in order:
+            for sink in order:
+                if source != sink:
+                    topology.add_connection(
+                        Connection(
+                            source=source,
+                            sink=sink,
+                            edge=SocketConnection(
+                                sink_multiaddr=Multiaddr(
+                                    address=f"/ip4/{address[sink]}/tcp/52415"
+                                )
+                            ),
+                        )
+                    )
+        return topology
+
+    forward = ring(nodes).get_thunderbolt_bridge_cycles(bridges, network)
+    backward = ring(nodes[::-1]).get_thunderbolt_bridge_cycles(bridges, network)
+
+    assert len(forward) == 5  # three pairs and the ring in each direction
+    assert forward == backward
