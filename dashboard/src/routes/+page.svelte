@@ -3044,6 +3044,7 @@
     partlyDownloaded: boolean;
     alternativeName: string | null;
     alternativeRunning: boolean;
+    autoPicked: boolean;
     resolve: (choice: DownloadChoice) => void;
   } | null>(null);
 
@@ -3051,6 +3052,8 @@
     modelId: string,
     alternativeId: string | null,
     alternativeRunning: boolean,
+    // false when the user picked the model (e.g. a recommendation card)
+    autoPicked = true,
   ): Promise<DownloadChoice> {
     // Only one prompt at a time: an older one counts as cancelled
     if (downloadChoicePrompt) answerDownloadChoice("cancel");
@@ -3076,6 +3079,7 @@
         partlyDownloaded: partPercent > 0,
         alternativeName: alternativeId ? shortName(alternativeId) : null,
         alternativeRunning,
+        autoPicked,
         resolve,
       };
     });
@@ -3292,9 +3296,67 @@
     return false;
   });
 
-  // Handle model selection from ChatModelSelector
-  function handleChatModelSelect(modelId: string, category: string) {
+  // Whether each model is running or on disk, for the New Chat
+  // recommendation cards
+  const chatModelStatus = $derived.by(() => {
+    const status: Record<string, "running" | "downloaded"> = {};
+    for (const model of models) {
+      if (hasRunningInstance(model.id)) status[model.id] = "running";
+      else if (getNodesWithModelDownloaded(downloadsData, model.id).length > 0)
+        status[model.id] = "downloaded";
+    }
+    return status;
+  });
+
+  // Downloads smaller than this start without asking
+  const CONFIRM_CARD_DOWNLOAD_ABOVE_GB = 1;
+
+  // Handle model selection from ChatModelSelector. A card launches its model
+  // in one click, so ask before that starts a large download, offering the
+  // running model (or the best downloaded one) instead.
+  async function handleChatModelSelect(modelId: string, category: string) {
+    const model = models.find((m) => m.id === modelId);
+    const needsDownload =
+      !hasExistingInstance(modelId) &&
+      getNodesWithModelDownloaded(downloadsData, modelId).length === 0 &&
+      (model ? getModelSizeGB(model) : 0) > CONFIRM_CARD_DOWNLOAD_ABOVE_GB;
+    if (needsDownload) {
+      const alternativeId =
+        bestRunningModelId ?? bestDownloadedModelId(modelId);
+      const choice = await askDownloadChoice(
+        modelId,
+        alternativeId,
+        alternativeId !== null && alternativeId === bestRunningModelId,
+        false,
+      );
+      if (choice === "cancel") return;
+      if (choice === "alternative" && alternativeId) {
+        launchModelForChat(alternativeId, category);
+        return;
+      }
+    }
     launchModelForChat(modelId, category);
+  }
+
+  // Best model (by the auto-pick tiers) that's on disk and fits, other than
+  // excludeId
+  function bestDownloadedModelId(excludeId: string): string | null {
+    const downloaded = models
+      .filter(
+        (m) =>
+          m.id !== excludeId &&
+          getNodesWithModelDownloaded(downloadsData, m.id).length > 0,
+      )
+      .map((m) => ({
+        id: m.id,
+        name: m.name ?? "",
+        base_model: m.base_model ?? "",
+        storage_size_megabytes: m.storage_size_megabytes ?? 0,
+        capabilities: m.capabilities ?? [],
+        family: m.family ?? "",
+        quantization: m.quantization ?? "",
+      }));
+    return pickAutoModel(downloaded, availableMemoryGB())?.id ?? null;
   }
 
   // Handle "+ Add Model" from ChatModelSelector
@@ -4925,9 +4987,16 @@
         Download {downloadChoicePrompt.modelName} ({downloadChoicePrompt.sizeLabel})?
       </h3>
       <p class="text-xs text-exo-light-gray/80 mb-5 leading-relaxed">
-        It's the best model that fits, but it isn't {downloadChoicePrompt.partlyDownloaded
-          ? "fully "
-          : ""}downloaded yet. Your message will be sent when it's ready.
+        {#if downloadChoicePrompt.autoPicked}
+          It's the best model that fits, but it isn't {downloadChoicePrompt.partlyDownloaded
+            ? "fully "
+            : ""}downloaded yet. Your message will be sent when it's ready.
+        {:else}
+          It isn't {downloadChoicePrompt.partlyDownloaded
+            ? "fully "
+            : ""}downloaded yet, so you can chat once the download finishes and
+          it has loaded.
+        {/if}
       </p>
       <div class="flex flex-wrap justify-end gap-2">
         <button
@@ -6462,6 +6531,7 @@
                 }))}
                 clusterLabel={chatClusterLabel}
                 totalMemoryGB={availableMemoryGB()}
+                modelStatus={chatModelStatus}
                 onSelect={handleChatModelSelect}
                 onAddModel={handleChatAddModel}
               />
