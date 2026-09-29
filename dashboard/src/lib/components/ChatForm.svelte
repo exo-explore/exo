@@ -222,10 +222,14 @@
   }
 
   // Keep the height right when the text is set from outside (e.g. a draft
-  // the parent puts back after a failed launch)
+  // the parent puts back after a failed launch). An empty box keeps its natural
+  // one-line height: measuring it as it first appears can give the full 150px.
   $effect(() => {
-    void message;
-    handleInput();
+    if (message) {
+      handleInput();
+    } else {
+      resetTextareaHeight();
+    }
   });
 
   function resetTextareaHeight() {
