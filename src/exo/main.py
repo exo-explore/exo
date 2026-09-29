@@ -2,12 +2,15 @@ import argparse
 import multiprocessing as mp
 import os
 import resource
+import shutil
 import signal
 import sys
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Self
 
 import anyio
+from anyio import to_thread
 from anyio.lowlevel import checkpoint as anyio_checkpoint
 from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
 from exo_rs import Pidfile, PidfileError
@@ -22,7 +25,12 @@ from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_zid
-from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_LOG, EXO_PID_FILE
+from exo.shared.constants import (
+    EXO_DEFAULT_MODELS_DIR,
+    EXO_EVENT_LOG_DIR,
+    EXO_LOG,
+    EXO_PID_FILE,
+)
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
@@ -31,6 +39,9 @@ from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
+
+# Where the master used to keep every event of a session; removed when a node starts
+_OLD_MASTER_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "master"
 
 
 @dataclass
@@ -156,6 +167,9 @@ class Node:
         )
 
     async def run(self):
+        await to_thread.run_sync(
+            partial(shutil.rmtree, _OLD_MASTER_EVENT_LOG_DIR, ignore_errors=True)
+        )
         async with self._tg as tg:
             signal.signal(signal.SIGINT, lambda _, __: self.shutdown())
             signal.signal(signal.SIGTERM, lambda _, __: self.shutdown())
