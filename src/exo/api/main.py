@@ -46,6 +46,7 @@ from exo.api.adapters.responses import (
     generate_responses_stream,
     responses_request_to_text_generation,
 )
+from exo.api.collected_response import CollectedResponse
 from exo.api.keepalive import with_sse_keepalive
 from exo.api.types import (
     AddCustomModelParams,
@@ -939,7 +940,7 @@ class API:
                 },
             )
         else:
-            return StreamingResponse(
+            return CollectedResponse(
                 collect_chat_response(
                     command.command_id,
                     self._token_chunk_stream(command.command_id),
@@ -1558,7 +1559,7 @@ class API:
                 },
             )
         else:
-            return StreamingResponse(
+            return CollectedResponse(
                 collect_claude_response(
                     command.command_id,
                     payload.model,
@@ -1595,7 +1596,7 @@ class API:
             )
 
         else:
-            return StreamingResponse(
+            return CollectedResponse(
                 collect_responses_response(
                     command.command_id,
                     payload.model,
@@ -1636,7 +1637,7 @@ class API:
                 },
             )
         else:
-            return StreamingResponse(
+            return CollectedResponse(
                 collect_ollama_chat_response(
                     command.command_id,
                     self._token_chunk_stream(command.command_id),
@@ -1672,7 +1673,7 @@ class API:
                 },
             )
         else:
-            return StreamingResponse(
+            return CollectedResponse(
                 collect_ollama_generate_response(
                     command.command_id,
                     self._token_chunk_stream(command.command_id),
