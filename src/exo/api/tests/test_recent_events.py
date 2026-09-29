@@ -28,7 +28,7 @@ async def test_events_endpoint_returns_the_most_recent_events() -> None:
     await api._apply_state()  # pyright: ignore[reportPrivateUsage]
 
     app = FastAPI()
-    app.get("/events")(api.stream_events)
+    app.get("/events")(api.get_events)
     returned = cast(
         list[dict[str, dict[str, str]]], TestClient(app).get("/events").json()
     )

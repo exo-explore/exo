@@ -51,6 +51,8 @@ struct BugReportService {
         let debugInfo = readDebugInfo()
 
         let stateData = try await fetch(url: baseURL.appendingPathComponent("state"))
+        // The API keeps its recent events in memory; nothing writes them to disk
+        let eventsData = try await fetch(url: baseURL.appendingPathComponent("events"))
 
         // Extract cluster TB bridge status from exo state
         let clusterTbBridgeStatus = extractClusterTbBridgeStatus(from: stateData)
@@ -76,6 +78,7 @@ struct BugReportService {
             })
         uploads.append(contentsOf: [
             ("\(prefix)state.json", stateData),
+            ("\(prefix)events.json", eventsData),
             ("\(prefix)report.json", reportJSON),
         ])
 
@@ -176,7 +179,8 @@ struct BugReportService {
             .appendingPathComponent("event_log")
         var results: [(path: String, data: Data)] = []
 
-        for subdir in ["master", "api"] {
+        // The master's on-disk event log, if it keeps one
+        for subdir in ["master"] {
             let dir = eventLogDir.appendingPathComponent(subdir)
             let contents =
                 (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []

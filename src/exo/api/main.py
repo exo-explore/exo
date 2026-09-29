@@ -18,7 +18,12 @@ import anyio
 from anyio import BrokenResourceError, ClosedResourceError, to_thread
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
@@ -401,7 +406,7 @@ class API:
 
         self.app.get("/state")(self.get_state)
         self.app.get("/state/{path:path}")(self.get_state)
-        self.app.get("/events")(self.stream_events)
+        self.app.get("/events")(self.get_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.post("/download/cancel")(self.cancel_download)
@@ -1015,22 +1020,15 @@ class API:
             )
         return model_id
 
-    def stream_events(self) -> StreamingResponse:
-        def _generate_json_array(events: Iterable[Event]) -> Iterable[str]:
-            yield "["
-            first = True
-            for event in events:
-                if not first:
-                    yield ","
-                first = False
-                yield event.model_dump_json()
-            yield "]"
-
-        return StreamingResponse(
-            # A copy: events keep arriving while the response streams
-            _generate_json_array(list(self._recent_events)),
-            media_type="application/json",
+    async def get_events(self) -> Response:
+        # A copy: events keep arriving while it is serialized
+        events = list(self._recent_events)
+        # Built in one go off the event loop: streaming each event as its own chunk took
+        # over 5 s for 10,000 events on a busy node
+        body = await to_thread.run_sync(
+            lambda: "[" + ",".join(event.model_dump_json() for event in events) + "]"
         )
+        return Response(content=body, media_type="application/json")
 
     async def get_image(self, image_id: str) -> FileResponse:
         stored = self._image_store.get(Id(image_id))
