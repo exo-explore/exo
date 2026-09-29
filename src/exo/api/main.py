@@ -5,7 +5,6 @@ import json
 import random
 import shutil
 import time
-from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 from functools import partial
@@ -55,6 +54,7 @@ from exo.api.adapters.responses import (
     responses_request_to_text_generation,
 )
 from exo.api.keepalive import with_sse_keepalive
+from exo.api.recent_events import RecentEvents
 from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
@@ -185,7 +185,6 @@ from exo.shared.types.commands import (
 from exo.shared.types.common import CommandId, Id, NodeId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
-    Event,
     IndexedEvent,
     InstanceDeleted,
     TracesMerged,
@@ -214,9 +213,6 @@ from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
 
-# GET /events returns this many of the most recent events. Every event, including one per
-# generated token, used to be kept for the whole session, growing ~/.exo/event_log without bound.
-RECENT_EVENTS = 10_000
 # Where that log used to be written; removed when the API starts
 _OLD_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
@@ -259,7 +255,7 @@ class API:
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
-        self._recent_events: deque[Event] = deque(maxlen=RECENT_EVENTS)
+        self._recent_events = RecentEvents()
         self._system_id = SystemId()
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
@@ -308,7 +304,7 @@ class API:
 
     def reset(self, result_clock: int, event_receiver: Receiver[IndexedEvent]):
         logger.info("Resetting API State")
-        self._recent_events = deque(maxlen=RECENT_EVENTS)
+        self._recent_events = RecentEvents()
         self.state = State()
         self._system_id = SystemId()
         self._text_generation_queues = {}
