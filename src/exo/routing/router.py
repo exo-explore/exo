@@ -84,7 +84,16 @@ class TopicRouter[T: FrozenModel]:
         self.senders -= to_clear
 
     async def publish_bytes(self, data: bytes):
-        await self.publish(self.topic.deserialize(data))
+        try:
+            item = self.topic.deserialize(data)
+        except ValueError as error:
+            # A message this node can't read (from a buggy or different version of exo) is
+            # dropped: letting the error out would stop the node's whole receive loop
+            logger.opt(exception=error).error(
+                f"Dropping a message on {self.topic.topic} that couldn't be read: {data[:300]!r}"
+            )
+            return
+        await self.publish(item)
 
     def new_sender(self) -> Sender[T]:
         return self._sender.clone()
