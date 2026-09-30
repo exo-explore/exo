@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import functools
 import hashlib
 import json
 import random
@@ -180,6 +181,7 @@ from exo.shared.types.events import (
     Event,
     IndexedEvent,
     InstanceDeleted,
+    TaskCreated,
     TracesMerged,
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
@@ -209,6 +211,14 @@ from exo.utils.task_group import TaskGroup
 
 _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
+
+
+# How long to wait for the cluster to accept a chat request before sending it again. A busy
+# node can take a while to see a request accepted (up to 18 s on four nodes streaming 800
+# events/s), and resending sooner only adds traffic. After about a minute the request ends
+# with an error instead of waiting forever.
+REQUEST_RESEND_WAITS = (10.0, 15.0, 30.0)
+_NOT_ACCEPTED_MESSAGE = "The cluster didn't accept the request. Please check that the model is running and try again."
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
@@ -1973,7 +1983,12 @@ class API:
                 self.state = apply(self.state, i_event)
                 event = i_event.event
 
+                if isinstance(event, TaskCreated) and isinstance(
+                    event.task, TextGenerationTask
+                ):
+                    self._mark_accepted(event.task.command_id)
                 if isinstance(event, ChunkGenerated):
+                    self._mark_accepted(event.command_id)
                     if queue := self._image_generation_queues.get(
                         event.command_id, None
                     ):
@@ -2039,12 +2054,78 @@ class API:
             if removed > 0:
                 logger.debug(f"Cleaned up {removed} expired images")
 
+    @functools.cached_property
+    def _awaiting_acceptance(self) -> dict[CommandId, anyio.Event]:
+        """Chat requests sent but not yet seen as a task."""
+        return {}
+
+    @functools.cached_property
+    def _request_inputs(self) -> dict[CommandId, list[SendInputChunk]]:
+        """The image chunks sent ahead of chat requests not yet seen as a task."""
+        return {}
+
     async def _send(self, command: Command):
+        await self._forward(command)
+        match command:
+            case SendInputChunk(chunk=chunk):
+                self._request_inputs.setdefault(chunk.command_id, []).append(command)
+            case TextGeneration() if (
+                command.command_id not in self._awaiting_acceptance
+                and self._tg.is_running()
+            ):
+                self._awaiting_acceptance[command.command_id] = anyio.Event()
+                self._tg.start_soon(self._resend_until_accepted, command)
+            case _:
+                pass
+
+    async def _forward(self, command: Command) -> None:
         while self.paused:
             await self.paused_ev.wait()
         await self.command_sender.send(
             ForwarderCommand(origin=self._system_id, command=command)
         )
+
+    async def _resend_until_accepted(self, command: TextGeneration) -> None:
+        """Send a chat request again until the cluster has accepted it.
+
+        A command can be lost on its way to the master: dropped under load, or sent just as
+        the master changed. The request would then wait forever for tokens that never come.
+        The master ignores a command it has already processed, so sending it again can't
+        start the request twice.
+        """
+        command_id = command.command_id
+        accepted = self._awaiting_acceptance[command_id]
+        try:
+            for wait in REQUEST_RESEND_WAITS:
+                with anyio.move_on_after(wait):
+                    await accepted.wait()
+                    return
+                if command_id not in self._text_generation_queues:
+                    return  # the request has already ended
+                logger.warning(
+                    f"Chat request {command_id} not accepted after {wait:.0f}s; sending it again"
+                )
+                for chunk in self._request_inputs.get(command_id, []):
+                    await self._forward(chunk)
+                await self._forward(command)
+            if (queue := self._text_generation_queues.get(command_id)) is not None:
+                logger.warning(
+                    f"Giving up on chat request {command_id}: never accepted"
+                )
+                with contextlib.suppress(BrokenResourceError, ClosedResourceError):
+                    await queue.send(
+                        ErrorChunk(
+                            model=command.task_params.model,
+                            error_message=_NOT_ACCEPTED_MESSAGE,
+                        )
+                    )
+        finally:
+            self._awaiting_acceptance.pop(command_id, None)
+            self._request_inputs.pop(command_id, None)
+
+    def _mark_accepted(self, command_id: CommandId) -> None:
+        if (accepted := self._awaiting_acceptance.get(command_id)) is not None:
+            accepted.set()
 
     async def _send_download(self, command: DownloadCommand):
         await self.download_command_sender.send(
