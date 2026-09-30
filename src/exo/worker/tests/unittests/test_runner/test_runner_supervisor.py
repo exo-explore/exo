@@ -3,6 +3,7 @@ from typing import cast
 import anyio
 import pytest
 
+import exo.worker.runner.supervisor as supervisor_module
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.common import CommandId, NodeId
@@ -14,9 +15,9 @@ from exo.shared.types.text_generation import (
     TextGenerationTaskParams,
 )
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
-from exo.shared.types.worker.runners import RunnerFailed, RunnerId
+from exo.shared.types.worker.runners import RunnerFailed, RunnerId, RunnerRunning
 from exo.utils.async_process import AsyncProcess
-from exo.utils.channels import channel, mp_channel
+from exo.utils.channels import Receiver, channel, mp_channel
 from exo.worker.runner.bootstrap import RunnerTerminationError
 from exo.worker.runner.supervisor import RunnerStdioHandler, RunnerSupervisor
 from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance
@@ -95,3 +96,126 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     event_sender.close()
     with anyio.move_on_after(0.1):
         await event_receiver.aclose()
+
+
+class _AliveProcess:
+    """A runner process that stays alive until it is stopped."""
+
+    def __init__(self):
+        rx1, _ = channel[bytes]()
+        rx2, _ = channel[bytes]()
+        self.stdout = rx1
+        self.stderr = rx2
+        self.exitcode: int | None = None
+
+    def is_alive(self) -> bool:
+        return self.exitcode is None
+
+    async def stop(self) -> None:
+        self.exitcode = -15
+
+
+async def generating_supervisor(
+    rank: int,
+) -> tuple[RunnerSupervisor, _AliveProcess, Receiver[Event]]:
+    event_sender, event_receiver = channel[Event]()
+    task_sender, _ = mp_channel[Task]()
+    cancel_sender, _ = mp_channel[TaskId]()
+    _, ev_recv = mp_channel[Event | RunnerTerminationError]()
+    bound_instance: BoundInstance = get_bound_mlx_ring_instance(
+        instance_id=InstanceId("instance-s"),
+        model_id=ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit"),
+        runner_id=RunnerId("runner-s"),
+        node_id=NodeId("node-s"),
+    )
+    if rank != 0:
+        bound_instance = BoundInstance(
+            instance=bound_instance.instance,
+            bound_runner_id=RunnerId("other_runner"),
+            bound_node_id=NodeId("other_node"),
+        )
+    process = _AliveProcess()
+    proc = cast(AsyncProcess, cast(object, process))
+    handler = await RunnerStdioHandler.create(
+        stdout_rx=proc.stdout, stderr_rx=proc.stderr
+    )
+    supervisor = RunnerSupervisor(
+        shard_metadata=bound_instance.bound_shard,
+        bound_instance=bound_instance,
+        runner_process=proc,
+        _runner_stdio_handler=handler,
+        initialize_timeout=400,
+        _ev_recv=ev_recv,
+        _task_sender=task_sender,
+        _event_sender=event_sender,
+        _cancel_sender=cancel_sender,
+    )
+    supervisor.shutdown = lambda: None
+    supervisor.status = RunnerRunning()
+    task = TextGeneration(
+        task_id=TaskId("task-s"),
+        instance_id=bound_instance.instance.instance_id,
+        command_id=CommandId("cmd-s"),
+        task_params=TextGenerationTaskParams(
+            model=bound_instance.bound_shard.model_card.model_id,
+            input=[InputMessage(role="user", content=InputMessageContent("hi"))],
+        ),
+    )
+    supervisor.in_progress[task.task_id] = task
+    return supervisor, process, event_receiver
+
+
+@pytest.mark.anyio
+async def test_a_first_rank_runner_silent_mid_generation_is_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(supervisor_module, "RUNNER_WATCH_INTERVAL", 0.01)
+    monkeypatch.setattr(supervisor_module, "RUNNER_STALL_TIMEOUT", 0.05)
+    supervisor, process, events = await generating_supervisor(rank=0)
+
+    with anyio.fail_after(2):
+        await supervisor._watch_runner()  # pyright: ignore[reportPrivateUsage]
+        chunk = await events.receive()
+        status = await events.receive()
+
+    assert not process.is_alive()
+    assert isinstance(chunk, ChunkGenerated)
+    assert isinstance(chunk.chunk, ErrorChunk)
+    assert isinstance(status, RunnerStatusUpdated)
+    assert isinstance(status.runner_status, RunnerFailed)
+
+
+@pytest.mark.anyio
+async def test_a_runner_that_keeps_reporting_is_left_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(supervisor_module, "RUNNER_WATCH_INTERVAL", 0.01)
+    monkeypatch.setattr(supervisor_module, "RUNNER_STALL_TIMEOUT", 0.05)
+    supervisor, process, _ = await generating_supervisor(rank=0)
+
+    async def keep_reporting() -> None:
+        while True:
+            supervisor._last_heard = anyio.current_time()  # pyright: ignore[reportPrivateUsage]
+            await anyio.sleep(0.01)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(keep_reporting)
+        with anyio.move_on_after(0.3):
+            await supervisor._watch_runner()  # pyright: ignore[reportPrivateUsage]
+        tg.cancel_scope.cancel()
+
+    assert process.is_alive()
+
+
+@pytest.mark.anyio
+async def test_other_ranks_are_not_judged_by_their_silence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(supervisor_module, "RUNNER_WATCH_INTERVAL", 0.01)
+    monkeypatch.setattr(supervisor_module, "RUNNER_STALL_TIMEOUT", 0.05)
+    supervisor, process, _ = await generating_supervisor(rank=1)
+
+    with anyio.move_on_after(0.3):
+        await supervisor._watch_runner()  # pyright: ignore[reportPrivateUsage]
+
+    assert process.is_alive()
