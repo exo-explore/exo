@@ -17,6 +17,8 @@ from exo.routing.event_router import (
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
+from exo.shared.models.model_cards import ModelId
+from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.commands import (
     AddCustomModelCard,
     CreateInstance,
@@ -38,6 +40,7 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
+    ChunkGenerated,
     CustomModelCardAdded,
     CustomModelCardDeleted,
     Event,
@@ -117,6 +120,15 @@ def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str |
                 continue
             return f"{ip}:{port}"
     return None
+
+
+class NoInstanceForModelError(Exception):
+    """A request for a model with no running instance, such as one deleted after the API checked
+    for it. The request is ended with this error: dropping it would leave it open forever."""
+
+    def __init__(self, model: str):
+        super().__init__(f"No instance found for model {model}")
+        self.model = ModelId(model)
 
 
 class Master:
@@ -209,9 +221,7 @@ class Master:
 
                             # there are no NON-prefill-only instances matching this model ID
                             if not instance_task_counts:
-                                raise ValueError(
-                                    f"No instance found for model {command.task_params.model}"
-                                )
+                                raise NoInstanceForModelError(command.task_params.model)
 
                             available_instance_ids = sorted(
                                 instance_task_counts.keys(),
@@ -260,9 +270,7 @@ class Master:
                                     )
 
                             if not instance_task_counts:
-                                raise ValueError(
-                                    f"No instance found for model {command.task_params.model}"
-                                )
+                                raise NoInstanceForModelError(command.task_params.model)
 
                             available_instance_ids = sorted(
                                 instance_task_counts.keys(),
@@ -316,9 +324,7 @@ class Master:
                                     )
 
                             if not instance_task_counts:
-                                raise ValueError(
-                                    f"No instance found for model {command.task_params.model}"
-                                )
+                                raise NoInstanceForModelError(command.task_params.model)
 
                             available_instance_ids = sorted(
                                 instance_task_counts.keys(),
@@ -464,6 +470,17 @@ class Master:
                                 )
                     for event in generated_events:
                         await self.event_sender.send(event)
+                except NoInstanceForModelError as error:
+                    command_id = forwarder_command.command.command_id
+                    logger.warning(f"Ending request {command_id}: {error}")
+                    await self.event_sender.send(
+                        ChunkGenerated(
+                            command_id=command_id,
+                            chunk=ErrorChunk(
+                                model=error.model, error_message=str(error)
+                            ),
+                        )
+                    )
                 except Exception as e:
                     logger.opt(exception=e).warning("Error in command processor")
 
