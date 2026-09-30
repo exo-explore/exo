@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import mlx.core as mx
 import numpy as np
+import numpy.typing as npt
 import psutil
 from mlx_lm.models.cache import (
     ArraysCache,
@@ -536,14 +537,22 @@ def cache_length(cache: KVCacheType) -> int:
 
 
 def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
-    """Find the length of the common prefix between two token arrays."""
+    """Find the length of the common prefix between two token arrays.
+
+    Compared on the CPU: the token ids are small and already evaluated, while a comparison
+    on the GPU waits for all the work queued ahead of it (the running batch's decode steps),
+    once for every cached prompt a new request is checked against.
+    """
     n = min(int(prompt.shape[0]), int(cached_prompt.shape[0]))
     if n == 0:
         return 0
 
-    equal = mx.equal(prompt[:n], cached_prompt[:n]).astype(mx.int32)
-    prefix_mask = mx.cumprod(equal)  # stays 1 until first mismatch, then 0 forever
-    return int(mx.sum(prefix_mask).item())
+    tokens: npt.NDArray[np.int64] = np.asarray(prompt, dtype=np.int64)[:n]
+    cached: npt.NDArray[np.int64] = np.asarray(cached_prompt, dtype=np.int64)[:n]
+    different: npt.NDArray[np.bool_] = np.not_equal(tokens, cached)
+    if different.any():
+        return int(np.argmax(different))
+    return n
 
 
 def get_available_memory() -> Memory:
