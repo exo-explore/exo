@@ -213,9 +213,11 @@ _API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
 
 
-# How long to wait for the cluster to accept a chat request before sending it again: about
-# a minute in all, after which the request ends with an error instead of waiting forever
-REQUEST_RESEND_WAITS = (3.0, 5.0, 10.0, 15.0, 30.0)
+# How long to wait for the cluster to accept a chat request before sending it again. A busy
+# node can take a while to see a request accepted (up to 18 s on four nodes streaming 800
+# events/s), and resending sooner only adds traffic. After about a minute the request ends
+# with an error instead of waiting forever.
+REQUEST_RESEND_WAITS = (10.0, 15.0, 30.0)
 _NOT_ACCEPTED_MESSAGE = "The cluster didn't accept the request. Please check that the model is running and try again."
 
 
