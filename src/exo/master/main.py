@@ -177,14 +177,22 @@ class Master:
 
     def _first_time(self, command_id: CommandId) -> bool:
         """Whether this command hasn't been processed yet. The API sends a chat request again
-        if it doesn't see it accepted, so the same command can arrive more than once."""
-        if command_id in self._processed_commands:
+        if it doesn't see it accepted, so the same command can arrive more than once. A new
+        master doesn't know what the old one processed, but a request it accepted is a task."""
+        if command_id in self._processed_commands or self._has_task_for(command_id):
             return False
         self._processed_commands.add(command_id)
         self._processed_order.append(command_id)
         if len(self._processed_order) > PROCESSED_COMMANDS_KEPT:
             self._processed_commands.discard(self._processed_order.popleft())
         return True
+
+    def _has_task_for(self, command_id: CommandId) -> bool:
+        return any(
+            isinstance(task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask))
+            and task.command_id == command_id
+            for task in self.state.tasks.values()
+        )
 
     async def _command_processor(self) -> None:
         with self.command_receiver as commands:
