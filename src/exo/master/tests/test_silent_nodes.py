@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import exo.master.main as master_main
-from exo.master.main import NODE_SILENCE_TIMEOUT, Master
+from exo.master.main import NODE_SILENCE_TIMEOUT, RECONNECT_ALLOWANCE, Master
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
@@ -174,8 +174,10 @@ async def test_a_node_still_silent_a_full_timeout_after_the_master_recovered_is_
     await check(master)
     assert removals(events) == []
 
-    # A full timeout of listening later, it still hasn't reported
-    master._listening_since -= NODE_SILENCE_TIMEOUT.total_seconds() + 1  # pyright: ignore[reportPrivateUsage]
+    # Time to reconnect and a full timeout of listening later, it still hasn't reported
+    master._listening_since -= (  # pyright: ignore[reportPrivateUsage]
+        (RECONNECT_ALLOWANCE + NODE_SILENCE_TIMEOUT).total_seconds() + 1
+    )
     await check(master)
 
     assert [kind for kind, _ in removals(events)] == ["node", "instance"]

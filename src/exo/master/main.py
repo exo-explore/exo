@@ -89,8 +89,10 @@ PLAN_INTERVAL = 1.0
 # How long to wait for a removal to be applied before sending it again
 REMOVAL_RESEND_INTERVAL = 5.0
 # A check this late means the master itself was stalled (frozen, asleep or overloaded) and
-# couldn't hear anyone, so nodes get a full NODE_SILENCE_TIMEOUT to report again
+# couldn't hear anyone. Nodes then get time to reconnect (discovery holds off for a while
+# after a stall) and a full NODE_SILENCE_TIMEOUT to report again before any is removed.
 MASTER_STALL = 5.0
+RECONNECT_ALLOWANCE = timedelta(seconds=15)
 
 
 def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
@@ -500,7 +502,7 @@ class Master:
                 f"Master was unresponsive for {check - self._last_check:.0f}s; "
                 "giving nodes time to report before removing any"
             )
-            self._listening_since = check
+            self._listening_since = check + RECONNECT_ALLOWANCE.total_seconds()
         self._last_check = check
         # A node is silent only if the master was listening and didn't hear from it
         listened = timedelta(seconds=check - self._listening_since)
