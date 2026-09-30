@@ -88,6 +88,9 @@ NODE_SILENCE_TIMEOUT = timedelta(seconds=15)
 PLAN_INTERVAL = 1.0
 # How long to wait for a removal to be applied before sending it again
 REMOVAL_RESEND_INTERVAL = 5.0
+# A check this late means the master itself was stalled (frozen, asleep or overloaded) and
+# couldn't hear anyone, so nodes get a full NODE_SILENCE_TIMEOUT to report again
+MASTER_STALL = 5.0
 
 
 def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
@@ -159,6 +162,9 @@ class Master:
         # When a removal was last sent, for nodes and instances not yet removed from the state
         self._removing_nodes: dict[NodeId, float] = {}
         self._deleting_instances: dict[InstanceId, float] = {}
+        # Since when the master has been able to hear nodes, and when it last checked on them
+        self._listening_since = time.monotonic()
+        self._last_check: float | None = None
         self._expected_ranks: dict[TaskId, set[int]] = {}
 
     async def run(self):
@@ -488,11 +494,21 @@ class Master:
             await anyio.sleep(PLAN_INTERVAL)
 
     async def _remove_silent_nodes_and_broken_instances(self) -> None:
+        check = time.monotonic()
+        if self._last_check is not None and check - self._last_check > MASTER_STALL:
+            logger.warning(
+                f"Master was unresponsive for {check - self._last_check:.0f}s; "
+                "giving nodes time to report before removing any"
+            )
+            self._listening_since = check
+        self._last_check = check
+        # A node is silent only if the master was listening and didn't hear from it
+        listened = timedelta(seconds=check - self._listening_since)
         now = datetime.now(tz=timezone.utc)
         silent = {
             node_id: now - seen
             for node_id, seen in self.state.last_seen.items()
-            if now - seen > NODE_SILENCE_TIMEOUT
+            if min(now - seen, listened) > NODE_SILENCE_TIMEOUT
         }
         for node_id, silence in silent.items():
             if self._resend_due(self._removing_nodes, node_id):

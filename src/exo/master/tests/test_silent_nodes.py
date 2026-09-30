@@ -1,5 +1,6 @@
 """The master removes nodes it hasn't heard from, and the instances they were part of, promptly."""
 
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -70,6 +71,9 @@ def master_with(
     master.event_sender, events = channel[Event]()
     master._removing_nodes = {}  # pyright: ignore[reportPrivateUsage]
     master._deleting_instances = {}  # pyright: ignore[reportPrivateUsage]
+    # Listening for long enough, and checking every second
+    master._listening_since = time.monotonic() - 3600  # pyright: ignore[reportPrivateUsage]
+    master._last_check = None  # pyright: ignore[reportPrivateUsage]
     return master, events
 
 
@@ -146,3 +150,32 @@ async def test_a_removal_that_was_never_applied_is_sent_again(
     await check(master)
 
     assert removals(events) == [("node", SILENT)]
+
+
+async def test_nodes_are_not_blamed_for_the_master_being_stalled() -> None:
+    master, events = master_with(
+        {SILENT: ago(NODE_SILENCE_TIMEOUT + timedelta(seconds=5))}, instance_on(SILENT)
+    )
+    # The master's previous check was 20 s ago: it was frozen, so it heard nobody
+    master._last_check = time.monotonic() - 20  # pyright: ignore[reportPrivateUsage]
+
+    await check(master)
+
+    assert removals(events) == []
+
+
+async def test_a_node_still_silent_a_full_timeout_after_the_master_recovered_is_removed() -> (
+    None
+):
+    master, events = master_with(
+        {SILENT: ago(NODE_SILENCE_TIMEOUT * 3)}, instance_on(SILENT)
+    )
+    master._last_check = time.monotonic() - 20  # pyright: ignore[reportPrivateUsage]
+    await check(master)
+    assert removals(events) == []
+
+    # A full timeout of listening later, it still hasn't reported
+    master._listening_since -= NODE_SILENCE_TIMEOUT.total_seconds() + 1  # pyright: ignore[reportPrivateUsage]
+    await check(master)
+
+    assert [kind for kind, _ in removals(events)] == ["node", "instance"]
