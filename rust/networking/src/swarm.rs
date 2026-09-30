@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures_lite::Stream;
 use tokio::sync::mpsc;
@@ -32,6 +34,11 @@ pub enum ToSwarm {
         result_sender: oneshot::Sender<Result<()>>,
     },
 }
+/// Messages received from the network wait here until exo reads them, and are dropped if it is
+/// full (retries recover them, seconds later). It has to absorb the pauses of a busy node: at the
+/// ~1,000 events/s of a loaded cluster this is about 15 s of messages.
+const INCOMING_MESSAGE_CAPACITY: usize = 16_384;
+
 #[derive(Debug)]
 pub enum FromSwarm {
     Message { topic: String, data: Vec<u8> },
@@ -53,7 +60,7 @@ impl Swarm {
         } = self;
         let stream = async_stream::stream! {
             let mut session = session;
-            let (mut to_topics, mut from_topics) = mpsc::channel(1024);
+            let (mut to_topics, mut from_topics) = mpsc::channel(INCOMING_MESSAGE_CAPACITY);
             let mut topics = Topics::new();
             let Ok((_token, discovery)) = register_liveness(&mut session.z).await else { return; };
             loop {
@@ -167,14 +174,25 @@ async fn on_message(
                 .callback({
                     let sender = to_topics.clone();
                     let topic = topic.clone();
+                    let dropped = Arc::new(AtomicU64::new(0));
                     move |sample| {
                         if sample.kind() != SampleKind::Put {
                             return;
                         }
-                        _ = sender.try_send(FromSwarm::Message {
+                        let message = FromSwarm::Message {
                             topic: topic.clone(),
                             data: sample.payload().to_bytes().to_vec(),
-                        });
+                        };
+                        if let Err(mpsc::error::TrySendError::Full(_)) = sender.try_send(message) {
+                            // Logged at the 1st, 2nd, 4th, 8th... drop, so a flood shows without
+                            // flooding the log
+                            let total = dropped.fetch_add(1, Ordering::Relaxed) + 1;
+                            if total.is_power_of_two() {
+                                log::warn!(
+                                    "dropped {total} incoming messages on topics/{topic} so far: exo isn't reading them fast enough"
+                                );
+                            }
+                        }
                     }
                 })
                 .await;
