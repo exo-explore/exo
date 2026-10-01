@@ -8,7 +8,11 @@ import loguru
 
 from exo.shared.types.events import Event
 from exo.shared.types.tasks import Task, TaskId
-from exo.shared.types.worker.instances import BoundInstance
+from exo.shared.types.worker.instances import (
+    BoundInstance,
+    Instance,
+    MlxJacclInstance,
+)
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.engines.base import Builder
 
@@ -37,6 +41,22 @@ class RunnerTerminationError:
         return f"{self.exception_type}: {self.exception_message}\n{self.traceback}"
 
 
+def use_fast_synch(instance: Instance, override: str | None) -> bool:
+    """Whether MLX should synchronise its CPU and GPU work by spinning on shared memory.
+
+    It saves latency on every hand-over between the GPU and the CPU, which an RDMA
+    (JACCL) instance makes for each collective. Over the TCP ring it makes no measurable
+    difference to a model's speed, and it breaks down when two runners share a Mac's GPU:
+    both models slow to a crawl, the ring fails with EFAULT, or the GPU deadlocks.
+    `--fast-synch` / `--no-fast-synch` (EXO_FAST_SYNCH) override the choice.
+    """
+    if override == "true":
+        return True
+    if override == "false":
+        return False
+    return isinstance(instance, MlxJacclInstance)
+
+
 def entrypoint(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event | RunnerTerminationError],
@@ -50,11 +70,10 @@ def entrypoint(
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
-    fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
-    if fast_synch_override == "false":
-        os.environ["MLX_METAL_FAST_SYNCH"] = "0"
-    else:
-        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+    fast_synch = use_fast_synch(
+        bound_instance.instance, os.environ.get("EXO_FAST_SYNCH")
+    )
+    os.environ["MLX_METAL_FAST_SYNCH"] = "1" if fast_synch else "0"
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 
