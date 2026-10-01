@@ -4,7 +4,7 @@ import hashlib
 import json
 import random
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
+from collections.abc import AsyncGenerator, Iterable
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
@@ -48,6 +48,7 @@ from exo.api.adapters.responses import (
 )
 from exo.api.collected_response import CollectedResponse
 from exo.api.keepalive import with_sse_keepalive
+from exo.api.request_logger import RequestLogger
 from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
@@ -265,13 +266,7 @@ class API:
 
         self.app = FastAPI()
 
-        @self.app.middleware("http")
-        async def _log_requests(  # pyright: ignore[reportUnusedFunction]
-            request: Request,
-            call_next: Callable[[Request], Awaitable[StreamingResponse]],
-        ) -> StreamingResponse:
-            logger.debug(f"API request: {request.method} {request.url.path}")
-            return await call_next(request)
+        self.app.add_middleware(RequestLogger)
 
         self._setup_exception_handlers()
         self._setup_cors()
