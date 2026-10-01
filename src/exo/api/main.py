@@ -310,6 +310,18 @@ class API:
         self._tg.start_soon(self._apply_state)
         self._sent_image_hashes = set()
 
+    def follow_new_master(self, result_clock: int) -> None:
+        """Carry on under a new master that took over the cluster's state: keep ours until
+        its snapshot replaces it, so the running models stay usable, but end the requests
+        in flight, whose output the old master was routing."""
+        logger.info("Following a new master")
+        self._system_id = SystemId()
+        self._shutdown_queues(self._text_generation_queues)
+        self._shutdown_queues(self._image_generation_queues)
+        self._text_generation_queues = {}
+        self._image_generation_queues = {}
+        self.unpause(result_clock)
+
     def unpause(self, result_clock: int):
         logger.info("Unpausing API")
         self.last_completed_election = result_clock
