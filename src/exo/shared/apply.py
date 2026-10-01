@@ -222,6 +222,18 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
     new_instances: Mapping[InstanceId, Instance] = {
         iid: inst for iid, inst in state.instances.items() if iid != event.instance_id
     }
+    # The instance's runners go with it: a runner being shut down rarely gets to report
+    # that it has, and one on a node that died never will
+    deleted = state.instances.get(event.instance_id)
+    gone: set[RunnerId] = (
+        set(deleted.shard_assignments.runner_to_shard) if deleted is not None else set()
+    )
+    new_runners: Mapping[RunnerId, RunnerStatus] = {
+        rid: rs for rid, rs in state.runners.items() if rid not in gone
+    }
+    new_ports: Mapping[RunnerId, int] = {
+        rid: p for rid, p in state.prefill_server_ports.items() if rid not in gone
+    }
     new_links: dict[InstanceLinkId, InstanceLink] = {}
     for link_id, link in state.instance_links.items():
         prefill = [i for i in link.prefill_instances if i != event.instance_id]
@@ -237,7 +249,12 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
                 update={"prefill_instances": prefill, "decode_instances": decode}
             )
     return state.model_copy(
-        update={"instances": new_instances, "instance_links": new_links}
+        update={
+            "instances": new_instances,
+            "instance_links": new_links,
+            "runners": new_runners,
+            "prefill_server_ports": new_ports,
+        }
     )
 
 
@@ -269,6 +286,13 @@ def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> Sta
         return state.model_copy(
             update={"runners": new_runners, "prefill_server_ports": new_ports}
         )
+    if not any(
+        event.runner_id in instance.shard_assignments.runner_to_shard
+        for instance in state.instances.values()
+    ):
+        # A runner of an instance that has been deleted, reporting as it shuts down: the
+        # state only keeps the runners of the instances it has
+        return state
     new_runners = {
         **state.runners,
         event.runner_id: event.runner_status,
