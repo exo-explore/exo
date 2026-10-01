@@ -491,7 +491,7 @@ class Args(FrozenModel):
             action="store_true",
             dest="fast_synch",
             default=None,
-            help="Force MLX FAST_SYNCH on (for JACCL backend)",
+            help="Force MLX FAST_SYNCH on (by default only RDMA/JACCL instances use it)",
         )
         fast_synch_group.add_argument(
             "--no-fast-synch",
