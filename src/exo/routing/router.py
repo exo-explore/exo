@@ -129,7 +129,7 @@ class Router:
         router = TopicRouter[T](topic, send)
         self.topic_routers[topic.topic] = cast(TopicRouter[FrozenModel], router)
         if self._tg.is_running():
-            await self._networking_subscribe(topic.topic)
+            await self._networking_subscribe(topic)
 
     def sender[T: FrozenModel](self, topic: TypedTopic[T]) -> Sender[T]:
         router = self.topic_routers.get(topic.topic, None)
@@ -162,8 +162,8 @@ class Router:
                 tg.start_soon(self._networking_recv)
                 tg.start_soon(self._networking_publish)
                 # subscribe to pending topics
-                for topic in self.topic_routers:
-                    await self._networking_subscribe(topic)
+                for router in self.topic_routers.values():
+                    await self._networking_subscribe(router.topic)
                 # Router only shuts down if you cancel it.
                 await sleep_forever()
         finally:
@@ -175,9 +175,11 @@ class Router:
         logger.debug("Shutting down Router")
         self._tg.cancel_tasks()
 
-    async def _networking_subscribe(self, topic: str):
-        await self._net.gossipsub_subscribe(topic)
-        logger.info(f"Subscribed to {topic}")
+    async def _networking_subscribe[T: FrozenModel](self, topic: TypedTopic[T]):
+        await self._net.gossipsub_subscribe(
+            topic.topic, high_priority=topic.high_priority
+        )
+        logger.info(f"Subscribed to {topic.topic}")
 
     async def _networking_unsubscribe(self, topic: str):
         await self._net.gossipsub_unsubscribe(topic)
