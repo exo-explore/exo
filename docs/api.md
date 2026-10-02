@@ -41,7 +41,7 @@ JSON object describing topology, nodes, and instances.
 
 **GET** `/events`
 
-Returns the internal events this node has applied in the current session (mainly for debugging and observability). A node that joined late, or fell far behind, catches up from a state snapshot, so it only has the events after that point.
+Returns the most recent internal events this node has applied, up to 10,000 of them (mainly for debugging and observability). Every generated token is an event, so under load this covers the last few seconds to minutes. A node that joined late, or fell far behind, catches up from a state snapshot, so it only has the events after that point.
 
 **Response:**
 Array of event objects.

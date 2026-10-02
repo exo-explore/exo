@@ -3,19 +3,26 @@ import contextlib
 import hashlib
 import json
 import random
+import shutil
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from datetime import datetime, timezone
+from functools import partial
 from http import HTTPStatus
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import anyio
-from anyio import BrokenResourceError, ClosedResourceError
+from anyio import BrokenResourceError, ClosedResourceError, to_thread
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
@@ -47,6 +54,7 @@ from exo.api.adapters.responses import (
     responses_request_to_text_generation,
 )
 from exo.api.keepalive import with_sse_keepalive
+from exo.api.recent_events import RecentEvents
 from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
@@ -178,7 +186,6 @@ from exo.shared.types.commands import (
 from exo.shared.types.common import CommandId, Id, NodeId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
-    Event,
     InstanceDeleted,
     StateSnapshot,
     TracesMerged,
@@ -204,11 +211,11 @@ from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
-from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
 
-_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
+# Where that log used to be written; removed when the API starts
+_OLD_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
 
 
@@ -249,7 +256,7 @@ class API:
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
-        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
+        self._recent_events = RecentEvents()
         self._system_id = SystemId()
         self.command_sender = command_sender
         self.download_command_sender = download_command_sender
@@ -297,8 +304,7 @@ class API:
 
     def reset(self, result_clock: int, event_receiver: NodeEventReceiver):
         logger.info("Resetting API State")
-        self._event_log.close()
-        self._event_log = DiskEventLog(_API_EVENT_LOG_DIR)
+        self._recent_events = RecentEvents()
         self.state = State()
         self._system_id = SystemId()
         self._text_generation_queues = {}
@@ -407,7 +413,7 @@ class API:
 
         self.app.get("/state")(self.get_state)
         self.app.get("/state/{path:path}")(self.get_state)
-        self.app.get("/events")(self.stream_events)
+        self.app.get("/events")(self.get_events)
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.post("/download/cancel")(self.cancel_download)
@@ -1014,21 +1020,15 @@ class API:
             )
         return model_id
 
-    def stream_events(self) -> StreamingResponse:
-        def _generate_json_array(events: Iterable[Event]) -> Iterable[str]:
-            yield "["
-            first = True
-            for event in events:
-                if not first:
-                    yield ","
-                first = False
-                yield event.model_dump_json()
-            yield "]"
-
-        return StreamingResponse(
-            _generate_json_array(self._event_log.read_all()),
-            media_type="application/json",
+    async def get_events(self) -> Response:
+        # A copy: events keep arriving while it is serialized
+        events = list(self._recent_events)
+        # Built in one go off the event loop: streaming each event as its own chunk took
+        # over 5 s for 10,000 events on a busy node
+        body = await to_thread.run_sync(
+            lambda: "[" + ",".join(event.model_dump_json() for event in events) + "]"
         )
+        return Response(content=body, media_type="application/json")
 
     async def get_image(self, image_id: str) -> FileResponse:
         stored = self._image_store.get(Id(image_id))
@@ -1917,6 +1917,9 @@ class API:
         try:
             async with self._tg as tg:
                 logger.info("Starting API")
+                await to_thread.run_sync(
+                    partial(shutil.rmtree, _OLD_API_EVENT_LOG_DIR, ignore_errors=True)
+                )
                 tg.start_soon(self._apply_state)
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)
@@ -1932,7 +1935,6 @@ class API:
 
                         shutdown_ev.set()
         finally:
-            self._event_log.close()
             self.command_sender.close()
             self.event_receiver.close()
 
@@ -1976,7 +1978,7 @@ class API:
                 if isinstance(i_event, StateSnapshot):
                     self._apply_snapshot(i_event)
                     continue
-                self._event_log.append(i_event.event)
+                self._recent_events.append(i_event.event)
                 self.state = apply(self.state, i_event)
                 event = i_event.event
 
