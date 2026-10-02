@@ -2,12 +2,13 @@
 """Tests that ErrorChunks for image commands reach the image stream consumer."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import anyio
 from fastapi import Request
 
 from exo.api.main import API
+from exo.api.recent_events import RecentEvents
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.commands import ForwarderCommand
 from exo.shared.types.common import CommandId, ModelId, SystemId
@@ -19,9 +20,10 @@ from exo.utils.channels import channel
 def _make_api() -> API:
     api = object.__new__(API)
     api.state = State()
-    api._event_log = MagicMock()  # pyright: ignore[reportPrivateUsage]
+    api._recent_events = RecentEvents()  # pyright: ignore[reportPrivateUsage]
     api._text_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
     api._image_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
+    api._cancelled_command_ids = set()  # pyright: ignore[reportPrivateUsage]
     api._send = AsyncMock()  # pyright: ignore[reportPrivateUsage]
     api._system_id = SystemId()  # pyright: ignore[reportPrivateUsage]
     api.command_sender, _ = channel[ForwarderCommand]()

@@ -61,8 +61,6 @@ def plan_with(runner: FakeRunnerSupervisor, tasks: dict[TaskId, TextGeneration])
         instances={INSTANCE_1_ID: INSTANCE},
         all_runners={RUNNER_1_ID: RunnerReady(), RUNNER_2_ID: RunnerReady()},
         tasks=tasks,
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )

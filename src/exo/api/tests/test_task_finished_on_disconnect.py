@@ -9,8 +9,18 @@ import pytest
 from fastapi import Request
 
 from exo.api.main import API
-from exo.shared.types.commands import ForwarderCommand, TaskCancelled, TaskFinished
-from exo.shared.types.common import CommandId, SystemId
+from exo.shared.types.commands import (
+    ForwarderCommand,
+    TaskCancelled,
+    TaskFinished,
+    TextGeneration,
+)
+from exo.shared.types.common import CommandId, ModelId, SystemId
+from exo.shared.types.text_generation import (
+    InputMessage,
+    InputMessageContent,
+    TextGenerationTaskParams,
+)
 from exo.utils.channels import Receiver, channel
 
 
@@ -20,12 +30,20 @@ def _make_api() -> tuple[API, Receiver[ForwarderCommand]]:
     api._system_id = SystemId()  # pyright: ignore[reportPrivateUsage]
     api._text_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
     api._image_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
+    api._cancelled_command_ids = set()  # pyright: ignore[reportPrivateUsage]
     api.command_sender, command_receiver = channel[ForwarderCommand]()
     return api, command_receiver
 
 
 async def _stream_text(api: API, command_id: CommandId) -> None:
-    async for _ in api._token_chunk_stream(command_id):  # pyright: ignore[reportPrivateUsage]
+    text_generation = TextGeneration(
+        command_id=command_id,
+        task_params=TextGenerationTaskParams(
+            model=ModelId("test-model"),
+            input=[InputMessage(role="user", content=InputMessageContent("hello"))],
+        ),
+    )
+    async for _ in api._token_chunk_stream(text_generation):  # pyright: ignore[reportPrivateUsage]
         pass
 
 

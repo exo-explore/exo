@@ -4,16 +4,15 @@ hanging or silently truncating, when their stream is closed before the
 generation finished (instance deleted, node dropped, or master changed)."""
 
 import json
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import anyio
 import pytest
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-import exo.api.main as api_main
 from exo.api.main import API
+from exo.api.recent_events import RecentEvents
 from exo.api.types import (
     ChatCompletionMessage,
     ChatCompletionRequest,
@@ -204,14 +203,11 @@ async def test_image_collect_fails_when_instance_is_deleted() -> None:
             _delete_instance(api, _image_task(command_id))
 
 
-async def test_reset_ends_in_flight_streams_with_error(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+async def test_reset_ends_in_flight_streams_with_error() -> None:
     """A master change resets the API; requests in flight must end with an
     error instead of hanging forever."""
-    monkeypatch.setattr(api_main, "_API_EVENT_LOG_DIR", tmp_path)
     api, _commands = _make_api()
-    api._event_log = MagicMock()  # pyright: ignore[reportPrivateUsage]
+    api._recent_events = RecentEvents()  # pyright: ignore[reportPrivateUsage]
     api.paused_ev = anyio.Event()
     api.last_completed_election = 0
     _old_events, api.event_receiver = channel[IndexedEvent]()
@@ -226,7 +222,6 @@ async def test_reset_ends_in_flight_streams_with_error(
             new_events, new_event_receiver = channel[IndexedEvent]()
             api.reset(result_clock=1, event_receiver=new_event_receiver)
             new_events.close()
-    api._event_log.close()  # pyright: ignore[reportPrivateUsage]
 
     assert events[-1:] == [_DONE_EVENT]
     assert _error_message(events[-2]) == _INTERRUPTED_MESSAGE

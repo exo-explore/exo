@@ -26,6 +26,7 @@ from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
     LocalForwarderEvent,
+    StateSnapshot,
 )
 from exo.shared.types.text_generation import (
     InputMessage,
@@ -66,6 +67,7 @@ async def test_a_request_for_a_model_with_no_instance_ends_with_an_error(
         event_sender=event_sender,
         local_event_receiver=channel[LocalForwarderEvent]()[1],
         global_event_sender=channel[GlobalForwarderEvent]()[0],
+        snapshot_sender=channel[StateSnapshot]()[0],
         download_command_sender=channel[ForwarderDownloadCommand]()[0],
     )
 
