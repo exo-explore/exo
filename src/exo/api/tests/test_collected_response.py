@@ -6,10 +6,11 @@ from typing import cast
 import anyio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from starlette.types import Message
+from starlette.types import Message, Scope
 
 from exo.api.adapters.chat_completions import collect_chat_response
 from exo.api.collected_response import CollectedResponse
+from exo.api.request_logger import RequestLogger
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -107,3 +108,51 @@ async def test_client_disconnect_cancels_the_generation() -> None:
         await cancelled.wait()
 
     assert sent == []
+
+
+async def test_a_client_that_gives_up_is_not_an_api_error() -> None:
+    # Behind the API's request logging, as every route is
+    cancelled = anyio.Event()
+
+    async def endless() -> AsyncIterator[str]:
+        try:
+            await anyio.sleep_forever()
+            yield ""
+        finally:
+            cancelled.set()
+
+    app = FastAPI()
+    app.add_middleware(RequestLogger)
+    app.post("/")(lambda: CollectedResponse(endless(), media_type="application/json"))
+
+    requested = False
+
+    async def receive() -> Message:
+        nonlocal requested
+        if not requested:
+            requested = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await anyio.sleep(0.1)
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        pass
+
+    scope: Scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.1"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/",
+        "raw_path": b"/",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [],
+        "client": ("client", 1),
+        "server": ("server", 80),
+    }
+    with anyio.fail_after(5):
+        # Raised "No response returned." through FastAPI's @app.middleware("http")
+        await app(scope, receive, send)
+        await cancelled.wait()
