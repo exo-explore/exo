@@ -72,6 +72,11 @@ class _CardCache:
             return list(self.cc.values())
         return [c for c in self.cc.values() if not _is_image_card(c)]
 
+    async def list_custom(self) -> list["ModelCard"]:
+        """The user-added cards saved on this node."""
+        await self.refresh()
+        return [c for c in self.cc.values() if c.is_custom]
+
     async def _load_cards_from_dir(self, directory: Path, *, is_custom: bool) -> None:
         """Load all TOML model cards from a directory into the cache."""
         async for toml_file in directory.rglob("*.toml"):
