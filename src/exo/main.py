@@ -28,6 +28,7 @@ from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils import STDIO_FDS
 from exo.utils.channels import Receiver, channel
+from exo.utils.exit_guard import exit_if_shutdown_hangs
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 from exo.worker.main import Worker
@@ -375,6 +376,7 @@ def main_inner(args: "Args"):
     finally:
         logger.info("EXO Shutdown complete")
         logger_cleanup()
+        exit_if_shutdown_hangs(EXO_LOG)
 
 
 class Args(FrozenModel):
