@@ -3227,18 +3227,14 @@
     // Clear forced-idle so restore effect resumes normal operation
     userForcedIdle = false;
 
-    // Find the best already-running model by tier
-    let bestRunning: { id: string; tierIndex: number } | null = null;
-    for (const [, inst] of Object.entries(instanceData)) {
-      const modelId = getInstanceModelId(inst);
-      if (modelId === "Unknown" || modelId === "Unknown Model") continue;
-      if (!hasRunningInstance(modelId)) continue;
-      const info = models.find((m) => m.id === modelId);
-      if (!info) continue;
-      const tierIndex = getAutoTierIndex(info.base_model ?? "");
-      if (!bestRunning || tierIndex < bestRunning.tierIndex) {
-        bestRunning = { id: modelId, tierIndex };
-      }
+    // The running model the chat bar shows gets the message: the user didn't
+    // ask for a different one, so don't start (and maybe download) another
+    const runningModelId = bestRunningModelId;
+    if (runningModelId && !chosenModelId) {
+      setSelectedChatModel(runningModelId);
+      if (!chatStarted) createConversation();
+      routeMessage(content, files);
+      return;
     }
 
     // Find the best auto model that fits in available memory
@@ -3255,20 +3251,6 @@
     const autoModel = chosenModelId
       ? (modelInfos.find((m) => m.id === chosenModelId) ?? null)
       : pickAutoModel(modelInfos, totalMem);
-
-    // Prefer running model unless auto-pick is a strictly better tier
-    if (bestRunning && !chosenModelId) {
-      const autoTier = autoModel
-        ? getAutoTierIndex(autoModel.base_model)
-        : Infinity;
-      if (autoTier >= bestRunning.tierIndex) {
-        // Running model is same or better tier — use it directly
-        setSelectedChatModel(bestRunning.id);
-        if (!chatStarted) createConversation();
-        routeMessage(content, files);
-        return;
-      }
-    }
 
     if (!autoModel) {
       addToast({
@@ -3346,7 +3328,7 @@
       // running model or the best downloaded one instead
       if (!isPlacementDownloaded(autoModel.id, placement)) {
         const alternativeId =
-          bestRunning?.id ??
+          runningModelId ??
           pickAutoModel(
             modelInfos.filter(
               (m) =>
@@ -3359,7 +3341,7 @@
         const choice = await askDownloadChoice(
           autoModel.id,
           alternativeId,
-          alternativeId !== null && alternativeId === bestRunning?.id,
+          alternativeId !== null && alternativeId === runningModelId,
         );
         if (choice === "cancel") {
           chatLaunchState = "idle";
@@ -3527,21 +3509,39 @@
     restoreChatDraft(queued.content, queued.files);
   }
 
-  // Best running model by tier (for auto-pick display)
+  // The running model a message goes to when none is selected, shown in the
+  // chat bar: the most recently launched from this browser, else the best by
+  // the auto-pick tiers, else the biggest. Image models can't take a chat.
   const bestRunningModelId = $derived.by(() => {
-    let best: { id: string; tierIndex: number } | null = null;
+    const candidates: {
+      id: string;
+      recentIndex: number;
+      tierIndex: number;
+      sizeMB: number;
+    }[] = [];
     for (const [, inst] of Object.entries(instanceData)) {
       const modelId = getInstanceModelId(inst);
       if (modelId === "Unknown" || modelId === "Unknown Model") continue;
+      if (candidates.some((candidate) => candidate.id === modelId)) continue;
       if (!hasRunningInstance(modelId)) continue;
+      if (modelSupportsImageGeneration(modelId)) continue;
       const info = models.find((m) => m.id === modelId);
       if (!info) continue;
-      const tierIndex = getAutoTierIndex(info.base_model ?? "");
-      if (!best || tierIndex < best.tierIndex) {
-        best = { id: modelId, tierIndex };
-      }
+      const recentIndex = recentModelIds.indexOf(modelId);
+      candidates.push({
+        id: modelId,
+        recentIndex: recentIndex === -1 ? Infinity : recentIndex,
+        tierIndex: getAutoTierIndex(info.base_model ?? ""),
+        sizeMB: info.storage_size_megabytes ?? 0,
+      });
     }
-    return best?.id ?? null;
+    candidates.sort(
+      (a, b) =>
+        (a.recentIndex === b.recentIndex ? 0 : a.recentIndex - b.recentIndex) ||
+        a.tierIndex - b.tierIndex ||
+        b.sizeMB - a.sizeMB,
+    );
+    return candidates[0]?.id ?? null;
   });
 
   // Track chat launch progress (download + loading)
@@ -5784,6 +5784,7 @@
                 modelCapabilities={modelCapabilities()}
                 onOpenModelPicker={openChatModelPicker}
                 onAutoSend={handleChatSend}
+                modelDisplayOverride={bestRunningModelId ?? undefined}
               />
             </div>
           </div>
@@ -6979,12 +6980,14 @@
                 <ChatForm
                   bind:message={chatDraft}
                   bind:uploadedFiles={chatDraftFiles}
-                  placeholder="Ask anything — we'll pick the best model automatically"
+                  placeholder={bestRunningModelId
+                    ? "Ask anything"
+                    : "Ask anything — we'll pick the best model automatically"}
                   showModelSelector={!!bestRunningModelId}
                   modelDisplayOverride={bestRunningModelId ?? undefined}
                   modelTasks={modelTasks()}
                   modelCapabilities={modelCapabilities()}
-                  onAutoSend={handleAutoSend}
+                  onAutoSend={handleChatSend}
                   onOpenModelPicker={openChatModelPicker}
                 />
               </div>
