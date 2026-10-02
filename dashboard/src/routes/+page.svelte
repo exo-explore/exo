@@ -76,6 +76,8 @@
   import { tweened } from "svelte/motion";
   import { cubicInOut, cubicOut } from "svelte/easing";
   import { onMount } from "svelte";
+  import { getNodesWithModelDownloaded } from "$lib/utils/downloads";
+  import type { ChatUploadedFile } from "$lib/types/files";
 
   const chatStarted = $derived(hasStartedChat());
   const minimized = $derived(isTopologyMinimized());
@@ -2603,7 +2605,7 @@
     chatLaunchState = "idle";
     pendingChatModelId = null;
     selectedChatCategory = null;
-    pendingAutoMessage = null;
+    returnQueuedMessageToInput();
     userForcedIdle = true;
     setSelectedChatModel("");
     createConversation();
@@ -2613,7 +2615,7 @@
     chatLaunchState = "idle";
     pendingChatModelId = null;
     selectedChatCategory = null;
-    pendingAutoMessage = null;
+    returnQueuedMessageToInput();
     userForcedIdle = true;
     // Restore chat model from the sidebar preview selection so both selectors stay in sync
     setSelectedChatModel(selectedModelId ?? "");
@@ -3132,7 +3134,7 @@
     modelId: string,
     category: string,
     skipCreate = false,
-  ) {
+  ): Promise<boolean> {
     userForcedIdle = false;
     pendingChatModelId = modelId;
     selectedChatCategory = category;
@@ -3142,7 +3144,7 @@
       setSelectedChatModel(modelId);
       if (!skipCreate) createConversation();
       chatLaunchState = "ready";
-      return;
+      return true;
     }
 
     // Already has an instance (downloading/loading) — attach to its progress
@@ -3156,7 +3158,7 @@
       } else {
         chatLaunchState = "launching";
       }
-      return;
+      return true;
     }
 
     chatLaunchState = "launching";
@@ -3172,7 +3174,7 @@
           message: `Failed to get placements: ${await readApiErrorMessage(res)}`,
         });
         chatLaunchState = "idle";
-        return;
+        return false;
       }
       const data: { previews: PlacementPreview[] } = await res.json();
       const placement = pickOptimalPlacement(data.previews);
@@ -3185,7 +3187,7 @@
             : "No valid placement found for this model",
         });
         chatLaunchState = "idle";
-        return;
+        return false;
       }
 
       // Launch the instance
@@ -3200,29 +3202,27 @@
           message: `Failed to launch: ${await readApiErrorMessage(launchRes)}`,
         });
         chatLaunchState = "idle";
-        return;
+        return false;
       }
 
       setSelectedChatModel(modelId);
       recordRecentLaunch(modelId);
       if (!skipCreate) createConversation();
       chatLaunchState = "downloading";
+      return true;
     } catch (error) {
       addToast({ type: "error", message: `Network error: ${error}` });
       chatLaunchState = "idle";
+      return false;
     }
   }
 
   // Handle auto-send: user typed without selecting a model
   async function handleAutoSend(
     content: string,
-    files?: {
-      id: string;
-      name: string;
-      type: string;
-      textContent?: string;
-      preview?: string;
-    }[],
+    files?: ChatUploadedFile[],
+    // Set when the user picked an alternative in the download prompt
+    chosenModelId?: string,
   ) {
     // Clear forced-idle so restore effect resumes normal operation
     userForcedIdle = false;
@@ -3252,10 +3252,12 @@
       family: m.family ?? "",
       quantization: m.quantization ?? "",
     }));
-    const autoModel = pickAutoModel(modelInfos, totalMem);
+    const autoModel = chosenModelId
+      ? (modelInfos.find((m) => m.id === chosenModelId) ?? null)
+      : pickAutoModel(modelInfos, totalMem);
 
     // Prefer running model unless auto-pick is a strictly better tier
-    if (bestRunning) {
+    if (bestRunning && !chosenModelId) {
       const autoTier = autoModel
         ? getAutoTierIndex(autoModel.base_model)
         : Infinity;
@@ -3271,8 +3273,11 @@
     if (!autoModel) {
       addToast({
         type: "error",
-        message: "No model fits in your available memory",
+        message: chosenModelId
+          ? `${chosenModelId.split("/").pop()} is no longer available`
+          : "No model fits in your available memory",
       });
+      restoreChatDraft(content, files);
       return;
     }
 
@@ -3290,7 +3295,7 @@
       setSelectedChatModel(autoModel.id);
       pendingChatModelId = autoModel.id;
       if (!chatStarted) createConversation();
-      pendingAutoMessage = { content, files };
+      queueMessage({ content, files, modelId: autoModel.id });
       const dlStatus = getModelDownloadStatus(autoModel.id);
       if (dlStatus.isDownloading) {
         chatLaunchState = "downloading";
@@ -3304,6 +3309,8 @@
     selectedChatCategory = "auto";
     pendingChatModelId = autoModel.id;
     chatLaunchState = "launching";
+    // Until the message is queued or handed on, give it back to the input
+    let handled = false;
 
     try {
       const res = await fetch(
@@ -3318,7 +3325,11 @@
         return;
       }
       const data: { previews: PlacementPreview[] } = await res.json();
-      const placement = pickOptimalPlacement(data.previews);
+      // Prefer a placement on devices that already have the model
+      let placement =
+        pickOptimalPlacement(
+          data.previews.filter((p) => isPlacementDownloaded(autoModel.id, p)),
+        ) ?? pickOptimalPlacement(data.previews);
       if (!placement) {
         const reason = getPlacementFailureReason(data.previews, autoModel.id);
         addToast({
@@ -3329,6 +3340,52 @@
         });
         chatLaunchState = "idle";
         return;
+      }
+
+      // Ask before starting a download the user didn't choose, offering the
+      // running model or the best downloaded one instead
+      if (!isPlacementDownloaded(autoModel.id, placement)) {
+        const alternativeId =
+          bestRunning?.id ??
+          pickAutoModel(
+            modelInfos.filter(
+              (m) =>
+                m.id !== autoModel.id &&
+                getNodesWithModelDownloaded(downloadsData, m.id).length > 0,
+            ),
+            totalMem,
+          )?.id ??
+          null;
+        const choice = await askDownloadChoice(
+          autoModel.id,
+          alternativeId,
+          alternativeId !== null && alternativeId === bestRunning?.id,
+        );
+        if (choice === "cancel") {
+          chatLaunchState = "idle";
+          return;
+        }
+        if (choice === "alternative" && alternativeId) {
+          handled = true;
+          selectedChatCategory = null;
+          chatLaunchState = "idle";
+          await handleAutoSend(content, files, alternativeId);
+          return;
+        }
+        // The prompt may have been open a while: place with fresh previews
+        const freshRes = await fetch(
+          `/instance/previews?model_id=${encodeURIComponent(autoModel.id)}`,
+        );
+        const freshPreviews: PlacementPreview[] = freshRes.ok
+          ? ((await freshRes.json()) as { previews: PlacementPreview[] })
+              .previews
+          : [];
+        placement =
+          pickOptimalPlacement(
+            freshPreviews.filter((p) => isPlacementDownloaded(autoModel.id, p)),
+          ) ??
+          pickOptimalPlacement(freshPreviews) ??
+          placement;
       }
 
       const launchRes = await fetch("/instance", {
@@ -3351,24 +3408,124 @@
       chatLaunchState = "downloading";
 
       // Queue the message to send once model is ready
-      pendingAutoMessage = { content, files };
+      queueMessage({ content, files, modelId: autoModel.id });
+      handled = true;
     } catch (error) {
       addToast({ type: "error", message: `Network error: ${error}` });
       chatLaunchState = "idle";
+    } finally {
+      if (!handled) restoreChatDraft(content, files);
     }
   }
 
-  // Pending message to send after auto-launch completes
-  let pendingAutoMessage = $state<{
-    content: string;
-    files?: {
-      id: string;
-      name: string;
-      type: string;
-      textContent?: string;
-      preview?: string;
-    }[];
+  // Whether a placement's devices all have the model on disk already
+  function isPlacementDownloaded(
+    modelId: string,
+    preview: PlacementPreview,
+  ): boolean {
+    const nodeIds = [...unwrapInstanceNodes(preview.instance)];
+    const downloadedOn = new Set(
+      getNodesWithModelDownloaded(downloadsData, modelId),
+    );
+    return (
+      nodeIds.length > 0 && nodeIds.every((nodeId) => downloadedOn.has(nodeId))
+    );
+  }
+
+  // ── Download confirmation for auto-picked models ──
+  type DownloadChoice = "download" | "alternative" | "cancel";
+  let downloadChoicePrompt = $state<{
+    modelName: string;
+    sizeLabel: string;
+    partlyDownloaded: boolean;
+    alternativeName: string | null;
+    alternativeRunning: boolean;
+    resolve: (choice: DownloadChoice) => void;
   } | null>(null);
+
+  function askDownloadChoice(
+    modelId: string,
+    alternativeId: string | null,
+    alternativeRunning: boolean,
+  ): Promise<DownloadChoice> {
+    // Only one prompt at a time: an older one counts as cancelled
+    if (downloadChoicePrompt) answerDownloadChoice("cancel");
+    const model = models.find((m) => m.id === modelId);
+    const sizeGB = model ? getModelSizeGB(model) : 0;
+    // Furthest partial download of this model on any device
+    const partPercent = Math.max(
+      0,
+      ...getModelDownloadStatus(modelId)
+        .perNode.filter((node) => node.status !== "completed")
+        .map((node) => node.percentage),
+    );
+    const formatGB = (gb: number) =>
+      gb >= 10 ? `${Math.round(gb)}` : gb.toFixed(1);
+    const shortName = (id: string) => id.split("/").pop() ?? id;
+    return new Promise((resolve) => {
+      downloadChoicePrompt = {
+        modelName: shortName(modelId),
+        sizeLabel:
+          partPercent > 0
+            ? `${formatGB(sizeGB * (1 - partPercent / 100))} of ${formatGB(sizeGB)} GB left`
+            : `${formatGB(sizeGB)} GB`,
+        partlyDownloaded: partPercent > 0,
+        alternativeName: alternativeId ? shortName(alternativeId) : null,
+        alternativeRunning,
+        resolve,
+      };
+    });
+  }
+
+  // Open the prompt as a modal (the rest of the page is inert, so nothing
+  // can be typed behind it) and focus the safe choice: the alternative if
+  // there is one, otherwise Cancel
+  function showDownloadChoiceDialog(dialog: HTMLDialogElement) {
+    dialog.showModal();
+    dialog.querySelector<HTMLButtonElement>("[data-default-choice]")?.focus();
+  }
+
+  function answerDownloadChoice(choice: DownloadChoice) {
+    const prompt = downloadChoicePrompt;
+    downloadChoicePrompt = null;
+    prompt?.resolve(choice);
+  }
+
+  // Pending message to send after auto-launch completes, and the model it waits for
+  type PendingMessage = {
+    content: string;
+    modelId: string;
+    files?: ChatUploadedFile[];
+  };
+  let pendingAutoMessage = $state<PendingMessage | null>(null);
+
+  // Text and attachments in the chat input. Kept here (not in ChatForm) so
+  // they survive the chat view switching layouts, and so an unsent message
+  // can be put back.
+  let chatDraft = $state("");
+  let chatDraftFiles = $state<ChatUploadedFile[]>([]);
+
+  function restoreChatDraft(content: string, files: ChatUploadedFile[] = []) {
+    chatDraft = chatDraft.trim() ? `${content}\n\n${chatDraft}` : content;
+    if (files.length > 0) chatDraftFiles = [...files, ...chatDraftFiles];
+  }
+
+  // Queue a message to send once its model is ready. A message already
+  // queued for something else goes back to the input rather than being lost.
+  function queueMessage(message: PendingMessage) {
+    if (pendingAutoMessage && pendingAutoMessage.content !== message.content) {
+      returnQueuedMessageToInput();
+    }
+    pendingAutoMessage = message;
+  }
+
+  // Give a queued message back to the input instead of dropping it
+  function returnQueuedMessageToInput() {
+    const queued = pendingAutoMessage;
+    if (!queued) return;
+    pendingAutoMessage = null;
+    restoreChatDraft(queued.content, queued.files);
+  }
 
   // Best running model by tier (for auto-pick display)
   const bestRunningModelId = $derived.by(() => {
@@ -3435,11 +3592,15 @@
     // Check if model is now ready
     if (hasRunningInstance(pendingChatModelId)) {
       chatLaunchState = "ready";
-      // Send pending auto message if any
+      // Send pending auto message if any (only to the model it was queued for)
       if (pendingAutoMessage) {
-        const msg = pendingAutoMessage;
-        pendingAutoMessage = null;
-        routeMessage(msg.content, msg.files);
+        if (pendingAutoMessage.modelId === pendingChatModelId) {
+          const msg = pendingAutoMessage;
+          pendingAutoMessage = null;
+          routeMessage(msg.content, msg.files);
+        } else {
+          returnQueuedMessageToInput();
+        }
       }
       return;
     }
@@ -3456,6 +3617,59 @@
     // Check if currently downloading
     if (chatLaunchDownload) {
       chatLaunchState = "downloading";
+    }
+  });
+
+  // Give a queued message back to the input if the model it waits for is
+  // removed, its download fails, or its runner keeps failing (the worker
+  // retries failed runners, so a single failure isn't final)
+  // Safety net: normally the worker removes the instance first (its retries
+  // take ~25-30 s when every attempt fails)
+  const QUEUED_MESSAGE_FAILED_GIVE_UP_MS = 45_000;
+  let queuedMessageWatch: {
+    message: PendingMessage | null;
+    instanceSeen: boolean;
+    failedSince: number | null;
+  } = { message: null, instanceSeen: false, failedSince: null };
+
+  $effect(() => {
+    const queued = pendingAutoMessage;
+    const instances = Object.entries(instanceData);
+    if (!queued) return;
+    if (queuedMessageWatch.message !== queued) {
+      queuedMessageWatch = {
+        message: queued,
+        instanceSeen: false,
+        failedSince: null,
+      };
+    }
+    const forModel = instances.filter(
+      ([, inst]) => getInstanceModelId(inst) === queued.modelId,
+    );
+    if (forModel.length === 0) {
+      if (queuedMessageWatch.instanceSeen) returnQueuedMessageToInput();
+      return;
+    }
+    queuedMessageWatch.instanceSeen = true;
+    const statuses = forModel.map(([id, inst]) => ({
+      failed: getInstanceDownloadStatus(id, inst).isFailed,
+      runnerFailed: deriveInstanceStatus(inst).statusText === "FAILED",
+    }));
+    if (!statuses.every((status) => status.failed)) {
+      queuedMessageWatch.failedSince = null;
+      return;
+    }
+    // Failed downloads aren't retried; failed runners are
+    if (statuses.some((status) => !status.runnerFailed)) {
+      returnQueuedMessageToInput();
+      return;
+    }
+    queuedMessageWatch.failedSince ??= Date.now();
+    if (
+      Date.now() - queuedMessageWatch.failedSince >=
+      QUEUED_MESSAGE_FAILED_GIVE_UP_MS
+    ) {
+      returnQueuedMessageToInput();
     }
   });
 
@@ -3503,16 +3717,7 @@
   }
 
   // Unified send handler: sends if model running, auto-launches if not
-  function handleChatSend(
-    content: string,
-    files?: {
-      id: string;
-      name: string;
-      type: string;
-      textContent?: string;
-      preview?: string;
-    }[],
-  ) {
+  function handleChatSend(content: string, files?: ChatUploadedFile[]) {
     const model = selectedChatModel();
 
     // Model is selected and running — send directly
@@ -3524,7 +3729,7 @@
 
     // Model is selected but NOT running — launch it, queue the message
     if (model) {
-      pendingAutoMessage = { content, files };
+      queueMessage({ content, files, modelId: model });
       userForcedIdle = false;
       // The selected model is already being placed or loaded; keep the queued
       // message and let the existing launch state effects send it once ready.
@@ -3535,7 +3740,13 @@
       ) {
         return;
       }
-      launchModelForChat(model, "picker", messages().length > 0);
+      launchModelForChat(model, "picker", messages().length > 0).then(
+        (launched) => {
+          if (!launched && pendingAutoMessage?.modelId === model) {
+            returnQueuedMessageToInput();
+          }
+        },
+      );
       return;
     }
 
@@ -5172,6 +5383,60 @@
     {/if}
   {/if}
 
+  {#if downloadChoicePrompt}
+    <!-- Asked before auto-pick starts a download. Modal: Escape cancels. -->
+    <dialog
+      use:showDownloadChoiceDialog
+      oncancel={(event) => {
+        event.preventDefault();
+        answerDownloadChoice("cancel");
+      }}
+      aria-labelledby="download-choice-title"
+      class="m-auto w-[calc(100%-2rem)] max-w-md bg-exo-dark-gray text-white border border-exo-yellow/20 rounded-lg shadow-2xl p-5 font-mono backdrop:bg-black/60"
+    >
+      <h3 id="download-choice-title" class="text-sm text-white mb-2">
+        Download {downloadChoicePrompt.modelName} ({downloadChoicePrompt.sizeLabel})?
+      </h3>
+      <p class="text-xs text-exo-light-gray/80 mb-5 leading-relaxed">
+        It's the best model that fits, but it isn't {downloadChoicePrompt.partlyDownloaded
+          ? "fully "
+          : ""}downloaded yet. Your message will be sent when it's ready.
+      </p>
+      <div class="flex flex-wrap justify-end gap-2">
+        <button
+          type="button"
+          onclick={() => answerDownloadChoice("cancel")}
+          data-default-choice={downloadChoicePrompt.alternativeName
+            ? undefined
+            : true}
+          class="px-3 py-1.5 text-xs text-exo-light-gray hover:text-white border border-exo-medium-gray/50 rounded cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-exo-yellow"
+        >
+          Cancel
+        </button>
+        {#if downloadChoicePrompt.alternativeName}
+          <button
+            type="button"
+            onclick={() => answerDownloadChoice("alternative")}
+            data-default-choice
+            class="px-3 py-1.5 text-xs text-exo-yellow border border-exo-yellow/40 hover:bg-exo-yellow/10 rounded cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-exo-yellow"
+          >
+            Use {downloadChoicePrompt.alternativeName}
+            ({downloadChoicePrompt.alternativeRunning
+              ? "running"
+              : "downloaded"})
+          </button>
+        {/if}
+        <button
+          type="button"
+          onclick={() => answerDownloadChoice("download")}
+          class="px-3 py-1.5 text-xs bg-exo-yellow text-exo-black hover:bg-exo-yellow/90 rounded cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-white"
+        >
+          Download
+        </button>
+      </div>
+    </dialog>
+  {/if}
+
   <!-- ═══════════════════════════════════════════════════════ -->
   <!-- MAIN DASHBOARD (always rendered, behind onboarding)    -->
   <!-- ═══════════════════════════════════════════════════════ -->
@@ -5508,6 +5773,8 @@
                 </div>
               {/if}
               <ChatForm
+                bind:message={chatDraft}
+                bind:uploadedFiles={chatDraftFiles}
                 placeholder={instanceCount === 0
                   ? "Choose a model to start chatting"
                   : "Ask anything"}
@@ -6569,6 +6836,44 @@
                     </div>
                   </div>
                 {/if}
+
+                {#if pendingAutoMessage}
+                  {@const attachmentCount =
+                    pendingAutoMessage.files?.length ?? 0}
+                  <!-- Queued message, sent automatically once the model is ready -->
+                  <div class="w-full flex flex-col items-end gap-1.5">
+                    <div
+                      class="command-panel rounded-lg rounded-tr-sm px-4 py-3 max-w-full"
+                    >
+                      <p
+                        class="text-sm text-white/80 whitespace-pre-wrap break-words line-clamp-4"
+                      >
+                        {pendingAutoMessage.content}
+                      </p>
+                      {#if attachmentCount > 0}
+                        <p
+                          class="text-[10px] text-exo-light-gray/60 font-mono mt-1"
+                        >
+                          + {attachmentCount}
+                          {attachmentCount === 1 ? "attachment" : "attachments"}
+                        </p>
+                      {/if}
+                    </div>
+                    <div
+                      class="flex items-center gap-3 text-[10px] font-mono uppercase tracking-wider text-exo-light-gray/60"
+                    >
+                      <span>Sends when the model is ready</span>
+                      <button
+                        type="button"
+                        onclick={returnQueuedMessageToInput}
+                        class="uppercase text-exo-light-gray hover:text-exo-yellow transition-colors cursor-pointer"
+                        title="Put the message back in the input"
+                      >
+                        Don't send
+                      </button>
+                    </div>
+                  </div>
+                {/if}
               </div>
             </div>
             <div
@@ -6576,6 +6881,8 @@
             >
               <div class="max-w-7xl mx-auto">
                 <ChatForm
+                  bind:message={chatDraft}
+                  bind:uploadedFiles={chatDraftFiles}
                   placeholder="Ask anything"
                   showModelSelector={true}
                   modelTasks={modelTasks()}
@@ -6633,6 +6940,8 @@
             >
               <div class="max-w-7xl mx-auto">
                 <ChatForm
+                  bind:message={chatDraft}
+                  bind:uploadedFiles={chatDraftFiles}
                   placeholder="Ask anything"
                   showModelSelector={true}
                   modelTasks={modelTasks()}
@@ -6668,6 +6977,8 @@
             >
               <div class="max-w-7xl mx-auto">
                 <ChatForm
+                  bind:message={chatDraft}
+                  bind:uploadedFiles={chatDraftFiles}
                   placeholder="Ask anything — we'll pick the best model automatically"
                   showModelSelector={!!bestRunningModelId}
                   modelDisplayOverride={bestRunningModelId ?? undefined}
