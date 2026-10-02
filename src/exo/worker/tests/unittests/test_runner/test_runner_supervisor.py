@@ -1,4 +1,4 @@
-from typing import cast
+from typing import cast, final
 
 import anyio
 import pytest
@@ -16,7 +16,7 @@ from exo.shared.types.text_generation import (
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerFailed, RunnerId
 from exo.utils.async_process import AsyncProcess
-from exo.utils.channels import channel, mp_channel
+from exo.utils.channels import Sender, channel, mp_channel
 from exo.worker.runner.bootstrap import RunnerTerminationError
 from exo.worker.runner.supervisor import RunnerStdioHandler, RunnerSupervisor
 from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance
@@ -35,9 +35,7 @@ class _DeadProcess:
         return False
 
 
-@pytest.mark.anyio
-async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> None:
-    event_sender, event_receiver = channel[Event]()
+async def _supervisor_of_dead_runner(event_sender: Sender[Event]) -> RunnerSupervisor:
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
     _, ev_recv = mp_channel[Event | RunnerTerminationError]()
@@ -64,20 +62,29 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
         _event_sender=event_sender,
         _cancel_sender=cancel_sender,
     )
+    supervisor.shutdown = lambda: None
+    return supervisor
 
-    command_id = CommandId("cmd-a")
-    task = TextGeneration(
-        task_id=TaskId("task-a"),
-        instance_id=bound_instance.instance.instance_id,
-        command_id=command_id,
+
+def _text_generation(supervisor: RunnerSupervisor, name: str) -> TextGeneration:
+    return TextGeneration(
+        task_id=TaskId(f"task-{name}"),
+        instance_id=supervisor.bound_instance.instance.instance_id,
+        command_id=CommandId(f"cmd-{name}"),
         task_params=TextGenerationTaskParams(
-            model=bound_instance.bound_shard.model_card.model_id,
+            model=supervisor.bound_instance.bound_shard.model_card.model_id,
             input=[InputMessage(role="user", content=InputMessageContent("hi"))],
             stream=True,
         ),
     )
+
+
+@pytest.mark.anyio
+async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> None:
+    event_sender, event_receiver = channel[Event]()
+    supervisor = await _supervisor_of_dead_runner(event_sender)
+    task = _text_generation(supervisor, "a")
     supervisor.in_progress[task.task_id] = task
-    supervisor.shutdown = lambda: None
 
     await supervisor._check_runner(RuntimeError("boom"))  # pyright: ignore[reportPrivateUsage]
 
@@ -85,7 +92,7 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     got_status = await event_receiver.receive()
 
     assert isinstance(got_chunk, ChunkGenerated)
-    assert got_chunk.command_id == command_id
+    assert got_chunk.command_id == task.command_id
     assert isinstance(got_chunk.chunk, ErrorChunk)
     assert "Runner shutdown before completing command" in got_chunk.chunk.error_message
 
@@ -95,3 +102,41 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     event_sender.close()
     with anyio.move_on_after(0.1):
         await event_receiver.aclose()
+
+
+@final
+class _FinishesATaskWhileSending:
+    """An event sender during whose sends the runner's last results arrive.
+
+    While the supervisor reports one request as failed, the event loop runs the coroutine that
+    forwards the runner's output, which marks another request complete.
+    """
+
+    def __init__(self) -> None:
+        self.sent: list[Event] = []
+        self.supervisor: RunnerSupervisor | None = None
+
+    async def send(self, event: Event) -> None:
+        self.sent.append(event)
+        assert self.supervisor is not None
+        if len(self.supervisor.in_progress) > 1:
+            self.supervisor.in_progress.pop(next(reversed(self.supervisor.in_progress)))
+        await anyio.sleep(0)
+
+
+@pytest.mark.anyio
+async def test_check_runner_survives_a_request_finishing_while_it_reports() -> None:
+    sender = _FinishesATaskWhileSending()
+    supervisor = await _supervisor_of_dead_runner(
+        cast(Sender[Event], cast(object, sender))
+    )
+    sender.supervisor = supervisor
+    first, second = _text_generation(supervisor, "a"), _text_generation(supervisor, "b")
+    supervisor.in_progress[first.task_id] = first
+    supervisor.in_progress[second.task_id] = second
+
+    await supervisor._check_runner(RuntimeError("boom"))  # pyright: ignore[reportPrivateUsage]
+
+    failed = [e.command_id for e in sender.sent if isinstance(e, ChunkGenerated)]
+    assert failed == [first.command_id]
+    assert isinstance(sender.sent[-1], RunnerStatusUpdated)
