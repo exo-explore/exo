@@ -692,10 +692,104 @@
   });
 
   let onboardingError = $state<string | null>(null);
+  // The instance launched from onboarding, so a failure can send the user back
+  let onboardingInstanceId = $state<string | null>(null);
+  let onboardingInstanceSeen = $state(false);
+  // Shown while the worker retries a failed runner (it retries with backoff
+  // and removes the instance after EXO_MAX_INSTANCE_RETRIES attempts)
+  let onboardingRetryNote = $state<string | null>(null);
+  let onboardingLastFailure: string | null = null;
+  let onboardingFailedSince: number | null = null;
+  // Launched but never appeared in time; removed if it shows up later
+  let abandonedOnboardingInstanceId = $state<string | null>(null);
+  const ONBOARDING_LAUNCH_TIMEOUT_MS = 30_000;
+  // Safety net: normally the worker removes the instance first (its retries
+  // take ~25-30 s when every attempt fails)
+  const ONBOARDING_FAILED_GIVE_UP_MS = 45_000;
+
+  function getOnboardingModelName(): string {
+    return onboardingModelId?.split("/").pop() ?? onboardingModelId ?? "Model";
+  }
+
+  function resetOnboardingLaunchTracking() {
+    onboardingInstanceId = null;
+    onboardingInstanceSeen = false;
+    onboardingRetryNote = null;
+    onboardingLastFailure = null;
+    onboardingFailedSince = null;
+  }
+
+  // Return to the model list with the reason instead of waiting forever
+  function failOnboardingLaunch(message: string, removeInstance: boolean) {
+    const instanceId = onboardingInstanceId;
+    resetOnboardingLaunchTracking();
+    onboardingError = message;
+    onboardingStep = 6;
+    // Don't leave behind an instance that can't start
+    if (removeInstance && instanceId && instanceData[instanceId]) {
+      void requestInstanceDeletion(instanceId);
+    }
+  }
+
+  $effect(() => {
+    if (onboardingStep !== 7 && onboardingStep !== 8) return;
+    if (!onboardingInstanceId) return;
+    const inst = instanceData[onboardingInstanceId];
+    if (!inst) {
+      // Gone after being seen: the worker gave up after retrying (the last
+      // failure is only kept while it was failing), or e.g. a device left
+      if (onboardingInstanceSeen) {
+        failOnboardingLaunch(
+          onboardingLastFailure ??
+            `${getOnboardingModelName()} stopped before it was ready. Try again.`,
+          false,
+        );
+      }
+      return;
+    }
+    onboardingInstanceSeen = true;
+    const status = getInstanceDownloadStatus(onboardingInstanceId, inst);
+    if (!status.isFailed) {
+      // Not failing (any more), e.g. the worker's retry is loading: drop the
+      // note, and don't blame a later disappearance on the old failure
+      onboardingFailedSince = null;
+      onboardingRetryNote = null;
+      onboardingLastFailure = null;
+      return;
+    }
+    if (deriveInstanceStatus(inst).statusText !== "FAILED") {
+      // Failed downloads aren't retried by the worker
+      failOnboardingLaunch(
+        `${getOnboardingModelName()} failed to download: ${status.errorMessage ?? "unknown error"}`,
+        true,
+      );
+      return;
+    }
+    // The runner failed; the worker will retry it
+    const reason = status.errorMessage
+      ? summarizeFailureReason(status.errorMessage)
+      : "the runner stopped unexpectedly";
+    onboardingLastFailure = `${getOnboardingModelName()} failed to start: ${reason}`;
+    onboardingRetryNote = `${onboardingLastFailure}. Retrying…`;
+    onboardingFailedSince ??= Date.now();
+    if (Date.now() - onboardingFailedSince >= ONBOARDING_FAILED_GIVE_UP_MS) {
+      failOnboardingLaunch(onboardingLastFailure, true);
+    }
+  });
+
+  $effect(() => {
+    const instances = instanceData;
+    const abandonedId = abandonedOnboardingInstanceId;
+    if (abandonedId && instances[abandonedId]) {
+      abandonedOnboardingInstanceId = null;
+      void requestInstanceDeletion(abandonedId);
+    }
+  });
 
   async function onboardingLaunchModel(modelId: string) {
     onboardingModelId = modelId;
     onboardingError = null;
+    resetOnboardingLaunchTracking();
     selectPreviewModel(modelId);
     onboardingStep = 7;
     // Launch via standard placement API (same as main dashboard)
@@ -727,6 +821,25 @@
         onboardingStep = 6;
         return;
       }
+      const [, placed] = getTagged(instanceData);
+      const launchedId =
+        (placed as { instanceId?: string } | null)?.instanceId ?? null;
+      onboardingInstanceId = launchedId;
+      if (launchedId) {
+        setTimeout(() => {
+          if (
+            onboardingStep === 7 &&
+            onboardingInstanceId === launchedId &&
+            !onboardingInstanceSeen
+          ) {
+            abandonedOnboardingInstanceId = launchedId;
+            failOnboardingLaunch(
+              `${getOnboardingModelName()} didn't start after 30 seconds. Try again or pick another model.`,
+              false,
+            );
+          }
+        }, ONBOARDING_LAUNCH_TIMEOUT_MS);
+      }
       setSelectedChatModel(modelId);
       recordRecentLaunch(modelId);
     } catch (error) {
@@ -739,6 +852,7 @@
   const onboardingDownloadProgress = $derived.by(() => {
     if (instanceCount === 0) return null;
     for (const [id, inst] of Object.entries(instanceData)) {
+      if (getInstanceModelId(inst) !== onboardingModelId) continue;
       const status = getInstanceDownloadStatus(id, inst);
       if (status.isDownloading && status.progress) {
         return status.progress;
@@ -4680,7 +4794,7 @@
             <h1
               class="text-xl font-sans font-light text-white/90 mb-2 tracking-wide"
             >
-              Downloading
+              {onboardingDownloadProgress ? "Downloading" : "Starting"}
             </h1>
             {#if onboardingModelId}
               <p class="text-sm text-white/40 font-sans">
@@ -4720,10 +4834,14 @@
                   class="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-exo-yellow to-exo-yellow-darker rounded-full animate-pulse"
                 ></div>
               </div>
-              <p class="text-xs font-mono text-white/40 mt-4">
-                Preparing download...
-              </p>
+              <p class="text-xs font-mono text-white/40 mt-4">Preparing…</p>
             </div>
+          {/if}
+
+          {#if onboardingRetryNote}
+            <p class="text-xs font-mono text-yellow-400/80 mt-6">
+              {onboardingRetryNote}
+            </p>
           {/if}
 
           <p class="text-xs font-sans text-white/40 mt-8">
@@ -4789,6 +4907,12 @@
               ></div>
             </div>
             <p class="text-sm text-white/30 font-sans">Loading...</p>
+          {/if}
+
+          {#if onboardingRetryNote}
+            <p class="text-xs font-mono text-yellow-400/80 mt-6">
+              {onboardingRetryNote}
+            </p>
           {/if}
         </div>
       {:else if onboardingStep === 9}
