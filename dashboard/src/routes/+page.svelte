@@ -6765,6 +6765,11 @@
                         <ModelCard
                           model={selectedModel}
                           isLaunching={launchingModelId === selectedModel.id}
+                          existingInstance={hasRunningInstance(selectedModel.id)
+                            ? "running"
+                            : hasExistingInstance(selectedModel.id)
+                              ? "starting"
+                              : null}
                           {downloadStatus}
                           nodes={data?.nodes ?? {}}
                           sharding={apiPreview.sharding}
