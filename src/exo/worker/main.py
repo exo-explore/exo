@@ -316,7 +316,13 @@ class Worker:
 
             logger.info(f"Worker plan: {task.__class__.__name__}")
             assert task.task_status
-            await self.event_sender.send(TaskCreated(task_id=task.task_id, task=task))
+            # Generation tasks come from the cluster state, so they exist already. This
+            # node's view of the state lags the master's: announcing such a task again
+            # can recreate one the master has just cancelled or deleted.
+            if task.task_id not in self.state.tasks:
+                await self.event_sender.send(
+                    TaskCreated(task_id=task.task_id, task=task)
+                )
 
             # lets not kill the worker if a runner is unresponsive
             match task:
