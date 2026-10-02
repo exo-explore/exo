@@ -297,7 +297,16 @@ class RunnerSupervisor:
             await self._task_sender.send_async(task)
         except ClosedResourceError:
             self.in_progress.pop(task.task_id, None)
+            self.pending.pop(task.task_id, None)
             logger.warning(f"Task {task} dropped, runner closed communication.")
+            return
+        # A runner that is generating only picks up new tasks between steps, so behind a
+        # long prompt the acknowledgement can take minutes, and the caller (the worker's
+        # planning for every runner on this node) would wait that long. Generation tasks
+        # are tracked by id in in_progress, so there's no need. Other tasks change the
+        # runner's status before it acknowledges them, and the worker plans from that
+        # status, so those still wait.
+        if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
             return
         await event.wait()
 
@@ -307,6 +316,22 @@ class RunnerSupervisor:
             self.cancelled.add(task_id)
             return
         self.cancelled.add(task_id)
+        acknowledged = self.pending.get(task_id)
+        if acknowledged is not None and not acknowledged.is_set():
+            # The runner hasn't picked the task up yet, and it ignores cancellations for
+            # tasks it doesn't know, so send this one once it has. (A runner that has gone
+            # away releases every waiting task.)
+            self._tg.start_soon(self._cancel_when_acknowledged, task_id, acknowledged)
+            return
+        await self._send_cancel(task_id)
+
+    async def _cancel_when_acknowledged(
+        self, task_id: TaskId, acknowledged: anyio.Event
+    ) -> None:
+        await acknowledged.wait()
+        await self._send_cancel(task_id)
+
+    async def _send_cancel(self, task_id: TaskId) -> None:
         with anyio.move_on_after(0.5) as scope:
             try:
                 await self._cancel_sender.send_async(task_id)
