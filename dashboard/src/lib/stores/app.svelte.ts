@@ -3411,10 +3411,7 @@ class AppStore {
         },
       );
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `Failed to delete download: ${response.status} - ${errorText}`,
-        );
+        throw new Error(await readApiErrorMessage(response));
       }
     } catch (error) {
       console.error("Error deleting download:", error);
