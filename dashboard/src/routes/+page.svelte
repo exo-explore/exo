@@ -3085,6 +3085,32 @@
     return false;
   }
 
+  // Home screen chat input. Sending a message with a model selected that isn't
+  // running launches it (downloading it first if needed), so say that instead
+  // of asking the user to pick a model they already picked.
+  const homeChatPlaceholder = $derived(
+    selectedChatModel() ? "Ask anything" : "Choose a model to start chatting",
+  );
+  const homeChatHint = $derived.by((): string | null => {
+    const modelId = selectedChatModel();
+    if (!modelId) {
+      return instanceCount === 0 ? "Select a model to get started." : null;
+    }
+    if (hasExistingInstance(modelId)) return null;
+    const name = modelId.split("/").pop() ?? modelId;
+    const onDisk = getModelDownloadStatus(modelId).perNode.some(
+      (node) => node.status === "completed",
+    );
+    if (onDisk) return `Send a message to start ${name}.`;
+    const model = models.find((m) => m.id === modelId);
+    const sizeGB = model ? getModelSizeGB(model) : 0;
+    const size =
+      sizeGB > 0
+        ? ` (${sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)} GB)`
+        : "";
+    return `Send a message to download and start ${name}${size}.`;
+  });
+
   // Pick optimal placement from previews (frontend logic)
   // Rules: 1-node → Pipeline/Ring, multi-node with RDMA → Tensor/Jaccl (most nodes),
   //         multi-node without RDMA → 1-node Pipeline/Ring
@@ -5834,10 +5860,10 @@
           <!-- Chat Input - Below topology, never overlaps -->
           <div class="px-4 pt-4 pb-6 flex-shrink-0">
             <div class="max-w-3xl mx-auto">
-              {#if instanceCount === 0}
+              {#if homeChatHint}
                 <div class="text-center mb-4">
                   <p class="text-sm text-white/50 font-sans">
-                    Select a model to get started.
+                    {homeChatHint}
                   </p>
                 </div>
               {/if}
@@ -5845,7 +5871,7 @@
                 bind:message={chatDraft}
                 bind:uploadedFiles={chatDraftFiles}
                 placeholder={instanceCount === 0
-                  ? "Choose a model to start chatting"
+                  ? homeChatPlaceholder
                   : "Ask anything"}
                 showHelperText={false}
                 showModelSelector={true}
