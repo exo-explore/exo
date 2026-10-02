@@ -1,6 +1,5 @@
 """Messages from the network are only parsed when something on this node receives them."""
 
-
 from exo.routing.router import TopicRouter
 from exo.routing.topics import PublishPolicy, TypedTopic
 from exo.utils.channels import channel
