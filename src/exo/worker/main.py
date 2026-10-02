@@ -15,7 +15,7 @@ from exo.routing.event_router import (
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models.model_cards import ModelId, card_cache
-from exo.shared.types.chunks import InputImageChunk
+from exo.shared.types.chunks import ErrorChunk, InputImageChunk
 from exo.shared.types.commands import (
     DeleteInstance,
     ForwarderCommand,
@@ -24,6 +24,7 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, NodeId, SystemId
 from exo.shared.types.events import (
+    ChunkGenerated,
     Event,
     IndexedEvent,
     InputChunkReceived,
@@ -31,6 +32,7 @@ from exo.shared.types.events import (
     NodeDownloadProgress,
     NodeGatheredInfo,
     TaskCreated,
+    TaskDeleted,
     TaskStatusUpdated,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
@@ -45,6 +47,7 @@ from exo.shared.types.tasks import (
     LoadModel,
     Shutdown,
     Task,
+    TaskId,
     TaskStatus,
     TextGeneration,
 )
@@ -88,10 +91,13 @@ class Worker:
 
         self._system_id = SystemId()
 
-        # Buffer for input image chunks (for image editing)
+        # Images a request sends ahead of itself, kept per request until it runs here or
+        # turns out not to need this node
         self.input_chunk_buffer: dict[CommandId, dict[int, InputImageChunk]] = {}
         self.input_chunk_counts: dict[CommandId, int] = {}
-        self.image_cache: dict[Base64ImageHash, Base64Image] = {}
+        self.input_images: dict[CommandId, dict[Base64ImageHash, Base64Image]] = {}
+        self._tasks_with_inputs: dict[TaskId, CommandId] = {}
+        self._inputs_lost: set[TaskId] = set()
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
         self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
@@ -171,11 +177,67 @@ class Worker:
                                 chunks_for_image, key=lambda c: c.chunk_index
                             )
                             img = Base64Image("".join(c.data for c in sorted_chunks))
-                            self.image_cache[
+                            self.input_images.setdefault(cmd_id, {})[
                                 Base64ImageHash(
                                     hashlib.sha256(img.encode("ascii")).hexdigest()
                                 )
                             ] = img
+
+                if isinstance(event, TaskCreated) and isinstance(
+                    event.task, (TextGeneration, ImageEdits)
+                ):
+                    self._keep_inputs_if_needed_here(event.task)
+
+                if isinstance(event, TaskDeleted):
+                    self._inputs_lost.discard(event.task_id)
+                    if (
+                        cmd_id := self._tasks_with_inputs.pop(event.task_id, None)
+                    ) is not None:
+                        self._drop_inputs(cmd_id)
+
+    def _keep_inputs_if_needed_here(self, task: TextGeneration | ImageEdits) -> None:
+        """Every node receives every request's images; only the nodes that run it keep them."""
+        instance = self.state.instances.get(task.instance_id)
+        if (
+            instance is None
+            or self.node_id not in instance.shard_assignments.node_to_runner
+        ):
+            self._drop_inputs(task.command_id)
+        elif task.command_id in self.input_chunk_buffer:
+            self._tasks_with_inputs[task.task_id] = task.command_id
+
+    def _drop_inputs(self, command_id: CommandId) -> None:
+        self.input_chunk_buffer.pop(command_id, None)
+        self.input_chunk_counts.pop(command_id, None)
+        self.input_images.pop(command_id, None)
+
+    async def _report_lost_inputs(self, task: TextGeneration | ImageEdits) -> None:
+        """Fail a request whose images never reached this node.
+
+        A request's images always arrive before the request itself, so if they are missing
+        once it is here, they are not coming: this node caught up from a state snapshot part
+        way through them. Waiting would hold the request, and the model's instance, forever.
+        """
+        if task.task_id in self._inputs_lost:
+            return
+        self._inputs_lost.add(task.task_id)
+        self._drop_inputs(task.command_id)
+        logger.warning(f"Images for request {task.command_id} never reached this node")
+        await self.event_sender.send(
+            ChunkGenerated(
+                command_id=task.command_id,
+                chunk=ErrorChunk(
+                    model=ModelId(task.task_params.model),
+                    error_message=(
+                        "The request's images didn't reach every device running the "
+                        "model. Please send it again."
+                    ),
+                ),
+            )
+        )
+        await self.event_sender.send(
+            TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Failed)
+        )
 
     async def _reconcile_custom_cards(self) -> None:
         while True:
@@ -200,8 +262,6 @@ class Worker:
                 self.state.instances,
                 self.state.runners,
                 self.state.tasks,
-                self.input_chunk_buffer,
-                self.image_cache,
                 self._instance_backoff,
                 self._download_backoff,
             )
@@ -300,6 +360,12 @@ class Worker:
                             task_id=task.task_id, task_status=TaskStatus.Complete
                         )
                     )
+                case ImageEdits() if (
+                    task.task_params.total_input_chunks > 0
+                    and len(self.input_chunk_buffer.get(task.command_id, {}))
+                    < task.task_params.total_input_chunks
+                ):
+                    await self._report_lost_inputs(task)
                 case ImageEdits() if task.task_params.total_input_chunks > 0:
                     # Assemble image from chunks and inject into task
                     cmd_id = task.command_id
@@ -332,17 +398,19 @@ class Worker:
                             advanced_params=task.task_params.advanced_params,
                         ),
                     )
-                    # Cleanup buffers
-                    if cmd_id in self.input_chunk_buffer:
-                        del self.input_chunk_buffer[cmd_id]
-                    if cmd_id in self.input_chunk_counts:
-                        del self.input_chunk_counts[cmd_id]
+                    self._drop_inputs(cmd_id)
                     await self._start_runner_task(modified_task)
 
+                case TextGeneration() if task.task_params.image_hashes and not all(
+                    h in self.input_images.get(task.command_id, {})
+                    for h in task.task_params.image_hashes.values()
+                ):
+                    await self._report_lost_inputs(task)
                 case TextGeneration() if task.task_params.image_hashes:
                     cmd_id = task.command_id
+                    images = self.input_images[cmd_id]
                     resolved_images = [
-                        self.image_cache[h]
+                        images[h]
                         for _, h in sorted(task.task_params.image_hashes.items())
                     ]
                     modified_task = task.model_copy(
@@ -352,10 +420,7 @@ class Worker:
                             )
                         }
                     )
-                    if cmd_id in self.input_chunk_buffer:
-                        del self.input_chunk_buffer[cmd_id]
-                    if cmd_id in self.input_chunk_counts:
-                        del self.input_chunk_counts[cmd_id]
+                    self._drop_inputs(cmd_id)
                     await self._start_runner_task(modified_task)
                 case LoadModel(instance_id=instance_id):
                     if (instance := self.state.instances.get(instance_id)) is not None:
