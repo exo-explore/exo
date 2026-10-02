@@ -25,6 +25,11 @@ class OrderedBuffer[T]:
             return
         self.store[idx] = t
 
+    def skip_to(self, idx: int) -> None:
+        """Drop everything before `idx` and release from `idx` onwards."""
+        self.store = {i: t for i, t in self.store.items() if i >= idx}
+        self.next_idx_to_release = max(self.next_idx_to_release, idx)
+
     def drain(self) -> list[T]:
         """Drain all available events from the buffer"""
         ret: list[T] = []
