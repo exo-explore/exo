@@ -1,6 +1,5 @@
 """Messages from the network are only parsed when something on this node receives them."""
 
-import pytest
 
 from exo.routing.router import TopicRouter
 from exo.routing.topics import PublishPolicy, TypedTopic
@@ -37,10 +36,11 @@ async def test_message_nobody_receives_is_not_parsed() -> None:
     await router.publish_bytes(b"not a ping")
 
 
-async def test_parse_errors_still_surface_when_someone_receives() -> None:
+async def test_an_unreadable_message_is_dropped_even_when_someone_receives() -> None:
     router = make_router()
-    send, _recv = channel[Ping]()
+    send, recv = channel[Ping]()
     router.senders.add(send)
 
-    with pytest.raises(ValueError):
-        await router.publish_bytes(b"not a ping")
+    await router.publish_bytes(b"not a ping")
+
+    assert recv.collect() == []
