@@ -35,6 +35,7 @@ from exo.shared.constants import (
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.state import State
 from exo.utils import STDIO_FDS
 from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import FrozenModel
@@ -195,6 +196,14 @@ class Node:
             sys.exit(1)
         self._tg.cancel_tasks()
 
+    def _cluster_state(self) -> State | None:
+        """The cluster state as this node last knew it, for a master it starts to carry on from."""
+        if self.worker:
+            return self.worker.state
+        if self.api:
+            return self.api.state
+        return None
+
     async def _elect_loop(self):
         with self.election_result_receiver as results:
             async for result in results:
@@ -207,19 +216,16 @@ class Node:
                 # Ok:
                 # On new master:
                 # - Elect master locally if necessary
-                # - Shutdown and re-create the worker
-                # - Shut down and re-create the API
+                # - Follow it, keeping the worker's runners and the API's state
 
                 if result.is_new_master:
                     await anyio_checkpoint()
-                    self.event_router.shutdown()
-                    self.event_router = EventRouter(
-                        result.session_id,
-                        self.router.sender(topics.COMMANDS),
-                        self.router.receiver(topics.GLOBAL_EVENTS),
-                        self.router.sender(topics.LOCAL_EVENTS),
-                        self.router.receiver(topics.STATE_SNAPSHOTS),
-                    )
+                    # Follow the new master without tearing anything down: it carries on from
+                    # the cluster's state, so runners and model instances keep going
+                    self.event_router.switch_session(result.session_id)
+                    if self.worker:
+                        # Before anything from the new master can reach the worker
+                        self.worker.follow_new_master(result.session_id)
 
                 if (
                     result.session_id.master_node_id == self.node_id
@@ -245,6 +251,7 @@ class Node:
                         download_command_sender=self.router.sender(
                             topics.DOWNLOAD_COMMANDS
                         ),
+                        initial_state=self._cluster_state(),
                     )
                     self._tg.start_soon(self.master.run)
                 elif (
@@ -274,22 +281,9 @@ class Node:
                         )
                         self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
-                        await self.worker.shutdown()
-                        # TODO: add profiling etc to resource monitor
-                        self.worker = Worker(
-                            self.node_id,
-                            event_receiver=self.event_router.receiver(),
-                            event_sender=self.event_router.sender(),
-                            command_sender=self.router.sender(topics.COMMANDS),
-                            download_command_sender=self.router.sender(
-                                topics.DOWNLOAD_COMMANDS
-                            ),
-                            api_port=self._api_port,
-                        )
-                        self._tg.start_soon(self.worker.run)
+                        await self.worker.announce_to_master()
                     if self.api:
-                        self.api.reset(result.won_clock, self.event_router.receiver())
-                    self._tg.start_soon(self.event_router.run)
+                        self.api.follow_new_master(result.won_clock)
                 else:
                     if self.api:
                         self.api.unpause(result.won_clock)
