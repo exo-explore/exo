@@ -5544,7 +5544,7 @@
     <!-- Left: Conversation History Sidebar (hidden in topology-only mode, welcome state, or when toggled off) - Desktop only -->
     {#if !topologyOnlyEnabled && sidebarVisible}
       <div
-        class="hidden md:block w-80 flex-shrink-0 border-r border-exo-yellow/10"
+        class="hidden lg:block w-80 flex-shrink-0 border-r border-exo-yellow/10"
         role="complementary"
         aria-label="Conversation history"
       >
