@@ -2141,10 +2141,16 @@
   }
 
   async function deleteInstance(instanceId: string) {
-    if (!confirm(`Delete instance ${instanceId.slice(0, 8)}...?`)) return;
-
     // Get the model ID of the instance being deleted before we delete it
     const deletedInstanceModelId = getInstanceModelId(instanceData[instanceId]);
+    const shortName =
+      deletedInstanceModelId.split("/").pop() ?? deletedInstanceModelId;
+    if (
+      !confirm(
+        `Delete the ${shortName} instance (${instanceId.slice(0, 8).toUpperCase()})?`,
+      )
+    )
+      return;
     const wasSelected = selectedChatModel() === deletedInstanceModelId;
 
     if (!(await requestInstanceDeletion(instanceId))) {
@@ -5564,7 +5570,12 @@
                           >
                         </div>
                         <button
-                          onclick={() => deleteInstance(id)}
+                          onclick={(e) => {
+                            // Don't let the card's handlers select the model being deleted
+                            e.stopPropagation();
+                            deleteInstance(id);
+                          }}
+                          onkeydown={(e) => e.stopPropagation()}
                           class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
                         >
                           DELETE
@@ -6702,7 +6713,12 @@
                             >
                           </div>
                           <button
-                            onclick={() => deleteInstance(id)}
+                            onclick={(e) => {
+                              // Don't let the card's handlers select the model being deleted
+                              e.stopPropagation();
+                              deleteInstance(id);
+                            }}
+                            onkeydown={(e) => e.stopPropagation()}
                             class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
                           >
                             DELETE
