@@ -1285,6 +1285,55 @@
     );
   }
 
+  // Same labels as the Interconnect options under Advanced Options
+  const RUNTIME_LABELS: Record<InstanceMeta, string> = {
+    MlxRing: "TCP/IP",
+    MlxJaccl: "RDMA (Fast)",
+  };
+
+  // Plain-language version of a placement error reported by the backend.
+  // Matches the ValueError messages raised by place_instance in
+  // src/exo/master/placement.py; anything else is shown as-is.
+  function describePlacementError(
+    error: string,
+    modelId: string,
+    onSelectedDevices = false,
+  ): string {
+    if (error.startsWith("No cycles found with sufficient memory")) {
+      const model = models.find((m) => m.id === modelId);
+      const sizeGB = model ? getModelSizeGB(model) : 0;
+      const where = onSelectedDevices
+        ? "on the selected devices"
+        : "on your devices";
+      return sizeGB > 0
+        ? `Not enough free memory ${where} (needs ${Math.ceil(sizeGB)} GB)`
+        : `Not enough free memory ${where}`;
+    }
+    if (error.startsWith("Requested RDMA")) {
+      return "RDMA needs devices connected over Thunderbolt 5 with RDMA enabled";
+    }
+    if (error.startsWith("Requested Tensor sharding but this model does not")) {
+      return "This model doesn't support Tensor sharding";
+    }
+    return error;
+  }
+
+  // Why none of these previews can launch. Prefers the Pipeline · TCP/IP
+  // error, since that is the least restrictive combination.
+  function getPlacementFailureReason(
+    previews: PlacementPreview[],
+    modelId: string,
+  ): string | null {
+    const failed = previews.filter((p) => p.error);
+    const preferred =
+      failed.find(
+        (p) => p.sharding === "Pipeline" && p.instance_meta === "MlxRing",
+      ) ?? failed[0];
+    return preferred?.error
+      ? describePlacementError(preferred.error, modelId)
+      : null;
+  }
+
   // Helper to get model size in GB (from megabytes)
   function getModelSizeGB(model: {
     id: string;
@@ -3128,9 +3177,12 @@
       const data: { previews: PlacementPreview[] } = await res.json();
       const placement = pickOptimalPlacement(data.previews);
       if (!placement) {
+        const reason = getPlacementFailureReason(data.previews, modelId);
         addToast({
           type: "error",
-          message: "No valid placement found for this model",
+          message: reason
+            ? `Can't launch ${modelId.split("/").pop() ?? modelId}: ${reason}`
+            : "No valid placement found for this model",
         });
         chatLaunchState = "idle";
         return;
@@ -3268,7 +3320,13 @@
       const data: { previews: PlacementPreview[] } = await res.json();
       const placement = pickOptimalPlacement(data.previews);
       if (!placement) {
-        addToast({ type: "error", message: "No valid placement found" });
+        const reason = getPlacementFailureReason(data.previews, autoModel.id);
+        addToast({
+          type: "error",
+          message: reason
+            ? `Can't launch ${autoModel.id.split("/").pop() ?? autoModel.id}: ${reason}`
+            : "No valid placement found",
+        });
         chatLaunchState = "idle";
         return;
       }
@@ -3556,6 +3614,73 @@
 
   // Get the first filtered preview (for launch function compatibility)
   const filteredPreview = $derived(() => filteredPreviews()[0] ?? null);
+
+  // When the selected model can't launch with the current settings: why, and
+  // the closest sharding/interconnect combination that would work
+  const placementMismatch = $derived.by(() => {
+    if (!selectedModelId || previewsData.length === 0) return null;
+    if (filteredPreviews().length > 0) return null;
+    const errored = previewsData.find(
+      (p) =>
+        p.sharding === selectedSharding &&
+        matchesSelectedRuntime(p.instance_meta) &&
+        p.error,
+    );
+    const otherSharding: "Pipeline" | "Tensor" =
+      selectedSharding === "Pipeline" ? "Tensor" : "Pipeline";
+    const otherRuntime: InstanceMeta =
+      selectedInstanceType === "MlxRing" ? "MlxJaccl" : "MlxRing";
+    const alternative =
+      [
+        { sharding: selectedSharding, runtime: otherRuntime },
+        { sharding: otherSharding, runtime: selectedInstanceType },
+        { sharding: otherSharding, runtime: otherRuntime },
+      ].find(({ sharding, runtime }) =>
+        previewsData.some(
+          (p) =>
+            p.sharding === sharding &&
+            p.instance_meta === runtime &&
+            p.error === null &&
+            p.memory_delta_by_node !== null,
+        ),
+      ) ?? null;
+    return {
+      // Previews are limited to the node filter when one is active
+      reason: errored?.error
+        ? describePlacementError(
+            errored.error,
+            selectedModelId,
+            isFilterActive(),
+          )
+        : null,
+      alternative,
+    };
+  });
+
+  function useLaunchSettings(
+    sharding: "Pipeline" | "Tensor",
+    runtime: InstanceMeta,
+  ) {
+    selectedSharding = sharding;
+    selectedInstanceType = runtime;
+    saveLaunchDefaults();
+  }
+
+  // Remembered non-default launch settings, shown while Advanced Options is closed
+  const customLaunchSettingsLabel = $derived.by(() => {
+    if (
+      selectedSharding === "Pipeline" &&
+      selectedInstanceType === "MlxRing" &&
+      selectedMinNodes <= 1
+    )
+      return null;
+    const parts: string[] = [
+      selectedSharding,
+      RUNTIME_LABELS[selectedInstanceType],
+    ];
+    if (selectedMinNodes > 1) parts.push(`${selectedMinNodes}+ devices`);
+    return parts.join(" · ");
+  });
 
   // Auto-update selectedMinNodes when node count changes (default to 1 = show all placements)
   $effect(() => {
@@ -6053,7 +6178,7 @@
               <button
                 type="button"
                 onclick={() => (showAdvancedOptions = !showAdvancedOptions)}
-                class="flex items-center gap-2 text-xs text-white/50 hover:text-white/70 font-mono tracking-wider uppercase transition-colors cursor-pointer py-1"
+                class="flex flex-wrap items-center gap-2 text-xs text-white/50 hover:text-white/70 font-mono tracking-wider uppercase transition-colors cursor-pointer py-1"
                 aria-expanded={showAdvancedOptions}
               >
                 <svg
@@ -6071,7 +6196,15 @@
                     d="M9 5l7 7-7 7"
                   />
                 </svg>
-                Advanced Options
+                <span class="whitespace-nowrap">Advanced Options</span>
+                {#if !showAdvancedOptions && customLaunchSettingsLabel}
+                  <span
+                    class="normal-case tracking-normal text-left text-exo-yellow/80 border border-exo-yellow/30 rounded px-1.5 py-0.5"
+                    title="Remembered launch settings"
+                  >
+                    {customLaunchSettingsLabel}
+                  </span>
+                {/if}
               </button>
 
               {#if showAdvancedOptions}
@@ -6309,10 +6442,27 @@
                     {/each}
                   </div>
                 {:else if selectedModel}
-                  <div class="text-center py-4">
+                  <div class="text-center py-4 space-y-3">
                     <div class="text-xs text-white/50 font-mono">
-                      No valid configurations for current settings
+                      {placementMismatch?.reason ??
+                        "No valid configurations for current settings"}
                     </div>
+                    {#if placementMismatch?.alternative}
+                      {@const alternative = placementMismatch.alternative}
+                      <button
+                        type="button"
+                        onclick={() =>
+                          useLaunchSettings(
+                            alternative.sharding,
+                            alternative.runtime,
+                          )}
+                        class="text-xs font-mono px-3 py-1.5 border border-exo-yellow/40 text-exo-yellow rounded hover:bg-exo-yellow/10 transition-colors cursor-pointer"
+                      >
+                        Use {alternative.sharding} · {RUNTIME_LABELS[
+                          alternative.runtime
+                        ]}
+                      </button>
+                    {/if}
                   </div>
                 {/if}
               {/if}
