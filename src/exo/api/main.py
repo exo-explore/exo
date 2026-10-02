@@ -820,14 +820,12 @@ class API:
                         )
 
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
-                )
+            await self._send_from_cleanup(
+                TaskCancelled(cancelled_command_id=command_id)
+            )
             raise
         finally:
-            await self._send(TaskFinished(finished_command_id=command_id))
+            await self._send_from_cleanup(TaskFinished(finished_command_id=command_id))
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
             self._cancelled_command_ids.discard(command_id)
@@ -1228,14 +1226,12 @@ class API:
                         yield "data: [DONE]\n\n"
 
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
-                )
+            await self._send_from_cleanup(
+                TaskCancelled(cancelled_command_id=command_id)
+            )
             raise
         finally:
-            await self._send(TaskFinished(finished_command_id=command_id))
+            await self._send_from_cleanup(TaskFinished(finished_command_id=command_id))
             if command_id in self._image_generation_queues:
                 del self._image_generation_queues[command_id]
             self._cancelled_command_ids.discard(command_id)
@@ -1323,14 +1319,12 @@ class API:
 
             return (images, stats if capture_stats else None)
         except anyio.get_cancelled_exc_class():
-            command = TaskCancelled(cancelled_command_id=command_id)
-            with anyio.CancelScope(shield=True):
-                await self.command_sender.send(
-                    ForwarderCommand(origin=self._system_id, command=command)
-                )
+            await self._send_from_cleanup(
+                TaskCancelled(cancelled_command_id=command_id)
+            )
             raise
         finally:
-            await self._send(TaskFinished(finished_command_id=command_id))
+            await self._send_from_cleanup(TaskFinished(finished_command_id=command_id))
             if command_id in self._image_generation_queues:
                 del self._image_generation_queues[command_id]
             self._cancelled_command_ids.discard(command_id)
@@ -2112,6 +2106,16 @@ class API:
         await self.command_sender.send(
             ForwarderCommand(origin=self._system_id, command=command)
         )
+
+    async def _send_from_cleanup(self, command: Command) -> None:
+        # Stream cleanup runs after a client disconnect has cancelled the
+        # stream, so an unshielded send would be cancelled before it reaches
+        # the master. Skip _send's election pause too: a shielded wait on it
+        # could block shutdown forever.
+        with anyio.CancelScope(shield=True):
+            await self.command_sender.send(
+                ForwarderCommand(origin=self._system_id, command=command)
+            )
 
     async def _send_download(self, command: DownloadCommand):
         await self.download_command_sender.send(
