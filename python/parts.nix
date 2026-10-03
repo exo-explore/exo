@@ -116,6 +116,11 @@ let
                   (lib.cmakeBool "MLX_BUILD_METAL" true)
                   (lib.cmakeOptionType "string" "CMAKE_INSTALL_LIBDIR" "lib")
                   (lib.cmakeOptionType "filepath" "FETCHCONTENT_SOURCE_DIR_METAL_CPP" "${metal_cpp}")
+                  # metal-cpp calls Objective-C methods through pointers that may be nil (e.g.
+                  # ~SharedPtr releases a moved-from null), relying on messages to nil being
+                  # no-ops. Clang 21 treats such a call as undefined and turns the path into a
+                  # trap, so MLX built here can crash (SIGTRAP) where Apple's build does not.
+                  (lib.cmakeOptionType "string" "CMAKE_CXX_FLAGS" "-fno-delete-null-pointer-checks")
                   (lib.cmakeOptionType "string" "CMAKE_OSX_DEPLOYMENT_TARGET" "${pkgs.apple-sdk_26.version}")
                   (lib.cmakeOptionType "filepath" "CMAKE_OSX_SYSROOT" "${pkgs.apple-sdk_26.passthru.sdkroot}")
                 ] ++ lib.optionals (isDarwin && isx86_64) [
