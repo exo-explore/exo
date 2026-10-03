@@ -30,6 +30,7 @@ from exo.shared.types.commands import (
     DownloadCommand,
     PlaceInstance,
 )
+from exo.shared.types.common import NodeId
 from exo.shared.types.deployments import Deployment, DeploymentId, DeploymentStatus
 from exo.shared.types.events import (
     DeploymentDeleted,
@@ -47,7 +48,8 @@ from exo.shared.types.worker.runners import RunnerReady, RunnerRunning
 STARTUP_GRACE = 15.0
 # How long a placement may take to appear in the state before the keeper places again
 PLACEMENT_TIMEOUT = 30.0
-# How often a deployment that no placement fits is tried again
+# How often a deployment that no placement fits is tried again; it is also tried as soon as the
+# nodes placement can use change
 UNPLACEABLE_RETRY = 30.0
 # An instance lost before all its runners were ready counts as a failed placement: the next one
 # waits FIRST_BACKOFF, doubling with each failure in a row up to MAX_BACKOFF. An instance lost
@@ -66,6 +68,8 @@ class _Attempt:
     ready: bool = False
     failures: int = 0
     retry_at: float = -math.inf
+    # The nodes placement could use when it last found no placement
+    unplaceable_on: frozenset[NodeId] | None = None
 
 
 @dataclass
@@ -167,7 +171,9 @@ def _keep(
         and not _arrived(deployment, attempt)
         and now - attempt.placed_at < PLACEMENT_TIMEOUT
     )
-    if in_flight or now < attempt.retry_at:
+    nodes = _usable_nodes(state)
+    cluster_changed = attempt.unplaceable_on not in (None, nodes)
+    if in_flight or (now < attempt.retry_at and not cluster_changed):
         return []
     command = PlaceInstance(
         model_card=deployment.model_card,
@@ -188,6 +194,7 @@ def _keep(
         )
     except ValueError as error:
         attempt.retry_at = now + UNPLACEABLE_RETRY
+        attempt.unplaceable_on = nodes
         if deployment.placement_error == str(error):
             return []
         return [
@@ -197,12 +204,23 @@ def _keep(
         ]
     (instance_id,) = [i for i in placement if i not in state.instances]
     attempt.instance_id, attempt.placed_at, attempt.ready = instance_id, now, False
+    attempt.unplaceable_on = None
     return [
         *get_transition_events(state.instances, placement, state.tasks),
         DeploymentPlaced(
             deployment_id=deployment.deployment_id, instance_id=instance_id
         ),
     ]
+
+
+def _usable_nodes(state: State) -> frozenset[NodeId]:
+    """The nodes placement can use: connected, with their memory and backends reported. A node
+    that joins shows up in the topology a moment before it reports these."""
+    return frozenset(
+        node_id
+        for node_id in state.topology.list_nodes()
+        if node_id in state.node_memory and node_id in state.node_backends
+    )
 
 
 def has_instance(deployment: Deployment, state: State) -> bool:

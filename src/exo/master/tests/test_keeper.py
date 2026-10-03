@@ -481,30 +481,71 @@ def test_reports_when_the_reason_it_cant_be_placed_changes():
     assert "backend" in failed.error
 
 
-def test_places_once_the_cluster_can_hold_the_model():
+def test_places_once_memory_frees_up_on_the_same_nodes():
     keeper = Keeper(started_at=START)
     big = _model("test/big", size_bytes=int(NODE_MEMORY * 2.5))
-    state, (deployment,) = _deploy(_cluster(2), big)
+    state, (deployment,) = _deploy(_cluster(3, memory=NODE_MEMORY // 2), big)
     state = _apply(state, keeper.step(state, AFTER_GRACE))
     assert (
         deployment_status(state.deployments[deployment.deployment_id], state)
         == "cant_place"
     )
 
-    bigger = _cluster(4)
     state = state.model_copy(
         update={
-            "topology": bigger.topology,
-            "node_memory": bigger.node_memory,
-            "node_network": bigger.node_network,
-            "node_backends": bigger.node_backends,
+            "node_memory": {
+                node_id: create_node_memory(NODE_MEMORY)
+                for node_id in state.node_memory
+            }
         }
     )
+    # The same nodes: tried again on the periodic retry
     assert keeper.step(state, AFTER_GRACE + UNPLACEABLE_RETRY - 0.001) == []
     state = _apply(state, keeper.step(state, AFTER_GRACE + UNPLACEABLE_RETRY))
 
     assert len(_instances_of(state, big)) == 1
     assert state.deployments[deployment.deployment_id].placement_error is None
+
+
+def test_tries_again_at_once_when_a_node_joins():
+    keeper = Keeper(started_at=START)
+    big = _model("test/big", size_bytes=int(NODE_MEMORY * 2.5))
+    full = _cluster(3)
+    joining = next(iter(full.node_memory))
+    state, _ = _deploy(event_apply(NodeTimedOut(node_id=joining), full), big)
+    state = _apply(state, keeper.step(state, AFTER_GRACE))
+    assert _instances_of(state, big) == []
+
+    state = state.model_copy(
+        update={
+            "topology": full.topology,
+            "node_memory": full.node_memory,
+            "node_backends": full.node_backends,
+        }
+    )
+    state = _apply(state, keeper.step(state, AFTER_GRACE + 2))
+
+    assert len(_instances_of(state, big)) == 1
+
+
+def test_a_joining_node_is_tried_once_it_has_reported_its_memory():
+    """A node shows up in the topology a moment before its memory: trying then would fail, and
+    the keeper would wait a full UNPLACEABLE_RETRY before trying again."""
+    keeper = Keeper(started_at=START)
+    big = _model("test/big", size_bytes=int(NODE_MEMORY * 2.5))
+    full = _cluster(3)
+    joining = next(iter(full.node_memory))
+    state, _ = _deploy(event_apply(NodeTimedOut(node_id=joining), full), big)
+    state = _apply(state, keeper.step(state, AFTER_GRACE))
+
+    state = state.model_copy(update={"topology": full.topology})
+    assert keeper.step(state, AFTER_GRACE + 1) == []
+    state = state.model_copy(
+        update={"node_memory": full.node_memory, "node_backends": full.node_backends}
+    )
+    state = _apply(state, keeper.step(state, AFTER_GRACE + 2))
+
+    assert len(_instances_of(state, big)) == 1
 
 
 def test_an_unplaceable_deployment_does_not_hold_up_the_others():
