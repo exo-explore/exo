@@ -1182,7 +1182,10 @@
     modelId: string,
     onSelectedDevices = false,
   ): string {
-    if (error.startsWith("No cycles found with sufficient memory")) {
+    if (
+      error.startsWith("Not enough memory") ||
+      error.startsWith("No cycles found with sufficient memory")
+    ) {
       const model = models.find((m) => m.id === modelId);
       const sizeGB = model ? getModelSizeGB(model) : 0;
       const where = onSelectedDevices
