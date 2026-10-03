@@ -1,8 +1,10 @@
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 
 import anyio
 from loguru import logger
 
+from exo.master.keeper import Keeper
 from exo.master.placement import (
     add_instance_to_placements,
     cancel_unnecessary_downloads,
@@ -19,8 +21,10 @@ from exo.shared.apply import apply
 from exo.shared.constants import EXO_EVENT_LOG_DIR, EXO_TRACING_ENABLED
 from exo.shared.types.commands import (
     AddCustomModelCard,
+    CreateDeployment,
     CreateInstance,
     DeleteCustomModelCard,
+    DeleteDeployment,
     DeleteInstance,
     DeleteInstanceLink,
     ForwarderCommand,
@@ -40,6 +44,7 @@ from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     CustomModelCardAdded,
     CustomModelCardDeleted,
+    DeploymentCreated,
     Event,
     GlobalForwarderEvent,
     IndexedEvent,
@@ -146,6 +151,9 @@ class Master:
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         self._expected_ranks: dict[TaskId, set[int]] = {}
+        self._keeper = Keeper(started_at=monotonic())
+        # Held while the keeper's events, or a deployment's deletion, are worked out and sent
+        self._keeping = anyio.Lock()
 
     async def run(self):
         logger.info("Starting Master")
@@ -155,6 +163,7 @@ class Master:
                 tg.start_soon(self._event_processor)
                 tg.start_soon(self._command_processor)
                 tg.start_soon(self._plan)
+                tg.start_soon(self._keep_deployments)
         except* (EventRouterBrokenResourceError, EventRouterClosedResourceError):
             # Event router has been closed (try-star syntax handles error groups)
             pass
@@ -436,6 +445,23 @@ class Master:
                             generated_events.append(
                                 CustomModelCardDeleted(model_id=command.model_id)
                             )
+                        case CreateDeployment():
+                            generated_events.append(
+                                DeploymentCreated(deployment=command.deployment)
+                            )
+                        case DeleteDeployment():
+                            async with self._keeping:
+                                events, download_commands = self._keeper.delete(
+                                    command, self.state
+                                )
+                                for event in events:
+                                    await self.event_sender.send(event)
+                            for cmd in download_commands:
+                                await self.download_command_sender.send(
+                                    ForwarderDownloadCommand(
+                                        origin=self._system_id, command=cmd
+                                    )
+                                )
                         case SetInstanceLink():
                             link = InstanceLink(
                                 link_id=command.link_id,
@@ -466,6 +492,17 @@ class Master:
                         await self.event_sender.send(event)
                 except Exception as e:
                     logger.opt(exception=e).warning("Error in command processor")
+
+    async def _keep_deployments(self) -> None:
+        """Once a second, place an instance for a deployment whose model has none (see keeper.py)."""
+        while True:
+            await anyio.sleep(1)
+            try:
+                async with self._keeping:
+                    for event in self._keeper.step(self.state, monotonic()):
+                        await self.event_sender.send(event)
+            except Exception as e:
+                logger.opt(exception=e).warning("Error keeping deployments running")
 
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:

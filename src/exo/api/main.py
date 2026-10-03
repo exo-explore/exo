@@ -69,6 +69,9 @@ from exo.api.types import (
     DeleteInstanceResponse,
     DeleteTracesRequest,
     DeleteTracesResponse,
+    DeploymentInfo,
+    DeploymentList,
+    DeploymentResponse,
     ErrorInfo,
     ErrorResponse,
     FinishReason,
@@ -124,6 +127,7 @@ from exo.api.types.openai_responses import (
     ResponsesResponse,
 )
 from exo.master.image_store import ImageStore
+from exo.master.keeper import deployment_status
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.constants import (
@@ -156,8 +160,10 @@ from exo.shared.types.commands import (
     AddCustomModelCard,
     CancelDownload,
     Command,
+    CreateDeployment,
     CreateInstance,
     DeleteCustomModelCard,
+    DeleteDeployment,
     DeleteDownload,
     DeleteInstance,
     DeleteInstanceLink,
@@ -175,6 +181,7 @@ from exo.shared.types.commands import (
     TextGeneration,
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SystemId
+from exo.shared.types.deployments import Deployment, DeploymentId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -349,6 +356,9 @@ class API:
         self.app.get("/instance/await", response_model=None)(self.await_instance)
         self.app.get("/instance/{instance_id}")(self.get_instance)
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
+        self.app.get("/deployments")(self.list_deployments)
+        self.app.post("/deployments")(self.create_deployment)
+        self.app.delete("/deployments/{deployment_id}")(self.delete_deployment)
         self.app.get("/v1/instance-links")(self.list_instance_links)
         self.app.post("/v1/instance-links")(self.create_instance_link)
         self.app.put("/v1/instance-links/{link_id}")(self.update_instance_link)
@@ -690,6 +700,64 @@ class API:
             message="Command received.",
             command_id=command.command_id,
             instance_id=instance_id,
+        )
+
+    def list_deployments(self) -> DeploymentList:
+        return DeploymentList(
+            deployments=[
+                DeploymentInfo(
+                    deployment=deployment,
+                    status=deployment_status(deployment, self.state),
+                )
+                for deployment in self.state.deployments.values()
+            ]
+        )
+
+    async def create_deployment(
+        self, payload: PlaceInstanceParams
+    ) -> DeploymentResponse:
+        """Keep a model running: the master places an instance of it whenever the cluster has none."""
+        existing = next(
+            (
+                deployment
+                for deployment in self.state.deployments.values()
+                if deployment.model_card.model_id == payload.model_id
+            ),
+            None,
+        )
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{payload.model_id} is already kept running by deployment {existing.deployment_id}",
+            )
+        command = CreateDeployment(
+            deployment=Deployment(
+                deployment_id=DeploymentId(),
+                model_card=await ModelCard.load(payload.model_id),
+                sharding=payload.sharding,
+                instance_meta=payload.instance_meta,
+                min_nodes=payload.min_nodes,
+            )
+        )
+        await self._send(command)
+        return DeploymentResponse(
+            message="Command received.",
+            command_id=command.command_id,
+            deployment_id=command.deployment.deployment_id,
+        )
+
+    async def delete_deployment(
+        self, deployment_id: DeploymentId
+    ) -> DeploymentResponse:
+        """Stop keeping a model running, and delete the instance the keeper placed for it."""
+        if deployment_id not in self.state.deployments:
+            raise HTTPException(status_code=404, detail="Deployment not found")
+        command = DeleteDeployment(deployment_id=deployment_id)
+        await self._send(command)
+        return DeploymentResponse(
+            message="Command received.",
+            command_id=command.command_id,
+            deployment_id=deployment_id,
         )
 
     async def get_feature_flags(self) -> dict[str, bool]:

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.deployments import Deployment, DeploymentId, DeploymentStatus
 from exo.shared.types.memory import Memory
 from exo.shared.types.text_generation import ReasoningDialect, ReasoningEffort
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
@@ -271,6 +272,21 @@ class PlaceInstanceParams(BaseModel):
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
+
+
+class DeploymentInfo(BaseModel):
+    deployment: Deployment
+    status: DeploymentStatus
+
+
+class DeploymentList(BaseModel):
+    deployments: list[DeploymentInfo]
+
+
+class DeploymentResponse(BaseModel):
+    message: str
+    command_id: CommandId
+    deployment_id: DeploymentId
 
 
 class CreateInstanceParams(BaseModel):

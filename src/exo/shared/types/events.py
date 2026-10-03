@@ -7,6 +7,7 @@ from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Connection
 from exo.shared.types.chunks import Chunk, InputImageChunk
 from exo.shared.types.common import CommandId, Id, ModelId, NodeId, SessionId, SystemId
+from exo.shared.types.deployments import Deployment, DeploymentId
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
@@ -146,6 +147,28 @@ class InstanceLinkDeleted(BaseEvent):
     link_id: InstanceLinkId
 
 
+class DeploymentCreated(BaseEvent):
+    deployment: Deployment
+
+
+class DeploymentDeleted(BaseEvent):
+    deployment_id: DeploymentId
+
+
+class DeploymentPlaced(BaseEvent):
+    """The keeper placed an instance for a deployment."""
+
+    deployment_id: DeploymentId
+    instance_id: InstanceId
+
+
+class DeploymentPlacementFailed(BaseEvent):
+    """The keeper found no placement for a deployment's model; it tries again later."""
+
+    deployment_id: DeploymentId
+    error: str
+
+
 Event = (
     TestEvent
     | TaskCreated
@@ -169,6 +192,10 @@ Event = (
     | CustomModelCardDeleted
     | InstanceLinkCreated
     | InstanceLinkDeleted
+    | DeploymentCreated
+    | DeploymentDeleted
+    | DeploymentPlaced
+    | DeploymentPlacementFailed
 )
 
 

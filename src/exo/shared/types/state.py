@@ -9,6 +9,7 @@ from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.backends import Backend
 from exo.shared.types.common import ModelId, NodeId
+from exo.shared.types.deployments import Deployment, DeploymentId
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
     DiskUsage,
@@ -70,6 +71,9 @@ class State(FrozenModel):
 
     # User-added model cards. Workers can reconcile their on-disk custom card cache
     custom_model_cards: Mapping[ModelId, ModelCard] = {}
+
+    # Models someone asked to keep running; the master's keeper places an instance when one is missing
+    deployments: Mapping[DeploymentId, Deployment] = {}
 
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:

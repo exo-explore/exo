@@ -6,10 +6,15 @@ from loguru import logger
 
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.common import ModelId, NodeId
+from exo.shared.types.deployments import Deployment, DeploymentId
 from exo.shared.types.events import (
     ChunkGenerated,
     CustomModelCardAdded,
     CustomModelCardDeleted,
+    DeploymentCreated,
+    DeploymentDeleted,
+    DeploymentPlaced,
+    DeploymentPlacementFailed,
     Event,
     IndexedEvent,
     InputChunkReceived,
@@ -95,6 +100,14 @@ def event_apply(event: Event, state: State) -> State:
             return apply_custom_model_card_added(event, state)
         case CustomModelCardDeleted():
             return apply_custom_model_card_deleted(event, state)
+        case DeploymentCreated():
+            return apply_deployment_created(event, state)
+        case DeploymentDeleted():
+            return apply_deployment_deleted(event, state)
+        case DeploymentPlaced():
+            return apply_deployment_placed(event, state)
+        case DeploymentPlacementFailed():
+            return apply_deployment_placement_failed(event, state)
         case InstanceCreated():
             return apply_instance_created(event, state)
         case InstanceDeleted():
@@ -500,3 +513,49 @@ def apply_custom_model_card_deleted(
         if model_id != event.model_id
     }
     return state.model_copy(update={"custom_model_cards": new_cards})
+
+
+def apply_deployment_created(event: DeploymentCreated, state: State) -> State:
+    # One deployment per model. Two requests for a model can both pass the API's check before
+    # either is applied; the first one applied wins.
+    model_id = event.deployment.model_card.model_id
+    if any(d.model_card.model_id == model_id for d in state.deployments.values()):
+        return state
+    deployments: Mapping[DeploymentId, Deployment] = {
+        **state.deployments,
+        event.deployment.deployment_id: event.deployment,
+    }
+    return state.model_copy(update={"deployments": deployments})
+
+
+def apply_deployment_deleted(event: DeploymentDeleted, state: State) -> State:
+    deployments: Mapping[DeploymentId, Deployment] = {
+        deployment_id: deployment
+        for deployment_id, deployment in state.deployments.items()
+        if deployment_id != event.deployment_id
+    }
+    return state.model_copy(update={"deployments": deployments})
+
+
+def apply_deployment_placed(event: DeploymentPlaced, state: State) -> State:
+    deployment = state.deployments.get(event.deployment_id)
+    if deployment is None:
+        return state
+    updated = deployment.model_copy(
+        update={"instance_id": event.instance_id, "placement_error": None}
+    )
+    return state.model_copy(
+        update={"deployments": {**state.deployments, event.deployment_id: updated}}
+    )
+
+
+def apply_deployment_placement_failed(
+    event: DeploymentPlacementFailed, state: State
+) -> State:
+    deployment = state.deployments.get(event.deployment_id)
+    if deployment is None:
+        return state
+    updated = deployment.model_copy(update={"placement_error": event.error})
+    return state.model_copy(
+        update={"deployments": {**state.deployments, event.deployment_id: updated}}
+    )
