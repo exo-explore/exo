@@ -40,6 +40,7 @@ from exo.shared.types.events import (
     InstanceDeleted,
 )
 from exo.shared.types.state import State
+from exo.shared.types.topology import RDMAConnection
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerReady, RunnerRunning
 
@@ -49,13 +50,17 @@ STARTUP_GRACE = 15.0
 # How long a placement may take to appear in the state before the keeper places again
 PLACEMENT_TIMEOUT = 30.0
 # How often a deployment that no placement fits is tried again; it is also tried as soon as the
-# nodes placement can use change
+# nodes placement can use, or the links between them, change
 UNPLACEABLE_RETRY = 30.0
 # An instance lost before all its runners were ready counts as a failed placement: the next one
 # waits FIRST_BACKOFF, doubling with each failure in a row up to MAX_BACKOFF. An instance lost
 # after it was ready (its node died, someone deleted it) is placed again at once.
 FIRST_BACKOFF = 10.0
 MAX_BACKOFF = 60.0
+
+
+# The nodes placement can use, and the links between them (source, sink, is RDMA)
+_Shape = tuple[frozenset[NodeId], frozenset[tuple[NodeId, NodeId, bool]]]
 
 
 @dataclass
@@ -68,8 +73,8 @@ class _Attempt:
     ready: bool = False
     failures: int = 0
     retry_at: float = -math.inf
-    # The nodes placement could use when it last found no placement
-    unplaceable_on: frozenset[NodeId] | None = None
+    # The cluster's shape when placement last found nothing that fits
+    unplaceable_on: _Shape | None = None
 
 
 @dataclass
@@ -171,8 +176,8 @@ def _keep(
         and not _arrived(deployment, attempt)
         and now - attempt.placed_at < PLACEMENT_TIMEOUT
     )
-    nodes = _usable_nodes(state)
-    cluster_changed = attempt.unplaceable_on not in (None, nodes)
+    shape = _shape(state)
+    cluster_changed = attempt.unplaceable_on not in (None, shape)
     if in_flight or (now < attempt.retry_at and not cluster_changed):
         return []
     command = PlaceInstance(
@@ -194,7 +199,7 @@ def _keep(
         )
     except ValueError as error:
         attempt.retry_at = now + UNPLACEABLE_RETRY
-        attempt.unplaceable_on = nodes
+        attempt.unplaceable_on = shape
         if deployment.placement_error == str(error):
             return []
         return [
@@ -213,14 +218,21 @@ def _keep(
     ]
 
 
-def _usable_nodes(state: State) -> frozenset[NodeId]:
-    """The nodes placement can use: connected, with their memory and backends reported. A node
-    that joins shows up in the topology a moment before it reports these."""
-    return frozenset(
+def _shape(state: State) -> _Shape:
+    """What placement works from, but for memory figures, which change all the time. A joining
+    node arrives in pieces: it shows up, reports its memory and backends, and its links appear
+    seconds later, so the keeper tries again as each piece arrives."""
+    nodes = frozenset(
         node_id
         for node_id in state.topology.list_nodes()
         if node_id in state.node_memory and node_id in state.node_backends
     )
+    links = frozenset(
+        (link.source, link.sink, isinstance(link.edge, RDMAConnection))
+        for link in state.topology.list_connections()
+        if link.source in nodes and link.sink in nodes
+    )
+    return nodes, links
 
 
 def has_instance(deployment: Deployment, state: State) -> bool:

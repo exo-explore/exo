@@ -191,7 +191,7 @@ Returns `{ "deployments": [{ "deployment": {...}, "status": ... }] }`. `status`
 is `serving` (an instance of the model has every runner ready), `starting` (an
 instance is on its way up), `placing` (one will be placed shortly) or
 `cant_place` (no placement fits the cluster now; `deployment.placementError`
-says why; it is tried again as soon as a node joins or leaves, and every 30 s).
+says why; it is tried again as soon as nodes or the links between them change, and every 30 s).
 
 ### Stop Keeping a Model Running
 

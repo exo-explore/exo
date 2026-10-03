@@ -4,6 +4,7 @@ Each test builds a State through the same events the cluster applies, steps a Ke
 times, and applies what it returns, so the tests follow the keeper exactly as the master runs it.
 """
 
+import copy
 import random
 from collections.abc import Iterable
 
@@ -528,9 +529,10 @@ def test_tries_again_at_once_when_a_node_joins():
     assert len(_instances_of(state, big)) == 1
 
 
-def test_a_joining_node_is_tried_once_it_has_reported_its_memory():
-    """A node shows up in the topology a moment before its memory: trying then would fail, and
-    the keeper would wait a full UNPLACEABLE_RETRY before trying again."""
+def test_a_joining_node_is_tried_again_as_each_piece_of_it_arrives():
+    """A node joins in pieces: it shows up, reports its memory and backends, and its links come
+    seconds later. Each piece is a reason to try again; otherwise the try made after the first
+    piece fails, and the keeper waits a full UNPLACEABLE_RETRY."""
     keeper = Keeper(started_at=START)
     big = _model("test/big", size_bytes=int(NODE_MEMORY * 2.5))
     full = _cluster(3)
@@ -538,12 +540,16 @@ def test_a_joining_node_is_tried_once_it_has_reported_its_memory():
     state, _ = _deploy(event_apply(NodeTimedOut(node_id=joining), full), big)
     state = _apply(state, keeper.step(state, AFTER_GRACE))
 
-    state = state.model_copy(update={"topology": full.topology})
+    shown_up = copy.deepcopy(state.topology)
+    shown_up.add_node(joining)
+    state = state.model_copy(update={"topology": shown_up})
     assert keeper.step(state, AFTER_GRACE + 1) == []
     state = state.model_copy(
         update={"node_memory": full.node_memory, "node_backends": full.node_backends}
     )
-    state = _apply(state, keeper.step(state, AFTER_GRACE + 2))
+    assert keeper.step(state, AFTER_GRACE + 2) == []  # no links to it yet
+    state = state.model_copy(update={"topology": full.topology})
+    state = _apply(state, keeper.step(state, AFTER_GRACE + 3))
 
     assert len(_instances_of(state, big)) == 1
 
