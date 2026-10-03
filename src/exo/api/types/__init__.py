@@ -23,6 +23,9 @@ from .api import DeleteDownloadResponse as DeleteDownloadResponse
 from .api import DeleteInstanceResponse as DeleteInstanceResponse
 from .api import DeleteTracesRequest as DeleteTracesRequest
 from .api import DeleteTracesResponse as DeleteTracesResponse
+from .api import DeploymentInfo as DeploymentInfo
+from .api import DeploymentList as DeploymentList
+from .api import DeploymentResponse as DeploymentResponse
 from .api import ErrorInfo as ErrorInfo
 from .api import ErrorResponse as ErrorResponse
 from .api import FinishReason as FinishReason

@@ -163,6 +163,43 @@ JSON describing the instance to be placed.
 Command acknowledgement. The instance may not be ready immediately; wait for it
 to appear through `/instance/await` before sending inference requests.
 
+### Keep a Model Running
+
+**POST** `/deployments`
+
+Asks the cluster to keep a model running. Whenever the cluster has no instance
+of the model (its node left, it failed to start, someone deleted it), the master
+places one with the same placement `/place_instance` uses. Any instance of the
+model counts, however it was placed. An instance lost before it was ready makes
+the next placement wait, from 10 s doubling up to 60 s; one lost after it was
+ready is placed again at once. One deployment per model.
+
+**Request body:** the same as `/place_instance`:
+
+```json
+{ "model_id": "mlx-community/Llama-3.2-1B-Instruct-4bit", "sharding": "Pipeline", "instance_meta": "MlxRing", "min_nodes": 1 }
+```
+
+**Response:** `{ "message", "command_id", "deployment_id" }`. `409` if the
+model is already kept running.
+
+### List Deployments
+
+**GET** `/deployments`
+
+Returns `{ "deployments": [{ "deployment": {...}, "status": ... }] }`. `status`
+is `serving` (an instance of the model has every runner ready), `starting` (an
+instance is on its way up), `placing` (one will be placed shortly) or
+`cant_place` (no placement fits the cluster now; `deployment.placementError`
+says why, and it is tried again every 30 s).
+
+### Stop Keeping a Model Running
+
+**DELETE** `/deployments/{deployment_id}`
+
+Deletes the deployment and the instance it placed. An instance of the model
+placed some other way is left running. `404` if there is no such deployment.
+
 ## 3. Models
 
 ### List Models
@@ -673,6 +710,9 @@ GET     /instance/placement
 GET     /instance/{instance_id}
 DELETE  /instance/{instance_id}
 POST    /place_instance
+GET     /deployments
+POST    /deployments
+DELETE  /deployments/{deployment_id}
 
 # Models
 GET     /models
